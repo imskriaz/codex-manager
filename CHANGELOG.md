@@ -2,6 +2,10 @@
 
 ## 1.0.3
 
+- Removed blocking Settings Sync and immediate quota/token refresh work from extension activation.
+- Fixed a browser workspace feedback loop that generated thousands of repeated environment requests.
+- Prevented overlapping peer heartbeat work, bounded HTTP heartbeats, and made relay shutdown deterministic.
+- Added uninstall cleanup for the detached Windows Startup relay.
 - Made account enable/disable, additions/imports, removals, credential replacements, reauthorization, and token-refresh settings durable encrypted-sync triggers.
 - Coalesced background VS Code Settings Sync writes for five minutes, persisted pending work, and added bounded retry backoff without coupling realtime peer heartbeats to durable sync.
 - Kept signed WebSocket presence authoritative while connected and increased offline detection to three missed heartbeats.
