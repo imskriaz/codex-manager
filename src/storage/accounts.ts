@@ -1082,6 +1082,18 @@ export class AccountsRepository {
     return account;
   }
 
+  /** Apply a local safety fence without publishing a new ownership claim. */
+  async setAccountEnabledFromSync(accountId: string, enabled: boolean): Promise<CodexManagerAccountRecord> {
+    const index = await this.readIndex();
+    const account = setAccountEnabledOnIndex(index, accountId, enabled, Date.now());
+
+    if (!account) {
+      throw createError.accountNotFound(accountId);
+    }
+    this.writeIndex(index, { notifyAccountSync: false });
+    return account;
+  }
+
   /** Set whether this PC prioritizes an account in its automatic switching queue. */
   async setAccountQueuePriority(accountId: string, queuePriority: boolean): Promise<CodexManagerAccountRecord> {
     const index = await this.readIndex();

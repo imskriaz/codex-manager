@@ -992,12 +992,25 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private async applyMergedEnablement(
     _entries: SyncAccountEnablement[],
-    _enforceDuringOverride = false
+    enforceDuringOverride = false
   ): Promise<void> {
     // The registry describes cross-device eligibility; it does not own the
     // local enabled flag. prepareAccountEnablement/prepareAccountSwitch and
     // canRefreshAccount enforce the registry without undoing a valid user
     // action after it has completed.
+    if (!enforceDuringOverride) {
+      return;
+    }
+
+    // Rescue can deliberately leave the same account enabled on multiple PCs.
+    // When rescue is turned off, restore the safety invariant locally without
+    // publishing a disabled ownership record over the foreign PC's claim.
+    const accounts = await this.repo.listAccounts();
+    for (const account of accounts) {
+      if (account.enabled && this.findForeignEnablement(account.id)) {
+        await this.repo.setAccountEnabledFromSync(account.id, false);
+      }
+    }
   }
 
   private findForeignEnablement(accountId: string): SyncAccountEnablement | undefined {

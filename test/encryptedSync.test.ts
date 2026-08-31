@@ -538,7 +538,7 @@ describe("encrypted account sync", () => {
     manager.dispose();
   });
 
-  it("preserves local enablement for a foreign claim but blocks local switching while it is ineligible", async () => {
+  it("automatically disables a locally enabled foreign claim when rescue is turned off", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
       update: vi.fn(),
@@ -611,7 +611,8 @@ describe("encrypted account sync", () => {
     await expect(manager.completeAccountEnablement("one", true)).resolves.toBeUndefined();
     expect(repo.setAccountEnabledFromSync).not.toHaveBeenCalled();
     await expect(manager.setRegistryOverrideEnabled(false)).resolves.toBe(true);
-    expect(repo.setAccountEnabledFromSync).not.toHaveBeenCalled();
+    expect(repo.setAccountEnabledFromSync).toHaveBeenCalledOnce();
+    expect(repo.setAccountEnabledFromSync).toHaveBeenCalledWith("one", false);
     expect(isEncryptedSyncRegistryOverrideEnabled()).toBe(false);
     manager.dispose();
   });
