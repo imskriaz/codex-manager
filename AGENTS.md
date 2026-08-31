@@ -13,7 +13,8 @@
 # Packaging and Push Rule
 
 - After every completed change to tracked project files, run the relevant verification, build a VSIX, commit the complete intended change set, and push the current branch.
-- Every prerelease bump must also create a GitHub Release for the matching tag and attach the verified VSIX artifact.
+- Do not create or publish a GitHub Release, tag, Marketplace release, or other deployment unless the user explicitly asks for that release in the current request.
+- A version bump and verified local VSIX package do not authorize release publication.
 - Treat VSIX packaging, committing, and pushing as part of the normal change workflow; do not wait for a separate request.
 - If verification, packaging, committing, or pushing fails, report the concrete failure and do not claim the change was delivered.
 - Do not install or deploy the project unless the user explicitly asks for it in the current request.

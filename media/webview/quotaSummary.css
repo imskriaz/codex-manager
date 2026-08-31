@@ -10707,11 +10707,6 @@ html[data-theme="dark"] .cli-terminal-panel {
   font-weight: 600;
 }
 
-.saved-unclaimed {
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
 .saved-running-device.is-remote {
   color: var(--accent-orange);
 }

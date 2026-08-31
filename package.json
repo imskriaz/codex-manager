@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -221,7 +221,7 @@
           "default": false,
           "scope": "machine",
           "ignoreSync": true,
-          "markdownDescription": "Synchronize saved account sessions and the per-account PC enablement registry through VS Code Settings Sync using a client-side encrypted vault. A signed-in VS Code Settings Sync machine can use Sync after entering the same passphrase. Sync is run after account toggles to share the latest registry; account usage, switching, and schedules never create sync traffic."
+          "markdownDescription": "Synchronize saved account sessions and the per-account PC enablement registry through VS Code Settings Sync using a client-side encrypted vault. Major vault changes—including add/import, removal, reauthorization, enable/disable, and token-refresh settings—are queued and coalesced. Signed WebSocket/HTTP peer updates remain realtime without consuming Settings Sync requests; account usage, switching, quota refreshes, and schedules never create sync traffic."
         },
         "codexManager.webDashboardEnabled": {
           "type": "boolean",

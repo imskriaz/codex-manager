@@ -16,12 +16,12 @@ describe("saved account card presentation", () => {
     expect(resolvePrimaryAccountControl({ healthKind: "healthy", dismissedHealth: false })).toBe("enablement");
   });
 
-  it("uses the remote-PC badge first and labels accounts without a claim", () => {
-    expect(resolveCompactIdentityBadge("Plus", "With Office PC")).toEqual({
+  it("shows only the PC name for a claim and no badge when unclaimed", () => {
+    expect(resolveCompactIdentityBadge("Office PC")).toEqual({
       kind: "running-device",
-      label: "With Office PC"
+      label: "Office PC"
     });
-    expect(resolveCompactIdentityBadge("Plus")).toEqual({ kind: "unclaimed", label: "Unclaimed" });
+    expect(resolveCompactIdentityBadge()).toBeUndefined();
   });
 
   it("shows the remote-PC label in both card layouts", () => {
@@ -29,9 +29,9 @@ describe("saved account card presentation", () => {
 
     expect(source).toContain('class="saved-credits-line saved-running-device"');
     expect(source).toContain("saved-running-device");
-    expect(resolveCompactIdentityBadge("Plus", "With DESKTOP-4ISJOQ6")).toEqual({
+    expect(resolveCompactIdentityBadge("DESKTOP-4ISJOQ6")).toEqual({
       kind: "running-device",
-      label: "With DESKTOP-4ISJOQ6"
+      label: "DESKTOP-4ISJOQ6"
     });
   });
 

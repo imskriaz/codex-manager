@@ -30,13 +30,9 @@ export function resolvePrimaryAccountControl(
 }
 
 export function resolveCompactIdentityBadge(
-  planTypeLabel: string,
-  runningDeviceLabel?: string,
-  unclaimedLabel = "Unclaimed"
-): { kind: "unclaimed" | "running-device"; label: string } {
-  return runningDeviceLabel
-    ? { kind: "running-device", label: runningDeviceLabel }
-    : { kind: "unclaimed", label: unclaimedLabel || planTypeLabel };
+  runningDeviceLabel?: string
+): { kind: "running-device"; label: string } | undefined {
+  return runningDeviceLabel ? { kind: "running-device", label: runningDeviceLabel } : undefined;
 }
 
 /** A foreign claim needs the rescue explanation only while rescue is locked. */
@@ -173,10 +169,9 @@ export function SavedAccountCard(props: {
   const registryOverrideEnabled = settings.encryptedSyncRegistryOverrideEnabled;
   const claimIsLocked = shouldOpenClaimPopover(runningOnOtherDevice, registryOverrideEnabled);
   const runningDeviceLabel = runningOnOtherDevice
-    ? resolveRunningDeviceLabel(account.runningDeviceName ?? "", props.lang)
+    ? resolveRunningDeviceLabel(account.runningDeviceName ?? "")
     : undefined;
-  const unclaimedLabel = props.lang === "zh" ? "未占用" : props.lang === "zh-hant" ? "未佔用" : "Unclaimed";
-  const compactIdentityBadge = resolveCompactIdentityBadge(account.planTypeLabel, runningDeviceLabel, unclaimedLabel);
+  const compactIdentityBadge = resolveCompactIdentityBadge(runningDeviceLabel);
   const enablementToggleLabel =
     runningOnOtherDevice && !registryOverrideEnabled
       ? resolveClaimedToggleLabel(account.runningDeviceName ?? "", props.lang)
@@ -487,12 +482,11 @@ export function SavedAccountCard(props: {
               ) : null}
               <div class="saved-table-meta">
                 <>
-                  <span
-                    class={`pill ${compactIdentityBadge.kind === "unclaimed" ? "saved-unclaimed" : "saved-running-device"}`}
-                    title={compactIdentityBadge.label}
-                  >
-                    {compactIdentityBadge.label}
-                  </span>
+                  {compactIdentityBadge ? (
+                    <span class="pill saved-running-device" title={compactIdentityBadge.label}>
+                      {compactIdentityBadge.label}
+                    </span>
+                  ) : null}
                   {account.switchQueued ? (
                     <button
                       class="pill warning saved-queued-badge"
@@ -743,12 +737,11 @@ export function SavedAccountCard(props: {
                     <span class="saved-title-text">{emailDisplay}</span>
                   </h3>
                   <div class="saved-meta">
-                    <span
-                      class={`pill ${compactIdentityBadge.kind === "unclaimed" ? "saved-unclaimed" : "saved-running-device"}`}
-                      title={compactIdentityBadge.label}
-                    >
-                      {compactIdentityBadge.label}
-                    </span>
+                    {compactIdentityBadge ? (
+                      <span class="pill saved-running-device" title={compactIdentityBadge.label}>
+                        {compactIdentityBadge.label}
+                      </span>
+                    ) : null}
                     {account.switchQueued ? (
                       <button
                         class="pill warning saved-queued-badge"
@@ -1184,14 +1177,8 @@ function resolveCompactResetLabel(lang: DashboardState["lang"]): string {
   return lang === "zh" ? "重置" : lang === "zh-hant" ? "重設" : "Reset";
 }
 
-function resolveRunningDeviceLabel(deviceName: string, lang: DashboardState["lang"]): string {
-  if (lang === "zh") {
-    return `由 ${deviceName}`;
-  }
-  if (lang === "zh-hant") {
-    return `由 ${deviceName}`;
-  }
-  return `With ${deviceName}`;
+function resolveRunningDeviceLabel(deviceName: string): string {
+  return deviceName;
 }
 
 function resolveClaimedToggleLabel(deviceName: string, lang: DashboardState["lang"]): string {
