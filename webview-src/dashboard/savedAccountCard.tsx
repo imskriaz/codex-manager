@@ -1,0 +1,1210 @@
+import { createPortal } from "preact/compat";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import type {
+  DashboardAccountViewModel,
+  DashboardActionPayload,
+  DashboardCopy,
+  DashboardSettings,
+  DashboardState
+} from "../../src/domain/dashboard/types";
+import { getSensitiveDisplayValue, isAccountAttention, renderTagList } from "./helpers";
+import {
+  EditTagsIcon,
+  renderDetailsIcon,
+  DownloadIcon,
+  renderRefreshIcon,
+  renderReauthorizeIcon,
+  renderReloadIcon,
+  renderRemoveIcon,
+  renderResyncProfileIcon,
+  renderSwitchIcon
+} from "./icons";
+import { ActionButton } from "./primitives";
+import { MetricRow, renderHealthPill } from "./accountMetricPrimitives";
+import { canRunAccountOnThisPc } from "./accountRunPolicy";
+
+export function resolvePrimaryAccountControl(
+  account: Pick<DashboardAccountViewModel, "healthKind" | "dismissedHealth">
+): "enablement" | "reauthorize" {
+  return account.healthKind === "reauthorize" ? "reauthorize" : "enablement";
+}
+
+export function resolveCompactIdentityBadge(
+  planTypeLabel: string,
+  runningDeviceLabel?: string
+): { kind: "plan" | "running-device"; label: string } {
+  return runningDeviceLabel
+    ? { kind: "running-device", label: runningDeviceLabel }
+    : { kind: "plan", label: planTypeLabel };
+}
+
+/** A foreign claim needs the rescue explanation only while rescue is locked. */
+export function shouldOpenClaimPopover(runningOnOtherDevice: boolean, registryOverrideEnabled: boolean): boolean {
+  return runningOnOtherDevice && !registryOverrideEnabled;
+}
+
+export interface ViewportPopoverPosition {
+  top: number;
+  left: number;
+  arrowLeft: number;
+  placement: "above" | "below";
+}
+
+export function resolveViewportPopoverPosition(
+  anchor: Pick<DOMRect, "top" | "right" | "bottom" | "left" | "width">,
+  popover: Pick<DOMRect, "width" | "height">,
+  viewport: { width: number; height: number },
+  gap = 8,
+  margin = 8
+): ViewportPopoverPosition {
+  const availableBelow = viewport.height - anchor.bottom - gap - margin;
+  const availableAbove = anchor.top - gap - margin;
+  const placement = popover.height > availableBelow && availableAbove > availableBelow ? "above" : "below";
+  const maxLeft = Math.max(margin, viewport.width - popover.width - margin);
+  const desiredLeft = anchor.left + anchor.width / 2 - popover.width / 2;
+  const left = Math.min(Math.max(desiredLeft, margin), maxLeft);
+  const desiredTop = placement === "above" ? anchor.top - gap - popover.height : anchor.bottom + gap;
+  const maxTop = Math.max(margin, viewport.height - popover.height - margin);
+  const top = Math.min(Math.max(desiredTop, margin), maxTop);
+  const anchorCenter = anchor.left + anchor.width / 2;
+  const arrowLeft = Math.min(Math.max(anchorCenter - left, 14), Math.max(14, popover.width - 14));
+
+  return { top, left, arrowLeft, placement };
+}
+
+/** Keep transport/provider details out of the compact card while retaining
+ * the actionable health state (for example, "Needs Reauth"). */
+export function resolveCardHealthReason(
+  account: Pick<DashboardAccountViewModel, "healthKind" | "healthLabel" | "healthMessage">
+): string {
+  // Raw API responses can contain JSON, request IDs, and internal wording that
+  // is both noisy and unsafe to expose in a dense card. The health label is the
+  // stable, localized action the user needs.
+  if (account.healthKind === "reauthorize" || account.healthKind === "refresh_failed") {
+    return account.healthLabel;
+  }
+  return account.healthLabel || account.healthMessage?.trim() || "Attention required";
+}
+
+export function SavedAccountCard(props: {
+  account: DashboardAccountViewModel;
+  lang: DashboardState["lang"];
+  copy: DashboardCopy;
+  settings: DashboardSettings;
+  now: number;
+  privacyMode: boolean;
+  busy: boolean;
+  reloadPromptPending: boolean;
+  switchPending: boolean;
+  reauthorizePending: boolean;
+  resyncProfilePending: boolean;
+  refreshPending: boolean;
+  detailsPending: boolean;
+  removePending: boolean;
+  enabledPending: boolean;
+  queuePriorityPending: boolean;
+  tokenRefreshPending: boolean;
+  manualTokenRefreshPending: boolean;
+  updateTagsPending: boolean;
+  consumeResetCreditPending: boolean;
+  exportPending: boolean;
+  selected: boolean;
+  metricPriority: string;
+  compactRow?: boolean;
+  onToggleSelected: () => void;
+  onExportAuth: () => void;
+  onEditTags: () => void;
+  onAction: (
+    action:
+      | "details"
+      | "switch"
+      | "reloadPrompt"
+      | "reauthorize"
+      | "resyncProfile"
+      | "refresh"
+      | "remove"
+      | "toggleAccountEnabled"
+      | "setAccountQueuePriority"
+      | "setAccountTokenRefreshEnabled"
+      | "refreshToken"
+      | "consumeResetCredit"
+      | "syncNow"
+      | "setEncryptedSyncRegistryOverride"
+      | "openExternalUrl",
+    accountId?: string,
+    payload?: DashboardActionPayload
+  ) => void;
+}) {
+  const { account, copy, settings, now, onAction, privacyMode } = props;
+  const zh = props.lang === "zh";
+  const hant = props.lang === "zh-hant";
+  const exportLabel = zh ? "导出 auth" : hant ? "匯出 auth" : "Export auth";
+  const infoLabel = zh ? "账号信息" : hant ? "帳號資訊" : "Account info";
+  const moreLabel = zh ? "更多操作" : hant ? "更多操作" : "More account actions";
+  const queuePriorityLabel = account.queuePriority
+    ? zh
+      ? "取消队列优先"
+      : hant
+        ? "取消佇列優先"
+        : "Remove queue priority"
+    : zh
+      ? "置顶自动队列"
+      : hant
+        ? "置頂自動佇列"
+        : "Prioritize in auto queue";
+  const tokenRefreshLabel = account.tokenRefreshEnabled
+    ? zh
+      ? "关闭令牌自动刷新"
+      : hant
+        ? "關閉權杖自動重新整理"
+        : "Disable token refresh"
+    : zh
+      ? "启用令牌自动刷新"
+      : hant
+        ? "啟用權杖自動重新整理"
+        : "Enable token refresh";
+  const manualTokenRefreshLabel = zh ? "立即刷新令牌" : hant ? "立即重新整理權杖" : "Refresh token now";
+  const queuedLabel = zh ? "排队中" : hant ? "排隊中" : "Queued";
+  const resetLabel = copy.resetCreditsBtn ?? (zh ? "重置配额" : hant ? "重置配額" : "Reset quota");
+  const runningOnOtherDevice = Boolean(
+    account.runningDeviceName && !account.runningOnThisDevice && account.runningDeviceOnline !== false
+  );
+  const registryOverrideEnabled = settings.encryptedSyncRegistryOverrideEnabled;
+  const claimIsLocked = shouldOpenClaimPopover(runningOnOtherDevice, registryOverrideEnabled);
+  const runningDeviceLabel = runningOnOtherDevice
+    ? resolveRunningDeviceLabel(account.runningDeviceName ?? "", props.lang)
+    : undefined;
+  const compactIdentityBadge = resolveCompactIdentityBadge(account.planTypeLabel, runningDeviceLabel);
+  const enablementToggleLabel =
+    runningOnOtherDevice && !registryOverrideEnabled
+      ? resolveClaimedToggleLabel(account.runningDeviceName ?? "", props.lang)
+      : runningOnOtherDevice
+        ? resolveOverrideToggleLabel(account.runningDeviceName ?? "", props.lang)
+        : account.enabled
+          ? copy.accountDisableTip
+          : copy.accountEnableTip;
+  const userIdDisplay = getSensitiveDisplayValue(account.userId, privacyMode, "id", "-");
+  const emailDisplay = getSensitiveDisplayValue(account.email, privacyMode, "email");
+  const backEmailDisplay = getSensitiveDisplayValue(account.email, privacyMode, "email");
+  const selectionLabel = props.selected ? copy.deselectAccount : copy.selectAccount;
+  const showReauthorizeButton = resolvePrimaryAccountControl(account) === "reauthorize";
+  const [flipped, setFlipped] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [claimPopoverOpen, setClaimPopoverOpen] = useState(false);
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const actionsMenuContentRef = useRef<HTMLDivElement>(null);
+  const claimPopoverRef = useRef<HTMLDivElement>(null);
+  const claimPopoverContentRef = useRef<HTMLDivElement>(null);
+  const [claimPopoverPosition, setClaimPopoverPosition] = useState<ViewportPopoverPosition>();
+  const [actionsMenuPosition, setActionsMenuPosition] = useState<ViewportPopoverPosition>();
+  useLayoutEffect(() => {
+    if (!claimPopoverOpen) {
+      setClaimPopoverPosition(undefined);
+      return;
+    }
+    setClaimPopoverPosition(undefined);
+    const updatePosition = () => {
+      const anchorRect = claimPopoverRef.current?.getBoundingClientRect();
+      const popoverRect = claimPopoverContentRef.current?.getBoundingClientRect();
+      if (!anchorRect || !popoverRect) {
+        return;
+      }
+      setClaimPopoverPosition(
+        resolveViewportPopoverPosition(anchorRect, popoverRect, {
+          width: window.innerWidth,
+          height: window.innerHeight
+        })
+      );
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [claimPopoverOpen]);
+  useLayoutEffect(() => {
+    if (!actionsOpen) {
+      setActionsMenuPosition(undefined);
+      return;
+    }
+    setActionsMenuPosition(undefined);
+    const updatePosition = () => {
+      const anchorRect = actionsMenuRef.current?.getBoundingClientRect();
+      const popoverRect = actionsMenuContentRef.current?.getBoundingClientRect();
+      if (!anchorRect || !popoverRect) {
+        return;
+      }
+      setActionsMenuPosition(
+        resolveViewportPopoverPosition(
+          anchorRect,
+          popoverRect,
+          {
+            width: window.innerWidth,
+            height: window.innerHeight
+          },
+          6
+        )
+      );
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [actionsOpen]);
+  useEffect(() => {
+    // A rescue-enabled foreign claim is warning-only and should never leave
+    // the locked-claim dialog open after the override state changes.
+    if (!claimIsLocked) {
+      setClaimPopoverOpen(false);
+    }
+  }, [claimIsLocked]);
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const closeOutside = (event: PointerEvent): void => {
+      const target = event.target as Node;
+      if (!actionsMenuRef.current?.contains(target) && !actionsMenuContentRef.current?.contains(target)) {
+        setActionsOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setActionsOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [actionsOpen]);
+  useEffect(() => {
+    if (!claimPopoverOpen) return;
+    const closeOutside = (event: PointerEvent): void => {
+      const target = event.target as Node;
+      if (!claimPopoverRef.current?.contains(target) && !claimPopoverContentRef.current?.contains(target))
+        setClaimPopoverOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setClaimPopoverOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [claimPopoverOpen]);
+  const showResyncButton = account.healthKind !== "reauthorize";
+  const hasResetCredit = account.resetCreditsAvailable != null && account.resetCreditsAvailable > 0;
+  const subscriptionRemaining = formatSubscriptionRemaining(account.subscriptionExpiresAt, now, props.lang);
+  const resyncButtonLabel =
+    (account.healthKind === "disabled" || account.healthKind === "quota") && !account.dismissedHealth
+      ? copy.resyncProfileBtn
+      : copy.syncProfileBtn;
+  const hasErrorHealth = isAccountAttention(account);
+  const healthReason = resolveCardHealthReason(account);
+  const cardStateClass = [
+    account.isActive ? "active" : "",
+    !account.enabled ? "account-disabled" : "",
+    props.busy ? "is-busy" : "",
+    props.selected ? "selected" : "",
+    hasErrorHealth ? "health-error" : "",
+    runningOnOtherDevice ? "remote-device" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const visibleMetrics = [...account.metrics.filter((metric) => metric.visible)].sort((left, right) => {
+    const priority = (metricKey: string): number =>
+      metricKey.includes(props.metricPriority)
+        ? 0
+        : metricKey.includes("weekly")
+          ? 1
+          : metricKey.includes("hourly")
+            ? 2
+            : 3;
+    return priority(left.key) - priority(right.key);
+  });
+  // A newly switched-in account keeps its previous quota summary until the
+  // first refresh for the new session. Do not style that stale snapshot as a
+  // live low-quota warning.
+  const quotaFreshForSession =
+    !account.isActive ||
+    account.sessionStartedAt == null ||
+    (account.lastQuotaAt != null && account.lastQuotaAt >= account.sessionStartedAt);
+  const lowQuota = quotaFreshForSession && visibleMetrics.some(
+    (metric) => typeof metric.percentage === "number" && metric.percentage <= settings.quotaYellowThreshold
+  );
+  const stopFlip = (event: Event): void => {
+    event.stopPropagation();
+  };
+  const handleFlipKey = (event: KeyboardEvent, nextFlipped: boolean): void => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    setFlipped(nextFlipped);
+  };
+  const handleEnablementToggle = (): void => {
+    if (claimIsLocked) {
+      setClaimPopoverOpen((open) => !open);
+      return;
+    }
+    // Send the intended value instead of asking the host to infer it from a
+    // potentially newer synchronized snapshot. This is especially important
+    // under Rescue, where a foreign claim remains visible while local
+    // enablement is allowed to diverge from the shared registry.
+    onAction("toggleAccountEnabled", account.id, { enabled: !account.enabled });
+  };
+  const claimPopover =
+    claimIsLocked && claimPopoverOpen
+      ? createPortal(
+          <div
+            ref={claimPopoverContentRef}
+            class={`claim-popover claim-popover-portal opens-${claimPopoverPosition?.placement ?? "below"}`}
+            role="dialog"
+            aria-label={resolveClaimPopoverText("title", account.runningDeviceName ?? "", props.lang)}
+            onClick={stopFlip}
+            style={{
+              top: `${claimPopoverPosition?.top ?? 0}px`,
+              left: `${claimPopoverPosition?.left ?? 0}px`,
+              visibility: claimPopoverPosition ? "visible" : "hidden",
+              "--popover-arrow-left": `${claimPopoverPosition?.arrowLeft ?? 14}px`
+            }}
+          >
+            <div class="claim-popover-head">
+              <div class="claim-popover-title">
+                {resolveClaimPopoverText("title", account.runningDeviceName ?? "", props.lang)}
+              </div>
+              <button
+                class="claim-popover-close"
+                type="button"
+                aria-label={resolveClaimPopoverText("close", "", props.lang)}
+                onClick={() => setClaimPopoverOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div class="claim-popover-body">
+              {resolveClaimPopoverText("body", account.runningDeviceName ?? "", props.lang)}
+            </div>
+            <div class="claim-popover-actions">
+              <button
+                class="claim-popover-action is-primary"
+                type="button"
+                disabled={props.busy}
+                onClick={() => {
+                  setClaimPopoverOpen(false);
+                  onAction("setEncryptedSyncRegistryOverride", undefined, { enabled: !registryOverrideEnabled });
+                }}
+              >
+                {resolveClaimPopoverText("rescue", "", props.lang)}
+              </button>
+              <button
+                class="claim-popover-action is-secondary"
+                type="button"
+                disabled={props.busy}
+                onClick={() => {
+                  setClaimPopoverOpen(false);
+                  onAction("syncNow");
+                }}
+              >
+                {resolveClaimPopoverText("sync", "", props.lang)}
+              </button>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
+  const renderPrimaryAccountControl = () =>
+    showReauthorizeButton ? (
+      <ActionButton
+        class="saved-control saved-reauthorize-control"
+        icon={renderReauthorizeIcon()}
+        iconOnly
+        label={copy.reauthorizeBtn}
+        pending={props.reauthorizePending}
+        disabled={props.busy}
+        onClick={() => onAction("reauthorize", account.id)}
+      />
+    ) : (
+      <div class="saved-enabled-control-wrap" ref={claimPopoverRef}>
+        <button
+          class={`saved-control saved-enabled-toggle ${account.enabled ? "is-checked" : ""} ${runningOnOtherDevice ? "is-remote-claimed" : ""} ${account.enablementSyncPending ? "is-sync-pending" : ""} ${runningOnOtherDevice && registryOverrideEnabled ? "is-claim-bypassed" : ""}`}
+          type="button"
+          title={enablementToggleLabel}
+          aria-label={enablementToggleLabel}
+          aria-pressed={account.enabled}
+          aria-haspopup={claimIsLocked ? "dialog" : undefined}
+          aria-expanded={claimIsLocked ? claimPopoverOpen : undefined}
+          disabled={props.busy}
+          onClick={handleEnablementToggle}
+        >
+          {props.enabledPending ? (
+            <span class="saved-toggle-spinner" aria-hidden="true"></span>
+          ) : (
+            <span class="saved-enabled-toggle-indicator" aria-hidden="true">
+              <span></span>
+            </span>
+          )}
+        </button>
+        {claimPopover}
+      </div>
+    );
+
+  if (props.compactRow) {
+    return (
+      <>
+        <article
+          class={`saved-table-row ${cardStateClass} ${lowQuota ? "low-quota" : ""} ${actionsOpen ? "has-open-menu" : ""}`}
+          aria-label={emailDisplay}
+        >
+          <div class="saved-table-identity">
+            <button
+              class={`saved-select-toggle ${props.selected ? "selected" : ""}`}
+              type="button"
+              aria-pressed={props.selected}
+              aria-label={selectionLabel}
+              title={selectionLabel}
+              onClick={props.onToggleSelected}
+            >
+              <span class="saved-select-toggle-mark" aria-hidden="true"></span>
+            </button>
+            <div class="saved-table-name-block">
+              <div class="saved-table-name-line">
+                <strong title={emailDisplay}>{emailDisplay}</strong>
+              </div>
+              {hasErrorHealth ? (
+                <span class={`saved-table-health-reason is-${account.healthKind}`} title={healthReason}>
+                  {healthReason}
+                </span>
+              ) : null}
+              <div class="saved-table-meta">
+                <>
+                  <span
+                    class={`pill ${compactIdentityBadge.kind === "plan" ? "plan" : "saved-running-device"}`}
+                    title={compactIdentityBadge.label}
+                  >
+                    {compactIdentityBadge.label}
+                  </span>
+                  {account.switchQueued ? (
+                    <button
+                      class="pill warning saved-queued-badge"
+                      type="button"
+                      title={copy.reloadBtn}
+                      aria-label={`${queuedLabel}: ${copy.reloadBtn}`}
+                      disabled={props.busy}
+                      onClick={(event) => {
+                        stopFlip(event);
+                        onAction("reloadPrompt", account.id);
+                      }}
+                    >
+                      {props.reloadPromptPending ? <span class="saved-toggle-spinner" aria-hidden="true"></span> : null}
+                      {queuedLabel}
+                    </button>
+                  ) : account.isActive ? (
+                    <span class="pill active">{copy.current}</span>
+                  ) : null}
+                  {renderHealthPill(account)}
+                  {subscriptionRemaining ? (
+                    <span
+                      class={`saved-subscription-remaining ${subscriptionRemaining.expiring ? "is-expiring" : ""}`}
+                      title={account.subscriptionTitle}
+                    >
+                      {subscriptionRemaining.label}
+                    </span>
+                  ) : null}
+                  {account.creditsText ? <span class="saved-table-credit">{account.creditsText}</span> : null}
+                  {hasResetCredit ? (
+                    <button
+                      class={`saved-table-credit saved-reset-badge ${props.consumeResetCreditPending ? "is-pending" : ""}`}
+                      type="button"
+                      title={formatResetCreditsTitle(
+                        account.resetCreditsAvailable,
+                        account.resetCreditsNextExpiresAt,
+                        props.lang
+                      )}
+                      aria-label={`${resetLabel}: ${account.resetCreditsAvailable}`}
+                      disabled={props.busy}
+                      onClick={() => onAction("consumeResetCredit", account.id)}
+                    >
+                      {props.consumeResetCreditPending ? (
+                        <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                      ) : null}
+                      <span>
+                        {resolveCompactResetLabel(props.lang)} {account.resetCreditsAvailable}
+                      </span>
+                    </button>
+                  ) : null}
+                </>
+              </div>
+            </div>
+          </div>
+
+          <div class="saved-table-metrics">
+            {visibleMetrics.slice(0, 2).map((metric) => (
+              <MetricRow key={metric.key} metric={metric} lang={props.lang} settings={settings} copy={copy} now={now} />
+            ))}
+          </div>
+
+          <div class="saved-table-actions" onClick={stopFlip}>
+            <button
+              class={`saved-control saved-queue-priority-toggle ${account.queuePriority ? "is-prioritized" : ""}`}
+              type="button"
+              title={queuePriorityLabel}
+              aria-label={queuePriorityLabel}
+              aria-pressed={account.queuePriority}
+              disabled={props.busy}
+              onClick={() => onAction("setAccountQueuePriority", account.id, { queuePriority: !account.queuePriority })}
+            >
+              {props.queuePriorityPending ? (
+                <span class="saved-toggle-spinner" aria-hidden="true"></span>
+              ) : (
+                <span aria-hidden="true">{account.queuePriority ? "★" : "☆"}</span>
+              )}
+            </button>
+            {renderPrimaryAccountControl()}
+            <ActionButton
+              icon={renderSwitchIcon()}
+              iconOnly
+              label={copy.switchBtn}
+              pending={props.switchPending}
+              disabled={!canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled)}
+              onClick={() => onAction("switch", account.id)}
+            />
+            <ActionButton
+              icon={renderRefreshIcon()}
+              iconOnly
+              label={copy.refreshBtn}
+              pending={props.refreshPending}
+              disabled={props.busy}
+              onClick={() => onAction("refresh", account.id)}
+            />
+            <div class="saved-overflow-wrap" ref={actionsMenuRef}>
+              <button
+                class={`saved-overflow-trigger ${actionsOpen ? "active" : ""}`}
+                type="button"
+                aria-label={moreLabel}
+                aria-expanded={actionsOpen}
+                onClick={() => setActionsOpen((open) => !open)}
+              >
+                •••
+              </button>
+              {actionsOpen
+                ? createPortal(
+                    <div
+                      ref={actionsMenuContentRef}
+                      class="saved-overflow-menu saved-table-overflow-menu saved-overflow-menu-portal"
+                      onClick={stopFlip}
+                      style={{
+                        top: `${actionsMenuPosition?.top ?? 0}px`,
+                        left: `${actionsMenuPosition?.left ?? 0}px`,
+                        visibility: actionsMenuPosition ? "visible" : "hidden"
+                      }}
+                    >
+                      <button
+                        type="button"
+                        disabled={props.busy || props.exportPending}
+                        onClick={() => {
+                          setActionsOpen(false);
+                          props.onExportAuth();
+                        }}
+                      >
+                        <DownloadIcon /> <span>{exportLabel}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={props.busy}
+                        onClick={() => {
+                          setActionsOpen(false);
+                          props.onEditTags();
+                        }}
+                      >
+                        <EditTagsIcon /> <span>{copy.editTagsBtn}</span>
+                      </button>
+                      {showResyncButton ? (
+                        <button
+                          type="button"
+                          disabled={props.busy}
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onAction("resyncProfile", account.id);
+                          }}
+                        >
+                          {renderResyncProfileIcon()} <span>{resyncButtonLabel}</span>
+                        </button>
+                      ) : null}
+                      {account.canRefreshToken ? (
+                        <button
+                          type="button"
+                          disabled={props.busy}
+                          onClick={() => {
+                            setActionsOpen(false);
+                            onAction("refreshToken", account.id);
+                          }}
+                        >
+                          {props.manualTokenRefreshPending ? (
+                            <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                          ) : (
+                            renderRefreshIcon()
+                          )}
+                          <span>{manualTokenRefreshLabel}</span>
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={props.busy}
+                        onClick={() => {
+                          setActionsOpen(false);
+                          onAction("setAccountTokenRefreshEnabled", account.id, {
+                            tokenRefreshEnabled: !account.tokenRefreshEnabled
+                          });
+                        }}
+                      >
+                        {props.tokenRefreshPending ? (
+                          <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                        ) : (
+                          <span
+                            class={`saved-menu-check ${account.tokenRefreshEnabled ? "is-checked" : ""}`}
+                            aria-hidden="true"
+                          >
+                            {account.tokenRefreshEnabled ? "✓" : "○"}
+                          </span>
+                        )}
+                        <span>{tokenRefreshLabel}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={props.busy || props.detailsPending}
+                        onClick={() => {
+                          setActionsOpen(false);
+                          onAction("details", account.id, { privacyMode });
+                        }}
+                      >
+                        {props.detailsPending ? (
+                          <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                        ) : (
+                          renderDetailsIcon()
+                        )}{" "}
+                        <span>{infoLabel}</span>
+                      </button>
+                      <button
+                        class="danger"
+                        type="button"
+                        disabled={props.busy}
+                        onClick={() => {
+                          setActionsOpen(false);
+                          onAction("remove", account.id);
+                        }}
+                      >
+                        {renderRemoveIcon()} <span>{copy.removeBtn}</span>
+                      </button>
+                    </div>,
+                    document.body
+                  )
+                : null}
+            </div>
+          </div>
+        </article>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <article
+        class={`saved-card-container ${cardStateClass} ${lowQuota ? "low-quota" : ""} ${actionsOpen ? "has-open-menu" : ""}`}
+      >
+        <div class={`saved-card-inner ${flipped ? "flipped" : ""}`}>
+          <section class={`saved-card saved-card-front ${cardStateClass}`} aria-label={emailDisplay}>
+            <div class="saved-head">
+              <div class="saved-title">
+                <div class="saved-identity-line">
+                  <h3>
+                    <button
+                      class={`saved-select-toggle ${props.selected ? "selected" : ""}`}
+                      type="button"
+                      aria-pressed={props.selected}
+                      aria-label={selectionLabel}
+                      title={selectionLabel}
+                      onClick={(event) => {
+                        stopFlip(event);
+                        props.onToggleSelected();
+                      }}
+                    >
+                      <span class="saved-select-toggle-mark" aria-hidden="true"></span>
+                    </button>
+                    <span class="saved-title-text">{emailDisplay}</span>
+                  </h3>
+                  <div class="saved-meta">
+                    <span class="pill plan">{account.planTypeLabel}</span>
+                    {account.switchQueued ? (
+                      <button
+                        class="pill warning saved-queued-badge"
+                        type="button"
+                        title={copy.reloadBtn}
+                        aria-label={`${queuedLabel}: ${copy.reloadBtn}`}
+                        disabled={props.busy}
+                        onClick={(event) => {
+                          stopFlip(event);
+                          onAction("reloadPrompt", account.id);
+                        }}
+                      >
+                        {props.reloadPromptPending ? (
+                          <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                        ) : null}
+                        {queuedLabel}
+                      </button>
+                    ) : account.isActive ? (
+                      <span class="pill active">{copy.current}</span>
+                    ) : null}
+                    {renderHealthPill(account)}
+                    {renderTagList(account.tags)}
+                  </div>
+                </div>
+                {hasErrorHealth ? (
+                  <div class={`saved-health-reason is-${account.healthKind}`} role="status" title={healthReason}>
+                    {healthReason}
+                  </div>
+                ) : null}
+              </div>
+              <div class="saved-top-actions" onClick={stopFlip}>
+                <button
+                  class={`saved-control saved-queue-priority-toggle ${account.queuePriority ? "is-prioritized" : ""}`}
+                  type="button"
+                  title={queuePriorityLabel}
+                  aria-label={queuePriorityLabel}
+                  aria-pressed={account.queuePriority}
+                  disabled={props.busy}
+                  onClick={() =>
+                    onAction("setAccountQueuePriority", account.id, { queuePriority: !account.queuePriority })
+                  }
+                >
+                  {props.queuePriorityPending ? (
+                    <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                  ) : (
+                    <span aria-hidden="true">{account.queuePriority ? "★" : "☆"}</span>
+                  )}
+                </button>
+                {renderPrimaryAccountControl()}
+                <button
+                  class="saved-control saved-edit-tags-btn"
+                  type="button"
+                  aria-label={copy.editTagsBtn}
+                  title={copy.editTagsBtn}
+                  disabled={props.busy}
+                  onClick={props.onEditTags}
+                >
+                  {props.updateTagsPending ? (
+                    <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                  ) : (
+                    <EditTagsIcon />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div class="saved-progress">
+              {visibleMetrics.length > 0 ? (
+                visibleMetrics.map((metric) => (
+                  <MetricRow
+                    key={metric.key}
+                    metric={metric}
+                    lang={props.lang}
+                    settings={settings}
+                    copy={copy}
+                    now={now}
+                  />
+                ))
+              ) : (
+                <div class="quota-empty-placeholder">{copy.resetUnknown}</div>
+              )}
+            </div>
+            <div class="saved-card-footer">
+              <div class="saved-credit-summary">
+                <>
+                  {runningDeviceLabel ? (
+                    <span class="saved-credits-line saved-running-device" title={runningDeviceLabel}>
+                      {runningDeviceLabel}
+                    </span>
+                  ) : null}
+                  {subscriptionRemaining ? (
+                    <span
+                      class={`saved-credits-line saved-subscription-remaining ${subscriptionRemaining.expiring ? "is-expiring" : ""}`}
+                      title={account.subscriptionTitle}
+                    >
+                      {subscriptionRemaining.label}
+                    </span>
+                  ) : null}
+                  {account.creditsText ? <span class="saved-credits-line">{account.creditsText}</span> : null}
+                  {hasResetCredit ? (
+                    <button
+                      class={`saved-credits-line saved-reset-credits-line saved-reset-badge ${props.consumeResetCreditPending ? "is-pending" : ""}`}
+                      type="button"
+                      title={formatResetCreditsTitle(
+                        account.resetCreditsAvailable,
+                        account.resetCreditsNextExpiresAt,
+                        props.lang
+                      )}
+                      aria-label={`${resetLabel}: ${account.resetCreditsAvailable}`}
+                      disabled={props.busy}
+                      onClick={() => onAction("consumeResetCredit", account.id)}
+                    >
+                      {props.consumeResetCreditPending ? (
+                        <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                      ) : null}
+                      <span>
+                        {resolveCompactResetLabel(props.lang)} {account.resetCreditsAvailable}
+                      </span>
+                    </button>
+                  ) : null}
+                </>
+              </div>
+              <div class="saved-actions" onClick={stopFlip}>
+                {account.isActive && !account.isCurrentWindowAccount ? (
+                  <ActionButton
+                    icon={renderReloadIcon()}
+                    iconOnly
+                    label={copy.reloadBtn}
+                    pending={props.reloadPromptPending}
+                    disabled={props.busy}
+                    onClick={() => onAction("reloadPrompt", account.id)}
+                  />
+                ) : null}
+                <ActionButton
+                  icon={renderSwitchIcon()}
+                  iconOnly
+                  label={copy.switchBtn}
+                  pending={props.switchPending}
+                  disabled={!canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled)}
+                  onClick={() => onAction("switch", account.id)}
+                />
+                <ActionButton
+                  icon={renderRefreshIcon()}
+                  iconOnly
+                  label={copy.refreshBtn}
+                  pending={props.refreshPending}
+                  disabled={props.busy}
+                  onClick={() => onAction("refresh", account.id)}
+                />
+                <div class="saved-overflow-wrap" ref={actionsMenuRef}>
+                  <button
+                    class={`saved-overflow-trigger ${actionsOpen ? "active" : ""}`}
+                    type="button"
+                    aria-label={moreLabel}
+                    aria-expanded={actionsOpen}
+                    onClick={() => setActionsOpen((open) => !open)}
+                  >
+                    •••
+                  </button>
+                  {actionsOpen
+                    ? createPortal(
+                        <div
+                          ref={actionsMenuContentRef}
+                          class="saved-overflow-menu saved-overflow-menu-portal"
+                          onClick={stopFlip}
+                          style={{
+                            top: `${actionsMenuPosition?.top ?? 0}px`,
+                            left: `${actionsMenuPosition?.left ?? 0}px`,
+                            visibility: actionsMenuPosition ? "visible" : "hidden"
+                          }}
+                        >
+                          <button
+                            type="button"
+                            disabled={props.busy || props.exportPending}
+                            onClick={() => {
+                              setActionsOpen(false);
+                              props.onExportAuth();
+                            }}
+                          >
+                            <DownloadIcon /> <span>{exportLabel}</span>
+                          </button>
+                          {showResyncButton ? (
+                            <button
+                              type="button"
+                              disabled={props.busy}
+                              onClick={() => {
+                                setActionsOpen(false);
+                                onAction("resyncProfile", account.id);
+                              }}
+                            >
+                              {renderResyncProfileIcon()} <span>{resyncButtonLabel}</span>
+                            </button>
+                          ) : null}
+                          {account.canRefreshToken ? (
+                            <button
+                              type="button"
+                              disabled={props.busy}
+                              onClick={() => {
+                                setActionsOpen(false);
+                                onAction("refreshToken", account.id);
+                              }}
+                            >
+                              {props.manualTokenRefreshPending ? (
+                                <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                              ) : (
+                                renderRefreshIcon()
+                              )}
+                              <span>{manualTokenRefreshLabel}</span>
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            disabled={props.busy}
+                            onClick={() => {
+                              setActionsOpen(false);
+                              onAction("setAccountTokenRefreshEnabled", account.id, {
+                                tokenRefreshEnabled: !account.tokenRefreshEnabled
+                              });
+                            }}
+                          >
+                            {props.tokenRefreshPending ? (
+                              <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                            ) : (
+                              <span
+                                class={`saved-menu-check ${account.tokenRefreshEnabled ? "is-checked" : ""}`}
+                                aria-hidden="true"
+                              >
+                                {account.tokenRefreshEnabled ? "✓" : "○"}
+                              </span>
+                            )}
+                            <span>{tokenRefreshLabel}</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={props.busy || props.detailsPending}
+                            onClick={() => {
+                              setActionsOpen(false);
+                              onAction("details", account.id, { privacyMode: props.privacyMode });
+                            }}
+                          >
+                            {props.detailsPending ? (
+                              <span class="saved-toggle-spinner" aria-hidden="true"></span>
+                            ) : (
+                              renderDetailsIcon()
+                            )}{" "}
+                            <span>{infoLabel}</span>
+                          </button>
+                          <button
+                            class="danger"
+                            type="button"
+                            disabled={props.busy}
+                            onClick={() => {
+                              setActionsOpen(false);
+                              onAction("remove", account.id);
+                            }}
+                          >
+                            {renderRemoveIcon()} <span>{copy.removeBtn}</span>
+                          </button>
+                        </div>,
+                        document.body
+                      )
+                    : null}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div
+            class={`saved-card saved-card-back ${cardStateClass}`}
+            role="button"
+            tabIndex={0}
+            aria-label={copy.detailsBtn}
+            onClick={() => setFlipped(false)}
+            onKeyDown={(event) => handleFlipKey(event, false)}
+          >
+            <div class="saved-back-body">
+              <div class="saved-back-header">
+                <div class="saved-back-icon" aria-hidden="true"></div>
+                <span class="saved-back-email">{backEmailDisplay}</span>
+              </div>
+              <div class="saved-detail-list">
+                <CardDetailRow label={resolveBackLabel("workspace", props.lang)} value={account.workspaceLabel} />
+                <CardDetailRow
+                  label={resolveBackLabel("subscription", props.lang)}
+                  value={account.subscriptionText}
+                  title={account.subscriptionTitle}
+                  color={account.subscriptionColor}
+                />
+                <CardDetailRow label={resolveBackLabel("addMethod", props.lang)} value={account.addMethodLabel} />
+                <CardDetailRow label={resolveBackLabel("createdAt", props.lang)} value={account.addedAtLabel} />
+                <CardDetailRow
+                  label={resolveBackLabel("status", props.lang)}
+                  value={resolveBackStatus(account, props.lang)}
+                  color={account.statusColor}
+                />
+                <CardDetailRow label={copy.userId} value={userIdDisplay} />
+              </div>
+              <div class="saved-back-tags">
+                <div class="account-tag-row">
+                  {renderTagList(account.tags) ?? <span class="tag-pill muted">{resolveNoTags(props.lang)}</span>}
+                </div>
+              </div>
+              <div class="saved-back-hint">{resolveBackHint(props.lang)}</div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </>
+  );
+}
+
+export function resolveClaimPopoverText(
+  key: "title" | "body" | "close" | "rescue" | "sync",
+  deviceName: string,
+  lang: DashboardState["lang"]
+): string {
+  const values = {
+    en: {
+      title: `Enabled on ${deviceName}`,
+      body: `Sync after disabling this account on ${deviceName}, or use rescue to unlock it only on this device.`,
+      close: "Close",
+      rescue: "Rescue override",
+      sync: "Sync & check"
+    },
+    zh: {
+      title: `已在 ${deviceName} 启用`,
+      body: `请在 ${deviceName} 停用账号后同步，或使用救援覆盖仅在本机解锁。`,
+      close: "关闭",
+      rescue: "救援覆盖",
+      sync: "同步并检查"
+    },
+    "zh-hant": {
+      title: `已在 ${deviceName} 啟用`,
+      body: `請在 ${deviceName} 停用帳號後同步，或使用救援覆寫僅在本機解鎖。`,
+      close: "關閉",
+      rescue: "救援覆寫",
+      sync: "同步並檢查"
+    }
+  } as const;
+  const locale = lang === "zh" || lang === "zh-hant" ? lang : "en";
+  return values[locale][key];
+}
+
+function resolveBackLabel(
+  key: "workspace" | "subscription" | "addMethod" | "createdAt" | "status",
+  lang: DashboardState["lang"]
+): string {
+  const zh = lang === "zh" || lang === "zh-hant";
+  const labels = {
+    workspace: zh ? "工作空间" : "Workspace",
+    subscription: zh ? "订阅到期" : "Subscription",
+    addMethod: zh ? "添加方式" : "Added by",
+    createdAt: zh ? "创建时间" : "Created at",
+    status: zh ? "状态" : "Status"
+  };
+  return labels[key];
+}
+
+function resolveBackStatus(account: DashboardAccountViewModel, lang: DashboardState["lang"]): string {
+  if (account.isActive) {
+    return lang === "zh" ? "当前激活" : lang === "zh-hant" ? "目前啟用" : "Current active";
+  }
+  return account.healthLabel;
+}
+
+function resolveNoTags(lang: DashboardState["lang"]): string {
+  return lang === "zh" ? "暂无标签" : lang === "zh-hant" ? "暫無標籤" : "No tags";
+}
+
+function resolveBackHint(lang: DashboardState["lang"]): string {
+  switch (lang) {
+    case "zh":
+      return "点击卡片任意区域返回配额监控";
+    case "zh-hant":
+      return "點擊卡片任意區域返回配額監控";
+    default:
+      return "Click anywhere to return to quota monitor";
+  }
+}
+
+function formatSubscriptionRemaining(
+  expiresAt: number | undefined,
+  now: number,
+  lang: DashboardState["lang"]
+): { label: string; expiring: boolean } | undefined {
+  if (expiresAt == null || !Number.isFinite(expiresAt)) {
+    return undefined;
+  }
+  const remainingMs = expiresAt - now;
+  if (remainingMs <= 0) {
+    // This entitlement timestamp can be stale while the account remains usable.
+    // Show it as neutral information and never as an account error.
+    return {
+      label: lang === "zh" || lang === "zh-hant" ? "剩 0天" : "0d left",
+      expiring: false
+    };
+  }
+  const days = Math.max(1, Math.ceil(remainingMs / 86_400_000));
+  return {
+    label: lang === "zh" || lang === "zh-hant" ? `剩 ${days}天` : `${days}d left`,
+    expiring: days <= 7
+  };
+}
+
+function CardDetailRow(props: { label: string; value: string; title?: string; color?: string }) {
+  return (
+    <div class="saved-detail-row">
+      <span class="saved-detail-label">{props.label}:</span>
+      <span
+        class="saved-detail-value"
+        title={props.title ?? props.value}
+        style={props.color ? { color: props.color } : undefined}
+      >
+        {props.value}
+      </span>
+    </div>
+  );
+}
+
+function formatResetCreditsExpiry(epochSeconds: number, lang: DashboardState["lang"]): string {
+  const d = new Date(epochSeconds * 1000);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const s = String(d.getSeconds()).padStart(2, "0");
+  const label = lang === "zh" ? "最近到期" : lang === "zh-hant" ? "最近到期" : "Expires";
+  return `${label}: ${y}/${mo}/${day} ${h}:${mi}:${s}`;
+}
+
+function resolveCompactResetLabel(lang: DashboardState["lang"]): string {
+  return lang === "zh" ? "重置" : lang === "zh-hant" ? "重設" : "Reset";
+}
+
+function resolveRunningDeviceLabel(deviceName: string, lang: DashboardState["lang"]): string {
+  if (lang === "zh") {
+    return `由 ${deviceName}`;
+  }
+  if (lang === "zh-hant") {
+    return `由 ${deviceName}`;
+  }
+  return `With ${deviceName}`;
+}
+
+function resolveClaimedToggleLabel(deviceName: string, lang: DashboardState["lang"]): string {
+  if (lang === "zh") return `已由 ${deviceName} 启用；请先在该电脑上停用`;
+  if (lang === "zh-hant") return `已由 ${deviceName} 啟用；請先在該電腦上停用`;
+  return `Enabled on ${deviceName}; sync the registry after it is disabled there`;
+}
+
+function resolveOverrideToggleLabel(deviceName: string, lang: DashboardState["lang"]): string {
+  if (lang === "zh") return `紧急绕过已启用；${deviceName} 的占用仅作警告`;
+  if (lang === "zh-hant") return `緊急略過已啟用；${deviceName} 的佔用僅作警告`;
+  return `Rescue override active; the claim by ${deviceName} is warning-only`;
+}
+
+function formatResetCreditsTitle(
+  available: number | undefined,
+  expiresAt: number | undefined,
+  lang: DashboardState["lang"]
+): string {
+  const count = available ?? "—";
+  const expiry = expiresAt != null && expiresAt > 0 ? ` · ${formatResetCreditsExpiry(expiresAt, lang)}` : "";
+  return `${resolveCompactResetLabel(lang)}: ${count}${expiry}`;
+}

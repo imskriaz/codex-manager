@@ -1,0 +1,417 @@
+/**
+ * 账号档案服务模块
+ *
+ * 优化内容:
+ * - 添加更详细的 JSDoc 注释
+ * - 改进类型安全性
+ * - 使用类型守卫
+ * - 复用共享工具函数
+ * - 使用统一的错误类型
+ */
+
+import { CodexTokens } from "../core/types";
+import { extractClaims } from "../utils/jwt";
+import { shouldRetryWithoutWorkspace } from "./workspaceRetry";
+import { fetchWithTimeout, isRetriableHttpStatus, isRetriableNetworkError, retryWithBackoff } from "../utils/network";
+import { APIError } from "../core/errors";
+import { logNetworkEvent } from "../utils/debug";
+import { ACCOUNT_CHECK_URL } from "../infrastructure/config/apiEndpoints";
+
+const PROFILE_CACHE_TTL_MS = 60_000;
+
+type ProfileCacheEntry = {
+  profile: RemoteAccountProfile;
+  expiresAt: number;
+};
+
+const profileCache = new Map<string, ProfileCacheEntry>();
+
+/**
+ * 远程账号档案信息
+ */
+interface RemoteAccountProfile {
+  /** 用户邮箱 */
+  email?: string;
+  /** 用户 ID */
+  userId?: string;
+  /** 计划类型 */
+  planType?: string;
+  /** 组织 ID */
+  organizationId?: string;
+  /** 订阅到期时间 */
+  subscriptionActiveUntil?: string;
+  /** 账号名称 */
+  accountName?: string;
+  /** 账号结构类型 */
+  accountStructure?: string;
+  /** 账号 ID */
+  accountId?: string;
+}
+
+/**
+ * 类型守卫：判断是否为有效记录对象
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * 从远程 API 获取账号档案
+ *
+ * @param tokens - 认证令牌
+ * @returns 账号档案信息，获取失败时返回 undefined
+ */
+export async function fetchRemoteAccountProfile(
+  tokens: CodexTokens,
+  options: { forceRefresh?: boolean; preferredAccountName?: string; preferredAccountStructure?: string } = {}
+): Promise<RemoteAccountProfile | undefined> {
+  const claims = extractClaims(tokens.idToken, tokens.accessToken);
+  const accountId = tokens.accountId ?? claims.accountId;
+  const organizationId = claims.organizationId;
+  pruneProfileCache();
+  const cacheKey = buildProfileCacheKey(
+    tokens.accessToken,
+    accountId,
+    organizationId,
+    options.preferredAccountName,
+    options.preferredAccountStructure
+  );
+  const cached = profileCache.get(cacheKey);
+  if (cached && !options.forceRefresh) {
+    return cached.profile;
+  }
+
+  const primary = await requestAccountProfile(ACCOUNT_CHECK_URL, tokens.accessToken, accountId);
+  const shouldRetry =
+    accountId &&
+    (!primary.ok
+      ? shouldRetryWithoutWorkspace(primary.status, primary.raw)
+      : !parseAccountProfile(
+          primary.payload,
+          accountId,
+          claims.organizationId,
+          options.preferredAccountName,
+          options.preferredAccountStructure
+        ));
+
+  if (shouldRetry) {
+    logNetworkEvent("profile.retry-without-workspace", {
+      accountId,
+      reason: primary.ok ? "profile_not_matched" : `status_${primary.status}`
+    });
+    const fallback = await requestAccountProfile(ACCOUNT_CHECK_URL, tokens.accessToken);
+    if (fallback.ok) {
+      const fallbackProfile = parseAccountProfile(
+        fallback.payload,
+        accountId,
+        claims.organizationId,
+        options.preferredAccountName,
+        options.preferredAccountStructure
+      );
+      if (fallbackProfile) {
+        profileCache.set(cacheKey, {
+          profile: fallbackProfile,
+          expiresAt: Date.now() + PROFILE_CACHE_TTL_MS
+        });
+        return fallbackProfile;
+      }
+    }
+  }
+
+  if (!primary.ok) {
+    throw new APIError(`Account profile API returned ${primary.status}: ${primary.raw.slice(0, 200)}`, {
+      statusCode: primary.status,
+      responseBody: primary.raw.slice(0, 200)
+    });
+  }
+
+  const profile = parseAccountProfile(
+    primary.payload,
+    accountId,
+    claims.organizationId,
+    options.preferredAccountName,
+    options.preferredAccountStructure
+  );
+  if (profile) {
+    profileCache.set(cacheKey, {
+      profile,
+      expiresAt: Date.now() + PROFILE_CACHE_TTL_MS
+    });
+  }
+  return profile;
+}
+
+async function requestAccountProfile(url: string, accessToken: string, accountId?: string): Promise<{
+  ok: boolean;
+  status: number;
+  raw: string;
+  payload: Record<string, unknown>;
+}> {
+  return retryWithBackoff(
+    async () => {
+      const headers = new Headers({
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json"
+      });
+
+      if (accountId) {
+        headers.set("ChatGPT-Account-Id", accountId);
+      }
+
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: "GET",
+          headers
+        },
+        8000,
+        "Account profile request"
+      );
+
+      const raw = await response.text();
+      logNetworkEvent("profile", {
+        accountId,
+        status: response.status,
+        ok: response.ok,
+        url,
+        bodyPreview: raw
+      });
+
+      return {
+        ok: response.ok,
+        status: response.status,
+        raw,
+        payload: parseProfilePayload(raw)
+      };
+    },
+    {
+      shouldRetryError: isRetriableNetworkError,
+      shouldRetryResult: (result) => !result.ok && isRetriableHttpStatus(result.status)
+    }
+  );
+}
+
+function parseProfilePayload(raw: string): Record<string, unknown> {
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 解析账号档案数据
+ */
+function parseAccountProfile(
+  payload: Record<string, unknown>,
+  expectedAccountId?: string,
+  expectedOrgId?: string,
+  preferredAccountName?: string,
+  preferredAccountStructure?: string
+): RemoteAccountProfile | undefined {
+  const records = collectAccountRecords(payload);
+  if (!records.length) {
+    return undefined;
+  }
+
+  let selected: Record<string, unknown> | undefined;
+
+  if (expectedAccountId) {
+    selected =
+      findByName(records, preferredAccountName) ??
+      findByStructure(records, preferredAccountStructure) ??
+      findByIdAndOrg(records, expectedAccountId, expectedOrgId) ??
+      findByOrg(records, expectedOrgId) ??
+      findById(records, expectedAccountId);
+    // 当请求已明确指定账号或组织时，只接受 workspace 身份匹配的记录，避免把其他 workspace 错绑到当前令牌上。
+    if (!selected) {
+      return undefined;
+    }
+  } else {
+    const orderingValue = payload["account_ordering"];
+    const orderedFirstId = Array.isArray(orderingValue)
+      ? orderingValue.find((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : undefined;
+
+    if (orderedFirstId) {
+      selected = findById(records, orderedFirstId);
+    }
+
+    if (!selected && expectedOrgId) {
+      selected = findByOrg(records, expectedOrgId);
+    }
+
+    if (!selected) {
+      selected = records[0];
+    }
+  }
+
+  return {
+    email: readField(payload, ["email"]) ?? readField(selected, ["email"]),
+    userId: readField(payload, ["user_id", "userId"]) ?? readField(selected, ["user_id", "userId"]),
+    // Workspace-scoped metadata should win over top-level user metadata.
+    planType: readField(selected, ["plan_type", "planType"]) ?? readField(payload, ["plan_type", "planType"]),
+    organizationId:
+      readField(selected, ["organization_id", "org_id", "workspace_id"]) ??
+      readField(payload, ["organization_id", "org_id"]),
+    subscriptionActiveUntil:
+      readScalarField(selected, ["subscription_active_until", "subscriptionActiveUntil", "chatgpt_subscription_active_until"]) ??
+      readScalarField(payload, ["subscription_active_until", "subscriptionActiveUntil", "chatgpt_subscription_active_until"]) ??
+      undefined,
+    accountName: readField(selected, [
+      "name",
+      "display_name",
+      "account_name",
+      "organization_name",
+      "workspace_name",
+      "title"
+    ]),
+    accountStructure: readField(selected, ["structure", "account_structure", "kind", "type", "account_type"]),
+    accountId: readField(selected, ["id", "account_id", "chatgpt_account_id", "workspace_id"])
+  };
+}
+
+function findByName(
+  records: Array<Record<string, unknown>>,
+  expectedName?: string
+): Record<string, unknown> | undefined {
+  const normalized = expectedName?.trim().toLowerCase();
+  if (!normalized || normalized === "personal") {
+    return undefined;
+  }
+  return records.find((record) =>
+    ["name", "display_name", "account_name", "organization_name", "workspace_name", "title"].some(
+      (key) => readField(record, [key])?.toLowerCase() === normalized
+    )
+  );
+}
+
+function findByStructure(
+  records: Array<Record<string, unknown>>,
+  expectedStructure?: string
+): Record<string, unknown> | undefined {
+  const normalized = expectedStructure?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  return records.find((record) => {
+    const structure = readField(record, ["structure", "account_structure", "kind", "type", "account_type"])
+      ?.trim()
+      .toLowerCase();
+    return normalized === "personal" ? structure === "personal" : Boolean(structure && structure !== "personal");
+  });
+}
+
+/**
+ * 收集账号记录数组
+ */
+function collectAccountRecords(payload: Record<string, unknown>): Array<Record<string, unknown>> {
+  const accountsValue = payload["accounts"];
+  if (Array.isArray(accountsValue)) {
+    return accountsValue.filter(isRecord);
+  }
+
+  if (isRecord(accountsValue)) {
+    return Object.values(accountsValue).filter(isRecord);
+  }
+
+  return [];
+}
+
+/**
+ * 按 ID 查找记录
+ */
+function findById(records: Array<Record<string, unknown>>, expectedId?: string): Record<string, unknown> | undefined {
+  if (!expectedId) {
+    return undefined;
+  }
+
+  return records.find((record) => {
+    const candidate = readField(record, ["id", "account_id", "chatgpt_account_id", "workspace_id"]);
+    return candidate === expectedId;
+  })!;
+}
+
+function findByIdAndOrg(
+  records: Array<Record<string, unknown>>,
+  expectedId?: string,
+  expectedOrgId?: string
+): Record<string, unknown> | undefined {
+  if (!expectedId || !expectedOrgId) {
+    return undefined;
+  }
+
+  return records.find((record) => {
+    const candidateId = readField(record, ["id", "account_id", "chatgpt_account_id", "workspace_id"]);
+    const candidateOrg = readField(record, ["organization_id", "org_id", "workspace_id"]);
+    return candidateId === expectedId && candidateOrg === expectedOrgId;
+  });
+}
+
+/**
+ * 按组织 ID 查找记录
+ */
+function findByOrg(
+  records: Array<Record<string, unknown>>,
+  expectedOrgId?: string
+): Record<string, unknown> | undefined {
+  if (!expectedOrgId) {
+    return undefined;
+  }
+
+  return records.find((record) => {
+    const candidate = readField(record, ["organization_id", "org_id", "workspace_id"]);
+    return candidate === expectedOrgId;
+  })!;
+}
+
+/**
+ * 读取字段值
+ */
+function readField(record: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function readScalarField(record: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return undefined;
+}
+
+function buildProfileCacheKey(
+  accessToken: string,
+  accountId?: string,
+  organizationId?: string,
+  accountName?: string,
+  accountStructure?: string
+): string {
+  return `${accessToken}::${accountId ?? ""}::${organizationId ?? ""}::${accountName ?? ""}::${accountStructure ?? ""}`;
+}
+
+function pruneProfileCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of profileCache.entries()) {
+    if (entry.expiresAt <= now) {
+      profileCache.delete(key);
+    }
+  }
+}

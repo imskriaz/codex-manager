@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "announcements": [
+    {
+      "id": "ann-2026-08-codex-manager-1-0-0",
+      "type": "release",
+      "priority": 1000,
+      "releaseVersion": "1.0.0",
+      "title": "Codex Manager 1.0.0",
+      "summary": "The extension is now published as Codex Manager with an English-first interface and an independent package identity.",
+      "content": "Codex Manager 1.0.0 introduces an independent Marketplace identity, English as the extension language, and updated product branding. Existing codexManager settings, local account data, backup formats, and compatibility behavior remain unchanged.",
+      "targetVersions": "*",
+      "targetLanguages": [
+        "*"
+      ],
+      "showOnce": true,
+      "popup": false,
+      "pinned": true,
+      "createdAt": "2026-08-29T00:00:00Z",
+      "expiresAt": null
+    }
+  ]
+}
