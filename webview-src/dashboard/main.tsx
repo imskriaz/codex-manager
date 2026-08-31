@@ -306,6 +306,7 @@ function App() {
     (): void => sendAction("listWorkspaceTerminals", undefined, {}),
     [sendAction]
   );
+  const lastAutomaticWorkspaceLoadRef = useRef<string>();
   const modals = useDashboardModals({
     dispatch,
     sendAction,
@@ -731,9 +732,16 @@ function App() {
 
   useEffect(() => {
     if (!isBrowserDashboard || !isCliSessionsPath(browserPath)) return;
-    requestWorkspaceEnvironment(selectedCliSession?.projectPath ?? cliComposerConfig?.projects?.[0]?.path);
+    const projectPath = selectedCliSession?.projectPath ?? cliComposerConfig?.projects?.[0]?.path;
+    const loadKey = `${browserPath}\n${projectPath ?? ""}`;
+    // Object-valued composer/session state can be replaced by every realtime
+    // response. Key the automatic load by the actual route and path so those
+    // renders cannot create a request -> result -> render feedback loop.
+    if (lastAutomaticWorkspaceLoadRef.current === loadKey) return;
+    lastAutomaticWorkspaceLoadRef.current = loadKey;
+    requestWorkspaceEnvironment(projectPath);
     requestWorkspaceTerminals();
-  }, [browserPath, cliComposerConfig?.projects, isBrowserDashboard, requestWorkspaceEnvironment, requestWorkspaceTerminals, selectedCliSession?.projectPath]);
+  }, [browserPath, cliComposerConfig?.projects?.[0]?.path, isBrowserDashboard, requestWorkspaceEnvironment, requestWorkspaceTerminals, selectedCliSession?.projectPath]);
 
   useEffect(() => {
     if (!isBrowserDashboard || !realtimeConnected || !isCliSessionsPath(browserPath)) return;
@@ -2163,7 +2171,10 @@ function App() {
                 selectedCliSession &&
                 requestCliSessionMessages(selectedCliSession.id, selectedCliSession.deviceId, true)
               }
-              onRefreshEnvironment={requestWorkspaceEnvironment}
+              onRefreshEnvironment={(projectPath) => {
+                lastAutomaticWorkspaceLoadRef.current = undefined;
+                requestWorkspaceEnvironment(projectPath);
+              }}
               onRunTerminal={(command, projectPath, terminalId) =>
                 sendAction("runWorkspaceTerminalCommand", undefined, { command, projectPath, terminalId })
               }

@@ -286,6 +286,14 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("body.is-cli-workspace-route #dashboard-main { display: none !important; }");
   });
 
+  it("keys automatic workspace environment loads so realtime renders cannot create a request loop", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(main).toContain("lastAutomaticWorkspaceLoadRef.current === loadKey");
+    expect(main).toContain("lastAutomaticWorkspaceLoadRef.current = loadKey");
+    expect(main).toContain("cliComposerConfig?.projects?.[0]?.path");
+    expect(main).not.toContain("[browserPath, cliComposerConfig?.projects, isBrowserDashboard");
+  });
+
   it("consolidates completed turn activity while keeping only the latest live item last", () => {
     const items = consolidateSessionMessages([
       { id: "user-1", kind: "message", role: "user", text: "Start." },

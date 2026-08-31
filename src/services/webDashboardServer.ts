@@ -65,6 +65,7 @@ const PEER_HEARTBEAT_INTERVAL_MS = 5_000;
 // HTTP-heartbeat paths have a chance to confirm it before we release state.
 const PEER_OFFLINE_AFTER_MS = 15_000;
 const PEER_RECONNECT_DELAY_MS = 1_000;
+const PEER_HTTP_HEARTBEAT_TIMEOUT_MS = 10_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const CLI_SESSION_RECONCILE_MS = 30_000;
 const CLI_SESSION_WATCH_DEBOUNCE_MS = 250;
@@ -178,6 +179,9 @@ export class WebDashboardServer implements vscode.Disposable {
   private peerReconnectTimer: NodeJS.Timeout | undefined;
   private peerPublishTimer: NodeJS.Timeout | undefined;
   private peerHttpHeartbeatTimer: NodeJS.Timeout | undefined;
+  private peerPublishInFlight: Promise<void> | undefined;
+  private peerPublishQueued = false;
+  private peerHttpHeartbeatInFlight: Promise<void> | undefined;
   private peerPresenceAuthoritative = false;
   private lastPeerSentAt = 0;
   private peerPresenceLossTimer: NodeJS.Timeout | undefined;
@@ -1686,6 +1690,26 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async publishPeerSessions(): Promise<void> {
+    if (this.peerPublishInFlight) {
+      this.peerPublishQueued = true;
+      return this.peerPublishInFlight;
+    }
+    const task = this.publishPeerSessionsCore();
+    this.peerPublishInFlight = task;
+    try {
+      await task;
+    } catch (error) {
+      console.warn("[codexManager] peer heartbeat publish failed", error);
+    } finally {
+      if (this.peerPublishInFlight === task) this.peerPublishInFlight = undefined;
+      if (this.peerPublishQueued) {
+        this.peerPublishQueued = false;
+        void this.publishPeerSessions();
+      }
+    }
+  }
+
+  private async publishPeerSessionsCore(): Promise<void> {
     const socket = this.peerSocket;
     if (!socket || socket.readyState !== UndiciWebSocket.OPEN) return;
     socket.send(JSON.stringify((await this.readLocalPeerSessions()) satisfies PeerSessionMessage));
@@ -1699,6 +1723,17 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async publishPeerHeartbeatHttp(): Promise<void> {
+    if (this.peerHttpHeartbeatInFlight) return this.peerHttpHeartbeatInFlight;
+    const task = this.publishPeerHeartbeatHttpCore();
+    this.peerHttpHeartbeatInFlight = task;
+    try {
+      await task;
+    } finally {
+      if (this.peerHttpHeartbeatInFlight === task) this.peerHttpHeartbeatInFlight = undefined;
+    }
+  }
+
+  private async publishPeerHeartbeatHttpCore(): Promise<void> {
     if (this.peerSocket?.readyState === UndiciWebSocket.OPEN) return;
     const configuredDomain = this.settingsStore.getDashboardSettings().cloudflaredDomain?.trim();
     const alwaysOnline = getCodexManagerConfiguration().get<boolean>("webDashboardAlwaysOnlineEnabled", false);
@@ -1708,12 +1743,16 @@ export class WebDashboardServer implements vscode.Disposable {
       this.encryptedSync?.setOnlineDeviceIds(undefined);
       return;
     }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), PEER_HTTP_HEARTBEAT_TIMEOUT_MS);
+    timeout.unref?.();
     try {
       const endpoint = new URL("/api/peer-heartbeat", domain);
       const response = await undiciFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Codex-Peer": "1" },
-        body: JSON.stringify(await this.readLocalPeerSessions())
+        body: JSON.stringify(await this.readLocalPeerSessions()),
+        signal: controller.signal
       });
       if (!response.ok) throw new Error(`Peer heartbeat failed (${response.status}).`);
       const aggregate = (await response.json()) as Partial<PeerAggregateMessage>;
@@ -1728,6 +1767,8 @@ export class WebDashboardServer implements vscode.Disposable {
       this.publishRealtimeState();
     } catch (error) {
       this.markPeerPresenceUnknown(error instanceof Error ? error.message : "HTTP heartbeat unavailable");
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

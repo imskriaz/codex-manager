@@ -39,4 +39,19 @@ describe("always-online relay peer lifecycle", () => {
     expect(source).toContain("rememberPendingAction(message.requestId, socket);");
     expect(source).toContain("const origin = takePendingAction(message.requestId);");
   });
+
+  it("force-closes peer sockets and bounds relay shutdown", () => {
+    const source = readFileSync("tools/always-online-server.js", "utf8");
+    expect(source).toContain('typeof socket.terminate === "function"');
+    expect(source).toContain("setTimeout(finish, 1000).unref()");
+    expect(source).toContain("peers.clear();");
+  });
+
+  it("registers an uninstall hook that removes the Windows startup relay", () => {
+    const manifest = JSON.parse(readFileSync("package.json", "utf8")) as { scripts?: Record<string, string> };
+    const uninstall = readFileSync("tools/uninstall.js", "utf8");
+    expect(manifest.scripts?.["vscode:uninstall"]).toBe("node ./tools/uninstall.js");
+    expect(uninstall).toContain("CodexManagerAlwaysOnline.cmd");
+    expect(uninstall.indexOf("removeFile(startupLauncher)")).toBeLessThan(uninstall.indexOf("await requestRelayShutdown(config)"));
+  });
 });

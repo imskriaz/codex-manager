@@ -29,6 +29,7 @@ const LOCAL_VAULT_DIRTY_KEY = "codexManager.encryptedSync.vaultDirty.v1";
 const ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS = 5 * 60 * 1000;
 const VAULT_SYNC_DEBOUNCE_DELAY_MS = 5 * 60 * 1000;
 const VAULT_SYNC_MAX_RETRY_DELAY_MS = 30 * 60 * 1000;
+const STARTUP_VAULT_MERGE_DELAY_MS = 30 * 1000;
 const REGISTRY_OVERRIDE_KEY = "codexManager.encryptedSync.enablementOverride.v1";
 const SCRYPT_COST = 131_072;
 const MAX_ACCOUNTS = 500;
@@ -116,6 +117,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private mutationVersion = 0;
   private currentSyncTask: Promise<boolean> | undefined;
   private backgroundSyncTimer: NodeJS.Timeout | undefined;
+  private startupVaultMergeTimer: NodeJS.Timeout | undefined;
   private backgroundSyncRetryDelayMs = VAULT_SYNC_DEBOUNCE_DELAY_MS;
   private readonly pendingVaultMutationReasons = new Set<string>();
   private vaultDirtyPersistence: Promise<void> = Promise.resolve();
@@ -146,47 +148,24 @@ export class EncryptedSyncManager implements vscode.Disposable {
     const deviceId = await this.getDeviceId();
     this.updateVisibleEnablement(this.readLocalEnablement(), deviceId);
     const remoteVault = this.context.globalState.get<string>(SYNC_KEY);
-    // A downloaded vault or an active Settings Sync sign-in opts this PC into
-    // sync mode. Do not require a second enable-toggle before asking for its password.
-    if ((remoteVault || (await this.hasSettingsSyncAccount())) && !this.isEnabled()) {
+    // A vault already downloaded by VS Code is an explicit signal that this
+    // machine participates in encrypted sync. Merely being signed in to VS
+    // Code is not: auto-enabling for every signed-in user caused expensive
+    // Settings Sync work during unrelated extension-host startups.
+    if (remoteVault && !this.isEnabled()) {
       await getCodexManagerConfiguration().update("encryptedSyncEnabled", true, vscode.ConfigurationTarget.Global);
-      if (remoteVault) {
-        encryptedSyncNeedsConfiguration = true;
-      }
+      encryptedSyncNeedsConfiguration = true;
     }
     if (this.isEnabled()) {
-      try {
-        // Apply a vault that VS Code downloaded just before activation so the
-        // dashboard starts with the latest enablement state even when the
-        // subsequent full sync cannot run yet.
-        await this.refreshEnablementFromDownloadedVault();
-      } catch (error) {
-        encryptedSyncNeedsConfiguration = true;
-        console.warn("[codexManager] could not read synchronized enablement registry during activation:", error);
-      }
-      // Refresh the Settings Sync service and merge the encrypted vault on
-      // every activation/reload. This uses the saved passphrase only; startup
-      // never opens prompts. Operational failures are surfaced as an
-      // actionable warning; initial passphrase setup remains visible in the
-      // dashboard without showing a notification on every activation.
-      let synced = false;
-      try {
-        synced = await this.syncNow(false, false, true);
-      } catch (error) {
-        if (error instanceof CrossWindowOperationBusyError) {
-          synced = true;
-        } else {
-          console.warn("[codexManager] startup encrypted sync failed:", error);
-        }
-      }
-      if (!synced && !encryptedSyncNeedsConfiguration) {
-        const message = encryptedSyncNeedsSettingsSync
-          ? "Startup sync is ready when VS Code Settings Sync is active. Sign in to VS Code and turn on Settings Sync, then run Sync Now."
-          : "Startup encrypted sync needs attention. Run Sync Now to retry.";
-        void vscode.window.showWarningMessage(message);
-      }
-      if (!synced && this.pendingVaultMutationReasons.size > 0) {
+      if (this.pendingVaultMutationReasons.size > 0) {
+        // Durable local mutations retain their normal five-minute batching and
+        // are the only reason startup may later request a VS Code Settings Sync.
         this.queueBackgroundSync(this.backgroundSyncRetryDelayMs);
+      } else if (remoteVault) {
+        // Merge only the vault VS Code has already downloaded, after the host
+        // has settled. This never invokes the VS Code Settings Sync command
+        // and therefore cannot hold extension activation behind network work.
+        this.queueStartupVaultMerge();
       }
     }
   }
@@ -197,6 +176,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (this.backgroundSyncTimer) {
       clearTimeout(this.backgroundSyncTimer);
       this.backgroundSyncTimer = undefined;
+    }
+    if (this.startupVaultMergeTimer) {
+      clearTimeout(this.startupVaultMergeTimer);
+      this.startupVaultMergeTimer = undefined;
     }
     this.pendingVaultMutationReasons.clear();
     this.clearVisibleEnablement();
@@ -303,6 +286,19 @@ export class EncryptedSyncManager implements vscode.Disposable {
           "The account change was saved locally, but its enable/disable registry could not be updated. Run Sync Sessions Now to retry."
         );
       });
+  }
+
+  private queueStartupVaultMerge(delayMs = STARTUP_VAULT_MERGE_DELAY_MS): void {
+    if (this.disposed || this.startupVaultMergeTimer) return;
+    this.startupVaultMergeTimer = setTimeout(() => {
+      this.startupVaultMergeTimer = undefined;
+      void this.syncNow(false, false, false).catch((error: unknown) => {
+        if (!(error instanceof CrossWindowOperationBusyError)) {
+          console.warn("[codexManager] deferred downloaded-vault merge failed:", error);
+        }
+      });
+    }, delayMs);
+    this.startupVaultMergeTimer.unref?.();
   }
 
   /** Mark a durable vault mutation without coupling frequent realtime updates to VS Code Settings Sync. */
@@ -622,6 +618,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
   async syncNow(interactive = true, announceSuccess = interactive, syncSettings = interactive): Promise<boolean> {
     if (this.disposed) {
       return false;
+    }
+    if (this.startupVaultMergeTimer) {
+      clearTimeout(this.startupVaultMergeTimer);
+      this.startupVaultMergeTimer = undefined;
     }
     if (this.currentSyncTask) {
       return this.currentSyncTask;

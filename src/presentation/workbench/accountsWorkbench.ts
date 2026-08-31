@@ -25,6 +25,7 @@ export class AccountsWorkbench {
   private readonly encryptedSync: EncryptedSyncManager;
   private readonly webDashboard: WebDashboardServer;
   private readonly alwaysOnlineServer: AlwaysOnlineServer;
+  private alwaysOnlinePreparationTimer: NodeJS.Timeout | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.repo = new AccountsRepository(context);
@@ -71,18 +72,6 @@ export class AccountsWorkbench {
         void vscode.window.showWarningMessage(
           `Web Dashboard could not start on port 39875: ${error instanceof Error ? error.message : String(error)}`
         );
-      }
-    });
-    await measureStep("alwaysOnlineServer.start", async () => {
-      try {
-        await this.alwaysOnlineServer.applyConfiguration();
-      } catch (error) {
-        console.warn("[codexManager] Always-online relay startup failed", error);
-        if (getAlwaysOnlineEnabled()) {
-          void vscode.window.showWarningMessage(
-            `Always-online WebSocket host could not start: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
       }
     });
     this.context.subscriptions.push(
@@ -190,9 +179,14 @@ export class AccountsWorkbench {
       `[codexManager] activation completed in ${Date.now() - activationStartedAt}ms`,
       activationSteps.map((step) => `${step.name}=${step.durationMs}ms`).join(", ")
     );
+    this.scheduleAlwaysOnlinePreparation();
   }
 
   dispose(): void {
+    if (this.alwaysOnlinePreparationTimer) {
+      clearTimeout(this.alwaysOnlinePreparationTimer);
+      this.alwaysOnlinePreparationTimer = undefined;
+    }
     this.encryptedSync.dispose();
     this.refreshCoordinator.dispose();
     this.repo.dispose();
@@ -218,6 +212,24 @@ export class AccountsWorkbench {
     if (summary.status === "corrupted_unrecoverable") {
       void vscode.window.showWarningMessage(translate("message.indexRecoveryFailed"));
     }
+  }
+
+  private scheduleAlwaysOnlinePreparation(): void {
+    if (this.alwaysOnlinePreparationTimer) return;
+    this.alwaysOnlinePreparationTimer = setTimeout(() => {
+      this.alwaysOnlinePreparationTimer = undefined;
+      void runWithPersistentOperation("startup:alwaysOnlineServer.prepare", () =>
+        this.alwaysOnlineServer.applyConfiguration()
+      ).catch((error) => {
+        console.warn("[codexManager] Always-online relay startup failed", error);
+        if (getAlwaysOnlineEnabled()) {
+          void vscode.window.showWarningMessage(
+            `Always-online WebSocket host could not start: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      });
+    }, 1_000);
+    this.alwaysOnlinePreparationTimer.unref?.();
   }
 }
 

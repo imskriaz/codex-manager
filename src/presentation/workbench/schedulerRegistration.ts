@@ -197,21 +197,15 @@ export function registerAutoRefreshScheduler(params: {
     const allMinutes = getAutoRefreshMinutes();
     if (allMinutes > 0) {
       allTimer = setInterval(runAllRefresh, allMinutes * 60 * 1000);
-      runAllRefresh();
+      allTimer.unref?.();
     }
 
     const currentMinutes = getAutoRefreshCurrentMinutes();
     if (currentMinutes > 0) {
-      void params.repo
-        .listAccounts()
-        .then((accounts) => {
-          const current = accounts.find((account) => account.isActive);
-          if (current) runCurrentRefresh(current);
-          else scheduleCurrentRefresh(currentMinutes * 60 * 1000);
-        })
-        .catch(() => {
-          scheduleCurrentRefresh(currentMinutes * 60 * 1000);
-        });
+      // Cached quota data is rendered during activation. Wait for the user's
+      // configured cadence before starting network maintenance so extension
+      // startup cannot trigger current-account and all-account bursts together.
+      scheduleCurrentRefresh(currentMinutes * 60 * 1000);
     }
   };
 
@@ -338,11 +332,7 @@ export function registerTokenRefreshScheduler(params: {
     timer = setInterval(() => {
       void runTokenRefreshSweep();
     }, params.checkIntervalMs);
-    void params.repo.listAccounts().then((accounts) => {
-      if (shouldRunAccountScheduler(accounts.length)) {
-        void runTokenRefreshSweep();
-      }
-    });
+    timer.unref?.();
   };
 
   applySchedule();

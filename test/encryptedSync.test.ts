@@ -274,7 +274,7 @@ describe("encrypted account sync", () => {
     expect(entry).not.toHaveProperty("enabled");
   });
 
-  it("runs one Settings Sync refresh on startup and stays idle during account use", async () => {
+  it("keeps startup free of Settings Sync network work and stays idle during account use", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -303,15 +303,15 @@ describe("encrypted account sync", () => {
 
     await manager.start();
     expect(setKeysForSync).toHaveBeenCalledWith(["codexManager.encryptedSync.v1"]);
-    expect(secretGet).toHaveBeenCalledTimes(2);
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.userDataSync.actions.syncNow");
+    expect(secretGet).toHaveBeenCalledTimes(1);
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.userDataSync.actions.syncNow");
 
     await manager.prepareAccountSwitch("account-one");
     await manager.completeAccountSwitch();
     await manager.cancelAccountSwitch();
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
 
-    expect(secretGet).toHaveBeenCalledTimes(2);
+    expect(secretGet).toHaveBeenCalledTimes(1);
     manager.dispose();
   });
 
@@ -343,7 +343,7 @@ describe("encrypted account sync", () => {
     manager.dispose();
   });
 
-  it("does not create scheduled sync traffic after the startup refresh", async () => {
+  it("does not create scheduled Settings Sync traffic for a clean vault", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -365,11 +365,12 @@ describe("encrypted account sync", () => {
     const manager = new EncryptedSyncManager(context, {} as never);
 
     await manager.start();
-    expect(secretGet).toHaveBeenCalledTimes(2);
+    expect(secretGet).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(59 * 60 * 1000);
-    expect(secretGet).toHaveBeenCalledTimes(2);
+    expect(secretGet).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(60 * 1000);
-    expect(secretGet).toHaveBeenCalledTimes(2);
+    expect(secretGet).toHaveBeenCalledTimes(1);
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.userDataSync.actions.syncNow");
     manager.dispose();
   });
 
@@ -584,10 +585,10 @@ describe("encrypted account sync", () => {
     await manager.start();
 
     expect(repo.setAccountEnabledFromSync).not.toHaveBeenCalled();
+    await expect(manager.prepareAccountSwitch("one")).rejects.toThrow(/Office PC/i);
     expect(getSyncedAccountLeases()).toEqual([
       expect.objectContaining({ accountId: "one", deviceName: "Office PC", isCurrentDevice: false })
     ]);
-    await expect(manager.prepareAccountSwitch("one")).rejects.toThrow(/Office PC/i);
 
     manager.setOnlineDeviceIds(["laptop-device"]);
     expect(getSyncedAccountLeases()).toEqual([

@@ -72,7 +72,9 @@ function removePeer(deviceId, socket) {
 }
 
 function closePeerSocket(socket) {
-  if (socket && typeof socket.close === "function") socket.close();
+  if (!socket) return;
+  if (typeof socket.terminate === "function") socket.terminate();
+  else if (typeof socket.close === "function") socket.close();
 }
 
 function rememberPendingAction(requestId, socket) {
@@ -185,14 +187,20 @@ function bind() {
 bind();
 
 function shutdown(code) {
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    if (pidPath) { try { fs.unlinkSync(pidPath); } catch {} }
+    process.exit(code);
+  };
   for (const pending of pendingActions.values()) clearTimeout(pending.timer);
   pendingActions.clear();
   for (const entry of peers.values()) closePeerSocket(entry.socket);
-  wsServer.close();
-  httpServer.close(() => {
-    if (pidPath) { try { fs.unlinkSync(pidPath); } catch {} }
-    process.exit(code);
-  });
+  peers.clear();
+  wsServer.close(finish);
+  httpServer.close(finish);
+  setTimeout(finish, 1000).unref();
 }
 process.once("SIGINT", () => shutdown(0));
 process.once("SIGTERM", () => shutdown(0));

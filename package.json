@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.0.3",
+  "version": "1.0.4-pre1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -315,6 +315,7 @@
     "menus": {}
   },
   "scripts": {
+    "vscode:uninstall": "node ./tools/uninstall.js",
     "build:webview": "vite build --config vite.webview.config.mts",
     "typecheck:webview": "tsc --noEmit -p tsconfig.webview.json",
     "watch:webview": "vite build --watch --config vite.webview.config.mts",

@@ -254,6 +254,14 @@ describe("peer WebSocket failure handling", () => {
     expect(source).toContain("this.peerActionWaiters.clear();");
   });
 
+  it("prevents overlapping peer publishes and bounds HTTP heartbeat requests", () => {
+    const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
+    expect(source).toContain("if (this.peerPublishInFlight)");
+    expect(source).toContain("if (this.peerHttpHeartbeatInFlight)");
+    expect(source).toContain("const PEER_HTTP_HEARTBEAT_TIMEOUT_MS = 10_000;");
+    expect(source).toContain("signal: controller.signal");
+  });
+
   it("keeps the VS Code host and detached relay on the single dashboard port", () => {
     const serverSource = readFileSync("src/services/webDashboardServer.ts", "utf8");
     const relaySource = readFileSync("tools/always-online-server.js", "utf8");

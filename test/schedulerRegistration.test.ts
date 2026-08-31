@@ -53,6 +53,8 @@ describe("auto refresh scheduler", () => {
       canRefreshAccount: () => true
     });
 
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() =>
       expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), current.id, {
         allowTokenRefresh: false,
@@ -130,6 +132,8 @@ describe("auto refresh scheduler", () => {
       onRefresh: vi.fn()
     });
 
+    expect(executeCommand).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
     await vi.waitFor(() => expect(executeCommand).toHaveBeenCalledWith("codexManager.refreshAllQuotas", {
       silent: true,
       forceRefresh: true,
@@ -153,6 +157,7 @@ describe("auto refresh scheduler", () => {
       canRefreshAccount: () => true
     });
 
+    await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(refreshSingleQuotaSafelyMock).toHaveBeenCalled());
     expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), current.id, {
       allowTokenRefresh: false,
@@ -174,6 +179,7 @@ describe("auto refresh scheduler", () => {
       canRefreshAccount: () => true
     });
 
+    await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(refreshSingleQuotaSafelyMock).toHaveBeenCalled());
     expect(maybeAutoSwitchForActiveQuotaMock).not.toHaveBeenCalled();
     disposable.dispose();
@@ -189,6 +195,7 @@ describe("auto refresh scheduler", () => {
       canRefreshAccount: () => true
     });
 
+    await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(maybeWarnForActiveQuotaMock).toHaveBeenCalledWith(repo));
     disposable.dispose();
   });
@@ -204,6 +211,7 @@ describe("auto refresh scheduler", () => {
       canRefreshAccount: () => true
     });
 
+    await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalled());
     expect(maybeWarnForActiveQuotaMock).not.toHaveBeenCalled();
     disposable.dispose();
@@ -224,6 +232,8 @@ describe("auto refresh scheduler", () => {
       canRefreshAccount: () => true
     });
 
+    expect(callTimes).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(callTimes).toHaveLength(1));
     await vi.advanceTimersByTimeAsync(0);
 
@@ -269,6 +279,8 @@ describe("auto refresh scheduler", () => {
       skewSeconds: 300
     });
 
+    expect(repo.listAccounts).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(repo.listAccounts).toHaveBeenCalled());
     expect(repo.getTokens).not.toHaveBeenCalled();
     disposable.dispose();
