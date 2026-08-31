@@ -740,10 +740,14 @@ function App() {
     const announce = (viewing: boolean): void => {
       postMessageToHost({ type: "dashboard:workspace-presence", viewing });
     };
-    announce(true);
-    const timer = window.setInterval(() => announce(true), 15_000);
+    const announceCurrentVisibility = (): void => announce(document.visibilityState === "visible");
+    announceCurrentVisibility();
+    const onVisibilityChange = (): void => announceCurrentVisibility();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    const timer = window.setInterval(announceCurrentVisibility, 15_000);
     return () => {
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       announce(false);
     };
   }, [browserPath, isBrowserDashboard, realtimeConnected]);

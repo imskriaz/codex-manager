@@ -1,10 +1,11 @@
 # Changelog
 
-## 1.0.2-pre1
+## 1.0.2
 
 - Keep the workspace session rail on Active by default when returning to the session list.
 - Ensure Active and Archive tabs remain mutually exclusive.
 - Run CLI session monitoring only while a browser workspace viewer is present; account-only pages stay idle.
+- Ignore hidden browser tabs when maintaining the workspace viewer lease.
 
 ## 1.0.1
 

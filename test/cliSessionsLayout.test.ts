@@ -325,7 +325,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
     expect(source).toContain("if (!isCliSessionsPath(browserPath)) return;");
-    expect(source).toContain("window.setInterval(() => announce(true), 15_000)");
+    expect(source).toContain("window.setInterval(announceCurrentVisibility, 15_000)");
   });
 
   it("summarizes completed tools as a compact natural-language group", () => {
