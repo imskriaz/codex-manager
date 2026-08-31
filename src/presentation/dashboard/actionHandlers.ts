@@ -451,7 +451,7 @@ async function runDashboardAction(
         );
         return {
           notice: openResult === "opened"
-            ? { level: "info" as const, message: payload?.path === "/workspace" || payload?.path === "/sessions" ? "Opened the Codex workspace in the Web Dashboard." : "Opened the Web Dashboard." }
+            ? { level: "info" as const, message: payload?.path === "/workspace" ? "Opened the Codex workspace in the Web Dashboard." : "Opened the Web Dashboard." }
             : openResult === "cancelled"
               ? { level: "warning" as const, message: "Opening the Web Dashboard was cancelled." }
               : { level: "warning" as const, message: "The Web Dashboard is unavailable. Enable it and set a password, then try again." }

@@ -48,6 +48,7 @@ import {
   verifyWebDashboardPassword,
   WEB_DASHBOARD_PASSWORD_MIN_LENGTH
 } from "./webDashboardPassword";
+import { subscribeDashboardRealtime } from "./dashboardRealtime";
 
 const WEB_DASHBOARD_PORT = 39875;
 const PASSWORD_SECRET_KEY = "codexManager.webDashboard.passwordHash.v1";
@@ -59,7 +60,10 @@ const MAX_LOGIN_ATTEMPTS = 8;
 const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const MAX_DASHBOARD_MESSAGE_BYTES = 2 * 1024 * 1024;
 const PEER_HEARTBEAT_INTERVAL_MS = 5_000;
-const PEER_OFFLINE_AFTER_MS = 15_000;
+// Keep a peer's claim visible through a short transport interruption. A
+// dropped WebSocket is not proof that the PC went offline; the reconnect and
+// HTTP-heartbeat paths have a chance to confirm it before we release state.
+const PEER_OFFLINE_AFTER_MS = 5_000;
 const PEER_RECONNECT_DELAY_MS = 1_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const CLI_SESSION_RECONCILE_MS = 30_000;
@@ -167,6 +171,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly peerLastSeenAt = new Map<string, number>();
   private readonly peerLastSignedAt = new Map<string, number>();
   private readonly peerSockets = new Map<string, WebSocket>();
+  private readonly peerDisconnectTimers = new Map<string, NodeJS.Timeout>();
   private readonly authenticatedPeerSockets = new WeakSet<WebSocket>();
   private readonly peerActionWaiters = new Map<string, (result: PeerActionResultMessage) => void>();
   private peerSocket: UndiciWebSocket | undefined;
@@ -198,6 +203,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private notificationMirrorSubscription: vscode.Disposable | undefined;
   private notificationResolutionSubscription: vscode.Disposable | undefined;
   private readonly assetCache = new Map<string, { content: Buffer; gzip: Buffer; etag: string }>();
+  private readonly dashboardRealtimeSubscription: () => void;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -219,6 +225,13 @@ export class WebDashboardServer implements vscode.Disposable {
           : vscode.commands.executeCommand<boolean>("codexManager.syncNow", { announceSuccess: false });
       }
     );
+    this.dashboardRealtimeSubscription = subscribeDashboardRealtime((message) => {
+      if (this.webSocketClients.size === 0 || message.type === "dashboard:snapshot") return;
+      const serialized = JSON.stringify(message);
+      for (const socket of this.webSocketClients) {
+        if (socket.readyState === WebSocket.OPEN) socket.send(serialized);
+      }
+    });
     this.webSocketServer.on("connection", (socket, request) => {
       this.webSocketLastPong.set(socket, Date.now());
       socket.on("pong", () => this.webSocketLastPong.set(socket, Date.now()));
@@ -228,12 +241,7 @@ export class WebDashboardServer implements vscode.Disposable {
         socket.once("close", () => {
           if (peerId && this.peerSockets.get(peerId) === socket) {
             this.peerSockets.delete(peerId);
-            this.peerSessions.delete(peerId);
-            this.peerLastSeenAt.delete(peerId);
-            this.peerLastSignedAt.delete(peerId);
-            this.updateOnlineDevicePresence();
-            void this.broadcastPeerAggregate();
-            this.publishRealtimeState();
+            this.deferPeerRemoval(peerId);
           }
         });
         socket.on("message", (data) => {
@@ -326,6 +334,8 @@ export class WebDashboardServer implements vscode.Disposable {
     this.cliSessionReconcileTimer = undefined;
     for (const socket of this.peerSockets.values()) socket.close();
     this.peerSockets.clear();
+    for (const timer of this.peerDisconnectTimers.values()) clearTimeout(timer);
+    this.peerDisconnectTimers.clear();
     this.peerSocket?.close();
     this.peerSocket = undefined;
     if (this.peerReconnectTimer) clearTimeout(this.peerReconnectTimer);
@@ -336,6 +346,8 @@ export class WebDashboardServer implements vscode.Disposable {
     this.peerSessions.clear();
     this.peerLastSeenAt.clear();
     this.peerLastSignedAt.clear();
+    for (const timer of this.peerDisconnectTimers.values()) clearTimeout(timer);
+    this.peerDisconnectTimers.clear();
     this.peerPresenceAuthoritative = false;
     if (this.peerPresenceLossTimer) clearTimeout(this.peerPresenceLossTimer);
     this.peerPresenceLossTimer = undefined;
@@ -382,6 +394,8 @@ export class WebDashboardServer implements vscode.Disposable {
     this.peerSessions.clear();
     this.peerLastSeenAt.clear();
     this.peerLastSignedAt.clear();
+    for (const timer of this.peerDisconnectTimers.values()) clearTimeout(timer);
+    this.peerDisconnectTimers.clear();
     this.peerPresenceAuthoritative = false;
     if (this.peerPresenceLossTimer) clearTimeout(this.peerPresenceLossTimer);
     this.peerPresenceLossTimer = undefined;
@@ -390,7 +404,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.connectPeerSocket();
   }
 
-  async openInBrowser(pathname = "/"): Promise<WebDashboardOpenResult> {
+  async openInBrowser(pathname = "/dash"): Promise<WebDashboardOpenResult> {
     if (!isWebDashboardPagePath(pathname)) {
       throw new Error("The requested Web Dashboard path is invalid.");
     }
@@ -452,6 +466,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.dashboardRealtimeSubscription();
     this.oauth.dispose();
     void this.stop();
   }
@@ -482,17 +497,9 @@ export class WebDashboardServer implements vscode.Disposable {
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
-    // `/` is the canonical account dashboard. Keep former workspace routes
-    // bookmark-safe while exposing the explicit workspace URL.
-    if (method === "GET" && path === "/workspace/") {
+    if (method === "GET" && (path === "/" || path === "/workspace/")) {
       response.statusCode = 302;
-      response.setHeader("Location", "/workspace");
-      response.end();
-      return;
-    }
-    if (method === "GET" && path === "/sessions") {
-      response.statusCode = 302;
-      response.setHeader("Location", "/workspace");
+      response.setHeader("Location", path === "/" ? "/dash" : "/workspace");
       response.end();
       return;
     }
@@ -748,8 +755,7 @@ export class WebDashboardServer implements vscode.Disposable {
       let peerPresenceChanged = false;
       for (const [deviceId, lastSeenAt] of this.peerLastSeenAt) {
         if (now - lastSeenAt <= PEER_OFFLINE_AFTER_MS || this.peerSockets.has(deviceId)) continue;
-        this.peerLastSeenAt.delete(deviceId);
-        this.peerSessions.delete(deviceId);
+        this.removePeerPresence(deviceId);
         peerPresenceChanged = true;
       }
       if (peerPresenceChanged) {
@@ -1248,6 +1254,36 @@ export class WebDashboardServer implements vscode.Disposable {
     );
   }
 
+  /** Keep a peer claim alive briefly while its transport reconnects. */
+  private deferPeerRemoval(deviceId: string): void {
+    const existing = this.peerDisconnectTimers.get(deviceId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.peerDisconnectTimers.delete(deviceId);
+      if (this.peerSockets.has(deviceId)) return;
+      const lastSeenAt = this.peerLastSeenAt.get(deviceId) ?? 0;
+      if (Date.now() - lastSeenAt < PEER_OFFLINE_AFTER_MS) {
+        this.deferPeerRemoval(deviceId);
+        return;
+      }
+      this.removePeerPresence(deviceId);
+      this.updateOnlineDevicePresence();
+      void this.broadcastPeerAggregate();
+      this.publishRealtimeState();
+    }, PEER_OFFLINE_AFTER_MS);
+    timer.unref?.();
+    this.peerDisconnectTimers.set(deviceId, timer);
+  }
+
+  private removePeerPresence(deviceId: string): void {
+    const timer = this.peerDisconnectTimers.get(deviceId);
+    if (timer) clearTimeout(timer);
+    this.peerDisconnectTimers.delete(deviceId);
+    this.peerLastSeenAt.delete(deviceId);
+    this.peerSessions.delete(deviceId);
+    this.peerLastSignedAt.delete(deviceId);
+  }
+
   private markPeerPresenceHealthy(): void {
     this.peerPresenceAuthoritative = true;
     this.peerHeartbeatFailureReported = false;
@@ -1257,11 +1293,19 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private markPeerPresenceUnknown(reason: string): void {
-    this.peerPresenceAuthoritative = false;
-    this.updateOnlineDevicePresence();
-    if (this.peerStopped || this.peerPresenceLossTimer) return;
+    if (this.peerStopped) {
+      this.peerPresenceAuthoritative = false;
+      this.updateOnlineDevicePresence();
+      return;
+    }
+    // Keep the last confirmed device set during the reconnect grace period.
+    // This prevents a transient WebSocket failure from turning every remote
+    // claim into an apparent unclaimed account.
+    if (this.peerPresenceLossTimer) return;
     this.peerPresenceLossTimer = setTimeout(() => {
       this.peerPresenceLossTimer = undefined;
+      this.peerPresenceAuthoritative = false;
+      this.updateOnlineDevicePresence();
       void this.encryptedSync
         ?.fenceLocalAccountsAfterPresenceLoss()
         .then((disabled) => {
@@ -1335,14 +1379,21 @@ export class WebDashboardServer implements vscode.Disposable {
       signature: message.signature
     };
     this.peerSessions.set(normalized.deviceId, normalized);
+    const disconnectTimer = this.peerDisconnectTimers.get(normalized.deviceId);
+    if (disconnectTimer) {
+      clearTimeout(disconnectTimer);
+      this.peerDisconnectTimers.delete(normalized.deviceId);
+    }
     recordPeerQuotaChecks(normalized.accounts ?? []);
     this.peerLastSeenAt.set(normalized.deviceId, Date.now());
     this.peerLastSignedAt.set(normalized.deviceId, normalized.sentAt);
     this.markPeerPresenceHealthy();
     if (normalized.enablementRegistry?.length) {
-      void this.encryptedSync?.applyRealtimeEnablementRegistry(normalized.enablementRegistry).catch((error) => {
+      try {
+        await this.encryptedSync?.applyRealtimeEnablementRegistry(normalized.enablementRegistry);
+      } catch (error) {
         console.warn("[codexManager] real-time peer enablement merge failed", error);
-      });
+      }
     }
     return true;
   }
@@ -1607,9 +1658,6 @@ export class WebDashboardServer implements vscode.Disposable {
       if (this.peerSocket === socket) this.peerSocket = undefined;
       if (this.peerPublishTimer) clearInterval(this.peerPublishTimer);
       this.peerPublishTimer = undefined;
-      this.peerSessions.clear();
-      this.peerLastSeenAt.clear();
-      this.peerLastSignedAt.clear();
       this.markPeerPresenceUnknown("WebSocket heartbeat disconnected");
       for (const [requestId, waiter] of this.peerActionWaiters) {
         waiter({
@@ -1807,20 +1855,14 @@ export function normalizePersistedWebDashboardSessions(
 
 export function isWebDashboardPagePath(pathname: string): boolean {
   return (
-    pathname === "/" ||
-    pathname === "/accounts" ||
+    pathname === "/dash" ||
     pathname === "/workspace" ||
-    pathname === "/sessions" ||
-    /^\/workspace\/[0-9a-f-]{36}$/i.test(pathname) ||
-    /^\/session\/[0-9a-f-]{36}$/i.test(pathname)
+    /^\/[0-9a-f-]{36}$/i.test(pathname)
   );
 }
 
 export function normalizeWebDashboardReturnPath(pathname: string): string {
-  if (pathname === "/sessions") return "/workspace";
-  const legacySession = pathname.match(/^\/session\/([0-9a-f-]{36})$/i);
-  if (legacySession) return `/workspace/${legacySession[1]}`;
-  return isWebDashboardPagePath(pathname) ? pathname : "/";
+  return isWebDashboardPagePath(pathname) ? pathname : "/dash";
 }
 
 export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes: number): Promise<string> {
@@ -1850,7 +1892,7 @@ export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes
   });
 }
 
-function loginPage(configured: boolean, error = "", returnPath = "/"): string {
+function loginPage(configured: boolean, error = "", returnPath = "/dash"): string {
   const action = `/login?returnTo=${encodeURIComponent(normalizeWebDashboardReturnPath(returnPath))}`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Web Dashboard password.</p><form method="post" action="${action}"><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" minlength="${WEB_DASHBOARD_PASSWORD_MIN_LENGTH}" aria-describedby="login-hint" autofocus required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a Web Dashboard password is set from the extension settings.</p>`}</main></body></html>`;
 }

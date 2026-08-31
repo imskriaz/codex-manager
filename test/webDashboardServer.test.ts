@@ -50,20 +50,19 @@ describe("readDashboardRequestBody", () => {
 
 describe("isWebDashboardPagePath", () => {
   it("serves the session workspace and direct session deep links", () => {
-    expect(isWebDashboardPagePath("/")).toBe(true);
-    expect(isWebDashboardPagePath("/accounts")).toBe(true);
+    expect(isWebDashboardPagePath("/dash")).toBe(true);
     expect(isWebDashboardPagePath("/workspace")).toBe(true);
-    expect(isWebDashboardPagePath("/workspace/01a04882-d037-7a42-ad24-9afb61901188")).toBe(true);
+    expect(isWebDashboardPagePath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(true);
     expect(isWebDashboardPagePath("/workspace/not-a-session")).toBe(false);
-    expect(isWebDashboardPagePath("/workspace/extra")).toBe(false);
+    expect(isWebDashboardPagePath("/workspace/01a04882-d037-7a42-ad24-9afb61901188")).toBe(false);
   });
 
   it("preserves safe session routes after login and rejects redirect paths", () => {
-    expect(normalizeWebDashboardReturnPath("/sessions")).toBe("/workspace");
-    expect(normalizeWebDashboardReturnPath("/workspace/01a04882-d037-7a42-ad24-9afb61901188")).toBe(
-      "/workspace/01a04882-d037-7a42-ad24-9afb61901188"
+    expect(normalizeWebDashboardReturnPath("/workspace")).toBe("/workspace");
+    expect(normalizeWebDashboardReturnPath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(
+      "/01a04882-d037-7a42-ad24-9afb61901188"
     );
-    expect(normalizeWebDashboardReturnPath("//example.com/steal")).toBe("/");
+    expect(normalizeWebDashboardReturnPath("//example.com/steal")).toBe("/dash");
   });
 });
 
@@ -216,6 +215,18 @@ describe("normalizeCloudflaredDomain", () => {
 });
 
 describe("peer WebSocket failure handling", () => {
+  it("keeps peer presence through a 5-second reconnect grace", () => {
+    const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
+    expect(source).toContain("const PEER_OFFLINE_AFTER_MS = 5_000;");
+    expect(source).toContain("this.deferPeerRemoval(peerId);");
+    expect(source).toContain("Keep the last confirmed device set during the reconnect grace period.");
+  });
+
+  it("merges a peer claim before publishing the refreshed dashboard snapshot", () => {
+    const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
+    expect(source).toContain("await this.encryptedSync?.applyRealtimeEnablementRegistry(normalized.enablementRegistry);");
+  });
+
   it("does not re-enter Undici close while its error event is dispatching", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
     expect(source).toContain('socket.addEventListener("error", () => undefined);');

@@ -31,11 +31,12 @@ export function resolvePrimaryAccountControl(
 
 export function resolveCompactIdentityBadge(
   planTypeLabel: string,
-  runningDeviceLabel?: string
-): { kind: "plan" | "running-device"; label: string } {
+  runningDeviceLabel?: string,
+  unclaimedLabel = "Unclaimed"
+): { kind: "unclaimed" | "running-device"; label: string } {
   return runningDeviceLabel
     ? { kind: "running-device", label: runningDeviceLabel }
-    : { kind: "plan", label: planTypeLabel };
+    : { kind: "unclaimed", label: unclaimedLabel || planTypeLabel };
 }
 
 /** A foreign claim needs the rescue explanation only while rescue is locked. */
@@ -174,7 +175,8 @@ export function SavedAccountCard(props: {
   const runningDeviceLabel = runningOnOtherDevice
     ? resolveRunningDeviceLabel(account.runningDeviceName ?? "", props.lang)
     : undefined;
-  const compactIdentityBadge = resolveCompactIdentityBadge(account.planTypeLabel, runningDeviceLabel);
+  const unclaimedLabel = props.lang === "zh" ? "未占用" : props.lang === "zh-hant" ? "未佔用" : "Unclaimed";
+  const compactIdentityBadge = resolveCompactIdentityBadge(account.planTypeLabel, runningDeviceLabel, unclaimedLabel);
   const enablementToggleLabel =
     runningOnOtherDevice && !registryOverrideEnabled
       ? resolveClaimedToggleLabel(account.runningDeviceName ?? "", props.lang)
@@ -486,7 +488,7 @@ export function SavedAccountCard(props: {
               <div class="saved-table-meta">
                 <>
                   <span
-                    class={`pill ${compactIdentityBadge.kind === "plan" ? "plan" : "saved-running-device"}`}
+                    class={`pill ${compactIdentityBadge.kind === "unclaimed" ? "saved-unclaimed" : "saved-running-device"}`}
                     title={compactIdentityBadge.label}
                   >
                     {compactIdentityBadge.label}
@@ -741,7 +743,12 @@ export function SavedAccountCard(props: {
                     <span class="saved-title-text">{emailDisplay}</span>
                   </h3>
                   <div class="saved-meta">
-                    <span class="pill plan">{account.planTypeLabel}</span>
+                    <span
+                      class={`pill ${compactIdentityBadge.kind === "unclaimed" ? "saved-unclaimed" : "saved-running-device"}`}
+                      title={compactIdentityBadge.label}
+                    >
+                      {compactIdentityBadge.label}
+                    </span>
                     {account.switchQueued ? (
                       <button
                         class="pill warning saved-queued-badge"

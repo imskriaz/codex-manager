@@ -104,11 +104,11 @@ type MetricPriority = string;
 const DEFAULT_ACCOUNT_SORT: AccountSort = "time-left";
 
 function isCliSessionsPath(pathname: string): boolean {
-  return pathname === "/workspace" || /^\/workspace\/[0-9a-f-]{36}$/i.test(pathname);
+  return pathname === "/workspace" || /^\/[0-9a-f-]{36}$/i.test(pathname);
 }
 
 function getCliSessionIdFromPath(pathname: string): string | undefined {
-  const match = pathname.match(/^\/workspace\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  const match = pathname.match(/^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
   return match?.[1];
 }
 
@@ -568,7 +568,7 @@ function App() {
           setSelectedCliSession(mergeCachedCliSession(session, selectedCliSession));
           setCliSessionMessages(message.payload.cliSessionMessages ?? []);
           setCliSessionMessagesError(undefined);
-          navigateDashboardPath(`/workspace/${session.id}`, setBrowserPath);
+          navigateDashboardPath(`/${session.id}`, setBrowserPath);
           setCliSessionFeedback({
             key: Date.now(),
             level: "info",
@@ -701,7 +701,7 @@ function App() {
         if (message.status === "completed" && message.action === "forkCodexCliSession" && message.payload?.cliSession) {
           setSelectedCliSession(mergeCachedCliSession(message.payload.cliSession, selectedCliSession));
           setCliSessionMessages([]);
-          navigateDashboardPath(`/workspace/${message.payload.cliSession.id}`, setBrowserPath);
+          navigateDashboardPath(`/${message.payload.cliSession.id}`, setBrowserPath);
         }
         if (
           message.status === "completed" &&
@@ -999,7 +999,7 @@ function App() {
       });
       return;
     }
-    navigateDashboardPath(`/workspace/${session.id}`, setBrowserPath);
+    navigateDashboardPath(`/${session.id}`, setBrowserPath);
     setSelectedCliSession(session);
     setCliSessionMessagesError(undefined);
     void readCliSessionMessagesCache(session.id).then((cached) => setCliSessionMessages(cached ?? []));

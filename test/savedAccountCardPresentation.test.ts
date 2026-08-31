@@ -16,19 +16,19 @@ describe("saved account card presentation", () => {
     expect(resolvePrimaryAccountControl({ healthKind: "healthy", dismissedHealth: false })).toBe("enablement");
   });
 
-  it("uses the remote-PC badge first in table rows and omits the redundant plan badge", () => {
+  it("uses the remote-PC badge first and labels accounts without a claim", () => {
     expect(resolveCompactIdentityBadge("Plus", "With Office PC")).toEqual({
       kind: "running-device",
       label: "With Office PC"
     });
-    expect(resolveCompactIdentityBadge("Plus")).toEqual({ kind: "plan", label: "Plus" });
+    expect(resolveCompactIdentityBadge("Plus")).toEqual({ kind: "unclaimed", label: "Unclaimed" });
   });
 
-  it("moves the remote-PC label into the card footer without changing the table identity", () => {
+  it("shows the remote-PC label in both card layouts", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
 
     expect(source).toContain('class="saved-credits-line saved-running-device"');
-    expect(source).not.toContain('class="pill saved-running-device"');
+    expect(source).toContain("saved-running-device");
     expect(resolveCompactIdentityBadge("Plus", "With DESKTOP-4ISJOQ6")).toEqual({
       kind: "running-device",
       label: "With DESKTOP-4ISJOQ6"

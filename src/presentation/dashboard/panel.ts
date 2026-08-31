@@ -24,6 +24,7 @@ import { scheduleExtensionHostReload } from "../../application/accounts/switchEf
 import { resolveOnboardingCompleted } from "../../services/onboarding";
 import { readCodexCliSessions, resolveCodexHome } from "../../services/codexSessionResume";
 import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindings";
+import { publishDashboardRealtime } from "../../services/dashboardRealtime";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
 const REOPEN_AFTER_HOST_RESTART_KEY = "codexManager.reopenDashboardAfterHostRestart";
@@ -294,6 +295,20 @@ class DashboardPanelController {
       payload,
       result.errorMessage
     );
+    // Terminal output is transient and therefore is not part of the account
+    // snapshot signature. Mirror it explicitly so an open browser workspace
+    // sees commands executed from the VS Code dashboard immediately.
+    if (message.action === "runWorkspaceTerminalCommand") {
+      publishDashboardRealtime({
+        type: "dashboard:action-result",
+        requestId: message.requestId,
+        action: message.action,
+        accountId: message.accountId,
+        status: result.status,
+        payload,
+        error: result.errorMessage
+      });
+    }
     if (
       result.status === "completed" &&
       (message.action === "unloadAuth" || result.payload?.reloadScheduled === true)
