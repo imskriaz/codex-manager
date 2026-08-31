@@ -3,11 +3,23 @@ import { describe, expect, it } from "vitest";
 import {
   consolidateSessionMessages,
   consolidatedActivityLabel,
-  splitMessageParagraphs
+  splitMessageParagraphs,
+  filterCliSessionsBySection
 } from "../webview-src/dashboard/cliSessionsModal";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 
 describe("sessions sidebar layout", () => {
+  it("keeps Active and Archive session tabs mutually exclusive", () => {
+    const sessions = [
+      { id: "active", title: "Active", status: "idle" as const },
+      { id: "archived", title: "Archived", status: "idle" as const, archived: true },
+      { id: "legacy", title: "Legacy", status: "idle" as const, archived: false }
+    ];
+
+    expect(filterCliSessionsBySection(sessions, "active").map((session) => session.id)).toEqual(["active", "legacy"]);
+    expect(filterCliSessionsBySection(sessions, "archived").map((session) => session.id)).toEqual(["archived"]);
+  });
+
   it("places the project rail below session filters", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
@@ -297,6 +309,16 @@ describe("sessions sidebar layout", () => {
     expect(items[4]).toMatchObject({ id: "thinking-live", status: "inProgress" });
     expect(items[5]).toMatchObject({ id: "user-2" });
     expect(items[6]).toMatchObject({ id: "command-3", status: "inProgress" });
+  });
+
+  it("defaults the workspace rail to Active when no session is selected", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const stateEffectStart = source.indexOf("// A session deep link should open in its matching state tab");
+    const stateEffect = source.slice(stateEffectStart, source.indexOf("setDeleteTarget(undefined);", stateEffectStart));
+
+    expect(stateEffectStart).toBeGreaterThan(-1);
+    expect(stateEffect).toContain('setSection(props.selectedSession?.archived ? "archived" : "active")');
+    expect(stateEffect).not.toContain("if (props.selectedSession)");
   });
 
   it("summarizes completed tools as a compact natural-language group", () => {

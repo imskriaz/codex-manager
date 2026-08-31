@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.0.1");
+    expect(manifest.version).toBe("1.0.2");
   });
 
   it("ships a Marketplace changelog", () => {
@@ -29,7 +29,8 @@ describe("extension manifest configuration", () => {
     const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 
     expect(changelog).toContain("# Changelog");
-    expect(changelog).toContain("## 1.0.1");
+    expect(changelog).toContain("## 1.0.2");
+    expect(changelog).not.toMatch(/##\s+\d+\.\d+\.\d+-pre\d+/i);
   });
 
   it("keeps required runtime modules in the VSIX dependency set", () => {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2
+
+- Keep the workspace session rail on Active by default when returning to the session list.
+- Ensure Active and Archive tabs remain mutually exclusive.
+
 ## 1.0.1
 
 Codex Manager now provides a cleaner, more dependable way to manage accounts and work with Codex sessions from VS Code or the browser dashboard.

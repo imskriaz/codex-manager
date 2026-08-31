@@ -36,6 +36,16 @@ import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types
 export type CliSessionFeedback = DashboardNotice & { key: number };
 type WorkspaceTab = "terminal" | "files" | "reviews" | `file:${string}` | `review:${string}`;
 type WorkspaceToolTab = "terminal" | "files" | "reviews";
+export type CliSessionSection = "active" | "archived";
+/** Keep the two state tabs mutually exclusive, treating only an explicit
+ * `archived: true` marker as archived. */
+export function filterCliSessionsBySection(
+  sessions: DashboardCliSessionSummary[],
+  section: CliSessionSection
+): DashboardCliSessionSummary[] {
+  const archived = section === "archived";
+  return sessions.filter((session) => (session.archived === true) === archived);
+}
 const workspaceTabKind = (tab: WorkspaceTab): WorkspaceToolTab => tab.startsWith("file:") ? "files" : tab.startsWith("review:") ? "reviews" : tab as WorkspaceToolTab;
 const workspaceTabPath = (tab: WorkspaceTab): string | undefined => tab.includes(":") ? tab.slice(tab.indexOf(":") + 1) : undefined;
 
@@ -130,7 +140,7 @@ export type CliSessionsPageProps = {
 };
 
 export function CliSessionsPage(props: CliSessionsPageProps) {
-  const [section, setSection] = useState<"active" | "archived">("active");
+  const [section, setSection] = useState<CliSessionSection>("active");
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
   const [model, setModel] = useState<string>();
@@ -176,7 +186,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   useEffect(() => saveWorkspaceLayout(layout), [layout]);
 
   useEffect(() => {
-    if (props.selectedSession) setSection(props.selectedSession.archived ? "archived" : "active");
+    // A session deep link should open in its matching state tab, but returning
+    // to the workspace list (including after archive/delete) must restore the
+    // default Active view instead of leaving the rail on Archive.
+    setSection(props.selectedSession?.archived ? "archived" : "active");
     setDeleteTarget(undefined);
   }, [props.selectedSession?.id, props.selectedSession?.archived]);
 
@@ -211,8 +224,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     };
   }, []);
 
-  const activeSessions = props.sessions.filter((session) => !session.archived);
-  const archivedSessions = props.sessions.filter((session) => session.archived);
+  const activeSessions = filterCliSessionsBySection(props.sessions, "active");
+  const archivedSessions = filterCliSessionsBySection(props.sessions, "archived");
   const runningCount = activeSessions.filter((session) => session.status === "running").length;
   const visibleSessions = useMemo(() => {
     const source = section === "active" ? activeSessions : archivedSessions;
@@ -1502,7 +1515,7 @@ function activityLabel(message: DashboardCliSessionMessage): string {
   if (message.kind === "command") return "Ran commands";
   return message.title ?? activityTitle(message.kind);
 }
-function EmptySessions(props: { search: boolean; section: "active" | "archived" }) { return <div class="cli-inline-state"><EmptyFolderIcon /><strong>{props.search ? "No matching sessions" : `No ${props.section} sessions`}</strong><span>{props.search ? "Try another title or session ID." : props.section === "active" ? "Start a Codex chat to see it here." : "Archived sessions will appear here."}</span></div>; }
+function EmptySessions(props: { search: boolean; section: CliSessionSection }) { return <div class="cli-inline-state"><EmptyFolderIcon /><strong>{props.search ? "No matching sessions" : `No ${props.section} sessions`}</strong><span>{props.search ? "Try another title or session ID." : props.section === "active" ? "Start a Codex chat to see it here." : "Archived sessions will appear here."}</span></div>; }
 function ConversationEmpty({ archived, logoUri }: { archived: boolean; logoUri?: string }) { return <div class="cli-conversation-empty">{logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}<h2>No messages yet</h2><p>{archived ? "This archived transcript has no readable messages." : "Send a message below to continue this session."}</p></div>; }
 function WorkspaceEmpty(props: { running: number; active: number; archived: number; logoUri?: string }) { return <div class="cli-workspace-empty"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h1>What should we build?</h1><p>Select a project below or choose a session from the sidebar.</p></div>; }
 function UsageBanner(props: { account?: DashboardAccountViewModel; onAction: (message: string) => void }) {
