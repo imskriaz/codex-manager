@@ -215,9 +215,9 @@ describe("normalizeCloudflaredDomain", () => {
 });
 
 describe("peer WebSocket failure handling", () => {
-  it("keeps peer presence through a 5-second reconnect grace", () => {
+  it("keeps peer presence through three missed heartbeats", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
-    expect(source).toContain("const PEER_OFFLINE_AFTER_MS = 5_000;");
+    expect(source).toContain("const PEER_OFFLINE_AFTER_MS = 15_000;");
     expect(source).toContain("this.deferPeerRemoval(peerId);");
     expect(source).toContain("Keep the last confirmed device set during the reconnect grace period.");
   });

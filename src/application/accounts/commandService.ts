@@ -12,6 +12,7 @@ import { needsWindowReloadForAccount } from "../../presentation/workbench/window
 import { getCommandCopy, getLanguage, logNetworkEvent, resolveLongQuotaLabel, t } from "../../utils";
 import {
   getAutoRefreshMinutes,
+  getCodexManagerConfiguration,
   isBackgroundTokenRefreshEnabled
 } from "../../infrastructure/config/extensionSettings";
 import { wasAccountQuotaCheckedWithin } from "../../services/quotaCheckCoordination";
@@ -453,19 +454,10 @@ export class AccountsCommandService {
     try {
       await this.repo.setAccountEnabled(account.id, account.enabled === false);
       this.view.refresh();
-      if (this.syncAccountChange) {
-        const synced = await this.syncAccountChange();
-        // The sync manager owns failure feedback; avoid stacking a second
-        // toast when a retry is needed.
-        if (synced === false) {
-          return;
-        }
-        void vscode.window.showInformationMessage(
-          synced === true ? "Account updated and encrypted sync completed." : "Account updated."
-        );
-      } else {
-        void vscode.window.showInformationMessage("Account updated.");
-      }
+      const syncEnabled = getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false);
+      void vscode.window.showInformationMessage(
+        syncEnabled ? "Account updated. Encrypted sync is queued." : "Account updated."
+      );
     } catch (error) {
       void vscode.window.showWarningMessage(getErrorMessage(error));
     }

@@ -70,6 +70,11 @@ describe("encrypted account sync", () => {
   });
 
   it("queues background sync after a local account removal so its tombstone is published", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as unknown as vscode.WorkspaceConfiguration);
     const state = new Map<string, unknown>();
     const updates: Array<[string, unknown]> = [];
     const context = {
@@ -94,7 +99,7 @@ describe("encrypted account sync", () => {
     manager.onAccountsMutated({ addedAccountIds: [], removedAccountIds: ["removed-account"] });
 
     expect(manager.isAccountDeletionPending("removed-account")).toBe(true);
-    await vi.waitFor(() => expect(queue).toHaveBeenCalledWith());
+    await vi.waitFor(() => expect(queue).toHaveBeenCalledWith(5 * 60 * 1000));
     expect(state.get("codexManager.encryptedSync.localDeletions.v1")).toEqual([
       expect.objectContaining({ accountId: "removed-account", deviceId: "device-one" })
     ]);
@@ -102,9 +107,74 @@ describe("encrypted account sync", () => {
       expect.arrayContaining([
         ["codexManager.encryptedSync.localDeletions.v1", expect.any(Array)],
         ["codexManager.encryptedSync.localEnablement.v1", expect.any(Array)],
-        ["codexManager.encryptedSync.localEnablementPending.v1", ["removed-account"]]
+        ["codexManager.encryptedSync.localEnablementPending.v1", ["removed-account"]],
+        ["codexManager.encryptedSync.vaultDirty.v1", ["account-removed"]]
       ])
     );
+    manager.dispose();
+  });
+
+  it("marks major account and credential changes for one coalesced durable sync", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as unknown as vscode.WorkspaceConfiguration);
+    const state = new Map<string, unknown>();
+    const context = {
+      subscriptions: [] as vscode.Disposable[],
+      globalState: {
+        get: <T>(key: string) => state.get(key) as T | undefined,
+        update: vi.fn(async (key: string, value: unknown) => state.set(key, value)),
+        setKeysForSync: vi.fn()
+      },
+      secrets: {
+        get: vi.fn(async () => "device-one"),
+        store: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined)
+      }
+    } as unknown as vscode.ExtensionContext;
+    const manager = new EncryptedSyncManager(context, {} as never);
+    const queue = vi.spyOn(manager, "queueBackgroundSync").mockImplementation(() => undefined);
+
+    manager.onVaultMutation("credentials-changed");
+    manager.onVaultMutation("token-refresh-setting-changed");
+    await manager.completeAccountEnablement("account-one", false);
+
+    await vi.waitFor(() => {
+      expect(state.get("codexManager.encryptedSync.vaultDirty.v1")).toEqual([
+        "credentials-changed",
+        "enablement-changed",
+        "token-refresh-setting-changed"
+      ]);
+    });
+    expect(queue).toHaveBeenCalledTimes(3);
+    expect(queue).toHaveBeenNthCalledWith(1, 5 * 60 * 1000);
+    expect(queue).toHaveBeenNthCalledWith(2, 5 * 60 * 1000);
+    expect(queue).toHaveBeenNthCalledWith(3, 5 * 60 * 1000);
+    manager.dispose();
+  });
+
+  it("retries a failed durable background sync without losing pending work", async () => {
+    vi.useFakeTimers();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as unknown as vscode.WorkspaceConfiguration);
+    const context = {
+      subscriptions: [] as vscode.Disposable[],
+      globalState: { get: vi.fn(), update: vi.fn(async () => undefined), setKeysForSync: vi.fn() },
+      secrets: { get: vi.fn(), store: vi.fn(), delete: vi.fn() }
+    } as unknown as vscode.ExtensionContext;
+    const manager = new EncryptedSyncManager(context, {} as never);
+    const sync = vi.spyOn(manager, "syncNow").mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+    manager.onVaultMutation("credentials-changed");
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(sync).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(sync).toHaveBeenCalledTimes(2);
     manager.dispose();
   });
 
@@ -525,6 +595,11 @@ describe("encrypted account sync", () => {
     ]);
     await expect(manager.prepareAccountSwitch("one")).resolves.toBeUndefined();
     await expect(manager.prepareAccountEnablement("one", true)).resolves.toBeUndefined();
+    manager.setOnlineDeviceIds(["laptop-device", "office-device"]);
+    expect(getSyncedAccountLeases()).toEqual([
+      expect.objectContaining({ accountId: "one", deviceName: "Office PC", online: true })
+    ]);
+    await expect(manager.prepareAccountSwitch("one")).rejects.toThrow(/Office PC/i);
     manager.setOnlineDeviceIds(undefined);
     await expect(manager.prepareAccountSwitch("one")).rejects.toThrow(/Office PC/i);
 

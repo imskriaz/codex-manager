@@ -63,7 +63,7 @@ const PEER_HEARTBEAT_INTERVAL_MS = 5_000;
 // Keep a peer's claim visible through a short transport interruption. A
 // dropped WebSocket is not proof that the PC went offline; the reconnect and
 // HTTP-heartbeat paths have a chance to confirm it before we release state.
-const PEER_OFFLINE_AFTER_MS = 5_000;
+const PEER_OFFLINE_AFTER_MS = 15_000;
 const PEER_RECONNECT_DELAY_MS = 1_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const CLI_SESSION_RECONCILE_MS = 30_000;

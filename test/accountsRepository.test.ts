@@ -157,6 +157,47 @@ describe("AccountsRepository token persistence", () => {
     repo.dispose();
   });
 
+  it("reports every durable vault mutation while leaving local-only changes out", async () => {
+    const secrets = new Map<string, string>();
+    const context = {
+      globalStorageUri: { fsPath: tempDir },
+      secrets: {
+        get: vi.fn(async (key: string) => secrets.get(key)),
+        store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+        delete: vi.fn(async (key: string) => secrets.delete(key))
+      }
+    } as unknown as vscode.ExtensionContext;
+    const onAccountsMutated = vi.fn();
+    const onVaultMutation = vi.fn();
+    const repo = new AccountsRepository(context);
+    repo.setAccountSwitchCoordinator({
+      prepareAccountSwitch: vi.fn(async () => undefined),
+      completeAccountSwitch: vi.fn(async () => undefined),
+      cancelAccountSwitch: vi.fn(async () => undefined),
+      onAccountsMutated,
+      onVaultMutation
+    });
+
+    const account = await repo.upsertFromTokens(createTokens("acct_durable", "durable@example.com"));
+    expect(onAccountsMutated).toHaveBeenCalledWith({ addedAccountIds: [account.id], removedAccountIds: [] });
+
+    onVaultMutation.mockClear();
+    await repo.updateTokens(account.id, {
+      ...createTokens("acct_durable", "durable@example.com"),
+      refreshToken: "replacement-refresh-token"
+    });
+    expect(onVaultMutation).toHaveBeenCalledWith("credentials-changed");
+
+    onVaultMutation.mockClear();
+    await repo.setAccountTokenRefreshEnabled(account.id, true);
+    expect(onVaultMutation).toHaveBeenCalledWith("token-refresh-setting-changed");
+
+    onVaultMutation.mockClear();
+    await repo.setAccountQueuePriority(account.id, true);
+    expect(onVaultMutation).not.toHaveBeenCalled();
+    repo.dispose();
+  });
+
   it("hydrates stored tokens from external auth.json changes without rewriting auth.json", async () => {
     const secrets = new Map<string, string>();
     const context = {

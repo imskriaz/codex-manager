@@ -135,6 +135,7 @@ export interface AccountSwitchCoordinator {
   completeAccountSwitch(accountId: string): Promise<void>;
   cancelAccountSwitch(accountId: string): Promise<void>;
   onAccountsMutated?(change: { addedAccountIds: string[]; removedAccountIds: string[] }): void;
+  onVaultMutation?(reason: "account-added" | "credentials-changed" | "token-refresh-setting-changed"): void;
   prepareAccountEnablement?(accountId: string, enabled: boolean): Promise<void>;
   completeAccountEnablement?(accountId: string, enabled: boolean): Promise<void>;
   /** Prevent compatibility-mirror imports from bypassing a synced deletion. */
@@ -376,6 +377,7 @@ export class AccountsRepository {
       throw createError.storageIndexRecoveryFailed(this.indexPath, this.state.indexHealth.lastErrorMessage);
     }
 
+    this.switchCoordinator?.onVaultMutation?.("credentials-changed");
     return {
       source: "backup",
       restoredCount: restored.accounts.length,
@@ -506,6 +508,7 @@ export class AccountsRepository {
       accountId: tokens.accountId ?? account.accountId
     };
 
+    const previousTokens = await this.secretStore.getTokens(accountId);
     await this.secretStore.setTokens(accountId, effectiveTokens);
     this.invalidateTokenCacheForAccount(accountId);
     await mirrorAideckCodexManagerAccount(account, effectiveTokens);
@@ -534,6 +537,9 @@ export class AccountsRepository {
 
     if (shouldWriteIndex) {
       this.writeIndex(index);
+    }
+    if (!previousTokens || !areTokenCredentialsEqual(previousTokens, effectiveTokens)) {
+      this.switchCoordinator?.onVaultMutation?.("credentials-changed");
     }
 
     return account;
@@ -706,6 +712,7 @@ export class AccountsRepository {
     const previousActiveId = index.currentAccountId;
     const id = buildAccountStorageId(claimsWithEmail.email, claimsWithEmail.accountId, claimsWithEmail.organizationId);
     const existing = index.accounts.find((item) => item.id === id);
+    const previousTokens = existing ? await this.secretStore.getTokens(id) : undefined;
     const now = Date.now();
     const account = buildAccountRecordDraft({
       storageId: id,
@@ -742,10 +749,16 @@ export class AccountsRepository {
 
     if (options.persistImmediately) {
       await this.persistRecoveredIndex(index, options.restoreSource ?? "shared_json");
+      if (!existing) {
+        this.switchCoordinator?.onAccountsMutated?.({ addedAccountIds: [id], removedAccountIds: [] });
+      }
     } else if (options.allowRecoveryWrite) {
       markRecoveryPending(this.state, index);
     } else {
       this.writeIndex(index);
+    }
+    if (existing && (!previousTokens || !areTokenCredentialsEqual(previousTokens, storedTokens))) {
+      this.switchCoordinator?.onVaultMutation?.("credentials-changed");
     }
 
     return account;
@@ -1084,11 +1097,13 @@ export class AccountsRepository {
   /** Enable or disable background token refresh for one account. */
   async setAccountTokenRefreshEnabled(accountId: string, enabled: boolean): Promise<CodexManagerAccountRecord> {
     const index = await this.readIndex();
+    const previous = index.accounts.find((item) => item.id === accountId)?.tokenRefreshEnabled === true;
     const account = setAccountTokenRefreshEnabledOnIndex(index, accountId, enabled, Date.now());
     if (!account) {
       throw createError.accountNotFound(accountId);
     }
     this.writeIndex(index);
+    if (previous !== enabled) this.switchCoordinator?.onVaultMutation?.("token-refresh-setting-changed");
     return account;
   }
 
@@ -1226,6 +1241,7 @@ export class AccountsRepository {
 
           account.updatedAt = Date.now();
           changed = true;
+          this.switchCoordinator?.onVaultMutation?.("credentials-changed");
         }
       }
     }

@@ -33,7 +33,7 @@ describe("first-run onboarding", () => {
     expect(main).toContain("deferSync: true");
     expect(main).not.toContain('onboardingPendingRef.current.add("syncNow")');
     expect(actions).toContain("markOnboardingCompleted(ctx.context)");
-    expect(sync).toContain("this.queueBackgroundSync()");
+    expect(sync).toContain("this.queueBackgroundSync(VAULT_SYNC_DEBOUNCE_DELAY_MS)");
   });
 });
 

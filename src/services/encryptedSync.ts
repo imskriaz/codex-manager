@@ -25,7 +25,10 @@ const LOCAL_DELETIONS_KEY = "codexManager.encryptedSync.localDeletions.v1";
 const LOCAL_ENABLEMENT_KEY = "codexManager.encryptedSync.localEnablement.v1";
 const LEGACY_LOCAL_ASSIGNMENTS_KEY = "codexManager.encryptedSync.localAssignments.v1";
 const LOCAL_ENABLEMENT_PENDING_KEY = "codexManager.encryptedSync.localEnablementPending.v1";
+const LOCAL_VAULT_DIRTY_KEY = "codexManager.encryptedSync.vaultDirty.v1";
 const ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS = 5 * 60 * 1000;
+const VAULT_SYNC_DEBOUNCE_DELAY_MS = 5 * 60 * 1000;
+const VAULT_SYNC_MAX_RETRY_DELAY_MS = 30 * 60 * 1000;
 const REGISTRY_OVERRIDE_KEY = "codexManager.encryptedSync.enablementOverride.v1";
 const SCRYPT_COST = 131_072;
 const MAX_ACCOUNTS = 500;
@@ -74,6 +77,14 @@ export type SyncAccountDeletion = {
 
 export type SyncedAccountLeaseView = SyncAccountLease & { isCurrentDevice: boolean; online?: boolean };
 
+export type EncryptedSyncMutationReason =
+  | "account-added"
+  | "account-removed"
+  | "credentials-changed"
+  | "enablement-changed"
+  | "token-refresh-setting-changed"
+  | "sync-configured";
+
 type CipherEnvelopeBase = {
   format: "codex-manager-encrypted-sync";
   version: 1;
@@ -105,6 +116,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private mutationVersion = 0;
   private currentSyncTask: Promise<boolean> | undefined;
   private backgroundSyncTimer: NodeJS.Timeout | undefined;
+  private backgroundSyncRetryDelayMs = VAULT_SYNC_DEBOUNCE_DELAY_MS;
+  private readonly pendingVaultMutationReasons = new Set<string>();
+  private vaultDirtyPersistence: Promise<void> = Promise.resolve();
   private onStateChanged: (() => void) | undefined;
   private applyingRemote = false;
   private localEnablementDefaults = new Map<string, boolean>();
@@ -123,6 +137,12 @@ export class EncryptedSyncManager implements vscode.Disposable {
     pendingEnablementAccountIds = new Set(
       Array.isArray(persistedPending) ? persistedPending.filter((id): id is string => typeof id === "string") : []
     );
+    const persistedDirty = this.context.globalState.get<unknown>(LOCAL_VAULT_DIRTY_KEY, []);
+    if (Array.isArray(persistedDirty)) {
+      for (const reason of persistedDirty) {
+        if (typeof reason === "string" && reason.trim()) this.pendingVaultMutationReasons.add(reason);
+      }
+    }
     const deviceId = await this.getDeviceId();
     this.updateVisibleEnablement(this.readLocalEnablement(), deviceId);
     const remoteVault = this.context.globalState.get<string>(SYNC_KEY);
@@ -165,6 +185,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
           : "Startup encrypted sync needs attention. Run Sync Now to retry.";
         void vscode.window.showWarningMessage(message);
       }
+      if (!synced && this.pendingVaultMutationReasons.size > 0) {
+        this.queueBackgroundSync(this.backgroundSyncRetryDelayMs);
+      }
     }
   }
 
@@ -175,6 +198,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       clearTimeout(this.backgroundSyncTimer);
       this.backgroundSyncTimer = undefined;
     }
+    this.pendingVaultMutationReasons.clear();
     this.clearVisibleEnablement();
   }
 
@@ -183,13 +207,32 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (this.disposed || this.backgroundSyncTimer) return;
     this.backgroundSyncTimer = setTimeout(() => {
       this.backgroundSyncTimer = undefined;
-      void this.syncNow(false, false, true).catch((error: unknown) => {
-        if (error instanceof CrossWindowOperationBusyError) {
-          this.queueBackgroundSync(Math.min(delayMs * 2, 10_000));
-          return;
-        }
-        console.warn("[codexManager] queued encrypted sync failed:", error);
-      });
+      void this.syncNow(false, false, true)
+        .then((synced) => {
+          if (synced || this.pendingVaultMutationReasons.size === 0) {
+            this.backgroundSyncRetryDelayMs = VAULT_SYNC_DEBOUNCE_DELAY_MS;
+            return;
+          }
+          this.backgroundSyncRetryDelayMs = Math.min(
+            Math.max(this.backgroundSyncRetryDelayMs * 2, VAULT_SYNC_DEBOUNCE_DELAY_MS),
+            VAULT_SYNC_MAX_RETRY_DELAY_MS
+          );
+          this.queueBackgroundSync(this.backgroundSyncRetryDelayMs);
+        })
+        .catch((error: unknown) => {
+          if (error instanceof CrossWindowOperationBusyError) {
+            this.queueBackgroundSync(Math.min(Math.max(delayMs * 2, 1_000), 10_000));
+            return;
+          }
+          console.warn("[codexManager] queued encrypted sync failed:", error);
+          if (this.pendingVaultMutationReasons.size > 0) {
+            this.backgroundSyncRetryDelayMs = Math.min(
+              Math.max(this.backgroundSyncRetryDelayMs * 2, VAULT_SYNC_DEBOUNCE_DELAY_MS),
+              VAULT_SYNC_MAX_RETRY_DELAY_MS
+            );
+            this.queueBackgroundSync(this.backgroundSyncRetryDelayMs);
+          }
+        });
     }, delayMs);
     this.backgroundSyncTimer.unref?.();
   }
@@ -249,13 +292,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
         }
         await this.storeLocalEnablement([...enablement.values()], deviceId);
         await this.markEnablementPending([...change.addedAccountIds, ...change.removedAccountIds]);
-        // Publish removal tombstones promptly instead of waiting for the next
-        // startup or an unrelated manual sync; otherwise another PC can
-        // upload its stale copy and resurrect a removed account. Additions
-        // already flow through their explicit OAuth/import sync paths, so do
-        // not schedule a duplicate background sync for them here.
+        if (change.addedAccountIds.length > 0) this.markVaultDirty("account-added", VAULT_SYNC_DEBOUNCE_DELAY_MS);
         if (change.removedAccountIds.length > 0) {
-          this.queueBackgroundSync();
+          this.markVaultDirty("account-removed", VAULT_SYNC_DEBOUNCE_DELAY_MS);
         }
       })
       .catch((error) => {
@@ -264,6 +303,26 @@ export class EncryptedSyncManager implements vscode.Disposable {
           "The account change was saved locally, but its enable/disable registry could not be updated. Run Sync Sessions Now to retry."
         );
       });
+  }
+
+  /** Mark a durable vault mutation without coupling frequent realtime updates to VS Code Settings Sync. */
+  onVaultMutation(reason: EncryptedSyncMutationReason): void {
+    if (this.disposed || this.applyingRemote || !reason.trim()) return;
+    this.mutationVersion += 1;
+    this.markVaultDirty(reason, VAULT_SYNC_DEBOUNCE_DELAY_MS);
+  }
+
+  private markVaultDirty(reason: string, delayMs: number): void {
+    this.pendingVaultMutationReasons.add(reason);
+    const snapshot = [...this.pendingVaultMutationReasons].sort();
+    this.vaultDirtyPersistence = this.vaultDirtyPersistence
+      .catch(() => undefined)
+      .then(() => this.context.globalState.update(LOCAL_VAULT_DIRTY_KEY, snapshot));
+    void this.vaultDirtyPersistence.catch((error) =>
+      console.warn("[codexManager] could not persist encrypted-sync pending state:", error)
+    );
+    if (this.isEnabled()) this.queueBackgroundSync(delayMs);
+    this.onStateChanged?.();
   }
 
   shutdown(): void {
@@ -422,7 +481,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         await this.markEnablementPending([accountId]);
       });
     await this.mutationChain;
-    this.queueBackgroundSync(ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS);
+    this.markVaultDirty("enablement-changed", ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS);
   }
 
   async setRegistryOverrideEnabled(enabled: boolean, options?: { passphrase?: string }): Promise<boolean> {
@@ -552,8 +611,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (!this.isEnabled()) {
       await getCodexManagerConfiguration().update("encryptedSyncEnabled", true, vscode.ConfigurationTarget.Global);
     }
+    this.markVaultDirty("sync-configured", VAULT_SYNC_DEBOUNCE_DELAY_MS);
     if (options?.deferSync) {
-      this.queueBackgroundSync();
+      this.queueBackgroundSync(VAULT_SYNC_DEBOUNCE_DELAY_MS);
       return true;
     }
     return this.syncing ? true : this.syncNow(true);
@@ -720,8 +780,23 @@ export class EncryptedSyncManager implements vscode.Disposable {
       if (wroteSyncVault && syncSettings && !(await this.ensureSettingsSyncReady(interactive))) {
         return false;
       }
+      await this.vaultDirtyPersistence.catch(() => undefined);
+      if (mutationVersion !== this.mutationVersion) {
+        if (interactive) {
+          void vscode.window.showWarningMessage(
+            "Accounts changed while encrypted sync was finishing. The newer update remains queued; run Sync Sessions Now again to confirm it completed."
+          );
+        }
+        return false;
+      }
       await this.context.globalState.update(LOCAL_ENABLEMENT_PENDING_KEY, []);
       pendingEnablementAccountIds = new Set();
+      await this.context.globalState.update(LOCAL_VAULT_DIRTY_KEY, []);
+      this.pendingVaultMutationReasons.clear();
+      if (this.backgroundSyncTimer) {
+        clearTimeout(this.backgroundSyncTimer);
+        this.backgroundSyncTimer = undefined;
+      }
       encryptedSyncLastCompletedAt = Date.now();
       encryptedSyncLastSessionCount = mergedAccounts.length;
       encryptedSyncLastEnabledSessionCount = mergedEnablement.filter((entry) => entry.enabled).length;
@@ -932,12 +1007,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
         entry.accountId === accountId &&
         entry.enabled &&
         entry.deviceId !== visibleEnablementDeviceId &&
-        // A PC is considered active only when it has successfully completed
-        // an encrypted sync recently. No timer, heartbeat, or WebSocket is
-        // required to release an abandoned claim.
-        (isSyncAccountEnablementActive(entry) ||
-          (entry.lastSyncedAt === undefined &&
-            (visibleOnlineDeviceIds === undefined || visibleOnlineDeviceIds.has(entry.deviceId))))
+        // Signed realtime presence is authoritative while the peer transport
+        // is healthy. The durable two-hour lease is only the offline fallback.
+        (visibleOnlineDeviceIds !== undefined
+          ? visibleOnlineDeviceIds.has(entry.deviceId)
+          : entry.lastSyncedAt === undefined || isSyncAccountEnablementActive(entry))
     );
   }
 
@@ -1058,7 +1132,7 @@ export function getSyncedAccountLeases(now = Date.now()): SyncedAccountLeaseView
           ? entry.lastSyncedAt === undefined
             ? undefined
             : isSyncAccountEnablementActive(entry, now)
-          : visibleOnlineDeviceIds.has(entry.deviceId) && isSyncAccountEnablementActive(entry, now))
+          : visibleOnlineDeviceIds.has(entry.deviceId))
     }));
 }
 

@@ -58,6 +58,8 @@ Enable `cliIntegrationEnabled` to read local CLI indexes/transcripts on demand. 
 
 The vault is encrypted before it is written to Settings Sync. The passphrase is not uploaded. Disable sync on a machine to stop it participating; local accounts remain available.
 
+Add/import, removal, reauthorization, enable/disable, credential replacement, and token-refresh setting changes mark the encrypted vault for a durable sync. Background changes are coalesced for five minutes and retried with bounded backoff so routine activity does not exhaust VS Code Settings Sync requests. Signed WebSocket peer updates remain realtime and fall back to signed HTTP heartbeats; quota refreshes, account switching, usage, schedules, and heartbeat traffic never request a durable sync.
+
 ## Browser dashboard
 
 Set `webDashboardEnabled` to start the local dashboard at `http://127.0.0.1:39875`. Run **Set Web Dashboard Password** before sharing it. `webDashboardAlwaysOnlineEnabled` keeps a detached relay on one always-on PC after VS Code closes; it requires encrypted sync and does not execute account actions by itself.

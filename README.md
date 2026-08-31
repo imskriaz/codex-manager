@@ -126,7 +126,7 @@ Important combinations:
 ## Privacy and security
 
 - Account tokens remain in local VS Code SecretStorage and the Codex credential file. They are not sent to a Codex Manager server.
-- Encrypted sync stores an encrypted vault in VS Code Settings Sync; account usage, switching, and schedules do not generate sync traffic.
+- Encrypted sync stores an encrypted vault in VS Code Settings Sync. Major vault changes are durably queued and coalesced, while signed peer WebSocket/HTTP updates carry enablement and dashboard state in realtime without consuming Settings Sync requests. Account usage, switching, quota refreshes, and schedules do not generate durable sync traffic.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without a password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
 - Review the [MIT License](LICENSE) and only manage accounts you own or are authorized to use.
