@@ -736,6 +736,19 @@ function App() {
   }, [browserPath, cliComposerConfig?.projects, isBrowserDashboard, requestWorkspaceEnvironment, requestWorkspaceTerminals, selectedCliSession?.projectPath]);
 
   useEffect(() => {
+    if (!isBrowserDashboard || !realtimeConnected || !isCliSessionsPath(browserPath)) return;
+    const announce = (viewing: boolean): void => {
+      postMessageToHost({ type: "dashboard:workspace-presence", viewing });
+    };
+    announce(true);
+    const timer = window.setInterval(() => announce(true), 15_000);
+    return () => {
+      window.clearInterval(timer);
+      announce(false);
+    };
+  }, [browserPath, isBrowserDashboard, realtimeConnected]);
+
+  useEffect(() => {
     const session = selectedCliSession;
     if (!session || session.status !== "running") return;
     // Filesystem notifications are not guaranteed on every platform or for
@@ -768,6 +781,7 @@ function App() {
       requestCliSessions();
       return;
     }
+    if (!isCliSessionsPath(browserPath)) return;
     void readCliSessionListCache().then((cached) => {
       if (cached) {
         setCliSessions(cached.sessions);
@@ -782,7 +796,7 @@ function App() {
       void readCliSessionMessagesCache(routeId).then((cached) => {
         if (cached) setCliSessionMessages(cached);
       });
-  }, [isBrowserDashboard, requestCliSessions, snapshot?.settings.cliIntegrationEnabled]);
+  }, [browserPath, isBrowserDashboard, requestCliSessions, snapshot?.settings.cliIntegrationEnabled]);
 
   useEffect(() => {
     const terminalNotice = snapshot?.terminalNotice;

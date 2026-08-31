@@ -839,6 +839,8 @@ export type DashboardHostMessage =
 
 export type DashboardClientMessage =
   | { type: "dashboard:ready" }
+  /** Browser workspace-viewer lease; used to gate CLI session monitoring. */
+  | { type: "dashboard:workspace-presence"; viewing: boolean }
   | { type: "dashboard:usage-history"; samples: DashboardUsageSample[] }
   | {
       type: "dashboard:action";

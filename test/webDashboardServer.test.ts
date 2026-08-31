@@ -193,6 +193,15 @@ describe("browser dashboard request boundaries", () => {
     expect(source).not.toContain("readCodexCliComposerConfig");
     expect(source).toContain("stabilizeSessionProjectPaths(this.context, sessions)");
   });
+
+  it("starts CLI realtime monitoring only for active workspace viewers", () => {
+    const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
+    expect(source).toContain("const WORKSPACE_VIEWER_LEASE_MS = 45_000;");
+    expect(source).toContain('message.type === "dashboard:workspace-presence"');
+    expect(source).toContain("this.hasWorkspaceViewer()");
+    expect(source).toContain("this.workspaceViewerLastSeen.delete(socket)");
+    expect(source).not.toMatch(/this\.startCliSessionWatcher\(\);\s*this\.startCliSessionReconciliation\(\);\s*this\.updateOnlineDevicePresence/);
+  });
 });
 
 describe("normalizeCloudflaredDomain", () => {

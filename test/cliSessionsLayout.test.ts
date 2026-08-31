@@ -321,6 +321,13 @@ describe("sessions sidebar layout", () => {
     expect(stateEffect).not.toContain("if (props.selectedSession)");
   });
 
+  it("announces browser workspace presence and does not request CLI sessions on account routes", () => {
+    const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(source).toContain('type: "dashboard:workspace-presence", viewing');
+    expect(source).toContain("if (!isCliSessionsPath(browserPath)) return;");
+    expect(source).toContain("window.setInterval(() => announce(true), 15_000)");
+  });
+
   it("summarizes completed tools as a compact natural-language group", () => {
     expect(consolidatedActivityLabel([
       { id: "file-1", kind: "file-change", text: "Edited .vscodeignore" },

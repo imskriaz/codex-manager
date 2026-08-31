@@ -64,6 +64,7 @@ const PEER_RECONNECT_DELAY_MS = 1_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const CLI_SESSION_RECONCILE_MS = 30_000;
 const CLI_SESSION_WATCH_DEBOUNCE_MS = 250;
+const WORKSPACE_VIEWER_LEASE_MS = 45_000;
 
 function decodeWebSocketMessage(data: RawData): string {
   if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
@@ -160,6 +161,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private stateBuildInFlight: Promise<DashboardState> | undefined;
   private lastRealtimeSignature = "";
   private readonly webSocketLastPong = new WeakMap<WebSocket, number>();
+  private readonly workspaceViewerLastSeen = new Map<WebSocket, number>();
   private webSocketHeartbeatTimer: NodeJS.Timeout | undefined;
   private readonly peerSessions = new Map<string, PeerSessionMessage>();
   private readonly peerLastSeenAt = new Map<string, number>();
@@ -179,6 +181,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private cliSessionChangeTimer: NodeJS.Timeout | undefined;
   private cliSessionReconcileTimer: NodeJS.Timeout | undefined;
   private cliSessionRealtimeRevision = Date.now();
+  private cliSessionPublish: Promise<void> | undefined;
   private localCliSessions: import("../domain/dashboard/types").DashboardCliSessionSummary[] | undefined;
   private localCliSessionsReadAt = 0;
   private localCliSessionsRead: Promise<import("../domain/dashboard/types").DashboardCliSessionSummary[]> | undefined;
@@ -238,8 +241,13 @@ export class WebDashboardServer implements vscode.Disposable {
         });
       } else {
         this.webSocketClients.add(socket);
-        socket.once("close", () => this.webSocketClients.delete(socket));
-        socket.once("error", () => this.webSocketClients.delete(socket));
+        const removeClient = (): void => {
+          this.webSocketClients.delete(socket);
+          this.workspaceViewerLastSeen.delete(socket);
+          this.refreshCliSessionRealtimeLifecycle();
+        };
+        socket.once("close", removeClient);
+        socket.once("error", removeClient);
         socket.on("message", (data) => {
           void this.handleBrowserSocketMessage(decodeWebSocketMessage(data), socket);
         });
@@ -291,8 +299,6 @@ export class WebDashboardServer implements vscode.Disposable {
     this.notificationResolutionSubscription ??= subscribeToVscodeNotificationResolutions((notificationId) => {
       this.broadcastRealtimeNotificationDismissed(notificationId);
     });
-    this.startCliSessionWatcher();
-    this.startCliSessionReconciliation();
     this.updateOnlineDevicePresence();
     this.connectPeerSocket();
   }
@@ -305,6 +311,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.server = undefined;
     for (const socket of this.webSocketClients) socket.close();
     this.webSocketClients.clear();
+    this.workspaceViewerLastSeen.clear();
     this.notificationMirrorSubscription?.dispose();
     this.notificationMirrorSubscription = undefined;
     this.notificationResolutionSubscription?.dispose();
@@ -723,6 +730,13 @@ export class WebDashboardServer implements vscode.Disposable {
     if (this.webSocketHeartbeatTimer) return;
     this.webSocketHeartbeatTimer = setInterval(() => {
       const now = Date.now();
+      let workspacePresenceChanged = false;
+      for (const [socket, lastSeenAt] of this.workspaceViewerLastSeen) {
+        if (now - lastSeenAt <= WORKSPACE_VIEWER_LEASE_MS) continue;
+        this.workspaceViewerLastSeen.delete(socket);
+        workspacePresenceChanged = true;
+      }
+      if (workspacePresenceChanged) this.refreshCliSessionRealtimeLifecycle();
       for (const socket of this.webSocketServer.clients) {
         if (socket.readyState !== WebSocket.OPEN) continue;
         if (now - (this.webSocketLastPong.get(socket) ?? 0) > 45_000) {
@@ -978,6 +992,10 @@ export class WebDashboardServer implements vscode.Disposable {
         if (this.cliSessionChangeTimer) return;
         this.cliSessionChangeTimer = setTimeout(() => {
           this.cliSessionChangeTimer = undefined;
+          if (!this.hasWorkspaceViewer()) {
+            this.refreshCliSessionRealtimeLifecycle();
+            return;
+          }
           // File changes are the trigger; the browser remains idle between
           // events and receives the bounded session list over WebSocket.
           this.localCliSessions = undefined;
@@ -999,15 +1017,62 @@ export class WebDashboardServer implements vscode.Disposable {
   private startCliSessionReconciliation(): void {
     if (this.cliSessionReconcileTimer) return;
     this.cliSessionReconcileTimer = setInterval(() => {
-      if (this.webSocketClients.size === 0 || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
+      if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) {
+        this.refreshCliSessionRealtimeLifecycle();
+        return;
+      }
       if (!this.cliSessionWatcher) this.startCliSessionWatcher();
       void this.publishCliSessionsRealtime();
     }, CLI_SESSION_RECONCILE_MS);
     this.cliSessionReconcileTimer.unref?.();
   }
 
+  private refreshCliSessionRealtimeLifecycle(): void {
+    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) {
+      this.stopCliSessionRealtime();
+      return;
+    }
+    this.startCliSessionWatcher();
+    this.startCliSessionReconciliation();
+    void this.publishCliSessionsRealtime();
+  }
+
+  private stopCliSessionRealtime(): void {
+    this.cliSessionWatcher?.close();
+    this.cliSessionWatcher = undefined;
+    if (this.cliSessionChangeTimer) clearTimeout(this.cliSessionChangeTimer);
+    this.cliSessionChangeTimer = undefined;
+    if (this.cliSessionReconcileTimer) clearInterval(this.cliSessionReconcileTimer);
+    this.cliSessionReconcileTimer = undefined;
+    this.cliSessionPublish = undefined;
+  }
+
+  private hasWorkspaceViewer(): boolean {
+    const now = Date.now();
+    for (const [socket, lastSeenAt] of this.workspaceViewerLastSeen) {
+      if (socket.readyState !== WebSocket.OPEN || now - lastSeenAt > WORKSPACE_VIEWER_LEASE_MS) {
+        this.workspaceViewerLastSeen.delete(socket);
+      }
+    }
+    return this.workspaceViewerLastSeen.size > 0;
+  }
+
+  private updateWorkspaceViewer(socket: WebSocket, viewing: boolean): void {
+    if (viewing) this.workspaceViewerLastSeen.set(socket, Date.now());
+    else this.workspaceViewerLastSeen.delete(socket);
+    this.refreshCliSessionRealtimeLifecycle();
+  }
+
   private async publishCliSessionsRealtime(): Promise<void> {
-    if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
+    if (this.cliSessionPublish) return this.cliSessionPublish;
+    this.cliSessionPublish = this.publishCliSessionsRealtimeCore().finally(() => {
+      this.cliSessionPublish = undefined;
+    });
+    return this.cliSessionPublish;
+  }
+
+  private async publishCliSessionsRealtimeCore(): Promise<void> {
+    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
     const sessions = await this.readLocalCliSessions(true);
     // Keep revisions monotonic across extension-host restarts. An already-open
     // browser page may otherwise reject a fresh revision that restarted at 1.
@@ -1033,6 +1098,10 @@ export class WebDashboardServer implements vscode.Disposable {
       const parsed = JSON.parse(raw) as unknown;
       if (!isDashboardClientMessage(parsed)) throw new Error("Invalid dashboard message.");
       message = parsed;
+      if (message.type === "dashboard:workspace-presence") {
+        this.updateWorkspaceViewer(socket, message.viewing);
+        return;
+      }
       const result = await this.processClientMessage(message);
       for (const hostMessage of result.messages) {
         if (hostMessage.type !== "dashboard:snapshot" && socket.readyState === WebSocket.OPEN) {
@@ -1154,7 +1223,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async getConnectedPeers(): Promise<DashboardPeerView[]> {
     const cliEnabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
-    const localSessionCount = cliEnabled ? (await this.readLocalCliSessions()).length : 0;
+    const localSessionCount = cliEnabled && this.hasWorkspaceViewer() ? (await this.readLocalCliSessions()).length : 0;
     return [
       {
         id: this.deviceId,
@@ -1809,6 +1878,8 @@ function isDashboardClientMessage(value: unknown): value is DashboardClientMessa
     case "dashboard:pickCodexCliPath":
     case "dashboard:clearCodexCliPath":
       return true;
+    case "dashboard:workspace-presence":
+      return typeof candidate["viewing"] === "boolean";
     case "dashboard:usage-history":
       return Array.isArray(candidate["samples"]) && candidate["samples"].length <= 10_000;
     case "dashboard:action":
