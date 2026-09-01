@@ -10709,6 +10709,10 @@ html[data-theme="dark"] .cli-terminal-panel {
   font-weight: 600;
 }
 
+.saved-subscription-remaining {
+  order: 2;
+}
+
 .saved-running-device.is-remote {
   color: var(--accent-orange);
 }
