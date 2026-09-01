@@ -327,6 +327,7 @@ export async function sendCodexCliSessionMessage(options: {
     }
     const executable = await resolveCodexCliExecutable();
     const cwd = resolveCliProjectPath(options.projectPath);
+    await assertUsableCliProjectPath(cwd);
     const startedAt = Date.now();
     await claimTrackedCliTurn({ id: options.sessionId, projectPath: cwd, startedAt, ownerPid: process.pid });
     const sessionRef = toSessionLogRef(options.sessionId);
@@ -530,6 +531,7 @@ export async function startCodexCliSession(options: {
     throw new Error("The selected access mode is invalid.");
   }
   const cwd = resolveCliProjectPath(options.projectPath);
+  await assertUsableCliProjectPath(cwd);
   const executable = await resolveCodexCliExecutable();
   const args = ["exec", "--json", "--color", "never", "--skip-git-repo-check"];
   if (options.model) args.push("--model", options.model);
@@ -1124,6 +1126,21 @@ async function readSmallOptionalFile(filePath: string, maxBytes: number): Promis
   return readSafeFileSnapshot(filePath, { maxBytes, rejectIfLarger: true })
     .then((snapshot) => snapshot.buffer.toString("utf8"))
     .catch(() => undefined);
+}
+
+/**
+ * Validate the working directory before spawning Codex. A session can retain
+ * a cwd that was deleted, moved to an offline drive, or replaced by a file;
+ * letting the CLI discover that itself can block resume for a long time.
+ */
+async function assertUsableCliProjectPath(projectPath: string): Promise<void> {
+  try {
+    const stat = await fs.stat(projectPath);
+    if (!stat.isDirectory()) throw new Error("The selected project path is not a folder.");
+  } catch (error) {
+    if (error instanceof Error && error.message === "The selected project path is not a folder.") throw error;
+    throw new Error("The selected project folder is unavailable. Choose an open, accessible workspace folder and try again.");
+  }
 }
 
 function parseCliModels(raw: string | undefined): DashboardCliComposerConfig["models"] {
