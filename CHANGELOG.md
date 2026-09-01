@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4-pre17
+
+- Keep the extension manifest regression coverage synchronized with the current prerelease package metadata.
+
 ## 1.0.4-pre14
 
 - Keep the session sidebar and chat workspace on the canonical root dashboard, while `/dash` opens the account overview.
