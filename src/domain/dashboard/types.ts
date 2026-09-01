@@ -362,6 +362,8 @@ export interface DashboardDailyUsageCacheEntry {
 
 export interface DashboardAccountViewModel {
   id: string;
+  /** Last durable account-record change, used to order authenticated peer events. */
+  updatedAt?: number;
   displayName: string;
   email: string;
   authMode?: "chatgpt" | "oauth";

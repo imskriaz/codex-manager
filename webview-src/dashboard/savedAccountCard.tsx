@@ -35,6 +35,16 @@ export function resolveCompactIdentityBadge(
   return runningDeviceLabel ? { kind: "running-device", label: runningDeviceLabel } : undefined;
 }
 
+export function resolveCardPlanBadge(planTypeLabel?: string): "Free" | "Plus" | "Pro" | "Max" | undefined {
+  const normalized = planTypeLabel?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (normalized.includes("max")) return "Max";
+  if (normalized.includes("pro")) return "Pro";
+  if (normalized.includes("plus")) return "Plus";
+  if (normalized.includes("free")) return "Free";
+  return undefined;
+}
+
 /** A foreign claim needs the rescue explanation only while rescue is locked. */
 export function shouldOpenClaimPopover(runningOnOtherDevice: boolean, registryOverrideEnabled: boolean): boolean {
   return runningOnOtherDevice && !registryOverrideEnabled;
@@ -172,6 +182,7 @@ export function SavedAccountCard(props: {
     ? resolveRunningDeviceLabel(account.runningDeviceName ?? "")
     : undefined;
   const compactIdentityBadge = resolveCompactIdentityBadge(runningDeviceLabel);
+  const cardPlanBadge = resolveCardPlanBadge(account.planTypeLabel);
   const enablementToggleLabel =
     runningOnOtherDevice && !registryOverrideEnabled
       ? resolveClaimedToggleLabel(account.runningDeviceName ?? "", props.lang)
@@ -735,13 +746,13 @@ export function SavedAccountCard(props: {
                       <span class="saved-select-toggle-mark" aria-hidden="true"></span>
                     </button>
                     <span class="saved-title-text">{emailDisplay}</span>
-                  </h3>
-                  <div class="saved-meta">
-                    {compactIdentityBadge ? (
-                      <span class="pill saved-running-device" title={compactIdentityBadge.label}>
-                        {compactIdentityBadge.label}
+                    {cardPlanBadge ? (
+                      <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>
+                        {cardPlanBadge}
                       </span>
                     ) : null}
+                  </h3>
+                  <div class="saved-meta">
                     {account.switchQueued ? (
                       <button
                         class="pill warning saved-queued-badge"

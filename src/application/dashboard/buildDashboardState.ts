@@ -235,6 +235,7 @@ function mapAccount(
   return {
     quotaIssueKind: getQuotaIssueKind(account.quotaError),
     id: account.id,
+    updatedAt: account.updatedAt,
     displayName: account.accountName?.trim() ?? account.email,
     email: account.email,
     authMode: account.authMode ?? "chatgpt",

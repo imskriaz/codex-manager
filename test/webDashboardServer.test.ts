@@ -7,9 +7,11 @@ import {
   isCliSessionWatchPath,
   isTrustedWebDashboardOrigin,
   isWebDashboardPagePath,
+  mergeFreshPeerAccountStates,
   normalizeWebDashboardReturnPath,
   readDashboardRequestBody
 } from "../src/services/webDashboardServer";
+import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 import { normalizeCloudflaredDomain } from "../src/presentation/dashboard/settings";
 
 function createRequest(): http.IncomingMessage & EventEmitter {
@@ -17,6 +19,78 @@ function createRequest(): http.IncomingMessage & EventEmitter {
   request.setEncoding = vi.fn().mockReturnValue(request);
   return request;
 }
+
+function account(id: string, lastQuotaAt: number, percentage: number, enabled = true): DashboardAccountViewModel {
+  return {
+    id,
+    updatedAt: lastQuotaAt,
+    displayName: id,
+    email: `${id}@example.com`,
+    tags: [],
+    authProviderLabel: "",
+    accountStructureLabel: "",
+    workspaceLabel: "",
+    isTeamWorkspace: false,
+    subscriptionText: "Plus",
+    subscriptionTitle: "Plus",
+    addMethodLabel: "",
+    addedAtLabel: "",
+    isActive: false,
+    switchQueued: false,
+    isCurrentWindowAccount: false,
+    enabled,
+    queuePriority: false,
+    tokenRefreshEnabled: false,
+    canRefreshToken: true,
+    showInStatusBar: false,
+    canToggleStatusBar: true,
+    statusToggleTitle: "",
+    hasQuota402: false,
+    healthKind: "healthy",
+    healthLabel: "Healthy",
+    dismissedHealth: false,
+    lastQuotaAt,
+    metrics: [{ key: "hourly", label: "5h", percentage, visible: true }]
+  };
+}
+
+describe("mergeFreshPeerAccountStates", () => {
+  it("uses a newer peer quota while preserving local device state", () => {
+    const local = account("account-1", 100, 0, false);
+    local.isActive = true;
+    const peer = account("account-1", 200, 100, true);
+
+    peer.displayName = "Updated peer name";
+    const [merged] = mergeFreshPeerAccountStates([local], [{ accounts: [peer] }]);
+
+    expect(merged.lastQuotaAt).toBe(200);
+    expect(merged.metrics[0]?.percentage).toBe(100);
+    expect(merged.displayName).toBe("Updated peer name");
+    expect(merged.enabled).toBe(false);
+    expect(merged.isActive).toBe(true);
+  });
+
+  it("does not replace a newer local quota with stale peer data", () => {
+    const local = account("account-1", 300, 75);
+    const peer = account("account-1", 200, 100);
+
+    expect(mergeFreshPeerAccountStates([local], [{ accounts: [peer] }])[0]).toBe(local);
+  });
+
+  it("merges metadata and quota independently by their event timestamps", () => {
+    const local = account("account-1", 300, 75);
+    local.updatedAt = 100;
+    const peer = account("account-1", 200, 10);
+    peer.updatedAt = 400;
+    peer.displayName = "New metadata";
+
+    const [merged] = mergeFreshPeerAccountStates([local], [{ accounts: [peer] }]);
+
+    expect(merged.displayName).toBe("New metadata");
+    expect(merged.metrics[0]?.percentage).toBe(75);
+    expect(merged.lastQuotaAt).toBe(300);
+  });
+});
 
 describe("readDashboardRequestBody", () => {
   it("reads a request body within the configured limit", async () => {

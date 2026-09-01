@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "fs";
 import {
   resolveCardHealthReason,
+  resolveCardPlanBadge,
   resolveClaimPopoverText,
   resolveCompactIdentityBadge,
   resolvePrimaryAccountControl,
@@ -24,6 +25,17 @@ describe("saved account card presentation", () => {
     expect(resolveCompactIdentityBadge()).toBeUndefined();
   });
 
+  it("shows only supported plan badges beside the card email", () => {
+    expect(resolveCardPlanBadge("Free")).toBe("Free");
+    expect(resolveCardPlanBadge("ChatGPT Plus")).toBe("Plus");
+    expect(resolveCardPlanBadge("Pro 20x")).toBe("Pro");
+    expect(resolveCardPlanBadge("Max")).toBe("Max");
+    expect(resolveCardPlanBadge("Team")).toBeUndefined();
+
+    const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+    expect(source).toContain('class="pill plan saved-plan-badge"');
+  });
+
   it("shows the remote-PC label in both card layouts", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
@@ -39,9 +51,31 @@ describe("saved account card presentation", () => {
     });
   });
 
-  it("orders reset credits before subscription days remaining", () => {
+  it("keeps the computer label out of the card header", () => {
+    const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+    const cardView = source.slice(source.indexOf("saved-card saved-card-front"));
+    const headerEnd = cardView.indexOf('<div class="saved-progress">');
+
+    expect(cardView.slice(0, headerEnd)).not.toContain('class="pill saved-running-device"');
+    expect(cardView).toContain('class="saved-credits-line saved-running-device"');
+  });
+
+  it("orders reset, computer, and days remaining in the card footer", () => {
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(styles).toMatch(/\.saved-reset-badge\s*{[^}]*order:\s*1/s);
+    expect(styles).toMatch(/\.saved-credit-summary \.saved-reset-badge\s*{[^}]*order:\s*0/s);
+    expect(styles).toMatch(/\.saved-credit-summary \.saved-running-device\s*{[^}]*order:\s*1/s);
+    expect(styles).toMatch(/\.saved-subscription-remaining\s*{[^}]*order:\s*2/s);
+    expect(readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8")).toContain(
+      "saved-reset-credits-line saved-reset-badge"
+    );
+  });
+
+  it("keeps card footer metadata on one ellipsizing line", () => {
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(styles).toMatch(/\.saved-credit-summary\s*{[^}]*flex-wrap:\s*nowrap/s);
+    expect(styles).toMatch(/\.saved-credit-summary\s*{[^}]*overflow:\s*hidden/s);
+    expect(styles).toMatch(/\.saved-credit-summary \.saved-running-device\s*{[^}]*flex:\s*1 1 auto/s);
+    expect(styles).toMatch(/\.saved-credit-summary \.saved-credits-line\s*{[^}]*text-overflow:\s*ellipsis/s);
   });
 
   it("keeps compact card metadata regular-weight with tight padding", () => {

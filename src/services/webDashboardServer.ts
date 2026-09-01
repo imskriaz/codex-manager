@@ -10,7 +10,12 @@ import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
 import { buildDashboardState } from "../application/dashboard/buildDashboardState";
 import { scheduleExtensionHostReload } from "../application/accounts/switchEffects";
-import type { DashboardClientMessage, DashboardHostMessage, DashboardPeerView } from "../domain/dashboard/types";
+import type {
+  DashboardAccountViewModel,
+  DashboardClientMessage,
+  DashboardHostMessage,
+  DashboardPeerView
+} from "../domain/dashboard/types";
 import type { DashboardState } from "../domain/dashboard/types";
 import type { DashboardActionPayload } from "../domain/dashboard/types";
 import { ExtensionSettingsStore, getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
@@ -118,6 +123,78 @@ type PeerAggregateMessage = {
   peers: PeerSessionMessage[];
 };
 type LocalPeerState = Pick<PeerSessionMessage, "sessions" | "accounts" | "enablementRegistry">;
+
+/**
+ * Display the freshest signed account events known by any connected peer while
+ * preserving device-local account state such as enablement and active status.
+ */
+export function mergeFreshPeerAccountStates(
+  localAccounts: DashboardAccountViewModel[],
+  peers: Iterable<Pick<PeerSessionMessage, "accounts">>
+): DashboardAccountViewModel[] {
+  const freshestStateById = new Map<string, DashboardAccountViewModel>();
+  const freshestQuotaById = new Map<string, DashboardAccountViewModel>();
+  for (const peer of peers) {
+    for (const account of peer.accounts ?? []) {
+      if (typeof account.updatedAt === "number" && Number.isFinite(account.updatedAt)) {
+        const current = freshestStateById.get(account.id);
+        if (!current || account.updatedAt > (current.updatedAt ?? 0)) freshestStateById.set(account.id, account);
+      }
+      if (typeof account.lastQuotaAt === "number" && Number.isFinite(account.lastQuotaAt)) {
+        const current = freshestQuotaById.get(account.id);
+        if (!current || account.lastQuotaAt > (current.lastQuotaAt ?? 0)) freshestQuotaById.set(account.id, account);
+      }
+    }
+  }
+
+  return localAccounts.map((local) => {
+    const peerState = freshestStateById.get(local.id);
+    const peerQuota = freshestQuotaById.get(local.id);
+    let merged = local;
+    if (peerState && (peerState.updatedAt ?? 0) > (local.updatedAt ?? 0)) {
+      merged = {
+        ...peerState,
+        isActive: local.isActive,
+        switchQueued: local.switchQueued,
+        isCurrentWindowAccount: local.isCurrentWindowAccount,
+        enabled: local.enabled,
+        queuePriority: local.queuePriority,
+        tokenRefreshEnabled: local.tokenRefreshEnabled,
+        showInStatusBar: local.showInStatusBar,
+        canToggleStatusBar: local.canToggleStatusBar,
+        statusToggleTitle: local.statusToggleTitle
+      };
+    }
+    if (!peerQuota || (peerQuota.lastQuotaAt ?? 0) <= (local.lastQuotaAt ?? 0)) {
+      return merged === local ? local : copyQuotaPresentation(local, merged);
+    }
+    return copyQuotaPresentation(peerQuota, merged);
+  });
+}
+
+function copyQuotaPresentation(source: DashboardAccountViewModel, target: DashboardAccountViewModel): DashboardAccountViewModel {
+  return {
+    ...target,
+    subscriptionText: source.subscriptionText,
+    subscriptionTitle: source.subscriptionTitle,
+    subscriptionColor: source.subscriptionColor,
+    subscriptionExpiresAt: source.subscriptionExpiresAt,
+    planTypeLabel: source.planTypeLabel,
+    creditsText: source.creditsText,
+    creditsBalance: source.creditsBalance,
+    creditsUnlimited: source.creditsUnlimited,
+    hasQuota402: source.hasQuota402,
+    quotaIssueKind: source.quotaIssueKind,
+    healthKind: source.healthKind,
+    healthLabel: source.healthLabel,
+    healthMessage: source.healthMessage,
+    healthIssueKey: source.healthIssueKey,
+    lastQuotaAt: source.lastQuotaAt,
+    resetCreditsAvailable: source.resetCreditsAvailable,
+    resetCreditsNextExpiresAt: source.resetCreditsNextExpiresAt,
+    metrics: source.metrics.map((metric) => ({ ...metric }))
+  };
+}
 
 function peerSessionSignaturePayload(message: Omit<PeerSessionMessage, "signature">): string {
   return JSON.stringify({
@@ -1855,12 +1932,15 @@ export class WebDashboardServer implements vscode.Disposable {
       await this.announcements.getState(this.getAnnouncementOptions()),
       await this.getConnectedPeers()
     );
+    const peerSessions = [...this.peerSessions.values()];
+    const accounts = mergeFreshPeerAccountStates(state.accounts, peerSessions);
     return {
       ...state,
-      usageHistory: await appendDashboardUsageSnapshot(this.context, state),
+      accounts,
+      usageHistory: await appendDashboardUsageSnapshot(this.context, { ...state, accounts }),
       dailyUsageCache: readDashboardDailyUsageCache(this.context),
       peerAccounts: Object.fromEntries(
-        [...this.peerSessions.values()].map((peer) => [peer.deviceId, peer.accounts ?? []])
+        peerSessions.map((peer) => [peer.deviceId, peer.accounts ?? []])
       )
     };
   }

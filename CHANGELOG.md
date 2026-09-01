@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.7
+
+- Apply the freshest account changes and quota snapshots reported by authenticated WebSocket peers while preserving each PC's local account state.
+- Refine saved-account cards with compact plan badges and a single-line footer for reset, computer, and subscription details.
+
 ## 1.0.6
 
 - Pause active-session transcript polling while the dashboard is hidden, then refresh immediately when it becomes visible again.
