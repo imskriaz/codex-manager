@@ -36,6 +36,18 @@ describe("saved account card presentation", () => {
     expect(source).toContain('class="pill plan saved-plan-badge"');
   });
 
+  it("keeps the grid-card account name and badges on one row with current before the plan", () => {
+    const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
+    const cardView = source.slice(source.indexOf("saved-card saved-card-front"));
+    const header = cardView.slice(0, cardView.indexOf('<div class="saved-top-actions"'));
+
+    expect(header).not.toContain('<div class="saved-meta">');
+    expect(header.indexOf('{copy.current}')).toBeLessThan(header.indexOf("{cardPlanBadge}"));
+    expect(styles).toMatch(/\.saved-identity-line h3\s*{[^}]*flex-wrap:\s*nowrap/s);
+    expect(styles).toMatch(/\.saved-identity-line h3\s*{[^}]*overflow:\s*hidden/s);
+  });
+
   it("shows the remote-PC label in both card layouts", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");

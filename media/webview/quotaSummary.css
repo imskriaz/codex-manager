@@ -10568,6 +10568,12 @@ html[data-theme="dark"] .cli-terminal-panel {
   min-width: 72px;
   font-size: 12px;
   line-height: 1.2;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.saved-identity-line h3 > :not(.saved-title-text) {
+  flex: none;
 }
 
 .saved-identity-line .saved-meta {

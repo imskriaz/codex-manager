@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.8
+
+- Keep each grid-card account name and its badges on one header row, with the current-account badge before the account-type badge.
+
 ## 1.0.7
 
 - Apply the freshest account changes and quota snapshots reported by authenticated WebSocket peers while preserving each PC's local account state.

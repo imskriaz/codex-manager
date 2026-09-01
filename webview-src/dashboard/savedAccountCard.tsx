@@ -746,13 +746,6 @@ export function SavedAccountCard(props: {
                       <span class="saved-select-toggle-mark" aria-hidden="true"></span>
                     </button>
                     <span class="saved-title-text">{emailDisplay}</span>
-                    {cardPlanBadge ? (
-                      <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>
-                        {cardPlanBadge}
-                      </span>
-                    ) : null}
-                  </h3>
-                  <div class="saved-meta">
                     {account.switchQueued ? (
                       <button
                         class="pill warning saved-queued-badge"
@@ -773,9 +766,14 @@ export function SavedAccountCard(props: {
                     ) : account.isActive ? (
                       <span class="pill active">{copy.current}</span>
                     ) : null}
+                    {cardPlanBadge ? (
+                      <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>
+                        {cardPlanBadge}
+                      </span>
+                    ) : null}
                     {renderHealthPill(account)}
                     {renderTagList(account.tags)}
-                  </div>
+                  </h3>
                 </div>
                 {hasErrorHealth ? (
                   <div class={`saved-health-reason is-${account.healthKind}`} role="status" title={healthReason}>
