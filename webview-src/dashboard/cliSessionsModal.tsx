@@ -891,36 +891,45 @@ export function consolidateSessionMessages(messages: DashboardCliSessionMessage[
   const result: ConsolidatedSessionItem[] = [];
   let turn: DashboardCliSessionMessage[] = [];
   const flushTurn = (): void => {
-    let liveIndex = -1;
+    let liveReasoningIndex = -1;
     for (let index = turn.length - 1; index >= 0; index -= 1) {
-      if (isTurnActivity(turn[index]!) && turn[index]!.status === "inProgress") {
-        liveIndex = index;
+      if (turn[index]!.kind === "reasoning" && turn[index]!.status === "inProgress") {
+        liveReasoningIndex = index;
         break;
       }
     }
+    const liveActivityIndexes = new Set(turn.flatMap((message, index) =>
+      isGroupableTurnActivity(message) && message.status === "inProgress" ? [index] : []
+    ));
 
     const completed = turn.flatMap((message, index) => {
-      if (!isGroupableTurnActivity(message) || index === liveIndex) return [];
-      return [message.status === "inProgress" ? { ...message, status: "completed" as const } : message];
+      if (!isGroupableTurnActivity(message) || liveActivityIndexes.has(index)) return [];
+      return [message];
     });
     let groupInserted = false;
-    for (const [index, message] of turn.entries()) {
+    for (const message of turn) {
       if (isGroupableTurnActivity(message)) {
         if (!groupInserted && completed.length > 0) {
           result.push({ id: `activity-group-${completed[0]!.id}`, messages: completed });
           groupInserted = true;
         }
-        if (index === liveIndex) continue;
         continue;
       }
       if (message.kind === "image") {
-        if (index !== liveIndex) result.push(message);
+        if (message.status !== "inProgress") result.push(message);
         continue;
       }
       if (isTurnActivity(message)) continue;
       result.push(message);
     }
-    if (liveIndex >= 0) result.push(turn[liveIndex]!);
+    // Keep every live tool visible. Multiple tools can run concurrently; the
+    // former single-index approach silently converted all but the newest one
+    // into completed activity. Reasoning remains a single rolling live item.
+    for (const [index, message] of turn.entries()) {
+      if (liveActivityIndexes.has(index) || index === liveReasoningIndex || (message.kind === "image" && message.status === "inProgress")) {
+        result.push(message);
+      }
+    }
     turn = [];
   };
   for (const message of messages) {

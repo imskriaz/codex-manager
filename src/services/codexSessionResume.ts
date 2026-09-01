@@ -789,8 +789,11 @@ function parseAppServerThreadItem(
       : undefined;
   }
   if (type === "agentMessage") {
-    const text = (typeof item["text"] === "string" ? item["text"] : readHumanText(item["content"]) ?? "").trim();
-    return text ? { id, kind: "message", role: "assistant", text: text.slice(0, MAX_SESSION_MESSAGE_CHARS), timestamp } : undefined;
+    const content = parseUserInputs(item["content"]);
+    const text = (typeof item["text"] === "string" ? item["text"] : (content.text || readHumanText(item["content"]) || "")).trim();
+    return text || content.images.length
+      ? { id, kind: "message", role: "assistant", text: text.slice(0, MAX_SESSION_MESSAGE_CHARS), ...(content.images.length ? { images: content.images } : {}), timestamp }
+      : undefined;
   }
   if (type === "reasoning") {
     const summary = readStringArray(item["summary"]);
@@ -824,14 +827,20 @@ function parseAppServerThreadItem(
   if (type === "customToolCall" || type === "custom_tool_call") {
     const name = typeof item["name"] === "string" ? item["name"] : "tool";
     const input = typeof item["input"] === "string" ? item["input"].trim() : safeDisplayJson(item["input"]);
-    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${name}` : `Used ${name}`, subtitle: name, text: status === "inProgress" ? `${name} is running.` : `${name} completed.`, arguments: input, debug: safeDisplayJson(item), status, timestamp };
+    const images = readImageSources(item);
+    const error = readHumanError(item["error"]);
+    if (images.length) return { id, kind: "image", title: "Generated image", text: `${images.length} image${images.length === 1 ? "" : "s"} generated.`, images: images.map((src) => ({ src, alt: "Generated image" })), status: error ? "failed" : status, timestamp };
+    const result = readHumanText(item["result"] ?? item["output"]);
+    const failed = Boolean(error) || status === "failed";
+    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${name}` : failed ? `${name} failed` : `Used ${name}`, subtitle: name, text: status === "inProgress" ? `${name} is running.` : error ?? result ?? `${name} completed.`, arguments: input, result: error ?? result, debug: safeDisplayJson(item), status: failed ? "failed" : status, timestamp };
   }
   if (type === "mcpToolCall" || type === "dynamicToolCall") {
     const server = typeof item["server"] === "string" ? item["server"] : typeof item["namespace"] === "string" ? item["namespace"] : "Tool";
     const tool = typeof item["tool"] === "string" ? item["tool"] : "call";
     const error = readHumanError(item["error"]);
     const debug = safeDisplayJson({ arguments: item["arguments"], error: item["error"], result: item["result"] ?? item["contentItems"] ?? item["success"] });
-    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${tool}` : error ? `${tool} failed` : `Used ${tool}`, subtitle: server, text: error ?? `${server} used ${tool}.`, result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]), debug, durationMs, status: error ? "failed" : status, timestamp };
+    const failed = Boolean(error) || status === "failed";
+    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${tool}` : failed ? `${tool} failed` : `Used ${tool}`, subtitle: server, text: error ?? `${server} used ${tool}.`, result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]), debug, durationMs, status: failed ? "failed" : status, timestamp };
   }
   if (type === "collabToolCall" || type === "collabAgentToolCall" || type === "subAgentActivity") {
     const tool = typeof item["tool"] === "string" ? item["tool"] : typeof item["kind"] === "string" ? item["kind"] : "Agent activity";
@@ -902,6 +911,16 @@ function parseUserInputs(value: unknown): { text: string; images: Array<{ src: s
 
 function readSafeImageSource(item: Record<string, unknown>): string | undefined {
   const nested = item["image"] && typeof item["image"] === "object" ? item["image"] as Record<string, unknown> : undefined;
+  // MCP and Responses image content commonly carries raw base64 in `data`
+  // alongside an image MIME type rather than a complete data URL.
+  const rawData = item["data"];
+  const rawMime = typeof item["mimeType"] === "string" ? item["mimeType"].trim().toLowerCase() : "";
+  if (typeof rawData === "string" && rawMime.startsWith("image/") && /^[a-z0-9+/=\r\n]+$/i.test(rawData.trim())) {
+    const compact = rawData.replace(/\s+/g, "");
+    if (compact.length > 0 && compact.length <= Math.ceil(MAX_SESSION_IMAGE_BYTES / 3) * 4) {
+      return `data:${rawMime};base64,${compact}`;
+    }
+  }
   for (const candidate of [item["image_url"], item["imageUrl"], item["url"], item["data"], item["path"], item["output_path"], nested?.["url"], nested?.["path"]]) {
     if (typeof candidate !== "string") continue;
     const value = candidate.trim();
@@ -1036,6 +1055,23 @@ function readHumanText(value: unknown): string | undefined {
   if (typeof candidate["text"] === "string" && candidate["text"].trim()) return candidate["text"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
   if (candidate["content"] !== undefined) return readHumanText(candidate["content"]);
   return readHumanError(value);
+}
+
+function isLegacyToolOutputFailure(value: unknown): boolean {
+  if (!value) return false;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (normalizeCliItemStatus(record["status"]) === "failed" || record["error"] !== undefined) return true;
+    const type = typeof record["type"] === "string" ? record["type"].toLowerCase() : "";
+    if (type.includes("error") || type.includes("failure")) return true;
+    return false;
+  }
+  if (typeof value !== "string") return false;
+  const text = value.trim();
+  return /^(?:execution\s+)?error\s*:/i.test(text)
+    || /^error\b/i.test(text)
+    || /^tool\s+(?:call\s+)?failed\b/i.test(text)
+    || /^command\s+failed\b/i.test(text);
 }
 
 function normalizeCliItemStatus(value: unknown): DashboardCliSessionMessage["status"] {
@@ -1900,8 +1936,11 @@ function mergeCliTranscriptMessage(messages: DashboardCliSessionMessage[], messa
     const images = [...(existing.images ?? [])];
     for (const image of message.images ?? []) if (!images.some((candidate) => candidate.src === image.src)) images.push(image);
     const keepConcreteActivity = existing.kind && existing.kind !== "tool-call" && message.kind === "tool-call";
+    const terminalStatus = existing.status === "failed" || existing.status === "declined" || existing.status === "interrupted"
+      ? existing.status
+      : message.status;
     messages[existingIndex] = keepConcreteActivity
-      ? { ...message, ...existing, id: existing.id, status: message.status, result: message.result ?? existing.result, debug: existing.debug ?? message.debug, ...(images.length ? { images: images.slice(0, 20) } : {}) }
+      ? { ...message, ...existing, id: existing.id, status: terminalStatus, result: message.result ?? existing.result, debug: existing.debug ?? message.debug, ...(images.length ? { images: images.slice(0, 20) } : {}) }
       : { ...existing, ...message, id: existing.id, ...(images.length ? { images: images.slice(0, 20) } : {}) };
     return false;
   }
@@ -1955,11 +1994,13 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
       const callId = typeof payload["call_id"] === "string" ? payload["call_id"] : typeof payload["id"] === "string" ? payload["id"] : `${sequence}-tool`;
       const output = payload["output"];
       const images = readImageSources({ output });
+      const outputStatus = normalizeCliItemStatus(payload["status"]);
+      const failure = outputStatus === "failed" || Boolean(payload["error"]) || isLegacyToolOutputFailure(output);
       if (images.length) {
-        return { id: callId, kind: "image", title: "Generated image", text: `${images.length} image${images.length === 1 ? "" : "s"} generated.`, images: images.map((src) => ({ src, alt: "Generated image" })), status: "completed", timestamp };
+        return { id: callId, kind: "image", title: "Generated image", text: `${images.length} image${images.length === 1 ? "" : "s"} generated.`, images: images.map((src) => ({ src, alt: "Generated image" })), status: failure ? "failed" : "completed", timestamp };
       }
       const result = readHumanText(output) || "Tool completed.";
-      return { id: callId, kind: "tool-call", title: "Tool completed", text: result.slice(0, MAX_SESSION_MESSAGE_CHARS), result: result.slice(0, MAX_SESSION_MESSAGE_CHARS), status: "completed", timestamp };
+      return { id: callId, kind: "tool-call", title: failure ? "Tool failed" : "Tool completed", text: result.slice(0, MAX_SESSION_MESSAGE_CHARS), result: result.slice(0, MAX_SESSION_MESSAGE_CHARS), status: failure ? "failed" : "completed", timestamp };
     }
     const role = payload?.["role"];
     if (payload?.["type"] !== "message" || (role !== "user" && role !== "assistant")) return undefined;
@@ -1975,7 +2016,7 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
       if ((content.type === "input_text" || content.type === "output_text") && typeof content.text === "string") {
         const text = content.text.trim();
         if (text) parts.push(text);
-      } else if (content.type === "input_image") {
+      } else if (content.type === "input_image" || content.type === "output_image" || content.type === "image") {
         const src = readSafeImageSource(content as Record<string, unknown>);
         if (src) images.push({ src, alt: "Attached image" });
         else parts.push("[Image unavailable]");

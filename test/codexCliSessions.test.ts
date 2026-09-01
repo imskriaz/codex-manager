@@ -191,6 +191,18 @@ describe("Codex session integration", () => {
     expect(completed).toMatchObject([{ id: "call-2", kind: "image", title: "Generated image", images: [{ src: "data:image/png;base64,AA==" }] }]);
   });
 
+  it("decodes raw MCP image content and preserves tool failures", () => {
+    const image = parseCodexAppServerThreadItems({
+      thread: { turns: [{ status: "completed", items: [{ type: "customToolCall", id: "image-call", name: "image", output: { type: "image", mimeType: "image/png", data: "AA==" } }] }] }
+    });
+    expect(image).toMatchObject([{ id: "image-call", kind: "image", images: [{ src: "data:image/png;base64,AA==" }] }]);
+
+    const failed = parseCodexAppServerThreadItems({
+      thread: { turns: [{ status: "completed", items: [{ type: "customToolCall", id: "failed-call", name: "exec", status: "failed", error: { message: "permission denied" } }] }] }
+    });
+    expect(failed).toMatchObject([{ id: "failed-call", kind: "tool-call", status: "failed", title: "exec failed" }]);
+  });
+
   it("keeps historical child activities completed when only the turn failed", () => {
     const items = parseCodexAppServerThreadItems({
       thread: {
@@ -285,6 +297,19 @@ describe("Codex session integration", () => {
     await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "call-1", kind: "tool-call", status: "inProgress", title: "Using shell_command" }]);
     await writeFile(transcript, "\n" + JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:01Z", payload: { type: "function_call_output", call_id: "call-1", output: "42 passed" } }), { flag: "a" });
     await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "call-1", kind: "tool-call", status: "completed", result: "42 passed" }]);
+  });
+
+  it("renders legacy tool output errors as failed", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-function-error-"));
+    roots.push(root);
+    const sessionDirectory = path.join(root, "sessions", "2026", "08", "30");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Function error", updated_at: "2026-08-30T10:00:00Z" }));
+    await writeFile(path.join(sessionDirectory, `rollout-${sessionId}.jsonl`), [
+      JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:00Z", payload: { type: "function_call", call_id: "failed-1", name: "exec", arguments: "npm test" } }),
+      JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:01Z", payload: { type: "function_call_output", call_id: "failed-1", output: "execution error: permission denied" } })
+    ].join("\n"));
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "failed-1", kind: "tool-call", status: "failed", title: "Tool failed" }]);
   });
 
   it("does not double-count a custom call that also emits a concrete command activity", async () => {

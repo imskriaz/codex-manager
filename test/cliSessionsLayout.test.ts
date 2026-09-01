@@ -407,4 +407,18 @@ describe("sessions sidebar layout", () => {
     expect(completed).toHaveLength(2);
     expect(completed[1]).toMatchObject({ messages: [{ id: "command-1" }] });
   });
+
+  it("keeps concurrent running tools visible instead of collapsing older calls", () => {
+    const items = consolidateSessionMessages([
+      { id: "user-1", kind: "message", role: "user", text: "Run both." },
+      { id: "tool-1", kind: "tool-call", status: "inProgress", text: "search is running." },
+      { id: "tool-2", kind: "tool-call", status: "inProgress", text: "exec is running." }
+    ]);
+
+    expect(items).toMatchObject([
+      { id: "user-1" },
+      { id: "tool-1", status: "inProgress" },
+      { id: "tool-2", status: "inProgress" }
+    ]);
+  });
 });
