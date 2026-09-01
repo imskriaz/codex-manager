@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.6
+
+- Pause active-session transcript polling while the dashboard is hidden, then refresh immediately when it becomes visible again.
+- Prevent disposed quota-reset schedulers from recreating timers or performing stale background work.
+- Improve account status filtering, quota badge presentation, and reset-credit styling.
+
 ## 1.0.5
 
 - Add a Claimed account filter after Disabled and hide status filters whose count is zero.

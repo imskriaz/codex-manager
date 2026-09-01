@@ -423,4 +423,12 @@ describe("sessions sidebar layout", () => {
       { id: "tool-2", status: "inProgress" }
     ]);
   });
+
+  it("pauses running-session polling while the dashboard is hidden", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+
+    expect(main).toContain('document.visibilityState === "visible"');
+    expect(main).toContain('document.addEventListener("visibilitychange", onVisibilityChange)');
+    expect(main).toContain('document.removeEventListener("visibilitychange", onVisibilityChange)');
+  });
 });

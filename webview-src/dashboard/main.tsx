@@ -833,9 +833,18 @@ function App() {
     // Filesystem notifications are not guaranteed on every platform or for
     // every Codex writer. Keep the selected transcript fresh while a turn is
     // active; requestCliSessionMessages throttles duplicate requests.
-    const refresh = (): void => requestCliSessionMessages(session.id, session.deviceId);
+    const refresh = (): void => {
+      if (document.visibilityState === "visible") requestCliSessionMessages(session.id, session.deviceId);
+    };
     const timer = window.setInterval(refresh, 2_000);
-    return () => window.clearInterval(timer);
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [requestCliSessionMessages, selectedCliSession?.deviceId, selectedCliSession?.id, selectedCliSession?.status]);
 
   useEffect(() => {
