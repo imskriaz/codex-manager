@@ -789,7 +789,7 @@ function parseAppServerThreadItem(
       : undefined;
   }
   if (type === "agentMessage") {
-    const text = typeof item["text"] === "string" ? item["text"].trim() : "";
+    const text = (typeof item["text"] === "string" ? item["text"] : readHumanText(item["content"]) ?? "").trim();
     return text ? { id, kind: "message", role: "assistant", text: text.slice(0, MAX_SESSION_MESSAGE_CHARS), timestamp } : undefined;
   }
   if (type === "reasoning") {
@@ -820,6 +820,11 @@ function parseAppServerThreadItem(
   if (type === "fileChange") {
     const changes = parseCliFileChanges(item["changes"]);
     return { id, kind: "file-change", title: status === "inProgress" ? "Editing files" : `Edited ${changes.length} ${changes.length === 1 ? "file" : "files"}`, text: changes.map((change) => change.path).join("\n") || "File changes", changes, status, timestamp };
+  }
+  if (type === "customToolCall" || type === "custom_tool_call") {
+    const name = typeof item["name"] === "string" ? item["name"] : "tool";
+    const input = typeof item["input"] === "string" ? item["input"].trim() : safeDisplayJson(item["input"]);
+    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${name}` : `Used ${name}`, subtitle: name, text: status === "inProgress" ? `${name} is running.` : `${name} completed.`, arguments: input, debug: safeDisplayJson(item), status, timestamp };
   }
   if (type === "mcpToolCall" || type === "dynamicToolCall") {
     const server = typeof item["server"] === "string" ? item["server"] : typeof item["namespace"] === "string" ? item["namespace"] : "Tool";
@@ -885,8 +890,8 @@ function parseUserInputs(value: unknown): { text: string; images: Array<{ src: s
   for (const entry of value) {
     if (!entry || typeof entry !== "object") continue;
     const item = entry as Record<string, unknown>;
-    if (item["type"] === "text" && typeof item["text"] === "string") parts.push(item["text"]);
-    else if (item["type"] === "image" || item["type"] === "localImage") {
+    if ((item["type"] === "text" || item["type"] === "Text" || item["type"] === "input_text" || item["type"] === "output_text") && typeof item["text"] === "string") parts.push(item["text"]);
+    else if (item["type"] === "image" || item["type"] === "Image" || item["type"] === "localImage" || item["type"] === "input_image" || item["type"] === "output_image") {
       const src = readSafeImageSource(item);
       if (src) images.push({ src, alt: typeof item["alt"] === "string" ? item["alt"].slice(0, 200) : "Attached image" });
       else parts.push("[Image unavailable]");
@@ -907,23 +912,23 @@ function readSafeImageSource(item: Record<string, unknown>): string | undefined 
 
 function readImageSources(item: Record<string, unknown>): string[] {
   const sources: string[] = [];
+  const visited = new Set<unknown>();
   const add = (value: unknown): void => {
     if (typeof value !== "string") return;
     const source = readSafeImageSource({ url: value });
     if (source && !sources.includes(source)) sources.push(source);
   };
-  for (const key of ["image_url", "imageUrl", "url", "data", "path", "output_path", "outputPath"]) add(item[key]);
-  for (const key of ["image", "result", "output"]) {
-    const nested = item[key];
-    if (nested && typeof nested === "object" && !Array.isArray(nested)) add(readSafeImageSource(nested as Record<string, unknown>));
-  }
-  for (const key of ["contentItems", "content_items", "images"]) {
-    const values = item[key];
-    if (Array.isArray(values)) for (const value of values) {
-      if (value && typeof value === "object") add(readSafeImageSource(value as Record<string, unknown>));
-      else add(value);
-    }
-  }
+  const visit = (value: unknown, depth = 0): void => {
+    if (depth > 4 || sources.length >= 20 || value === null || value === undefined) return;
+    if (typeof value === "string") { add(value); return; }
+    if (typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    if (Array.isArray(value)) { for (const entry of value) visit(entry, depth + 1); return; }
+    const record = value as Record<string, unknown>;
+    add(readSafeImageSource(record));
+    for (const key of ["image", "images", "result", "output", "content", "contentItems", "content_items", "data"]) visit(record[key], depth + 1);
+  };
+  visit(item);
   return sources.slice(0, 20);
 }
 
@@ -1021,9 +1026,15 @@ function readHumanError(value: unknown): string | undefined {
 
 function readHumanText(value: unknown): string | undefined {
   if (typeof value === "string" && value.trim()) return value.trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
+  if (Array.isArray(value)) {
+    const parts = value.map((entry) => readHumanText(entry)).filter((entry): entry is string => Boolean(entry));
+    return parts.length ? parts.join("\n\n").slice(0, MAX_SESSION_MESSAGE_CHARS) : undefined;
+  }
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
   if (typeof candidate["message"] === "string" && candidate["message"].trim()) return candidate["message"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
+  if (typeof candidate["text"] === "string" && candidate["text"].trim()) return candidate["text"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
+  if (candidate["content"] !== undefined) return readHumanText(candidate["content"]);
   return readHumanError(value);
 }
 
@@ -1869,11 +1880,29 @@ function mergeCliTranscriptMessage(messages: DashboardCliSessionMessage[], messa
   // item_started followed by item_completed). Replace the earlier snapshot
   // in place so the workspace shows the live command/reasoning without
   // duplicating it when the final result arrives.
-  const existingIndex = message.kind && message.kind !== "message"
-    ? messages.findIndex((candidate) => candidate.id === message.id && candidate.kind === message.kind)
+  let existingIndex = message.kind && message.kind !== "message"
+    ? messages.findIndex((candidate) => candidate.id === message.id && candidate.kind !== "message" && (candidate.kind === message.kind || message.kind === "image" || message.kind === "tool-call"))
     : -1;
+  if (existingIndex < 0 && message.kind && message.kind !== "message" && message.kind !== "reasoning" && message.kind !== "tool-call") {
+    for (let index = messages.length - 1; index >= Math.max(0, messages.length - 2); index -= 1) {
+      const candidate = messages[index]!;
+      if (candidate.kind === "tool-call" && candidate.status === "inProgress") { existingIndex = index; break; }
+    }
+  }
+  if (existingIndex < 0 && (!message.kind || message.kind === "message")) {
+    for (let index = messages.length - 1; index >= Math.max(0, messages.length - 3); index -= 1) {
+      const candidate = messages[index]!;
+      if (candidate.role === message.role && candidate.text.trim() === message.text.trim()) { existingIndex = index; break; }
+    }
+  }
   if (existingIndex >= 0) {
-    messages[existingIndex] = message;
+    const existing = messages[existingIndex]!;
+    const images = [...(existing.images ?? [])];
+    for (const image of message.images ?? []) if (!images.some((candidate) => candidate.src === image.src)) images.push(image);
+    const keepConcreteActivity = existing.kind && existing.kind !== "tool-call" && message.kind === "tool-call";
+    messages[existingIndex] = keepConcreteActivity
+      ? { ...message, ...existing, id: existing.id, status: message.status, result: message.result ?? existing.result, debug: existing.debug ?? message.debug, ...(images.length ? { images: images.slice(0, 20) } : {}) }
+      : { ...existing, ...message, id: existing.id, ...(images.length ? { images: images.slice(0, 20) } : {}) };
     return false;
   }
   messages.push(message);
@@ -1889,6 +1918,9 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     };
     const timestamp = typeof value.timestamp === "string" ? normalizeTimestamp(value.timestamp) : undefined;
     const eventPayload = value.type === "event_msg" ? value.payload : undefined;
+    if (eventPayload?.["type"] === "user_message") {
+      return parsePersistedUserMessage(eventPayload, `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "user"}`, timestamp);
+    }
     if (eventPayload && ["item_started", "item_updated", "item_completed"].includes(String(eventPayload["type"]))) {
       const item = normalizePersistedActivity(eventPayload["item"]);
       const activityTimestamp = typeof value.timestamp === "string" ? value.timestamp : "activity";
@@ -1902,6 +1934,33 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
       return parseAppServerThreadItem(item, `${sequence}-${activityTimestamp}`, status, timestamp);
     }
     const payload = value.type === "response_item" ? value.payload : undefined;
+    if (payload?.["type"] === "custom_tool_call" || payload?.["type"] === "function_call" || payload?.["type"] === "tool_search_call") {
+      const callId = typeof payload["call_id"] === "string" ? payload["call_id"] : typeof payload["id"] === "string" ? payload["id"] : `${sequence}-tool`;
+      const name = typeof payload["name"] === "string" ? payload["name"] : "tool";
+      const rawInput = payload["input"] ?? payload["arguments"];
+      const input = typeof rawInput === "string" ? rawInput.trim() : safeDisplayJson(rawInput);
+      return {
+        id: callId,
+        kind: "tool-call",
+        title: `Using ${name}`,
+        subtitle: name,
+        text: input ? `${name} is running.` : `${name} is running…`,
+        arguments: input,
+        debug: safeDisplayJson({ name, input: rawInput, callId }),
+        status: "inProgress",
+        timestamp
+      };
+    }
+    if (payload?.["type"] === "custom_tool_call_output" || payload?.["type"] === "function_call_output" || payload?.["type"] === "tool_search_output") {
+      const callId = typeof payload["call_id"] === "string" ? payload["call_id"] : typeof payload["id"] === "string" ? payload["id"] : `${sequence}-tool`;
+      const output = payload["output"];
+      const images = readImageSources({ output });
+      if (images.length) {
+        return { id: callId, kind: "image", title: "Generated image", text: `${images.length} image${images.length === 1 ? "" : "s"} generated.`, images: images.map((src) => ({ src, alt: "Generated image" })), status: "completed", timestamp };
+      }
+      const result = readHumanText(output) || "Tool completed.";
+      return { id: callId, kind: "tool-call", title: "Tool completed", text: result.slice(0, MAX_SESSION_MESSAGE_CHARS), result: result.slice(0, MAX_SESSION_MESSAGE_CHARS), status: "completed", timestamp };
+    }
     const role = payload?.["role"];
     if (payload?.["type"] !== "message" || (role !== "user" && role !== "assistant")) return undefined;
     if (role === "assistant" && payload["phase"] && payload["phase"] !== "commentary" && payload["phase"] !== "final_answer") {
@@ -1924,6 +1983,7 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     }
     const text = parts.join("\n\n").trim();
     if (!text && images.length === 0) return undefined;
+    if (role === "user" && isInternalSessionContext(text, payload)) return undefined;
     return {
       id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "message"}`,
       role,
@@ -1934,6 +1994,35 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
   } catch {
     return undefined;
   }
+}
+
+function isInternalSessionContext(text: string, payload: Record<string, unknown>): boolean {
+  const metadata = payload["internal_chat_message_metadata_passthrough"];
+  if (metadata && typeof metadata === "object") {
+    const kinds = (metadata as Record<string, unknown>)["content_item_kinds"];
+    if (Array.isArray(kinds) && kinds.length > 0 && !kinds.includes("user.text") && !kinds.includes("user.image")) return true;
+  }
+  const trimmed = text.trimStart();
+  return trimmed.startsWith("<recommended_plugins>")
+    || trimmed.startsWith("<skills_instructions>")
+    || trimmed.startsWith("<environment_context>")
+    || trimmed.startsWith("The following is the Codex agent history whose request action you are assessing.")
+    || trimmed.startsWith("The following is the Codex agent history added since your last approval assessment.");
+}
+
+function parsePersistedUserMessage(payload: Record<string, unknown>, id: string, timestamp?: string): DashboardCliSessionMessage | undefined {
+  const item = payload["item"] && typeof payload["item"] === "object" ? payload["item"] as Record<string, unknown> : payload;
+  const content = parseUserInputs(item["content"] ?? payload["content"]);
+  const directImages: unknown[] = [
+    ...(Array.isArray(payload["images"]) ? payload["images"] as unknown[] : []),
+    ...(Array.isArray(payload["local_images"]) ? payload["local_images"] as unknown[] : [])
+  ];
+  for (const image of directImages) {
+    const src = typeof image === "string" ? readSafeImageSource({ url: image }) : image && typeof image === "object" ? readSafeImageSource(image as Record<string, unknown>) : undefined;
+    if (src && !content.images.some((candidate) => candidate.src === src)) content.images.push({ src, alt: "Attached image" });
+  }
+  const text = content.text || (typeof payload["message"] === "string" ? payload["message"].trim() : "");
+  return text || content.images.length ? { id, kind: "message", role: "user", text: text.slice(0, MAX_SESSION_MESSAGE_CHARS), ...(content.images.length ? { images: content.images.slice(0, 20) } : {}), timestamp } : undefined;
 }
 
 function normalizePersistedActivity(value: unknown): Record<string, unknown> | undefined {
@@ -1960,6 +2049,19 @@ function normalizePersistedActivity(value: unknown): Record<string, unknown> | u
     imageView: "imageView",
     ContextCompaction: "contextCompaction",
     contextCompaction: "contextCompaction",
+    UserMessage: "userMessage",
+    userMessage: "userMessage",
+    user_message: "userMessage",
+    AgentMessage: "agentMessage",
+    agentMessage: "agentMessage",
+    agent_message: "agentMessage",
+    ImageGeneration: "imageGeneration",
+    imageGeneration: "imageGeneration",
+    image_generation: "imageGeneration",
+    GeneratedImage: "imageGeneration",
+    generatedImage: "imageGeneration",
+    dynamicToolCall: "dynamicToolCall",
+    DynamicToolCall: "dynamicToolCall",
     Extension: item["kind"] === "web.search" ? "webSearch" : ""
   } as Record<string, string>)[persistedType];
   if (!type) return undefined;

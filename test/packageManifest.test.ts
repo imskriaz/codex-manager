@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.0.4-pre4");
+    expect(manifest.version).toBe("1.0.4-pre5");
   });
 
   it("ships a Marketplace changelog", () => {

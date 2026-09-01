@@ -179,6 +179,18 @@ describe("Codex session integration", () => {
     ]);
   });
 
+  it("surfaces live custom tool calls and image output", () => {
+    const running = parseCodexAppServerThreadItems({
+      thread: { turns: [{ status: "inProgress", items: [{ type: "customToolCall", id: "call-1", name: "search", input: "query=Codex" }] }] }
+    });
+    expect(running).toMatchObject([{ id: "call-1", kind: "tool-call", status: "inProgress", title: "Using search" }]);
+
+    const completed = parseCodexAppServerThreadItems({
+      thread: { turns: [{ status: "completed", items: [{ type: "imageGeneration", id: "call-2", output: [{ type: "output_image", image_url: "data:image/png;base64,AA==" }] }] }] }
+    });
+    expect(completed).toMatchObject([{ id: "call-2", kind: "image", title: "Generated image", images: [{ src: "data:image/png;base64,AA==" }] }]);
+  });
+
   it("keeps historical child activities completed when only the turn failed", () => {
     const items = parseCodexAppServerThreadItems({
       thread: {
@@ -259,6 +271,81 @@ describe("Codex session integration", () => {
     await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([
       { id: "cmd-live", kind: "command", status: "completed", output: "42 passed" },
       { id: "reason-live", kind: "reasoning", status: "inProgress", text: "Inspecting the failing test" }
+    ]);
+  });
+
+  it("reads legacy function calls and replaces starts with correlated completion output", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-function-call-"));
+    roots.push(root);
+    const sessionDirectory = path.join(root, "sessions", "2026", "08", "30");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Function", updated_at: "2026-08-30T10:00:00Z" }));
+    const transcript = path.join(sessionDirectory, `rollout-${sessionId}.jsonl`);
+    await writeFile(transcript, JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:00Z", payload: { type: "function_call", id: "fc-1", call_id: "call-1", name: "shell_command", arguments: "command=npm test" } }));
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "call-1", kind: "tool-call", status: "inProgress", title: "Using shell_command" }]);
+    await writeFile(transcript, "\n" + JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:01Z", payload: { type: "function_call_output", call_id: "call-1", output: "42 passed" } }), { flag: "a" });
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "call-1", kind: "tool-call", status: "completed", result: "42 passed" }]);
+  });
+
+  it("does not double-count a custom call that also emits a concrete command activity", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-correlated-command-"));
+    roots.push(root);
+    const sessionDirectory = path.join(root, "sessions", "2026", "08", "30");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Correlated", updated_at: "2026-08-30T10:00:00Z" }));
+    await writeFile(path.join(sessionDirectory, `rollout-${sessionId}.jsonl`), [
+      JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:00Z", payload: { type: "custom_tool_call", call_id: "call-1", name: "exec", input: "npm test" } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-08-30T10:00:01Z", payload: { type: "item_completed", item: { type: "CommandExecution", id: "exec-1", command: "npm test", status: "completed", aggregated_output: "42 passed", exit_code: 0 } } }),
+      JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:02Z", payload: { type: "custom_tool_call_output", call_id: "call-1", output: [{ type: "input_text", text: "Script completed" }] } })
+    ].join("\n"));
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "call-1", kind: "command", status: "completed", output: "42 passed", result: "Script completed" }]);
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toHaveLength(1);
+  });
+
+  it("keeps an incomplete trailing JSONL tool record until it is finished", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-partial-call-"));
+    roots.push(root);
+    const sessionDirectory = path.join(root, "sessions", "2026", "08", "30");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Partial", updated_at: "2026-08-30T10:00:00Z" }));
+    const transcript = path.join(sessionDirectory, `rollout-${sessionId}.jsonl`);
+    const record = JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:00Z", payload: { type: "custom_tool_call", call_id: "partial-1", name: "exec", input: "npm test" } });
+    await writeFile(transcript, record.slice(0, -1));
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toEqual([]);
+    await writeFile(transcript, "}", { flag: "a" });
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "partial-1", status: "inProgress" }]);
+  });
+
+  it("reads event user messages with attached images", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-user-image-"));
+    roots.push(root);
+    const sessionDirectory = path.join(root, "sessions", "2026", "08", "30");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Image prompt", updated_at: "2026-08-30T10:00:00Z" }));
+    await writeFile(path.join(sessionDirectory, `rollout-${sessionId}.jsonl`), JSON.stringify({
+      type: "event_msg",
+      timestamp: "2026-08-30T10:00:00Z",
+      payload: { type: "item_completed", item: { type: "UserMessage", id: "user-image", content: [{ type: "text", text: "Review this" }, { type: "image", image_url: "data:image/png;base64,AA==" }] } }
+    }));
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "user-image", role: "user", text: "Review this", images: [{ src: "data:image/png;base64,AA==" }] }]);
+  });
+
+  it("deduplicates mirrored item messages and hides injected session context", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-message-dedupe-"));
+    roots.push(root);
+    const sessionDirectory = path.join(root, "sessions", "2026", "08", "30");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Dedupe", updated_at: "2026-08-30T10:00:00Z" }));
+    await writeFile(path.join(sessionDirectory, `rollout-${sessionId}.jsonl`), [
+      JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:00Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<recommended_plugins>internal</recommended_plugins>" }] } }),
+      JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:01Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Review this" }] } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-08-30T10:00:01Z", payload: { type: "item_completed", item: { type: "UserMessage", id: "user-rich", content: [{ type: "text", text: "Review this" }, { type: "image", image_url: "data:image/png;base64,AA==" }] } } }),
+      JSON.stringify({ type: "event_msg", timestamp: "2026-08-30T10:00:02Z", payload: { type: "item_completed", item: { type: "AgentMessage", id: "agent-event", content: [{ type: "Text", text: "Done" }] } } }),
+      JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:02Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done" }] } })
+    ].join("\n"));
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([
+      { role: "user", text: "Review this", images: [{ src: "data:image/png;base64,AA==" }] },
+      { role: "assistant", text: "Done" }
     ]);
   });
 
