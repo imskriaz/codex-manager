@@ -8749,7 +8749,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   min-width: 29px;
   height: 18px;
   padding: 0 5px;
-  border: 1px solid color-mix(in srgb, var(--accent-orange) 68%, var(--border-default));
+  border: 1px solid var(--danger);
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-orange) 20%, var(--bg-elevated));
   color: var(--accent-orange);
@@ -10704,6 +10704,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 .saved-running-device {
+  order: 0;
   color: var(--accent-orange);
   font-weight: 600;
 }
@@ -11038,7 +11039,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 .saved-reset-badge {
-  order: -1;
+  order: 1;
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -11048,8 +11049,8 @@ html[data-theme="dark"] .cli-terminal-panel {
   padding: 0 5px !important;
   border: 1px solid color-mix(in srgb, var(--accent-orange) 68%, var(--border-default));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-orange) 24%, var(--bg-elevated));
-  color: color-mix(in srgb, var(--accent-orange) 84%, white) !important;
+  background: var(--danger);
+  color: #fff !important;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-orange) 10%, transparent);
   cursor: pointer;
   font-family: inherit;
@@ -11065,8 +11066,8 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 .saved-reset-badge:hover:not(:disabled),
 .saved-reset-badge:focus-visible {
-  border-color: var(--accent-orange);
-  background: color-mix(in srgb, var(--accent-orange) 34%, var(--bg-elevated));
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 84%, black);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-orange) 20%, transparent);
 }
 

@@ -40,7 +40,7 @@ describe("saved account card presentation", () => {
 
   it("orders reset credits before subscription days remaining", () => {
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(styles).toMatch(/\.saved-reset-badge\s*{[^}]*order:\s*-1/s);
+    expect(styles).toMatch(/\.saved-reset-badge\s*{[^}]*order:\s*1/s);
   });
 
   it("keeps raw provider errors out of the card health reason", () => {
