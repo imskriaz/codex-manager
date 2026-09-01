@@ -1,35 +1,15 @@
 # Changelog
 
-## 1.0.4-pre17
+## 1.0.4
 
+- Safely validate Codex resume working directories before starting resumed sessions.
 - Keep the extension manifest regression coverage synchronized with the current prerelease package metadata.
-
-## 1.0.4-pre14
-
 - Keep the session sidebar and chat workspace on the canonical root dashboard, while `/dash` opens the account overview.
-
-## 1.0.4-pre13
-
 - Strengthen the blurred backdrop for all dashboard confirmation and input modals.
-
-## 1.0.4-pre12
-
 - Use centered modal dialogs for password entry in the VS Code dashboard.
-
-## 1.0.4-pre11
-
 - Make the root Web Dashboard home show the session sidebar and chat workspace, with the account dashboard available at `/dash`.
-
-## 1.0.4-pre10
-
 - Serve the Web Dashboard home page at the root URL so `https://codex.madebydevs.com` is the canonical entry point.
-
-## 1.0.4-pre9
-
 - Relay authenticated realtime encrypted-vault events across all connected peer PCs, not only the first receiving host.
-
-## 1.0.4-pre8
-
 - Mirror encrypted vault changes over the authenticated realtime peer WebSocket without consuming Settings Sync requests.
 - Coalesce durable vault uploads for five seconds, merge incoming snapshots through the normal conflict-safe path, and retry when a competing vault update is detected.
 - Keep manual Settings Sync as the receiving-PC fallback and report inconclusive empty-vault background attempts as failures for retry.
@@ -48,6 +28,10 @@
 - Ensure Active and Archive tabs remain mutually exclusive.
 - Run CLI session monitoring only while a browser workspace viewer is present; account-only pages stay idle.
 - Ignore hidden browser tabs when maintaining the workspace viewer lease.
+
+## 1.0.2
+
+- No separate changelog entry was recorded for this version.
 
 ## 1.0.1
 
@@ -70,3 +54,8 @@ Codex Manager now provides a cleaner, more dependable way to manage accounts and
 - Improved browser-dashboard reconnect behavior and Cloudflare-hosted login handling.
 - Safer workspace file access and more dependable PowerShell command execution on Windows.
 - Packaging excludes local browser-test artifacts.
+
+## 1.0.0
+
+- Initial release.
+
