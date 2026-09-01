@@ -80,6 +80,7 @@ export function registerAutoRefreshScheduler(params: {
   let allInFlight = false;
   let currentInFlight = false;
   let currentScheduleVersion = 0;
+  let disposed = false;
   const handledQuotaResets = new Set<string>();
 
   const quotaResetTimes = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number]): number[] => {
@@ -90,6 +91,7 @@ export function registerAutoRefreshScheduler(params: {
   };
 
   const scheduleNextQuotaReset = async (): Promise<void> => {
+    if (disposed) return;
     if (quotaResetTimer) {
       clearTimeout(quotaResetTimer);
       quotaResetTimer = undefined;
@@ -109,6 +111,7 @@ export function registerAutoRefreshScheduler(params: {
   };
 
   const runDueQuotaResetRefreshes = (): void => {
+    if (disposed) return;
     quotaResetTimer = undefined;
     void (async () => {
       const now = Date.now();
@@ -312,6 +315,7 @@ export function registerAutoRefreshScheduler(params: {
   params.context.subscriptions.push(configDisposable);
   return {
     dispose(): void {
+      disposed = true;
       configDisposable.dispose();
       if (allTimer) clearInterval(allTimer);
       currentScheduleVersion += 1;
