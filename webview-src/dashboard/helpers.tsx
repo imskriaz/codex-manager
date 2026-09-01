@@ -22,6 +22,10 @@ export function countAccountEnablement(accounts: readonly DashboardAccountViewMo
   return { enabled, disabled: accounts.length - enabled };
 }
 
+export function isAccountClaimedByAnotherDevice(account: DashboardAccountViewModel): boolean {
+  return Boolean(account.runningDeviceName && !account.runningOnThisDevice && account.runningDeviceOnline !== false);
+}
+
 export function createShareFileName(): string {
   const now = new Date();
   const year = String(now.getFullYear());

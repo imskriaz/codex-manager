@@ -1,6 +1,10 @@
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
-import { countAccountEnablement, isAccountAttention } from "../webview-src/dashboard/helpers";
+import {
+  countAccountEnablement,
+  isAccountAttention,
+  isAccountClaimedByAnotherDevice
+} from "../webview-src/dashboard/helpers";
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 
 describe("dashboard attention state", () => {
@@ -36,7 +40,30 @@ describe("dashboard attention state", () => {
     expect(source).toContain('capable: zh ? "配额内" : hant ? "配額內" : "Within quota"');
     expect(source).toContain('incapable: zh ? "超出配额" : hant ? "超出配額" : "Over quota"');
   });
+
+  it("shows the claimed filter only for online claims from another device", () => {
+    expect(isAccountClaimedByAnotherDevice(accountClaim("Office PC", false, true))).toBe(true);
+    expect(isAccountClaimedByAnotherDevice(accountClaim("Office PC", true, true))).toBe(false);
+    expect(isAccountClaimedByAnotherDevice(accountClaim("Office PC", false, false))).toBe(false);
+
+    const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(source).toContain('filter: "claimed"');
+    expect(source).toContain("claimedAccountCount > 0");
+    expect(source).toContain("accountEnablement.enabled > 0");
+    expect(source).toContain("accountEnablement.disabled > 0");
+    expect(source).toContain("validAccountCount > 0");
+    expect(source).toContain("invalidAccountCount > 0");
+    expect(source.indexOf('filter: "claimed"')).toBeGreaterThan(source.indexOf('filter: "disabled"'));
+  });
 });
+
+function accountClaim(
+  runningDeviceName: string,
+  runningOnThisDevice: boolean,
+  runningDeviceOnline: boolean
+): DashboardAccountViewModel {
+  return { runningDeviceName, runningOnThisDevice, runningDeviceOnline } as DashboardAccountViewModel;
+}
 
 function account(
   healthKind: DashboardAccountViewModel["healthKind"],

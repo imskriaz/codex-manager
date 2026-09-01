@@ -31,6 +31,7 @@ import {
 import {
   countAccountEnablement,
   isAccountAttention,
+  isAccountClaimedByAnotherDevice,
   normalizeThresholds,
   resolveBrandSubtitle,
   resolveOverviewAccount
@@ -308,9 +309,10 @@ function App() {
       const previous = lastCliMessageRequestRef.current;
       if (!force && previous?.sessionId === sessionId && now - previous.at < 2_000) return;
       lastCliMessageRequestRef.current = { sessionId, at: now };
-      const routeProject = getCliSessionIdFromPath(window.location.pathname) === sessionId
-        ? new URLSearchParams(window.location.search).get("project")?.trim()
-        : undefined;
+      const routeProject =
+        getCliSessionIdFromPath(window.location.pathname) === sessionId
+          ? new URLSearchParams(window.location.search).get("project")?.trim()
+          : undefined;
       const projectPath = cliSessions.find((session) => session.id === sessionId)?.projectPath ?? routeProject;
       sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath });
     },
@@ -1216,6 +1218,7 @@ function App() {
   const invalidAccountCount = displayedAccounts.filter(isAccountAttention).length;
   const validAccountCount = displayedAccounts.length - invalidAccountCount;
   const accountEnablement = countAccountEnablement(displayedAccounts);
+  const claimedAccountCount = displayedAccounts.filter(isAccountClaimedByAnotherDevice).length;
   const capabilityThresholds: DashboardAutoQueueCapabilityThresholds = {
     hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
     hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
@@ -1447,7 +1450,8 @@ function App() {
       kind: "password",
       action: "configureEncryptedSync",
       title: "Set password",
-      message: "Create or enter the one password used for encrypted sync, remote dashboard login, and protected controls.",
+      message:
+        "Create or enter the one password used for encrypted sync, remote dashboard login, and protected controls.",
       confirmPassword: true
     });
   };
@@ -1801,54 +1805,76 @@ function App() {
                     >
                       {resolveUiText("total", snapshot.lang)} {displayedAccounts.length}
                     </button>
-                    <button
-                      class={`header-count-badge is-enabled header-count-link ${uiPreferences.filter === "enabled" ? "is-selected" : ""}`}
-                      type="button"
-                      aria-pressed={uiPreferences.filter === "enabled"}
-                      onClick={() => setUiPreferences((current) => ({ ...current, filter: "enabled" }))}
-                    >
-                      {resolveUiText("enabled", snapshot.lang)} {accountEnablement.enabled}
-                    </button>
-                    <button
-                      class={`header-count-badge is-disabled header-count-link ${uiPreferences.filter === "disabled" ? "is-selected" : ""}`}
-                      type="button"
-                      aria-pressed={uiPreferences.filter === "disabled"}
-                      onClick={() => setUiPreferences((current) => ({ ...current, filter: "disabled" }))}
-                    >
-                      {resolveUiText("disabled", snapshot.lang)} {accountEnablement.disabled}
-                    </button>
-                    <button
-                      class={`header-count-badge is-valid header-count-link ${uiPreferences.filter === "healthy" ? "is-selected" : ""}`}
-                      type="button"
-                      aria-pressed={uiPreferences.filter === "healthy"}
-                      onClick={() => setUiPreferences((current) => ({ ...current, filter: "healthy" }))}
-                    >
-                      {resolveUiText("valid", snapshot.lang)} {validAccountCount}
-                    </button>
-                    <button
-                      class={`header-count-badge header-count-link ${invalidAccountCount ? "is-invalid" : ""} ${uiPreferences.filter === "attention" ? "is-selected" : ""}`}
-                      type="button"
-                      aria-pressed={uiPreferences.filter === "attention"}
-                      onClick={() => setUiPreferences((current) => ({ ...current, filter: "attention" }))}
-                    >
-                      {resolveUiText("invalid", snapshot.lang)} {invalidAccountCount}
-                    </button>
-                    <button
-                      class={`header-count-badge is-capable header-count-link ${uiPreferences.filter === "capable" ? "is-selected" : ""}`}
-                      type="button"
-                      aria-pressed={uiPreferences.filter === "capable"}
-                      onClick={() => setUiPreferences((current) => ({ ...current, filter: "capable" }))}
-                    >
-                      {resolveUiText("capable", snapshot.lang)} {capableAccountCount}
-                    </button>
-                    <button
-                      class={`header-count-badge header-count-link ${incapableAccountCount ? "is-incapable" : ""} ${uiPreferences.filter === "incapable" ? "is-selected" : ""}`}
-                      type="button"
-                      aria-pressed={uiPreferences.filter === "incapable"}
-                      onClick={() => setUiPreferences((current) => ({ ...current, filter: "incapable" }))}
-                    >
-                      {resolveUiText("incapable", snapshot.lang)} {incapableAccountCount}
-                    </button>
+                    {accountEnablement.enabled > 0 ? (
+                      <button
+                        class={`header-count-badge is-enabled header-count-link ${uiPreferences.filter === "enabled" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "enabled"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "enabled" }))}
+                      >
+                        {resolveUiText("enabled", snapshot.lang)} {accountEnablement.enabled}
+                      </button>
+                    ) : null}
+                    {accountEnablement.disabled > 0 ? (
+                      <button
+                        class={`header-count-badge is-disabled header-count-link ${uiPreferences.filter === "disabled" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "disabled"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "disabled" }))}
+                      >
+                        {resolveUiText("disabled", snapshot.lang)} {accountEnablement.disabled}
+                      </button>
+                    ) : null}
+                    {claimedAccountCount > 0 ? (
+                      <button
+                        class={`header-count-badge is-claimed header-count-link ${uiPreferences.filter === "claimed" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "claimed"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "claimed" }))}
+                      >
+                        {resolveUiText("claimed", snapshot.lang)} {claimedAccountCount}
+                      </button>
+                    ) : null}
+                    {validAccountCount > 0 ? (
+                      <button
+                        class={`header-count-badge is-valid header-count-link ${uiPreferences.filter === "healthy" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "healthy"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "healthy" }))}
+                      >
+                        {resolveUiText("valid", snapshot.lang)} {validAccountCount}
+                      </button>
+                    ) : null}
+                    {invalidAccountCount > 0 ? (
+                      <button
+                        class={`header-count-badge header-count-link ${invalidAccountCount ? "is-invalid" : ""} ${uiPreferences.filter === "attention" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "attention"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "attention" }))}
+                      >
+                        {resolveUiText("invalid", snapshot.lang)} {invalidAccountCount}
+                      </button>
+                    ) : null}
+                    {capableAccountCount > 0 ? (
+                      <button
+                        class={`header-count-badge is-capable header-count-link ${uiPreferences.filter === "capable" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "capable"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "capable" }))}
+                      >
+                        {resolveUiText("capable", snapshot.lang)} {capableAccountCount}
+                      </button>
+                    ) : null}
+                    {incapableAccountCount > 0 ? (
+                      <button
+                        class={`header-count-badge header-count-link ${incapableAccountCount ? "is-incapable" : ""} ${uiPreferences.filter === "incapable" ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={uiPreferences.filter === "incapable"}
+                        onClick={() => setUiPreferences((current) => ({ ...current, filter: "incapable" }))}
+                      >
+                        {resolveUiText("incapable", snapshot.lang)} {incapableAccountCount}
+                      </button>
+                    ) : null}
                     <button
                       class={`header-count-badge is-quota ${uiPreferences.metricPriority === "weekly" ? "is-selected" : ""}`}
                       type="button"
@@ -2597,6 +2623,7 @@ function filterAccounts(
       (filter === "active" && account.isActive) ||
       (filter === "enabled" && account.enabled) ||
       (filter === "disabled" && !account.enabled) ||
+      (filter === "claimed" && isAccountClaimedByAnotherDevice(account)) ||
       (filter === "capable" && hasDashboardAutoQueueCapability(account, capabilityThresholds)) ||
       (filter === "incapable" && !hasDashboardAutoQueueCapability(account, capabilityThresholds));
     const matchesTags = selectedTags.length === 0 || selectedTags.some((tag) => account.tags.includes(tag));
@@ -2988,6 +3015,7 @@ function resolveUiText(key: string, lang: string): string {
     incapable: zh ? "超出配额" : hant ? "超出配額" : "Over quota",
     enabled: zh ? "已启用" : hant ? "已啟用" : "Enabled",
     disabled: zh ? "已禁用" : hant ? "已停用" : "Disabled",
+    claimed: zh ? "已被占用" : hant ? "已被占用" : "Claimed",
     weeklyShort: zh ? "周配额" : hant ? "週配額" : "Weekly",
     metric: zh ? "主指标" : hant ? "主指標" : "Metric",
     tags: zh ? "标签" : hant ? "標籤" : "Tags",

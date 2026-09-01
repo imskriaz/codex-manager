@@ -1,13 +1,5 @@
 export type AccountFilter =
-  | "all"
-  | "healthy"
-  | "attention"
-  | "low"
-  | "active"
-  | "enabled"
-  | "disabled"
-  | "capable"
-  | "incapable";
+  "all" | "healthy" | "attention" | "low" | "active" | "enabled" | "disabled" | "claimed" | "capable" | "incapable";
 export type DashboardView = "cards" | "list";
 export type UiPreferences = {
   filter: AccountFilter;
