@@ -325,14 +325,14 @@ export class AccountsCommandService {
     const quotaCheckGapMs = getAutoRefreshMinutes() * 60_000;
     const accounts = (options?.silent ? allAccounts.filter((account) => account.enabled !== false) : allAccounts)
       .filter((account) => account.id !== currentId)
+      .filter((account) => canIncludeInRefreshAll(account, this.canRefreshAccount))
       .filter(
         (account) =>
           !respectQuotaCheckGap ||
           quotaCheckGapMs <= 0 ||
           (!wasAccountQuotaCheckedWithin(account, quotaCheckGapMs) &&
             !(typeof account.lastQuotaAt === "number" && Date.now() - account.lastQuotaAt < quotaCheckGapMs))
-      )
-      .filter((account) => !options?.silent || this.canRefreshAccount(account.id));
+      );
     let success = 0;
     let failed = 0;
     const refreshAll = async (progress?: vscode.Progress<{ message?: string; increment?: number }>) => {
@@ -624,6 +624,14 @@ export class AccountsCommandService {
       callback
     );
   }
+}
+
+/** Exclude accounts claimed by another PC unless the local rescue override permits access. */
+export function canIncludeInRefreshAll(
+  account: Pick<CodexManagerAccountRecord, "id">,
+  canRefreshAccount: (accountId: string) => boolean
+): boolean {
+  return canRefreshAccount(account.id);
 }
 
 function formatQueuedActivationSuffix(

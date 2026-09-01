@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
-import { AccountsCommandService } from "../src/application/accounts/commandService";
+import { AccountsCommandService, canIncludeInRefreshAll } from "../src/application/accounts/commandService";
 import type { CodexManagerAccountRecord } from "../src/core/types";
 import type { AccountsRepository } from "../src/storage";
 import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
@@ -97,6 +97,19 @@ describe("manual account switch command", () => {
 
     expect(repo.switchAccount).not.toHaveBeenCalled();
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(`${current.email} is already the active account`);
+  });
+});
+
+describe("refresh all quota eligibility", () => {
+  it("skips an account when its foreign claim is enforced with rescue off", () => {
+    const canRefreshAccount = vi.fn().mockReturnValue(false);
+
+    expect(canIncludeInRefreshAll({ id: "claimed-account" }, canRefreshAccount)).toBe(false);
+    expect(canRefreshAccount).toHaveBeenCalledWith("claimed-account");
+  });
+
+  it("includes an account when rescue permits refreshing its foreign claim", () => {
+    expect(canIncludeInRefreshAll({ id: "rescued-account" }, () => true)).toBe(true);
   });
 });
 
