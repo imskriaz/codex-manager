@@ -270,7 +270,6 @@ export class AccountsCommandService {
 
   async autoSelectAccount(): Promise<void> {
     await maybeAutoSwitchForActiveQuota(this.repo, this.view, {
-      ignoreEnabled: true,
       userInitiated: true
     });
   }
