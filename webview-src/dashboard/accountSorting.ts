@@ -1,5 +1,9 @@
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
-import { compareAutoQueueOrderValues, compareAutoQueueUrgency } from "../../src/domain/autoQueueOrder";
+import {
+  calculateAutoQueueEfficiency,
+  compareAutoQueueOrderValues,
+  compareAutoQueueUrgency
+} from "../../src/domain/autoQueueOrder";
 
 export type DashboardAutoQueueCapabilityThresholds = {
   hourlyEnabled: boolean;
@@ -31,15 +35,35 @@ export function compareDashboardAutoQueueAccounts(
   });
   const leftOrder = orderValue(left);
   const rightOrder = orderValue(right);
+  const leftCapable = hasDashboardAutoQueueCapability(left, thresholds);
+  const rightCapable = hasDashboardAutoQueueCapability(right, thresholds);
+  // A reset time is not quota. Exhausted accounts remain ignored until an
+  // existing refresh/peer event reports usable quota after the reset.
+  if (leftCapable !== rightCapable) {
+    return leftCapable ? -1 : 1;
+  }
   const urgencyDifference = compareAutoQueueUrgency(leftOrder, rightOrder);
   if (urgencyDifference !== 0) {
     return urgencyDifference;
   }
 
-  const leftPriority = left.queuePriority === true && hasDashboardAutoQueueCapability(left, thresholds);
-  const rightPriority = right.queuePriority === true && hasDashboardAutoQueueCapability(right, thresholds);
+  const leftPriority = left.queuePriority === true && leftCapable;
+  const rightPriority = right.queuePriority === true && rightCapable;
   if (leftPriority !== rightPriority) {
     return leftPriority ? -1 : 1;
+  }
+
+  const nowMs = Date.now();
+  const hasFutureReset = (order: ReturnType<typeof orderValue>) =>
+    order.windows.some(
+      (window) => typeof window.resetAt === "number" && Number.isFinite(window.resetAt) && window.resetAt >= nowMs / 1_000
+    );
+  if (leftCapable && (hasFutureReset(leftOrder) || hasFutureReset(rightOrder))) {
+    const leftScore = calculateAutoQueueEfficiency(leftOrder, { nowMs, staleAfterMs: 30 * 60_000, starred: leftPriority }).score;
+    const rightScore = calculateAutoQueueEfficiency(rightOrder, { nowMs, staleAfterMs: 30 * 60_000, starred: rightPriority }).score;
+    if (leftScore !== rightScore) {
+      return rightScore - leftScore;
+    }
   }
 
   return compareAutoQueueOrderValues(leftOrder, rightOrder);

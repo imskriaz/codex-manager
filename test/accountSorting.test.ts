@@ -20,6 +20,41 @@ describe("sortWithQueuedAccount", () => {
 });
 
 describe("compareDashboardAutoQueueAccounts", () => {
+  it("ignores exhausted quota until a refresh reports quota after reset", () => {
+    const now = Date.now() / 1_000;
+    const base = {
+      isActive: false,
+      switchQueued: false,
+      creditsUnlimited: false,
+      creditsBalance: 0,
+      subscriptionExpiresAt: Date.now() + 7 * 86_400_000,
+      lastQuotaAt: Date.now()
+    };
+    const exhausted = {
+      ...base,
+      id: "exhausted",
+      metrics: [
+        { key: "hourly", period: "hourly", percentage: 0, resetAt: now + 6 * 60, visible: true },
+        { key: "weekly", period: "weekly", percentage: 53, resetAt: now + 6 * 86_400, visible: true }
+      ]
+    } as any;
+    const full = {
+      ...base,
+      id: "full",
+      metrics: [
+        { key: "hourly", period: "hourly", percentage: 100, resetAt: now + 5 * 60 * 60, visible: true },
+        { key: "weekly", period: "weekly", percentage: 68, resetAt: now + 6 * 86_400, visible: true }
+      ]
+    } as any;
+
+    expect([exhausted, full].sort(compareDashboardAutoQueueAccounts).map((item) => item.id)).toEqual([
+      "full",
+      "exhausted"
+    ]);
+    exhausted.metrics[0].percentage = 100;
+    expect(hasDashboardAutoQueueCapability(exhausted)).toBe(true);
+  });
+
   it("puts a capable starred account ahead of quota balance ordering", () => {
     const base = {
       isActive: false,
