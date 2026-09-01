@@ -846,6 +846,15 @@ export class WebDashboardServer implements vscode.Disposable {
         };
       }
       return new Promise((resolve) => {
+        if (this.peerActionWaiters.has(message.requestId)) {
+          resolve({
+            type: "peer:action-result",
+            requestId: message.requestId,
+            status: "failed",
+            error: "A dashboard action with this request ID is already pending. Try the action again."
+          });
+          return;
+        }
         const timeout = setTimeout(() => {
           this.peerActionWaiters.delete(message.requestId);
           resolve({
@@ -859,21 +868,36 @@ export class WebDashboardServer implements vscode.Disposable {
           clearTimeout(timeout);
           resolve(this.decoratePeerActionResult(result, targetDeviceId));
         });
-        hub.send(
-          JSON.stringify({
+        try {
+          hub.send(JSON.stringify({
             type: "peer:action",
             requestId: message.requestId,
             action: message.action,
             accountId: message.accountId,
             payload: message.payload
-          } satisfies PeerActionMessage)
-        );
+          } satisfies PeerActionMessage));
+        } catch (error) {
+          clearTimeout(timeout);
+          this.peerActionWaiters.delete(message.requestId);
+          resolve({
+            type: "peer:action-result",
+            requestId: message.requestId,
+            status: "failed",
+            error: error instanceof Error ? `The peer action could not be sent: ${error.message}` : "The peer action could not be sent."
+          });
+        }
       });
     }
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
+      let settled = false;
+      const finish = (result: PeerActionResultMessage): void => {
+        if (settled) return;
+        settled = true;
         cleanup();
-        resolve({
+        resolve(result);
+      };
+      const timeout = setTimeout(() => {
+        finish({
           type: "peer:action-result",
           requestId: message.requestId,
           status: "failed",
@@ -884,8 +908,7 @@ export class WebDashboardServer implements vscode.Disposable {
         try {
           const result = JSON.parse(data.toString()) as PeerActionResultMessage;
           if (result.type !== "peer:action-result" || result.requestId !== message.requestId) return;
-          cleanup();
-          resolve(this.decoratePeerActionResult(result, targetDeviceId));
+          finish(this.decoratePeerActionResult(result, targetDeviceId));
         } catch {
           // Ignore unrelated peer traffic.
         }
@@ -893,17 +916,34 @@ export class WebDashboardServer implements vscode.Disposable {
       const cleanup = (): void => {
         clearTimeout(timeout);
         socket.off("message", onMessage);
+        socket.off("close", onDisconnect);
+        socket.off("error", onDisconnect);
       };
+      const onDisconnect = (): void => finish({
+        type: "peer:action-result",
+        requestId: message.requestId,
+        status: "failed",
+        error: "The selected PC disconnected before the action completed."
+      });
       socket.on("message", onMessage);
-      socket.send(
-        JSON.stringify({
+      socket.once("close", onDisconnect);
+      socket.once("error", onDisconnect);
+      try {
+        socket.send(JSON.stringify({
           type: "peer:action",
           requestId: message.requestId,
           action: message.action,
           accountId: message.accountId,
           payload: { ...(message.payload ?? {}), targetDeviceId: undefined }
-        } satisfies PeerActionMessage)
-      );
+        } satisfies PeerActionMessage));
+      } catch (error) {
+        finish({
+          type: "peer:action-result",
+          requestId: message.requestId,
+          status: "failed",
+          error: error instanceof Error ? `The peer action could not be sent: ${error.message}` : "The peer action could not be sent."
+        });
+      }
     });
   }
 

@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import { resolveAccountHealth } from "../../application/accounts/health";
 import { refreshImportedAccountQuota, refreshSingleQuota } from "../../application/accounts/quota";
 import { fetchResetCredits, consumeResetCredit } from "../../services/quota";
@@ -672,7 +674,7 @@ async function runDashboardAction(
     case "listCodexCliSessions":
       return handleListCodexCliSessions(ctx.context, ctx.getRemoteCliSessions);
     case "getCodexCliSessionMessages":
-      return handleGetCodexCliSessionMessages(payload?.sessionId);
+      return handleGetCodexCliSessionMessages(payload?.sessionId, payload?.projectPath);
     case "sendCodexCliSessionMessage":
       return handleSendCodexCliSessionMessage(payload);
     case "cancelCodexCliSessionTurn":
@@ -1642,14 +1644,27 @@ async function handleStartCodexCliSession(
   };
 }
 
-async function handleGetCodexCliSessionMessages(sessionId: string | undefined) {
+async function handleGetCodexCliSessionMessages(sessionId: string | undefined, requestedProjectPath?: string) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
   const cliSession = await readCodexCliSessionSummary(sessionId);
   if (!cliSession) throw new Error("This Codex session was not found. Refresh the session list and try again.");
+  if (
+    requestedProjectPath?.trim() &&
+    cliSession.projectPath?.trim() &&
+    (await canonicalProjectPath(requestedProjectPath)) !== (await canonicalProjectPath(cliSession.projectPath))
+  ) {
+    throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
+  }
   if (cliSession.archived) throw new Error("Archived sessions cannot be opened. Restore the session first.");
   const cliSessionMessages = await readCodexCliSessionMessages(sessionId);
   return { cliSession, cliSessionMessages };
+}
+
+async function canonicalProjectPath(projectPath: string): Promise<string> {
+  const resolved = path.resolve(projectPath.trim());
+  const canonical = await realpath(resolved).catch(() => resolved);
+  return process.platform === "win32" ? canonical.toLocaleLowerCase("en-US") : canonical;
 }
 
 async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload | undefined) {

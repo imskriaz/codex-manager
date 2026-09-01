@@ -38,6 +38,7 @@ import { recordDashboardActionPrompt, shouldSuppressDashboardNotifications } fro
 import { getDashboardCopy } from "../dashboard/copy";
 import {
   compareCodexManagerAccountAutoQueueOrder,
+  getCodexManagerAccountAutoQueueEfficiency,
   hasCodexManagerAccountAutoQueueCapability,
   hasComparableHourlyWindow,
   hasComparableWeeklyWindow
@@ -441,7 +442,7 @@ async function evaluateAutoSwitchForActiveQuota(
         (options.ignoreEnabled || account.enabled !== false) &&
         !!account.quotaSummary &&
         !account.quotaError &&
-        hasCurrentSessionQuotaSnapshot(account) &&
+        hasFreshQuotaSnapshot(account) &&
         hasCodexManagerAccountAutoQueueCapability(account, {
           hourlyEnabled: hourlyQuotaControlEnabled,
           hourlyThreshold,
@@ -597,7 +598,8 @@ async function evaluateAutoSwitchForActiveQuota(
     latestNext.isActive ||
     (!options.ignoreEnabled && latestNext.enabled === false) ||
     latestNext.quotaError ||
-    !latestNext.quotaSummary
+    !latestNext.quotaSummary ||
+    !hasFreshQuotaSnapshot(latestNext)
   ) {
     if (options.userInitiated) {
       void vscode.window.showWarningMessage("Auto Select cancelled — account state changed. Refresh and try again.");
@@ -634,7 +636,8 @@ async function evaluateAutoSwitchForActiveQuota(
   view.markObservedAuthIdentity?.(next.id);
   view.refresh();
 
-  const switchMessage = buildAutoSwitchSuccessMessage(next);
+  const decisionReason = getCodexManagerAccountAutoQueueEfficiency(next, autoQueueScoringOptions()).reason;
+  const switchMessage = buildAutoSwitchSuccessMessage(next, false, decisionReason);
 
   if (!needsWindowReloadForAccount(next.id)) {
     recordAutoSwitchDashboardNotice(switchMessage, "info", {
@@ -1143,6 +1146,17 @@ function hasCurrentSessionQuotaSnapshot(account: CodexManagerAccountRecord): boo
   );
 }
 
+function quotaSnapshotSafetyAgeMs(): number {
+  const intervalMinutes = getAutoRefreshMinutes();
+  // Peer snapshots retain their checkedAt and are eligible without a local call.
+  return Math.max(30 * 60_000, (intervalMinutes > 0 ? intervalMinutes : 15) * 2 * 60_000 + 5 * 60_000);
+}
+
+function hasFreshQuotaSnapshot(account: CodexManagerAccountRecord, now = Date.now()): boolean {
+  return hasCurrentSessionQuotaSnapshot(account) &&
+    (typeof account.lastQuotaAt !== "number" || now - account.lastQuotaAt <= quotaSnapshotSafetyAgeMs());
+}
+
 function applyOptionalCoordinatedQuotaSnapshot(
   account: CodexManagerAccountRecord | undefined
 ): CodexManagerAccountRecord | undefined {
@@ -1176,7 +1190,7 @@ export function selectQuotaWarningSwitchTarget(
     .filter((candidate) => {
       if (candidate.id === active.id || candidate.isActive || candidate.enabled === false) return false;
       if (!candidate.quotaSummary || candidate.quotaError) return false;
-      if (!hasCurrentSessionQuotaSnapshot(candidate)) return false;
+      if (!hasFreshQuotaSnapshot(candidate)) return false;
       if (dimension === "hourly") {
         return hasComparableHourlyWindow(candidate) && candidate.quotaSummary.hourlyPercentage > threshold;
       }
@@ -1220,17 +1234,30 @@ export function formatAccountToastLabel(account: CodexManagerAccountRecord): str
 }
 
 function compareAutoSwitchCandidate(left: CodexManagerAccountRecord, right: CodexManagerAccountRecord): number {
-  return compareCodexManagerAccountAutoQueueOrder(left, right);
+  return compareCodexManagerAccountAutoQueueOrder(left, right, autoQueueScoringOptions());
+}
+
+function autoQueueScoringOptions(): { nowMs: number; staleAfterMs: number } {
+  return { nowMs: Date.now(), staleAfterMs: quotaSnapshotSafetyAgeMs() };
 }
 
 function buildMatchedRules(): string[] {
   return ["quota"];
 }
 
-function buildAutoSwitchSuccessMessage(account: CodexManagerAccountRecord, reloaded = false): string {
+function buildAutoSwitchSuccessMessage(
+  account: CodexManagerAccountRecord,
+  reloaded = false,
+  reason?: ReturnType<typeof getCodexManagerAccountAutoQueueEfficiency>["reason"]
+): string {
   const copy = getDashboardCopy(getLanguage());
   const template = reloaded ? copy.autoSwitchToastSwitchedAndReloaded : copy.autoSwitchToastSwitched;
-  return template.replace("{account}", account.email);
+  const message = template.replace("{account}", account.email);
+  if (reloaded || !reason) return message;
+  if (reason === "quota-expiring") return `${message} Selected to use quota before its next reset.`;
+  if (reason === "long-window-protected") return `${message} Selected while protecting scarce long-window quota.`;
+  if (reason === "starred-priority") return `${message} Selected by queue priority.`;
+  return `${message} Selected for the best usable quota balance.`;
 }
 
 function showAutoSwitchFailure(error: unknown): void {

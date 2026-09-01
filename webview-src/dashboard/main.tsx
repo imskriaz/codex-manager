@@ -308,9 +308,13 @@ function App() {
       const previous = lastCliMessageRequestRef.current;
       if (!force && previous?.sessionId === sessionId && now - previous.at < 2_000) return;
       lastCliMessageRequestRef.current = { sessionId, at: now };
-      sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId });
+      const routeProject = getCliSessionIdFromPath(window.location.pathname) === sessionId
+        ? new URLSearchParams(window.location.search).get("project")?.trim()
+        : undefined;
+      const projectPath = cliSessions.find((session) => session.id === sessionId)?.projectPath ?? routeProject;
+      sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath });
     },
-    [sendAction]
+    [cliSessions, sendAction]
   );
   const requestWorkspaceEnvironment = useCallback(
     (projectPath?: string): void => sendAction("getWorkspaceEnvironment", undefined, { projectPath }),

@@ -780,10 +780,12 @@ describe("refreshSingleQuota token automation state", () => {
       maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
     ).resolves.toBe(true);
 
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("Switched to next@example.com.");
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+      "Switched to next@example.com. Selected for the best usable quota balance."
+    );
     expect(getAutoSwitchRuntimeSnapshot().dashboardNotice).toMatchObject({
       level: "info",
-      message: "Switched to next@example.com."
+      message: "Switched to next@example.com. Selected for the best usable quota balance."
     });
   });
 

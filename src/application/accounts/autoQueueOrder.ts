@@ -1,5 +1,6 @@
 import type { CodexManagerAccountRecord } from "../../core/types";
 import {
+  calculateAutoQueueEfficiency,
   compareAutoQueueOrderValues,
   compareAutoQueueUrgency,
   parseCreditsOrderValue
@@ -9,7 +10,8 @@ import { parseSubscriptionExpiryMs } from "../../utils/subscriptionExpiry";
 
 export function compareCodexManagerAccountAutoQueueOrder(
   left: CodexManagerAccountRecord,
-  right: CodexManagerAccountRecord
+  right: CodexManagerAccountRecord,
+  options?: { nowMs?: number; staleAfterMs?: number }
 ): number {
   const leftOrder = toOrderValue(left);
   const rightOrder = toOrderValue(right);
@@ -24,7 +26,30 @@ export function compareCodexManagerAccountAutoQueueOrder(
     return leftPriority ? -1 : 1;
   }
 
+  const nowSeconds = (options?.nowMs ?? Date.now()) / 1_000;
+  if (hasFutureReset(leftOrder, nowSeconds) || hasFutureReset(rightOrder, nowSeconds)) {
+    const leftScore = score(left, leftOrder, options).score;
+    const rightScore = score(right, rightOrder, options).score;
+    if (leftScore !== rightScore) return rightScore - leftScore;
+  }
+
   return compareAutoQueueOrderValues(leftOrder, rightOrder);
+}
+
+export function getCodexManagerAccountAutoQueueEfficiency(account: CodexManagerAccountRecord, options?: { nowMs?: number; staleAfterMs?: number }) {
+  return score(account, toOrderValue(account), options);
+}
+
+function score(account: CodexManagerAccountRecord, order: ReturnType<typeof toOrderValue>, options?: { nowMs?: number; staleAfterMs?: number }) {
+  return calculateAutoQueueEfficiency(order, {
+    nowMs: options?.nowMs,
+    staleAfterMs: options?.staleAfterMs ?? 30 * 60_000,
+    starred: account.queuePriority === true && hasCodexManagerAccountAutoQueueCapability(account)
+  });
+}
+
+function hasFutureReset(order: ReturnType<typeof toOrderValue>, nowSeconds: number): boolean {
+  return order.windows.some((window) => typeof window.resetAt === "number" && Number.isFinite(window.resetAt) && window.resetAt >= nowSeconds);
 }
 
 export type AutoQueueCapabilityThresholds = {

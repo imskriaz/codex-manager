@@ -173,6 +173,40 @@ describe("executeDashboardActionMessage", () => {
     expect(readCodexCliSessionMessagesMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a session opened through a different project without reading its messages", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback
+    } as unknown as vscode.WorkspaceConfiguration);
+    const sessionProject = await fs.mkdtemp(path.join(os.tmpdir(), "codex-session-project-"));
+    const requestedProject = await fs.mkdtemp(path.join(os.tmpdir(), "codex-request-project-"));
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce({
+      id: "01a04882-d037-7a42-ad24-9afb61901189",
+      title: "Project-scoped demo",
+      status: "idle",
+      archived: false,
+      projectPath: sessionProject
+    });
+    readCodexCliSessionMessagesMock.mockClear();
+
+    try {
+      const result = await executeDashboardActionMessage(createContext(), {
+        type: "dashboard:action",
+        action: "getCodexCliSessionMessages",
+        requestId: "req-wrong-project",
+        payload: {
+          sessionId: "01a04882-d037-7a42-ad24-9afb61901189",
+          projectPath: requestedProject
+        }
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toMatch(/different project/i);
+      expect(readCodexCliSessionMessagesMock).not.toHaveBeenCalled();
+    } finally {
+      await Promise.all([removeTestDirectory(sessionProject), removeTestDirectory(requestedProject)]);
+    }
+  });
+
   it("returns captured output and success feedback for a workspace terminal command", async () => {
     const command = process.platform === "win32"
       ? "Write-Output dashboard-terminal-success"
