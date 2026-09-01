@@ -113,9 +113,17 @@ function getCliSessionIdFromPath(pathname: string): string | undefined {
   return match?.[1];
 }
 
-function navigateDashboardPath(pathname: string, setPath: (value: string) => void): void {
-  if (window.location.pathname !== pathname) window.history.pushState({}, "", pathname);
-  setPath(pathname);
+function navigateDashboardPath(path: string, setPath: (value: string) => void): void {
+  const url = new URL(path, window.location.origin);
+  if (window.location.pathname !== url.pathname || window.location.search !== url.search) {
+    window.history.pushState({}, "", `${url.pathname}${url.search}`);
+  }
+  setPath(url.pathname);
+}
+
+function buildCliSessionPath(session: Pick<DashboardCliSessionSummary, "id" | "projectPath">): string {
+  const projectPath = typeof session.projectPath === "string" ? session.projectPath.trim() : "";
+  return projectPath ? `/${session.id}?project=${encodeURIComponent(projectPath)}` : `/${session.id}`;
 }
 
 function isAccountSort(value: string | null): value is AccountSort {
@@ -570,7 +578,7 @@ function App() {
           setSelectedCliSession(mergeCachedCliSession(session, selectedCliSession));
           setCliSessionMessages(message.payload.cliSessionMessages ?? []);
           setCliSessionMessagesError(undefined);
-          navigateDashboardPath(`/${session.id}`, setBrowserPath);
+          navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
           setCliSessionFeedback({
             key: Date.now(),
             level: "info",
@@ -747,7 +755,7 @@ function App() {
         if (message.status === "completed" && message.action === "forkCodexCliSession" && message.payload?.cliSession) {
           setSelectedCliSession(mergeCachedCliSession(message.payload.cliSession, selectedCliSession));
           setCliSessionMessages([]);
-          navigateDashboardPath(`/${message.payload.cliSession.id}`, setBrowserPath);
+          navigateDashboardPath(buildCliSessionPath(message.payload.cliSession), setBrowserPath);
         }
         if (
           message.status === "completed" &&
@@ -1063,7 +1071,7 @@ function App() {
       });
       return;
     }
-    navigateDashboardPath(`/${session.id}`, setBrowserPath);
+    navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
     setSelectedCliSession(session);
     setCliSessionMessagesError(undefined);
     void readCliSessionMessagesCache(session.id).then((cached) => setCliSessionMessages(cached ?? []));
