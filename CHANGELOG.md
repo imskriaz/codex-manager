@@ -8,7 +8,7 @@
 - Strengthen the blurred backdrop for all dashboard confirmation and input modals.
 - Use centered modal dialogs for password entry in the VS Code dashboard.
 - Make the root Web Dashboard home show the session sidebar and chat workspace, with the account dashboard available at `/dash`.
-- Serve the Web Dashboard home page at the root URL so `https://codex.madebydevs.com` is the canonical entry point.
+- Serve the Web Dashboard home page at the root URL as the canonical entry point.
 - Relay authenticated realtime encrypted-vault events across all connected peer PCs, not only the first receiving host.
 - Mirror encrypted vault changes over the authenticated realtime peer WebSocket without consuming Settings Sync requests.
 - Coalesce durable vault uploads for five seconds, merge incoming snapshots through the normal conflict-safe path, and retry when a competing vault update is detected.

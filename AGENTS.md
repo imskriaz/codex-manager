@@ -23,3 +23,7 @@
 
 - Every change that modifies tracked project files must increment the extension prerelease number by exactly one (`preN` to `preN+1`) in `package.json` and keep the root `package-lock.json` version fields synchronized.
 - Do not reuse a prerelease number across changes, skip a prerelease number, or leave version metadata unchanged.
+
+# Public Documentation Privacy
+
+- Do not include developer-specific domains, hostnames, personal URLs, or other identifying deployment details in public-facing documentation, changelogs, README files, or extension manifest descriptions. Use generic wording or placeholders instead.
