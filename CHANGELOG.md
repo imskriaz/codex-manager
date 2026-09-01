@@ -1,9 +1,12 @@
 # Changelog
 
-## 1.0.9-pre1
+## 1.0.9
 
 - Render the `/dash` center dashboard above the workspace conversation layer while preserving both workspace side panels.
 - Keep collapsed PC groups packed together at the top of the session rail.
+- Keep the left rail visible on `/dash`, hide the right tools panel on dashboard and New Chat surfaces, and reopen tools for selected desktop chat sessions.
+- Keep `/dash` session, presence, environment, and terminal data live through the same workspace-shell lifecycle as chat routes.
+- Preserve array/object command payloads and show command names, tool arguments, results, working directories, and output in expanded activity details.
 
 ## 1.0.8
 

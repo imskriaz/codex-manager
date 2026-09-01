@@ -282,15 +282,34 @@ describe("sessions sidebar layout", () => {
     expect(hooks).toContain("}, [dispatch, targetDeviceId]);");
     expect(main).toContain('document.body.classList.toggle("is-cli-workspace-route", workspaceRoute)');
     expect(main).toContain('document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute)');
-    expect(main).toContain('(isCliSessionsPath(browserPath) || browserPath === "/dash")');
+    expect(main).toContain("hasBrowserWorkspaceShell(browserPath)");
+    expect(main).toContain('dashboardMode={browserPath === "/dash"}');
+    expect(main).toContain("is-dashboard-workspace-route");
+    expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain(
+      'props.dashboardMode ? "is-dashboard-mode"'
+    );
     expect(css).toContain("body.is-cli-workspace-route { overflow: hidden; }");
     expect(css).toContain("body.is-cli-workspace-route #dashboard-main { display: none !important; }");
     expect(css).toContain("body.is-dashboard-workspace-route #dashboard-main {");
     expect(css).toMatch(/body\.is-dashboard-workspace-route #dashboard-main\s*{[^}]*z-index:\s*10010/s);
-    expect(css).toContain("calc(var(--cli-shell-rail-width, 238px) + 7px)");
-    expect(css).toContain("calc(var(--cli-shell-terminal-width, 380px) + 7px)");
+    expect(css).toContain("var(--cli-shell-divider-width, 5px)");
+    expect(css).toMatch(/\.cli-workspace\.is-dashboard-mode \.cli-conversation\s*{[^}]*visibility:\s*hidden/s);
+    expect(css).toMatch(/\.cli-workspace\.is-dashboard-mode \.cli-conversation\s*{[^}]*pointer-events:\s*none/s);
     expect(css).toMatch(/\.cli-project-list\s*{[^}]*align-content:\s*start/s);
     expect(css).toMatch(/\.cli-project-list\s*{[^}]*grid-auto-rows:\s*max-content/s);
+  });
+
+  it("keeps the tools panel closed for dashboard and new-chat surfaces", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(source).toContain("if (props.dashboardMode)");
+    expect(source).toContain("setRailCollapsed(false);");
+    expect(source).toContain("if (newChatProject !== undefined)");
+    expect(source).toContain("setContextCollapsed(true);");
+    expect(source).toContain("if (props.selectedSession && window.innerWidth >= 1180) setContextCollapsed(false);");
+    expect(source).toContain("inert={props.dashboardMode || undefined}");
+    expect(styles).toMatch(/\.cli-workspace\.is-dashboard-mode \.cli-context-toggle\s*{[^}]*display:\s*none/s);
+    expect(styles).toMatch(/body\.is-dashboard-workspace-route #dashboard-main\s*{[^}]*inset:\s*0 0 0 calc/s);
   });
 
   it("keys automatic workspace environment loads so realtime renders cannot create a request loop", () => {
@@ -342,7 +361,9 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('sendAction("openWebDashboard", undefined, { path: "/" })');
     expect(source).toContain('onDashboard={() => navigateDashboardPath("/dash", setBrowserPath)}');
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
-    expect(source).toContain("if (!isCliSessionsPath(browserPath)) return;");
+    expect(source).toContain('return pathname === "/dash" || isCliSessionsPath(pathname);');
+    expect(source).toContain("if (!hasBrowserWorkspaceShell(browserPath)) return;");
+    expect(source).toContain("if (hasBrowserWorkspaceShell(path)) requestCliSessions();");
     expect(source).toContain("window.setInterval(announceCurrentVisibility, 15_000)");
   });
 
@@ -356,6 +377,13 @@ describe("sessions sidebar layout", () => {
       { id: "command-2", kind: "command", text: "npm run package" },
       { id: "image-1", kind: "image", text: "Viewed screenshot" }
     ])).toBe("Ran 2 commands, viewed an image");
+  });
+
+  it("renders command and tool-call details instead of generic placeholders", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain('message.command ?? message.text');
+    expect(source).toContain('<strong>Arguments</strong>');
+    expect(source).toContain('message.title ?? "Ran command"');
   });
 
   it("keeps line spacing readable while collapsing oversized paragraph gaps", () => {

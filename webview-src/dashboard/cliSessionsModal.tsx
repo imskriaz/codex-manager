@@ -69,6 +69,7 @@ const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
 };
 
 export type CliSessionsPageProps = {
+  dashboardMode?: boolean;
   sessions: DashboardCliSessionSummary[];
   selectedSession?: DashboardCliSessionSummary;
   messages: DashboardCliSessionMessage[];
@@ -409,19 +410,34 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
 
   useEffect(() => {
+    if (props.dashboardMode) {
+      setRailCollapsed(false);
+      setContextCollapsed(true);
+      return;
+    }
+    if (newChatProject !== undefined) {
+      setContextCollapsed(true);
+      return;
+    }
+    if (props.selectedSession && window.innerWidth >= 1180) setContextCollapsed(false);
+  }, [newChatProject, props.dashboardMode, props.selectedSession?.id]);
+
+  useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty("--cli-shell-rail-width", railCollapsed ? "0px" : `${layout.railWidth}px`);
     root.style.setProperty("--cli-shell-terminal-width", contextCollapsed ? "0px" : `${layout.terminalWidth}px`);
+    root.style.setProperty("--cli-shell-divider-width", "5px");
     return () => {
       root.style.removeProperty("--cli-shell-rail-width");
       root.style.removeProperty("--cli-shell-terminal-width");
+      root.style.removeProperty("--cli-shell-divider-width");
     };
   }, [contextCollapsed, layout.railWidth, layout.terminalWidth, railCollapsed]);
 
   return (
     <div
       ref={workspaceRef}
-      class={`cli-workspace ${railCollapsed ? "is-rail-collapsed" : ""} ${contextCollapsed ? "is-terminal-collapsed" : ""}`}
+      class={`cli-workspace ${props.dashboardMode ? "is-dashboard-mode" : ""} ${railCollapsed ? "is-rail-collapsed" : ""} ${contextCollapsed ? "is-terminal-collapsed" : ""}`}
       style={`--cli-rail-width:${layout.railWidth}px;--cli-terminal-width:${layout.terminalWidth}px;--cli-environment-width:${layout.environmentWidth}px;--cli-environment-height:${layout.environmentHeight}px;--cli-composer-height:${layout.composerHeight}px`}
     >
       <button type="button" class="cli-rail-toggle" aria-label={railCollapsed ? "Show sessions sidebar" : "Hide sessions sidebar"} title={railCollapsed ? "Show sessions sidebar" : "Hide sessions sidebar"} onClick={() => setRailCollapsed((collapsed) => !collapsed)}><SidebarIcon /></button>
@@ -516,7 +532,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onReset={() => setLayout((current) => ({ ...current, railWidth: DEFAULT_WORKSPACE_LAYOUT.railWidth }))}
         />
 
-        <main class={`cli-conversation ${props.selectedSession ? "has-session" : newChatProject !== undefined ? "has-new-chat" : ""}`}>
+        <main
+          class={`cli-conversation ${props.selectedSession ? "has-session" : newChatProject !== undefined ? "has-new-chat" : ""}`}
+          aria-hidden={props.dashboardMode || undefined}
+          inert={props.dashboardMode || undefined}
+        >
           {props.selectedSession ? (
             <>
               <ConversationHeader
@@ -821,6 +841,7 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
         {message.output ? <pre class="cli-activity-output"><code>{message.output}</code></pre> : <div class="cli-activity-copy">{running ? "Waiting for command output…" : "No command output."}</div>}
       </> : message.kind === "file-change" ? <FileChangeDetails changes={message.changes ?? []} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : message.kind === "tool-call" ? <>
         <div class="cli-activity-copy cli-human-summary">{message.text}</div>
+        {message.arguments ? <div class="cli-activity-result"><strong>Arguments</strong><pre><code>{message.arguments}</code></pre></div> : null}
         {message.result && message.result !== message.text ? <div class={`cli-activity-result ${failed ? "is-error" : ""}`}><strong>{failed ? "Error" : "Result"}</strong><span>{message.result}</span></div> : null}
         {message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><pre><code>{message.debug}</code></pre></details> : null}
       </> : message.kind === "image" ? <><div class="cli-activity-copy">{message.text}</div>{message.images?.length ? <div class="cli-session-images cli-activity-images">{message.images.map((image, index) => <a href={image.src} target="_blank" rel="noreferrer" aria-label={`Open ${image.alt ?? "image"}`}><img src={image.src} alt={image.alt ?? `Image ${index + 1}`} loading="lazy" /></a>)}</div> : null}</> : <div class="cli-activity-copy">{message.text}</div>}
@@ -1531,7 +1552,7 @@ function InlineError(props: { text: string; retry: () => void }) {
 
 function activityLabel(message: DashboardCliSessionMessage): string {
   if (message.kind === "reasoning") return "Thinking";
-  if (message.kind === "command") return "Ran commands";
+  if (message.kind === "command") return message.title ?? "Ran command";
   return message.title ?? activityTitle(message.kind);
 }
 function EmptySessions(props: { search: boolean; section: CliSessionSection }) { return <div class="cli-inline-state"><EmptyFolderIcon /><strong>{props.search ? "No matching sessions" : `No ${props.section} sessions`}</strong><span>{props.search ? "Try another title or session ID." : props.section === "active" ? "Start a Codex chat to see it here." : "Archived sessions will appear here."}</span></div>; }

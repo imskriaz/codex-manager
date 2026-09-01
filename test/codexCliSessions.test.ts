@@ -140,7 +140,7 @@ describe("Codex session integration", () => {
           items: [
             { type: "userMessage", id: "user-1", content: [{ type: "text", text: "Build it" }, { type: "image", imageUrl: "data:image/png;base64,aGVsbG8=" }] },
             { type: "reasoning", id: "reason-1", summary: ["Inspecting the implementation"], content: [] },
-            { type: "commandExecution", id: "cmd-1", command: "npm test", cwd: "D:/repo", status: "completed", aggregatedOutput: "42 passed", exitCode: 0, durationMs: 1250 },
+            { type: "commandExecution", id: "cmd-1", command: ["npm", "test"], cwd: "D:/repo", status: "completed", aggregatedOutput: "42 passed", exitCode: 0, durationMs: 1250 },
             { type: "fileChange", id: "files-1", status: "completed", changes: [{ path: "src/app.ts", kind: "update", diff: "+done" }] },
             { type: "mcpToolCall", id: "tool-1", server: "docs", tool: "search", status: "failed", arguments: { q: "Codex" }, error: { message: "offline" }, durationMs: 40 },
             { type: "ImageView", id: "image-1", path: "file:///tmp/screenshot.png" },
@@ -155,7 +155,7 @@ describe("Codex session integration", () => {
       { id: "reason-1", kind: "reasoning", title: "Reasoning", text: "Inspecting the implementation" },
       { id: "cmd-1", kind: "command", command: "npm test", output: "42 passed", exitCode: 0, durationMs: 1250 },
       { id: "files-1", kind: "file-change", title: "Edited 1 file", changes: [{ path: "src/app.ts", kind: "update", diff: "+done" }] },
-      { id: "tool-1", kind: "tool-call", title: "search failed", subtitle: "docs", status: "failed" },
+      { id: "tool-1", kind: "tool-call", title: "search failed", subtitle: "docs", arguments: "{\n  \"q\": \"Codex\"\n}", status: "failed" },
       { id: "image-1", kind: "image", title: "Viewed image", text: "screenshot.png", images: [{ src: "file:///tmp/screenshot.png" }] },
       { id: "agent-1", kind: "message", role: "assistant", text: "Completed" }
     ]);

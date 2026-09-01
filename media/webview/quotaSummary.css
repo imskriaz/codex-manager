@@ -12865,13 +12865,20 @@ body.is-dashboard-workspace-route { overflow: hidden; }
 body.is-dashboard-workspace-route #dashboard-main {
   position: fixed;
   z-index: 10010;
-  inset: 0 calc(var(--cli-shell-terminal-width, 380px) + 7px) 0 calc(var(--cli-shell-rail-width, 238px) + 7px);
+  inset: 0 0 0 calc(var(--cli-shell-rail-width, 224px) + var(--cli-shell-divider-width, 5px));
   width: auto;
   max-width: none;
   margin: 0;
   overflow: auto;
   border-radius: 0;
   background: var(--bg-base, var(--bg-page, #fbfaf8));
+}
+.cli-workspace.is-dashboard-mode .cli-conversation {
+  visibility: hidden;
+  pointer-events: none;
+}
+.cli-workspace.is-dashboard-mode .cli-context-toggle {
+  display: none;
 }
 .workspace-route-dashboard-hidden { display: none !important; }
 .cli-workspace { font-size: 13px; }

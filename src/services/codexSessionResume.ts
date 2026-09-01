@@ -806,7 +806,7 @@ function parseAppServerThreadItem(
     return { id, kind: "plan", title: "Plan", text: readDisplayText(item["text"], "Codex prepared a plan."), status, timestamp };
   }
   if (type === "commandExecution") {
-    const command = readDisplayText(item["command"], "Command");
+    const command = readCommandText(item["command"] ?? item["cmd"] ?? item["argv"]);
     const output = typeof item["aggregatedOutput"] === "string" ? item["aggregatedOutput"].slice(0, MAX_SESSION_MESSAGE_CHARS) : undefined;
     return {
       id,
@@ -842,7 +842,7 @@ function parseAppServerThreadItem(
     const error = readHumanError(item["error"]);
     const debug = safeDisplayJson({ arguments: item["arguments"], error: item["error"], result: item["result"] ?? item["contentItems"] ?? item["success"] });
     const failed = Boolean(error) || status === "failed";
-    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${tool}` : failed ? `${tool} failed` : `Used ${tool}`, subtitle: server, text: error ?? `${server} used ${tool}.`, result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]), debug, durationMs, status: failed ? "failed" : status, timestamp };
+    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${tool}` : failed ? `${tool} failed` : `Used ${tool}`, subtitle: server, text: error ?? `${server} used ${tool}.`, arguments: safeDisplayJson(item["arguments"]), result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]), debug, durationMs, status: failed ? "failed" : status, timestamp };
   }
   if (type === "collabToolCall" || type === "collabAgentToolCall" || type === "subAgentActivity") {
     const tool = typeof item["tool"] === "string" ? item["tool"] : typeof item["kind"] === "string" ? item["kind"] : "Agent activity";
@@ -1017,6 +1017,22 @@ function readStringArray(value: unknown): string[] {
 
 function readDisplayText(value: unknown, fallback: string): string {
   return (typeof value === "string" && value.trim() ? value.trim() : fallback).slice(0, MAX_SESSION_MESSAGE_CHARS);
+}
+
+function readCommandText(value: unknown): string {
+  if (typeof value === "string" && value.trim()) return value.trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
+  if (Array.isArray(value)) {
+    const parts = value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()));
+    if (parts.length) return parts.join(" ").slice(0, MAX_SESSION_MESSAGE_CHARS);
+  }
+  if (value && typeof value === "object") {
+    const command = value as Record<string, unknown>;
+    const executable = readCommandText(command["command"] ?? command["cmd"] ?? command["program"] ?? command["executable"]);
+    const args = readStringArray(command["args"] ?? command["arguments"] ?? command["argv"]);
+    const combined = [executable === "Command" ? "" : executable, ...args].filter(Boolean).join(" ").trim();
+    if (combined) return combined.slice(0, MAX_SESSION_MESSAGE_CHARS);
+  }
+  return "Command";
 }
 
 function safeDisplayJson(value: unknown): string | undefined {

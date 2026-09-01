@@ -110,6 +110,10 @@ function isCliSessionsPath(pathname: string): boolean {
   return pathname === "/" || pathname === "/workspace" || /^\/[0-9a-f-]{36}$/i.test(pathname);
 }
 
+function hasBrowserWorkspaceShell(pathname: string): boolean {
+  return pathname === "/dash" || isCliSessionsPath(pathname);
+}
+
 function getCliSessionIdFromPath(pathname: string): string | undefined {
   const match = pathname.match(/^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
   return match?.[1];
@@ -791,7 +795,7 @@ function App() {
   }, [snapshot?.dailyUsageCache]);
 
   useEffect(() => {
-    if (!isBrowserDashboard || !isCliSessionsPath(browserPath)) return;
+    if (!isBrowserDashboard || !hasBrowserWorkspaceShell(browserPath)) return;
     const projectPath = selectedCliSession?.projectPath ?? cliComposerConfig?.projects?.[0]?.path;
     const loadKey = `${browserPath}\n${projectPath ?? ""}`;
     // Object-valued composer/session state can be replaced by every realtime
@@ -811,7 +815,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!isBrowserDashboard || !realtimeConnected || !isCliSessionsPath(browserPath)) return;
+    if (!isBrowserDashboard || !realtimeConnected || !hasBrowserWorkspaceShell(browserPath)) return;
     const announce = (viewing: boolean): void => {
       postMessageToHost({ type: "dashboard:workspace-presence", viewing });
     };
@@ -857,7 +861,7 @@ function App() {
         setSelectedCliSession(undefined);
         setCliSessionMessages([]);
       }
-      if (path === "/" || path === "/workspace" || sessionId) requestCliSessions();
+      if (hasBrowserWorkspaceShell(path)) requestCliSessions();
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -869,7 +873,7 @@ function App() {
       requestCliSessions();
       return;
     }
-    if (!isCliSessionsPath(browserPath)) return;
+    if (!hasBrowserWorkspaceShell(browserPath)) return;
     void readCliSessionListCache().then((cached) => {
       if (cached) {
         setCliSessions(cached.sessions);
@@ -2189,9 +2193,10 @@ function App() {
         />
       }
 
-      {isBrowserDashboard && (isCliSessionsPath(browserPath) || browserPath === "/dash")
+      {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
+              dashboardMode={browserPath === "/dash"}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
               messages={cliSessionMessages}
