@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.4-pre10
+
+- Serve the Web Dashboard home page at the root URL so `https://codex.madebydevs.com` is the canonical entry point.
+
+## 1.0.4-pre9
+
+- Relay authenticated realtime encrypted-vault events across all connected peer PCs, not only the first receiving host.
+
 ## 1.0.4-pre8
 
 - Mirror encrypted vault changes over the authenticated realtime peer WebSocket without consuming Settings Sync requests.

@@ -422,7 +422,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.connectPeerSocket();
   }
 
-  async openInBrowser(pathname = "/dash"): Promise<WebDashboardOpenResult> {
+  async openInBrowser(pathname = "/"): Promise<WebDashboardOpenResult> {
     if (!isWebDashboardPagePath(pathname)) {
       throw new Error("The requested Web Dashboard path is invalid.");
     }
@@ -477,9 +477,9 @@ export class WebDashboardServer implements vscode.Disposable {
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
-    if (method === "GET" && (path === "/" || path === "/workspace/")) {
+    if (method === "GET" && path === "/workspace/") {
       response.statusCode = 302;
-      response.setHeader("Location", path === "/" ? "/dash" : "/workspace");
+      response.setHeader("Location", "/workspace");
       response.end();
       return;
     }
@@ -1375,7 +1375,7 @@ export class WebDashboardServer implements vscode.Disposable {
     return true;
   }
 
-  private async acceptPeerVault(message: Partial<PeerVaultMessage>): Promise<boolean> {
+  private async acceptPeerVault(message: Partial<PeerVaultMessage>, sourceSocket?: WebSocket): Promise<boolean> {
     if (
       message.type !== "peer:vault" ||
       typeof message.deviceId !== "string" ||
@@ -1392,6 +1392,16 @@ export class WebDashboardServer implements vscode.Disposable {
       return false;
     }
     await this.encryptedSync?.applyRealtimeEncryptedVault(message.vault);
+    // A dashboard host can have several peer PCs connected. Relay the
+    // authenticated ciphertext event so one source change reaches the whole
+    // connected peer set without another Settings Sync request.
+    const serialized = JSON.stringify(message);
+    for (const socket of this.peerSockets.values()) {
+      if (socket === sourceSocket || !this.authenticatedPeerSockets.has(socket) || socket.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+      socket.send(serialized);
+    }
     this.publishRealtimeState();
     return true;
   }
@@ -1424,7 +1434,7 @@ export class WebDashboardServer implements vscode.Disposable {
     try {
       const message = JSON.parse(raw) as Partial<PeerSessionMessage> & Partial<PeerVaultMessage> & Partial<PeerActionMessage>;
       if (message.type === "peer:vault") {
-        await this.acceptPeerVault(message);
+        await this.acceptPeerVault(message, sourceSocket);
         return;
       }
       if (message.type === "peer:action") {
@@ -1915,11 +1925,11 @@ export function normalizePersistedWebDashboardSessions(
 }
 
 export function isWebDashboardPagePath(pathname: string): boolean {
-  return pathname === "/dash" || pathname === "/workspace" || /^\/[0-9a-f-]{36}$/i.test(pathname);
+  return pathname === "/" || pathname === "/dash" || pathname === "/workspace" || /^\/[0-9a-f-]{36}$/i.test(pathname);
 }
 
 export function normalizeWebDashboardReturnPath(pathname: string): string {
-  return isWebDashboardPagePath(pathname) ? pathname : "/dash";
+  return isWebDashboardPagePath(pathname) ? pathname : "/";
 }
 
 export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes: number): Promise<string> {
@@ -1949,7 +1959,7 @@ export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes
   });
 }
 
-function loginPage(configured: boolean, error = "", returnPath = "/dash"): string {
+function loginPage(configured: boolean, error = "", returnPath = "/"): string {
   const action = `/login?returnTo=${encodeURIComponent(normalizeWebDashboardReturnPath(returnPath))}`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Codex Manager password.</p><form method="post" action="${action}"><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" autofocus required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
 }

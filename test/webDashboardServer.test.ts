@@ -50,6 +50,7 @@ describe("readDashboardRequestBody", () => {
 
 describe("isWebDashboardPagePath", () => {
   it("serves the session workspace and direct session deep links", () => {
+    expect(isWebDashboardPagePath("/")).toBe(true);
     expect(isWebDashboardPagePath("/dash")).toBe(true);
     expect(isWebDashboardPagePath("/workspace")).toBe(true);
     expect(isWebDashboardPagePath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(true);
@@ -58,11 +59,12 @@ describe("isWebDashboardPagePath", () => {
   });
 
   it("preserves safe session routes after login and rejects redirect paths", () => {
+    expect(normalizeWebDashboardReturnPath("/")).toBe("/");
     expect(normalizeWebDashboardReturnPath("/workspace")).toBe("/workspace");
     expect(normalizeWebDashboardReturnPath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(
       "/01a04882-d037-7a42-ad24-9afb61901188"
     );
-    expect(normalizeWebDashboardReturnPath("//example.com/steal")).toBe("/dash");
+    expect(normalizeWebDashboardReturnPath("//example.com/steal")).toBe("/");
   });
 });
 
