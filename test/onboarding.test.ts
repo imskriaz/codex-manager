@@ -11,7 +11,9 @@ describe("first-run onboarding", () => {
     expect(modal).toContain("cloudflared tunnel --url http://127.0.0.1:39875");
     expect(modal).toContain("Set the shared Password under General settings before remote login.");
     expect(modal).not.toContain("dashboardPassword");
-    expect(modal).not.toContain('type="password"');
+    expect(modal).toContain('type="password"');
+    expect(modal).toContain('password: "Password"');
+    expect(modal).not.toContain("Passphrase");
     expect(modal).toContain("PayPal or Wise");
     expect(modal).toContain("skriaz@live.com");
   });
@@ -33,8 +35,8 @@ describe("first-run onboarding", () => {
 
     expect(main).toContain('sendAction("completeOnboarding")');
     expect(main).toContain("snapshot.onboardingCompleted");
-    expect(main).not.toContain("deferSync: true");
-    expect(main).not.toContain('onboardingPendingRef.current.add("configureEncryptedSync")');
+    expect(main).toContain("deferSync: true");
+    expect(main).toContain('onboardingPendingRef.current.add("configureEncryptedSync")');
     expect(main).not.toContain('onboardingPendingRef.current.add("syncNow")');
     expect(actions).toContain("markOnboardingCompleted(ctx.context)");
     expect(sync).toContain("this.queueBackgroundSync(VAULT_SYNC_DEBOUNCE_DELAY_MS)");

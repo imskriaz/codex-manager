@@ -16,7 +16,7 @@ export function OnboardingModal(props: {
   importCompleted: boolean;
   onClose: () => void;
   onAccept: () => void;
-  onSubmitSetup: (values: { syncEnabled: boolean }) => void;
+  onSubmitSetup: (values: { syncEnabled: boolean; password: string; confirmation: string }) => void;
   onImportCurrent: () => void;
   onContinueImport: () => void;
   onContinueCloudflare: (values: { cloudflaredDomain: string; dashboardEnabled: boolean }) => void;
@@ -24,12 +24,16 @@ export function OnboardingModal(props: {
 }) {
   const [syncEnabled, setSyncEnabled] = useState(props.settings.encryptedSyncEnabled);
   const [dashboardEnabled, setDashboardEnabled] = useState(props.settings.webDashboardEnabled);
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
   const [domain, setDomain] = useState(props.settings.cloudflaredDomain ?? "");
 
   useEffect(() => {
     if (props.step === "setup") {
       setSyncEnabled(props.settings.encryptedSyncEnabled);
       setDashboardEnabled(props.settings.webDashboardEnabled);
+      setPassword("");
+      setConfirmation("");
     }
     if (props.step === "cloudflare") setDomain(props.settings.cloudflaredDomain ?? "");
   }, [
@@ -50,6 +54,8 @@ export function OnboardingModal(props: {
           setupSub: "立即保存配置并继续。首次同步将在后台使用客户端加密运行。",
           sync: "启用加密同步",
           syncHint: "在已登录 VS Code Settings Sync 的设备之间共享账号会话。",
+          password: "密码",
+          confirm: "确认密码",
           dashboard: "启用 Web Dashboard",
           continue: "保存并继续",
           importTitle: "检查当前账号",
@@ -70,6 +76,8 @@ export function OnboardingModal(props: {
             setupSub: "立即儲存設定並繼續。首次同步會在背景以用戶端加密執行。",
             sync: "啟用加密同步",
             syncHint: "在已登入 VS Code Settings Sync 的裝置之間共享帳號工作階段。",
+            password: "密碼",
+            confirm: "確認密碼",
             dashboard: "啟用 Web Dashboard",
             continue: "儲存並繼續",
             importTitle: "檢查目前帳號",
@@ -91,6 +99,8 @@ export function OnboardingModal(props: {
               "Save the configuration now and continue immediately. Initial sync runs in the background with client-side encryption.",
             sync: "Enable encrypted sync",
             syncHint: "Share account sessions across devices signed in to VS Code Settings Sync.",
+            password: "Password",
+            confirm: "Confirm password",
             dashboard: "Enable Web Dashboard",
             continue: "Save & continue",
             importTitle: "Check your current account",
@@ -104,6 +114,7 @@ export function OnboardingModal(props: {
             domain: "Cloudflared hostname",
             finish: "Finish setup"
           };
+  const mismatch = syncEnabled && confirmation.length > 0 && password !== confirmation;
   const title =
     props.step === "agreement"
       ? copy.welcome
@@ -155,7 +166,9 @@ export function OnboardingModal(props: {
           class="onboarding-content"
           onSubmit={(event) => {
             event.preventDefault();
-            props.onSubmitSetup({ syncEnabled });
+            if (!mismatch && (!syncEnabled || password)) {
+              props.onSubmitSetup({ syncEnabled, password, confirmation });
+            }
           }}
         >
           <p class="onboarding-subtitle">{copy.setupSub}</p>
@@ -170,12 +183,37 @@ export function OnboardingModal(props: {
               <small>{copy.syncHint}</small>
             </span>
           </label>
+          {syncEnabled ? (
+            <div class="onboarding-field-grid">
+              <label>
+                <span>{copy.password}</span>
+                <input
+                  class="modal-input"
+                  type="password"
+                  value={password}
+                  autoComplete="new-password"
+                  onInput={(event) => setPassword(event.currentTarget.value)}
+                />
+              </label>
+              <label>
+                <span>{copy.confirm}</span>
+                <input
+                  class="modal-input"
+                  type="password"
+                  value={confirmation}
+                  autoComplete="new-password"
+                  onInput={(event) => setConfirmation(event.currentTarget.value)}
+                />
+              </label>
+            </div>
+          ) : null}
+          {mismatch ? <div class="modal-error">Passwords do not match.</div> : null}
           {props.error ? <div class="modal-error">{props.error}</div> : null}
           <div class="modal-actions">
             <button
               class="modal-primary-btn"
               type="submit"
-              disabled={props.busy}
+              disabled={props.busy || (syncEnabled && (!password || mismatch))}
             >
               {props.busy ? "Working…" : copy.continue} <span aria-hidden="true">→</span>
             </button>

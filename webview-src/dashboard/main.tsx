@@ -1462,11 +1462,19 @@ function App() {
     setOnboardingStep("setup");
   };
 
-  const submitOnboardingSetup = (values: { syncEnabled: boolean }): void => {
+  const submitOnboardingSetup = (values: { syncEnabled: boolean; password: string; confirmation: string }): void => {
     setOnboardingError(undefined);
     setOnboardingBusy(true);
     onboardingPendingRef.current = new Set();
     sendSetting("encryptedSyncEnabled", values.syncEnabled);
+    if (values.syncEnabled) {
+      onboardingPendingRef.current.add("configureEncryptedSync");
+      sendAction("configureEncryptedSync", undefined, {
+        passphrase: values.password,
+        passphraseConfirmation: values.confirmation,
+        deferSync: true
+      });
+    }
     if (onboardingPendingRef.current.size === 0) {
       setOnboardingBusy(false);
       setOnboardingStep("import");
