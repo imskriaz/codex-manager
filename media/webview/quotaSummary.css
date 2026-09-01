@@ -8698,6 +8698,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   background: color-mix(in srgb, var(--text-muted) 9%, transparent);
   color: var(--text-secondary);
   font-size: 9px;
+  font-weight: 400;
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8989,10 +8990,11 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 .saved-table-meta .saved-subscription-remaining {
-  padding: 1px 5px;
+  padding: 1px 3px;
   border: 1px solid color-mix(in srgb, var(--accent-green) 40%, transparent);
   border-radius: 999px;
   font-size: 9px;
+  font-weight: 400;
   line-height: 1.2;
 }
 
@@ -10719,8 +10721,8 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 .pill.saved-running-device {
   border: 1px solid var(--danger);
-  background: var(--danger);
-  color: #fff;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
 }
 
 .table-running-device {
@@ -11050,7 +11052,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   justify-content: center;
   gap: 4px;
   min-height: 17px;
-  padding: 0 5px !important;
+  padding: 0 3px !important;
   border: 1px solid color-mix(in srgb, var(--accent-orange) 68%, var(--border-default));
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-orange) 24%, var(--bg-elevated));
@@ -11059,7 +11061,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   cursor: pointer;
   font-family: inherit;
   font-size: 9px !important;
-  font-weight: 700;
+  font-weight: 400;
   line-height: 1;
   transition:
     border-color 120ms ease,
@@ -11395,7 +11397,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 .saved-table-meta .pill {
   flex: none;
   min-height: 16px;
-  padding: 0 5px;
+  padding: 0 3px;
   font-size: 9px;
 }
 

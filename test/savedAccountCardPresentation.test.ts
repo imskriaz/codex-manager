@@ -30,8 +30,9 @@ describe("saved account card presentation", () => {
 
     expect(source).toContain('class="saved-credits-line saved-running-device"');
     expect(source).toContain("saved-running-device");
-    expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*background: var\(--danger\)/s);
-    expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*color: #fff/s);
+    expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*border: 1px solid var\(--danger\)/s);
+    expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*background: color-mix\(in srgb, var\(--danger\) 8%, transparent\)/s);
+    expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*color: var\(--danger\)/s);
     expect(resolveCompactIdentityBadge("DESKTOP-4ISJOQ6")).toEqual({
       kind: "running-device",
       label: "DESKTOP-4ISJOQ6"
@@ -41,6 +42,16 @@ describe("saved account card presentation", () => {
   it("orders reset credits before subscription days remaining", () => {
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(styles).toMatch(/\.saved-reset-badge\s*{[^}]*order:\s*1/s);
+  });
+
+  it("keeps compact card metadata regular-weight with tight padding", () => {
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
+
+    expect(styles).toMatch(/\.saved-table-meta \.saved-running-device\s*{[^}]*font-weight:\s*400/s);
+    expect(styles).toMatch(/\.saved-table-meta \.saved-subscription-remaining\s*{[^}]*padding:\s*1px 3px/s);
+    expect(styles).toMatch(/\.saved-table-meta \.saved-subscription-remaining\s*{[^}]*font-weight:\s*400/s);
+    expect(styles).toMatch(/\.saved-reset-badge\s*{[^}]*padding:\s*0 3px !important/s);
+    expect(styles).toMatch(/\.saved-reset-badge\s*{[^}]*font-weight:\s*400/s);
   });
 
   it("keeps raw provider errors out of the card health reason", () => {
