@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.0
+
+- Keep the experimental Workspace setting specific to each PC.
+- Ask whether to unload the current Codex auth after disabling its account, and automatically unload it after restart when postponed.
+- Place dashboard popouts, dialogs, and toast feedback on a consistent elevation scale so feedback remains visible.
+- Show each unchanged low-quota VS Code warning only once until the quota recovers or its threshold changes.
+
 ## 1.0.9
 
 - Render the `/dash` center dashboard above the workspace conversation layer while preserving both workspace side panels.

@@ -51,6 +51,7 @@ import type {
   DashboardHostMessage
 } from "../../domain/dashboard/types";
 import type { CodexManagerAccountRecord, CodexManagerBackup } from "../../core/types";
+import { getErrorMessage } from "../../core";
 import type { SwitchAccountCommandResult } from "../../application/accounts/commandService";
 import type { DashboardLanguage } from "../../localization/languages";
 import { AccountsRepository } from "../../storage";
@@ -511,8 +512,20 @@ async function runDashboardAction(
       return handleEnableAllValid(ctx.repo, ctx.schedulePublishState);
     case "disableAll":
       return handleDisableAll(ctx.repo, ctx.schedulePublishState);
-    case "unloadAuth":
+    case "unloadAuth": {
+      const activeAccount = (await ctx.repo.listAccounts()).find((candidate) => candidate.isActive);
       await unloadAuthFile();
+      let releaseWarning: string | undefined;
+      if (activeAccount) {
+        try {
+          // Unloading is also an explicit release on this PC. Use the normal
+          // enablement path so encrypted sync publishes the disabled record
+          // and another PC can safely claim the session.
+          await ctx.repo.setAccountEnabled(activeAccount.id, false);
+        } catch (error) {
+          releaseWarning = getErrorMessage(error);
+        }
+      }
       await ctx.repo.syncActiveAccountFromAuthFile();
       await ctx.context.workspaceState.update(CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY, undefined);
       setCurrentWindowRuntimeAccountId(undefined);
@@ -520,10 +533,15 @@ async function runDashboardAction(
       ctx.schedulePublishState();
       return {
         notice: {
-          level: "info" as const,
-          message: "Codex auth unloaded. Reloading; Codex will stay signed out until you log in or switch an account."
+          level: releaseWarning ? ("warning" as const) : ("info" as const),
+          message: releaseWarning
+            ? `Codex auth was unloaded, but the account's shared claim could not be released: ${releaseWarning}. Disable it manually and run Sync Now.`
+            : activeAccount
+              ? "Codex auth unloaded and the account was disabled on this PC. Its sync release is queued; reloading now."
+              : "Codex auth unloaded. Reloading; Codex will stay signed out until you log in or switch an account."
         }
       };
+    }
     case "reloadPrompt":
       return handleReloadPrompt(account, payload, ctx.hostKind === "browser");
     case "reauthorize":
@@ -648,7 +666,27 @@ async function runDashboardAction(
         } finally {
           ctx.schedulePublishState();
         }
-        return undefined;
+        if (!enabled && account.isActive) {
+          return {
+            actionPrompts: [
+              {
+                kind: "disabledActiveAccount" as const,
+                accountId: account.id,
+                message: `${account.email} is disabled. Unload Codex auth now? Later keeps it loaded only until restart.`,
+                unloadLabel: "Unload",
+                keepUsingLabel: "Later"
+              }
+            ]
+          };
+        }
+        return {
+          notice: {
+            level: "info" as const,
+            message: enabled
+              ? `${account.email} was enabled on this PC. Sync is queued.`
+              : `${account.email} was disabled on this PC. Sync is queued.`
+          }
+        };
       }
       return undefined;
     case "setAccountQueuePriority":

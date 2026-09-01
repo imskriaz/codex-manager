@@ -797,16 +797,24 @@ export interface DashboardActionResultPayload {
   reloadScheduled?: boolean;
 }
 
-export interface DashboardActionPrompt {
-  kind: "quotaWarning";
-  accountId: string;
-  message: string;
-  switchAccountId?: string;
-  switchLabel?: string;
-  resetLabel?: string;
-  selectLabel: string;
-  laterLabel: string;
-}
+export type DashboardActionPrompt =
+  | {
+      kind: "quotaWarning";
+      accountId: string;
+      message: string;
+      switchAccountId?: string;
+      switchLabel?: string;
+      resetLabel?: string;
+      selectLabel: string;
+      laterLabel: string;
+    }
+  | {
+      kind: "disabledActiveAccount";
+      accountId: string;
+      message: string;
+      unloadLabel: string;
+      keepUsingLabel: string;
+    };
 
 export interface DashboardNotice {
   level: "info" | "warning" | "error";

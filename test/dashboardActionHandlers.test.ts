@@ -86,6 +86,10 @@ describe("executeDashboardActionMessage", () => {
       ...createContext(),
       context: { workspaceState: { update: workspaceUpdate } } as unknown as DashboardActionContext["context"],
       repo: {
+        listAccounts: vi.fn().mockResolvedValue([
+          { id: "active-account", email: "active@example.com", isActive: true, enabled: true }
+        ]),
+        setAccountEnabled: vi.fn().mockResolvedValue(undefined),
         syncActiveAccountFromAuthFile,
         flush: vi.fn().mockResolvedValue(undefined)
       } as unknown as DashboardActionContext["repo"]
@@ -98,13 +102,14 @@ describe("executeDashboardActionMessage", () => {
     });
 
     expect(unloadAuthFileMock).toHaveBeenCalledOnce();
+    expect(context.repo.setAccountEnabled).toHaveBeenCalledWith("active-account", false);
     expect(syncActiveAccountFromAuthFile).toHaveBeenCalledOnce();
     expect(workspaceUpdate).toHaveBeenCalledWith("codexManager.currentWindowRuntimeAccountId", undefined);
     expect(context.schedulePublishState).toHaveBeenCalledOnce();
     expect(result.status).toBe("completed");
     expect(result.payload?.notice).toEqual({
       level: "info",
-      message: "Codex auth unloaded. Reloading; Codex will stay signed out until you log in or switch an account."
+      message: "Codex auth unloaded and the account was disabled on this PC. Its sync release is queued; reloading now."
     });
   });
 
@@ -114,6 +119,8 @@ describe("executeDashboardActionMessage", () => {
       ...createContext(),
       context: { workspaceState: { update: vi.fn() } } as unknown as DashboardActionContext["context"],
       repo: {
+        listAccounts: vi.fn().mockResolvedValue([]),
+        setAccountEnabled: vi.fn(),
         syncActiveAccountFromAuthFile: vi.fn(),
         flush: vi.fn().mockResolvedValue(undefined)
       } as unknown as DashboardActionContext["repo"]
@@ -787,7 +794,7 @@ describe("executeDashboardActionMessage", () => {
     expect(repo.setAccountEnabled).toHaveBeenCalledWith(account.id, true);
     expect(context.schedulePublishState).toHaveBeenCalled();
     expect(result.status).toBe("completed");
-    expect(result.payload?.notice).toBeUndefined();
+    expect(result.payload?.notice?.message).toContain("enabled on this PC");
   });
 
   it("honors an explicit enable request when synchronized account state is stale", async () => {
@@ -834,7 +841,42 @@ describe("executeDashboardActionMessage", () => {
 
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("codexManager.syncNow", expect.anything());
     expect(result.status).toBe("completed");
+    expect(result.payload?.notice?.message).toContain("disabled on this PC");
+  });
+
+  it("asks whether to unload after disabling the current account", async () => {
+    const account = {
+      id: "current-account",
+      email: "current@example.com",
+      enabled: true,
+      isActive: true
+    };
+    const repo = {
+      getAccount: vi.fn().mockResolvedValue(account),
+      setAccountEnabled: vi.fn().mockResolvedValue({ ...account, enabled: false })
+    } as unknown as DashboardActionContext["repo"];
+
+    const result = await executeDashboardActionMessage(
+      { ...createContext(), repo },
+      {
+        type: "dashboard:action",
+        action: "toggleAccountEnabled",
+        requestId: "req-disable-current",
+        accountId: account.id,
+        payload: { enabled: false }
+      }
+    );
+
+    expect(result.status).toBe("completed");
     expect(result.payload?.notice).toBeUndefined();
+    expect(result.payload?.actionPrompts).toEqual([
+      expect.objectContaining({
+        kind: "disabledActiveAccount",
+        accountId: account.id,
+        unloadLabel: "Unload",
+        keepUsingLabel: "Later"
+      })
+    ]);
   });
 
   it("does not block an account toggle while a background account task is running", async () => {
@@ -896,7 +938,7 @@ describe("executeDashboardActionMessage", () => {
     expect(repo.setAccountEnabled).toHaveBeenCalledWith(account.id, false);
     expect(context.schedulePublishState).toHaveBeenCalled();
     expect(result.status).toBe("completed");
-    expect(result.payload?.notice).toBeUndefined();
+    expect(result.payload?.notice?.message).toContain("disabled on this PC");
   });
 
   it("returns account claim enablement failures to the dashboard", async () => {

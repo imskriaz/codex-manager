@@ -76,6 +76,23 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).toHaveBeenCalledWith("autoSwitchReloadWindowEnabled", true, vscode.ConfigurationTarget.Global);
   });
 
+  it("always stores the workspace master gate on this PC", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn(),
+      update,
+      inspect: vi.fn(() => ({
+        key: "codexManager.cliIntegrationEnabled",
+        defaultValue: false,
+        workspaceValue: true
+      }))
+    } as never);
+
+    await expect(handleDashboardSettingUpdate("cliIntegrationEnabled", false)).resolves.toBe(true);
+
+    expect(update).toHaveBeenCalledWith("cliIntegrationEnabled", false, vscode.ConfigurationTarget.Global);
+  });
+
   it("preserves the legacy shared warning value before changing the 5-hour threshold", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

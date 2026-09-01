@@ -13549,6 +13549,73 @@ body.is-dashboard-workspace-route #dashboard-main {
   transition-delay: 0s;
 }
 
+/* Dashboard elevation contract. Neutral content owns the base layer; every
+   viewport surface uses one ordered scale so menus, dialogs, and feedback do
+   not compete through unrelated local z-index values. */
+:root {
+  --dashboard-z-content: 0;
+  --dashboard-z-popover: 20000;
+  --dashboard-z-overlay: 30000;
+  --dashboard-z-action: 31000;
+  --dashboard-z-toast: 40000;
+}
+
+.panel {
+  position: relative;
+  z-index: var(--dashboard-z-content);
+  isolation: isolate;
+}
+
+.claim-popover-portal,
+.saved-overflow-menu.saved-overflow-menu-portal,
+.dashboard-tag-filter-popover,
+.dashboard-pc-picker-popover,
+.cli-sessions-popover,
+.cli-account-menu,
+.cli-file-context-menu,
+.cli-context-add-menu,
+.cli-terminal-profile-menu {
+  z-index: var(--dashboard-z-popover);
+}
+
+.overlay,
+.cli-share-overlay {
+  z-index: var(--dashboard-z-overlay);
+}
+
+.announcement-overlay,
+.overlay:has(.dashboard-confirm-modal),
+.action-popover-layer {
+  z-index: var(--dashboard-z-action);
+}
+
+.dashboard-notice-stack {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: var(--dashboard-z-toast);
+  display: grid;
+  gap: 6px;
+  width: min(420px, calc(100vw - 40px));
+  margin: 0;
+  pointer-events: none;
+}
+
+.dashboard-notice-stack .dashboard-notice {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  pointer-events: auto;
+}
+
+@media (max-width: 600px) {
+  .dashboard-notice-stack {
+    right: 12px;
+    bottom: 12px;
+    width: calc(100vw - 24px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .overlay {
     transition: none;

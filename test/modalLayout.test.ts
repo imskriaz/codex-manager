@@ -10,7 +10,8 @@ describe("dashboard modal layout", () => {
     expect(compactRules).toBeGreaterThan(settingsSkin);
     expect(css).toMatch(/\.dashboard-modal-compact\s*\{[\s\S]*?width:\s*min\(520px/);
     expect(css).toMatch(/\.dashboard-confirm-modal\s*\{[\s\S]*?width:\s*min\(480px/);
-    expect(css).toMatch(/\.overlay:has\(\.dashboard-confirm-modal\)\s*\{[\s\S]*?z-index:\s*1250/);
+    expect(css).toMatch(/--dashboard-z-overlay:\s*30000/);
+    expect(css).toMatch(/\.overlay:has\(\.dashboard-confirm-modal\),[\s\S]*?z-index:\s*var\(--dashboard-z-action\)/);
     expect(css).toMatch(/\.dashboard-modal-compact \.dashboard-modal-body\s*\{[\s\S]*?gap:\s*8px/);
   });
 });

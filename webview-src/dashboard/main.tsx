@@ -421,6 +421,16 @@ function App() {
           message: actionPrompt.message
         });
       }
+      if (actionPrompt?.kind === "disabledActiveAccount") {
+        setBrowserActionRequest({
+          kind: "disabledActiveAccount",
+          accountId: actionPrompt.accountId,
+          title: "Current account disabled",
+          message: actionPrompt.message,
+          unloadLabel: actionPrompt.unloadLabel,
+          keepUsingLabel: actionPrompt.keepUsingLabel
+        });
+      }
       if (
         isBrowserDashboard &&
         message.type === "dashboard:action-result" &&
@@ -1413,6 +1423,17 @@ function App() {
       });
       return;
     }
+    if (request.kind === "disabledActiveAccount") {
+      if (submittedTags?.[0] === "unload") {
+        sendAction("unloadAuth");
+      } else {
+        showNotice({
+          level: "warning",
+          message: "The account stays loaded only for this VS Code session. It will be unloaded automatically after restart."
+        });
+      }
+      return;
+    }
     if (request.kind === "switch") {
       const accountId = request.accountIds[0];
       if (accountId) {
@@ -1454,9 +1475,11 @@ function App() {
           ? "Tag update cancelled."
           : request.kind === "password"
             ? `${request.title} cancelled.`
-            : request.kind === "notification"
-              ? "Notification dismissed."
-              : request.action === "reloadPrompt"
+          : request.kind === "notification"
+            ? "Notification dismissed."
+            : request.kind === "disabledActiveAccount"
+              ? "The disabled account remains loaded for this VS Code session and will unload automatically after restart."
+            : request.action === "reloadPrompt"
                 ? "Reload postponed. Use Reload when you are ready."
                 : `${request.title} cancelled.`;
     showNotice({ level: "info", message });
@@ -1585,6 +1608,29 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
+      {notices.length
+        ? createPortal(
+            <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
+              {notices.map((notice) => (
+                <div
+                  key={notice.id}
+                  class={`dashboard-notice is-${notice.level}`}
+                  role={notice.level === "error" ? "alert" : "status"}
+                >
+                  <span>{notice.message}</span>
+                  <button
+                    type="button"
+                    aria-label="Dismiss notification"
+                    onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>,
+            document.body
+          )
+        : null}
       <main
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
@@ -1604,26 +1650,6 @@ function App() {
           </section>
         ) : null}
         <section class="section">
-          {notices.length ? (
-            <div class="dashboard-notice-stack" aria-label="Notifications">
-              {notices.map((notice) => (
-                <div
-                  key={notice.id}
-                  class={`dashboard-notice is-${notice.level}`}
-                  role={notice.level === "error" ? "alert" : "status"}
-                >
-                  <span>{notice.message}</span>
-                  <button
-                    type="button"
-                    aria-label="Dismiss notification"
-                    onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
           <div class="hero">
             <div class={`brand ${isBrowserDashboard ? "has-pc-picker" : ""}`}>
               <img class="brand-logo" src={snapshot.logoUri} alt="" aria-hidden="true" width="28" height="28" />

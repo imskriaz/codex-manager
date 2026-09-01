@@ -58,7 +58,9 @@ const AUTO_SWITCH_WEEKLY_THRESHOLD = "autoSwitchWeeklyThreshold";
 const AUTO_RESET_ENABLED = "autoResetEnabled";
 const AUTO_RESET_WEEKLY_THRESHOLD = "autoResetWeeklyThreshold";
 const QUOTA_WARNING_ENABLED = "quotaWarningEnabled";
-const MAX_WARNINGS_PER_CYCLE = 3;
+// One native warning is enough while the same account/dimension remains below
+// the same threshold. The count resets after recovery or a threshold change.
+const MAX_WARNINGS_PER_CYCLE = 1;
 const quotaWarningCounts = new Map<string, number>();
 let autoSwitchInFlight: Promise<boolean> | undefined;
 let lastBlockedAutoSwitchKey: string | undefined;

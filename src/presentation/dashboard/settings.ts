@@ -210,6 +210,12 @@ function resolveConfigurationTarget(
   config: vscode.WorkspaceConfiguration,
   key: DashboardConfigurationKey
 ): vscode.ConfigurationTarget {
+  // Workspace access exposes local files, terminals, and CLI sessions. Keep
+  // its master gate in this machine's user settings even if an older install
+  // left a workspace-level override behind in a shared repository.
+  if (key === "cliIntegrationEnabled") {
+    return vscode.ConfigurationTarget.Global;
+  }
   const inspected = config.inspect(key);
   if (inspected?.workspaceFolderValue !== undefined) {
     return vscode.ConfigurationTarget.WorkspaceFolder;

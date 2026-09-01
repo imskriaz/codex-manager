@@ -1140,6 +1140,31 @@ describe("quota warning window validation", () => {
     ]);
   });
 
+  it("shows the same low-quota warning only once until recovery", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: vi.fn((key: string, defaultValue?: unknown) => {
+        const values: Record<string, unknown> = {
+          quotaWarningEnabled: true,
+          hourlyQuotaControlEnabled: false,
+          quotaWarningThreshold: 10
+        };
+        return values[key] ?? defaultValue;
+      })
+    } as never);
+    const showWarning = vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue(undefined);
+    showWarning.mockClear();
+    const account = createAccount("single-warning", true, 80, 5);
+    const repo = {
+      getAccount: vi.fn(async () => account),
+      listAccounts: vi.fn(async () => [account])
+    };
+
+    await maybeWarnForAccount(repo as unknown as AccountsRepository, account.id);
+    await maybeWarnForAccount(repo as unknown as AccountsRepository, account.id);
+
+    expect(showWarning).toHaveBeenCalledTimes(1);
+  });
+
   it("opens the account picker when Select Account is chosen", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {

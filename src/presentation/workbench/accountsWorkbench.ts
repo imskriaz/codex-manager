@@ -14,6 +14,7 @@ import {
   prepareQuotaSummaryPanelForExtensionHostRestart,
   restoreQuotaSummaryPanelAfterExtensionHostRestart
 } from "../dashboard";
+import { unloadDisabledActiveAccountOnStartup } from "./startupAccountSafety";
 
 const TOKEN_REFRESH_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const TOKEN_REFRESH_SKEW_SECONDS = 5 * 60;
@@ -57,6 +58,9 @@ export class AccountsWorkbench {
     }
     await measureStep("repo.init", async () => {
       await this.repo.init({ deferSync: true });
+    });
+    await measureStep("disabledActiveAccountFence", async () => {
+      await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
     });
     await measureStep("encryptedSync.start", async () => {
       await this.encryptedSync.start();

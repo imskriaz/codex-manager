@@ -15,6 +15,8 @@ describe("port dashboard action modals", () => {
     expect(source).toContain("openBrowserSwitchPicker();");
     expect(source).toContain('kind: "tags"');
     expect(source).toContain('kind: "notification"');
+    expect(source).toContain('kind: "disabledActiveAccount"');
+    expect(source).toContain('sendAction("unloadAuth")');
     expect(source).toContain('type: "dashboard:notification-response"');
     expect(source).toContain('submittedTags: submittedTags ?? []');
     expect(source).toContain("handleConfigureEncryptedSync");
@@ -26,6 +28,8 @@ describe("port dashboard action modals", () => {
     expect(source).toContain('presentation={isBrowserDashboard ? "modal" : "popover"}');
     const modal = readFileSync("webview-src/dashboard/browserActionModal.tsx", "utf8");
     expect(modal).toContain('request.kind === "password"');
+    expect(modal).toContain('request.kind === "disabledActiveAccount"');
+    expect(modal).toContain('props.onConfirm(request, ["unload"])');
     expect(modal).toContain("const Shell = useModalShell || props.presentation !== \"popover\" ? ModalShell : ActionPopoverShell;");
   });
 });

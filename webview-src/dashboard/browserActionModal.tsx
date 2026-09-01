@@ -34,6 +34,14 @@ export type BrowserActionRequest =
       actions: string[];
     }
   | {
+      kind: "disabledActiveAccount";
+      accountId: string;
+      title: string;
+      message: string;
+      unloadLabel: string;
+      keepUsingLabel: string;
+    }
+  | {
       kind: "confirm";
       action: Extract<DashboardActionName, "reloadPrompt" | "remove" | "batchRemove" | "consumeResetCredit">;
       accountId?: string;
@@ -92,6 +100,7 @@ export function BrowserActionModal(props: {
   const useModalShell =
     request.kind === "confirm" ||
     request.kind === "quotaWarning" ||
+    request.kind === "disabledActiveAccount" ||
     request.kind === "notification" ||
     request.kind === "password";
   const Shell = useModalShell || props.presentation !== "popover" ? ModalShell : ActionPopoverShell;
@@ -299,6 +308,38 @@ export function BrowserActionModal(props: {
             ))}
             <button class="modal-secondary-btn" type="button" onClick={() => props.onCancel(request)}>
               {cancelLabel}
+            </button>
+          </div>
+        </div>
+      </Shell>
+    );
+  }
+
+  if (request.kind === "disabledActiveAccount") {
+    return (
+      <Shell
+        open
+        title={request.title}
+        closeLabel={props.closeLabel}
+        className="dashboard-confirm-modal"
+        onClose={() => props.onCancel(request)}
+      >
+        <div class="modal-stack">
+          <div class="modal-note">{request.message}</div>
+          <div class="modal-actions action-popover-choice-grid">
+            <button
+              class="modal-primary-btn danger"
+              type="button"
+              onClick={() => props.onConfirm(request, ["unload"])}
+            >
+              {request.unloadLabel}
+            </button>
+            <button
+              class="modal-secondary-btn"
+              type="button"
+              onClick={() => props.onConfirm(request, ["keep"])}
+            >
+              {request.keepUsingLabel}
             </button>
           </div>
         </div>

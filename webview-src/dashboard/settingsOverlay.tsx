@@ -317,7 +317,7 @@ export function SettingsOverlay(props: {
                       ? "控制工作区功能；CLI 路径仍可单独配置。"
                       : props.lang === "zh-hant"
                         ? "控制工作區功能；CLI 路徑仍可單獨設定。"
-                        : "Control workspace features; configure the CLI path separately when needed."}
+                        : "Control workspace features on this PC; configure the CLI path separately when needed."}
                   </div>
                 </div>
                 <div class="settings-integration-grid">
@@ -334,7 +334,7 @@ export function SettingsOverlay(props: {
                         ? "默认停用。启用后可在面板中打开工作区、会话和终端工具。"
                         : props.lang === "zh-hant"
                           ? "預設停用。啟用後可在面板中開啟工作區、工作階段與終端工具。"
-                          : "Disabled by default. Enable the workspace view, sessions, and terminal tools in the dashboard."
+                          : "Disabled by default and stored only on this PC. Enable the workspace view, sessions, and terminal tools in the dashboard."
                     }
                     enabled={props.settings.cliIntegrationEnabled === true}
                     onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)}

@@ -57,7 +57,7 @@ describe("sessions sidebar layout", () => {
     expect(main).not.toContain('"PCs and CLI sessions"');
     expect(main).toContain("mergeCachedCliSessions");
     expect(settings).toContain('"Enable workspace (Experimental)"');
-    expect(settings).toContain('"Disabled by default. Enable the workspace view, sessions, and terminal tools in the dashboard."');
+    expect(settings).toContain("stored only on this PC");
   });
 
   it("returns to the workspace list after archive or delete", () => {
