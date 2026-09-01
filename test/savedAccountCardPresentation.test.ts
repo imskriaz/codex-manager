@@ -26,13 +26,21 @@ describe("saved account card presentation", () => {
 
   it("shows the remote-PC label in both card layouts", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
 
     expect(source).toContain('class="saved-credits-line saved-running-device"');
     expect(source).toContain("saved-running-device");
+    expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*background: var\(--danger\)/s);
+    expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*color: #fff/s);
     expect(resolveCompactIdentityBadge("DESKTOP-4ISJOQ6")).toEqual({
       kind: "running-device",
       label: "DESKTOP-4ISJOQ6"
     });
+  });
+
+  it("orders reset credits before subscription days remaining", () => {
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(styles).toMatch(/\.saved-reset-badge\s*{[^}]*order:\s*-1/s);
   });
 
   it("keeps raw provider errors out of the card health reason", () => {

@@ -10713,9 +10713,9 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 .pill.saved-running-device {
-  border: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--text-muted) 9%, transparent);
-  color: var(--text-secondary);
+  border: 1px solid var(--danger);
+  background: var(--danger);
+  color: #fff;
 }
 
 .table-running-device {
@@ -11038,6 +11038,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 .saved-reset-badge {
+  order: -1;
   appearance: none;
   display: inline-flex;
   align-items: center;

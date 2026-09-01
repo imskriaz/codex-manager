@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   countAccountEnablement,
   isAccountAttention,
-  isAccountClaimedByAnotherDevice
+  isAccountClaimedByAnotherDevice,
+  shouldShowAccountCountFilter
 } from "../webview-src/dashboard/helpers";
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 
@@ -41,6 +42,12 @@ describe("dashboard attention state", () => {
     expect(source).toContain('incapable: zh ? "超出配额" : hant ? "超出配額" : "Over quota"');
   });
 
+  it("hides account count filters that match the total account count", () => {
+    expect(shouldShowAccountCountFilter(12, 12)).toBe(false);
+    expect(shouldShowAccountCountFilter(0, 12)).toBe(false);
+    expect(shouldShowAccountCountFilter(6, 12)).toBe(true);
+  });
+
   it("shows the claimed filter only for online claims from another device", () => {
     expect(isAccountClaimedByAnotherDevice(accountClaim("Office PC", false, true))).toBe(true);
     expect(isAccountClaimedByAnotherDevice(accountClaim("Office PC", true, true))).toBe(false);
@@ -48,11 +55,11 @@ describe("dashboard attention state", () => {
 
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).toContain('filter: "claimed"');
-    expect(source).toContain("claimedAccountCount > 0");
-    expect(source).toContain("accountEnablement.enabled > 0");
-    expect(source).toContain("accountEnablement.disabled > 0");
-    expect(source).toContain("validAccountCount > 0");
-    expect(source).toContain("invalidAccountCount > 0");
+    expect(source).toContain("shouldShowAccountCountFilter(claimedAccountCount, displayedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(accountEnablement.enabled, displayedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(accountEnablement.disabled, displayedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(validAccountCount, displayedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(invalidAccountCount, displayedAccounts.length)");
     expect(source.indexOf('filter: "claimed"')).toBeGreaterThan(source.indexOf('filter: "disabled"'));
   });
 });

@@ -22,6 +22,10 @@ export function countAccountEnablement(accounts: readonly DashboardAccountViewMo
   return { enabled, disabled: accounts.length - enabled };
 }
 
+export function shouldShowAccountCountFilter(count: number, total: number): boolean {
+  return count > 0 && count < total;
+}
+
 export function isAccountClaimedByAnotherDevice(account: DashboardAccountViewModel): boolean {
   return Boolean(account.runningDeviceName && !account.runningOnThisDevice && account.runningDeviceOnline !== false);
 }

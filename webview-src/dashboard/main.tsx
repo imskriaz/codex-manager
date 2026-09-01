@@ -34,7 +34,8 @@ import {
   isAccountClaimedByAnotherDevice,
   normalizeThresholds,
   resolveBrandSubtitle,
-  resolveOverviewAccount
+  resolveOverviewAccount,
+  shouldShowAccountCountFilter
 } from "./helpers";
 import { useDashboardActions, useDashboardHostSync, useDashboardModals } from "./hooks";
 import {
@@ -1805,7 +1806,7 @@ function App() {
                     >
                       {resolveUiText("total", snapshot.lang)} {displayedAccounts.length}
                     </button>
-                    {accountEnablement.enabled > 0 ? (
+                    {shouldShowAccountCountFilter(accountEnablement.enabled, displayedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-enabled header-count-link ${uiPreferences.filter === "enabled" ? "is-selected" : ""}`}
                         type="button"
@@ -1815,7 +1816,7 @@ function App() {
                         {resolveUiText("enabled", snapshot.lang)} {accountEnablement.enabled}
                       </button>
                     ) : null}
-                    {accountEnablement.disabled > 0 ? (
+                    {shouldShowAccountCountFilter(accountEnablement.disabled, displayedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-disabled header-count-link ${uiPreferences.filter === "disabled" ? "is-selected" : ""}`}
                         type="button"
@@ -1825,7 +1826,7 @@ function App() {
                         {resolveUiText("disabled", snapshot.lang)} {accountEnablement.disabled}
                       </button>
                     ) : null}
-                    {claimedAccountCount > 0 ? (
+                    {shouldShowAccountCountFilter(claimedAccountCount, displayedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-claimed header-count-link ${uiPreferences.filter === "claimed" ? "is-selected" : ""}`}
                         type="button"
@@ -1835,7 +1836,7 @@ function App() {
                         {resolveUiText("claimed", snapshot.lang)} {claimedAccountCount}
                       </button>
                     ) : null}
-                    {validAccountCount > 0 ? (
+                    {shouldShowAccountCountFilter(validAccountCount, displayedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-valid header-count-link ${uiPreferences.filter === "healthy" ? "is-selected" : ""}`}
                         type="button"
@@ -1845,7 +1846,7 @@ function App() {
                         {resolveUiText("valid", snapshot.lang)} {validAccountCount}
                       </button>
                     ) : null}
-                    {invalidAccountCount > 0 ? (
+                    {shouldShowAccountCountFilter(invalidAccountCount, displayedAccounts.length) ? (
                       <button
                         class={`header-count-badge header-count-link ${invalidAccountCount ? "is-invalid" : ""} ${uiPreferences.filter === "attention" ? "is-selected" : ""}`}
                         type="button"
@@ -1855,7 +1856,7 @@ function App() {
                         {resolveUiText("invalid", snapshot.lang)} {invalidAccountCount}
                       </button>
                     ) : null}
-                    {capableAccountCount > 0 ? (
+                    {shouldShowAccountCountFilter(capableAccountCount, displayedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-capable header-count-link ${uiPreferences.filter === "capable" ? "is-selected" : ""}`}
                         type="button"
@@ -1865,7 +1866,7 @@ function App() {
                         {resolveUiText("capable", snapshot.lang)} {capableAccountCount}
                       </button>
                     ) : null}
-                    {incapableAccountCount > 0 ? (
+                    {shouldShowAccountCountFilter(incapableAccountCount, displayedAccounts.length) ? (
                       <button
                         class={`header-count-badge header-count-link ${incapableAccountCount ? "is-incapable" : ""} ${uiPreferences.filter === "incapable" ? "is-selected" : ""}`}
                         type="button"
