@@ -76,9 +76,90 @@ export function registerAutoRefreshScheduler(params: {
 }): vscode.Disposable {
   let allTimer: NodeJS.Timeout | undefined;
   let currentTimer: NodeJS.Timeout | undefined;
+  let quotaResetTimer: NodeJS.Timeout | undefined;
   let allInFlight = false;
   let currentInFlight = false;
   let currentScheduleVersion = 0;
+  const handledQuotaResets = new Set<string>();
+
+  const quotaResetTimes = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number]): number[] => {
+    const quota = account.quotaSummary;
+    return [quota?.hourlyResetTime, quota?.weeklyResetTime]
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      .map((value) => value * 1_000);
+  };
+
+  const scheduleNextQuotaReset = async (): Promise<void> => {
+    if (quotaResetTimer) {
+      clearTimeout(quotaResetTimer);
+      quotaResetTimer = undefined;
+    }
+    const accounts = (await params.repo.listAccounts()).filter((account) => account.enabled !== false);
+    const now = Date.now();
+    const futureResets = accounts.flatMap(quotaResetTimes).filter((resetAt) => resetAt > now);
+    if (!futureResets.length) {
+      return;
+    }
+    const nextResetAt = Math.min(...futureResets);
+    quotaResetTimer = setTimeout(
+      runDueQuotaResetRefreshes,
+      Math.min(2_147_000_000, Math.max(0, nextResetAt - now + 1_000))
+    );
+    quotaResetTimer.unref?.();
+  };
+
+  const runDueQuotaResetRefreshes = (): void => {
+    quotaResetTimer = undefined;
+    void (async () => {
+      const now = Date.now();
+      const accounts = (await params.repo.listAccounts()).filter((account) => account.enabled !== false);
+      let refreshedAny = false;
+      for (const account of accounts) {
+        const dueResets = quotaResetTimes(account).filter((resetAt) => resetAt <= now);
+        const unhandled = dueResets.filter((resetAt) => !handledQuotaResets.has(`${account.id}:${resetAt}`));
+        if (!unhandled.length || (params.canRefreshAccount && !params.canRefreshAccount(account.id))) {
+          continue;
+        }
+        for (const resetAt of unhandled) {
+          handledQuotaResets.add(`${account.id}:${resetAt}`);
+        }
+        try {
+          await runCrossWindowExclusive(`background:quota-reset-refresh:${account.id}`, "Quota reset refresh", async () => {
+            refreshedAny = await refreshSingleQuotaSafely(
+              params.repo,
+              { refresh: params.onRefresh },
+              account.id,
+              {
+                forceRefresh: true,
+                allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
+                skipDisabled: true,
+                announceFailure: false
+              }
+            ) || refreshedAny;
+          });
+        } catch (error) {
+          if (!(error instanceof CrossWindowOperationBusyError)) {
+            console.warn(`[codexManager] quota reset refresh failed for ${account.email}:`, error);
+          }
+        }
+      }
+      if (refreshedAny) {
+        const switched = await maybeAutoSwitchForActiveQuota(params.repo, { refresh: params.onRefresh });
+        if (!switched) {
+          await maybeWarnForActiveQuota(params.repo);
+        }
+        params.onRefresh();
+      }
+      // Retain only keys still represented by the current snapshots.
+      const currentKeys = new Set(accounts.flatMap((account) => quotaResetTimes(account).map((at) => `${account.id}:${at}`)));
+      for (const key of handledQuotaResets) {
+        if (!currentKeys.has(key)) handledQuotaResets.delete(key);
+      }
+      await scheduleNextQuotaReset();
+    })().catch((error) => {
+      console.warn("[codexManager] unable to schedule quota reset refresh:", error);
+    });
+  };
 
   const applySchedule = (): void => {
     const scheduleVersion = ++currentScheduleVersion;
@@ -199,6 +280,10 @@ export function registerAutoRefreshScheduler(params: {
       allTimer = setInterval(runAllRefresh, allMinutes * 60 * 1000);
       allTimer.unref?.();
     }
+    if (quotaResetTimer) {
+      clearTimeout(quotaResetTimer);
+      quotaResetTimer = undefined;
+    }
 
     const currentMinutes = getAutoRefreshCurrentMinutes();
     if (currentMinutes > 0) {
@@ -207,6 +292,9 @@ export function registerAutoRefreshScheduler(params: {
       // startup cannot trigger current-account and all-account bursts together.
       scheduleCurrentRefresh(currentMinutes * 60 * 1000);
     }
+    void scheduleNextQuotaReset().catch((error) => {
+      console.warn("[codexManager] unable to schedule quota reset refresh:", error);
+    });
   };
 
   applySchedule();
@@ -228,6 +316,7 @@ export function registerAutoRefreshScheduler(params: {
       if (allTimer) clearInterval(allTimer);
       currentScheduleVersion += 1;
       if (currentTimer) clearTimeout(currentTimer);
+      if (quotaResetTimer) clearTimeout(quotaResetTimer);
     }
   };
 }

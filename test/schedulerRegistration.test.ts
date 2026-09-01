@@ -72,6 +72,44 @@ describe("auto refresh scheduler", () => {
     disposable.dispose();
   });
 
+  it("refreshes an enabled account once when its known quota reset time is reached", async () => {
+    const resetAt = Date.now() / 1_000 + 5;
+    const account = {
+      id: "reset-due",
+      email: "reset-due@example.com",
+      isActive: false,
+      enabled: true,
+      quotaSummary: {
+        hourlyPercentage: 0,
+        hourlyResetTime: resetAt,
+        hourlyWindowPresent: true,
+        hourlyWindowMinutes: 300
+      }
+    };
+    const repo = { listAccounts: vi.fn(async () => [account]) } as unknown as AccountsRepository;
+    const onRefresh = vi.fn();
+    const disposable = registerAutoRefreshScheduler({
+      context: { subscriptions: [] } as never,
+      repo,
+      onRefresh,
+      canRefreshAccount: () => true
+    });
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    await vi.waitFor(() =>
+      expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), account.id, {
+        allowTokenRefresh: false,
+        forceRefresh: true,
+        announceFailure: false,
+        skipDisabled: true
+      })
+    );
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    disposable.dispose();
+  });
+
   it("pauses the periodic all-account sweep when safety refresh is enabled", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((key: string, fallback?: unknown) => {
