@@ -408,6 +408,16 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }));
   };
 
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--cli-shell-rail-width", railCollapsed ? "0px" : `${layout.railWidth}px`);
+    root.style.setProperty("--cli-shell-terminal-width", contextCollapsed ? "0px" : `${layout.terminalWidth}px`);
+    return () => {
+      root.style.removeProperty("--cli-shell-rail-width");
+      root.style.removeProperty("--cli-shell-terminal-width");
+    };
+  }, [contextCollapsed, layout.railWidth, layout.terminalWidth, railCollapsed]);
+
   return (
     <div
       ref={workspaceRef}

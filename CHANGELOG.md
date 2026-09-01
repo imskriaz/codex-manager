@@ -3,6 +3,7 @@
 ## 1.0.8
 
 - Keep each grid-card account name and its badges on one header row, with the current-account badge before the account-type badge.
+- Keep the browser workspace's left session rail and right tools panel visible on `/dash`, with the dashboard filling the center panel.
 
 ## 1.0.7
 

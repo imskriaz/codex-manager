@@ -281,8 +281,13 @@ describe("sessions sidebar layout", () => {
     expect(hooks).toContain("const sendAction = useCallback<SendAction>");
     expect(hooks).toContain("}, [dispatch, targetDeviceId]);");
     expect(main).toContain('document.body.classList.toggle("is-cli-workspace-route", workspaceRoute)');
+    expect(main).toContain('document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute)');
+    expect(main).toContain('(isCliSessionsPath(browserPath) || browserPath === "/dash")');
     expect(css).toContain("body.is-cli-workspace-route { overflow: hidden; }");
     expect(css).toContain("body.is-cli-workspace-route #dashboard-main { display: none !important; }");
+    expect(css).toContain("body.is-dashboard-workspace-route #dashboard-main {");
+    expect(css).toContain("calc(var(--cli-shell-rail-width, 238px) + 7px)");
+    expect(css).toContain("calc(var(--cli-shell-terminal-width, 380px) + 7px)");
   });
 
   it("keys automatic workspace environment loads so realtime renders cannot create a request loop", () => {

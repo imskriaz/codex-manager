@@ -12859,6 +12859,18 @@ select:focus-visible,
 /* Workspace v3 final cascade guard. */
 body.is-cli-workspace-route { overflow: hidden; }
 body.is-cli-workspace-route #dashboard-main { display: none !important; }
+body.is-dashboard-workspace-route { overflow: hidden; }
+body.is-dashboard-workspace-route #dashboard-main {
+  position: fixed;
+  z-index: 20;
+  inset: 0 calc(var(--cli-shell-terminal-width, 380px) + 7px) 0 calc(var(--cli-shell-rail-width, 238px) + 7px);
+  width: auto;
+  max-width: none;
+  margin: 0;
+  overflow: auto;
+  border-radius: 0;
+  background: var(--bg-base, var(--bg-page, #fbfaf8));
+}
 .workspace-route-dashboard-hidden { display: none !important; }
 .cli-workspace { font-size: 13px; }
 .cli-workspace .cli-session-rail { grid-template-rows: auto auto auto auto minmax(0, 1fr) auto; padding: 5px 5px 0; }

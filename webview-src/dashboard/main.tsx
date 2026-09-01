@@ -916,9 +916,12 @@ function App() {
 
   useEffect(() => {
     const workspaceRoute = isBrowserDashboard && isCliSessionsPath(browserPath);
+    const dashboardWorkspaceRoute = isBrowserDashboard && browserPath === "/dash";
     document.body.classList.toggle("is-cli-workspace-route", workspaceRoute);
+    document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute);
     return () => {
       document.body.classList.remove("is-cli-workspace-route");
+      document.body.classList.remove("is-dashboard-workspace-route");
     };
   }, [browserPath, isBrowserDashboard]);
 
@@ -2186,7 +2189,7 @@ function App() {
         />
       }
 
-      {isBrowserDashboard && isCliSessionsPath(browserPath)
+      {isBrowserDashboard && (isCliSessionsPath(browserPath) || browserPath === "/dash")
         ? createPortal(
             <CliSessionsPage
               sessions={cliSessions}
