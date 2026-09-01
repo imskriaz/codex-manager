@@ -25,7 +25,7 @@ describe("port dashboard action modals", () => {
     expect(source).toContain("<BrowserActionModal");
     expect(source).toContain('presentation={isBrowserDashboard ? "modal" : "popover"}');
     const modal = readFileSync("webview-src/dashboard/browserActionModal.tsx", "utf8");
-    expect(modal).toContain('request.kind === "confirm" || request.kind === "quotaWarning" || request.kind === "notification"');
+    expect(modal).toContain('request.kind === "password"');
     expect(modal).toContain("const Shell = useModalShell || props.presentation !== \"popover\" ? ModalShell : ActionPopoverShell;");
   });
 });

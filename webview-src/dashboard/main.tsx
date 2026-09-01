@@ -103,7 +103,9 @@ type MetricPriority = string;
 const DEFAULT_ACCOUNT_SORT: AccountSort = "time-left";
 
 function isCliSessionsPath(pathname: string): boolean {
-  return pathname === "/workspace" || /^\/[0-9a-f-]{36}$/i.test(pathname);
+  // The root URL is the canonical session workspace/home. Keep /workspace as
+  // a backwards-compatible alias for existing bookmarks and tunnel links.
+  return pathname === "/" || pathname === "/workspace" || /^\/[0-9a-f-]{36}$/i.test(pathname);
 }
 
 function getCliSessionIdFromPath(pathname: string): string | undefined {
@@ -752,7 +754,7 @@ function App() {
           (message.action === "archiveCodexCliSession" || message.action === "deleteCodexCliSession")
         ) {
           if (selectedCliSession) void invalidateCliSessionCache(selectedCliSession.id);
-          navigateDashboardPath("/workspace", setBrowserPath);
+          navigateDashboardPath("/", setBrowserPath);
           setSelectedCliSession(undefined);
           setCliSessionMessages([]);
         }
@@ -831,7 +833,7 @@ function App() {
         setSelectedCliSession(undefined);
         setCliSessionMessages([]);
       }
-      if (path === "/workspace" || sessionId) requestCliSessions();
+      if (path === "/" || path === "/workspace" || sessionId) requestCliSessions();
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -1042,10 +1044,10 @@ function App() {
     : undefined;
   const openCliSessions = (): void => {
     if (!isBrowserDashboard) {
-      sendAction("openWebDashboard", undefined, { path: "/workspace" });
+      sendAction("openWebDashboard", undefined, { path: "/" });
       return;
     }
-    navigateDashboardPath("/workspace", setBrowserPath);
+    navigateDashboardPath("/", setBrowserPath);
     setSelectedCliSession(undefined);
     setCliSessionMessages([]);
     setCliSessionsError(undefined);
@@ -1429,10 +1431,6 @@ function App() {
   };
 
   const handleConfigureEncryptedSync = (): void => {
-    if (!isBrowserDashboard) {
-      sendAction("configureEncryptedSync");
-      return;
-    }
     setBrowserActionRequest({
       kind: "password",
       action: "configureEncryptedSync",
@@ -1443,7 +1441,7 @@ function App() {
   };
 
   const handleRegistryOverride = (enabled: boolean): void => {
-    if (!isBrowserDashboard || !enabled) {
+    if (!enabled) {
       sendAction("setEncryptedSyncRegistryOverride", undefined, { enabled });
       return;
     }
@@ -2182,14 +2180,14 @@ function App() {
               selectedPeerId={selectedPeer?.id ?? selectedPeerId}
               peerAccounts={snapshot.peerAccounts}
               onPeerChange={setSelectedPeerId}
-              onDashboard={() => navigateDashboardPath("/", setBrowserPath)}
+              onDashboard={() => navigateDashboardPath("/dash", setBrowserPath)}
               onRefresh={() => {
                 explicitCliRefreshRef.current = true;
                 requestCliSessions(true);
               }}
               onSelect={selectCliSession}
               onBackToList={() => {
-                navigateDashboardPath("/workspace", setBrowserPath);
+                navigateDashboardPath("/", setBrowserPath);
                 setSelectedCliSession(undefined);
                 setCliSessionMessages([]);
                 setCliSessionMessagesError(undefined);

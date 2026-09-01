@@ -2844,7 +2844,8 @@ html[data-theme="auto"] body.vscode-light .saved-enabled-toggle.is-checked .save
   position: fixed;
   inset: 0;
   background: rgba(13, 17, 23, 0.68);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   display: none;
   align-items: flex-start;
   justify-content: center;
@@ -13470,6 +13471,29 @@ body.is-cli-workspace-route #dashboard-main { display: none !important; }
    keeps the modal and the empty-account overview usable at narrow heights. */
 .account-add-popover .dashboard-modal-body {
   overflow: visible;
+}
+
+/* Keep workspace dialogs from appearing abruptly. The overlay remains in the
+   layout while hidden so opacity can transition, but does not intercept input. */
+.overlay {
+  display: flex;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, visibility 0s linear 180ms;
+}
+
+.overlay.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay {
+    transition: none;
+  }
 }
 
 .account-add-flow {

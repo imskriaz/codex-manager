@@ -89,7 +89,11 @@ export function BrowserActionModal(props: {
   // Keeping them in the action popover makes a reset/remove prompt overlap the
   // quota cards (and can move it off-screen when the dashboard is scrolled).
   // Lightweight pickers and forms can still use the compact action popover.
-  const useModalShell = request.kind === "confirm" || request.kind === "quotaWarning" || request.kind === "notification";
+  const useModalShell =
+    request.kind === "confirm" ||
+    request.kind === "quotaWarning" ||
+    request.kind === "notification" ||
+    request.kind === "password";
   const Shell = useModalShell || props.presentation !== "popover" ? ModalShell : ActionPopoverShell;
   if (request.kind === "switch") {
     const candidates = request.accountIds

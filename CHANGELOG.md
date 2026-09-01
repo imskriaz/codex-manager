@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.4-pre14
+
+- Keep the session sidebar and chat workspace on the canonical root dashboard, while `/dash` opens the account overview.
+
+## 1.0.4-pre13
+
+- Strengthen the blurred backdrop for all dashboard confirmation and input modals.
+
+## 1.0.4-pre12
+
+- Use centered modal dialogs for password entry in the VS Code dashboard.
+
+## 1.0.4-pre11
+
+- Make the root Web Dashboard home show the session sidebar and chat workspace, with the account dashboard available at `/dash`.
+
 ## 1.0.4-pre10
 
 - Serve the Web Dashboard home page at the root URL so `https://codex.madebydevs.com` is the canonical entry point.
