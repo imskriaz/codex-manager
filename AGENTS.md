@@ -27,3 +27,7 @@
 # Public Documentation Privacy
 
 - Do not include developer-specific domains, hostnames, personal URLs, or other identifying deployment details in public-facing documentation, changelogs, README files, or extension manifest descriptions. Use generic wording or placeholders instead.
+
+# GitHub Release Rule
+
+- When the user explicitly requests a release, publish a GitHub Release for the requested version and attach the verified VSIX artifact. Pushing commits alone is not sufficient; if GitHub authentication or tooling is unavailable, report that concrete blocker.
