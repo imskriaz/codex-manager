@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.9-pre1
+
+- Render the `/dash` center dashboard above the workspace conversation layer while preserving both workspace side panels.
+- Keep collapsed PC groups packed together at the top of the session rail.
+
 ## 1.0.8
 
 - Keep each grid-card account name and its badges on one header row, with the current-account badge before the account-type badge.

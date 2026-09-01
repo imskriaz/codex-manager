@@ -286,8 +286,11 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("body.is-cli-workspace-route { overflow: hidden; }");
     expect(css).toContain("body.is-cli-workspace-route #dashboard-main { display: none !important; }");
     expect(css).toContain("body.is-dashboard-workspace-route #dashboard-main {");
+    expect(css).toMatch(/body\.is-dashboard-workspace-route #dashboard-main\s*{[^}]*z-index:\s*10010/s);
     expect(css).toContain("calc(var(--cli-shell-rail-width, 238px) + 7px)");
     expect(css).toContain("calc(var(--cli-shell-terminal-width, 380px) + 7px)");
+    expect(css).toMatch(/\.cli-project-list\s*{[^}]*align-content:\s*start/s);
+    expect(css).toMatch(/\.cli-project-list\s*{[^}]*grid-auto-rows:\s*max-content/s);
   });
 
   it("keys automatic workspace environment loads so realtime renders cannot create a request loop", () => {

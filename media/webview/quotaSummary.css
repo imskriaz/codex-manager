@@ -5865,6 +5865,8 @@ html[data-theme="dark"] .cli-terminal-panel {
 /* Workspace browser refinements: dense project-first rail and account dock. */
 .cli-project-list {
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 2px;
   margin: 0 3px 8px;
   padding: 5px 0 7px;
@@ -12862,7 +12864,7 @@ body.is-cli-workspace-route #dashboard-main { display: none !important; }
 body.is-dashboard-workspace-route { overflow: hidden; }
 body.is-dashboard-workspace-route #dashboard-main {
   position: fixed;
-  z-index: 20;
+  z-index: 10010;
   inset: 0 calc(var(--cli-shell-terminal-width, 380px) + 7px) 0 calc(var(--cli-shell-rail-width, 238px) + 7px);
   width: auto;
   max-width: none;
