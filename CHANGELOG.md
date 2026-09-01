@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.5
+
+- Add a Claimed account filter after Disabled and hide status filters whose count is zero.
+- Skip accounts claimed by another PC during quota refresh and automatic queue work.
+- Improve event-driven automatic queue efficiency.
+- Preserve project context when opening linked Codex sessions.
+- Keep public documentation free of private deployment details.
+
 ## 1.0.4
 
 - Update the extension description to refer to Codex/ChatGPT account management.
