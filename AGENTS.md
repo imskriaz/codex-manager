@@ -23,6 +23,7 @@
 
 - Every change that modifies tracked project files must increment the extension prerelease number by exactly one (`preN` to `preN+1`) in `package.json` and keep the root `package-lock.json` version fields synchronized.
 - Do not reuse a prerelease number across changes, skip a prerelease number, or leave version metadata unchanged.
+- Exception: when the user explicitly requests a specific version or explicitly asks to override this rule, follow the requested version and keep all version metadata synchronized.
 
 # Public Documentation Privacy
 
