@@ -2,6 +2,7 @@
 
 ## 1.0.4
 
+- Update the extension description to refer to Codex/ChatGPT account management.
 - Safely validate Codex resume working directories before starting resumed sessions.
 - Keep the extension manifest regression coverage synchronized with the current prerelease package metadata.
 - Keep the session sidebar and chat workspace on the canonical root dashboard, while `/dash` opens the account overview.
