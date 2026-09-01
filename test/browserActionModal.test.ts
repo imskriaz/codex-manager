@@ -18,7 +18,7 @@ describe("port dashboard action modals", () => {
     expect(source).toContain('type: "dashboard:notification-response"');
     expect(source).toContain('submittedTags: submittedTags ?? []');
     expect(source).toContain("handleConfigureEncryptedSync");
-    expect(source).toContain('kind: "passphrase"');
+    expect(source).toContain('kind: "password"');
     expect(source).toContain('No account to switch — no capable account has enough quota remaining.');
     expect(source).toContain('uiPreferences.filter === "all" ? "is-selected"');
     expect(source).toContain('aria-pressed={uiPreferences.filter === "all"}');

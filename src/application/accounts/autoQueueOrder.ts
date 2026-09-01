@@ -1,16 +1,30 @@
 import type { CodexManagerAccountRecord } from "../../core/types";
-import { compareAutoQueueOrderValues, parseCreditsOrderValue } from "../../domain/autoQueueOrder";
+import {
+  compareAutoQueueOrderValues,
+  compareAutoQueueUrgency,
+  parseCreditsOrderValue
+} from "../../domain/autoQueueOrder";
 import { isMonthlyQuotaWindow } from "../../utils/quotaLabels";
 import { parseSubscriptionExpiryMs } from "../../utils/subscriptionExpiry";
 
-export function compareCodexManagerAccountAutoQueueOrder(left: CodexManagerAccountRecord, right: CodexManagerAccountRecord): number {
+export function compareCodexManagerAccountAutoQueueOrder(
+  left: CodexManagerAccountRecord,
+  right: CodexManagerAccountRecord
+): number {
+  const leftOrder = toOrderValue(left);
+  const rightOrder = toOrderValue(right);
+  const urgencyDifference = compareAutoQueueUrgency(leftOrder, rightOrder);
+  if (urgencyDifference !== 0) {
+    return urgencyDifference;
+  }
+
   const leftPriority = left.queuePriority === true && hasCodexManagerAccountAutoQueueCapability(left);
   const rightPriority = right.queuePriority === true && hasCodexManagerAccountAutoQueueCapability(right);
   if (leftPriority !== rightPriority) {
     return leftPriority ? -1 : 1;
   }
 
-  return compareAutoQueueOrderValues(toOrderValue(left), toOrderValue(right));
+  return compareAutoQueueOrderValues(leftOrder, rightOrder);
 }
 
 export type AutoQueueCapabilityThresholds = {

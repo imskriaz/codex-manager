@@ -22,18 +22,13 @@ export class ExtensionSettingsStore {
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15)),
       autoRefreshCurrentMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
-      usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(
-        config.get<number>("usageHistoryRetentionDays", 7)
-      ),
+      usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
       hourlyQuotaControlEnabled: config.get<boolean>("hourlyQuotaControlEnabled", true),
       autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", false),
       autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
       autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0)),
-      autoSwitchRefreshAllBeforeSwitchEnabled: config.get<boolean>(
-        "autoSwitchRefreshAllBeforeSwitchEnabled",
-        false
-      ),
+      autoSwitchRefreshAllBeforeSwitchEnabled: config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false),
       autoResetEnabled: config.get<boolean>("autoResetEnabled", false),
       autoResetWeeklyThreshold: normalizeAutoResetWeeklyThreshold(config.get<number>("autoResetWeeklyThreshold", 1)),
       autoSwitchLockMinutes: normalizeAutoSwitchLockMinutes(config.get<number>("autoSwitchLockMinutes", 0)),
@@ -47,7 +42,7 @@ export class ExtensionSettingsStore {
       quotaYellowThreshold: thresholds.yellow,
       debugNetwork: config.get<boolean>("debugNetwork", false),
       encryptedSyncEnabled: config.get<boolean>("encryptedSyncEnabled", false),
-      // Runtime-owned and password-gated; buildDashboardState replaces this placeholder.
+      // Runtime-owned and passphrase-gated; buildDashboardState replaces this placeholder.
       encryptedSyncRegistryOverrideEnabled: false,
       webDashboardEnabled: config.get<boolean>("webDashboardEnabled", false),
       webDashboardAlwaysOnlineEnabled: config.get<boolean>("webDashboardAlwaysOnlineEnabled", false),
@@ -143,9 +138,10 @@ export function normalizeQuotaWarningWeeklyThreshold(value: number): number {
   return Math.max(0, Math.min(90, Math.round(value)));
 }
 
-export function getQuotaWarningThresholds(
-  config: vscode.WorkspaceConfiguration = getCodexManagerConfiguration()
-): { hourly: number; weekly: number } {
+export function getQuotaWarningThresholds(config: vscode.WorkspaceConfiguration = getCodexManagerConfiguration()): {
+  hourly: number;
+  weekly: number;
+} {
   const hourly = normalizeQuotaWarningThreshold(config.get<number>("quotaWarningThreshold", 10));
   const configuredWeekly = getExplicitNumberConfiguration(config, "quotaWarningWeeklyThreshold");
   const weeklyInspection = config.inspect?.<number>("quotaWarningWeeklyThreshold");
@@ -163,10 +159,7 @@ export function getQuotaWarningThresholds(
   };
 }
 
-function getExplicitNumberConfiguration(
-  config: vscode.WorkspaceConfiguration,
-  key: string
-): number | undefined {
+function getExplicitNumberConfiguration(config: vscode.WorkspaceConfiguration, key: string): number | undefined {
   const inspected = config.inspect?.<number>(key);
   return (
     inspected?.workspaceFolderLanguageValue ??

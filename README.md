@@ -11,7 +11,7 @@ It is an independent, community project. It is not an official OpenAI product.
 - Safe switching: choose an account manually or enable threshold-based automatic switching.
 - Dashboard: a VS Code webview plus an optional password-protected browser dashboard.
 - Session tools: inspect local Codex CLI sessions through a read-only transcript viewer, send messages, start/stop Manager-owned turns, and fork sessions when CLI integration is enabled. Opening a session in the official Codex extension remains an explicit action.
-- Encrypted sync: share the account vault and per-device enablement through VS Code Settings Sync using a client-side passphrase.
+- Encrypted sync: share the account vault and per-device enablement through VS Code Settings Sync using the shared password.
 - Diagnostics: structured, redacted JSONL logs with operation IDs and failure outcomes.
 
 See the complete feature and setting reference in [`docs/FEATURES.md`](docs/FEATURES.md).
@@ -94,8 +94,7 @@ Open the Command Palette and search for `Codex Manager`.
 | Show Quota Summary | Open the VS Code dashboard. |
 | Keyboard Shortcuts & Help | View dashboard shortcuts and help. |
 | Open Latest Session in VS Code | Open the newest local CLI session. |
-| Configure Encrypted Session Sync / Sync Sessions Now | Set the passphrase and run encrypted Settings Sync. |
-| Set Web Dashboard Password | Set or replace the browser-dashboard password (minimum six characters). |
+| Sync Sessions Now | Run encrypted Settings Sync using the shared password configured in General. |
 | Open Persistent Logs | Open the current redacted JSONL diagnostic log. |
 
 ## Browser dashboard and Cloudflare
@@ -103,7 +102,7 @@ Open the Command Palette and search for `Codex Manager`.
 The browser dashboard is disabled by default and listens on `http://127.0.0.1:39875` when enabled. In the dashboard Settings:
 
 1. Turn on **Web dashboard**.
-2. Run **Set Web Dashboard Password** and use a password of at least six characters.
+2. Set the shared **Password** in General; remote dashboard login and encrypted sync use that same password.
 3. If the dashboard must remain available after VS Code closes, turn on **Always-online WebSocket host** on one always-on PC.
 4. For a public HTTPS address, set **Cloudflared domain** to the final URL (for example `https://codex.example.com`) and configure the tunnel to forward to `http://127.0.0.1:39875`.
 
@@ -118,7 +117,7 @@ All settings use the `codexManager.*` namespace. The dashboard explains each con
 Important combinations:
 
 - **CLI integration** enables dashboard session discovery and controls. It does not perform automatic CLI resume.
-- **Encrypted sync** requires VS Code Settings Sync and the same passphrase on each machine. The passphrase is never uploaded by the extension.
+- **Encrypted sync** requires VS Code Settings Sync and the same password on each machine. The password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
 - **Always-online host** is optional and requires encrypted sync before it can relay signed peer state.
 - **Cloudflared domain** is only a display/configuration value; the `cloudflared` process and DNS route are managed by you.
@@ -127,7 +126,7 @@ Important combinations:
 
 - Account tokens remain in local VS Code SecretStorage and the Codex credential file. They are not sent to a Codex Manager server.
 - Encrypted sync stores an encrypted vault in VS Code Settings Sync. Major vault changes are durably queued and coalesced, while signed peer WebSocket/HTTP updates carry enablement and dashboard state in realtime without consuming Settings Sync requests. Account usage, switching, quota refreshes, and schedules do not generate durable sync traffic.
-- The browser dashboard is local-only until enabled. Never expose port `39875` without a password and HTTPS access control.
+- The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
 - Review the [MIT License](LICENSE) and only manage accounts you own or are authorized to use.
 
@@ -136,7 +135,7 @@ Important combinations:
 - **No accounts appear:** import the current `auth.json`, or complete OAuth again. Confirm `CODEX_HOME` points to the same Codex installation.
 - **Quota refresh fails:** run **Refresh Quota**, check your network/proxy settings, and inspect **Open Persistent Logs** for the operation ID.
 - **Switch did not affect Codex:** close/restart the Codex desktop app or enable the extension’s app-restart setting. Verify the active `auth.json` in **Open Codex Home**.
-- **Browser dashboard cannot connect:** confirm Web dashboard is enabled, port `39875` is listening locally, the password is correct, and the Cloudflare route points to `http://127.0.0.1:39875`.
+- **Browser dashboard cannot connect:** confirm Web dashboard is enabled, the shared Password is configured in General, and the Cloudflare route points to `http://127.0.0.1:39875`.
 - **Sessions are missing:** enable CLI integration, verify the configured Codex CLI path, and confirm the Codex session index exists.
 
 ## Documentation map

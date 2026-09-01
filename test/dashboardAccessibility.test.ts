@@ -19,7 +19,7 @@ describe("dashboard accessibility and interaction flow", () => {
       expect(source).toContain('aria-modal="true"');
       expect(source).toContain("onKeyDown={");
     }
-    expect(settings).toContain('aria-label={props.copy.closeModal}');
+    expect(settings).toContain("aria-label={props.copy.closeModal}");
   });
 
   it("organizes settings into labelled, keyboard-operable tab panels", () => {
@@ -29,7 +29,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(settings).toContain('role="tabpanel"');
     expect(settings).toContain('event.key === "ArrowRight"');
     expect(settings).toContain('event.key === "ArrowLeft"');
-    expect(settings).toContain('aria-selected={activeTab === tab.id}');
+    expect(settings).toContain("aria-selected={activeTab === tab.id}");
   });
 
   it("announces initial loading and exposes a main landmark and skip link", () => {
@@ -51,6 +51,18 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(source).toContain('<button type="submit">Unlock dashboard</button>');
   });
 
+  it("places the shared password in General instead of the data and sync panel", () => {
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const generalPanel = settings.indexOf('id="settings-panel-general"');
+    const passwordSetting = settings.indexOf('data-setting="shared-password"');
+    const dataPanel = settings.indexOf('id="settings-panel-data"');
+
+    expect(generalPanel).toBeGreaterThanOrEqual(0);
+    expect(passwordSetting).toBeGreaterThan(generalPanel);
+    expect(passwordSetting).toBeLessThan(dataPanel);
+    expect(settings.slice(dataPanel)).not.toContain("onClick={props.onConfigureSync}");
+  });
+
   it("preserves visible keyboard focus even where component styles remove outlines", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(css).toContain("button:focus-visible");
@@ -68,8 +80,8 @@ describe("dashboard accessibility and interaction flow", () => {
   it("labels settings toggles and range controls for assistive technology", () => {
     const controls = readFileSync("webview-src/dashboard/settingsControls.tsx", "utf8");
     expect(controls).toContain("aria-label={props.title}");
-    expect(controls).toContain('aria-label={`${props.copy.colorThresholdYellowTitle} threshold`}');
-    expect(controls).toContain('aria-label={`${props.copy.colorThresholdGreenTitle} threshold`}');
+    expect(controls).toContain("aria-label={`${props.copy.colorThresholdYellowTitle} threshold`}");
+    expect(controls).toContain("aria-label={`${props.copy.colorThresholdGreenTitle} threshold`}");
     expect(controls).toContain("aria-label={props.description(currentValue)}");
   });
 

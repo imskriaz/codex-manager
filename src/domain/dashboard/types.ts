@@ -508,7 +508,6 @@ export type DashboardActionName =
   | "copyText"
   | "openDashboard"
   | "openWebDashboard"
-  | "setWebDashboardPassword"
   | "openExternalUrl"
   | "downloadJsonFile"
   | "previewImportSharedJson"
@@ -603,14 +602,13 @@ export interface DashboardActionPayload {
   terminalName?: string;
   terminalProfile?: "default" | "powershell" | "cmd" | "bash";
   commitMessage?: string;
-  password?: string;
   /** Browser-dashboard confirmation supplied by an in-page modal. */
   confirmed?: boolean;
   /** Explicit dashboard Reload button intent; bypasses stale runtime markers. */
   forceReload?: boolean;
   /** Tags collected by the browser dashboard instead of a VS Code input box. */
   submittedTags?: string[];
-  /** Secret collected by a port-dashboard password modal. Never persisted in dashboard state. */
+  /** Secret collected by a browser passphrase modal. Never persisted in dashboard state. */
   passphrase?: string;
   passphraseConfirmation?: string;
   /** Save sync configuration now and perform the initial network sync in the background. */

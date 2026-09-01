@@ -50,7 +50,6 @@ import {
   AccountInfoModal,
   AddAccountModal,
   CliSessionsPage,
-  WebDashboardPasswordModal,
   ConfirmCancelOauthModal,
   SettingsOverlay,
   ShareTokenModal
@@ -156,7 +155,6 @@ function App() {
   const [usageHistory, setUsageHistory] = useState<DashboardUsageSample[]>(loadUsageHistory);
   const [accountInfoAccountId, setAccountInfoAccountId] = useState<string>();
   const [browserPath, setBrowserPath] = useState(() => (isBrowserDashboard ? window.location.pathname : "/"));
-  const [webPasswordModalOpen, setWebPasswordModalOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep>("agreement");
   const [onboardingBusy, setOnboardingBusy] = useState(false);
@@ -193,46 +191,52 @@ function App() {
   const nextNoticeIdRef = useRef(0);
   const browserPushPermissionRef = useRef<Promise<NotificationPermission | undefined>>();
   const lastBrowserPushKeyRef = useRef<string>();
-  const pushBrowserNotification = useCallback((notice: DashboardNotice) => {
-    const major = notice.level !== "info" || Boolean(notice.actions?.length);
-    if (!isBrowserDashboard || !major || typeof Notification === "undefined") {
-      return;
-    }
-    const notificationKey = notice.notificationId ?? `${notice.level}:${notice.message}`;
-    if (lastBrowserPushKeyRef.current === notificationKey) return;
-    lastBrowserPushKeyRef.current = notificationKey;
-    const show = () => {
-      if (Notification.permission !== "granted") return;
-      try {
-        const notification = new Notification("Codex Manager", {
-          body: notice.message,
-          tag: `codex-manager-${notice.notificationId ?? notice.level}`
-        });
-        notification.onclick = () => window.focus();
-      } catch {
-        // The dashboard toast remains available when the browser blocks OS notifications.
+  const pushBrowserNotification = useCallback(
+    (notice: DashboardNotice) => {
+      const major = notice.level !== "info" || Boolean(notice.actions?.length);
+      if (!isBrowserDashboard || !major || typeof Notification === "undefined") {
+        return;
       }
-    };
-    if (Notification.permission === "granted") {
-      show();
-      return;
-    }
-    if (Notification.permission === "denied") return;
-    browserPushPermissionRef.current ??= Notification.requestPermission().catch(() => undefined);
-    void browserPushPermissionRef.current.then(show);
-  }, [isBrowserDashboard]);
+      const notificationKey = notice.notificationId ?? `${notice.level}:${notice.message}`;
+      if (lastBrowserPushKeyRef.current === notificationKey) return;
+      lastBrowserPushKeyRef.current = notificationKey;
+      const show = () => {
+        if (Notification.permission !== "granted") return;
+        try {
+          const notification = new Notification("Codex Manager", {
+            body: notice.message,
+            tag: `codex-manager-${notice.notificationId ?? notice.level}`
+          });
+          notification.onclick = () => window.focus();
+        } catch {
+          // The dashboard toast remains available when the browser blocks OS notifications.
+        }
+      };
+      if (Notification.permission === "granted") {
+        show();
+        return;
+      }
+      if (Notification.permission === "denied") return;
+      browserPushPermissionRef.current ??= Notification.requestPermission().catch(() => undefined);
+      void browserPushPermissionRef.current.then(show);
+    },
+    [isBrowserDashboard]
+  );
   const [realtimeConnected, setRealtimeConnected] = useState(false);
-  const showNotice = useCallback((next: DashboardNotice) => {
-    const id = ++nextNoticeIdRef.current;
-    setNotices((current) => {
-      if (current.some((notice) => notice.level === next.level && notice.message === next.message)) return current;
-      return [...current, { ...next, id }].slice(-4);
-    });
-    scheduleDashboardToastDismiss(() => {
-      setNotices((current) => current.filter((notice) => notice.id !== id));
-    });
-    pushBrowserNotification(next);
-  }, [pushBrowserNotification]);
+  const showNotice = useCallback(
+    (next: DashboardNotice) => {
+      const id = ++nextNoticeIdRef.current;
+      setNotices((current) => {
+        if (current.some((notice) => notice.level === next.level && notice.message === next.message)) return current;
+        return [...current, { ...next, id }].slice(-4);
+      });
+      scheduleDashboardToastDismiss(() => {
+        setNotices((current) => current.filter((notice) => notice.id !== id));
+      });
+      pushBrowserNotification(next);
+    },
+    [pushBrowserNotification]
+  );
   const lastTerminalNoticeAtRef = useRef<number>();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { patchSettings, sendAction, sendSetting, isActionPending, hasGlobalPendingAction } = useDashboardActions(
@@ -337,19 +341,6 @@ function App() {
         if (onboardingAction === "inspectCurrentAuth" && message.status === "completed") {
           setCurrentAuthEmail(message.payload?.currentAuthEmail);
           setCurrentAuthAlreadyAdded(message.payload?.currentAuthAlreadyAdded === true);
-        }
-        if (onboardingStep === "cloudflare" && onboardingAction === "setWebDashboardPassword" && onboardingPendingRef.current.has(onboardingAction)) {
-          if (message.status === "failed") {
-            onboardingPendingRef.current.clear();
-            setOnboardingBusy(false);
-            setOnboardingError(message.error ?? "The dashboard password could not be saved.");
-          } else if (message.status === "completed") {
-            onboardingPendingRef.current.delete(onboardingAction);
-            if (onboardingPendingRef.current.size === 0) {
-              setOnboardingBusy(false);
-              setOnboardingStep("donation");
-            }
-          }
         }
         if (onboardingPendingRef.current.has(onboardingAction)) {
           if (message.status === "failed") {
@@ -463,7 +454,7 @@ function App() {
           setCliSessionsError(undefined);
           if (explicitRefresh)
             setCliSessionFeedback({ key: Date.now(), level: "info", message: "Sessions refreshed." });
-            const routeId = getCliSessionIdFromPath(window.location.pathname);
+          const routeId = getCliSessionIdFromPath(window.location.pathname);
           if (routeId) {
             const routeSession = sessions.find((session) => session.id === routeId);
             if (routeSession?.archived) {
@@ -475,15 +466,15 @@ function App() {
                 message: "This session is archived. Restore it below to continue the conversation."
               });
             } else if (routeSession) {
-              const previousRouteSession = selectedCliSessionRef.current?.id === routeId
-                ? selectedCliSessionRef.current
-                : undefined;
-              const sessionChanged = !previousRouteSession
-                || previousRouteSession.updatedAt !== routeSession.updatedAt
-                || previousRouteSession.status !== routeSession.status
-                || previousRouteSession.projectPath !== routeSession.projectPath
-                || previousRouteSession.runningBy !== routeSession.runningBy
-                || previousRouteSession.canStop !== routeSession.canStop;
+              const previousRouteSession =
+                selectedCliSessionRef.current?.id === routeId ? selectedCliSessionRef.current : undefined;
+              const sessionChanged =
+                !previousRouteSession ||
+                previousRouteSession.updatedAt !== routeSession.updatedAt ||
+                previousRouteSession.status !== routeSession.status ||
+                previousRouteSession.projectPath !== routeSession.projectPath ||
+                previousRouteSession.runningBy !== routeSession.runningBy ||
+                previousRouteSession.canStop !== routeSession.canStop;
               setSelectedCliSession(routeSession);
               // A running turn appends activity events to its transcript while
               // the session index can keep the same updatedAt. Refresh the
@@ -515,7 +506,11 @@ function App() {
           setCliSessionMessages(message.payload?.cliSessionMessages ?? []);
           if (message.payload?.cliSession?.id)
             void writeCliSessionMessagesCache(message.payload.cliSession.id, message.payload?.cliSessionMessages ?? []);
-          setSelectedCliSession(message.payload?.cliSession ? mergeCachedCliSession(message.payload.cliSession, selectedCliSession) : selectedCliSession);
+          setSelectedCliSession(
+            message.payload?.cliSession
+              ? mergeCachedCliSession(message.payload.cliSession, selectedCliSession)
+              : selectedCliSession
+          );
           setCliSessionMessagesError(undefined);
         } else {
           const error = message.error ?? "Session messages could not be loaded.";
@@ -547,7 +542,11 @@ function App() {
               composerConfig: cliComposerConfig
             });
           }
-          setSelectedCliSession(message.payload?.cliSession ? mergeCachedCliSession(message.payload.cliSession, selectedCliSession) : selectedCliSession);
+          setSelectedCliSession(
+            message.payload?.cliSession
+              ? mergeCachedCliSession(message.payload.cliSession, selectedCliSession)
+              : selectedCliSession
+          );
           setCliSessionMessagesError(undefined);
           setCliSessionFeedback({ key: Date.now(), level: "info", message: "Codex completed the turn." });
         } else {
@@ -621,56 +620,100 @@ function App() {
         setCliSessionFeedback({
           key: Date.now(),
           level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error",
-          message: message.status === "completed"
-            ? "Terminal command completed."
-            : (message.error ?? "Terminal command failed.")
+          message:
+            message.status === "completed"
+              ? "Terminal command completed."
+              : (message.error ?? "Terminal command failed.")
         });
         requestWorkspaceEnvironment(selectedCliSession?.projectPath);
         requestWorkspaceTerminals();
       }
-      if (message.type === "dashboard:action-result" && ["listWorkspaceTerminals", "createWorkspaceTerminal", "focusWorkspaceTerminal"].includes(message.action)) {
+      if (
+        message.type === "dashboard:action-result" &&
+        ["listWorkspaceTerminals", "createWorkspaceTerminal", "focusWorkspaceTerminal"].includes(message.action)
+      ) {
         if (message.status === "completed") {
-          setWorkspaceTerminals(message.payload?.workspaceTerminals ?? (message.payload?.workspaceTerminal ? [message.payload.workspaceTerminal] : []));
+          setWorkspaceTerminals(
+            message.payload?.workspaceTerminals ??
+              (message.payload?.workspaceTerminal ? [message.payload.workspaceTerminal] : [])
+          );
           if (message.action !== "listWorkspaceTerminals") {
-            setCliSessionFeedback({ key: Date.now(), level: "info", message: message.payload?.notice?.message ?? "Terminal action completed." });
+            setCliSessionFeedback({
+              key: Date.now(),
+              level: "info",
+              message: message.payload?.notice?.message ?? "Terminal action completed."
+            });
           }
         } else {
-          setCliSessionFeedback({ key: Date.now(), level: "error", message: message.error ?? "Terminal action failed." });
+          setCliSessionFeedback({
+            key: Date.now(),
+            level: "error",
+            message: message.error ?? "Terminal action failed."
+          });
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "listWorkspaceFiles") {
         if (message.status === "completed") setWorkspaceFiles(message.payload?.workspaceFiles ?? []);
-        else setCliSessionFeedback({ key: Date.now(), level: "error", message: message.error ?? "Project files could not be loaded." });
+        else
+          setCliSessionFeedback({
+            key: Date.now(),
+            level: "error",
+            message: message.error ?? "Project files could not be loaded."
+          });
       }
       if (message.type === "dashboard:action-result" && message.action === "deleteWorkspaceFile") {
         if (message.status === "completed") {
           setWorkspaceFiles(message.payload?.workspaceFiles ?? []);
-          if (message.payload?.deletedWorkspaceFilePath) setWorkspaceFilesByPath((current) => {
-            const next = { ...current };
-            delete next[message.payload!.deletedWorkspaceFilePath!];
-            return next;
+          if (message.payload?.deletedWorkspaceFilePath)
+            setWorkspaceFilesByPath((current) => {
+              const next = { ...current };
+              delete next[message.payload!.deletedWorkspaceFilePath!];
+              return next;
+            });
+          setCliSessionFeedback({
+            key: Date.now(),
+            level: "info",
+            message: message.payload?.notice?.message ?? "File deleted."
           });
-          setCliSessionFeedback({ key: Date.now(), level: "info", message: message.payload?.notice?.message ?? "File deleted." });
           requestWorkspaceEnvironment(selectedCliSession?.projectPath);
-        } else setCliSessionFeedback({ key: Date.now(), level: "error", message: message.error ?? "File could not be deleted." });
+        } else
+          setCliSessionFeedback({
+            key: Date.now(),
+            level: "error",
+            message: message.error ?? "File could not be deleted."
+          });
       }
-      if (message.type === "dashboard:action-result" && (message.action === "readWorkspaceFile" || message.action === "saveWorkspaceFile")) {
+      if (
+        message.type === "dashboard:action-result" &&
+        (message.action === "readWorkspaceFile" || message.action === "saveWorkspaceFile")
+      ) {
         if (message.status === "completed" && message.payload?.workspaceFile) {
           const workspaceFile = message.payload.workspaceFile;
           setWorkspaceFilesByPath((current) => ({ ...current, [workspaceFile.path]: workspaceFile }));
           if (message.action === "saveWorkspaceFile") {
-            setCliSessionFeedback({ key: Date.now(), level: "info", message: message.payload.notice?.message ?? "File saved." });
+            setCliSessionFeedback({
+              key: Date.now(),
+              level: "info",
+              message: message.payload.notice?.message ?? "File saved."
+            });
             requestWorkspaceEnvironment(selectedCliSession?.projectPath);
           }
         } else if (message.status === "failed") {
-          setCliSessionFeedback({ key: Date.now(), level: "error", message: message.error ?? "The project file action failed." });
+          setCliSessionFeedback({
+            key: Date.now(),
+            level: "error",
+            message: message.error ?? "The project file action failed."
+          });
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "cancelWorkspaceTerminalCommand") {
         setCliSessionFeedback({
           key: Date.now(),
           level: message.status === "completed" ? "warning" : "error",
-          message: message.status === "completed" ? "Stopping the terminal command…" : (message.error ?? "The terminal command could not be stopped.")
+          message:
+            message.status === "completed"
+              ? "Stopping the terminal command…"
+              : (message.error ?? "The terminal command could not be stopped.")
         });
       }
       if (
@@ -741,7 +784,14 @@ function App() {
     lastAutomaticWorkspaceLoadRef.current = loadKey;
     requestWorkspaceEnvironment(projectPath);
     requestWorkspaceTerminals();
-  }, [browserPath, cliComposerConfig?.projects?.[0]?.path, isBrowserDashboard, requestWorkspaceEnvironment, requestWorkspaceTerminals, selectedCliSession?.projectPath]);
+  }, [
+    browserPath,
+    cliComposerConfig?.projects?.[0]?.path,
+    isBrowserDashboard,
+    requestWorkspaceEnvironment,
+    requestWorkspaceTerminals,
+    selectedCliSession?.projectPath
+  ]);
 
   useEffect(() => {
     if (!isBrowserDashboard || !realtimeConnected || !isCliSessionsPath(browserPath)) return;
@@ -959,10 +1009,14 @@ function App() {
               {isBrowserDashboard ? (
                 <img class="loading-logo" src="/assets/codex.svg" alt="" width="72" height="72" />
               ) : (
-                <span class="loading-logo loading-logo-fallback"><CodexSessionsIcon /></span>
+                <span class="loading-logo loading-logo-fallback">
+                  <CodexSessionsIcon />
+                </span>
               )}
             </div>
-            <div class="loading-shine" aria-hidden="true"><span /></div>
+            <div class="loading-shine" aria-hidden="true">
+              <span />
+            </div>
             <span class="loading-label">Loading</span>
           </div>
         </section>
@@ -1277,7 +1331,7 @@ function App() {
   };
 
   const openBrowserSwitchPicker = (targetDeviceId?: string): void => {
-    const accountsForTarget = targetDeviceId ? snapshot.peerAccounts?.[targetDeviceId] ?? [] : displayedAccounts;
+    const accountsForTarget = targetDeviceId ? (snapshot.peerAccounts?.[targetDeviceId] ?? []) : displayedAccounts;
     const accountIds = accountsForTarget
       .filter(
         (account) =>
@@ -1340,7 +1394,7 @@ function App() {
       });
       return;
     }
-    if (request.kind === "passphrase") {
+    if (request.kind === "password") {
       sendAction(request.action, undefined, {
         enabled: request.enabled,
         passphrase: submittedTags?.[0],
@@ -1364,13 +1418,13 @@ function App() {
         ? "Account switch cancelled."
         : request.kind === "tags"
           ? "Tag update cancelled."
-          : request.kind === "passphrase"
-          ? `${request.title} cancelled.`
+          : request.kind === "password"
+            ? `${request.title} cancelled.`
             : request.kind === "notification"
               ? "Notification dismissed."
-            : request.action === "reloadPrompt"
-              ? "Reload postponed. Use Reload when you are ready."
-              : `${request.title} cancelled.`;
+              : request.action === "reloadPrompt"
+                ? "Reload postponed. Use Reload when you are ready."
+                : `${request.title} cancelled.`;
     showNotice({ level: "info", message });
   };
 
@@ -1380,11 +1434,11 @@ function App() {
       return;
     }
     setBrowserActionRequest({
-      kind: "passphrase",
+      kind: "password",
       action: "configureEncryptedSync",
-      title: "Configure encrypted sync",
-      message: "Create or enter the passphrase for the synchronized account vault.",
-      confirmPassphrase: true
+      title: "Set password",
+      message: "Create or enter the one password used for encrypted sync, remote dashboard login, and protected controls.",
+      confirmPassword: true
     });
   };
 
@@ -1394,12 +1448,12 @@ function App() {
       return;
     }
     setBrowserActionRequest({
-      kind: "passphrase",
+      kind: "password",
       action: "setEncryptedSyncRegistryOverride",
       enabled,
       title: "Enable rescue override",
-      message: "Enter the encrypted sync passphrase to enable rescue override on this PC.",
-      confirmPassphrase: false
+      message: "Enter the shared password to enable rescue override on this PC.",
+      confirmPassword: false
     });
   };
 
@@ -1408,23 +1462,11 @@ function App() {
     setOnboardingStep("setup");
   };
 
-  const submitOnboardingSetup = (values: {
-    syncEnabled: boolean;
-    passphrase: string;
-    confirmation: string;
-  }): void => {
+  const submitOnboardingSetup = (values: { syncEnabled: boolean }): void => {
     setOnboardingError(undefined);
     setOnboardingBusy(true);
     onboardingPendingRef.current = new Set();
     sendSetting("encryptedSyncEnabled", values.syncEnabled);
-    if (values.syncEnabled) {
-      onboardingPendingRef.current.add("configureEncryptedSync");
-      sendAction("configureEncryptedSync", undefined, {
-        passphrase: values.passphrase,
-        passphraseConfirmation: values.confirmation,
-        deferSync: true
-      });
-    }
     if (onboardingPendingRef.current.size === 0) {
       setOnboardingBusy(false);
       setOnboardingStep("import");
@@ -1438,20 +1480,11 @@ function App() {
     sendAction("importCurrent");
   };
 
-  const continueOnboardingCloudflare = (values: {
-    cloudflaredDomain: string;
-    dashboardEnabled: boolean;
-    dashboardPassword: string;
-  }): void => {
+  const continueOnboardingCloudflare = (values: { cloudflaredDomain: string; dashboardEnabled: boolean }): void => {
     setOnboardingBusy(true);
     onboardingPendingRef.current = new Set();
     sendSetting("cloudflaredDomain", values.cloudflaredDomain);
     sendSetting("webDashboardEnabled", values.dashboardEnabled);
-    if (values.dashboardEnabled && values.dashboardPassword) {
-      onboardingPendingRef.current.add("setWebDashboardPassword");
-      sendAction("setWebDashboardPassword", undefined, { password: values.dashboardPassword });
-    }
-    if (onboardingPendingRef.current.size > 0) return;
     setOnboardingStep("donation");
     setOnboardingBusy(false);
   };
@@ -2033,10 +2066,6 @@ function App() {
         onSyncNow={() => sendAction("syncNow")}
         onSetRegistryOverride={handleRegistryOverride}
         registryOverridePending={isActionPending("setEncryptedSyncRegistryOverride")}
-        onSetWebDashboardPassword={() => {
-          if (isBrowserDashboard) setWebPasswordModalOpen(true);
-          else sendAction("setWebDashboardPassword");
-        }}
       />
 
       <OnboardingModal
@@ -2087,22 +2116,12 @@ function App() {
         onClose={() => setAccountInfoAccountId(undefined)}
       />
 
-      <WebDashboardPasswordModal
-        open={isBrowserDashboard && webPasswordModalOpen}
-        closeLabel={snapshot.copy.closeModal}
-        onClose={() => setWebPasswordModalOpen(false)}
-        onSubmit={(password) => {
-          setWebPasswordModalOpen(false);
-          sendAction("setWebDashboardPassword", undefined, { password });
-        }}
-      />
-
-      {(
+      {
         <BrowserActionModal
           request={browserActionRequest}
           accounts={
             browserActionRequest?.kind === "switch" && browserActionRequest.targetDeviceId
-              ? snapshot.peerAccounts?.[browserActionRequest.targetDeviceId] ?? []
+              ? (snapshot.peerAccounts?.[browserActionRequest.targetDeviceId] ?? [])
               : displayedAccounts
           }
           lang={snapshot.lang}
@@ -2111,7 +2130,7 @@ function App() {
           onConfirm={confirmBrowserAction}
           presentation={isBrowserDashboard ? "modal" : "popover"}
         />
-      )}
+      }
 
       {isBrowserDashboard && isCliSessionsPath(browserPath)
         ? createPortal(
@@ -2162,7 +2181,7 @@ function App() {
               }}
               onSelect={selectCliSession}
               onBackToList={() => {
-    navigateDashboardPath("/workspace", setBrowserPath);
+                navigateDashboardPath("/workspace", setBrowserPath);
                 setSelectedCliSession(undefined);
                 setCliSessionMessages([]);
                 setCliSessionMessagesError(undefined);
@@ -2179,11 +2198,11 @@ function App() {
                 sendAction("runWorkspaceTerminalCommand", undefined, { command, projectPath, terminalId })
               }
               onListTerminals={requestWorkspaceTerminals}
-              onCreateTerminal={(profile, projectPath) => sendAction("createWorkspaceTerminal", undefined, { terminalProfile: profile, projectPath })}
-              onFocusTerminal={(terminalId) => sendAction("focusWorkspaceTerminal", undefined, { terminalId })}
-              onCancelTerminal={(terminalId) =>
-                sendAction("cancelWorkspaceTerminalCommand", undefined, { terminalId })
+              onCreateTerminal={(profile, projectPath) =>
+                sendAction("createWorkspaceTerminal", undefined, { terminalProfile: profile, projectPath })
               }
+              onFocusTerminal={(terminalId) => sendAction("focusWorkspaceTerminal", undefined, { terminalId })}
+              onCancelTerminal={(terminalId) => sendAction("cancelWorkspaceTerminalCommand", undefined, { terminalId })}
               onCommitWorkspace={(commitMessage, projectPath) =>
                 sendAction("commitWorkspaceChanges", undefined, { commitMessage, projectPath, confirmed: true })
               }
@@ -2191,11 +2210,36 @@ function App() {
                 sendAction("pushWorkspaceBranch", undefined, { projectPath, confirmed: true })
               }
               onClearTerminal={() => setTerminalResults([])}
-              onListFiles={(projectPath) => sendAction("listWorkspaceFiles", undefined, { projectPath, targetDeviceId: selectedCliSession?.deviceId })}
-              onReadFile={(filePath, projectPath) => sendAction("readWorkspaceFile", undefined, { filePath, projectPath, targetDeviceId: selectedCliSession?.deviceId })}
+              onListFiles={(projectPath) =>
+                sendAction("listWorkspaceFiles", undefined, {
+                  projectPath,
+                  targetDeviceId: selectedCliSession?.deviceId
+                })
+              }
+              onReadFile={(filePath, projectPath) =>
+                sendAction("readWorkspaceFile", undefined, {
+                  filePath,
+                  projectPath,
+                  targetDeviceId: selectedCliSession?.deviceId
+                })
+              }
               onClearFile={() => setWorkspaceFilesByPath({})}
-              onDeleteFile={(filePath, projectPath) => sendAction("deleteWorkspaceFile", undefined, { filePath, projectPath, confirmed: true, targetDeviceId: selectedCliSession?.deviceId })}
-              onSaveFile={(filePath, fileContent, projectPath) => sendAction("saveWorkspaceFile", undefined, { filePath, fileContent, projectPath, targetDeviceId: selectedCliSession?.deviceId })}
+              onDeleteFile={(filePath, projectPath) =>
+                sendAction("deleteWorkspaceFile", undefined, {
+                  filePath,
+                  projectPath,
+                  confirmed: true,
+                  targetDeviceId: selectedCliSession?.deviceId
+                })
+              }
+              onSaveFile={(filePath, fileContent, projectPath) =>
+                sendAction("saveWorkspaceFile", undefined, {
+                  filePath,
+                  fileContent,
+                  projectPath,
+                  targetDeviceId: selectedCliSession?.deviceId
+                })
+              }
               onStart={(input) => sendAction("startCodexCliSession", undefined, input)}
               onSend={(input) =>
                 selectedCliSession &&
@@ -2363,7 +2407,9 @@ function sortAccounts(
     const healthDifference = healthRank[left.healthKind] - healthRank[right.healthKind];
     if (healthDifference !== 0) return healthDifference;
 
-    return compareDashboardAutoQueueAccounts(left, right, capabilityThresholds) || left.email.localeCompare(right.email);
+    return (
+      compareDashboardAutoQueueAccounts(left, right, capabilityThresholds) || left.email.localeCompare(right.email)
+    );
   };
 
   if (sort === "auto-queue") {
@@ -2724,7 +2770,9 @@ function PcPickerControl(props: {
               aria-label={pickerLabel}
               style={{ top: `${popoverPosition.top}px`, left: `${popoverPosition.left}px` }}
             >
-              <div class="dashboard-pc-picker-heading">{isZh ? "已连接的电脑" : isHant ? "已連線的電腦" : "Connected PCs"}</div>
+              <div class="dashboard-pc-picker-heading">
+                {isZh ? "已连接的电脑" : isHant ? "已連線的電腦" : "Connected PCs"}
+              </div>
               {props.peers.map((peer) => (
                 <button
                   key={peer.id}

@@ -7,7 +7,7 @@ Cloudflare Tunnel is outbound-only: `cloudflared` connects from your PC to Cloud
 ## Before you start
 
 - Enable **Web dashboard** in Codex Manager.
-- Set a dashboard password (minimum six characters) with **Set Web Dashboard Password**.
+- Set the shared Password in General; encrypted sync and remote dashboard login use it.
 - Keep the dashboard host running, or enable **Always-online WebSocket host** on an always-on PC.
 - Own a domain managed by Cloudflare and install [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/).
 
@@ -19,7 +19,7 @@ Quick Tunnels create a temporary random `trycloudflare.com` hostname. They are f
 cloudflared tunnel --url http://127.0.0.1:39875
 ```
 
-Copy the URL printed in the terminal, open it in a browser, and use the dashboard password. Keep this terminal running. A Quick Tunnel is not stable and does not provide a custom DNS name.
+Copy the URL printed in the terminal, open it in a browser, and use the shared password. Keep this terminal running. A Quick Tunnel is not stable and does not provide a custom DNS name.
 
 See Cloudflare’s [Quick Tunnels documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/).
 
@@ -78,7 +78,7 @@ If the public page fails, check that the local dashboard is enabled, the service
 ## Security checklist
 
 - Use a named tunnel and HTTPS hostname for real accounts.
-- Keep the dashboard password unique; rotate it with **Set Web Dashboard Password**.
+- Keep the shared password protected and use the same value on every participating PC.
 - Add a [Cloudflare Access application](https://developers.cloudflare.com/cloudflare-one/applications/configure-apps/) when the hostname should be restricted to specific users.
 - Do not publish `auth.json`, SecretStorage, the VS Code port, or an MQTT listener.
 - Revoke the tunnel in Cloudflare if the connector credential is exposed.

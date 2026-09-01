@@ -107,53 +107,6 @@ export function AccountInfoModal(props: {
   );
 }
 
-export function WebDashboardPasswordModal(props: {
-  open: boolean;
-  closeLabel: string;
-  onClose: () => void;
-  onSubmit: (password: string) => void;
-}) {
-  const [password, setPassword] = useState("");
-  return (
-    <ModalShell
-      open={props.open}
-      title="Set Web Dashboard password"
-      closeLabel={props.closeLabel}
-      className="dashboard-modal-compact"
-      onClose={props.onClose}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          props.onSubmit(password);
-          setPassword("");
-        }}
-      >
-        <label class="settings-block-sub" for="web-dashboard-password">
-          Use at least 8 characters. Leave empty to remove the password.
-        </label>
-        <input
-          id="web-dashboard-password"
-          class="settings-text-input"
-          name="web-dashboard-password"
-          type="password"
-          autoComplete="new-password"
-          spellcheck={false}
-          value={password}
-          onInput={(event) => setPassword(event.currentTarget.value)}
-          autoFocus
-        />
-        <div class="saved-actions">
-          <button type="button" onClick={props.onClose}>
-            Cancel
-          </button>
-          <button type="submit">Save password</button>
-        </div>
-      </form>
-    </ModalShell>
-  );
-}
-
 function InfoRow(props: { label: string; value: string; title?: string; mono?: boolean }) {
   return (
     <div class="account-info-row">

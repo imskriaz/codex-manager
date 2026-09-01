@@ -1,5 +1,5 @@
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
-import { compareAutoQueueOrderValues } from "../../src/domain/autoQueueOrder";
+import { compareAutoQueueOrderValues, compareAutoQueueUrgency } from "../../src/domain/autoQueueOrder";
 
 export type DashboardAutoQueueCapabilityThresholds = {
   hourlyEnabled: boolean;
@@ -12,12 +12,6 @@ export function compareDashboardAutoQueueAccounts(
   right: DashboardAccountViewModel,
   thresholds?: DashboardAutoQueueCapabilityThresholds
 ): number {
-  const leftPriority = left.queuePriority === true && hasDashboardAutoQueueCapability(left, thresholds);
-  const rightPriority = right.queuePriority === true && hasDashboardAutoQueueCapability(right, thresholds);
-  if (leftPriority !== rightPriority) {
-    return leftPriority ? -1 : 1;
-  }
-
   const metricForPeriod = (account: DashboardAccountViewModel, period: "hourly" | "weekly" | "monthly") =>
     account.metrics.find(
       (metric) =>
@@ -35,8 +29,20 @@ export function compareDashboardAutoQueueAccounts(
     subscriptionExpiresAt: account.subscriptionExpiresAt,
     lastQuotaAt: account.lastQuotaAt
   });
+  const leftOrder = orderValue(left);
+  const rightOrder = orderValue(right);
+  const urgencyDifference = compareAutoQueueUrgency(leftOrder, rightOrder);
+  if (urgencyDifference !== 0) {
+    return urgencyDifference;
+  }
 
-  return compareAutoQueueOrderValues(orderValue(left), orderValue(right));
+  const leftPriority = left.queuePriority === true && hasDashboardAutoQueueCapability(left, thresholds);
+  const rightPriority = right.queuePriority === true && hasDashboardAutoQueueCapability(right, thresholds);
+  if (leftPriority !== rightPriority) {
+    return leftPriority ? -1 : 1;
+  }
+
+  return compareAutoQueueOrderValues(leftOrder, rightOrder);
 }
 
 export function hasDashboardAutoQueueCapability(
@@ -54,20 +60,16 @@ export function hasDashboardAutoQueueCapability(
       typeof metric.percentage === "number" &&
       Number.isFinite(metric.percentage)
   );
-  const concernedMetrics = primaryQuotaMetrics.filter(
-    (metric) => metric.key !== "hourly" || thresholds.hourlyEnabled
-  );
+  const concernedMetrics = primaryQuotaMetrics.filter((metric) => metric.key !== "hourly" || thresholds.hourlyEnabled);
   if (
     concernedMetrics.some(
       (metric) =>
-        metric.percentage! <=
-        (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
+        metric.percentage! <= (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
     )
-  ) return false;
+  )
+    return false;
   const hasQuota = concernedMetrics.some(
-    (metric) =>
-      metric.percentage! >
-      (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
+    (metric) => metric.percentage! > (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
   );
   return account.creditsUnlimited === true || hasQuota || (account.creditsBalance ?? 0) > 0;
 }

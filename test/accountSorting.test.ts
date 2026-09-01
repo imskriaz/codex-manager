@@ -49,6 +49,36 @@ describe("compareDashboardAutoQueueAccounts", () => {
     ]);
   });
 
+  it("puts an urgent 5-hour reset ahead of a starred dashboard account without changing its star", () => {
+    const now = Date.now() / 1_000;
+    const base = {
+      isActive: false,
+      switchQueued: false,
+      creditsUnlimited: false,
+      creditsBalance: 0,
+      subscriptionExpiresAt: Date.now() + 7 * 86_400_000,
+      lastQuotaAt: 1
+    };
+    const urgent = {
+      ...base,
+      id: "urgent",
+      queuePriority: false,
+      metrics: [{ key: "hourly", period: "hourly", percentage: 30, resetAt: now + 20 * 60, visible: true }]
+    } as any;
+    const starred = {
+      ...base,
+      id: "starred",
+      queuePriority: true,
+      metrics: [{ key: "hourly", period: "hourly", percentage: 100, resetAt: now + 60 * 60, visible: true }]
+    } as any;
+
+    expect([starred, urgent].sort(compareDashboardAutoQueueAccounts).map((item) => item.id)).toEqual([
+      "urgent",
+      "starred"
+    ]);
+    expect(urgent.queuePriority).toBe(false);
+  });
+
   it("keeps dashboard ordering aligned with quota reset and credit ordering", () => {
     const base = {
       isActive: false,
@@ -112,16 +142,20 @@ describe("compareDashboardAutoQueueAccounts", () => {
       ]
     } as any;
 
-    expect(hasDashboardAutoQueueCapability(account, {
-      hourlyEnabled: false,
-      hourlyThreshold: 20,
-      weeklyThreshold: 20
-    })).toBe(false);
+    expect(
+      hasDashboardAutoQueueCapability(account, {
+        hourlyEnabled: false,
+        hourlyThreshold: 20,
+        weeklyThreshold: 20
+      })
+    ).toBe(false);
     account.metrics[1].percentage = 25;
-    expect(hasDashboardAutoQueueCapability(account, {
-      hourlyEnabled: false,
-      hourlyThreshold: 20,
-      weeklyThreshold: 20
-    })).toBe(true);
+    expect(
+      hasDashboardAutoQueueCapability(account, {
+        hourlyEnabled: false,
+        hourlyThreshold: 20,
+        weeklyThreshold: 20
+      })
+    ).toBe(true);
   });
 });

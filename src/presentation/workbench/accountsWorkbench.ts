@@ -78,8 +78,8 @@ export class AccountsWorkbench {
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (
           event.affectsConfiguration("codexManager.webDashboardEnabled") ||
-          event.affectsConfiguration("codexManager.cloudflaredDomain")
-          || event.affectsConfiguration("codexManager.webDashboardAlwaysOnlineEnabled")
+          event.affectsConfiguration("codexManager.cloudflaredDomain") ||
+          event.affectsConfiguration("codexManager.webDashboardAlwaysOnlineEnabled")
         ) {
           void this.webDashboard.applyConfiguration().catch((error) => {
             console.warn("[codexManager] Web Dashboard configuration update failed", error);
@@ -88,13 +88,23 @@ export class AccountsWorkbench {
             );
           });
           if (event.affectsConfiguration("codexManager.webDashboardAlwaysOnlineEnabled")) {
-            void this.alwaysOnlineServer.applyConfiguration().then((result) => {
-              if (result === "started") void vscode.window.showInformationMessage("Always-online WebSocket host started on this PC.");
-              if (result === "stopped") void vscode.window.showInformationMessage("Always-online WebSocket host stopped.");
-              if (result === "paused") void vscode.window.showInformationMessage("Always-online WebSocket host is armed and will take over when VS Code closes.");
-            }).catch((error) => {
-              void vscode.window.showErrorMessage(`Always-online WebSocket host failed: ${error instanceof Error ? error.message : String(error)}`);
-            });
+            void this.alwaysOnlineServer
+              .applyConfiguration()
+              .then((result) => {
+                if (result === "started")
+                  void vscode.window.showInformationMessage("Always-online WebSocket host started on this PC.");
+                if (result === "stopped")
+                  void vscode.window.showInformationMessage("Always-online WebSocket host stopped.");
+                if (result === "paused")
+                  void vscode.window.showInformationMessage(
+                    "Always-online WebSocket host is armed and will take over when VS Code closes."
+                  );
+              })
+              .catch((error) => {
+                void vscode.window.showErrorMessage(
+                  `Always-online WebSocket host failed: ${error instanceof Error ? error.message : String(error)}`
+                );
+              });
           }
         }
       }),
@@ -105,16 +115,6 @@ export class AccountsWorkbench {
           "Open web dashboard",
           () => this.webDashboard.openInBrowser(options?.pathname),
           "dashboard:open-web"
-        )
-      ),
-      vscode.commands.registerCommand("codexManager.setWebDashboardPassword", (password?: string) =>
-        runRegisteredCommand(
-          "Set web dashboard password",
-          () =>
-            password === undefined
-              ? this.webDashboard.promptSetPassword()
-              : this.webDashboard.setPasswordValue(password),
-          "dashboard:set-web-password"
         )
       ),
       vscode.commands.registerCommand("codexManager.prepareDashboardForExtensionHostRestart", () =>

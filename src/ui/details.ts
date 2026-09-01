@@ -124,13 +124,12 @@ export function openDetailsPanel(
         }
         return;
       }
-
     });
 
     detailsPanelConfigWatcher = vscode.workspace.onDidChangeConfiguration((event) => {
       if (
-          !detailsPanel ||
-          (!event.affectsConfiguration("codexManager.displayLanguage") &&
+        !detailsPanel ||
+        (!event.affectsConfiguration("codexManager.displayLanguage") &&
           !event.affectsConfiguration("codexManager.dashboardTheme") &&
           !event.affectsConfiguration("codexManager.quotaGreenThreshold") &&
           !event.affectsConfiguration("codexManager.quotaYellowThreshold"))
@@ -248,7 +247,10 @@ export async function refreshDetailsPanel(): Promise<void> {
   renderDetails(account, tokens);
 }
 
-function renderDetails(account: CodexManagerAccountRecord, tokens?: Awaited<ReturnType<AccountsRepository["getTokens"]>>): void {
+function renderDetails(
+  account: CodexManagerAccountRecord,
+  tokens?: Awaited<ReturnType<AccountsRepository["getTokens"]>>
+): void {
   if (!detailsPanel || !detailsPanelState.styles || !detailsPanelState.scripts) {
     return;
   }
@@ -467,7 +469,10 @@ export function renderDetailsBodyAttributes(privacyMode: boolean): string {
   return `${classAttr} data-privacy-hidden="${privacyMode ? "true" : "false"}"`;
 }
 
-export function getDetailsWorkspaceValue(account: Pick<CodexManagerAccountRecord, "accountName" | "accountStructure">, fallback: string): string {
+export function getDetailsWorkspaceValue(
+  account: Pick<CodexManagerAccountRecord, "accountName" | "accountStructure">,
+  fallback: string
+): string {
   const name = account.accountName?.trim();
   if (name) {
     return name;
@@ -580,36 +585,8 @@ function renderSensitiveHtml(value: string | undefined, kind: SensitiveKind, fal
 }
 
 function maskSensitiveValue(value: string, kind: SensitiveKind): string {
-  switch (kind) {
-    case "email":
-      return maskEmail(value);
-    case "name":
-      return maskSegmentedValue(value);
-    case "id":
-      return createMask(value.length, 10, 18);
-    default:
-      return createMask(value.length);
-  }
-}
-
-function maskEmail(value: string): string {
-  const [localPart, domainPart] = value.split("@");
-  if (!localPart || !domainPart) {
-    return createMask(value.length);
-  }
-
-  return `${createMask(localPart.length, 4, 10)}@${createMask(domainPart.length, 4, 10)}`;
-}
-
-function maskSegmentedValue(value: string): string {
-  return value
-    .split(/(\s+|[._\-\\/]+)/)
-    .map((segment) => (/^(\s+|[._\-\\/]+)$/.test(segment) ? segment : createMask(segment.length, 3, 8)))
-    .join("");
-}
-
-function createMask(length: number, min = 6, max = 12): string {
-  return "*".repeat(Math.max(min, Math.min(max, Math.max(1, length))));
+  void kind;
+  return `${value.slice(0, 3)}***${value.slice(-3)}`;
 }
 
 function renderEyeSvg(): string {

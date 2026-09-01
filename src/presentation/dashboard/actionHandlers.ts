@@ -77,7 +77,6 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "setEncryptedSyncRegistryOverride",
   "openDashboard",
   "openWebDashboard",
-  "setWebDashboardPassword",
   "reauthorize",
   "details",
   "refresh",
@@ -158,7 +157,6 @@ export type DashboardActionContext = {
   configureEncryptedSync?: (passphrase: string, confirmation: string) => Promise<boolean>;
   syncEncryptedAccounts?: () => Promise<boolean>;
   setEncryptedSyncRegistryOverride?: (enabled: boolean, passphrase?: string) => Promise<boolean>;
-  setWebDashboardPassword?: (password: string) => Promise<void>;
   getRemoteCliSessions?: () => DashboardCliSessionSummary[];
 };
 
@@ -234,13 +232,14 @@ async function executeDashboardActionMessageCore(
         message.action === "batchRemove" ||
         message.action === "consumeResetCredit" ||
         message.action === "updateTags");
-    payload = COMMAND_ROUTED_ACTIONS.has(message.action) && !browserDirectMutation
-      ? await execute()
-      : await executeAndFlush();
+    payload =
+      COMMAND_ROUTED_ACTIONS.has(message.action) && !browserDirectMutation ? await execute() : await executeAndFlush();
   } catch (error) {
-    status = error instanceof CodexCliTurnCancelledError || (error instanceof WorkspaceTerminalCommandError && error.result.status === "cancelled")
-      ? "cancelled"
-      : "failed";
+    status =
+      error instanceof CodexCliTurnCancelledError ||
+      (error instanceof WorkspaceTerminalCommandError && error.result.status === "cancelled")
+        ? "cancelled"
+        : "failed";
     if (error instanceof WorkspaceTerminalCommandError) payload = { terminalResult: error.result };
     errorMessage = toFailureMessage(error);
     console.error(`[codexManager] dashboard action failed: ${message.action}`, error);
@@ -281,7 +280,7 @@ async function runDashboardAction(
           reloadRequired,
           reloadAccountId: imported.id,
           notice: {
-            level: quotaResult.error ? "warning" as const : "info" as const,
+            level: quotaResult.error ? ("warning" as const) : ("info" as const),
             message: quotaResult.error
               ? `Imported ${imported.email}, but quota refresh failed: ${quotaResult.error.message}`
               : `Imported ${imported.email}.`
@@ -333,24 +332,26 @@ async function runDashboardAction(
     case "configureEncryptedSync":
       if (ctx.hostKind === "browser") {
         if (!payload?.passphrase || !payload.passphraseConfirmation) {
-          throw new Error("Enter and confirm the sync passphrase in the browser dashboard.");
+          throw new Error("Enter and confirm the shared password in the browser dashboard.");
         }
         if (!ctx.configureEncryptedSync) {
           throw new Error("Encrypted sync is unavailable in the browser dashboard host.");
         }
         if (!(await ctx.configureEncryptedSync(payload.passphrase, payload.passphraseConfirmation))) {
-          throw new Error("Encrypted sync was not configured. Check the passphrase and try again.");
+          throw new Error("Encrypted sync was not configured. Check the password and try again.");
         }
         ctx.schedulePublishState();
         return { notice: { level: "info" as const, message: "Encrypted sync is configured." } };
       }
       if (payload?.passphrase && payload.passphraseConfirmation) {
-        if (!(await vscode.commands.executeCommand<boolean>("codexManager.configureEncryptedSync", {
-          passphrase: payload.passphrase,
-          confirmation: payload.passphraseConfirmation,
-          deferSync: payload.deferSync === true
-        }))) {
-          throw new Error("Encrypted sync was not configured. Check the passphrase and try again.");
+        if (
+          !(await vscode.commands.executeCommand<boolean>("codexManager.configureEncryptedSync", {
+            passphrase: payload.passphrase,
+            confirmation: payload.passphraseConfirmation,
+            deferSync: payload.deferSync === true
+          }))
+        ) {
+          throw new Error("Encrypted sync was not configured. Check the password and try again.");
         }
         ctx.schedulePublishState();
         return {
@@ -364,7 +365,7 @@ async function runDashboardAction(
       }
       if ((await vscode.commands.executeCommand<boolean>("codexManager.configureEncryptedSync")) !== true) {
         ctx.schedulePublishState();
-        throw new Error("The sync passphrase was not set. Try again and complete the passphrase prompts.");
+        throw new Error("The password was not set. Try again and complete the password prompts.");
       }
       ctx.schedulePublishState();
       return undefined;
@@ -395,19 +396,19 @@ async function runDashboardAction(
           throw new Error("The rescue override is unavailable in the browser dashboard host.");
         }
         if (payload.enabled && !payload.passphrase) {
-          throw new Error("Enter the encrypted sync passphrase in the browser dashboard.");
+          throw new Error("Enter the shared password in the browser dashboard.");
         }
         if (!(await ctx.setEncryptedSyncRegistryOverride(payload.enabled, payload.passphrase))) {
           throw new Error(
             payload.enabled
-              ? "Rescue override was not enabled. Check the encrypted sync passphrase and try again."
+              ? "Rescue override was not enabled. Check the shared password and try again."
               : "Rescue override could not be disabled. Try again."
           );
         }
         ctx.schedulePublishState();
         return {
           notice: {
-            level: payload.enabled ? "warning" as const : "info" as const,
+            level: payload.enabled ? ("warning" as const) : ("info" as const),
             message: payload.enabled
               ? "Rescue override enabled on this PC. Foreign-PC claims are warning-only."
               : "Rescue override disabled. The synchronized registry is enforced again."
@@ -423,7 +424,7 @@ async function runDashboardAction(
         ctx.schedulePublishState();
         throw new Error(
           payload.enabled
-            ? "Rescue override was not enabled. Verify the encrypted sync passphrase and try again."
+            ? "Rescue override was not enabled. Verify the shared password and try again."
             : "Rescue override could not be disabled. Try again."
         );
       }
@@ -443,47 +444,29 @@ async function runDashboardAction(
     case "openDashboard":
       await vscode.commands.executeCommand("codexManager.showQuotaSummary");
       return undefined;
-    case "openWebDashboard":
-      {
-        const openResult = await vscode.commands.executeCommand<"opened" | "cancelled" | "unavailable">(
-          "codexManager.openWebDashboard",
-          { pathname: payload?.path }
-        );
-        return {
-          notice: openResult === "opened"
-            ? { level: "info" as const, message: payload?.path === "/workspace" ? "Opened the Codex workspace in the Web Dashboard." : "Opened the Web Dashboard." }
+    case "openWebDashboard": {
+      const openResult = await vscode.commands.executeCommand<"opened" | "cancelled" | "unavailable">(
+        "codexManager.openWebDashboard",
+        { pathname: payload?.path }
+      );
+      return {
+        notice:
+          openResult === "opened"
+            ? {
+                level: "info" as const,
+                message:
+                  payload?.path === "/workspace"
+                    ? "Opened the Codex workspace in the Web Dashboard."
+                    : "Opened the Web Dashboard."
+              }
             : openResult === "cancelled"
               ? { level: "warning" as const, message: "Opening the Web Dashboard was cancelled." }
-              : { level: "warning" as const, message: "The Web Dashboard is unavailable. Enable it and set a password, then try again." }
-        };
-      }
-    case "setWebDashboardPassword":
-      if (ctx.hostKind === "browser") {
-        if (!ctx.setWebDashboardPassword) {
-          throw new Error("The browser dashboard password service is unavailable.");
-        }
-        await ctx.setWebDashboardPassword(payload?.password ?? "");
-        ctx.schedulePublishState();
-        return {
-          notice: {
-            level: "info" as const,
-            message: payload?.password ? "Web Dashboard password updated." : "Web Dashboard password removed."
-          }
-        };
-      }
-      if (payload?.password !== undefined) {
-        await vscode.commands.executeCommand("codexManager.setWebDashboardPassword", payload.password);
-        ctx.schedulePublishState();
-        return {
-          notice: {
-            level: "info" as const,
-            message: payload.password ? "Web Dashboard password updated." : "Web Dashboard password removed."
-          }
-        };
-      }
-      await vscode.commands.executeCommand("codexManager.setWebDashboardPassword", payload?.password);
-      ctx.schedulePublishState();
-      return undefined;
+              : {
+                  level: "warning" as const,
+                  message: "The Web Dashboard is unavailable. Enable it and configure Encrypted Sync, then try again."
+                }
+      };
+    }
     case "openExternalUrl":
       return handleOpenExternalUrl(payload);
     case "downloadJsonFile":
@@ -621,16 +604,14 @@ async function runDashboardAction(
           };
         }
         if (result?.status === "switched" && result.account) {
-          const reloadRequired = result.reloadNeeded && !result.reloaded
-            ? deferWindowReloadForAccount(result.account.id)
-            : false;
+          const reloadRequired =
+            result.reloadNeeded && !result.reloaded ? deferWindowReloadForAccount(result.account.id) : false;
           return {
             notice: {
               level: "info" as const,
-              message:
-                reloadRequired
-                  ? `Switched to ${result.account.email}. Reloading Codex…`
-                  : `Switched to ${result.account.email}.`
+              message: reloadRequired
+                ? `Switched to ${result.account.email}. Reloading Codex…`
+                : `Switched to ${result.account.email}.`
             },
             reloadScheduled: reloadRequired
           };
@@ -731,7 +712,11 @@ async function runDashboardAction(
       return { workspaceTerminals: listWorkspaceTerminals() };
     case "createWorkspaceTerminal":
       return {
-        workspaceTerminal: createWorkspaceTerminal(payload?.projectPath, payload?.terminalProfile, payload?.terminalName),
+        workspaceTerminal: createWorkspaceTerminal(
+          payload?.projectPath,
+          payload?.terminalProfile,
+          payload?.terminalName
+        ),
         workspaceTerminals: listWorkspaceTerminals(),
         notice: { level: "info" as const, message: "VS Code terminal opened." }
       };
@@ -1133,7 +1118,12 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     if (!supported.has(key) || !["string", "number", "boolean"].includes(typeof value)) {
       continue;
     }
-    if ((key === "codexAppPath" || key === "codexCliPath") && typeof value === "string" && value && !(await pathExists(value))) {
+    if (
+      (key === "codexAppPath" || key === "codexCliPath") &&
+      typeof value === "string" &&
+      value &&
+      !(await pathExists(value))
+    ) {
       continue;
     }
     await handleDashboardSettingUpdate(
@@ -1169,14 +1159,16 @@ async function handleUpdateTags(
   const dashboardCopy = getDashboardCopy(resolveLanguage());
   const targetAccount = targetIds.length === 1 ? (account ?? (await repo.getAccount(targetIds[0]!))) : undefined;
   const mode = payload?.mode === "add" || payload?.mode === "remove" ? payload.mode : "set";
-  const tags = payload?.submittedTags ?? (browserHost
-    ? undefined
-    : await promptForTags({
-        copy: dashboardCopy,
-        mode,
-        initialTags: targetAccount?.tags ?? [],
-        label: targetIds.length === 1 ? targetAccount?.email : undefined
-      }));
+  const tags =
+    payload?.submittedTags ??
+    (browserHost
+      ? undefined
+      : await promptForTags({
+          copy: dashboardCopy,
+          mode,
+          initialTags: targetAccount?.tags ?? [],
+          label: targetIds.length === 1 ? targetAccount?.email : undefined
+        }));
   if (tags === undefined) {
     if (browserHost) {
       throw new Error("Enter tags in the browser dashboard, then try again.");
@@ -1230,9 +1222,10 @@ function handleAutoSwitchLock(
   return {
     notice: {
       level: "info" as const,
-      message: lockMinutes > 0
-        ? `Auto-switch locked for ${lockMinutes} minute${lockMinutes === 1 ? "" : "s"}.`
-        : "Auto-switch lock removed."
+      message:
+        lockMinutes > 0
+          ? `Auto-switch locked for ${lockMinutes} minute${lockMinutes === 1 ? "" : "s"}.`
+          : "Auto-switch lock removed."
     }
   };
 }
@@ -1424,10 +1417,7 @@ async function handleBatchRemove(
   };
 }
 
-async function handleDisableAll(
-  repo: AccountsRepository,
-  schedulePublishState: () => void
-) {
+async function handleDisableAll(repo: AccountsRepository, schedulePublishState: () => void) {
   const accounts = await repo.listAccounts();
   const enabledAccounts = accounts.filter((candidate) => candidate.enabled !== false);
   let success = accounts.length - enabledAccounts.length;
@@ -1468,10 +1458,7 @@ async function handleDisableAll(
   };
 }
 
-async function handleEnableAllValid(
-  repo: AccountsRepository,
-  schedulePublishState: () => void
-) {
+async function handleEnableAllValid(repo: AccountsRepository, schedulePublishState: () => void) {
   const accounts = await repo.listAccounts();
   const automation = getTokenAutomationSnapshot();
   let success = 0;
@@ -1514,10 +1501,11 @@ async function handleEnableAllValid(
       failures
     },
     notice: {
-      level: failed > 0 ? "warning" as const : "info" as const,
-      message: failed > 0
-        ? `${summary} ${failed} account${failed === 1 ? "" : "s"} failed.${firstFailure ? ` First error: ${firstFailure}` : ""}`
-        : summary
+      level: failed > 0 ? ("warning" as const) : ("info" as const),
+      message:
+        failed > 0
+          ? `${summary} ${failed} account${failed === 1 ? "" : "s"} failed.${firstFailure ? ` First error: ${firstFailure}` : ""}`
+          : summary
     }
   };
 }
@@ -1539,9 +1527,7 @@ async function handleReloadPrompt(
       ? { notice: { level: "info" as const, message: "Reloading the VS Code extension host…" } }
       : { notice: { level: "warning" as const, message: "This VS Code window is already using that account." } };
   }
-  const reloaded = payload?.forceReload
-    ? await reloadWindowNow()
-    : await promptWindowReloadForAccount(account);
+  const reloaded = payload?.forceReload ? await reloadWindowNow() : await promptWindowReloadForAccount(account);
   return reloaded
     ? { notice: { level: "info" as const, message: "Reloading the VS Code extension host…" } }
     : {
@@ -1606,15 +1592,16 @@ async function handleListCodexCliSessions(
   if (!(await isCodexCliAvailable())) {
     throw new Error("Codex CLI is not available on this PC. Install it or set CODEX_CLI_PATH, then try again.");
   }
-  const [localSessions, cliComposerConfig] = await Promise.all([
-    readCodexCliSessions(),
-    readCodexCliComposerConfig()
-  ]);
+  const [localSessions, cliComposerConfig] = await Promise.all([readCodexCliSessions(), readCodexCliComposerConfig()]);
   const remoteSessions = getRemoteCliSessions?.() ?? [];
-  const stabilizedLocalSessions = await stabilizeSessionProjectPaths(context, localSessions, cliComposerConfig.projects);
+  const stabilizedLocalSessions = await stabilizeSessionProjectPaths(
+    context,
+    localSessions,
+    cliComposerConfig.projects
+  );
   return {
-    cliSessions: [...stabilizedLocalSessions, ...remoteSessions].sort(
-      (left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
+    cliSessions: [...stabilizedLocalSessions, ...remoteSessions].sort((left, right) =>
+      String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
     ),
     cliComposerConfig
   };
@@ -1635,13 +1622,10 @@ async function handleStartCodexCliSession(
     sandboxMode: payload?.sandboxMode,
     projectPath: payload?.projectPath
   });
-  const [localSessions, cliComposerConfig] = await Promise.all([
-    readCodexCliSessions(),
-    readCodexCliComposerConfig()
-  ]);
+  const [localSessions, cliComposerConfig] = await Promise.all([readCodexCliSessions(), readCodexCliComposerConfig()]);
   const remoteSessions = getRemoteCliSessions?.() ?? [];
-  const cliSessions = [...localSessions, ...remoteSessions].sort(
-    (left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
+  const cliSessions = [...localSessions, ...remoteSessions].sort((left, right) =>
+    String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
   );
   return {
     cliSessions,

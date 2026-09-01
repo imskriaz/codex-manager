@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.0.4-pre2",
+  "version": "1.0.4-pre4",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -227,7 +227,7 @@
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "markdownDescription": "Run the local browser dashboard on 127.0.0.1:39875. Local access does not require a password. Set a password before exposing the port through Cloudflared or another tunnel."
+          "markdownDescription": "Run the local browser dashboard on 127.0.0.1:39875. Local access does not require a password. Set the shared Password in General before exposing the port through Cloudflared or another tunnel."
         },
         "codexManager.webDashboardAlwaysOnlineEnabled": {
           "type": "boolean",
@@ -238,7 +238,7 @@
         "codexManager.cloudflaredDomain": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional HTTPS Cloudflared domain for the dashboard, for example https://codex.example.com. Point the tunnel to http://127.0.0.1:39875 and set a Web Dashboard password before sharing it. Leave empty to use local access only."
+          "markdownDescription": "Optional HTTPS Cloudflared domain for the dashboard, for example https://codex.example.com. Point the tunnel to http://127.0.0.1:39875 and set the shared Password in General before sharing it. Leave empty to use local access only."
         }
       }
     },
@@ -296,16 +296,8 @@
         "title": "Codex Manager: Keyboard Shortcuts & Help"
       },
       {
-        "command": "codexManager.configureEncryptedSync",
-        "title": "Codex Manager: Configure Encrypted Session Sync"
-      },
-      {
         "command": "codexManager.syncNow",
         "title": "Codex Manager: Sync Sessions Now"
-      },
-      {
-        "command": "codexManager.setWebDashboardPassword",
-        "title": "Codex Manager: Set Web Dashboard Password"
       },
       {
         "command": "codexManager.openPersistentLogs",

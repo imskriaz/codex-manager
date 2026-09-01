@@ -40,7 +40,7 @@ const MAX_PLAINTEXT_BYTES = 16 * 1024 * 1024;
 const MAX_ENVELOPE_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_LENGTH = 4096;
 const MAX_TOKEN_LENGTH = 512 * 1024;
-const VAULT_AUTHENTICATION_ERROR = "The vault passphrase is incorrect or the synchronized data was modified.";
+const VAULT_AUTHENTICATION_ERROR = "The password is incorrect or the synchronized data was modified.";
 let encryptedSyncNeedsConfiguration = false;
 let encryptedSyncNeedsSettingsSync = false;
 let visibleAccountEnablement: SyncAccountEnablement[] = [];
@@ -349,6 +349,18 @@ export class EncryptedSyncManager implements vscode.Disposable {
     return this.getDeviceId();
   }
 
+  async hasDashboardPassphrase(): Promise<boolean> {
+    return Boolean(await this.context.secrets.get(PASSPHRASE_KEY));
+  }
+
+  async verifyDashboardPassphrase(candidate: string): Promise<boolean> {
+    const stored = await this.context.secrets.get(PASSPHRASE_KEY);
+    if (!stored) return false;
+    const expected = Buffer.from(stored, "utf8");
+    const actual = Buffer.from(candidate, "utf8");
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  }
+
   async signRealtimePeerPayload(payload: string): Promise<string | undefined> {
     if (!this.isEnabled()) return undefined;
     const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
@@ -368,10 +380,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (!this.isEnabled()) return undefined;
     const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
     if (!passphrase) return undefined;
-    return crypto
-      .createHash("sha256")
-      .update(`peer-presence-v1:${passphrase}`, "utf8")
-      .digest("base64url");
+    return crypto.createHash("sha256").update(`peer-presence-v1:${passphrase}`, "utf8").digest("base64url");
   }
 
   async verifyRealtimePeerPayload(payload: string, signature: string): Promise<boolean> {
@@ -494,12 +503,12 @@ export class EncryptedSyncManager implements vscode.Disposable {
       }
       const stored = await this.context.secrets.get(PASSPHRASE_KEY);
       if (!stored) {
-        void vscode.window.showErrorMessage("Set the encrypted sync passphrase before enabling rescue override.");
+        void vscode.window.showErrorMessage("Set the shared password before enabling rescue override.");
         return false;
       }
       const entered =
         options?.passphrase ??
-        (await this.promptForPassphrase("Enter the encrypted sync passphrase to enable rescue override"));
+        (await this.promptForPassphrase("Enter the shared password to enable rescue override"));
       if (!entered) {
         void vscode.window.showWarningMessage(
           "Rescue override was not enabled because password verification was cancelled."
@@ -522,7 +531,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       }
       if (!valid) {
         void vscode.window.showErrorMessage(
-          "Rescue override was not enabled because the encrypted sync passphrase was incorrect."
+          "Rescue override was not enabled because the password was incorrect."
         );
         return false;
       }
@@ -559,8 +568,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
       options?.passphrase ??
       (await this.promptForPassphrase(
         rawRemote
-          ? "Enter the passphrase used by the encrypted sync vault"
-          : "Create a passphrase for encrypted account sync"
+          ? "Enter the password used by Codex Manager"
+          : "Create the shared Codex Manager password"
       ));
     if (!passphrase) {
       return false;
@@ -577,7 +586,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
           return false;
         }
         const choice = await vscode.window.showWarningMessage(
-          "That passphrase cannot decrypt the existing synchronized vault.",
+          "That password cannot decrypt the existing synchronized vault.",
           { modal: true },
           "Try Again",
           "Replace Remote Vault"
@@ -595,9 +604,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
       }
     } else {
       const confirmation =
-        options?.confirmation ?? (await this.promptForPassphrase("Confirm the encrypted sync passphrase"));
+        options?.confirmation ?? (await this.promptForPassphrase("Confirm the shared password"));
       if (confirmation === undefined || confirmation !== passphrase) {
-        void vscode.window.showErrorMessage("The sync passphrases did not match.");
+        void vscode.window.showErrorMessage("The passwords did not match.");
         return false;
       }
     }
@@ -727,9 +736,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       const activityAt = Date.now();
       mergedEnablement = canonicalizeSyncAccountEnablement(
         [...byAccount.values()].map((entry) =>
-          entry.deviceId === localDeviceId && entry.enabled
-            ? { ...entry, lastSyncedAt: activityAt }
-            : entry
+          entry.deviceId === localDeviceId && entry.enabled ? { ...entry, lastSyncedAt: activityAt } : entry
         )
       );
       const mergedAccountIdsAfterDeletion = new Set(mergedAccounts.map(getSyncAccountId));
@@ -824,7 +831,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       }
       if (interactive) {
         const detail = isVaultAuthenticationError(error)
-          ? "The saved sync passphrase was rejected. Set the sync passphrase again and use the same value on both PCs."
+          ? "The saved password was rejected. Set the password again in General and use the same value on both PCs."
           : error instanceof Error
             ? error.message
             : String(error);
@@ -990,10 +997,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     }
   }
 
-  private async applyMergedEnablement(
-    _entries: SyncAccountEnablement[],
-    enforceDuringOverride = false
-  ): Promise<void> {
+  private async applyMergedEnablement(_entries: SyncAccountEnablement[], enforceDuringOverride = false): Promise<void> {
     // The registry describes cross-device eligibility; it does not own the
     // local enabled flag. prepareAccountEnablement/prepareAccountSwitch and
     // canRefreshAccount enforce the registry without undoing a valid user
@@ -1135,9 +1139,7 @@ export function getSyncedAccountLeases(now = Date.now()): SyncedAccountLeaseView
       deviceId: entry.deviceId,
       deviceName: entry.deviceName,
       updatedAt: entry.updatedAt,
-      expiresAt: entry.lastSyncedAt
-        ? entry.lastSyncedAt + SYNC_ACTIVITY_LEASE_TIMEOUT_MS
-        : Number.MAX_SAFE_INTEGER,
+      expiresAt: entry.lastSyncedAt ? entry.lastSyncedAt + SYNC_ACTIVITY_LEASE_TIMEOUT_MS : Number.MAX_SAFE_INTEGER,
       isCurrentDevice: entry.deviceId === visibleEnablementDeviceId,
       online:
         entry.deviceId === visibleEnablementDeviceId ||

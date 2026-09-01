@@ -6,11 +6,61 @@ import {
 import type { CodexManagerAccountRecord } from "../src/core/types";
 
 describe("auto queue order", () => {
-  it("keeps starred accounts ahead of all automatic criteria", () => {
+  it("keeps starred accounts ahead of non-urgent automatic criteria", () => {
     const starred = account("starred", { hourly: 10, weekly: 10, queuePriority: true });
     const unstarred = account("unstarred", { hourly: 100, weekly: 100 });
 
     expect(sortedIds(unstarred, starred)).toEqual(["starred", "unstarred"]);
+  });
+
+  it("puts a 5-hour reset within 20 minutes ahead of a starred account", () => {
+    const now = Date.now() / 1_000;
+    const urgent = account("urgent", { hourly: 30, hourlyResetAt: now + 20 * 60, weekly: 60 });
+    const starred = account("starred", {
+      hourly: 100,
+      hourlyResetAt: now + 60 * 60,
+      weekly: 100,
+      queuePriority: true
+    });
+
+    expect(sortedIds(starred, urgent)).toEqual(["urgent", "starred"]);
+    expect(urgent.queuePriority).not.toBe(true);
+  });
+
+  it("uses the configured urgency thresholds for weekly, monthly, and subscription expiry", () => {
+    const nowSeconds = Date.now() / 1_000;
+    const nowMs = nowSeconds * 1_000;
+    const starred = account("starred", {
+      hourly: 100,
+      hourlyResetAt: nowSeconds + 60 * 60,
+      weekly: 100,
+      weeklyResetAt: nowSeconds + 24 * 60 * 60,
+      subscriptionExpiresAt: nowMs + 7 * 24 * 60 * 60 * 1_000,
+      queuePriority: true
+    });
+    const urgentWeekly = account("urgent-weekly", {
+      hourly: 80,
+      hourlyResetAt: nowSeconds + 60 * 60,
+      weekly: 80,
+      weeklyResetAt: nowSeconds + 3 * 60 * 60
+    });
+    const urgentMonthly = account("urgent-monthly", {
+      hourlyPresent: false,
+      monthly: 80,
+      weeklyResetAt: nowSeconds + 24 * 60 * 60,
+      planType: "free"
+    });
+    const urgentSubscription = account("urgent-subscription", {
+      hourly: 80,
+      hourlyResetAt: nowSeconds + 60 * 60,
+      weekly: 80,
+      weeklyResetAt: nowSeconds + 24 * 60 * 60,
+      subscriptionExpiresAt: nowMs + 24 * 60 * 60 * 1_000
+    });
+
+    expect(sortedIds(starred, urgentWeekly)[0]).toBe("urgent-weekly");
+    expect(sortedIds(starred, urgentMonthly)[0]).toBe("urgent-monthly");
+    expect(sortedIds(starred, urgentSubscription)[0]).toBe("urgent-subscription");
   });
 
   it("does not prioritize a starred account with no quota or credits", () => {
@@ -35,7 +85,7 @@ describe("auto queue order", () => {
     expect(hasCodexManagerAccountAutoQueueCapability(aboveWeeklySwitchLimit, thresholds)).toBe(true);
   });
 
-  it("uses each window reset time immediately after its remaining quota", () => {
+  it("uses each window reset time before its percentage", () => {
     const renewsSooner = account("renews-sooner", {
       hourly: 80,
       hourlyResetAt: 1_000,
@@ -48,6 +98,26 @@ describe("auto queue order", () => {
     });
 
     expect(sortedIds(renewsLater, renewsSooner)).toEqual(["renews-sooner", "renews-later"]);
+  });
+
+  it("uses percentage after reset time ties within each 5h, weekly, and monthly window", () => {
+    const higherHourly = account("higher-hourly", { hourly: 90, hourlyResetAt: 1_000, weekly: 20 });
+    const lowerHourly = account("lower-hourly", { hourly: 80, hourlyResetAt: 1_000, weekly: 100 });
+    expect(sortedIds(lowerHourly, higherHourly)).toEqual(["higher-hourly", "lower-hourly"]);
+
+    const higherWeekly = account("higher-weekly", {
+      hourly: 80,
+      hourlyResetAt: 1_000,
+      weekly: 90,
+      weeklyResetAt: 2_000
+    });
+    const lowerWeekly = account("lower-weekly", {
+      hourly: 80,
+      hourlyResetAt: 1_000,
+      weekly: 70,
+      weeklyResetAt: 2_000
+    });
+    expect(sortedIds(lowerWeekly, higherWeekly)).toEqual(["higher-weekly", "lower-weekly"]);
   });
 
   it("skips a missing value and continues to the next criterion", () => {

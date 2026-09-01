@@ -10,6 +10,47 @@ export interface AutoQueueOrderValue {
   lastQuotaAt?: number;
 }
 
+export const AUTO_QUEUE_URGENT_RESET_SECONDS = [20 * 60, 3 * 60 * 60, 24 * 60 * 60] as const;
+export const AUTO_QUEUE_URGENT_SUBSCRIPTION_SECONDS = 24 * 60 * 60;
+
+/**
+ * Quota that is close to expiring must be used before starred accounts:
+ * 5-hour within 20 minutes, weekly within 3 hours, monthly within 1 day, and
+ * subscription expiry within 1 day. Window precedence remains 5h, weekly,
+ * monthly, then subscription.
+ */
+export function compareAutoQueueUrgency(
+  left: AutoQueueOrderValue,
+  right: AutoQueueOrderValue,
+  nowSeconds = Date.now() / 1_000
+): number {
+  const windowCount = Math.max(left.windows.length, right.windows.length);
+  for (let index = 0; index < windowCount; index += 1) {
+    const threshold = AUTO_QUEUE_URGENT_RESET_SECONDS[index];
+    if (threshold === undefined) continue;
+    const leftReset = urgentAt(left.windows[index]?.resetAt, nowSeconds, threshold);
+    const rightReset = urgentAt(right.windows[index]?.resetAt, nowSeconds, threshold);
+    if (leftReset === undefined && rightReset === undefined) continue;
+    if (leftReset === undefined) return 1;
+    if (rightReset === undefined) return -1;
+    if (leftReset !== rightReset) return leftReset - rightReset;
+  }
+  const leftExpiry = urgentAt(
+    left.subscriptionExpiresAt,
+    nowSeconds * 1_000,
+    AUTO_QUEUE_URGENT_SUBSCRIPTION_SECONDS * 1_000
+  );
+  const rightExpiry = urgentAt(
+    right.subscriptionExpiresAt,
+    nowSeconds * 1_000,
+    AUTO_QUEUE_URGENT_SUBSCRIPTION_SECONDS * 1_000
+  );
+  if (leftExpiry === undefined && rightExpiry === undefined) return 0;
+  if (leftExpiry === undefined) return 1;
+  if (rightExpiry === undefined) return -1;
+  return leftExpiry - rightExpiry;
+}
+
 /**
  * Compares auto-queue candidates by remaining quota and the time until that
  * window resets. A criterion is ignored when either candidate is missing it,
@@ -24,15 +65,16 @@ export function compareAutoQueueOrderValues(left: AutoQueueOrderValue, right: Au
       continue;
     }
 
-    const quotaDifference = compareWhenBoth(leftWindow.percentage, rightWindow.percentage, -1);
-    if (quotaDifference !== 0) {
-      return quotaDifference;
-    }
-
-    // When quota is tied, use the account whose quota renews sooner first.
+    // After urgent resets and explicit stars have been handled, preserve the
+    // remaining quota that expires first, then prefer the higher percentage.
     const resetDifference = compareWhenBoth(leftWindow.resetAt, rightWindow.resetAt, 1);
     if (resetDifference !== 0) {
       return resetDifference;
+    }
+
+    const quotaDifference = compareWhenBoth(leftWindow.percentage, rightWindow.percentage, -1);
+    if (quotaDifference !== 0) {
+      return quotaDifference;
     }
   }
 
@@ -47,6 +89,12 @@ export function compareAutoQueueOrderValues(left: AutoQueueOrderValue, right: Au
   }
 
   return compareWhenBoth(left.lastQuotaAt, right.lastQuotaAt, -1);
+}
+
+function urgentAt(value: number | undefined, now: number, threshold: number): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const timeLeft = value - now;
+  return timeLeft >= 0 && timeLeft <= threshold ? value : undefined;
 }
 
 export function parseCreditsOrderValue(

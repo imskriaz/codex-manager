@@ -52,12 +52,12 @@ export type BrowserActionRequest =
       title: string;
     }
   | {
-      kind: "passphrase";
+      kind: "password";
       action: Extract<DashboardActionName, "configureEncryptedSync" | "setEncryptedSyncRegistryOverride">;
       enabled?: boolean;
       title: string;
       message: string;
-      confirmPassphrase: boolean;
+      confirmPassword: boolean;
     };
 
 export function BrowserActionModal(props: {
@@ -71,13 +71,13 @@ export function BrowserActionModal(props: {
 }) {
   const request = props.request;
   const [tagText, setTagText] = useState("");
-  const [passphrase, setPassphrase] = useState("");
-  const [passphraseConfirmation, setPassphraseConfirmation] = useState("");
+  const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
 
   useEffect(() => {
     setTagText(request?.kind === "tags" ? request.initialTags.join(", ") : "");
-    setPassphrase("");
-    setPassphraseConfirmation("");
+    setPassword("");
+    setPasswordConfirmation("");
   }, [request]);
 
   if (!request) {
@@ -180,9 +180,9 @@ export function BrowserActionModal(props: {
     );
   }
 
-  if (request.kind === "passphrase") {
+  if (request.kind === "password") {
     const submitLabel = props.lang === "zh" ? "继续" : props.lang === "zh-hant" ? "繼續" : "Continue";
-    const mismatch = request.confirmPassphrase && passphraseConfirmation !== passphrase;
+    const mismatch = request.confirmPassword && passwordConfirmation !== password;
     return (
       <Shell
         open
@@ -195,44 +195,44 @@ export function BrowserActionModal(props: {
           class="modal-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!passphrase || mismatch) {
+            if (!password || mismatch) {
               return;
             }
-            props.onConfirm(request, [passphrase, passphraseConfirmation]);
+            props.onConfirm(request, [password, passwordConfirmation]);
           }}
         >
           <div class="modal-note">{request.message}</div>
           <input
             class="modal-input"
             type="password"
-            name="sync-passphrase"
+            name="codex-manager-password"
             autoComplete="current-password"
             spellcheck={false}
-            value={passphrase}
-            placeholder="Passphrase"
-            aria-label="Passphrase"
+            value={password}
+            placeholder="Password"
+            aria-label="Password"
             autoFocus
-            onInput={(event) => setPassphrase(event.currentTarget.value)}
+            onInput={(event) => setPassword(event.currentTarget.value)}
           />
-          {request.confirmPassphrase ? (
+          {request.confirmPassword ? (
             <input
               class="modal-input"
               type="password"
-              name="sync-passphrase-confirmation"
+              name="codex-manager-password-confirmation"
               autoComplete="new-password"
               spellcheck={false}
-              value={passphraseConfirmation}
-              placeholder="Confirm passphrase"
-              aria-label="Confirm passphrase"
-              onInput={(event) => setPassphraseConfirmation(event.currentTarget.value)}
+              value={passwordConfirmation}
+              placeholder="Confirm password"
+              aria-label="Confirm password"
+              onInput={(event) => setPasswordConfirmation(event.currentTarget.value)}
             />
           ) : null}
-          {mismatch && passphraseConfirmation ? <div class="modal-error">The passphrases do not match.</div> : null}
+          {mismatch && passwordConfirmation ? <div class="modal-error">The passwords do not match.</div> : null}
           <div class="modal-actions">
             <button class="modal-secondary-btn" type="button" onClick={() => props.onCancel(request)}>
               {cancelLabel}
             </button>
-            <button class="modal-primary-btn" type="submit" disabled={!passphrase || mismatch}>
+            <button class="modal-primary-btn" type="submit" disabled={!password || mismatch}>
               {submitLabel}
             </button>
           </div>

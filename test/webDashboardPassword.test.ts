@@ -1,11 +1,7 @@
 import { EventEmitter } from "events";
 import { describe, expect, it, vi } from "vitest";
 import type * as http from "http";
-import {
-  hashWebDashboardPassword,
-  verifyWebDashboardPassword,
-  WEB_DASHBOARD_PASSWORD_MIN_LENGTH
-} from "../src/services/webDashboardPassword";
+import { EncryptedSyncManager } from "../src/services/encryptedSync";
 import {
   isAddressInUseError,
   isForwardedHttpsRequest,
@@ -14,20 +10,26 @@ import {
   WebDashboardServer
 } from "../src/services/webDashboardServer";
 
-describe("Web Dashboard password", () => {
-  it("hashes and verifies a six-character password with the configured scrypt memory budget", async () => {
-    const password = "123456";
-    const stored = await hashWebDashboardPassword(password);
+describe("Web Dashboard encrypted-sync passphrase", () => {
+  it("uses the encrypted-sync secret as the dashboard credential", async () => {
+    const passphrase = "correct horse battery staple";
+    const manager = new EncryptedSyncManager(
+      {
+        secrets: {
+          get: vi.fn(async (key: string) => (key === "codexManager.encryptedSync.passphrase" ? passphrase : undefined))
+        }
+      } as never,
+      {} as never,
+      {
+        hasDashboardPassphrase: vi.fn(async () => true),
+        verifyDashboardPassphrase: vi.fn(async () => false),
+        setOnlineDeviceIds: vi.fn()
+      } as never
+    );
 
-    expect(WEB_DASHBOARD_PASSWORD_MIN_LENGTH).toBe(6);
-    expect(stored).not.toContain(password);
-    await expect(verifyWebDashboardPassword(password, stored)).resolves.toBe(true);
-    await expect(verifyWebDashboardPassword("654321", stored)).resolves.toBe(false);
-  });
-
-  it("rejects malformed stored hashes", async () => {
-    await expect(verifyWebDashboardPassword("123456", "invalid")).resolves.toBe(false);
-    await expect(verifyWebDashboardPassword("123456", "scrypt$bad$bad")).resolves.toBe(false);
+    await expect(manager.hasDashboardPassphrase()).resolves.toBe(true);
+    await expect(manager.verifyDashboardPassphrase(passphrase)).resolves.toBe(true);
+    await expect(manager.verifyDashboardPassphrase("wrong passphrase")).resolves.toBe(false);
   });
 
   it("recognizes a shared dashboard port without hiding unrelated server errors", () => {
@@ -68,7 +70,12 @@ describe("Web Dashboard forwarded protocol", () => {
         globalStorageUri: { fsPath: "storage" },
         extensionUri: { fsPath: "extension" }
       } as never,
-      {} as never
+      {} as never,
+      {
+        hasDashboardPassphrase: vi.fn(async () => true),
+        verifyDashboardPassphrase: vi.fn(async () => false),
+        setOnlineDeviceIds: vi.fn()
+      } as never
     );
     const headers = new Map<string, unknown>();
     let body = "";
@@ -79,9 +86,11 @@ describe("Web Dashboard forwarded protocol", () => {
         body = value ?? "";
       })
     } as unknown as http.ServerResponse;
-    const handle = (server as unknown as {
-      handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void>;
-    }).handle.bind(server);
+    const handle = (
+      server as unknown as {
+        handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void>;
+      }
+    ).handle.bind(server);
 
     await handle(
       {
@@ -106,7 +115,12 @@ describe("Web Dashboard forwarded protocol", () => {
         globalStorageUri: { fsPath: "storage" },
         extensionUri: { fsPath: "extension" }
       } as never,
-      {} as never
+      {} as never,
+      {
+        hasDashboardPassphrase: vi.fn(async () => true),
+        verifyDashboardPassphrase: vi.fn(async () => false),
+        setOnlineDeviceIds: vi.fn()
+      } as never
     );
     let body = "";
     const response = {
@@ -127,9 +141,11 @@ describe("Web Dashboard forwarded protocol", () => {
       socket: { remoteAddress: "127.0.0.1" },
       setEncoding: vi.fn()
     }) as unknown as http.IncomingMessage;
-    const handle = (server as unknown as {
-      handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void>;
-    }).handle.bind(server);
+    const handle = (
+      server as unknown as {
+        handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void>;
+      }
+    ).handle.bind(server);
 
     const pending = handle(request, response);
     request.emit("data", "password=incorrect");

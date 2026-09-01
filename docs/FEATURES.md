@@ -42,7 +42,7 @@ The dashboard shows remaining 5-hour, weekly/monthly, and code-review windows, r
 | `autoResetEnabled` | off | Use an eligible reset credit when every enabled account is out of quota. |
 | `autoResetWeeklyThreshold` | `1%` | Weekly quota limit for reset-credit automation. |
 
-Candidates are ranked by remaining 5-hour quota, then weekly quota, with subscription expiry used to break ties. Automation is off by default and should be enabled deliberately.
+Auto queue ranks capable, enabled accounts by urgent expiry first (5h ≤20m, weekly ≤3h, monthly/subscription ≤1d), then explicit star, then 5h/weekly/monthly time-left and percentage, and finally subscription time-left. Automation is off by default and should be enabled deliberately.
 
 ## Codex desktop and CLI
 
@@ -53,16 +53,16 @@ Enable `cliIntegrationEnabled` to read local CLI indexes/transcripts on demand. 
 ## Encrypted sync
 
 1. Sign in to VS Code Settings Sync on each machine.
-2. Enable `encryptedSyncEnabled` or run **Configure Encrypted Session Sync**.
-3. Enter the same passphrase on every machine, then run **Sync Sessions Now**.
+2. Set the shared **Password** in General, then enable `encryptedSyncEnabled`.
+3. Enter the same password on every machine, then run **Sync Sessions Now**.
 
-The vault is encrypted before it is written to Settings Sync. The passphrase is not uploaded. Disable sync on a machine to stop it participating; local accounts remain available.
+The vault is encrypted before it is written to Settings Sync. The password is not uploaded. Disable sync on a machine to stop it participating; local accounts remain available.
 
 Add/import, removal, reauthorization, enable/disable, credential replacement, and token-refresh setting changes mark the encrypted vault for a durable sync. Background changes are coalesced for five minutes and retried with bounded backoff so routine activity does not exhaust VS Code Settings Sync requests. Signed WebSocket peer updates remain realtime and fall back to signed HTTP heartbeats; quota refreshes, account switching, usage, schedules, and heartbeat traffic never request a durable sync.
 
 ## Browser dashboard
 
-Set `webDashboardEnabled` to start the local dashboard at `http://127.0.0.1:39875`. Run **Set Web Dashboard Password** before sharing it. `webDashboardAlwaysOnlineEnabled` keeps a detached relay on one always-on PC after VS Code closes; it requires encrypted sync and does not execute account actions by itself.
+Set `webDashboardEnabled` to start the local dashboard at `http://127.0.0.1:39875`. Set the shared **Password** under General before sharing it; remote dashboard login uses that same password. `webDashboardAlwaysOnlineEnabled` keeps a detached relay on one always-on PC after VS Code closes; it requires encrypted sync and does not execute account actions by itself.
 
 `cloudflaredDomain` records the HTTPS hostname you configured. It does not install or start Cloudflare. See [`CLOUDFLARE.md`](CLOUDFLARE.md).
 

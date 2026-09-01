@@ -685,7 +685,7 @@ describe("executeDashboardActionMessage", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(result.errorMessage).toMatch(/passphrase was not set/i);
+    expect(result.errorMessage).toMatch(/password was not set/i);
     expect(context.schedulePublishState).toHaveBeenCalled();
   });
 

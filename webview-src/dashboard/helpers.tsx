@@ -14,9 +14,10 @@ export function isAccountAttention(account: DashboardAccountViewModel): boolean 
   );
 }
 
-export function countAccountEnablement(
-  accounts: readonly DashboardAccountViewModel[]
-): { enabled: number; disabled: number } {
+export function countAccountEnablement(accounts: readonly DashboardAccountViewModel[]): {
+  enabled: number;
+  disabled: number;
+} {
   const enabled = accounts.filter((account) => account.enabled).length;
   return { enabled, disabled: accounts.length - enabled };
 }
@@ -311,11 +312,10 @@ function maskSharedValue(value: unknown, parentKey?: string): unknown {
   return value;
 }
 
-function maskSensitiveString(_value: string): string {
-  // Keep privacy-mode values visually consistent and completely unreadable.
-  // A fixed-width mask also prevents account names and identifiers from
-  // changing card layout when privacy mode is enabled.
-  return "********";
+export function maskSensitiveString(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) return "***";
+  return `${normalized.slice(0, 3)}***${normalized.slice(-3)}`;
 }
 
 function maskSensitiveValue(value: string, kind: SensitiveKind): string {
