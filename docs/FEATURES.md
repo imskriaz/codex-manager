@@ -58,7 +58,7 @@ Enable `cliIntegrationEnabled` to read local CLI indexes/transcripts on demand. 
 
 The vault is encrypted before it is written to Settings Sync. The password is not uploaded. Disable sync on a machine to stop it participating; local accounts remain available.
 
-Add/import, removal, reauthorization, enable/disable, credential replacement, and token-refresh setting changes mark the encrypted vault for a durable sync. Background changes are coalesced for five minutes and retried with bounded backoff so routine activity does not exhaust VS Code Settings Sync requests. Signed WebSocket peer updates remain realtime and fall back to signed HTTP heartbeats; quota refreshes, account switching, usage, schedules, and heartbeat traffic never request a durable sync.
+Add/import, removal, reauthorization, enable/disable, credential replacement, and token-refresh setting changes mark the encrypted vault for a durable sync. Background changes are coalesced for five seconds and retried with bounded backoff. When the authenticated peer WebSocket is online, the changed encrypted vault is delivered and merged immediately; Settings Sync remains the durable fallback and can be applied with Sync Sessions Now on a receiving PC. Signed WebSocket peer updates remain realtime; quota refreshes, account switching, usage, schedules, and heartbeat traffic never request a durable sync.
 
 ## Browser dashboard
 

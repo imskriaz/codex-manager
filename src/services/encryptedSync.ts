@@ -26,10 +26,13 @@ const LOCAL_ENABLEMENT_KEY = "codexManager.encryptedSync.localEnablement.v1";
 const LEGACY_LOCAL_ASSIGNMENTS_KEY = "codexManager.encryptedSync.localAssignments.v1";
 const LOCAL_ENABLEMENT_PENDING_KEY = "codexManager.encryptedSync.localEnablementPending.v1";
 const LOCAL_VAULT_DIRTY_KEY = "codexManager.encryptedSync.vaultDirty.v1";
-const ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS = 5 * 60 * 1000;
-const VAULT_SYNC_DEBOUNCE_DELAY_MS = 5 * 60 * 1000;
+// Keep a short debounce so bursts of edits coalesce, while every change is
+// propagated to the shared Settings Sync vault within seconds.
+const ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS = 5 * 1000;
+const VAULT_SYNC_DEBOUNCE_DELAY_MS = 5 * 1000;
 const VAULT_SYNC_MAX_RETRY_DELAY_MS = 30 * 60 * 1000;
 const STARTUP_VAULT_MERGE_DELAY_MS = 30 * 1000;
+const MAX_VAULT_CONFLICT_RETRIES = 3;
 const REGISTRY_OVERRIDE_KEY = "codexManager.encryptedSync.enablementOverride.v1";
 const SCRYPT_COST = 131_072;
 const MAX_ACCOUNTS = 500;
@@ -116,8 +119,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private mutationChain: Promise<void> = Promise.resolve();
   private mutationVersion = 0;
   private currentSyncTask: Promise<boolean> | undefined;
+  private currentSyncAnnouncesSuccess = false;
+  private currentSyncUsesSettingsSync = false;
   private backgroundSyncTimer: NodeJS.Timeout | undefined;
   private startupVaultMergeTimer: NodeJS.Timeout | undefined;
+  private realtimeVaultCache: { mutationVersion: number; encrypted: string } | undefined;
   private backgroundSyncRetryDelayMs = VAULT_SYNC_DEBOUNCE_DELAY_MS;
   private readonly pendingVaultMutationReasons = new Set<string>();
   private vaultDirtyPersistence: Promise<void> = Promise.resolve();
@@ -305,6 +311,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   onVaultMutation(reason: EncryptedSyncMutationReason): void {
     if (this.disposed || this.applyingRemote || !reason.trim()) return;
     this.mutationVersion += 1;
+    this.realtimeVaultCache = undefined;
     this.markVaultDirty(reason, VAULT_SYNC_DEBOUNCE_DELAY_MS);
   }
 
@@ -381,6 +388,49 @@ export class EncryptedSyncManager implements vscode.Disposable {
     const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
     if (!passphrase) return undefined;
     return crypto.createHash("sha256").update(`peer-presence-v1:${passphrase}`, "utf8").digest("base64url");
+  }
+
+  /** Build one encrypted vault snapshot for the authenticated peer channel. */
+  async getRealtimeEncryptedVault(): Promise<string | undefined> {
+    if (!this.isEnabled()) return undefined;
+    if (this.realtimeVaultCache?.mutationVersion === this.mutationVersion) {
+      return this.realtimeVaultCache.encrypted;
+    }
+    const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
+    if (!passphrase) return undefined;
+    await this.mutationChain.catch(() => undefined);
+    const payload = await this.buildLocalPayload();
+    const encrypted = await encryptSyncPayload(payload, passphrase);
+    this.realtimeVaultCache = { mutationVersion: this.mutationVersion, encrypted };
+    return encrypted;
+  }
+
+  /** Accept a peer's encrypted snapshot and merge it through the normal path. */
+  async applyRealtimeEncryptedVault(raw: string): Promise<boolean> {
+    if (!this.isEnabled() || !raw || raw.length > MAX_ENVELOPE_BYTES) return false;
+    const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
+    if (!passphrase) return false;
+    try {
+      await decryptSyncPayload(raw, passphrase);
+      const current = this.context.globalState.get<string>(SYNC_KEY);
+      if (current) {
+        // Equal timestamps are still accepted: two PCs can commit within the
+        // same millisecond, and the merge must see both account sets.
+        if (parseCipherEnvelope(raw).updatedAt < parseCipherEnvelope(current).updatedAt) return false;
+      }
+      await this.context.globalState.update(SYNC_KEY, raw);
+      this.lastRemoteRaw = undefined;
+      this.lastRemotePayload = undefined;
+      this.lastRemotePassphraseHash = undefined;
+      const merged = await this.syncNow(false, false, false);
+      if (merged) this.realtimeVaultCache = { mutationVersion: this.mutationVersion, encrypted: raw };
+      return merged;
+    } catch (error) {
+      if (!isVaultAuthenticationError(error)) {
+        console.warn("[codexManager] real-time encrypted vault rejected:", error);
+      }
+      return false;
+    }
   }
 
   async verifyRealtimePeerPayload(payload: string, signature: string): Promise<boolean> {
@@ -613,6 +663,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
     await this.context.secrets.store(PASSPHRASE_KEY, passphrase);
     encryptedSyncNeedsConfiguration = false;
+    this.mutationVersion += 1;
+    this.realtimeVaultCache = undefined;
     if (!this.isEnabled()) {
       await getCodexManagerConfiguration().update("encryptedSyncEnabled", true, vscode.ConfigurationTarget.Global);
     }
@@ -633,7 +685,12 @@ export class EncryptedSyncManager implements vscode.Disposable {
       this.startupVaultMergeTimer = undefined;
     }
     if (this.currentSyncTask) {
-      return this.currentSyncTask;
+      const runningTask = this.currentSyncTask;
+      const needsFollowup =
+        (syncSettings && !this.currentSyncUsesSettingsSync) ||
+        (announceSuccess && !this.currentSyncAnnouncesSuccess);
+      const result = await runningTask;
+      return needsFollowup && !this.disposed ? this.syncNow(interactive, announceSuccess, syncSettings) : result;
     }
     const execute = async (): Promise<boolean> => {
       try {
@@ -646,17 +703,25 @@ export class EncryptedSyncManager implements vscode.Disposable {
     // the cross-window lease, so a maintenance sync cannot block a click.
     const task = interactive ? execute() : runEncryptedSyncOperation("Encrypted account sync", execute);
     this.currentSyncTask = task;
+    this.currentSyncAnnouncesSuccess = announceSuccess;
+    this.currentSyncUsesSettingsSync = syncSettings;
     try {
       return await task;
     } finally {
       if (this.currentSyncTask === task) this.currentSyncTask = undefined;
+      if (this.currentSyncTask === undefined) {
+        this.currentSyncAnnouncesSuccess = false;
+        this.currentSyncUsesSettingsSync = false;
+      }
     }
   }
 
   private async performSyncNow(
     interactive: boolean,
     announceSuccess: boolean,
-    syncSettings: boolean
+    syncSettings: boolean,
+    conflictAttempt = 0,
+    skipInitialSettingsSync = false
   ): Promise<boolean> {
     if (!this.isEnabled()) {
       if (interactive) {
@@ -668,7 +733,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     // A globalState update only confirms a local write. Ask VS Code's own
     // Settings Sync service to run first so a signed-out or disabled machine
     // cannot be reported as successfully synchronized.
-    if (syncSettings && !(await this.ensureSettingsSyncReady(interactive))) {
+    if (syncSettings && !skipInitialSettingsSync && !(await this.ensureSettingsSyncReady(interactive))) {
       return false;
     }
 
@@ -698,7 +763,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
           );
           return false;
         }
-        return true;
+        // This is inconclusive, not a successful sync. Keep durable work
+        // queued so the next Settings Sync download can be merged.
+        return false;
       }
       const remote = rawRemote ? await this.readRemotePayload(rawRemote, passphrase) : undefined;
       const remoteNeedsUpgrade = rawRemote ? parseCipherEnvelope(rawRemote).compression === undefined : false;
@@ -745,6 +812,13 @@ export class EncryptedSyncManager implements vscode.Disposable {
       );
       const merged = await this.createPayload(mergedAccounts, mergedDeletions, mergedEnablement);
 
+      // Settings Sync can download a newer vault while this merge is doing
+      // crypto or repository work. Never apply or publish a candidate built
+      // from an obsolete remote snapshot; retry from the latest ciphertext.
+      if (this.context.globalState.get<string>(SYNC_KEY) !== rawRemote) {
+        return this.retryAfterVaultConflict(interactive, announceSuccess, syncSettings, conflictAttempt);
+      }
+
       if (mutationVersion !== this.mutationVersion) {
         if (interactive) {
           void vscode.window.showWarningMessage(
@@ -765,6 +839,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
         await this.applyMergedEnablement(mergedEnablement);
       } finally {
         this.applyingRemote = false;
+      }
+      if (this.context.globalState.get<string>(SYNC_KEY) !== rawRemote) {
+        return this.retryAfterVaultConflict(interactive, announceSuccess, syncSettings, conflictAttempt);
       }
       let wroteSyncVault = false;
       if (
@@ -787,6 +864,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
       if (wroteSyncVault && syncSettings && !(await this.ensureSettingsSyncReady(interactive))) {
         return false;
       }
+      const expectedVaultRaw = wroteSyncVault ? this.lastRemoteRaw : rawRemote;
+      if (this.context.globalState.get<string>(SYNC_KEY) !== expectedVaultRaw) {
+        return this.retryAfterVaultConflict(interactive, announceSuccess, syncSettings, conflictAttempt);
+      }
       await this.vaultDirtyPersistence.catch(() => undefined);
       if (mutationVersion !== this.mutationVersion) {
         if (interactive) {
@@ -800,6 +881,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       pendingEnablementAccountIds = new Set();
       await this.context.globalState.update(LOCAL_VAULT_DIRTY_KEY, []);
       this.pendingVaultMutationReasons.clear();
+      this.realtimeVaultCache = undefined;
       if (this.backgroundSyncTimer) {
         clearTimeout(this.backgroundSyncTimer);
         this.backgroundSyncTimer = undefined;
@@ -841,6 +923,30 @@ export class EncryptedSyncManager implements vscode.Disposable {
     } finally {
       this.syncing = false;
     }
+  }
+
+  private async retryAfterVaultConflict(
+    interactive: boolean,
+    announceSuccess: boolean,
+    syncSettings: boolean,
+    conflictAttempt: number
+  ): Promise<boolean> {
+    if (conflictAttempt >= MAX_VAULT_CONFLICT_RETRIES) {
+      if (interactive) {
+        void vscode.window.showWarningMessage(
+          "The shared vault changed repeatedly while syncing. Your local changes remain queued; try Sync Sessions Now again."
+        );
+      }
+      if (this.pendingVaultMutationReasons.size > 0) this.queueBackgroundSync(1_000);
+      return false;
+    }
+    return this.performSyncNow(
+      interactive,
+      announceSuccess,
+      syncSettings,
+      conflictAttempt + 1,
+      true
+    );
   }
 
   private async ensureSettingsSyncReady(showFailure = true): Promise<boolean> {

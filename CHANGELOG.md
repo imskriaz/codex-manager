@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4-pre8
+
+- Mirror encrypted vault changes over the authenticated realtime peer WebSocket without consuming Settings Sync requests.
+- Coalesce durable vault uploads for five seconds, merge incoming snapshots through the normal conflict-safe path, and retry when a competing vault update is detected.
+- Keep manual Settings Sync as the receiving-PC fallback and report inconclusive empty-vault background attempts as failures for retry.
+
 ## 1.0.3
 
 - Removed blocking Settings Sync and immediate quota/token refresh work from extension activation.

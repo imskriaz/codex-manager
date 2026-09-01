@@ -92,6 +92,13 @@ type PeerSessionMessage = {
   sentAt: number;
   signature?: string;
 };
+type PeerVaultMessage = {
+  type: "peer:vault";
+  deviceId: string;
+  sentAt: number;
+  vault: string;
+  signature?: string;
+};
 type PeerActionMessage = {
   type: "peer:action";
   requestId: string;
@@ -122,6 +129,10 @@ function peerSessionSignaturePayload(message: Omit<PeerSessionMessage, "signatur
     enablementRegistry: message.enablementRegistry ?? [],
     sentAt: message.sentAt
   });
+}
+
+function peerVaultSignaturePayload(message: Omit<PeerVaultMessage, "signature">): string {
+  return JSON.stringify({ type: message.type, deviceId: message.deviceId, sentAt: message.sentAt, vault: message.vault });
 }
 
 export function isCliSessionWatchPath(filename: string | Buffer | null): boolean {
@@ -176,6 +187,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private peerHttpHeartbeatTimer: NodeJS.Timeout | undefined;
   private peerPublishInFlight: Promise<void> | undefined;
   private peerPublishQueued = false;
+  private lastPublishedPeerVault = "";
   private peerHttpHeartbeatInFlight: Promise<void> | undefined;
   private peerPresenceAuthoritative = false;
   private lastPeerSentAt = 0;
@@ -689,6 +701,7 @@ export class WebDashboardServer implements vscode.Disposable {
   /** Publish a local account or session change to browsers and online peers. */
   publishLocalStateChange(): void {
     this.publishLocalPeerState();
+    void this.publishPeerVault();
     this.publishRealtimeState();
   }
 
@@ -1362,6 +1375,27 @@ export class WebDashboardServer implements vscode.Disposable {
     return true;
   }
 
+  private async acceptPeerVault(message: Partial<PeerVaultMessage>): Promise<boolean> {
+    if (
+      message.type !== "peer:vault" ||
+      typeof message.deviceId !== "string" ||
+      message.deviceId === this.deviceId ||
+      typeof message.vault !== "string" ||
+      message.vault.length > MAX_DASHBOARD_MESSAGE_BYTES ||
+      typeof message.sentAt !== "number" ||
+      !Number.isFinite(message.sentAt) ||
+      typeof message.signature !== "string" ||
+      Math.abs(Date.now() - message.sentAt) > 2 * 60_000
+    ) return false;
+    const unsigned = { type: "peer:vault" as const, deviceId: message.deviceId, sentAt: message.sentAt, vault: message.vault };
+    if (!(await this.encryptedSync?.verifyRealtimePeerPayload(peerVaultSignaturePayload(unsigned), message.signature))) {
+      return false;
+    }
+    await this.encryptedSync?.applyRealtimeEncryptedVault(message.vault);
+    this.publishRealtimeState();
+    return true;
+  }
+
   private async handlePeerHeartbeatHttp(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
     let parsed: Partial<PeerSessionMessage>;
     try {
@@ -1388,7 +1422,11 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async handlePeerMessage(raw: string, sourceSocket: WebSocket): Promise<void> {
     try {
-      const message = JSON.parse(raw) as Partial<PeerSessionMessage> & Partial<PeerActionMessage>;
+      const message = JSON.parse(raw) as Partial<PeerSessionMessage> & Partial<PeerVaultMessage> & Partial<PeerActionMessage>;
+      if (message.type === "peer:vault") {
+        await this.acceptPeerVault(message);
+        return;
+      }
       if (message.type === "peer:action") {
         if (!this.authenticatedPeerSockets.has(sourceSocket)) return;
         if (message.payload?.targetDeviceId && message.payload.targetDeviceId !== this.deviceId) {
@@ -1587,7 +1625,10 @@ export class WebDashboardServer implements vscode.Disposable {
     this.peerSocket = socket;
     this.startPeerHttpHeartbeat();
     socket.addEventListener("open", () => {
-      void this.publishPeerSessions();
+      void (async () => {
+        await this.publishPeerSessions();
+        await this.publishPeerVault();
+      })();
       if (this.peerHttpHeartbeatTimer) clearInterval(this.peerHttpHeartbeatTimer);
       this.peerHttpHeartbeatTimer = undefined;
       this.peerPublishTimer = setInterval(() => void this.publishPeerSessions(), PEER_HEARTBEAT_INTERVAL_MS);
@@ -1676,6 +1717,18 @@ export class WebDashboardServer implements vscode.Disposable {
     const socket = this.peerSocket;
     if (!socket || socket.readyState !== UndiciWebSocket.OPEN) return;
     socket.send(JSON.stringify((await this.readLocalPeerSessions()) satisfies PeerSessionMessage));
+  }
+
+  private async publishPeerVault(): Promise<void> {
+    const socket = this.peerSocket;
+    if (!socket || socket.readyState !== UndiciWebSocket.OPEN) return;
+    const vault = await this.encryptedSync?.getRealtimeEncryptedVault();
+    if (!vault || vault === this.lastPublishedPeerVault) return;
+    const unsigned = { type: "peer:vault" as const, deviceId: this.deviceId, sentAt: Date.now(), vault };
+    const signature = await this.encryptedSync?.signRealtimePeerPayload(peerVaultSignaturePayload(unsigned));
+    if (!signature) return;
+    socket.send(JSON.stringify({ ...unsigned, signature } satisfies PeerVaultMessage));
+    this.lastPublishedPeerVault = vault;
   }
 
   private startPeerHttpHeartbeat(): void {
