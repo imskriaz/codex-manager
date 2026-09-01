@@ -32,6 +32,7 @@ import {
   recordAutoSwitchReason
 } from "../../presentation/workbench/autoSwitchState";
 import { clearTokenAutomationError } from "../../presentation/workbench/tokenAutomationState";
+import { isEncryptedSyncRegistryOverrideEnabled } from "../../services/encryptedSync";
 import { getCommandCopy, getLanguage, getQuotaWarningCopy, resolveLongQuotaLabel } from "../../utils";
 import { getQuotaIssueKind } from "../../utils/quotaIssue";
 import { recordDashboardActionPrompt, shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
@@ -368,7 +369,14 @@ export async function maybeAutoSwitchForActiveQuota(
     return autoSwitchInFlight;
   }
 
-  const task = evaluateAutoSwitchForActiveQuota(repo, view, options);
+  // Rescue override is a local, passphrase-gated escape hatch for the shared
+  // enablement registry. While it is active, automatic switching must be
+  // allowed to consider accounts claimed by another PC as well.
+  const effectiveOptions = {
+    ...options,
+    ignoreEnabled: options.ignoreEnabled === true || isEncryptedSyncRegistryOverrideEnabled()
+  };
+  const task = evaluateAutoSwitchForActiveQuota(repo, view, effectiveOptions);
   autoSwitchInFlight = task;
   try {
     return await task;
