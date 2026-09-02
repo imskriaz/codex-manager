@@ -232,17 +232,6 @@ export function AddAccountModal(props: {
             <span>{props.lang === "zh" ? "或" : "OR"}</span>
           </div>
           <div class="account-add-layer-actions" aria-label="Other ways to add an account">
-            <button
-              class="account-add-layer-action"
-              type="button"
-              disabled={props.importCurrentPending}
-              onClick={props.onImportCurrent}
-            >
-              <span class="modal-btn-icon" aria-hidden="true">
-                <ImportIcon />
-              </span>
-              <span>{props.importCurrentPending ? "..." : props.copy.importCurrent}</span>
-            </button>
             <label class="account-add-layer-action">
               <span class="modal-btn-icon" aria-hidden="true">
                 <ImportIcon />
@@ -262,6 +251,20 @@ export function AddAccountModal(props: {
                 }}
               />
             </label>
+            <div class="account-add-choice-divider" role="separator" aria-label="Alternative account import methods">
+              <span>{props.lang === "zh" ? "或" : "OR"}</span>
+            </div>
+            <button
+              class="account-add-layer-action"
+              type="button"
+              disabled={props.importCurrentPending}
+              onClick={props.onImportCurrent}
+            >
+              <span class="modal-btn-icon" aria-hidden="true">
+                <ImportIcon />
+              </span>
+              <span>{props.importCurrentPending ? "..." : props.copy.importCurrent}</span>
+            </button>
           </div>
         </>
       ) : null}

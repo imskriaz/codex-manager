@@ -14,6 +14,7 @@ import {
   t
 } from "../utils";
 import { formatAccountUsageDuration } from "../utils/accountUsage";
+import { readAuthFile } from "../codex";
 
 const STATUS_BAR_ICON = "$(codex-openai)";
 const STATUS_BAR_COMMAND = "codexManager.showQuotaSummary";
@@ -55,9 +56,25 @@ export class AccountsStatusBarProvider {
     const accounts = await this.repo.listAccounts();
     this.item.command = STATUS_BAR_COMMAND;
     const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
+    const _t = t();
+    const authFile = await readAuthFile();
+    if (!authFile) {
+      this.item.text = `${STATUS_BAR_ICON} Codex Manager`;
+      const md = new vscode.MarkdownString(undefined, true);
+      md.isTrusted = true;
+      md.appendMarkdown("**Codex Manager**\n\n");
+      md.appendMarkdown(
+        accounts.length > 0
+          ? "No account is currently loaded. Saved accounts are still available in Codex Manager.\n\nUse the dashboard to read saved account details or load an account."
+          : _t("status.noAccounts")
+      );
+      md.appendMarkdown(`\n\n${buildStatusQuickAccessMarkdown()}`);
+      this.item.tooltip = md;
+      this.item.show();
+      return;
+    }
     const primary = resolveStatusBarAccount(accounts, currentWindowAccountId);
     const showHourlyQuota = isHourlyQuotaControlEnabled();
-    const _t = t();
 
     if (!primary) {
       this.item.text = `${STATUS_BAR_ICON} Codex Manager`;
