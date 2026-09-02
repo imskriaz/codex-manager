@@ -1487,14 +1487,25 @@ function App() {
   };
 
   const handleConfigureEncryptedSync = (): void => {
+    const configured = snapshot.encryptedSyncNeedsConfiguration !== true;
     setBrowserActionRequest({
       kind: "password",
       action: "configureEncryptedSync",
-      title: "Set password",
+      title: configured ? "Change password" : "Set password",
       message:
-        "Create or enter the one password used for encrypted sync, remote dashboard login, and protected controls.",
+        configured
+          ? "Enter a new shared password. The same password must be used on every PC."
+          : "Create the one shared password used for encrypted sync, remote dashboard login, and protected controls.",
       confirmPassword: true
     });
+  };
+
+  const handleSyncNow = (): void => {
+    if (snapshot.encryptedSyncNeedsConfiguration === true) {
+      handleConfigureEncryptedSync();
+      return;
+    }
+    sendAction("syncNow");
   };
 
   const handleRegistryOverride = (enabled: boolean): void => {
@@ -1741,7 +1752,7 @@ function App() {
                 aria-label="Sync now"
                 disabled={hasGlobalPendingAction || syncPending}
                 aria-busy={syncPending}
-                onClick={() => sendAction("syncNow")}
+                onClick={handleSyncNow}
               >
                 <span class="button-face">
                   {syncPending ? <span class="button-spinner" aria-hidden="true"></span> : null}
@@ -1807,6 +1818,7 @@ function App() {
                 : () => document.querySelector<HTMLInputElement>("#inline-add-account-panel .oauth-link-input")?.focus()
             }
             onSetPassword={handleConfigureEncryptedSync}
+            passwordConfigured={snapshot.encryptedSyncNeedsConfiguration !== true}
             onOnboard={() => {
               setOnboardingError(undefined);
               setOnboardingStep("agreement");
@@ -1815,7 +1827,7 @@ function App() {
             }}
             onRefreshAll={() => sendAction("refreshAll")}
             onConfigureSync={handleConfigureEncryptedSync}
-            onSyncNow={() => sendAction("syncNow")}
+            onSyncNow={handleSyncNow}
             syncPending={syncPending}
             switchPending={
               isActionPending("switch") || displayedAccounts.some((account) => isActionPending("switch", account.id))
@@ -2158,7 +2170,7 @@ function App() {
         onExportBackup={handleExportBackup}
         onImportBackup={modals.openImportModal}
         onConfigureSync={handleConfigureEncryptedSync}
-        onSyncNow={() => sendAction("syncNow")}
+        onSyncNow={handleSyncNow}
         onSetRegistryOverride={handleRegistryOverride}
         registryOverridePending={isActionPending("setEncryptedSyncRegistryOverride")}
       />

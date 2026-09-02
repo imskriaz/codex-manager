@@ -49,6 +49,8 @@ export function OnboardingModal(props: {
       ? {
           welcome: "开始使用 Codex Manager",
           agreement: "在保存账号之前，请确认你了解这些凭据会保存在本机并可选择加密同步。",
+          termsTitle: "条款与责任",
+          terms: "本项目按“现状”提供，不作任何形式的保证。作者和贡献者不对因使用、误用、依赖或无法使用本项目而造成的损失承担责任。",
           accept: "接受并继续",
           setup: "连接你的工作区",
           setupSub: "立即保存配置并继续。首次同步将在后台使用客户端加密运行。",
@@ -58,6 +60,7 @@ export function OnboardingModal(props: {
           confirm: "确认密码",
           dashboard: "启用 Web Dashboard",
           continue: "保存并继续",
+          skipPassword: "暂时跳过密码",
           importTitle: "检查当前账号",
           importSub: "首次同步在后台继续时，我们会避免重复添加已有账号。",
           import: "导入",
@@ -71,6 +74,8 @@ export function OnboardingModal(props: {
         ? {
             welcome: "開始使用 Codex Manager",
             agreement: "儲存帳號前，請確認你了解憑證會保存在本機，並可選擇加密同步。",
+            termsTitle: "條款與責任",
+            terms: "本專案按「現狀」提供，不作任何形式的保證。作者與貢獻者不對因使用、誤用、依賴或無法使用本專案而造成的損失承擔責任。",
             accept: "接受並繼續",
             setup: "連接你的工作區",
             setupSub: "立即儲存設定並繼續。首次同步會在背景以用戶端加密執行。",
@@ -80,6 +85,7 @@ export function OnboardingModal(props: {
             confirm: "確認密碼",
             dashboard: "啟用 Web Dashboard",
             continue: "儲存並繼續",
+            skipPassword: "暫時略過密碼",
             importTitle: "檢查目前帳號",
             importSub: "首次同步在背景繼續時，我們會避免重複加入已有帳號。",
             import: "匯入",
@@ -93,6 +99,9 @@ export function OnboardingModal(props: {
             welcome: "Welcome to Codex Manager",
             agreement:
               "Before saving accounts, confirm that you understand credentials stay on this PC and can be shared only through encrypted sync.",
+            termsTitle: "Terms and responsibility",
+            terms:
+              "This project is provided as-is without warranties. The author and contributors are not liable for losses caused by use, misuse, reliance on, or inability to use this project.",
             accept: "Accept & continue",
             setup: "Connect your workspace",
             setupSub:
@@ -103,6 +112,7 @@ export function OnboardingModal(props: {
             confirm: "Confirm password",
             dashboard: "Enable Web Dashboard",
             continue: "Save & continue",
+            skipPassword: "Skip password for now",
             importTitle: "Check your current account",
             importSub:
               "We’ll avoid adding an account that is already saved while initial sync continues in the background.",
@@ -153,6 +163,10 @@ export function OnboardingModal(props: {
             <span>
               Accounts are stored in VS Code Secret Storage. Encrypted sync is opt-in and protected by your shared password.
             </span>
+          </div>
+          <div class="onboarding-terms" role="note">
+            <strong>{copy.termsTitle}</strong>
+            <span>{copy.terms}</span>
           </div>
           <div class="modal-actions">
             <button class="modal-primary-btn" type="button" onClick={props.onAccept}>
@@ -210,6 +224,19 @@ export function OnboardingModal(props: {
           {mismatch ? <div class="modal-error">Passwords do not match.</div> : null}
           {props.error ? <div class="modal-error">{props.error}</div> : null}
           <div class="modal-actions">
+            <button
+              class="modal-secondary-btn"
+              type="button"
+              disabled={props.busy}
+              onClick={() => {
+                setSyncEnabled(false);
+                setPassword("");
+                setConfirmation("");
+                props.onSubmitSetup({ syncEnabled: false, password: "", confirmation: "" });
+              }}
+            >
+              {copy.skipPassword}
+            </button>
             <button
               class="modal-primary-btn"
               type="submit"

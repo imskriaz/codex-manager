@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1-pre4
+
+- Preserve cross-PC claim and automatic-switch lock metadata when realtime peer quota snapshots arrive.
+- Keep list-view account type and lock badges visible without changing grid-view badges.
+- Keep dashboard password labels aligned with configuration state and route missing-password Sync actions through the dashboard modal.
+- Use one shared password across PCs for encrypted vault and WebSocket claim signing; browser sync never opens a VS Code password prompt.
+
 ## 1.1.1-pre3
 
 - Keep local account startup available when optional encrypted sync initialization fails.

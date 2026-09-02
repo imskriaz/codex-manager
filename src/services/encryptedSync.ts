@@ -153,6 +153,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
     }
     const deviceId = await this.getDeviceId();
     this.updateVisibleEnablement(this.readLocalEnablement(), deviceId);
+    // Keep the dashboard's password action in sync with Secret Storage from
+    // the first render. Without this, an enabled sync setting with a missing
+    // secret looked configured and a dashboard Sync click fell through to the
+    // extension-host password prompt.
+    encryptedSyncNeedsConfiguration = !(await this.context.secrets.get(PASSPHRASE_KEY));
     const remoteVault = this.context.globalState.get<string>(SYNC_KEY);
     // A vault already downloaded by VS Code is an explicit signal that this
     // machine participates in encrypted sync. Merely being signed in to VS

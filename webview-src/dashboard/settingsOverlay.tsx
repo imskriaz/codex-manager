@@ -79,7 +79,7 @@ export function SettingsOverlay(props: {
   };
   const usageHistoryCopy = resolveUsageHistoryCopy(props.lang, props.usageHistoryCount);
   const transferCopy = resolveTransferCopy(props.lang);
-  const passwordCopy = resolvePasswordCopy(props.lang);
+  const passwordCopy = resolvePasswordCopy(props.lang, !props.encryptedSyncNeedsConfiguration);
   const navigationCopy = resolveSettingsNavigationCopy(props.lang);
   const tabs = navigationCopy.tabs;
 
@@ -961,7 +961,7 @@ function resolveUsageHistoryCopy(
   };
 }
 
-function resolvePasswordCopy(lang: DashboardState["lang"]): {
+function resolvePasswordCopy(lang: DashboardState["lang"], configured: boolean): {
   title: string;
   sub: string;
   note: string;
@@ -974,7 +974,7 @@ function resolvePasswordCopy(lang: DashboardState["lang"]): {
       sub: "为 Codex Manager 的受保护功能设置一个共享密码。",
       note: "同一个密码用于加密同步、远程面板登录、多电脑连接和恢复控制。",
       needsConfiguration: "密码需要重新设置，然后受保护的功能才能继续使用。",
-      configure: "设置或更改密码"
+      configure: configured ? "更改密码" : "设置密码"
     };
   }
   if (lang === "zh-hant") {
@@ -983,7 +983,7 @@ function resolvePasswordCopy(lang: DashboardState["lang"]): {
       sub: "為 Codex Manager 的受保護功能設定一個共用密碼。",
       note: "同一個密碼用於加密同步、遠端面板登入、多電腦連線和復原控制。",
       needsConfiguration: "密碼需要重新設定，受保護的功能才能繼續使用。",
-      configure: "設定或變更密碼"
+      configure: configured ? "變更密碼" : "設定密碼"
     };
   }
   return {
@@ -991,7 +991,7 @@ function resolvePasswordCopy(lang: DashboardState["lang"]): {
     sub: "Set one shared password for Codex Manager's protected features.",
     note: "The same password protects encrypted sync, remote dashboard login, multi-PC connections, and recovery controls.",
     needsConfiguration: "Set the password again before protected features can continue.",
-    configure: "Set or change password"
+    configure: configured ? "Change Password" : "Set Password"
   };
 }
 

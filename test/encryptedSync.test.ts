@@ -344,7 +344,7 @@ describe("encrypted account sync", () => {
 
     await manager.start();
     expect(setKeysForSync).toHaveBeenCalledWith(["codexManager.encryptedSync.v1"]);
-    expect(secretGet).toHaveBeenCalledTimes(1);
+    expect(secretGet).toHaveBeenCalledTimes(2);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.userDataSync.actions.syncNow");
 
     await manager.prepareAccountSwitch("account-one");
@@ -352,7 +352,7 @@ describe("encrypted account sync", () => {
     await manager.cancelAccountSwitch();
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
 
-    expect(secretGet).toHaveBeenCalledTimes(1);
+    expect(secretGet).toHaveBeenCalledTimes(2);
     manager.dispose();
   });
 
@@ -406,11 +406,11 @@ describe("encrypted account sync", () => {
     const manager = new EncryptedSyncManager(context, {} as never);
 
     await manager.start();
-    expect(secretGet).toHaveBeenCalledTimes(1);
+    expect(secretGet).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(59 * 60 * 1000);
-    expect(secretGet).toHaveBeenCalledTimes(1);
+    expect(secretGet).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(60 * 1000);
-    expect(secretGet).toHaveBeenCalledTimes(1);
+    expect(secretGet).toHaveBeenCalledTimes(2);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.userDataSync.actions.syncNow");
     manager.dispose();
   });

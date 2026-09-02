@@ -5385,6 +5385,9 @@ html[data-theme="dark"] .cli-terminal-panel {
 .onboarding-callout strong, .onboarding-import-card strong, .onboarding-instructions strong { color: var(--text-primary); }
 .onboarding-callout span, .onboarding-instructions span { color: var(--text-secondary); font-size: 12px; }
 .onboarding-callout.is-success { border-color: color-mix(in srgb, var(--accent-green) 60%, var(--border-default)); }
+.onboarding-terms { display: grid; gap: 4px; padding: 11px 13px; border-left: 3px solid color-mix(in srgb, var(--accent-blue) 55%, var(--border-muted)); border-radius: 4px 10px 10px 4px; background: color-mix(in srgb, var(--bg-base) 28%, transparent); }
+.onboarding-terms strong { color: var(--text-secondary); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.onboarding-terms span { color: var(--text-muted); font-size: 11px; line-height: 1.55; }
 .onboarding-option { display: flex; align-items: flex-start; gap: 11px; padding: 12px 13px; border: 1px solid var(--border-muted); border-radius: 12px; cursor: pointer; }
 .onboarding-option input { margin-top: 3px; accent-color: var(--accent-blue); }
 .onboarding-option span, .onboarding-field-grid label, .onboarding-content > label { display: grid; gap: 5px; }

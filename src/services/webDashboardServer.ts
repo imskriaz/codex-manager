@@ -862,7 +862,10 @@ export class WebDashboardServer implements vscode.Disposable {
             configureEncryptedSync: this.encryptedSync
               ? (passphrase, confirmation) => this.encryptedSync!.configure({ passphrase, confirmation })
               : undefined,
-            syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(true, false) : undefined,
+            // Browser actions must never open a VS Code input box. The
+            // dashboard opens its password modal when configuration is needed;
+            // a non-interactive sync is the safe fallback for stale snapshots.
+            syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false) : undefined,
             setEncryptedSyncRegistryOverride: this.encryptedSync
               ? (enabled, passphrase) => this.encryptedSync!.setRegistryOverrideEnabled(enabled, { passphrase })
               : undefined,
@@ -1697,7 +1700,7 @@ export class WebDashboardServer implements vscode.Disposable {
           configureEncryptedSync: this.encryptedSync
             ? (passphrase, confirmation) => this.encryptedSync!.configure({ passphrase, confirmation })
             : undefined,
-          syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(true, false) : undefined
+          syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false) : undefined
         },
         {
           type: "dashboard:action",

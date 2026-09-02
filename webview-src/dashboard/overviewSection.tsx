@@ -82,6 +82,7 @@ export function OverviewSection(props: {
   onSetAutoSwitchLock: (minutes: number) => void;
   onAddAccount: () => void;
   onSetPassword: () => void;
+  passwordConfigured?: boolean;
   onOnboard: () => void;
   onRefreshAll: () => void;
   onConfigureSync: () => void;
@@ -404,8 +405,8 @@ export function OverviewSection(props: {
                             style={{ top: `${morePopoverPosition.top}px`, right: `${morePopoverPosition.right}px` }}
                           >
                             <div class="claim-popover-title">{resolveOverviewToolbarLabel("more", props.lang)}</div>
-                            <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); props.onSetPassword(); }}>
-                              🔑 {resolveOverviewMenuLabel("setPassword", props.lang)}
+                              <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); props.onSetPassword(); }}>
+                              🔑 {resolveOverviewMenuLabel("setPassword", props.lang, props.passwordConfigured === true)}
                             </button>
                             <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); props.onOnboard(); }}>
                               ✨ {resolveOverviewMenuLabel("onboard", props.lang)}
@@ -1375,7 +1376,8 @@ function resolveOverviewMenuLabel(
     | "unlock"
     | "setPassword"
     | "onboard",
-  lang: DashboardState["lang"]
+  lang: DashboardState["lang"],
+  passwordConfigured = false
 ): string {
   const values = {
     en: {
@@ -1389,7 +1391,7 @@ function resolveOverviewMenuLabel(
       rescueOff: "Rescue off",
       lock: "Lock",
        unlock: "Unlock",
-       setPassword: "Set Password",
+       setPassword: passwordConfigured ? "Change Password" : "Set Password",
        onboard: "Onboard"
     },
     zh: {
@@ -1403,7 +1405,7 @@ function resolveOverviewMenuLabel(
       rescueOff: "关闭救援",
       lock: "锁定",
        unlock: "解锁",
-       setPassword: "设置密码",
+       setPassword: passwordConfigured ? "更改密码" : "设置密码",
        onboard: "引导设置"
     },
     "zh-hant": {
@@ -1417,7 +1419,7 @@ function resolveOverviewMenuLabel(
       rescueOff: "關閉救援",
       lock: "鎖定",
        unlock: "解鎖",
-       setPassword: "設定密碼",
+       setPassword: passwordConfigured ? "變更密碼" : "設定密碼",
        onboard: "導覽設定"
     }
   } as const;
