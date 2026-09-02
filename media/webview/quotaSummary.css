@@ -10560,7 +10560,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 .saved-identity-line {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  align-items: start;
+  align-items: stretch;
   gap: 3px;
   min-width: 0;
 }
@@ -11673,9 +11673,10 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 .overview-account,
 .overview-main {
-  align-self: start;
-  height: auto;
+  align-self: stretch;
+  height: 100%;
   min-height: 0;
+  box-sizing: border-box;
 }
 
 .overview-main {
@@ -11710,6 +11711,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   .overview-main {
     grid-column: auto;
     width: 100%;
+    height: auto;
   }
 }
 

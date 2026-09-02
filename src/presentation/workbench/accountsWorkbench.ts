@@ -59,12 +59,27 @@ export class AccountsWorkbench {
     await measureStep("repo.init", async () => {
       await this.repo.init({ deferSync: true });
     });
-    await measureStep("disabledActiveAccountFence", async () => {
-      await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
-    });
+    let encryptedSyncStarted = false;
     await measureStep("encryptedSync.start", async () => {
-      await this.encryptedSync.start();
+      try {
+        await this.encryptedSync.start();
+        encryptedSyncStarted = true;
+      } catch (error) {
+        // Sync is supplemental; a stale/broken sync session must never prevent
+        // the local account manager from starting or force an auth unload.
+        console.warn("[codexManager] encrypted sync startup failed; continuing locally", error);
+        void vscode.window.showWarningMessage(
+          `Encrypted sync could not start. Local account automation will continue: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
     });
+    if (encryptedSyncStarted) {
+      await measureStep("disabledActiveAccountFence", async () => {
+        await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
+      });
+    }
     await measureStep("alwaysOnlineServer.prepare", async () => {
       await this.alwaysOnlineServer.prepareForVscodeSession();
     });

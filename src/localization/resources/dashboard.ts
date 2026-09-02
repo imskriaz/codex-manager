@@ -26,7 +26,7 @@ const en: DashboardCopy = {
   announcementsDaysAgo: "{value}d ago",
   addAccount: "Add Account",
   importCurrent: "Import Current",
-  refreshAll: "Refresh All Quotas",
+  refreshAll: "Refresh Quotas",
   shareToken: "Share Token",
   shareTokenDisabledTip: "Select at least one account before sharing",
   shareTokenModeHint: "Current export mode: full account package",

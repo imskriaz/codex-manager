@@ -380,11 +380,13 @@ export function OverviewSection(props: {
                       onClick={refreshMode === "sync" ? props.onSyncNow : props.onRefreshAll}
                       disabled={props.disabled}
                     >
-                      {resolveOverviewToolbarLabel(refreshMode === "sync" ? "sync" : "refresh", props.lang)}
+                      {refreshMode === "sync"
+                        ? resolveOverviewToolbarLabel("sync", props.lang)
+                        : props.copy.refreshAll}
                     </ActionButton>
                   </>
                 ) : null}
-                {account ? (
+                {account && (contextAction !== "switch" || !providedAccount) ? (
                   <ActionButton
                     class="toolbar-btn"
                     icon={
@@ -399,7 +401,6 @@ export function OverviewSection(props: {
                     label={resolveOverviewContextLabel(contextAction, props.lang)}
                     disabled={
                       props.disabled ||
-                      !providedAccount ||
                       (contextAction === "switch" && props.switchPending) ||
                       (contextAction === "reload" && props.reloadPending)
                     }

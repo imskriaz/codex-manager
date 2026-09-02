@@ -399,6 +399,9 @@ export function registerTokenRefreshScheduler(params: {
     } finally {
       inFlight = false;
       markTokenAutomationSweepFinished(lastFailureMessage);
+      if (lastFailureMessage) {
+        void vscode.window.showWarningMessage(`Background token refresh failed: ${lastFailureMessage}`);
+      }
       console.info(
         `[codexManager] background token refresh sweep: checked=${checked}, refreshed=${refreshedCount}` +
           (lastFailureMessage ? `, lastError=${lastFailureMessage}` : ""),
