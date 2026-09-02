@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.1-pre4
+## 1.1.1
 
 - Preserve cross-PC claim and automatic-switch lock metadata when realtime peer quota snapshots arrive.
 - Keep list-view account type and lock badges visible without changing grid-view badges.
