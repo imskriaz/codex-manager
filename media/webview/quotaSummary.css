@@ -960,7 +960,7 @@ html[data-theme="auto"] body.vscode-light .settings-theme-option.active {
 .cli-file-media-preview video { display: block; width: min(100%, 960px); max-height: calc(100vh - 150px); background: #000; }
 .cli-file-media-preview small { color: var(--text-muted); font-size: 9px; }
 .cli-file-pdf-preview,
-.cli-file-document-preview { width: 100%; min-width: 0; min-height: 0; height: 100%; border: 0; background: #fff; }
+.cli-file-document-preview { width: 100%; min-width: 0; min-height: 0; height: 100%; border: 0; background: var(--bg-surface); }
 .cli-markdown-preview { min-height: 0; padding: 18px 22px 40px; overflow: auto; color: var(--text-primary); font-size: 12px; line-height: 1.65; }
 .cli-markdown-preview > :first-child { margin-top: 0; }
 .cli-markdown-preview h1, .cli-markdown-preview h2 { padding-bottom: 5px; border-bottom: 1px solid var(--border-default); }
@@ -13657,7 +13657,12 @@ body.is-dashboard-workspace-route #dashboard-main {
 
 .account-add-layer-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.account-add-flow > .account-add-layer-action {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .account-add-choice-divider {

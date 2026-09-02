@@ -251,11 +251,18 @@ export class AccountsCommandService {
     this.view.refresh();
     let reloaded = false;
     if (!shouldSuppressDashboardNotifications()) {
-      if (reloadNeeded) {
-        void vscode.window.showInformationMessage(`Switched to ${account.email}. Reloading Codex…`);
-      }
       try {
-        reloaded = await autoReloadWindowForAccount(account.id);
+        if (reloadNeeded) {
+          const reloadAutomatically = getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
+          if (!reloadAutomatically) {
+            reloaded = await promptWindowReloadForAccount(account, { message: `Switched to ${account.email}. Reload VS Code?` });
+          } else {
+            void vscode.window.showInformationMessage(`Switched to ${account.email}. Reloading Codex…`);
+            reloaded = await autoReloadWindowForAccount(account.id);
+          }
+        } else {
+          reloaded = await autoReloadWindowForAccount(account.id);
+        }
       } catch (error) {
         throw new Error(
           `Switched to ${account.email}, but VS Code could not reload: ${getErrorMessage(error)}. Run Developer: Reload Window to finish applying the account.`

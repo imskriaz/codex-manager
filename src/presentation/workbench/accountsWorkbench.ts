@@ -63,7 +63,18 @@ export class AccountsWorkbench {
       await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
     });
     await measureStep("encryptedSync.start", async () => {
-      await this.encryptedSync.start();
+      // Settings Sync is an optional transport. A broken provider, stale
+      // secret, or unavailable sync service must never prevent the local
+      // account manager (and its schedulers) from starting.
+      try {
+        await this.encryptedSync.start();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn("[codexManager] encrypted sync startup failed; continuing locally", error);
+        void vscode.window.showWarningMessage(
+          `Encrypted Sync could not start. Local account management will continue; retry Sync later. ${detail}`
+        );
+      }
     });
     await measureStep("alwaysOnlineServer.prepare", async () => {
       await this.alwaysOnlineServer.prepareForVscodeSession();

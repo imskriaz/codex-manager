@@ -163,7 +163,7 @@ export function SettingsToggleBlock(props: {
           </span>
         </button>
       </div>
-      {props.children}
+      {props.enabled ? props.children : null}
     </div>
   );
 }

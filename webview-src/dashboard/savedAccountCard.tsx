@@ -176,9 +176,10 @@ export function SavedAccountCard(props: {
   const runningOnOtherDevice = Boolean(
     account.runningDeviceName && !account.runningOnThisDevice && account.runningDeviceOnline !== false
   );
+  const claimedByOtherDevice = Boolean(account.runningDeviceName && !account.runningOnThisDevice);
   const registryOverrideEnabled = settings.encryptedSyncRegistryOverrideEnabled;
   const claimIsLocked = shouldOpenClaimPopover(runningOnOtherDevice, registryOverrideEnabled);
-  const runningDeviceLabel = runningOnOtherDevice
+  const runningDeviceLabel = claimedByOtherDevice
     ? resolveRunningDeviceLabel(account.runningDeviceName ?? "")
     : undefined;
   const compactIdentityBadge = resolveCompactIdentityBadge(runningDeviceLabel);
@@ -525,6 +526,16 @@ export function SavedAccountCard(props: {
                       {subscriptionRemaining.label}
                     </span>
                   ) : null}
+                  {cardPlanBadge ? (
+                    <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>
+                      {cardPlanBadge}
+                    </span>
+                  ) : null}
+                  {account.autoSwitchLockedUntil ? (
+                    <span class="pill warning saved-lock-badge" title="Automatic switching is locked for this account">
+                      🔒 Locked
+                    </span>
+                  ) : null}
                   {account.creditsText ? <span class="saved-table-credit">{account.creditsText}</span> : null}
                   {hasResetCredit ? (
                     <button
@@ -839,6 +850,11 @@ export function SavedAccountCard(props: {
                   {runningDeviceLabel ? (
                     <span class="saved-credits-line saved-running-device" title={runningDeviceLabel}>
                       {runningDeviceLabel}
+                    </span>
+                  ) : null}
+                  {account.autoSwitchLockedUntil ? (
+                    <span class="saved-credits-line saved-lock-badge" title="Automatic switching is locked for this account">
+                      🔒 Locked
                     </span>
                   ) : null}
                   {subscriptionRemaining ? (

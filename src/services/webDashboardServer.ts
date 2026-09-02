@@ -162,7 +162,13 @@ export function mergeFreshPeerAccountStates(
         tokenRefreshEnabled: local.tokenRefreshEnabled,
         showInStatusBar: local.showInStatusBar,
         canToggleStatusBar: local.canToggleStatusBar,
-        statusToggleTitle: local.statusToggleTitle
+        statusToggleTitle: local.statusToggleTitle,
+        // Claim/lock state is PC-local. A fresher quota snapshot from a peer
+        // must never erase the local device name or lock badge.
+        runningDeviceName: local.runningDeviceName,
+        runningOnThisDevice: local.runningOnThisDevice,
+        runningDeviceOnline: local.runningDeviceOnline,
+        autoSwitchLockedUntil: local.autoSwitchLockedUntil
       };
     }
     if (!peerQuota || (peerQuota.lastQuotaAt ?? 0) <= (local.lastQuotaAt ?? 0)) {

@@ -66,6 +66,9 @@ export class AccountsStatusBarProvider {
       md.appendMarkdown("**Codex Manager**\n\n");
       md.appendMarkdown(_t("status.noAccounts"));
       md.appendMarkdown(
+        "\n\nSaved accounts are still available in the dashboard. Open Codex Manager to read them or load one into this window."
+      );
+      md.appendMarkdown(
         "\n\n**Quick access**  \n" +
           "`Ctrl+Shift+P` — find every **Codex Manager** command  \n" +
           "`Ctrl+K Ctrl+S` — view or assign keyboard shortcuts  \n" +

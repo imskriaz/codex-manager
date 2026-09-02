@@ -437,7 +437,8 @@ function App() {
         (message.action === "switch" || message.action === "importCurrent") &&
         message.status === "completed" &&
         message.payload?.reloadRequired &&
-        message.payload.reloadAccountId
+        message.payload.reloadAccountId &&
+        !state.snapshot?.settings.autoSwitchReloadWindowEnabled
       ) {
         const switchedAccount = state.snapshot?.accounts.find(
           (account) => account.id === message.payload?.reloadAccountId
@@ -1805,6 +1806,13 @@ function App() {
                 ? modals.openAddAccountModal
                 : () => document.querySelector<HTMLInputElement>("#inline-add-account-panel .oauth-link-input")?.focus()
             }
+            onSetPassword={handleConfigureEncryptedSync}
+            onOnboard={() => {
+              setOnboardingError(undefined);
+              setOnboardingStep("agreement");
+              setOnboardingImportCompleted(false);
+              setOnboardingOpen(true);
+            }}
             onRefreshAll={() => sendAction("refreshAll")}
             onConfigureSync={handleConfigureEncryptedSync}
             onSyncNow={() => sendAction("syncNow")}

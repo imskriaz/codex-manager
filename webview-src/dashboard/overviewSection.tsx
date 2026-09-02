@@ -19,7 +19,7 @@ import {
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
 import { ActionButton } from "./primitives";
 import { MetricGauge } from "./accountMetricPrimitives";
-import { AccountAccessIcon, renderRefreshIcon, renderReloadIcon, renderSwitchIcon, ResetCreditIcon } from "./icons";
+import { AccountAccessIcon, renderRefreshIcon, ResetCreditIcon } from "./icons";
 
 export type { DashboardUsageSample } from "../../src/domain/dashboard/types";
 
@@ -81,6 +81,8 @@ export function OverviewSection(props: {
   onLoadDailyUsage?: () => void;
   onSetAutoSwitchLock: (minutes: number) => void;
   onAddAccount: () => void;
+  onSetPassword: () => void;
+  onOnboard: () => void;
   onRefreshAll: () => void;
   onConfigureSync: () => void;
   onSyncNow: () => void;
@@ -108,7 +110,6 @@ export function OverviewSection(props: {
       ? getSensitiveDisplayValue(account.accountName, privacyMode, "name", account.accountName)
       : undefined;
   const hasResetCredit = (account?.resetCreditsAvailable ?? 0) > 0;
-  const refreshMode = resolveOverviewRefreshMode(settings.encryptedSyncEnabled);
   const toolbarActionCount = resolveOverviewToolbarActionCount(
     hasAccounts,
     Boolean(providedAccount),
@@ -125,6 +126,9 @@ export function OverviewSection(props: {
   const contextAction = account
     ? resolveOverviewContextAction(account, settings.encryptedSyncRegistryOverrideEnabled)
     : "switch";
+  const runRefreshAll = (): void => {
+    props.onRefreshAll();
+  };
   const openLockDialog = (trigger: HTMLElement): void => {
     const rect = trigger.getBoundingClientRect();
     setLockPopoverPosition({ top: rect.bottom + 5, right: Math.max(8, window.innerWidth - rect.right) });
@@ -356,71 +360,29 @@ export function OverviewSection(props: {
                 >
                   {resolveOverviewToolbarLabel("add", props.lang)}
                 </ActionButton>
-                {!hasAccounts ? (
-                  <ActionButton
-                    class="toolbar-btn"
-                    icon={renderRefreshIcon()}
-                    label={resolveSyncNowLabel(props.lang)}
-                    pending={props.syncPending}
-                    disabled={props.disabled}
-                    onClick={settings.encryptedSyncEnabled ? props.onSyncNow : props.onConfigureSync}
-                  >
-                    {resolveOverviewToolbarLabel("sync", props.lang)}
-                  </ActionButton>
-                ) : null}
-                {hasAccounts ? (
-                  <>
-                    <ActionButton
-                      class="toolbar-btn"
-                      icon={renderRefreshIcon()}
-                      label={
-                        refreshMode === "sync" ? resolveSyncNowLabel(props.lang) : resolveQuotaRefreshLabel(props.lang)
-                      }
-                      pending={refreshMode === "sync" ? props.syncPending : props.refreshAllPending}
-                      onClick={refreshMode === "sync" ? props.onSyncNow : props.onRefreshAll}
-                      disabled={props.disabled}
-                    >
-                      {resolveOverviewToolbarLabel(refreshMode === "sync" ? "sync" : "refresh", props.lang)}
-                    </ActionButton>
-                  </>
-                ) : null}
-                {account ? (
-                  <ActionButton
-                    class="toolbar-btn"
-                    icon={
-                      contextAction === "reload" ? (
-                        renderReloadIcon()
-                      ) : contextAction === "switch" ? (
-                        renderSwitchIcon()
-                      ) : (
-                        <span class="overview-action-symbol">🛟</span>
-                      )
-                    }
-                    label={resolveOverviewContextLabel(contextAction, props.lang)}
-                    disabled={
-                      props.disabled ||
-                      !providedAccount ||
-                      (contextAction === "switch" && props.switchPending) ||
-                      (contextAction === "reload" && props.reloadPending)
-                    }
-                    pending={
-                      contextAction === "reload"
-                        ? props.reloadPending
-                        : contextAction === "switch"
-                          ? props.switchPending
-                          : props.registryOverridePending
-                    }
-                    onClick={() => {
-                      if (contextAction === "reload") props.onReloadAccount();
-                      else if (contextAction === "rescue") props.onSetRegistryOverride(true);
-                      else props.onSwitchAccount();
-                    }}
-                  >
-                    {resolveOverviewContextLabel(contextAction, props.lang)}
-                  </ActionButton>
-                ) : null}
-                {account ? (
-                  <div class="overview-more-wrap" ref={moreRef}>
+                <ActionButton
+                  class="toolbar-btn"
+                  icon={renderRefreshIcon()}
+                  label={resolveSyncNowLabel(props.lang)}
+                  pending={props.syncPending}
+                  disabled={props.disabled}
+                  onClick={settings.encryptedSyncEnabled ? props.onSyncNow : props.onConfigureSync}
+                >
+                  {resolveOverviewToolbarLabel("sync", props.lang)}
+                </ActionButton>
+                <ActionButton
+                  class="toolbar-btn"
+                  icon={renderRefreshIcon()}
+                  label={props.copy.refreshAll}
+                  pending={props.refreshAllPending}
+                  // disabled={props.refreshAllPending} is the primary refresh guard.
+                  disabled={props.refreshAllPending || props.disabled || !hasAccounts}
+                  onClick={runRefreshAll}
+                >
+                  {/* Fixed toolbar refresh replaces the former More-menu item. */}
+                  {resolveOverviewToolbarLabel("refresh", props.lang)}
+                </ActionButton>
+                <div class="overview-more-wrap" ref={moreRef}>
                     <ActionButton
                       class="toolbar-btn"
                       icon={<span class="overview-action-symbol">⋯</span>}
@@ -442,6 +404,12 @@ export function OverviewSection(props: {
                             style={{ top: `${morePopoverPosition.top}px`, right: `${morePopoverPosition.right}px` }}
                           >
                             <div class="claim-popover-title">{resolveOverviewToolbarLabel("more", props.lang)}</div>
+                            <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); props.onSetPassword(); }}>
+                              🔑 {resolveOverviewMenuLabel("setPassword", props.lang)}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); props.onOnboard(); }}>
+                              ✨ {resolveOverviewMenuLabel("onboard", props.lang)}
+                            </button>
                             {providedAccount && contextAction !== "switch" ? (
                               <button
                                 type="button"
@@ -478,40 +446,32 @@ export function OverviewSection(props: {
                                 ⏏ {resolveOverviewMenuLabel("unload", props.lang)}
                               </button>
                             ) : null}
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setMoreOpen(false);
-                                props.onEnableAllValid();
-                              }}
-                              disabled={!props.accounts?.some((candidate) => candidate.enabled === false)}
-                              title={resolveOverviewEnableAllHint(props.lang)}
-                            >
-                              ⊕ {resolveOverviewMenuLabel("enableAll", props.lang)}
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setMoreOpen(false);
-                                props.onDisableAll();
-                              }}
-                              disabled={!props.accounts?.some((candidate) => candidate.enabled !== false)}
-                            >
-                              ⊘ {resolveOverviewMenuLabel("disableAll", props.lang)}
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setMoreOpen(false);
-                                props.onRefreshAll();
-                              }}
-                              disabled={props.refreshAllPending}
-                            >
-                              ◌ {props.copy.refreshAll}
-                            </button>
+                            {props.accounts?.some((candidate) => candidate.enabled === false) ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                disabled={!providedAccount || props.switchPending}
+                                onClick={() => {
+                                  setMoreOpen(false);
+                                  props.onEnableAllValid();
+                                }}
+                                title={resolveOverviewEnableAllHint(props.lang)}
+                              >
+                                ⊕ {resolveOverviewMenuLabel("enableAll", props.lang)}
+                              </button>
+                            ) : null}
+                            {props.accounts?.some((candidate) => candidate.enabled !== false) ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setMoreOpen(false);
+                                  props.onDisableAll();
+                                }}
+                              >
+                                ⊘ {resolveOverviewMenuLabel("disableAll", props.lang)}
+                              </button>
+                            ) : null}
                             {providedAccount && contextAction !== "rescue" ? (
                               <button
                                 type="button"
@@ -564,8 +524,7 @@ export function OverviewSection(props: {
                           document.body
                         )
                       : null}
-                  </div>
-                ) : null}
+                </div>
               </div>
             </div>
           </div>
@@ -1404,7 +1363,18 @@ export function resolveResetCreditBadgeLabel(lang: DashboardState["lang"]): stri
 
 function resolveOverviewMenuLabel(
   action:
-    "switch" | "reload" | "unload" | "enableAll" | "disableAll" | "quota" | "rescue" | "rescueOff" | "lock" | "unlock",
+    | "switch"
+    | "reload"
+    | "unload"
+    | "enableAll"
+    | "disableAll"
+    | "quota"
+    | "rescue"
+    | "rescueOff"
+    | "lock"
+    | "unlock"
+    | "setPassword"
+    | "onboard",
   lang: DashboardState["lang"]
 ): string {
   const values = {
@@ -1418,7 +1388,9 @@ function resolveOverviewMenuLabel(
       rescue: "Rescue",
       rescueOff: "Rescue off",
       lock: "Lock",
-      unlock: "Unlock"
+       unlock: "Unlock",
+       setPassword: "Set Password",
+       onboard: "Onboard"
     },
     zh: {
       switch: "切换",
@@ -1430,7 +1402,9 @@ function resolveOverviewMenuLabel(
       rescue: "救援",
       rescueOff: "关闭救援",
       lock: "锁定",
-      unlock: "解锁"
+       unlock: "解锁",
+       setPassword: "设置密码",
+       onboard: "引导设置"
     },
     "zh-hant": {
       switch: "切換",
@@ -1442,7 +1416,9 @@ function resolveOverviewMenuLabel(
       rescue: "救援",
       rescueOff: "關閉救援",
       lock: "鎖定",
-      unlock: "解鎖"
+       unlock: "解鎖",
+       setPassword: "設定密碼",
+       onboard: "導覽設定"
     }
   } as const;
   return values[lang === "zh" || lang === "zh-hant" ? lang : "en"][action];
@@ -1452,12 +1428,6 @@ function resolveOverviewEnableAllHint(lang: DashboardState["lang"]): string {
   if (lang === "zh") return "仅启用仍有有效凭据且不需要重新授权的账户";
   if (lang === "zh-hant") return "僅啟用仍有有效憑證且不需要重新授權的帳戶";
   return "Enable accounts with valid credentials that do not require reauthorization.";
-}
-
-function resolveQuotaRefreshLabel(lang: DashboardState["lang"]): string {
-  if (lang === "zh") return "刷新配额";
-  if (lang === "zh-hant") return "重新整理配額";
-  return "Quota Refresh";
 }
 
 function formatCompactDate(timestamp: number | undefined, lang: DashboardState["lang"], fallback: string): string {

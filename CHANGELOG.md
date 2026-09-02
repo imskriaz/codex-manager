@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.1-pre3
+
+- Keep local account startup available when optional encrypted sync initialization fails.
+- Hide dependent automation controls while their parent toggle is disabled.
+- Streamline account add choices with vertical Authorization Link, JSON File, and Import Current alternatives.
+- Keep the unloaded status bar useful, with guidance for reading and loading saved accounts.
+- Make Add, Sync, Refresh, and More the fixed overview actions; add Set Password and Onboard to More and hide inapplicable bulk actions.
+- Respect the auto-reload setting for manual account switches and keep background automation independent of open dashboard tabs.
+
 ## 1.1.0
 
 - Keep the experimental Workspace setting specific to each PC.
