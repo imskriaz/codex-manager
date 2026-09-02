@@ -108,7 +108,6 @@ export function OverviewSection(props: {
       ? getSensitiveDisplayValue(account.accountName, privacyMode, "name", account.accountName)
       : undefined;
   const hasResetCredit = (account?.resetCreditsAvailable ?? 0) > 0;
-  const refreshMode = resolveOverviewRefreshMode(settings.encryptedSyncEnabled);
   const toolbarActionCount = resolveOverviewToolbarActionCount(
     hasAccounts,
     Boolean(providedAccount),
@@ -373,16 +372,12 @@ export function OverviewSection(props: {
                     <ActionButton
                       class="toolbar-btn"
                       icon={renderRefreshIcon()}
-                      label={
-                        refreshMode === "sync" ? resolveSyncNowLabel(props.lang) : resolveQuotaRefreshLabel(props.lang)
-                      }
-                      pending={refreshMode === "sync" ? props.syncPending : props.refreshAllPending}
-                      onClick={refreshMode === "sync" ? props.onSyncNow : props.onRefreshAll}
+                      label={resolveQuotaRefreshLabel(props.lang)}
+                      pending={props.refreshAllPending}
+                      onClick={props.onRefreshAll}
                       disabled={props.disabled}
                     >
-                      {refreshMode === "sync"
-                        ? resolveOverviewToolbarLabel("sync", props.lang)
-                        : props.copy.refreshAll}
+                      {props.copy.refreshAll}
                     </ActionButton>
                   </>
                 ) : null}
@@ -401,6 +396,7 @@ export function OverviewSection(props: {
                     label={resolveOverviewContextLabel(contextAction, props.lang)}
                     disabled={
                       props.disabled ||
+                      !providedAccount ||
                       (contextAction === "switch" && props.switchPending) ||
                       (contextAction === "reload" && props.reloadPending)
                     }
@@ -513,6 +509,19 @@ export function OverviewSection(props: {
                             >
                               ◌ {props.copy.refreshAll}
                             </button>
+                            {settings.encryptedSyncEnabled ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setMoreOpen(false);
+                                  props.onSyncNow();
+                                }}
+                                disabled={props.syncPending}
+                              >
+                                ⟳ {resolveSyncNowLabel(props.lang)}
+                              </button>
+                            ) : null}
                             {providedAccount && contextAction !== "rescue" ? (
                               <button
                                 type="button"

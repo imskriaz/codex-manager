@@ -308,7 +308,7 @@ export function SettingsOverlay(props: {
                   </div>
                 </div>
               </div>
-              <div class="settings-block settings-block-wide settings-integration-group">
+              {props.settings.webDashboardEnabled ? <div class="settings-block settings-block-wide settings-integration-group">
                 <div class="settings-block-head settings-integration-head">
                   <div class="settings-block-title">
                     {props.lang === "zh" ? "工作区" : props.lang === "zh-hant" ? "工作區" : "Workspace"}
@@ -398,7 +398,7 @@ export function SettingsOverlay(props: {
                     onClear={props.onClearCodexCliPath}
                   />
                 </div>
-              </div>
+              </div> : null}
               <SettingsToggleBlock
                 title={props.copy.codexAppRestartTitle}
                 sub={props.copy.codexAppRestartSub}
@@ -453,6 +453,7 @@ export function SettingsOverlay(props: {
                   sub={props.copy.autoRefreshCurrentSub}
                   enabled={props.settings.autoRefreshCurrentMinutes > 0}
                   onToggle={props.onAutoRefreshCurrentToggle}
+                  showToggle={false}
                 >
                   <div class={`settings-stack ${props.settings.autoRefreshCurrentMinutes > 0 ? "" : "is-hidden"}`}>
                     <SettingsDiscreteSlider
@@ -472,6 +473,7 @@ export function SettingsOverlay(props: {
                   sub={props.copy.autoRefreshSub}
                   enabled={props.settings.autoRefreshMinutes > 0}
                   onToggle={props.onAutoRefreshToggle}
+                  showToggle={false}
                 >
                   <div class={`settings-stack ${props.settings.autoRefreshMinutes > 0 ? "" : "is-hidden"}`}>
                     <SettingsDiscreteSlider

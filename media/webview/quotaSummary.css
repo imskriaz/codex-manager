@@ -12265,9 +12265,18 @@ select:focus-visible,
 
 .settings-layout .settings-integration-grid > .settings-block,
 .settings-layout .settings-refresh-group > .settings-block {
-  padding: 11px 12px;
+  padding: 9px 10px;
   border-color: var(--border-muted);
   background: var(--bg-elevated);
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.settings-layout .settings-preference-row {
+  min-height: 34px;
+  padding: 5px 7px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-elevated) 72%, transparent);
 }
 
 .settings-layout .settings-note {

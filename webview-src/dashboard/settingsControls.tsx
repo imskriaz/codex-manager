@@ -141,6 +141,7 @@ export function SettingsToggleBlock(props: {
   onToggle: (enabled: boolean) => void;
   disabled?: boolean;
   className?: string;
+  showToggle?: boolean;
   children?: ComponentChildren;
 }) {
   return (
@@ -150,7 +151,7 @@ export function SettingsToggleBlock(props: {
           <div class="settings-block-title">{props.title}</div>
           <div class="settings-block-sub">{props.sub}</div>
         </div>
-        <button
+        {props.showToggle !== false ? <button
           class={`settings-inline-toggle ${props.enabled ? "active" : ""}`}
           type="button"
           aria-label={props.title}
@@ -161,7 +162,7 @@ export function SettingsToggleBlock(props: {
           <span class="settings-inline-toggle-track">
             <span class="settings-inline-toggle-thumb"></span>
           </span>
-        </button>
+        </button> : null}
       </div>
       {props.children}
     </div>
@@ -173,6 +174,7 @@ export function SettingsPreferenceRow(props: {
   sub: string;
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
+  showToggle?: boolean;
 }) {
   return (
     <div class="settings-preference-row">
@@ -180,7 +182,7 @@ export function SettingsPreferenceRow(props: {
         <div class="settings-block-title">{props.title}</div>
         <div class="settings-block-sub">{props.sub}</div>
       </div>
-      <button
+      {props.showToggle !== false ? <button
         class={`settings-inline-toggle ${props.enabled ? "active" : ""}`}
         type="button"
         aria-label={props.title}
@@ -190,7 +192,7 @@ export function SettingsPreferenceRow(props: {
         <span class="settings-inline-toggle-track">
           <span class="settings-inline-toggle-thumb"></span>
         </span>
-      </button>
+      </button> : null}
     </div>
   );
 }
