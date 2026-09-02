@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.1
+
+- Keep “Refresh Quotas” visible in the overview toolbar; move account sync into More.
+- Run background quota and token automation independently of the visible dashboard and surface failures with VS Code notifications.
+- Prevent sync startup failures from blocking local startup or forcing an account unload.
+- Show the contextual Switch action only when it is applicable, and balance the overview panels responsively.
+- Group automation settings into a compact layout with only the relevant capability toggles.
+- Hide Workspace settings when the Web Dashboard is disabled and improve settings alignment and density.
+
 ## 1.1.0
 
 - Keep the experimental Workspace setting specific to each PC.
