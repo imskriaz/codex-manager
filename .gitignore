@@ -19,3 +19,4 @@ parity*.yml
 root*.yml
 selected*.png
 selected*.yml
+output*
