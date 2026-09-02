@@ -11429,6 +11429,21 @@ html[data-theme="dark"] .cli-terminal-panel {
   font-size: 9px;
 }
 
+html[data-theme="light"] .overview-actions .toolbar .add-account-btn,
+html[data-theme="auto"] body.vscode-light .overview-actions .toolbar .add-account-btn {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, var(--border-default));
+  background: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-elevated));
+}
+
+html[data-theme="light"] .overview-actions .toolbar .add-account-btn:hover,
+html[data-theme="light"] .overview-actions .toolbar .add-account-btn:focus-visible,
+html[data-theme="auto"] body.vscode-light .overview-actions .toolbar .add-account-btn:hover,
+html[data-theme="auto"] body.vscode-light .overview-actions .toolbar .add-account-btn:focus-visible {
+  border-color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 22%, var(--bg-elevated));
+}
+
 .saved-credit-summary .saved-reset-badge {
   order: 0;
 }

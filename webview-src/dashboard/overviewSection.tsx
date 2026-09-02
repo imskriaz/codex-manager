@@ -355,32 +355,26 @@ export function OverviewSection(props: {
                 >
                   {resolveOverviewToolbarLabel("add", props.lang)}
                 </ActionButton>
-                {!hasAccounts ? (
-                  <ActionButton
-                    class="toolbar-btn"
-                    icon={renderRefreshIcon()}
-                    label={resolveSyncNowLabel(props.lang)}
-                    pending={props.syncPending}
-                    disabled={props.disabled}
-                    onClick={settings.encryptedSyncEnabled ? props.onSyncNow : props.onConfigureSync}
-                  >
-                    {resolveOverviewToolbarLabel("sync", props.lang)}
-                  </ActionButton>
-                ) : null}
-                {hasAccounts ? (
-                  <>
-                    <ActionButton
-                      class="toolbar-btn"
-                      icon={renderRefreshIcon()}
-                      label={resolveQuotaRefreshLabel(props.lang)}
-                      pending={props.refreshAllPending}
-                      onClick={props.onRefreshAll}
-                      disabled={props.disabled}
-                    >
-                      {props.copy.refreshAll}
-                    </ActionButton>
-                  </>
-                ) : null}
+                <ActionButton
+                  class="toolbar-btn"
+                  icon={renderRefreshIcon()}
+                  label={resolveSyncNowLabel(props.lang)}
+                  pending={props.syncPending}
+                  disabled={props.disabled}
+                  onClick={settings.encryptedSyncEnabled ? props.onSyncNow : props.onConfigureSync}
+                >
+                  {resolveOverviewToolbarLabel("sync", props.lang)}
+                </ActionButton>
+                <ActionButton
+                  class="toolbar-btn"
+                  icon={renderRefreshIcon()}
+                  label={resolveQuotaRefreshLabel(props.lang)}
+                  pending={props.refreshAllPending}
+                  onClick={props.onRefreshAll}
+                  disabled={props.disabled || !hasAccounts}
+                >
+                  {resolveOverviewToolbarLabel("refresh", props.lang)}
+                </ActionButton>
                 {account && (contextAction !== "switch" || !providedAccount) ? (
                   <ActionButton
                     class="toolbar-btn"
