@@ -9,6 +9,7 @@ import {
   SettingsDiscreteSlider,
   SettingsLanguageBlock,
   SettingsPathBlock,
+  SettingsPreferenceRow,
   SettingsSegmentBlock,
   SettingsThemeBlock,
   SettingsThresholdBlock,
@@ -596,7 +597,7 @@ export function SettingsOverlay(props: {
                     onPreview={(value) => props.onPatchSettings({ autoSwitchWeeklyThreshold: value })}
                     onCommit={(value) => patchAndSend("autoSwitchWeeklyThreshold", value)}
                   />
-                  <SettingsToggleBlock
+                  <SettingsPreferenceRow
                     title={props.copy.autoResetTitle ?? "Automatic quota reset plan"}
                     sub={
                       props.copy.autoResetSub ??
@@ -604,27 +605,26 @@ export function SettingsOverlay(props: {
                     }
                     enabled={props.settings.autoResetEnabled === true}
                     onToggle={(enabled) => patchAndSend("autoResetEnabled", enabled)}
-                  >
-                    <div class={`settings-stack ${props.settings.autoResetEnabled ? "" : "is-hidden"}`}>
-                      <SettingsDiscreteSlider
-                        value={props.settings.autoResetWeeklyThreshold ?? 1}
-                        values={AUTO_RESET_VALUES}
-                        accent="amber"
-                        sparseScale
-                        valueLabel={(value) => `${value}%`}
-                        description={(value) =>
-                          formatTemplate(
-                            props.copy.autoResetThresholdDescTemplate ??
-                              "Reset a candidate when its weekly quota is {value}% or lower.",
-                            value
-                          )
-                        }
-                        onPreview={(value) => props.onPatchSettings({ autoResetWeeklyThreshold: value })}
-                        onCommit={(value) => patchAndSend("autoResetWeeklyThreshold", value)}
-                      />
-                    </div>
-                  </SettingsToggleBlock>
-                  <SettingsToggleBlock
+                  />
+                  {props.settings.autoResetEnabled ? (
+                    <SettingsDiscreteSlider
+                      value={props.settings.autoResetWeeklyThreshold ?? 1}
+                      values={AUTO_RESET_VALUES}
+                      accent="amber"
+                      sparseScale
+                      valueLabel={(value) => `${value}%`}
+                      description={(value) =>
+                        formatTemplate(
+                          props.copy.autoResetThresholdDescTemplate ??
+                            "Reset a candidate when its weekly quota is {value}% or lower.",
+                          value
+                        )
+                      }
+                      onPreview={(value) => props.onPatchSettings({ autoResetWeeklyThreshold: value })}
+                      onCommit={(value) => patchAndSend("autoResetWeeklyThreshold", value)}
+                    />
+                  ) : null}
+                  <SettingsPreferenceRow
                     title={props.copy.autoSwitchReloadTitle}
                     sub={props.copy.autoSwitchReloadSub}
                     enabled={props.settings.autoSwitchReloadWindowEnabled}
@@ -641,7 +641,7 @@ export function SettingsOverlay(props: {
                 onToggle={(enabled) => patchAndSend("quotaWarningEnabled", enabled)}
               >
                 <div class={`settings-stack ${props.settings.quotaWarningEnabled ? "" : "is-hidden"}`}>
-                  <SettingsToggleBlock
+                  <SettingsPreferenceRow
                     title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh all quotas before warning switch"}
                     sub={
                       props.copy.autoSwitchRefreshAllSub ??
