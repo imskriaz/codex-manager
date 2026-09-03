@@ -154,7 +154,7 @@ describe("compareDashboardAutoQueueAccounts", () => {
     expect(hasDashboardAutoQueueCapability(account)).toBe(false);
   });
 
-  it("treats an account with either primary quota exhausted as incapable, even with credits", () => {
+  it("ignores weekly quota when the primary 5-hour quota is healthy", () => {
     const account = {
       creditsBalance: 25,
       creditsUnlimited: false,
@@ -164,7 +164,40 @@ describe("compareDashboardAutoQueueAccounts", () => {
       ]
     } as any;
 
+    expect(hasDashboardAutoQueueCapability(account)).toBe(true);
+  });
+
+  it("keeps an account incapable when its primary 5-hour quota is exhausted", () => {
+    const account = {
+      creditsBalance: 25,
+      creditsUnlimited: false,
+      metrics: [
+        { key: "hourly", period: "hourly", percentage: 0, visible: true },
+        { key: "weekly", period: "weekly", percentage: 100, visible: true }
+      ]
+    } as any;
+
     expect(hasDashboardAutoQueueCapability(account)).toBe(false);
+  });
+
+  it("follows the selected percentage metric when determining capability", () => {
+    const account = {
+      creditsBalance: 0,
+      creditsUnlimited: false,
+      metrics: [
+        { key: "hourly", period: "hourly", percentage: 0, visible: true },
+        { key: "weekly", period: "weekly", percentage: 80, visible: true }
+      ]
+    } as any;
+
+    expect(
+      hasDashboardAutoQueueCapability(account, {
+        hourlyEnabled: true,
+        hourlyThreshold: 20,
+        weeklyThreshold: 20,
+        primaryMetric: "weekly"
+      })
+    ).toBe(true);
   });
 
   it("matches capability to the automatic-switch thresholds", () => {

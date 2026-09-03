@@ -1137,7 +1137,8 @@ function App() {
           {
             hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
             hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
-            weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
+            weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold,
+            primaryMetric: uiPreferences.metricPriority
           }
         ),
         accountSort,
@@ -1145,7 +1146,8 @@ function App() {
         {
           hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
           hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
-          weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
+          weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold,
+          primaryMetric: uiPreferences.metricPriority
         },
         snapshot.settings.encryptedSyncRegistryOverrideEnabled
       ),
@@ -1252,7 +1254,8 @@ function App() {
   const capabilityThresholds: DashboardAutoQueueCapabilityThresholds = {
     hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
     hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
-    weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
+    weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold,
+    primaryMetric: uiPreferences.metricPriority
   };
   const capableAccountCount = displayedAccounts.filter((account) =>
     hasDashboardAutoQueueCapability(account, capabilityThresholds)

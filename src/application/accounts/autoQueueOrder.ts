@@ -81,23 +81,22 @@ export function hasCodexManagerAccountAutoQueueCapability(
   }
 ): boolean {
   const quota = account.quotaSummary;
-  // Capability follows the automatic-switch settings for each controlled
-  // quota window. Credits cannot override a window at or below its threshold.
-  if (
-    (thresholds.hourlyEnabled &&
-      hasComparableHourlyWindow(account) &&
-      quota!.hourlyPercentage <= thresholds.hourlyThreshold) ||
-    (hasComparableWeeklyWindow(account) && quota!.weeklyPercentage <= thresholds.weeklyThreshold)
-  ) {
-    return false;
+  // The short (primary) window is authoritative whenever it is enabled and
+  // present. A healthy weekly window must not make an account capable when its
+  // primary 5-hour quota is exhausted. Weekly is only a fallback when the
+  // primary window is disabled or unavailable.
+  const hasPrimaryQuota = thresholds.hourlyEnabled && hasComparableHourlyWindow(account);
+  if (hasPrimaryQuota) {
+    return (quota?.hourlyPercentage ?? 0) > thresholds.hourlyThreshold;
   }
-  const hasQuota =
-    (thresholds.hourlyEnabled &&
-      hasComparableHourlyWindow(account) &&
-      (quota?.hourlyPercentage ?? 0) > thresholds.hourlyThreshold) ||
-    (hasComparableWeeklyWindow(account) && (quota?.weeklyPercentage ?? 0) > thresholds.weeklyThreshold);
+
+  const hasSecondaryQuota = hasComparableWeeklyWindow(account);
+  if (hasSecondaryQuota) {
+    return (quota?.weeklyPercentage ?? 0) > thresholds.weeklyThreshold;
+  }
+
   const credits = parseCreditsOrderValue(quota?.credits);
-  return hasQuota || credits === Number.POSITIVE_INFINITY || (credits !== undefined && credits > 0);
+  return credits === Number.POSITIVE_INFINITY || (credits !== undefined && credits > 0);
 }
 
 export function hasComparableHourlyWindow(account: CodexManagerAccountRecord): boolean {
