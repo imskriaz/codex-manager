@@ -178,7 +178,9 @@ export class AccountsRepository {
    * - 创建存储目录
    * - 同步激活账号状态
    */
-  async init(options: { deferSync?: boolean } = {}): Promise<{ authSyncCompleted: boolean; mirrorSyncCompleted: boolean }> {
+  async init(
+    options: { deferSync?: boolean } = {}
+  ): Promise<{ authSyncCompleted: boolean; mirrorSyncCompleted: boolean }> {
     try {
       await fs.mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
     } catch (cause) {
@@ -618,7 +620,9 @@ export class AccountsRepository {
 
     if (updated.length > 0) {
       await Promise.all(
-        updated.map(async (account) => mirrorAideckCodexManagerAccount(account, await this.secretStore.getTokens(account.id)))
+        updated.map(async (account) =>
+          mirrorAideckCodexManagerAccount(account, await this.secretStore.getTokens(account.id))
+        )
       );
       this.writeIndex(index);
     }
@@ -632,7 +636,9 @@ export class AccountsRepository {
 
     if (updated.length > 0) {
       await Promise.all(
-        updated.map(async (account) => mirrorAideckCodexManagerAccount(account, await this.secretStore.getTokens(account.id)))
+        updated.map(async (account) =>
+          mirrorAideckCodexManagerAccount(account, await this.secretStore.getTokens(account.id))
+        )
       );
       this.writeIndex(index);
     }
@@ -810,7 +816,9 @@ export class AccountsRepository {
       const accounts = await this.listAccounts();
       return {
         email,
-        alreadyAdded: accounts.some((account) => account.id === id || account.email.trim().toLowerCase() === email.toLowerCase())
+        alreadyAdded: accounts.some(
+          (account) => account.id === id || account.email.trim().toLowerCase() === email.toLowerCase()
+        )
       };
     } catch {
       return { alreadyAdded: false };
@@ -851,7 +859,9 @@ export class AccountsRepository {
     return JSON.stringify(buildCodexAuthFile(tokens), null, 2);
   }
 
-  async importSharedAccounts(input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]): Promise<CodexManagerAccountRecord[]> {
+  async importSharedAccounts(
+    input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]
+  ): Promise<CodexManagerAccountRecord[]> {
     return this.importSharedAccountsInternal(input);
   }
 
@@ -959,7 +969,10 @@ export class AccountsRepository {
    * @param accountId - 目标账号 ID
    * @returns 切换后的账号记录
    */
-  async switchAccount(accountId: string, options: { forceTokenRefresh?: boolean } = {}): Promise<CodexManagerAccountRecord> {
+  async switchAccount(
+    accountId: string,
+    options: { forceTokenRefresh?: boolean } = {}
+  ): Promise<CodexManagerAccountRecord> {
     // 按账号串行化，避免切号与后台续期并发刷新同一账号 token
     return this.accountMutex.runExclusive(accountId, async () => {
       await this.switchCoordinator?.prepareAccountSwitch(accountId);
@@ -1361,7 +1374,12 @@ export class AccountsRepository {
   /**
    * 更新重置次数快照（由后台 fetchResetCredits 拉取后调用）。
    */
-  async updateResetCreditsSnapshot(accountId: string, availableCount: number, nextExpiresAt?: number): Promise<void> {
+  async updateResetCreditsSnapshot(
+    accountId: string,
+    availableCount: number,
+    nextExpiresAt?: number,
+    availableIds?: string[]
+  ): Promise<void> {
     const index = await this.readIndex();
     const account = index.accounts.find((item) => item.id === accountId);
     if (!account?.quotaSummary) {
@@ -1383,6 +1401,33 @@ export class AccountsRepository {
     }
     account.quotaSummary.resetCreditsAvailable = availableCount;
     account.quotaSummary.resetCreditsNextExpiresAt = effectiveNextExpiresAt;
+    if (availableIds) {
+      account.quotaSummary.resetCreditsAvailableIds = Array.from(new Set(availableIds.filter(Boolean)));
+    }
+    account.updatedAt = Date.now();
+    this.writeIndex(index);
+  }
+
+  /** Permanently fences one provider reset credit after an ineligible response. */
+  async excludeResetCredit(accountId: string, resetId: string): Promise<void> {
+    const normalizedId = resetId.trim();
+    if (!normalizedId) {
+      return;
+    }
+    const index = await this.readIndex();
+    const account = index.accounts.find((item) => item.id === accountId);
+    if (!account?.quotaSummary) {
+      return;
+    }
+    const summary = account.quotaSummary;
+    const excluded = new Set(summary.resetCreditsExcludedIds ?? []);
+    excluded.add(normalizedId);
+    summary.resetCreditsExcludedIds = Array.from(excluded);
+    if (summary.resetCreditsAvailableIds) {
+      summary.resetCreditsAvailableIds = summary.resetCreditsAvailableIds.filter((id) => id !== normalizedId);
+    }
+    summary.resetCreditsAvailable = Math.max(0, (summary.resetCreditsAvailable ?? 0) - 1);
+    summary.resetCreditsNextExpiresAt = summary.resetCreditsAvailable ? summary.resetCreditsNextExpiresAt : undefined;
     account.updatedAt = Date.now();
     this.writeIndex(index);
   }

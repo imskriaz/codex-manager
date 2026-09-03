@@ -125,6 +125,7 @@ export function SavedAccountCard(props: {
     action:
       | "details"
       | "switch"
+      | "unloadAuth"
       | "reloadPrompt"
       | "reauthorize"
       | "resyncProfile"
@@ -172,6 +173,7 @@ export function SavedAccountCard(props: {
         : "Enable token refresh";
   const manualTokenRefreshLabel = zh ? "立即刷新令牌" : hant ? "立即重新整理權杖" : "Refresh token now";
   const queuedLabel = zh ? "排队中" : hant ? "排隊中" : "Queued";
+  const unloadLabel = zh ? "卸载" : hant ? "卸載" : "Unload";
   const resetLabel = copy.resetCreditsBtn ?? (zh ? "重置配额" : hant ? "重置配額" : "Reset quota");
   const runningOnOtherDevice = Boolean(
     account.runningDeviceName && !account.runningOnThisDevice && account.runningDeviceOnline !== false
@@ -344,9 +346,11 @@ export function SavedAccountCard(props: {
     !account.isActive ||
     account.sessionStartedAt == null ||
     (account.lastQuotaAt != null && account.lastQuotaAt >= account.sessionStartedAt);
-  const lowQuota = quotaFreshForSession && visibleMetrics.some(
-    (metric) => typeof metric.percentage === "number" && metric.percentage <= settings.quotaYellowThreshold
-  );
+  const lowQuota =
+    quotaFreshForSession &&
+    visibleMetrics.some(
+      (metric) => typeof metric.percentage === "number" && metric.percentage <= settings.quotaYellowThreshold
+    );
   const stopFlip = (event: Event): void => {
     event.stopPropagation();
   };
@@ -587,12 +591,16 @@ export function SavedAccountCard(props: {
             </button>
             {renderPrimaryAccountControl()}
             <ActionButton
-              icon={renderSwitchIcon()}
+              icon={account.isActive ? renderReloadIcon() : renderSwitchIcon()}
               iconOnly
-              label={copy.switchBtn}
-              pending={props.switchPending}
-              disabled={!canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled)}
-              onClick={() => onAction("switch", account.id)}
+              label={account.isActive ? unloadLabel : copy.switchBtn}
+              pending={account.isActive ? false : props.switchPending}
+              disabled={
+                account.isActive ? props.busy : !canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled)
+              }
+              onClick={() =>
+                onAction(account.isActive ? "unloadAuth" : "switch", account.isActive ? undefined : account.id)
+              }
             />
             <ActionButton
               icon={renderRefreshIcon()}
@@ -853,7 +861,10 @@ export function SavedAccountCard(props: {
                     </span>
                   ) : null}
                   {account.autoSwitchLockedUntil ? (
-                    <span class="saved-credits-line saved-lock-badge" title="Automatic switching is locked for this account">
+                    <span
+                      class="saved-credits-line saved-lock-badge"
+                      title="Automatic switching is locked for this account"
+                    >
                       🔒 Locked
                     </span>
                   ) : null}
@@ -901,12 +912,16 @@ export function SavedAccountCard(props: {
                   />
                 ) : null}
                 <ActionButton
-                  icon={renderSwitchIcon()}
+                  icon={account.isActive ? renderReloadIcon() : renderSwitchIcon()}
                   iconOnly
-                  label={copy.switchBtn}
-                  pending={props.switchPending}
-                  disabled={!canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled)}
-                  onClick={() => onAction("switch", account.id)}
+                  label={account.isActive ? unloadLabel : copy.switchBtn}
+                  pending={account.isActive ? false : props.switchPending}
+                  disabled={
+                    account.isActive ? props.busy : !canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled)
+                  }
+                  onClick={() =>
+                    onAction(account.isActive ? "unloadAuth" : "switch", account.isActive ? undefined : account.id)
+                  }
                 />
                 <ActionButton
                   icon={renderRefreshIcon()}

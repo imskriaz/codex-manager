@@ -15,13 +15,18 @@ export function compareCodexManagerAccountAutoQueueOrder(
 ): number {
   const leftOrder = toOrderValue(left);
   const rightOrder = toOrderValue(right);
+  const leftCapable = hasCodexManagerAccountAutoQueueCapability(left);
+  const rightCapable = hasCodexManagerAccountAutoQueueCapability(right);
+  if (leftCapable !== rightCapable) {
+    return leftCapable ? -1 : 1;
+  }
   const urgencyDifference = compareAutoQueueUrgency(leftOrder, rightOrder);
   if (urgencyDifference !== 0) {
     return urgencyDifference;
   }
 
-  const leftPriority = left.queuePriority === true && hasCodexManagerAccountAutoQueueCapability(left);
-  const rightPriority = right.queuePriority === true && hasCodexManagerAccountAutoQueueCapability(right);
+  const leftPriority = left.queuePriority === true && leftCapable;
+  const rightPriority = right.queuePriority === true && rightCapable;
   if (leftPriority !== rightPriority) {
     return leftPriority ? -1 : 1;
   }
@@ -36,11 +41,18 @@ export function compareCodexManagerAccountAutoQueueOrder(
   return compareAutoQueueOrderValues(leftOrder, rightOrder);
 }
 
-export function getCodexManagerAccountAutoQueueEfficiency(account: CodexManagerAccountRecord, options?: { nowMs?: number; staleAfterMs?: number }) {
+export function getCodexManagerAccountAutoQueueEfficiency(
+  account: CodexManagerAccountRecord,
+  options?: { nowMs?: number; staleAfterMs?: number }
+) {
   return score(account, toOrderValue(account), options);
 }
 
-function score(account: CodexManagerAccountRecord, order: ReturnType<typeof toOrderValue>, options?: { nowMs?: number; staleAfterMs?: number }) {
+function score(
+  account: CodexManagerAccountRecord,
+  order: ReturnType<typeof toOrderValue>,
+  options?: { nowMs?: number; staleAfterMs?: number }
+) {
   return calculateAutoQueueEfficiency(order, {
     nowMs: options?.nowMs,
     staleAfterMs: options?.staleAfterMs ?? 30 * 60_000,
@@ -49,7 +61,9 @@ function score(account: CodexManagerAccountRecord, order: ReturnType<typeof toOr
 }
 
 function hasFutureReset(order: ReturnType<typeof toOrderValue>, nowSeconds: number): boolean {
-  return order.windows.some((window) => typeof window.resetAt === "number" && Number.isFinite(window.resetAt) && window.resetAt >= nowSeconds);
+  return order.windows.some(
+    (window) => typeof window.resetAt === "number" && Number.isFinite(window.resetAt) && window.resetAt >= nowSeconds
+  );
 }
 
 export type AutoQueueCapabilityThresholds = {

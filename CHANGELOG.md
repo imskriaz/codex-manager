@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.2
+
+- Expand the manual OAuth callback field into a multiline editor with a full-width submit action.
+- Fence reset credits rejected as ineligible by provider credit ID so they disappear from the dashboard and automatic reset queue without affecting future credits.
+- Turn the current-account switch slot into an unload action with a reload icon, while keeping account loading available for other saved accounts.
+- Order automatic-queue candidates by capability first so quota-exhausted, invalid, or foreign-claimed accounts stay last without disturbing the remaining priority order.
+- Remove the Onboard entry from the More actions menu, show percentage values beside metric labels, and hide the reset badge when a compact account row has no room for it.
+
 ## 1.1.1
 
 - Preserve cross-PC claim and automatic-switch lock metadata when realtime peer quota snapshots arrive.

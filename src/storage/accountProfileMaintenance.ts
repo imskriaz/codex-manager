@@ -31,6 +31,14 @@ export function applyQuotaUpdate(params: {
     nextQuotaSummary.resetCreditsNextExpiresAt = previousQuotaSummary.resetCreditsNextExpiresAt;
     preservedResetCreditsExpiry = true;
   }
+  if (nextQuotaSummary && previousQuotaSummary) {
+    if (nextQuotaSummary.resetCreditsExcludedIds == null && previousQuotaSummary.resetCreditsExcludedIds?.length) {
+      nextQuotaSummary.resetCreditsExcludedIds = [...previousQuotaSummary.resetCreditsExcludedIds];
+    }
+    if (nextQuotaSummary.resetCreditsAvailableIds == null && previousQuotaSummary.resetCreditsAvailableIds?.length) {
+      nextQuotaSummary.resetCreditsAvailableIds = [...previousQuotaSummary.resetCreditsAvailableIds];
+    }
+  }
   if ((previousQuotaSummary?.resetCreditsAvailable ?? nextQuotaSummary?.resetCreditsAvailable ?? 0) > 0) {
     console.info("[codexManager] quota reset credits update", {
       accountId: params.account.id,

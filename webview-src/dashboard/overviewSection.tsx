@@ -384,147 +384,148 @@ export function OverviewSection(props: {
                   {resolveOverviewToolbarLabel("refresh", props.lang)}
                 </ActionButton>
                 <div class="overview-more-wrap" ref={moreRef}>
-                    <ActionButton
-                      class="toolbar-btn"
-                      icon={<span class="overview-action-symbol">⋯</span>}
-                      label={resolveOverviewToolbarLabel("more", props.lang)}
-                      disabled={props.disabled}
-                      aria-haspopup="menu"
-                      aria-expanded={moreOpen}
-                      onClick={toggleMoreMenu}
-                    >
-                      {resolveOverviewToolbarLabel("more", props.lang)}
-                    </ActionButton>
-                    {moreOpen
-                      ? createPortal(
-                          <div
-                            ref={morePopoverContentRef}
-                            class="claim-popover claim-popover-portal overview-more-menu"
-                            role="menu"
-                            aria-label={resolveOverviewToolbarLabel("more", props.lang)}
-                            style={{ top: `${morePopoverPosition.top}px`, right: `${morePopoverPosition.right}px` }}
+                  <ActionButton
+                    class="toolbar-btn"
+                    icon={<span class="overview-action-symbol">⋯</span>}
+                    label={resolveOverviewToolbarLabel("more", props.lang)}
+                    disabled={props.disabled}
+                    aria-haspopup="menu"
+                    aria-expanded={moreOpen}
+                    onClick={toggleMoreMenu}
+                  >
+                    {resolveOverviewToolbarLabel("more", props.lang)}
+                  </ActionButton>
+                  {moreOpen
+                    ? createPortal(
+                        <div
+                          ref={morePopoverContentRef}
+                          class="claim-popover claim-popover-portal overview-more-menu"
+                          role="menu"
+                          aria-label={resolveOverviewToolbarLabel("more", props.lang)}
+                          style={{ top: `${morePopoverPosition.top}px`, right: `${morePopoverPosition.right}px` }}
+                        >
+                          <div class="claim-popover-title">{resolveOverviewToolbarLabel("more", props.lang)}</div>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setMoreOpen(false);
+                              props.onSetPassword();
+                            }}
                           >
-                            <div class="claim-popover-title">{resolveOverviewToolbarLabel("more", props.lang)}</div>
-                              <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); props.onSetPassword(); }}>
-                              🔑 {resolveOverviewMenuLabel("setPassword", props.lang, props.passwordConfigured === true)}
+                            🔑 {resolveOverviewMenuLabel("setPassword", props.lang, props.passwordConfigured === true)}
+                          </button>
+                          {providedAccount && contextAction !== "switch" ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setMoreOpen(false);
+                                props.onSwitchAccount();
+                              }}
+                            >
+                              ⇄ {resolveOverviewMenuLabel("switch", props.lang)}
                             </button>
-                            <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); props.onOnboard(); }}>
-                              ✨ {resolveOverviewMenuLabel("onboard", props.lang)}
+                          ) : null}
+                          {providedAccount && contextAction !== "reload" ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setMoreOpen(false);
+                                props.onReloadAccount();
+                              }}
+                            >
+                              ↻ {resolveOverviewMenuLabel("reload", props.lang)}
                             </button>
-                            {providedAccount && contextAction !== "switch" ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
+                          ) : null}
+                          {providedAccount ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setMoreOpen(false);
+                                props.onUnloadAuth();
+                              }}
+                            >
+                              ⏏ {resolveOverviewMenuLabel("unload", props.lang)}
+                            </button>
+                          ) : null}
+                          {props.accounts?.some((candidate) => candidate.enabled === false) ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              disabled={!providedAccount || props.switchPending}
+                              onClick={() => {
+                                setMoreOpen(false);
+                                props.onEnableAllValid();
+                              }}
+                              title={resolveOverviewEnableAllHint(props.lang)}
+                            >
+                              ⊕ {resolveOverviewMenuLabel("enableAll", props.lang)}
+                            </button>
+                          ) : null}
+                          {props.accounts?.some((candidate) => candidate.enabled !== false) ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setMoreOpen(false);
+                                props.onDisableAll();
+                              }}
+                            >
+                              ⊘ {resolveOverviewMenuLabel("disableAll", props.lang)}
+                            </button>
+                          ) : null}
+                          {providedAccount && contextAction !== "rescue" ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setMoreOpen(false);
+                                props.onSetRegistryOverride(!settings.encryptedSyncRegistryOverrideEnabled);
+                              }}
+                            >
+                              🛟{" "}
+                              {resolveOverviewMenuLabel(
+                                settings.encryptedSyncRegistryOverrideEnabled ? "rescueOff" : "rescue",
+                                props.lang
+                              )}
+                            </button>
+                          ) : null}
+                          {providedAccount ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={(event) => {
+                                if (account.autoSwitchLockedUntil) {
                                   setMoreOpen(false);
-                                  props.onSwitchAccount();
-                                }}
-                              >
-                                ⇄ {resolveOverviewMenuLabel("switch", props.lang)}
-                              </button>
-                            ) : null}
-                            {providedAccount && contextAction !== "reload" ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setMoreOpen(false);
-                                  props.onReloadAccount();
-                                }}
-                              >
-                                ↻ {resolveOverviewMenuLabel("reload", props.lang)}
-                              </button>
-                            ) : null}
-                            {providedAccount ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setMoreOpen(false);
-                                  props.onUnloadAuth();
-                                }}
-                              >
-                                ⏏ {resolveOverviewMenuLabel("unload", props.lang)}
-                              </button>
-                            ) : null}
-                            {props.accounts?.some((candidate) => candidate.enabled === false) ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                disabled={!providedAccount || props.switchPending}
-                                onClick={() => {
-                                  setMoreOpen(false);
-                                  props.onEnableAllValid();
-                                }}
-                                title={resolveOverviewEnableAllHint(props.lang)}
-                              >
-                                ⊕ {resolveOverviewMenuLabel("enableAll", props.lang)}
-                              </button>
-                            ) : null}
-                            {props.accounts?.some((candidate) => candidate.enabled !== false) ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setMoreOpen(false);
-                                  props.onDisableAll();
-                                }}
-                              >
-                                ⊘ {resolveOverviewMenuLabel("disableAll", props.lang)}
-                              </button>
-                            ) : null}
-                            {providedAccount && contextAction !== "rescue" ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setMoreOpen(false);
-                                  props.onSetRegistryOverride(!settings.encryptedSyncRegistryOverrideEnabled);
-                                }}
-                              >
-                                🛟{" "}
-                                {resolveOverviewMenuLabel(
-                                  settings.encryptedSyncRegistryOverrideEnabled ? "rescueOff" : "rescue",
-                                  props.lang
-                                )}
-                              </button>
-                            ) : null}
-                            {providedAccount ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={(event) => {
-                                  if (account.autoSwitchLockedUntil) {
-                                    setMoreOpen(false);
-                                    props.onSetAutoSwitchLock(0);
-                                  } else {
-                                    openLockDialog(event.currentTarget);
-                                  }
-                                }}
-                              >
-                                {account.autoSwitchLockedUntil ? "🔓" : "🔒"}{" "}
-                                {resolveOverviewMenuLabel(
-                                  account.autoSwitchLockedUntil ? "unlock" : "lock",
-                                  props.lang
-                                )}
-                              </button>
-                            ) : null}
-                            {providedAccount && props.showCliSessions && props.onOpenCliSessions ? (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setMoreOpen(false);
-                                  props.onOpenCliSessions!();
-                                }}
-                              >
-                                ◉ Sessions
-                              </button>
-                            ) : null}
-                          </div>,
-                          document.body
-                        )
-                      : null}
+                                  props.onSetAutoSwitchLock(0);
+                                } else {
+                                  openLockDialog(event.currentTarget);
+                                }
+                              }}
+                            >
+                              {account.autoSwitchLockedUntil ? "🔓" : "🔒"}{" "}
+                              {resolveOverviewMenuLabel(account.autoSwitchLockedUntil ? "unlock" : "lock", props.lang)}
+                            </button>
+                          ) : null}
+                          {providedAccount && props.showCliSessions && props.onOpenCliSessions ? (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setMoreOpen(false);
+                                props.onOpenCliSessions!();
+                              }}
+                            >
+                              ◉ Sessions
+                            </button>
+                          ) : null}
+                        </div>,
+                        document.body
+                      )
+                    : null}
                 </div>
               </div>
             </div>
@@ -1390,9 +1391,9 @@ function resolveOverviewMenuLabel(
       rescue: "Rescue",
       rescueOff: "Rescue off",
       lock: "Lock",
-       unlock: "Unlock",
-       setPassword: passwordConfigured ? "Change Password" : "Set Password",
-       onboard: "Onboard"
+      unlock: "Unlock",
+      setPassword: passwordConfigured ? "Change Password" : "Set Password",
+      onboard: "Onboard"
     },
     zh: {
       switch: "切换",
@@ -1404,9 +1405,9 @@ function resolveOverviewMenuLabel(
       rescue: "救援",
       rescueOff: "关闭救援",
       lock: "锁定",
-       unlock: "解锁",
-       setPassword: passwordConfigured ? "更改密码" : "设置密码",
-       onboard: "引导设置"
+      unlock: "解锁",
+      setPassword: passwordConfigured ? "更改密码" : "设置密码",
+      onboard: "引导设置"
     },
     "zh-hant": {
       switch: "切換",
@@ -1418,9 +1419,9 @@ function resolveOverviewMenuLabel(
       rescue: "救援",
       rescueOff: "關閉救援",
       lock: "鎖定",
-       unlock: "解鎖",
-       setPassword: passwordConfigured ? "變更密碼" : "設定密碼",
-       onboard: "導覽設定"
+      unlock: "解鎖",
+      setPassword: passwordConfigured ? "變更密碼" : "設定密碼",
+      onboard: "導覽設定"
     }
   } as const;
   return values[lang === "zh" || lang === "zh-hant" ? lang : "en"][action];

@@ -28,6 +28,8 @@ describe("add account OAuth actions", () => {
     expect(modal).toContain("oauth-link-row");
     expect(modal).toContain('oauth-link-row ${oauthLinkReady ? "" : "is-create"}');
     expect(modal).toContain('layer === "callback"');
+    expect(modal).toContain("<textarea");
+    expect(modal).toContain("rows={3}");
     expect(modal).toContain('layer === "import"');
     expect(modal).toContain('class="account-add-choice-divider"');
     expect(modal).toContain('class="account-add-layer-actions"');

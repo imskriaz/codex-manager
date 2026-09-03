@@ -11398,6 +11398,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   display: grid;
   gap: 3px;
   min-width: 0;
+  container-type: inline-size;
 }
 
 .saved-table-name-line {
@@ -13663,6 +13664,15 @@ body.is-dashboard-workspace-route #dashboard-main {
   grid-template-columns: minmax(0, 1fr);
 }
 
+/* The reset badge is the least essential identity badge. Hide it before the
+   compact row can clip/overlap badges when a narrow account column runs out
+   of room; wider rows keep it visible. */
+@container (max-width: 180px) {
+  .saved-table-meta .saved-reset-badge {
+    display: none;
+  }
+}
+
 .account-add-flow > .account-add-layer-action {
   width: 100%;
   box-sizing: border-box;
@@ -13753,13 +13763,17 @@ body.is-dashboard-workspace-route #dashboard-main {
 }
 
 .account-add-callback-layer .oauth-callback-row {
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .account-add-callback-layer .oauth-callback-input {
-  flex: 1 1 auto;
   min-width: 0;
-  min-height: 30px;
+  min-height: 64px;
+  width: 100%;
+  resize: vertical;
+  line-height: 1.4;
 }
 
 .account-add-callback-layer .modal-primary-btn,
@@ -13768,6 +13782,10 @@ body.is-dashboard-workspace-route #dashboard-main {
   padding: 4px 9px;
   border-radius: 7px;
   white-space: nowrap;
+}
+
+.account-add-callback-layer .modal-primary-btn {
+  width: 100%;
 }
 
 .account-add-file-status {
@@ -13844,8 +13862,6 @@ body.is-dashboard-workspace-route #dashboard-main {
   .account-add-layer-actions,
   .account-add-callback-layer .oauth-callback-row {
     grid-template-columns: minmax(0, 1fr);
-    flex-direction: column;
-    align-items: stretch;
   }
 
   .account-add-callback-layer .modal-primary-btn {

@@ -1146,7 +1146,8 @@ function App() {
           hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
           hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
           weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
-        }
+        },
+        snapshot.settings.encryptedSyncRegistryOverrideEnabled
       ),
     [
       displayedAccounts,
@@ -1154,6 +1155,7 @@ function App() {
       snapshot.settings.hourlyQuotaControlEnabled,
       snapshot.settings.autoSwitchHourlyThreshold,
       snapshot.settings.autoSwitchWeeklyThreshold,
+      snapshot.settings.encryptedSyncRegistryOverrideEnabled,
       uiPreferences.accountSearch,
       uiPreferences.filter,
       uiPreferences.tagFilter,
@@ -1256,21 +1258,6 @@ function App() {
     hasDashboardAutoQueueCapability(account, capabilityThresholds)
   ).length;
   const incapableAccountCount = displayedAccounts.length - capableAccountCount;
-  const weeklyPercentages = displayedAccounts
-    .map(
-      (account) =>
-        account.metrics.find(
-          (metric) =>
-            metric.visible &&
-            metric.key.includes("weekly") &&
-            typeof metric.percentage === "number" &&
-            Number.isFinite(metric.percentage)
-        )?.percentage
-    )
-    .filter((value): value is number => typeof value === "number");
-  const weeklyQuotaPercent = weeklyPercentages.length
-    ? Math.round(weeklyPercentages.reduce((sum, value) => sum + value, 0) / weeklyPercentages.length)
-    : undefined;
   const availableMetrics = Array.from(
     new Map(
       displayedAccounts
@@ -1279,6 +1266,19 @@ function App() {
         .map((metric) => [metric.key, metric])
     ).values()
   );
+  const metricAveragePercent = (metricKey: string): number | undefined => {
+    const values = displayedAccounts
+      .flatMap((account) => account.metrics)
+      .filter(
+        (metric) =>
+          metric.visible &&
+          metric.key === metricKey &&
+          typeof metric.percentage === "number" &&
+          Number.isFinite(metric.percentage)
+      )
+      .map((metric) => metric.percentage as number);
+    return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : undefined;
+  };
 
   const handleShareTokens = (): void => {
     if (!selectedCount) {
@@ -1430,7 +1430,8 @@ function App() {
       } else {
         showNotice({
           level: "warning",
-          message: "The account stays loaded only for this VS Code session. It will be unloaded automatically after restart."
+          message:
+            "The account stays loaded only for this VS Code session. It will be unloaded automatically after restart."
         });
       }
       return;
@@ -1476,13 +1477,13 @@ function App() {
           ? "Tag update cancelled."
           : request.kind === "password"
             ? `${request.title} cancelled.`
-          : request.kind === "notification"
-            ? "Notification dismissed."
-            : request.kind === "disabledActiveAccount"
-              ? "The disabled account remains loaded for this VS Code session and will unload automatically after restart."
-            : request.action === "reloadPrompt"
-                ? "Reload postponed. Use Reload when you are ready."
-                : `${request.title} cancelled.`;
+            : request.kind === "notification"
+              ? "Notification dismissed."
+              : request.kind === "disabledActiveAccount"
+                ? "The disabled account remains loaded for this VS Code session and will unload automatically after restart."
+                : request.action === "reloadPrompt"
+                  ? "Reload postponed. Use Reload when you are ready."
+                  : `${request.title} cancelled.`;
     showNotice({ level: "info", message });
   };
 
@@ -1492,10 +1493,9 @@ function App() {
       kind: "password",
       action: "configureEncryptedSync",
       title: configured ? "Change password" : "Set password",
-      message:
-        configured
-          ? "Enter a new shared password. The same password must be used on every PC."
-          : "Create the one shared password used for encrypted sync, remote dashboard login, and protected controls.",
+      message: configured
+        ? "Enter a new shared password. The same password must be used on every PC."
+        : "Create the one shared password used for encrypted sync, remote dashboard login, and protected controls.",
       confirmPassword: true
     });
   };
@@ -1938,16 +1938,6 @@ function App() {
                         {resolveUiText("incapable", snapshot.lang)} {incapableAccountCount}
                       </button>
                     ) : null}
-                    <button
-                      class={`header-count-badge is-quota ${uiPreferences.metricPriority === "weekly" ? "is-selected" : ""}`}
-                      type="button"
-                      aria-pressed={uiPreferences.metricPriority === "weekly"}
-                      title={resolveWeeklyQuotaTitle(weeklyQuotaPercent, weeklyPercentages.length, snapshot.lang)}
-                      onClick={() => setUiPreferences((current) => ({ ...current, metricPriority: "weekly" }))}
-                    >
-                      {resolveUiText("weeklyShort", snapshot.lang)}{" "}
-                      {weeklyQuotaPercent == null ? "—" : `${weeklyQuotaPercent}%`}
-                    </button>
                   </span>
                 </h2>
               </div>
@@ -2042,7 +2032,8 @@ function App() {
                 >
                   {availableMetrics.map((metric) => (
                     <option key={metric.key} value={metric.key}>
-                      {metric.label}
+                      {metric.label} ·{" "}
+                      {metricAveragePercent(metric.key) == null ? "—" : `${metricAveragePercent(metric.key)}%`}
                     </option>
                   ))}
                 </select>
@@ -2483,7 +2474,8 @@ function sortAccounts(
   accounts: DashboardAccountViewModel[],
   sort: AccountSort,
   metricPriority: MetricPriority,
-  capabilityThresholds: DashboardAutoQueueCapabilityThresholds
+  capabilityThresholds: DashboardAutoQueueCapabilityThresholds,
+  registryOverrideEnabled = false
 ): DashboardAccountViewModel[] {
   const metricFor = (account: DashboardAccountViewModel, priority: MetricPriority) =>
     account.metrics.find(
@@ -2505,8 +2497,17 @@ function sortAccounts(
   const compareAutoQueue = (left: DashboardAccountViewModel, right: DashboardAccountViewModel): number => {
     if (left.isActive !== right.isActive) return left.isActive ? -1 : 1;
     if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
-    const leftPriority = left.queuePriority && hasDashboardAutoQueueCapability(left, capabilityThresholds);
-    const rightPriority = right.queuePriority && hasDashboardAutoQueueCapability(right, capabilityThresholds);
+    const leftCapable =
+      left.enabled &&
+      hasDashboardAutoQueueCapability(left, capabilityThresholds) &&
+      canRunAccountOnThisPc(left, false, registryOverrideEnabled);
+    const rightCapable =
+      right.enabled &&
+      hasDashboardAutoQueueCapability(right, capabilityThresholds) &&
+      canRunAccountOnThisPc(right, false, registryOverrideEnabled);
+    if (leftCapable !== rightCapable) return leftCapable ? -1 : 1;
+    const leftPriority = left.queuePriority && leftCapable;
+    const rightPriority = right.queuePriority && rightCapable;
     if (leftPriority !== rightPriority) {
       return leftPriority ? -1 : 1;
     }
@@ -3095,19 +3096,6 @@ function resolveUiText(key: string, lang: string): string {
   if (key === "healthy") return labels["healthy"] ?? "Healthy";
   if (key === "attention") return labels["attention"] ?? "Attention";
   return labels[key] ?? key;
-}
-
-function resolveWeeklyQuotaTitle(percent: number | undefined, accountCount: number, lang: string): string {
-  if (percent == null) {
-    return lang === "zh"
-      ? "没有可用的每周配额数据"
-      : lang === "zh-hant"
-        ? "沒有可用的每週配額資料"
-        : "No weekly quota data available";
-  }
-  if (lang === "zh") return `${accountCount} 个账号的平均每周剩余配额：${percent}%`;
-  if (lang === "zh-hant") return `${accountCount} 個帳號的平均每週剩餘配額：${percent}%`;
-  return `Average weekly quota remaining across ${accountCount} accounts: ${percent}%`;
 }
 
 function resolveSortAriaLabel(lang: string): string {

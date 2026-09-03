@@ -18,7 +18,7 @@ import {
 import { wasAccountQuotaCheckedWithin } from "../../services/quotaCheckCoordination";
 import { openDetailsPanel } from "../../ui";
 import { openQuotaSummaryPanel } from "../../ui/quotaSummary";
-import { consumeResetCredit } from "../../services/quota";
+import { consumeResetCredit, isResetCreditIneligibleError } from "../../services/quota";
 import {
   RefreshView,
   formatAccountToastLabel,
@@ -35,10 +35,7 @@ import {
   promptWindowReloadForAccount
 } from "./switchEffects";
 import { activateQueuedAccountIfCurrentMissing } from "./queuedAccountActivation";
-import {
-  CrossWindowOperationBusyError,
-  runCrossWindowExclusive
-} from "../../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../../utils/crossWindowOperations";
 import { shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 const REFRESH_ALL_SILENT_CONCURRENCY = 1;
 const REFRESH_ALL_MANUAL_CONCURRENCY = 2;
@@ -188,9 +185,10 @@ export class AccountsCommandService {
         }
 
         if (result.error) {
-          const syncSuffix = synced === false
-            ? " Encrypted sync could not be completed; run Sync Now to share the new credentials."
-            : "";
+          const syncSuffix =
+            synced === false
+              ? " Encrypted sync could not be completed; run Sync Now to share the new credentials."
+              : "";
           void vscode.window.showWarningMessage(
             `${copy.importedButQuotaFailed(updated.email, result.error.message)}${syncSuffix}${formatQueuedActivationSuffix(queuedActivation)}`
           );
@@ -253,9 +251,14 @@ export class AccountsCommandService {
     if (!shouldSuppressDashboardNotifications()) {
       try {
         if (reloadNeeded) {
-          const reloadAutomatically = getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
+          const reloadAutomatically = getCodexManagerConfiguration().get<boolean>(
+            "autoSwitchReloadWindowEnabled",
+            false
+          );
           if (!reloadAutomatically) {
-            reloaded = await promptWindowReloadForAccount(account, { message: `Switched to ${account.email}. Reload VS Code?` });
+            reloaded = await promptWindowReloadForAccount(account, {
+              message: `Switched to ${account.email}. Reload VS Code?`
+            });
           } else {
             void vscode.window.showInformationMessage(`Switched to ${account.email}. Reloading Codex…`);
             reloaded = await autoReloadWindowForAccount(account.id);
@@ -302,7 +305,15 @@ export class AccountsCommandService {
 
     const tokens = await this.repo.getTokens(account.id);
     if (!tokens?.accessToken) throw new Error("No access token available");
-    await consumeResetCredit(tokens.accessToken, account.accountId ?? undefined);
+    const attemptedResetId = account.quotaSummary?.resetCreditsAvailableIds?.[0];
+    try {
+      await consumeResetCredit(tokens.accessToken, account.accountId ?? undefined);
+    } catch (error) {
+      if (attemptedResetId && isResetCreditIneligibleError(error)) {
+        await this.repo.excludeResetCredit(account.id, attemptedResetId);
+      }
+      throw error;
+    }
     await refreshSingleQuota(this.repo, this.view, account.id, {
       announce: false,
       warnQuota: false,
@@ -544,7 +555,8 @@ export class AccountsCommandService {
       }
 
       const raw = await vscode.workspace.fs.readFile(picked[0]);
-      const parsed = JSON.parse(Buffer.from(raw).toString("utf8")) as SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[];
+      const parsed = JSON.parse(Buffer.from(raw).toString("utf8")) as
+        SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[];
       const restored = await this.repo.restoreAccountsFromSharedJson(parsed);
       this.view.refresh();
       void vscode.window.showInformationMessage(

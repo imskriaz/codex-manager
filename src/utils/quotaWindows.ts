@@ -60,10 +60,13 @@ export function normalizeQuotaSummary(summary?: CodexQuotaSummary): CodexQuotaSu
     codeReviewWindowMinutes: summary.codeReviewWindowMinutes,
     codeReviewWindowPresent: summary.codeReviewWindowPresent,
     additionalRateLimits:
-      summary.additionalRateLimits?.map((limit) => ({ ...limit })) ?? readAdditionalRateLimitsFromRawData(summary.rawData),
+      summary.additionalRateLimits?.map((limit) => ({ ...limit })) ??
+      readAdditionalRateLimitsFromRawData(summary.rawData),
     credits: summary.credits ? { ...summary.credits } : readCreditsFromRawData(summary.rawData),
     resetCreditsAvailable: summary.resetCreditsAvailable,
     resetCreditsNextExpiresAt: summary.resetCreditsNextExpiresAt,
+    resetCreditsExcludedIds: summary.resetCreditsExcludedIds ? [...summary.resetCreditsExcludedIds] : undefined,
+    resetCreditsAvailableIds: summary.resetCreditsAvailableIds ? [...summary.resetCreditsAvailableIds] : undefined,
     rawData: summary.rawData
   };
 }
@@ -91,7 +94,11 @@ function readAdditionalRateLimitsFromRawData(rawData: unknown): CodexAdditionalQ
 
     return [
       {
-        limitName: readString(record["limit_name"]) ?? readString(record["limitName"]) ?? readString(record["name"]) ?? "额外模型",
+        limitName:
+          readString(record["limit_name"]) ??
+          readString(record["limitName"]) ??
+          readString(record["name"]) ??
+          "额外模型",
         meteredFeature: readString(record["metered_feature"]) ?? readString(record["meteredFeature"]),
         hourlyPercentage,
         hourlyResetTime: readResetTime(hourly),
@@ -265,7 +272,13 @@ function readResetTime(window: Record<string, unknown> | undefined): number | un
     return resetAt > 1_000_000_000_000 ? Math.floor(resetAt / 1000) : Math.floor(resetAt);
   }
 
-  const resetAfterSeconds = readNumberField(window, "reset_after_seconds", "resetAfterSeconds", "reset_after", "resetAfter");
+  const resetAfterSeconds = readNumberField(
+    window,
+    "reset_after_seconds",
+    "resetAfterSeconds",
+    "reset_after",
+    "resetAfter"
+  );
   if (typeof resetAfterSeconds === "number" && resetAfterSeconds >= 0) {
     return Math.floor(Date.now() / 1000) + Math.floor(resetAfterSeconds);
   }

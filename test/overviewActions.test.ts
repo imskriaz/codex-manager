@@ -10,6 +10,22 @@ import {
 } from "../webview-src/dashboard/overviewSection";
 
 describe("overview actions", () => {
+  it("uses the current account action slot to unload with a reload icon", () => {
+    const card = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+
+    expect(card).toContain("icon={account.isActive ? renderReloadIcon() : renderSwitchIcon()}");
+    expect(card).toContain(
+      'onAction(account.isActive ? "unloadAuth" : "switch", account.isActive ? undefined : account.id)'
+    );
+  });
+
+  it("keeps onboarding available without exposing it in the More menu", () => {
+    const overview = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
+
+    expect(overview).toContain("overview-more-menu");
+    expect(overview).not.toContain('resolveOverviewMenuLabel("onboard", props.lang)');
+  });
+
   it("places the connected-PC picker beside Codex Manager and removes duplicate selectors", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const overview = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");

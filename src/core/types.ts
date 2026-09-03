@@ -73,6 +73,10 @@ export interface CodexQuotaSummary {
   resetCreditsAvailable?: number;
   /** 最近一张可用重置次数的到期时间戳 (秒) */
   resetCreditsNextExpiresAt?: number;
+  /** Provider reset-credit IDs that have been rejected as ineligible locally. */
+  resetCreditsExcludedIds?: string[];
+  /** Provider reset-credit IDs currently available for an attempted reset. */
+  resetCreditsAvailableIds?: string[];
   /** 原始接口返回 */
   rawData?: unknown;
 }
@@ -529,6 +533,7 @@ export interface SharedCodexManagerAccountJson {
     code_review_window_minutes?: number;
     code_review_window_present?: boolean;
     reset_credits_available?: number;
+    reset_credits_excluded_ids?: string[];
     additional_rate_limits?: Array<{
       limit_name?: string;
       metered_feature?: string;

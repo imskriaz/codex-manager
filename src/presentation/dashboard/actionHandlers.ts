@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { resolveAccountHealth } from "../../application/accounts/health";
 import { refreshImportedAccountQuota, refreshSingleQuota } from "../../application/accounts/quota";
-import { fetchResetCredits, consumeResetCredit } from "../../services/quota";
+import { fetchResetCredits, consumeResetCredit, isResetCreditIneligibleError } from "../../services/quota";
 import { fetchDailyUsageBreakdown } from "../../services/usage";
 import {
   archiveCodexCliSession,
@@ -1592,7 +1592,11 @@ async function handleGetResetCredits(
   }
 
   const accountId = account.accountId ?? undefined;
-  const snapshot = await fetchResetCredits(tokens.accessToken, accountId);
+  const snapshot = await fetchResetCredits(
+    tokens.accessToken,
+    accountId,
+    account.quotaSummary?.resetCreditsExcludedIds ?? []
+  );
   return { resetCredits: snapshot };
 }
 
@@ -1871,7 +1875,16 @@ async function handleConsumeResetCredit(
   }
 
   const accountId = account.accountId ?? undefined;
-  await consumeResetCredit(tokens.accessToken, accountId);
+  const attemptedResetId = account.quotaSummary?.resetCreditsAvailableIds?.[0];
+  try {
+    await consumeResetCredit(tokens.accessToken, accountId);
+  } catch (error) {
+    if (attemptedResetId && isResetCreditIneligibleError(error)) {
+      await repo.excludeResetCredit(account.id, attemptedResetId);
+      schedulePublishState?.();
+    }
+    throw error;
+  }
 
   const successMessage = isZh
     ? "速率限制已重置，你可以继续工作了。"

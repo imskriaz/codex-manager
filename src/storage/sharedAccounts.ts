@@ -1,9 +1,17 @@
 import { AccountError, ErrorCode } from "../core/errors";
-import type { CodexManagerAccountRecord, CodexQuotaSummary, CodexTokens, SharedCodexManagerAccountJson } from "../core/types";
+import type {
+  CodexManagerAccountRecord,
+  CodexQuotaSummary,
+  CodexTokens,
+  SharedCodexManagerAccountJson
+} from "../core/types";
 import { buildAccountStorageId } from "../utils/accountIdentity";
 import { extractClaims } from "../utils/jwt";
 
-export function toSharedAccountJson(account: CodexManagerAccountRecord, tokens: CodexTokens): SharedCodexManagerAccountJson {
+export function toSharedAccountJson(
+  account: CodexManagerAccountRecord,
+  tokens: CodexTokens
+): SharedCodexManagerAccountJson {
   // Do not add account.enabled or account.queuePriority here. They select
   // automation accounts on this PC and must not follow a session through
   // backup or encrypted sync.
@@ -127,6 +135,9 @@ export function fromSharedQuota(quota: NonNullable<SharedCodexManagerAccountJson
     codeReviewWindowMinutes: normalizeOptionalNumber(quota.code_review_window_minutes),
     codeReviewWindowPresent: Boolean(quota.code_review_window_present),
     resetCreditsAvailable: normalizeOptionalNumber(quota.reset_credits_available),
+    resetCreditsExcludedIds: Array.isArray(quota.reset_credits_excluded_ids)
+      ? quota.reset_credits_excluded_ids.filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+      : undefined,
     additionalRateLimits: Array.isArray(quota.additional_rate_limits)
       ? quota.additional_rate_limits.map((limit) => ({
           limitName: sanitizeOptionalValue(limit.limit_name) ?? "额外模型",
@@ -225,6 +236,7 @@ function toSharedQuota(summary?: CodexQuotaSummary): SharedCodexManagerAccountJs
     code_review_window_minutes: summary.codeReviewWindowMinutes,
     code_review_window_present: summary.codeReviewWindowPresent,
     reset_credits_available: summary.resetCreditsAvailable,
+    reset_credits_excluded_ids: summary.resetCreditsExcludedIds,
     additional_rate_limits: summary.additionalRateLimits?.map((limit) => ({
       limit_name: limit.limitName,
       metered_feature: limit.meteredFeature,

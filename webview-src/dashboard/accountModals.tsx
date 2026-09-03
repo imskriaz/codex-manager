@@ -283,8 +283,9 @@ export function AddAccountModal(props: {
               props.onCompleteOAuth();
             }}
           >
-            <input
+            <textarea
               class="modal-input oauth-callback-input"
+              rows={3}
               value={props.oauthCallbackUrl}
               placeholder={props.copy.manualCallbackLabel}
               aria-label={props.copy.manualCallbackLabel}

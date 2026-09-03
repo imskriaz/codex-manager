@@ -103,7 +103,8 @@ export async function refreshQuota(
       tokensUpdated = true;
     }
 
-    const accountId = account.accountId ?? extractClaims(effectiveTokens.idToken, effectiveTokens.accessToken).accountId;
+    const accountId =
+      account.accountId ?? extractClaims(effectiveTokens.idToken, effectiveTokens.accessToken).accountId;
     const primary = await requestQuotaUsage(effectiveTokens.accessToken, accountId);
     const usageResult =
       accountId && !primary.ok && shouldRetryWithoutWorkspace(primary.status, primary.raw)
@@ -151,7 +152,10 @@ export async function refreshQuota(
   }
 }
 
-async function requestQuotaUsage(accessToken: string, accountId?: string): Promise<{
+async function requestQuotaUsage(
+  accessToken: string,
+  accountId?: string
+): Promise<{
   ok: boolean;
   status: number;
   raw: string;
@@ -224,7 +228,17 @@ function normalizeOptionalScalar(value: unknown): string | undefined {
   }
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const record = value as Record<string, unknown>;
-    for (const key of ["value", "timestamp", "ts", "seconds", "sec", "unix", "epoch", "epoch_seconds", "epochSeconds"]) {
+    for (const key of [
+      "value",
+      "timestamp",
+      "ts",
+      "seconds",
+      "sec",
+      "unix",
+      "epoch",
+      "epoch_seconds",
+      "epochSeconds"
+    ]) {
       const normalized = normalizeOptionalScalar(record[key]);
       if (normalized) {
         return normalized;
@@ -276,8 +290,12 @@ function parseUsage(usage: CodexUsageResponse): CodexQuotaSummary {
     weeklyWindowPresent: weeklyPercentage !== undefined,
     codeReviewPercentage: crPercentage ?? 0,
     codeReviewResetTime: crWindow ? normalizeReset(crWindow) : undefined,
-    codeReviewRequestsLeft: crWindow ? pickNumberField(crWindow, "remaining", "requests_left", "requestsLeft") : undefined,
-    codeReviewRequestsLimit: crWindow ? pickNumberField(crWindow, "limit", "requests_limit", "requestsLimit") : undefined,
+    codeReviewRequestsLeft: crWindow
+      ? pickNumberField(crWindow, "remaining", "requests_left", "requestsLeft")
+      : undefined,
+    codeReviewRequestsLimit: crWindow
+      ? pickNumberField(crWindow, "limit", "requests_limit", "requestsLimit")
+      : undefined,
     codeReviewWindowMinutes: crWindow ? normalizeWindow(crWindow) : undefined,
     codeReviewWindowPresent: crPercentage !== undefined,
     additionalRateLimits: parseAdditionalRateLimits(additionalRateLimitItems, percentScale),
@@ -450,7 +468,10 @@ function sortWindowsByDuration(windows: UsageWindowInfo[]): UsageWindowInfo[] {
 /**
  * 规范化剩余百分比 (转换为 0-100 的范围)
  */
-function resolveRemainingPercentage(window: UsageWindowInfo | undefined, scale: "percent" | "ratio"): number | undefined {
+function resolveRemainingPercentage(
+  window: UsageWindowInfo | undefined,
+  scale: "percent" | "ratio"
+): number | undefined {
   if (!window) {
     return undefined;
   }
@@ -460,7 +481,10 @@ function resolveRemainingPercentage(window: UsageWindowInfo | undefined, scale: 
     return 100 - usedPercent;
   }
 
-  const remainingPercent = normalizePercentValue(pickNumberField(window, "remaining_percent", "remainingPercent"), scale);
+  const remainingPercent = normalizePercentValue(
+    pickNumberField(window, "remaining_percent", "remainingPercent"),
+    scale
+  );
   if (remainingPercent !== undefined) {
     return remainingPercent;
   }
@@ -506,7 +530,10 @@ function readOptionalString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-function pickNumberField<T extends string>(source: Partial<Record<T, number>> | undefined, ...keys: T[]): number | undefined {
+function pickNumberField<T extends string>(
+  source: Partial<Record<T, number>> | undefined,
+  ...keys: T[]
+): number | undefined {
   if (!source) {
     return undefined;
   }
@@ -514,14 +541,17 @@ function pickNumberField<T extends string>(source: Partial<Record<T, number>> | 
   return pickNumber(...keys.map((key) => source[key]));
 }
 
-function pickWindow(source: UsageRateLimitInfo | CodexUsageResponse["rate_limit"] | undefined, kind: "primary" | "secondary"): UsageWindowInfo | undefined {
+function pickWindow(
+  source: UsageRateLimitInfo | CodexUsageResponse["rate_limit"] | undefined,
+  kind: "primary" | "secondary"
+): UsageWindowInfo | undefined {
   if (!source) {
     return undefined;
   }
 
   return kind === "primary"
-    ? source.primary_window ?? source.primaryWindow
-    : source.secondary_window ?? source.secondaryWindow;
+    ? (source.primary_window ?? source.primaryWindow)
+    : (source.secondary_window ?? source.secondaryWindow);
 }
 
 function detectUsagePercentScale(...windows: Array<UsageWindowInfo | undefined>): "percent" | "ratio" {
@@ -549,7 +579,13 @@ function normalizeReset(window?: UsageWindowInfo): number | undefined {
   if (typeof resetAt === "number") {
     return resetAt > 1_000_000_000_000 ? Math.floor(resetAt / 1000) : Math.floor(resetAt);
   }
-  const resetAfterSeconds = pickNumberField(window, "reset_after_seconds", "resetAfterSeconds", "reset_after", "resetAfter");
+  const resetAfterSeconds = pickNumberField(
+    window,
+    "reset_after_seconds",
+    "resetAfterSeconds",
+    "reset_after",
+    "resetAfter"
+  );
   if (typeof resetAfterSeconds === "number" && resetAfterSeconds >= 0) {
     return Math.floor(Date.now() / 1000) + resetAfterSeconds;
   }
@@ -631,7 +667,8 @@ function getQuotaCacheGeneration(accountId: string): number {
  */
 export async function fetchResetCredits(
   accessToken: string,
-  accountId?: string
+  accountId?: string,
+  excludedIds: readonly string[] = []
 ): Promise<CodexResetCreditsSnapshot> {
   const headers = new Headers({
     Authorization: `Bearer ${accessToken}`,
@@ -666,7 +703,18 @@ export async function fetchResetCredits(
     });
   }
 
-  return parseResetCreditsSnapshot(JSON.parse(raw) as Record<string, unknown>);
+  return parseResetCreditsSnapshot(JSON.parse(raw) as Record<string, unknown>, excludedIds);
+}
+
+/** Returns true when the provider says this particular reset credit cannot be redeemed. */
+export function isResetCreditIneligibleError(error: unknown): boolean {
+  if (!(error instanceof APIError) || error.statusCode !== 403) {
+    return false;
+  }
+  return (
+    error.context?.["errorCode"] === "rate_limit_reset_ineligible" ||
+    error.message.includes("rate_limit_reset_ineligible")
+  );
 }
 
 /**
@@ -675,10 +723,7 @@ export async function fetchResetCredits(
  * @param accessToken - access token
  * @param accountId - ChatGPT account ID
  */
-export async function consumeResetCredit(
-  accessToken: string,
-  accountId?: string
-): Promise<void> {
+export async function consumeResetCredit(accessToken: string, accountId?: string): Promise<void> {
   const headers = new Headers({
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
@@ -722,19 +767,28 @@ export async function consumeResetCredit(
   }
 }
 
-function parseResetCreditsSnapshot(payload: Record<string, unknown>): CodexResetCreditsSnapshot {
+function parseResetCreditsSnapshot(
+  payload: Record<string, unknown>,
+  excludedIds: readonly string[] = []
+): CodexResetCreditsSnapshot {
   const dataRecord = isResetCreditRecord(payload["data"]) ? payload["data"] : undefined;
   const creditsValue = payload["credits"] ?? dataRecord?.["credits"];
-  const credits: CodexResetCredit[] = Array.isArray(creditsValue)
+  const allCredits: CodexResetCredit[] = Array.isArray(creditsValue)
     ? creditsValue.filter(isResetCreditRecord).map(parseResetCreditRecord)
     : [];
+  const excluded = new Set(excludedIds.filter((id) => id.trim()));
+  const credits = allCredits.filter((credit) => !credit.id || !excluded.has(credit.id));
 
-  const availableCount =
+  const reportedAvailableCount =
     normalizeOptionalInt(payload["available_count"]) ??
     normalizeOptionalInt(payload["availableCount"]) ??
     normalizeOptionalInt(dataRecord?.["available_count"]) ??
     normalizeOptionalInt(dataRecord?.["availableCount"]) ??
-    credits.filter(isAvailableResetCredit).length;
+    allCredits.filter(isAvailableResetCredit).length;
+  const excludedAvailableCount = allCredits.filter(
+    (credit) => credit.id && excluded.has(credit.id) && isAvailableResetCredit(credit)
+  ).length;
+  const availableCount = Math.max(0, reportedAvailableCount - excludedAvailableCount);
 
   const explicitNextExpiresAt =
     readResetCreditTimestamp(payload, [

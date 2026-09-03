@@ -13,7 +13,8 @@ import {
   QuotaRefreshResult,
   refreshQuota,
   fetchResetCredits,
-  consumeResetCredit
+  consumeResetCredit,
+  isResetCreditIneligibleError
 } from "../../services";
 import {
   recordAccountQuotaCheck,
@@ -295,14 +296,23 @@ async function syncResetCreditsSnapshot(
   remoteAccountId?: string
 ): Promise<void> {
   try {
-    const snapshot = await fetchResetCredits(accessToken, remoteAccountId);
+    const excludedIds = updatedAccount.quotaSummary?.resetCreditsExcludedIds ?? [];
+    const snapshot = excludedIds.length
+      ? await fetchResetCredits(accessToken, remoteAccountId, excludedIds)
+      : await fetchResetCredits(accessToken, remoteAccountId);
     if (updatedAccount.quotaSummary) {
       updatedAccount.quotaSummary.resetCreditsAvailable = snapshot.availableCount;
       updatedAccount.quotaSummary.resetCreditsNextExpiresAt = snapshot.nextExpiresAt;
+      updatedAccount.quotaSummary.resetCreditsAvailableIds = snapshot.credits
+        .filter((credit) => credit.status === undefined || credit.status === "available")
+        .map((credit) => credit.id)
+        .filter((id): id is string => Boolean(id));
     }
-    await repo
-      .updateResetCreditsSnapshot(accountId, snapshot.availableCount, snapshot.nextExpiresAt)
-      .catch(() => undefined);
+    const availableIds = updatedAccount.quotaSummary?.resetCreditsAvailableIds;
+    const update = availableIds?.length
+      ? repo.updateResetCreditsSnapshot(accountId, snapshot.availableCount, snapshot.nextExpiresAt, availableIds)
+      : repo.updateResetCreditsSnapshot(accountId, snapshot.availableCount, snapshot.nextExpiresAt);
+    await update.catch(() => undefined);
     view?.refresh();
   } catch {
     return;
@@ -460,18 +470,25 @@ async function evaluateAutoSwitchForActiveQuota(
   const next = candidates[0];
   if (!next) {
     if (config.get<boolean>(AUTO_RESET_ENABLED, false)) {
-      const resetThreshold = normalizeAutoResetWeeklyThreshold(
-        config.get<number>(AUTO_RESET_WEEKLY_THRESHOLD, 1)
-      );
+      const resetThreshold = normalizeAutoResetWeeklyThreshold(config.get<number>(AUTO_RESET_WEEKLY_THRESHOLD, 1));
       if (
         (active.quotaSummary?.resetCreditsAvailable ?? 0) > 0 &&
         hasComparableWeeklyWindow(active) &&
         active.quotaSummary.weeklyPercentage <= resetThreshold
       ) {
         try {
-          const resetResult = await executeActiveResetPlan(repo, view, active, hourlyThreshold, weeklyThreshold, resetThreshold);
+          const resetResult = await executeActiveResetPlan(
+            repo,
+            view,
+            active,
+            hourlyThreshold,
+            weeklyThreshold,
+            resetThreshold
+          );
           if (!resetResult && options.userInitiated) {
-            void vscode.window.showWarningMessage("Auto Select cancelled — account state changed. Refresh and try again.");
+            void vscode.window.showWarningMessage(
+              "Auto Select cancelled — account state changed. Refresh and try again."
+            );
           }
           return resetResult;
         } catch (error) {
@@ -498,7 +515,9 @@ async function evaluateAutoSwitchForActiveQuota(
             weeklyThreshold
           );
           if (!fallbackResult && options.userInitiated) {
-            void vscode.window.showWarningMessage("Auto Select cancelled — account state changed. Refresh and try again.");
+            void vscode.window.showWarningMessage(
+              "Auto Select cancelled — account state changed. Refresh and try again."
+            );
           }
           return fallbackResult;
         }
@@ -511,7 +530,8 @@ async function evaluateAutoSwitchForActiveQuota(
             !account.quotaError &&
             hasCurrentSessionQuotaSnapshot(account) &&
             (account.quotaSummary?.resetCreditsAvailable ?? 0) > 0 &&
-            hasComparableWeeklyWindow(account) && account.quotaSummary!.weeklyPercentage <= resetThreshold
+            hasComparableWeeklyWindow(account) &&
+            account.quotaSummary!.weeklyPercentage <= resetThreshold
         )
         .sort(compareAutoSwitchCandidate)[0];
       if (resetCandidate) {
@@ -527,7 +547,9 @@ async function evaluateAutoSwitchForActiveQuota(
             resetThreshold
           );
           if (!resetResult && options.userInitiated) {
-            void vscode.window.showWarningMessage("Auto Select cancelled — account state changed. Refresh and try again.");
+            void vscode.window.showWarningMessage(
+              "Auto Select cancelled — account state changed. Refresh and try again."
+            );
           }
           return resetResult;
         } catch (error) {
@@ -554,7 +576,9 @@ async function evaluateAutoSwitchForActiveQuota(
             weeklyThreshold
           );
           if (!fallbackResult && options.userInitiated) {
-            void vscode.window.showWarningMessage("Auto Select cancelled — account state changed. Refresh and try again.");
+            void vscode.window.showWarningMessage(
+              "Auto Select cancelled — account state changed. Refresh and try again."
+            );
           }
           return fallbackResult;
         }
@@ -727,9 +751,7 @@ async function refreshAllBeforeAutoSwitchIfDue(
   lastAutoSwitchSafetyRefreshAt = now;
   let allRefreshed = true;
   const task = (async (): Promise<boolean> => {
-    const accounts = (await repo.listAccounts()).filter(
-      (account) => account.enabled !== false && !account.isActive
-    );
+    const accounts = (await repo.listAccounts()).filter((account) => account.enabled !== false && !account.isActive);
     for (const account of accounts) {
       if (
         !bypassGap &&
@@ -774,7 +796,15 @@ async function executeActiveResetPlan(
   if (!tokens?.accessToken) {
     throw new Error(`No access token available for reset-plan account ${active.email}`);
   }
-  await consumeResetCredit(tokens.accessToken, active.accountId ?? undefined);
+  const attemptedResetId = active.quotaSummary?.resetCreditsAvailableIds?.[0];
+  try {
+    await consumeResetCredit(tokens.accessToken, active.accountId ?? undefined);
+  } catch (error) {
+    if (attemptedResetId && isResetCreditIneligibleError(error)) {
+      await repo.excludeResetCredit(active.id, attemptedResetId);
+    }
+    throw error;
+  }
   const refreshed = await refreshSingleQuota(repo, view, active.id, {
     announce: false,
     warnQuota: false,
@@ -827,7 +857,15 @@ async function executeResetPlan(
   if (!tokens?.accessToken) {
     throw new Error(`No access token available for reset-plan account ${next.email}`);
   }
-  await consumeResetCredit(tokens.accessToken, next.accountId ?? undefined);
+  const attemptedResetId = next.quotaSummary?.resetCreditsAvailableIds?.[0];
+  try {
+    await consumeResetCredit(tokens.accessToken, next.accountId ?? undefined);
+  } catch (error) {
+    if (attemptedResetId && isResetCreditIneligibleError(error)) {
+      await repo.excludeResetCredit(next.id, attemptedResetId);
+    }
+    throw error;
+  }
   const refreshed = await refreshSingleQuota(repo, view, next.id, {
     announce: false,
     warnQuota: false,
@@ -1050,12 +1088,7 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
     threshold: number;
   }> = [];
   const weeklyLabel = hasComparableWeeklyWindow(account)
-    ? resolveLongQuotaLabel(
-        account.planType,
-        account.quotaSummary.weeklyWindowMinutes,
-        getLanguage(),
-        copy.weeklyLabel
-      )
+    ? resolveLongQuotaLabel(account.planType, account.quotaSummary.weeklyWindowMinutes, getLanguage(), copy.weeklyLabel)
     : undefined;
   if (hourlyQuotaControlEnabled && hasComparableHourlyWindow(account)) {
     checks.push({
@@ -1093,9 +1126,7 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
     quotaWarningCounts.set(warnKey, warningCount + 1);
     const accountLabel = account.email;
     const switchTarget = selectQuotaWarningSwitchTarget(accounts, account, check.dimension, check.threshold);
-    const switchAccount = switchTarget
-      ? copy.switchAccount(formatAccountToastLabel(switchTarget))
-      : undefined;
+    const switchAccount = switchTarget ? copy.switchAccount(formatAccountToastLabel(switchTarget)) : undefined;
     const resetAccount = copy.resetAccount(accountLabel);
     const resetAvailable = (account.quotaSummary.resetCreditsAvailable ?? 0) > 0;
     const actions = [
@@ -1124,20 +1155,15 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
     ) {
       continue;
     }
-    void vscode.window
-      .showWarningMessage(
-        warningMessage,
-        ...actions
-      )
-      .then((selection) => {
-        if (switchAccount && switchTarget && selection === switchAccount) {
-          void vscode.commands.executeCommand("codexManager.switchAccount", switchTarget);
-        } else if (selection === resetAccount) {
-          void vscode.commands.executeCommand("codexManager.consumeResetCredit", account);
-        } else if (selection === copy.selectAccount) {
-          void vscode.commands.executeCommand("codexManager.switchAccount");
-        }
-      });
+    void vscode.window.showWarningMessage(warningMessage, ...actions).then((selection) => {
+      if (switchAccount && switchTarget && selection === switchAccount) {
+        void vscode.commands.executeCommand("codexManager.switchAccount", switchTarget);
+      } else if (selection === resetAccount) {
+        void vscode.commands.executeCommand("codexManager.consumeResetCredit", account);
+      } else if (selection === copy.selectAccount) {
+        void vscode.commands.executeCommand("codexManager.switchAccount");
+      }
+    });
   }
 }
 
@@ -1155,8 +1181,10 @@ function quotaSnapshotSafetyAgeMs(): number {
 }
 
 function hasFreshQuotaSnapshot(account: CodexManagerAccountRecord, now = Date.now()): boolean {
-  return hasCurrentSessionQuotaSnapshot(account) &&
-    (typeof account.lastQuotaAt !== "number" || now - account.lastQuotaAt <= quotaSnapshotSafetyAgeMs());
+  return (
+    hasCurrentSessionQuotaSnapshot(account) &&
+    (typeof account.lastQuotaAt !== "number" || now - account.lastQuotaAt <= quotaSnapshotSafetyAgeMs())
+  );
 }
 
 function applyOptionalCoordinatedQuotaSnapshot(

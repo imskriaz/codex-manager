@@ -11,11 +11,13 @@ const { consumeResetCreditMock } = vi.hoisted(() => ({
 const { unloadAuthFileMock } = vi.hoisted(() => ({
   unloadAuthFileMock: vi.fn()
 }));
-const { readCodexCliSessionsMock, readCodexCliSessionSummaryMock, readCodexCliSessionMessagesMock } = vi.hoisted(() => ({
-  readCodexCliSessionsMock: vi.fn(),
-  readCodexCliSessionSummaryMock: vi.fn(),
-  readCodexCliSessionMessagesMock: vi.fn()
-}));
+const { readCodexCliSessionsMock, readCodexCliSessionSummaryMock, readCodexCliSessionMessagesMock } = vi.hoisted(
+  () => ({
+    readCodexCliSessionsMock: vi.fn(),
+    readCodexCliSessionSummaryMock: vi.fn(),
+    readCodexCliSessionMessagesMock: vi.fn()
+  })
+);
 
 vi.mock("../src/services/quota", async () => {
   const actual = await vi.importActual<typeof import("../src/services/quota")>("../src/services/quota");
@@ -34,7 +36,9 @@ vi.mock("../src/codex", async () => {
 });
 
 vi.mock("../src/services/codexSessionResume", async () => {
-  const actual = await vi.importActual<typeof import("../src/services/codexSessionResume")>("../src/services/codexSessionResume");
+  const actual = await vi.importActual<typeof import("../src/services/codexSessionResume")>(
+    "../src/services/codexSessionResume"
+  );
   return {
     ...actual,
     readCodexCliSessions: readCodexCliSessionsMock,
@@ -51,6 +55,7 @@ import {
 } from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
 import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
+import { APIError } from "../src/core/errors";
 
 let operationDirectory: string;
 
@@ -86,9 +91,9 @@ describe("executeDashboardActionMessage", () => {
       ...createContext(),
       context: { workspaceState: { update: workspaceUpdate } } as unknown as DashboardActionContext["context"],
       repo: {
-        listAccounts: vi.fn().mockResolvedValue([
-          { id: "active-account", email: "active@example.com", isActive: true, enabled: true }
-        ]),
+        listAccounts: vi
+          .fn()
+          .mockResolvedValue([{ id: "active-account", email: "active@example.com", isActive: true, enabled: true }]),
         setAccountEnabled: vi.fn().mockResolvedValue(undefined),
         syncActiveAccountFromAuthFile,
         flush: vi.fn().mockResolvedValue(undefined)
@@ -148,17 +153,14 @@ describe("executeDashboardActionMessage", () => {
       payload: { path: "/" }
     });
 
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
-      "codexManager.openWebDashboard",
-      { pathname: "/" }
-    );
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.openWebDashboard", { pathname: "/" });
     expect(result.status).toBe("completed");
     expect(result.payload?.notice).toEqual({ level: "info", message: "Opened the Web Dashboard." });
   });
 
   it("returns a visible failure and does not open an archived session", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
-      get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback
+      get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)
     } as unknown as vscode.WorkspaceConfiguration);
     readCodexCliSessionSummaryMock.mockResolvedValueOnce({
       id: "01a04882-d037-7a42-ad24-9afb61901188",
@@ -182,7 +184,7 @@ describe("executeDashboardActionMessage", () => {
 
   it("rejects a session opened through a different project without reading its messages", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
-      get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback
+      get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)
     } as unknown as vscode.WorkspaceConfiguration);
     const sessionProject = await fs.mkdtemp(path.join(os.tmpdir(), "codex-session-project-"));
     const requestedProject = await fs.mkdtemp(path.join(os.tmpdir(), "codex-request-project-"));
@@ -215,9 +217,8 @@ describe("executeDashboardActionMessage", () => {
   });
 
   it("returns captured output and success feedback for a workspace terminal command", async () => {
-    const command = process.platform === "win32"
-      ? "Write-Output dashboard-terminal-success"
-      : "printf dashboard-terminal-success";
+    const command =
+      process.platform === "win32" ? "Write-Output dashboard-terminal-success" : "printf dashboard-terminal-success";
     const result = await executeDashboardActionMessage(createContext(), {
       type: "dashboard:action",
       action: "runWorkspaceTerminalCommand",
@@ -232,9 +233,10 @@ describe("executeDashboardActionMessage", () => {
   });
 
   it("keeps terminal output while returning a truthful failed action state", async () => {
-    const command = process.platform === "win32"
-      ? "Write-Error dashboard-terminal-failed; exit 9"
-      : "printf dashboard-terminal-failed >&2; exit 9";
+    const command =
+      process.platform === "win32"
+        ? "Write-Error dashboard-terminal-failed; exit 9"
+        : "printf dashboard-terminal-failed >&2; exit 9";
     const result = await executeDashboardActionMessage(createContext(), {
       type: "dashboard:action",
       action: "runWorkspaceTerminalCommand",
@@ -309,7 +311,9 @@ describe("executeDashboardActionMessage", () => {
 
   it("returns a visible reload outcome when the VS Code reload prompt is postponed", async () => {
     setCurrentWindowRuntimeAccountId("account-before-reload");
-    vi.mocked(vscode.window.showInformationMessage).mockReset().mockResolvedValue("Later" as never);
+    vi.mocked(vscode.window.showInformationMessage)
+      .mockReset()
+      .mockResolvedValue("Later" as never);
     const account = { id: "account-next", email: "next@example.com" };
     const context = {
       ...createContext(),
@@ -670,6 +674,54 @@ describe("executeDashboardActionMessage", () => {
     expect(result.status).toBe("completed");
   });
 
+  it("fences an ineligible reset credit by ID and publishes the updated count", async () => {
+    const ineligible = new APIError("Consume reset credit returned 403: rate_limit_reset_ineligible", {
+      statusCode: 403,
+      context: { errorCode: "rate_limit_reset_ineligible" }
+    });
+    consumeResetCreditMock.mockReset().mockRejectedValueOnce(ineligible);
+    const excludeResetCredit = vi.fn().mockResolvedValue(undefined);
+    const schedulePublishState = vi.fn();
+    const repo = {
+      getAccount: vi.fn(async () => ({
+        id: "account-1",
+        email: "dev@example.com",
+        accountId: "acct-1",
+        quotaSummary: {
+          resetCreditsAvailable: 2,
+          resetCreditsAvailableIds: ["old-credit", "new-credit"]
+        }
+      })),
+      getTokens: vi.fn(async () => ({ accessToken: "access-token" })),
+      excludeResetCredit
+    } as unknown as DashboardActionContext["repo"];
+
+    const result = await executeDashboardActionMessage(
+      {
+        context: {} as DashboardActionContext["context"],
+        repo,
+        resolveLanguage: () => "en",
+        schedulePublishState,
+        publishState: vi.fn(),
+        oauth: {} as DashboardActionContext["oauth"],
+        announcements: {} as DashboardActionContext["announcements"],
+        getAnnouncementOptions: () => ({ version: "0.1.15", locale: "en" })
+      },
+      {
+        type: "dashboard:action",
+        action: "consumeResetCredit",
+        requestId: "req-ineligible",
+        accountId: "account-1",
+        payload: { confirmed: true }
+      }
+    );
+
+    expect(excludeResetCredit).toHaveBeenCalledWith("account-1", "old-credit");
+    expect(schedulePublishState).toHaveBeenCalled();
+    expect(result.status).toBe("failed");
+    consumeResetCreditMock.mockReset().mockResolvedValue(undefined);
+  });
+
   it("keeps dashboard refresh separate from encrypted sync when enabled", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
       get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback)
@@ -899,12 +951,15 @@ describe("executeDashboardActionMessage", () => {
       setAccountEnabled: vi.fn().mockResolvedValue({ ...account, enabled: false })
     } as unknown as DashboardActionContext["repo"];
 
-    const result = await executeDashboardActionMessage({ ...createContext(), repo }, {
-      type: "dashboard:action",
-      action: "toggleAccountEnabled",
-      requestId: "req-toggle-background-busy",
-      accountId: account.id
-    });
+    const result = await executeDashboardActionMessage(
+      { ...createContext(), repo },
+      {
+        type: "dashboard:action",
+        action: "toggleAccountEnabled",
+        requestId: "req-toggle-background-busy",
+        accountId: account.id
+      }
+    );
 
     expect(result.status).toBe("completed");
     expect(repo.setAccountEnabled).toHaveBeenCalledWith(account.id, false);
@@ -1046,9 +1101,9 @@ describe("executeDashboardActionMessage", () => {
     ];
     const repo = {
       listAccounts: vi.fn().mockResolvedValue(accounts),
-      getTokens: vi.fn(async (id: string) => id === "missing-credentials"
-        ? undefined
-        : { accessToken: "access", idToken: "id", refreshToken: "refresh" }),
+      getTokens: vi.fn(async (id: string) =>
+        id === "missing-credentials" ? undefined : { accessToken: "access", idToken: "id", refreshToken: "refresh" }
+      ),
       setAccountEnabled: vi.fn().mockResolvedValue(undefined)
     } as unknown as DashboardActionContext["repo"];
     const context = { ...createContext(), repo };
@@ -1084,11 +1139,14 @@ describe("executeDashboardActionMessage", () => {
       setAccountEnabled: vi.fn().mockRejectedValue(new Error("Account is claimed by another PC."))
     } as unknown as DashboardActionContext["repo"];
 
-    const result = await executeDashboardActionMessage({ ...createContext(), repo }, {
-      type: "dashboard:action",
-      action: "enableAllValid",
-      requestId: "req-enable-all-valid-partial"
-    });
+    const result = await executeDashboardActionMessage(
+      { ...createContext(), repo },
+      {
+        type: "dashboard:action",
+        action: "enableAllValid",
+        requestId: "req-enable-all-valid-partial"
+      }
+    );
 
     expect(result.status).toBe("completed");
     expect(result.payload?.batchResult).toMatchObject({
@@ -1099,7 +1157,8 @@ describe("executeDashboardActionMessage", () => {
     });
     expect(result.payload?.notice).toEqual({
       level: "warning",
-      message: "Enabled 0 valid accounts; skipped 0 invalid accounts. 1 account failed. First error: Account is claimed by another PC."
+      message:
+        "Enabled 0 valid accounts; skipped 0 invalid accounts. 1 account failed. First error: Account is claimed by another PC."
     });
   });
 
@@ -1110,7 +1169,8 @@ describe("executeDashboardActionMessage", () => {
     ];
     const repo = {
       listAccounts: vi.fn().mockResolvedValue(accounts),
-      setAccountEnabled: vi.fn()
+      setAccountEnabled: vi
+        .fn()
         .mockResolvedValueOnce(undefined)
         .mockRejectedValueOnce(new Error("local index is read-only"))
     } as unknown as DashboardActionContext["repo"];
