@@ -1,8 +1,18 @@
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import { resolveCreateOAuthLinkLabel } from "../webview-src/dashboard/accountModals";
+import { resolveAccountAccessAction } from "../webview-src/dashboard/savedAccountCard";
 
 describe("add account OAuth actions", () => {
+  it("uses one context-specific access action per account", () => {
+    expect(resolveAccountAccessAction({ isActive: false, isCurrentWindowAccount: false })).toBe("switch");
+    expect(resolveAccountAccessAction({ isActive: true, isCurrentWindowAccount: true })).toBe("unloadAuth");
+    expect(resolveAccountAccessAction({ isActive: true, isCurrentWindowAccount: false })).toBe("reloadPrompt");
+
+    const card = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+    expect(card).not.toContain("account.isActive && !account.isCurrentWindowAccount ?");
+  });
+
   it("shows Create Link before the authorization actions are available", () => {
     expect(resolveCreateOAuthLinkLabel("en")).toBe("Create Link");
 

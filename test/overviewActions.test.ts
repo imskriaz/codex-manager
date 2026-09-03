@@ -13,10 +13,11 @@ describe("overview actions", () => {
   it("uses the current account action slot to unload with a reload icon", () => {
     const card = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
 
-    expect(card).toContain("icon={account.isActive ? renderReloadIcon() : renderSwitchIcon()}");
+    expect(card).toContain("const accessAction = resolveAccountAccessAction(account);");
     expect(card).toContain(
-      'onAction(account.isActive ? "unloadAuth" : "switch", account.isActive ? undefined : account.id)'
+      'const accessActionIcon = accessAction === "switch" ? renderSwitchIcon() : renderReloadIcon();'
     );
+    expect(card).toContain("onClick={runAccessAction}");
   });
 
   it("keeps onboarding available without exposing it in the More menu", () => {

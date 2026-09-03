@@ -29,6 +29,13 @@ export function resolvePrimaryAccountControl(
   return account.healthKind === "reauthorize" ? "reauthorize" : "enablement";
 }
 
+export function resolveAccountAccessAction(
+  account: Pick<DashboardAccountViewModel, "isActive" | "isCurrentWindowAccount">
+): "switch" | "unloadAuth" | "reloadPrompt" {
+  if (!account.isActive) return "switch";
+  return account.isCurrentWindowAccount ? "unloadAuth" : "reloadPrompt";
+}
+
 export function resolveCompactIdentityBadge(
   runningDeviceLabel?: string
 ): { kind: "running-device"; label: string } | undefined {
@@ -318,6 +325,21 @@ export function SavedAccountCard(props: {
       : copy.syncProfileBtn;
   const hasErrorHealth = isAccountAttention(account);
   const healthReason = resolveCardHealthReason(account);
+  const accessAction = resolveAccountAccessAction(account);
+  const accessActionLabel =
+    accessAction === "switch" ? copy.switchBtn : accessAction === "reloadPrompt" ? copy.reloadBtn : unloadLabel;
+  const accessActionIcon = accessAction === "switch" ? renderSwitchIcon() : renderReloadIcon();
+  const accessActionPending =
+    accessAction === "switch"
+      ? props.switchPending
+      : accessAction === "reloadPrompt"
+        ? props.reloadPromptPending
+        : false;
+  const accessActionDisabled =
+    accessAction === "switch" ? !canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled) : props.busy;
+  const runAccessAction = (): void => {
+    onAction(accessAction, accessAction === "unloadAuth" ? undefined : account.id);
+  };
   const cardStateClass = [
     account.isActive ? "active" : "",
     !account.enabled ? "account-disabled" : "",
@@ -591,16 +613,12 @@ export function SavedAccountCard(props: {
             </button>
             {renderPrimaryAccountControl()}
             <ActionButton
-              icon={account.isActive ? renderReloadIcon() : renderSwitchIcon()}
+              icon={accessActionIcon}
               iconOnly
-              label={account.isActive ? unloadLabel : copy.switchBtn}
-              pending={account.isActive ? false : props.switchPending}
-              disabled={
-                account.isActive ? props.busy : !canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled)
-              }
-              onClick={() =>
-                onAction(account.isActive ? "unloadAuth" : "switch", account.isActive ? undefined : account.id)
-              }
+              label={accessActionLabel}
+              pending={accessActionPending}
+              disabled={accessActionDisabled}
+              onClick={runAccessAction}
             />
             <ActionButton
               icon={renderRefreshIcon()}
@@ -901,27 +919,13 @@ export function SavedAccountCard(props: {
                 </>
               </div>
               <div class="saved-actions" onClick={stopFlip}>
-                {account.isActive && !account.isCurrentWindowAccount ? (
-                  <ActionButton
-                    icon={renderReloadIcon()}
-                    iconOnly
-                    label={copy.reloadBtn}
-                    pending={props.reloadPromptPending}
-                    disabled={props.busy}
-                    onClick={() => onAction("reloadPrompt", account.id)}
-                  />
-                ) : null}
                 <ActionButton
-                  icon={account.isActive ? renderReloadIcon() : renderSwitchIcon()}
+                  icon={accessActionIcon}
                   iconOnly
-                  label={account.isActive ? unloadLabel : copy.switchBtn}
-                  pending={account.isActive ? false : props.switchPending}
-                  disabled={
-                    account.isActive ? props.busy : !canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled)
-                  }
-                  onClick={() =>
-                    onAction(account.isActive ? "unloadAuth" : "switch", account.isActive ? undefined : account.id)
-                  }
+                  label={accessActionLabel}
+                  pending={accessActionPending}
+                  disabled={accessActionDisabled}
+                  onClick={runAccessAction}
                 />
                 <ActionButton
                   icon={renderRefreshIcon()}
