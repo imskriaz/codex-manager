@@ -2,6 +2,10 @@
 
 - Canonical local UI test surface: `http://127.0.0.1:39875`. Use it for read-only browser smoke checks, responsive screenshots, console-error checks, and performance timing after dashboard changes.
 
+# Work Recap Rule
+
+- Before taking action on any user request, provide a detailed recap of the intended changes, verification, and release/commit implications so scope is explicit.
+
 # User-Initiated Action Feedback Rule
 
 - Every user-initiated action must reach a visible terminal state: success, warning, cancellation, or failure.

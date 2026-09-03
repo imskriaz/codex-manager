@@ -215,7 +215,8 @@ describe("overview actions", () => {
 
     expect(source).toContain('class="overview-reset-credit"');
     expect(resolveResetCreditBadgeLabel("en")).toBe("Reset");
-    expect(source).toContain("resolveResetCreditBadgeLabel(props.lang)");
+    expect(source).toContain("<ResetCreditIcon />");
+    expect(source).toContain('class="saved-reset-count"');
     expect(source).not.toContain("overview-quota-notice");
     expect(source).not.toContain("Weekly quota remaining");
     expect(source).not.toContain("Auto-switch is enabled");

@@ -106,6 +106,12 @@ describe("resolveStatusBarAccount", () => {
 
     expect(resolveStatusBarAccount([windowAccount], windowAccount.id)).toBe(windowAccount);
   });
+
+  it("returns no account when nothing is running instead of selecting an arbitrary saved account", () => {
+    const savedAccount = { ...account, id: "saved", isActive: false };
+
+    expect(resolveStatusBarAccount([savedAccount])).toBeUndefined();
+  });
 });
 
 describe("renderAccountPanel", () => {

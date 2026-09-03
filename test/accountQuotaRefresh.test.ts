@@ -3,20 +3,26 @@ import * as vscode from "vscode";
 import type { CodexManagerAccountRecord, CodexTokens } from "../src/core/types";
 import type { AccountsRepository } from "../src/storage";
 
-const { refreshQuotaMock, fetchResetCreditsMock, consumeResetCreditMock, clearTokenAutomationErrorMock } = vi.hoisted(() => ({
-  refreshQuotaMock: vi.fn(),
-  fetchResetCreditsMock: vi.fn(),
-  consumeResetCreditMock: vi.fn(),
-  clearTokenAutomationErrorMock: vi.fn()
-}));
+const { refreshQuotaMock, fetchResetCreditsMock, consumeResetCreditMock, clearTokenAutomationErrorMock } = vi.hoisted(
+  () => ({
+    refreshQuotaMock: vi.fn(),
+    fetchResetCreditsMock: vi.fn(),
+    consumeResetCreditMock: vi.fn(),
+    clearTokenAutomationErrorMock: vi.fn()
+  })
+);
 
-const { handleCodexAppRestartPreferenceMock, autoReloadWindowForAccountMock, promptWindowReloadForAccountMock, reloadWindowNowMock } =
-  vi.hoisted(() => ({
-    handleCodexAppRestartPreferenceMock: vi.fn(),
-    autoReloadWindowForAccountMock: vi.fn(),
-    promptWindowReloadForAccountMock: vi.fn(),
-    reloadWindowNowMock: vi.fn()
-  }));
+const {
+  handleCodexAppRestartPreferenceMock,
+  autoReloadWindowForAccountMock,
+  promptWindowReloadForAccountMock,
+  reloadWindowNowMock
+} = vi.hoisted(() => ({
+  handleCodexAppRestartPreferenceMock: vi.fn(),
+  autoReloadWindowForAccountMock: vi.fn(),
+  promptWindowReloadForAccountMock: vi.fn(),
+  reloadWindowNowMock: vi.fn()
+}));
 
 vi.mock("../src/services", () => ({
   refreshQuota: refreshQuotaMock,
@@ -331,7 +337,8 @@ describe("refreshSingleQuota token automation state", () => {
         hourlyWindowPresent: true,
         weeklyPercentage: 97,
         weeklyWindowPresent: true,
-        resetCreditsAvailable: 1
+        resetCreditsAvailable: 1,
+        resetCreditsAvailableIds: ["stale-credit"]
       }
     };
     const repo: QuotaRefreshRepo = {
@@ -364,7 +371,7 @@ describe("refreshSingleQuota token automation state", () => {
     await Promise.resolve();
 
     expect(fetchResetCreditsMock).toHaveBeenCalledWith(tokens.accessToken, "acct-1");
-    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 1, 1_800_000_000);
+    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 1, 1_800_000_000, []);
     expect(view.refresh).toHaveBeenCalled();
   });
 
@@ -410,7 +417,7 @@ describe("refreshSingleQuota token automation state", () => {
     await Promise.resolve();
 
     expect(fetchResetCreditsMock).toHaveBeenCalledWith(tokens.accessToken, "acct-2");
-    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 0, undefined);
+    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 0, undefined, []);
   });
 
   it("auto-switches to the candidate with the highest 5-hour quota before weekly quota", async () => {
@@ -491,10 +498,14 @@ describe("refreshSingleQuota token automation state", () => {
     };
 
     await expect(
-      maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() }, {
-        ignoreEnabled: true,
-        userInitiated: true
-      })
+      maybeAutoSwitchForActiveQuota(
+        repo as unknown as AccountsRepository,
+        { refresh: vi.fn() },
+        {
+          ignoreEnabled: true,
+          userInitiated: true
+        }
+      )
     ).resolves.toBe(true);
 
     expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id);
@@ -857,17 +868,15 @@ describe("refreshSingleQuota token automation state", () => {
     }));
     fetchResetCreditsMock.mockResolvedValue({ availableCount: 0, credits: [], nextExpiresAt: undefined });
 
-    await expect(
-      maybeWarnForAccount(repo as unknown as AccountsRepository, active.id)
-    ).resolves.toBeUndefined();
+    await expect(maybeWarnForAccount(repo as unknown as AccountsRepository, active.id)).resolves.toBeUndefined();
 
     expect(repo.getTokens).toHaveBeenCalledTimes(1);
     expect(repo.getTokens).not.toHaveBeenCalledWith(active.id, { bypassCache: true });
     expect(repo.getTokens).toHaveBeenCalledWith(candidate.id, { bypassCache: true });
     expect(
-      vi.mocked(vscode.window.showWarningMessage).mock.calls.some((call) =>
-        String(call[0]).includes("safety-active@example.com")
-      )
+      vi
+        .mocked(vscode.window.showWarningMessage)
+        .mock.calls.some((call) => String(call[0]).includes("safety-active@example.com"))
     ).toBe(true);
   });
 
@@ -1013,7 +1022,9 @@ describe("refreshSingleQuota token automation state", () => {
     const tokens: CodexTokens = { idToken: "id", accessToken: "access" };
     const repo = {
       listAccounts: vi.fn(async () => [active, resetTarget, fallback]),
-      getAccount: vi.fn(async (id: string) => (id === resetTarget.id ? resetTarget : id === fallback.id ? fallback : active)),
+      getAccount: vi.fn(async (id: string) =>
+        id === resetTarget.id ? resetTarget : id === fallback.id ? fallback : active
+      ),
       getTokens: vi.fn(async () => tokens),
       updateQuota: vi.fn(async () => resetTarget),
       refreshSubscriptionState: vi.fn(async () => undefined),
@@ -1133,11 +1144,7 @@ describe("quota warning window validation", () => {
       "active@example.com Weekly quota is at 5%, below your configured threshold of 10%."
     );
     expect(showWarning.mock.calls[0]?.[0]).not.toContain("Balance");
-    expect(showWarning.mock.calls[0]?.slice(1)).toEqual([
-      "Switch recommended@example.com",
-      "Select Account",
-      "Later"
-    ]);
+    expect(showWarning.mock.calls[0]?.slice(1)).toEqual(["Switch recommended@example.com", "Select Account", "Later"]);
   });
 
   it("shows the same low-quota warning only once until recovery", async () => {
@@ -1250,9 +1257,9 @@ describe("quota warning window validation", () => {
         return values[key] ?? defaultValue;
       })
     } as never);
-    const showWarning = vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue(
-      "Reset reset-action@example.com" as never
-    );
+    const showWarning = vi
+      .spyOn(vscode.window, "showWarningMessage")
+      .mockResolvedValue("Reset reset-action@example.com" as never);
     showWarning.mockClear();
     const executeCommand = vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
     const account = createAccount("reset-action", true, 6, 95);
@@ -1274,9 +1281,7 @@ describe("quota warning window validation", () => {
       "Select Account",
       "Later"
     ]);
-    await vi.waitFor(() =>
-      expect(executeCommand).toHaveBeenCalledWith("codexManager.consumeResetCredit", account)
-    );
+    await vi.waitFor(() => expect(executeCommand).toHaveBeenCalledWith("codexManager.consumeResetCredit", account));
   });
 
   it("does not warn for missing hourly and weekly windows", async () => {
@@ -1409,7 +1414,8 @@ describe("quota warning window validation", () => {
     const target = createAccount("auto-race-target", false, 90, 90);
     const manual = createAccount("manual-race-winner", true, 90, 90);
     const repo = {
-      listAccounts: vi.fn()
+      listAccounts: vi
+        .fn()
         .mockResolvedValueOnce([active, target])
         .mockResolvedValueOnce([{ ...active, isActive: false }, target, manual]),
       switchAccount: vi.fn()
@@ -1437,10 +1443,7 @@ describe("quota warning window validation", () => {
     const showWarning = vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue(undefined);
     showWarning.mockClear();
     const repo = {
-      getAccount: vi.fn()
-        .mockResolvedValueOnce(active)
-        .mockResolvedValueOnce(active)
-        .mockResolvedValueOnce(inactive),
+      getAccount: vi.fn().mockResolvedValueOnce(active).mockResolvedValueOnce(active).mockResolvedValueOnce(inactive),
       listAccounts: vi.fn(async () => [active])
     };
 

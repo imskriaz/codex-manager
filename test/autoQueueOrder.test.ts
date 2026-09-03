@@ -9,18 +9,38 @@ import type { CodexManagerAccountRecord } from "../src/core/types";
 describe("auto queue order", () => {
   it("scores quota near reset while protecting scarce weekly capacity", () => {
     const nowMs = 2_000_000_000_000;
-    const expiring = account("expiring", { hourly: 70, hourlyResetAt: nowMs / 1_000 + 15 * 60, weekly: 75, weeklyResetAt: nowMs / 1_000 + 5 * 86400, lastQuotaAt: nowMs - 60_000 });
-    const scarce = account("scarce", { hourly: 95, hourlyResetAt: nowMs / 1_000 + 4 * 3600, weekly: 22, weeklyResetAt: nowMs / 1_000 + 5 * 86400, lastQuotaAt: nowMs - 60_000 });
-    expect(compareCodexManagerAccountAutoQueueOrder(expiring, scarce, { nowMs, staleAfterMs: 30 * 60_000 })).toBeLessThan(0);
-    expect(getCodexManagerAccountAutoQueueEfficiency(expiring, { nowMs, staleAfterMs: 30 * 60_000 }).reason).toBe("quota-expiring");
+    const expiring = account("expiring", {
+      hourly: 70,
+      hourlyResetAt: nowMs / 1_000 + 15 * 60,
+      weekly: 75,
+      weeklyResetAt: nowMs / 1_000 + 5 * 86400,
+      lastQuotaAt: nowMs - 60_000
+    });
+    const scarce = account("scarce", {
+      hourly: 95,
+      hourlyResetAt: nowMs / 1_000 + 4 * 3600,
+      weekly: 22,
+      weeklyResetAt: nowMs / 1_000 + 5 * 86400,
+      lastQuotaAt: nowMs - 60_000
+    });
+    expect(
+      compareCodexManagerAccountAutoQueueOrder(expiring, scarce, { nowMs, staleAfterMs: 30 * 60_000 })
+    ).toBeLessThan(0);
+    expect(getCodexManagerAccountAutoQueueEfficiency(expiring, { nowMs, staleAfterMs: 30 * 60_000 }).reason).toBe(
+      "quota-expiring"
+    );
   });
 
   it("lowers confidence for old snapshots without requesting new data", () => {
     const nowMs = 2_000_000_000_000;
     const fresh = account("fresh", { hourly: 70, weekly: 70, lastQuotaAt: nowMs - 60_000 });
     const stale = account("stale", { hourly: 70, weekly: 70, lastQuotaAt: nowMs - 60 * 60_000 });
-    expect(getCodexManagerAccountAutoQueueEfficiency(fresh, { nowMs, staleAfterMs: 30 * 60_000 }).freshness).toBeGreaterThan(getCodexManagerAccountAutoQueueEfficiency(stale, { nowMs, staleAfterMs: 30 * 60_000 }).freshness);
-    expect(getCodexManagerAccountAutoQueueEfficiency(stale, { nowMs, staleAfterMs: 30 * 60_000 }).reason).toBe("stale-data");
+    expect(
+      getCodexManagerAccountAutoQueueEfficiency(fresh, { nowMs, staleAfterMs: 30 * 60_000 }).freshness
+    ).toBeGreaterThan(getCodexManagerAccountAutoQueueEfficiency(stale, { nowMs, staleAfterMs: 30 * 60_000 }).freshness);
+    expect(getCodexManagerAccountAutoQueueEfficiency(stale, { nowMs, staleAfterMs: 30 * 60_000 }).reason).toBe(
+      "stale-data"
+    );
   });
   it("keeps starred accounts ahead of non-urgent automatic criteria", () => {
     const starred = account("starred", { hourly: 10, weekly: 10, queuePriority: true });
@@ -86,7 +106,13 @@ describe("auto queue order", () => {
     expect(sortedIds(emptyStarred, capable)).toEqual(["capable", "empty-starred"]);
   });
 
-  it("treats an account with either primary quota exhausted as incapable, even with credits", () => {
+  it("treats an account with exhausted primary quota as incapable, even with weekly quota and credits", () => {
+    const exhaustedPrimary = account("exhausted-primary", { hourly: 0, weekly: 100, credits: "20" });
+
+    expect(hasCodexManagerAccountAutoQueueCapability(exhaustedPrimary)).toBe(false);
+  });
+
+  it("treats an account with exhausted weekly quota as incapable, even with primary quota and credits", () => {
     const exhaustedWeekly = account("exhausted-weekly", { hourly: 100, weekly: 0, credits: "20" });
 
     expect(hasCodexManagerAccountAutoQueueCapability(exhaustedWeekly)).toBe(false);

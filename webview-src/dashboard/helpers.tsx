@@ -9,8 +9,7 @@ export function isAccountAttention(account: DashboardAccountViewModel): boolean 
     !account.dismissedHealth &&
     (account.healthKind === "reauthorize" ||
       account.healthKind === "refresh_failed" ||
-      account.healthKind === "disabled" ||
-      account.healthKind === "quota")
+      account.healthKind === "disabled")
   );
 }
 

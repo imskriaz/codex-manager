@@ -308,10 +308,15 @@ async function syncResetCreditsSnapshot(
         .map((credit) => credit.id)
         .filter((id): id is string => Boolean(id));
     }
-    const availableIds = updatedAccount.quotaSummary?.resetCreditsAvailableIds;
-    const update = availableIds?.length
-      ? repo.updateResetCreditsSnapshot(accountId, snapshot.availableCount, snapshot.nextExpiresAt, availableIds)
-      : repo.updateResetCreditsSnapshot(accountId, snapshot.availableCount, snapshot.nextExpiresAt);
+    const availableIds = updatedAccount.quotaSummary?.resetCreditsAvailableIds ?? [];
+    // Always replace the persisted ID list, including with an empty list, so
+    // credits fenced by the provider cannot leave a stale reset action behind.
+    const update = repo.updateResetCreditsSnapshot(
+      accountId,
+      snapshot.availableCount,
+      snapshot.nextExpiresAt,
+      availableIds
+    );
     await update.catch(() => undefined);
     view?.refresh();
   } catch {

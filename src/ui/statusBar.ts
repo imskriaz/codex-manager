@@ -104,9 +104,7 @@ export function resolveStatusBarAccount(
   currentWindowAccountId?: string
 ): CodexManagerAccountRecord | undefined {
   return (
-    accounts.find((account) => account.isActive) ??
-    accounts.find((account) => account.id === currentWindowAccountId) ??
-    accounts[0]
+    accounts.find((account) => account.isActive) ?? accounts.find((account) => account.id === currentWindowAccountId)
   );
 }
 
@@ -126,10 +124,7 @@ export function buildStatusText(account: CodexManagerAccountRecord, showHourlyQu
   return `${STATUS_BAR_ICON} ${account.email}`;
 }
 
-function buildTooltip(
-  primary: CodexManagerAccountRecord,
-  showHourlyQuota: boolean
-): vscode.MarkdownString {
+function buildTooltip(primary: CodexManagerAccountRecord, showHourlyQuota: boolean): vscode.MarkdownString {
   const _t = t();
   const md = new vscode.MarkdownString(undefined, true);
   md.isTrusted = true;
@@ -151,10 +146,7 @@ export function buildStatusQuickAccessMarkdown(): string {
   );
 }
 
-export function renderAccountPanel(
-  account: CodexManagerAccountRecord,
-  showHourlyQuota: boolean
-): string {
+export function renderAccountPanel(account: CodexManagerAccountRecord, showHourlyQuota: boolean): string {
   const _t = t();
   const language = getLanguage();
   const plan = formatPlanType(account.planType ?? "team", language);

@@ -56,11 +56,20 @@ export function compareDashboardAutoQueueAccounts(
   const nowMs = Date.now();
   const hasFutureReset = (order: ReturnType<typeof orderValue>) =>
     order.windows.some(
-      (window) => typeof window.resetAt === "number" && Number.isFinite(window.resetAt) && window.resetAt >= nowMs / 1_000
+      (window) =>
+        typeof window.resetAt === "number" && Number.isFinite(window.resetAt) && window.resetAt >= nowMs / 1_000
     );
   if (leftCapable && (hasFutureReset(leftOrder) || hasFutureReset(rightOrder))) {
-    const leftScore = calculateAutoQueueEfficiency(leftOrder, { nowMs, staleAfterMs: 30 * 60_000, starred: leftPriority }).score;
-    const rightScore = calculateAutoQueueEfficiency(rightOrder, { nowMs, staleAfterMs: 30 * 60_000, starred: rightPriority }).score;
+    const leftScore = calculateAutoQueueEfficiency(leftOrder, {
+      nowMs,
+      staleAfterMs: 30 * 60_000,
+      starred: leftPriority
+    }).score;
+    const rightScore = calculateAutoQueueEfficiency(rightOrder, {
+      nowMs,
+      staleAfterMs: 30 * 60_000,
+      starred: rightPriority
+    }).score;
     if (leftScore !== rightScore) {
       return rightScore - leftScore;
     }
@@ -77,25 +86,29 @@ export function hasDashboardAutoQueueCapability(
     weeklyThreshold: 0
   }
 ): boolean {
-  const primaryQuotaMetrics = account.metrics.filter(
+  const quotaMetrics = account.metrics.filter(
     (metric) =>
       metric.visible &&
       (metric.key === "hourly" || metric.key === "weekly") &&
       typeof metric.percentage === "number" &&
       Number.isFinite(metric.percentage)
   );
-  const concernedMetrics = primaryQuotaMetrics.filter((metric) => metric.key !== "hourly" || thresholds.hourlyEnabled);
+  const concernedMetrics = quotaMetrics.filter((metric) => metric.key !== "hourly" || thresholds.hourlyEnabled);
   if (
     concernedMetrics.some(
       (metric) =>
         metric.percentage! <= (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
     )
-  )
+  ) {
     return false;
-  const hasQuota = concernedMetrics.some(
-    (metric) => metric.percentage! > (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
-  );
-  return account.creditsUnlimited === true || hasQuota || (account.creditsBalance ?? 0) > 0;
+  }
+  const allMainQuotaAvailable =
+    concernedMetrics.length > 0 &&
+    concernedMetrics.every(
+      (metric) =>
+        metric.percentage! > (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
+    );
+  return account.creditsUnlimited === true || allMainQuotaAvailable || (account.creditsBalance ?? 0) > 0;
 }
 
 /**

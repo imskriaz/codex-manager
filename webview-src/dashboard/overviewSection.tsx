@@ -229,9 +229,7 @@ export function OverviewSection(props: {
                         ) : (
                           <ResetCreditIcon />
                         )}
-                        <span>
-                          {resolveResetCreditBadgeLabel(props.lang)} {account.resetCreditsAvailable}
-                        </span>
+                        <span class="saved-reset-count">{account.resetCreditsAvailable}</span>
                       </button>
                     ) : null}
                   </div>

@@ -154,13 +154,26 @@ describe("compareDashboardAutoQueueAccounts", () => {
     expect(hasDashboardAutoQueueCapability(account)).toBe(false);
   });
 
-  it("treats an account with either primary quota exhausted as incapable, even with credits", () => {
+  it("requires every enabled main quota window to remain available", () => {
     const account = {
       creditsBalance: 25,
       creditsUnlimited: false,
       metrics: [
         { key: "hourly", period: "hourly", percentage: 100, visible: true },
         { key: "weekly", period: "weekly", percentage: 0, visible: true }
+      ]
+    } as any;
+
+    expect(hasDashboardAutoQueueCapability(account)).toBe(false);
+  });
+
+  it("keeps an account incapable when its primary 5-hour quota is exhausted", () => {
+    const account = {
+      creditsBalance: 25,
+      creditsUnlimited: false,
+      metrics: [
+        { key: "hourly", period: "hourly", percentage: 0, visible: true },
+        { key: "weekly", period: "weekly", percentage: 100, visible: true }
       ]
     } as any;
 

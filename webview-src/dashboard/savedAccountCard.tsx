@@ -17,7 +17,8 @@ import {
   renderReloadIcon,
   renderRemoveIcon,
   renderResyncProfileIcon,
-  renderSwitchIcon
+  renderSwitchIcon,
+  ResetCreditIcon
 } from "./icons";
 import { ActionButton } from "./primitives";
 import { MetricRow, renderHealthPill } from "./accountMetricPrimitives";
@@ -579,9 +580,8 @@ export function SavedAccountCard(props: {
                       {props.consumeResetCreditPending ? (
                         <span class="saved-toggle-spinner" aria-hidden="true"></span>
                       ) : null}
-                      <span>
-                        {resolveCompactResetLabel(props.lang)} {account.resetCreditsAvailable}
-                      </span>
+                      <ResetCreditIcon />
+                      <span class="saved-reset-count">{account.resetCreditsAvailable}</span>
                     </button>
                   ) : null}
                 </>
@@ -911,9 +911,8 @@ export function SavedAccountCard(props: {
                       {props.consumeResetCreditPending ? (
                         <span class="saved-toggle-spinner" aria-hidden="true"></span>
                       ) : null}
-                      <span>
-                        {resolveCompactResetLabel(props.lang)} {account.resetCreditsAvailable}
-                      </span>
+                      <ResetCreditIcon />
+                      <span class="saved-reset-count">{account.resetCreditsAvailable}</span>
                     </button>
                   ) : null}
                 </>

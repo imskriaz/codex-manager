@@ -6,7 +6,8 @@
 - Fence reset credits rejected as ineligible by provider credit ID so they disappear from the dashboard and automatic reset queue without affecting future credits.
 - Turn the current-account switch slot into an unload action with a reload icon, while keeping account loading available for other saved accounts.
 - Order automatic-queue candidates by capability first so quota-exhausted, invalid, or foreign-claimed accounts stay last without disturbing the remaining priority order.
-- Remove the Onboard entry from the More actions menu, show percentage values beside metric labels, and hide the reset badge when a compact account row has no room for it.
+- Remove the Onboard entry from the More actions menu, show percentage values beside metric labels, and keep reset credits available through compact icon-and-count controls.
+- Deliver quota issues through notifications instead of account-card warning badges, and keep the status bar focused on the running account with a Codex Manager fallback.
 
 ## 1.1.1
 

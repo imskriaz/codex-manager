@@ -30,11 +30,9 @@ export function renderHealthPill(account: DashboardAccountViewModel) {
         </span>
       );
     case "quota":
-      return (
-        <span class="pill warning" title={account.healthMessage}>
-          {account.healthLabel}
-        </span>
-      );
+      // Quota warnings are delivered through the notification flow. Keep
+      // quota metrics visible without duplicating the warning as a card badge.
+      return null;
     default:
       return null;
   }

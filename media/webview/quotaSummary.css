@@ -11124,6 +11124,19 @@ html[data-theme="dark"] .cli-terminal-panel {
   content: none !important;
 }
 
+.saved-reset-badge .button-icon {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+}
+
+.saved-reset-count {
+  min-width: 1ch;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
+
 @media (max-width: 650px) {
   .overview-shell {
     grid-template-columns: 1fr;
@@ -11396,6 +11409,8 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 .saved-table-name-block {
   display: grid;
+  flex: 1 1 0;
+  width: 0;
   gap: 3px;
   min-width: 0;
   container-type: inline-size;
@@ -13664,15 +13679,6 @@ body.is-dashboard-workspace-route #dashboard-main {
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* The reset badge is the least essential identity badge. Hide it before the
-   compact row can clip/overlap badges when a narrow account column runs out
-   of room; wider rows keep it visible. */
-@container (max-width: 180px) {
-  .saved-table-meta .saved-reset-badge {
-    display: none;
-  }
-}
-
 .account-add-flow > .account-add-layer-action {
   width: 100%;
   box-sizing: border-box;
@@ -13815,6 +13821,7 @@ body.is-dashboard-workspace-route #dashboard-main {
 .overview-shell {
   grid-template-columns: minmax(230px, 0.9fr) minmax(0, 1.7fr);
   align-items: stretch;
+  grid-auto-rows: minmax(0, 1fr);
 }
 
 .overview-account,
@@ -13823,6 +13830,22 @@ body.is-dashboard-workspace-route #dashboard-main {
   height: 100%;
   min-height: 0;
   box-sizing: border-box;
+}
+
+.overview-main {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-content: stretch;
+  gap: 6px;
+}
+
+.overview-main > .usage-graph-card {
+  min-height: 0;
+  height: 100%;
+}
+
+.overview-bottom-row {
+  align-self: end;
 }
 
 .overview-account-main {
@@ -13855,6 +13878,15 @@ body.is-dashboard-workspace-route #dashboard-main {
 
   .overview-account .overview-meta {
     grid-template-rows: auto;
+  }
+
+  .overview-main {
+    align-content: start;
+    grid-auto-rows: auto;
+  }
+
+  .overview-main > .usage-graph-card {
+    height: auto;
   }
 }
 

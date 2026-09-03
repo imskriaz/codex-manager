@@ -81,8 +81,8 @@ export function hasCodexManagerAccountAutoQueueCapability(
   }
 ): boolean {
   const quota = account.quotaSummary;
-  // Capability follows the automatic-switch settings for each controlled
-  // quota window. Credits cannot override a window at or below its threshold.
+  // Capability requires every enabled main quota window to remain above its
+  // automatic-switch threshold. Credits cannot override an exhausted window.
   if (
     (thresholds.hourlyEnabled &&
       hasComparableHourlyWindow(account) &&
@@ -91,13 +91,14 @@ export function hasCodexManagerAccountAutoQueueCapability(
   ) {
     return false;
   }
-  const hasQuota =
-    (thresholds.hourlyEnabled &&
-      hasComparableHourlyWindow(account) &&
-      (quota?.hourlyPercentage ?? 0) > thresholds.hourlyThreshold) ||
-    (hasComparableWeeklyWindow(account) && (quota?.weeklyPercentage ?? 0) > thresholds.weeklyThreshold);
+  const allMainQuotaAvailable =
+    ((thresholds.hourlyEnabled && hasComparableHourlyWindow(account)) || hasComparableWeeklyWindow(account)) &&
+    (!thresholds.hourlyEnabled ||
+      !hasComparableHourlyWindow(account) ||
+      (quota?.hourlyPercentage ?? 0) > thresholds.hourlyThreshold) &&
+    (!hasComparableWeeklyWindow(account) || (quota?.weeklyPercentage ?? 0) > thresholds.weeklyThreshold);
   const credits = parseCreditsOrderValue(quota?.credits);
-  return hasQuota || credits === Number.POSITIVE_INFINITY || (credits !== undefined && credits > 0);
+  return allMainQuotaAvailable || credits === Number.POSITIVE_INFINITY || (credits !== undefined && credits > 0);
 }
 
 export function hasComparableHourlyWindow(account: CodexManagerAccountRecord): boolean {
