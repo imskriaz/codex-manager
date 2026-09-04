@@ -1,18 +1,21 @@
 # Changelog
 
-## 1.1.3-pre1
-
-- Show the selected account email in the reauthorization dialog title while preserving the standard add-account title for other entry points.
-
 ## 1.1.2
 
 - Synchronize Privacy Mode across the browser dashboard, VS Code dashboard, and account details, with visible success or failure feedback.
+- Show the selected account email in the reauthorization dialog title while preserving the standard add-account title for other entry points.
 - Expand the manual OAuth callback field into a multiline editor with a full-width submit action.
 - Fence reset credits rejected as ineligible by provider credit ID so they disappear from the dashboard and automatic reset queue without affecting future credits.
 - Turn the current-account switch slot into an unload action with a reload icon, while keeping account loading available for other saved accounts.
 - Order automatic-queue candidates by capability first so quota-exhausted, invalid, or foreign-claimed accounts stay last without disturbing the remaining priority order.
 - Remove the Onboard entry from the More actions menu, show percentage values beside metric labels, and keep reset credits available through compact icon-and-count controls.
 - Deliver quota issues through notifications instead of account-card warning badges, and keep the status bar focused on the running account with a Codex Manager fallback.
+- Keep local account startup available when optional encrypted sync initialization fails.
+- Hide dependent automation controls while their parent toggle is disabled.
+- Streamline account add choices with vertical Authorization Link, JSON File, and Import Current alternatives.
+- Keep the unloaded status bar useful, with guidance for reading and loading saved accounts.
+- Make Add, Sync, Refresh, and More the fixed overview actions; add Set Password and Onboard to More and hide inapplicable bulk actions.
+- Respect the auto-reload setting for manual account switches and keep background automation independent of open dashboard tabs.
 
 ## 1.1.1
 
@@ -20,15 +23,6 @@
 - Keep list-view account type and lock badges visible without changing grid-view badges.
 - Keep dashboard password labels aligned with configuration state and route missing-password Sync actions through the dashboard modal.
 - Use one shared password across PCs for encrypted vault and WebSocket claim signing; browser sync never opens a VS Code password prompt.
-
-## 1.1.1-pre3
-
-- Keep local account startup available when optional encrypted sync initialization fails.
-- Hide dependent automation controls while their parent toggle is disabled.
-- Streamline account add choices with vertical Authorization Link, JSON File, and Import Current alternatives.
-- Keep the unloaded status bar useful, with guidance for reading and loading saved accounts.
-- Make Add, Sync, Refresh, and More the fixed overview actions; add Set Password and Onboard to More and hide inapplicable bulk actions.
-- Respect the auto-reload setting for manual account switches and keep background automation independent of open dashboard tabs.
 
 ## 1.1.0
 
