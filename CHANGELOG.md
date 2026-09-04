@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.2
+## 1.1.3
 
 - Synchronize Privacy Mode across the browser dashboard, VS Code dashboard, and account details, with visible success or failure feedback.
 - Show the selected account email in the reauthorization dialog title while preserving the standard add-account title for other entry points.
