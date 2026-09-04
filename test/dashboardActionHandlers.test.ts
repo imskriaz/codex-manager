@@ -811,8 +811,9 @@ describe("executeDashboardActionMessage", () => {
     expect(context.schedulePublishState).toHaveBeenCalled();
   });
 
-  it("reports cancelled passphrase setup instead of completing silently", async () => {
-    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(false);
+  it("requires the dashboard password modal instead of opening a native prompt", async () => {
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+    vi.mocked(vscode.window.showInputBox).mockClear();
     const context = createContext();
 
     const result = await executeDashboardActionMessage(context, {
@@ -822,7 +823,9 @@ describe("executeDashboardActionMessage", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(result.errorMessage).toMatch(/password was not set/i);
+    expect(result.errorMessage).toMatch(/dashboard/i);
+    expect(vscode.window.showInputBox).not.toHaveBeenCalled();
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("codexManager.configureEncryptedSync");
     expect(context.schedulePublishState).toHaveBeenCalled();
   });
 
@@ -1245,10 +1248,12 @@ describe("executeDashboardActionMessage", () => {
       type: "dashboard:action",
       action: "setEncryptedSyncRegistryOverride",
       requestId: "req-bypass-on",
-      payload: { enabled: true }
+      payload: { enabled: true, passphrase: "dashboard password" }
     });
 
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.setEncryptedSyncRegistryOverride", true);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.setEncryptedSyncRegistryOverride", true, {
+      passphrase: "dashboard password"
+    });
     expect(enabled.status).toBe("completed");
     expect(enabled.payload?.notice).toBeUndefined();
     expect(context.schedulePublishState).toHaveBeenCalled();
@@ -1261,7 +1266,11 @@ describe("executeDashboardActionMessage", () => {
       payload: { enabled: false }
     });
 
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.setEncryptedSyncRegistryOverride", false);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      "codexManager.setEncryptedSyncRegistryOverride",
+      false,
+      { passphrase: undefined }
+    );
     expect(disabled.status).toBe("completed");
     expect(disabled.payload?.notice).toBeUndefined();
 

@@ -81,6 +81,10 @@ export function getActionTimeoutMs(action: DashboardActionName): number {
     case "exportBackup":
     case "configureEncryptedSync":
     case "syncNow":
+      // Settings Sync may need one download pass and one upload pass. Keep the
+      // dashboard waiting for the host's real terminal result instead of
+      // showing a misleading 30-second client timeout while sync continues.
+      return 135_000;
     case "setEncryptedSyncRegistryOverride":
     case "exportAuthFile":
     case "prepareOAuthSession":

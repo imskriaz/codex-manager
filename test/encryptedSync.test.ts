@@ -35,7 +35,11 @@ describe("encrypted account sync", () => {
     const context = {
       subscriptions: [] as vscode.Disposable[],
       globalState: { get: vi.fn(() => undefined), update: vi.fn(async () => undefined), setKeysForSync: vi.fn() },
-      secrets: { get: vi.fn(async () => undefined), store: vi.fn(async () => undefined), delete: vi.fn(async () => undefined) }
+      secrets: {
+        get: vi.fn(async () => undefined),
+        store: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined)
+      }
     } as unknown as vscode.ExtensionContext;
     const manager = new EncryptedSyncManager(context, {} as never);
     const queue = vi.spyOn(manager, "queueBackgroundSync").mockImplementation(() => undefined);
@@ -56,7 +60,11 @@ describe("encrypted account sync", () => {
     const context = {
       subscriptions: [] as vscode.Disposable[],
       globalState: { get: vi.fn(() => undefined), update: vi.fn(async () => undefined), setKeysForSync: vi.fn() },
-      secrets: { get: vi.fn(async () => undefined), store: vi.fn(async () => undefined), delete: vi.fn(async () => undefined) }
+      secrets: {
+        get: vi.fn(async () => undefined),
+        store: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined)
+      }
     } as unknown as vscode.ExtensionContext;
     const manager = new EncryptedSyncManager(context, {} as never);
     const sync = vi.spyOn(manager, "syncNow").mockResolvedValue(true);
@@ -111,6 +119,27 @@ describe("encrypted account sync", () => {
         ["codexManager.encryptedSync.vaultDirty.v1", ["account-removed"]]
       ])
     );
+    manager.dispose();
+  });
+
+  it("never opens a native VS Code password input", async () => {
+    vi.mocked(vscode.window.showInputBox).mockClear();
+    vi.mocked(vscode.window.showWarningMessage).mockClear();
+    const context = {
+      subscriptions: [] as vscode.Disposable[],
+      globalState: { get: vi.fn(() => undefined), update: vi.fn(async () => undefined), setKeysForSync: vi.fn() },
+      secrets: {
+        get: vi.fn(async () => undefined),
+        store: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined)
+      }
+    } as unknown as vscode.ExtensionContext;
+    const manager = new EncryptedSyncManager(context, {} as never);
+
+    await expect(manager.configure()).resolves.toBe(false);
+
+    expect(vscode.window.showInputBox).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringMatching(/dashboard.*on-screen/i));
     manager.dispose();
   });
 
@@ -209,9 +238,14 @@ describe("encrypted account sync", () => {
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
-    const state = new Map<string, unknown>();
     const local = createEntry("local", 100, "local-refresh");
     const remote = createEntry("remote", 200, "remote-refresh");
+    const durable = createEntry("durable", 150, "durable-refresh");
+    const durablePayload = createPayload([durable]);
+    durablePayload.updatedAt = 10_000;
+    const state = new Map<string, unknown>([
+      ["codexManager.encryptedSync.v1", await encryptSyncPayload(durablePayload, PASSPHRASE)]
+    ]);
     const context = {
       subscriptions: [] as vscode.Disposable[],
       globalState: {
@@ -220,7 +254,9 @@ describe("encrypted account sync", () => {
         setKeysForSync: vi.fn()
       },
       secrets: {
-        get: vi.fn(async (key: string) => (key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one")),
+        get: vi.fn(async (key: string) =>
+          key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one"
+        ),
         store: vi.fn(async () => undefined),
         delete: vi.fn(async () => undefined)
       }
@@ -237,10 +273,16 @@ describe("encrypted account sync", () => {
     const outbound = await manager.getRealtimeEncryptedVault();
     expect(outbound).toEqual(expect.any(String));
     expect(outbound).not.toContain("local-refresh");
-    const inbound = await encryptSyncPayload(createPayload([remote]), PASSPHRASE);
+    const peerPayload = createPayload([remote]);
+    peerPayload.updatedAt = 1;
+    const inbound = await encryptSyncPayload(peerPayload, PASSPHRASE);
 
     await expect(manager.applyRealtimeEncryptedVault(inbound)).resolves.toBe(true);
     expect(repo.importSharedAccountsWithSummary).toHaveBeenCalled();
+    const mergedVault = await decryptSyncPayload(state.get("codexManager.encryptedSync.v1") as string, PASSPHRASE);
+    expect(mergedVault.accounts.map((entry) => entry.id)).toEqual(["durable", "local", "remote"]);
+    expect(repo.setAccountEnabledFromSync).toHaveBeenCalledWith("durable", false);
+    expect(repo.setAccountEnabledFromSync).toHaveBeenCalledWith("remote", false);
     manager.dispose();
   });
 
@@ -415,13 +457,54 @@ describe("encrypted account sync", () => {
     manager.dispose();
   });
 
+  it("merges a vault downloaded after startup without requiring another command", async () => {
+    vi.useFakeTimers();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as unknown as vscode.WorkspaceConfiguration);
+    const initial = await encryptSyncPayload(createPayload([createEntry("initial", 100)]), PASSPHRASE);
+    const downloaded = await encryptSyncPayload(createPayload([createEntry("new-account", 200)]), PASSPHRASE);
+    const state = new Map<string, unknown>([["codexManager.encryptedSync.v1", initial]]);
+    const context = {
+      subscriptions: [] as vscode.Disposable[],
+      globalState: {
+        get: <T>(key: string) => state.get(key) as T | undefined,
+        update: vi.fn(async (key: string, value: unknown) => state.set(key, value)),
+        setKeysForSync: vi.fn()
+      },
+      secrets: {
+        get: vi.fn(async (key: string) => (key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device")),
+        store: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined)
+      }
+    } as unknown as vscode.ExtensionContext;
+    const repo = {
+      listAccounts: vi.fn(async () => []),
+      exportSharedAccounts: vi.fn(async () => []),
+      importSharedAccountsWithSummary: vi.fn(async () => ({ failedCount: 0 })),
+      removeAccount: vi.fn(async () => undefined),
+      invalidateCachedIndex: vi.fn(),
+      setAccountEnabledFromSync: vi.fn(async () => undefined)
+    };
+    const manager = new EncryptedSyncManager(context, repo as never);
+
+    await manager.start();
+    const sync = vi.spyOn(manager, "syncNow").mockResolvedValue(true);
+    state.set("codexManager.encryptedSync.v1", downloaded);
+    await vi.advanceTimersByTimeAsync(5 * 1000);
+
+    expect(sync).toHaveBeenCalledWith(false, false, true);
+    manager.dispose();
+  }, 15_000);
+
   it("requires the encrypted sync passphrase before enabling local rescue override", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
-    vi.mocked(vscode.window.showInputBox).mockResolvedValue("wrong passphrase value");
     const state = new Map<string, unknown>();
     const context = {
       subscriptions: [] as vscode.Disposable[],
@@ -444,12 +527,13 @@ describe("encrypted account sync", () => {
     const manager = new EncryptedSyncManager(context, {} as never);
 
     await manager.start();
-    await expect(manager.setRegistryOverrideEnabled(true)).resolves.toBe(false);
+    await expect(manager.setRegistryOverrideEnabled(true, { passphrase: "wrong passphrase value" })).resolves.toBe(
+      false
+    );
     expect(isEncryptedSyncRegistryOverrideEnabled()).toBe(false);
     expect(state.get("codexManager.encryptedSync.enablementOverride.v1")).toBeUndefined();
 
-    vi.mocked(vscode.window.showInputBox).mockResolvedValue(PASSPHRASE);
-    await expect(manager.setRegistryOverrideEnabled(true)).resolves.toBe(true);
+    await expect(manager.setRegistryOverrideEnabled(true, { passphrase: PASSPHRASE })).resolves.toBe(true);
     expect(isEncryptedSyncRegistryOverrideEnabled()).toBe(true);
     expect(state.get("codexManager.encryptedSync.enablementOverride.v1")).toBe(true);
 
@@ -503,7 +587,7 @@ describe("encrypted account sync", () => {
     await expect(manager.syncNow(false, false, false)).resolves.toBe(true);
 
     expect(repo.importSharedAccountsWithSummary).toHaveBeenCalled();
-    expect(repo.setAccountEnabledFromSync).not.toHaveBeenCalled();
+    expect(repo.setAccountEnabledFromSync).toHaveBeenCalledWith("new-session", false);
     expect(state.get("codexManager.encryptedSync.localEnablement.v1")).toEqual([
       expect.objectContaining({ accountId: "new-session", enabled: false, revision: 1 })
     ]);
@@ -520,7 +604,9 @@ describe("encrypted account sync", () => {
       subscriptions: [] as vscode.Disposable[],
       globalState: { get: vi.fn(), update: vi.fn(async () => undefined), setKeysForSync: vi.fn() },
       secrets: {
-        get: vi.fn(async (key: string) => key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one"),
+        get: vi.fn(async (key: string) =>
+          key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one"
+        ),
         store: vi.fn(async () => undefined),
         delete: vi.fn(async () => undefined)
       }
@@ -645,8 +731,7 @@ describe("encrypted account sync", () => {
     manager.setOnlineDeviceIds(undefined);
     await expect(manager.prepareAccountSwitch("one")).rejects.toThrow(/Office PC/i);
 
-    vi.mocked(vscode.window.showInputBox).mockResolvedValue(PASSPHRASE);
-    await expect(manager.setRegistryOverrideEnabled(true)).resolves.toBe(true);
+    await expect(manager.setRegistryOverrideEnabled(true, { passphrase: PASSPHRASE })).resolves.toBe(true);
     await expect(manager.prepareAccountSwitch("one")).resolves.toBeUndefined();
     await expect(manager.prepareAccountEnablement("one", true)).resolves.toBeUndefined();
     await expect(manager.completeAccountEnablement("one", true)).resolves.toBeUndefined();
@@ -727,6 +812,19 @@ describe("encrypted account sync", () => {
     const newer = { ...createEntry("one", 200, "newer"), credential_updated_at: 2_000 };
 
     expect(mergeSyncAccounts([older], [newer])[0]?.tokens?.refresh_token).toBe("newer");
+  });
+
+  it("prefers server-issued token freshness when PC clocks disagree", () => {
+    const staleFromFastClock = {
+      ...createEntry("one", 200, "stale"),
+      credential_updated_at: 9_000_000
+    };
+    const freshFromSlowClock = {
+      ...createEntry("one", 300, "fresh"),
+      credential_updated_at: 1_000
+    };
+
+    expect(mergeSyncAccounts([staleFromFastClock], [freshFromSlowClock])[0]?.tokens?.refresh_token).toBe("fresh");
   });
 
   it("clears the receiving PC's stale automation auth error when newer credentials are synchronized", async () => {

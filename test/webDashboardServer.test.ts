@@ -275,7 +275,9 @@ describe("browser dashboard request boundaries", () => {
     expect(source).toContain('message.type === "dashboard:workspace-presence"');
     expect(source).toContain("this.hasWorkspaceViewer()");
     expect(source).toContain("this.workspaceViewerLastSeen.delete(socket)");
-    expect(source).not.toMatch(/this\.startCliSessionWatcher\(\);\s*this\.startCliSessionReconciliation\(\);\s*this\.updateOnlineDevicePresence/);
+    expect(source).not.toMatch(
+      /this\.startCliSessionWatcher\(\);\s*this\.startCliSessionReconciliation\(\);\s*this\.updateOnlineDevicePresence/
+    );
   });
 });
 
@@ -287,10 +289,17 @@ describe("normalizeCloudflaredDomain", () => {
     expect(normalizeCloudflaredDomain("https://user:pass@codex.example.com")).toBeUndefined();
     expect(normalizeCloudflaredDomain(" ")).toBe("");
   });
-
 });
 
 describe("peer WebSocket failure handling", () => {
+  it("runs durable Settings Sync for user-initiated browser sync actions", () => {
+    const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
+    expect(source.match(/syncNow\(false, false, true\)/g)).toHaveLength(2);
+    expect(source).not.toContain(
+      "syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false)"
+    );
+  });
+
   it("keeps peer presence through three missed heartbeats", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
     expect(source).toContain("const PEER_OFFLINE_AFTER_MS = 15_000;");
@@ -300,7 +309,9 @@ describe("peer WebSocket failure handling", () => {
 
   it("merges a peer claim before publishing the refreshed dashboard snapshot", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
-    expect(source).toContain("await this.encryptedSync?.applyRealtimeEnablementRegistry(normalized.enablementRegistry);");
+    expect(source).toContain(
+      "await this.encryptedSync?.applyRealtimeEnablementRegistry(normalized.enablementRegistry);"
+    );
   });
 
   it("does not re-enter Undici close while its error event is dispatching", () => {

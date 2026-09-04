@@ -178,7 +178,10 @@ export function mergeFreshPeerAccountStates(
   });
 }
 
-function copyQuotaPresentation(source: DashboardAccountViewModel, target: DashboardAccountViewModel): DashboardAccountViewModel {
+function copyQuotaPresentation(
+  source: DashboardAccountViewModel,
+  target: DashboardAccountViewModel
+): DashboardAccountViewModel {
   return {
     ...target,
     subscriptionText: source.subscriptionText,
@@ -215,7 +218,12 @@ function peerSessionSignaturePayload(message: Omit<PeerSessionMessage, "signatur
 }
 
 function peerVaultSignaturePayload(message: Omit<PeerVaultMessage, "signature">): string {
-  return JSON.stringify({ type: message.type, deviceId: message.deviceId, sentAt: message.sentAt, vault: message.vault });
+  return JSON.stringify({
+    type: message.type,
+    deviceId: message.deviceId,
+    sentAt: message.sentAt,
+    vault: message.vault
+  });
 }
 
 export function isCliSessionWatchPath(filename: string | Buffer | null): boolean {
@@ -865,7 +873,9 @@ export class WebDashboardServer implements vscode.Disposable {
             // Browser actions must never open a VS Code input box. The
             // dashboard opens its password modal when configuration is needed;
             // a non-interactive sync is the safe fallback for stale snapshots.
-            syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false) : undefined,
+            syncEncryptedAccounts: this.encryptedSync
+              ? () => this.encryptedSync!.syncNow(false, false, true)
+              : undefined,
             setEncryptedSyncRegistryOverride: this.encryptedSync
               ? (enabled, passphrase) => this.encryptedSync!.setRegistryOverrideEnabled(enabled, { passphrase })
               : undefined,
@@ -955,13 +965,15 @@ export class WebDashboardServer implements vscode.Disposable {
           resolve(this.decoratePeerActionResult(result, targetDeviceId));
         });
         try {
-          hub.send(JSON.stringify({
-            type: "peer:action",
-            requestId: message.requestId,
-            action: message.action,
-            accountId: message.accountId,
-            payload: message.payload
-          } satisfies PeerActionMessage));
+          hub.send(
+            JSON.stringify({
+              type: "peer:action",
+              requestId: message.requestId,
+              action: message.action,
+              accountId: message.accountId,
+              payload: message.payload
+            } satisfies PeerActionMessage)
+          );
         } catch (error) {
           clearTimeout(timeout);
           this.peerActionWaiters.delete(message.requestId);
@@ -969,7 +981,10 @@ export class WebDashboardServer implements vscode.Disposable {
             type: "peer:action-result",
             requestId: message.requestId,
             status: "failed",
-            error: error instanceof Error ? `The peer action could not be sent: ${error.message}` : "The peer action could not be sent."
+            error:
+              error instanceof Error
+                ? `The peer action could not be sent: ${error.message}`
+                : "The peer action could not be sent."
           });
         }
       });
@@ -1005,29 +1020,35 @@ export class WebDashboardServer implements vscode.Disposable {
         socket.off("close", onDisconnect);
         socket.off("error", onDisconnect);
       };
-      const onDisconnect = (): void => finish({
-        type: "peer:action-result",
-        requestId: message.requestId,
-        status: "failed",
-        error: "The selected PC disconnected before the action completed."
-      });
+      const onDisconnect = (): void =>
+        finish({
+          type: "peer:action-result",
+          requestId: message.requestId,
+          status: "failed",
+          error: "The selected PC disconnected before the action completed."
+        });
       socket.on("message", onMessage);
       socket.once("close", onDisconnect);
       socket.once("error", onDisconnect);
       try {
-        socket.send(JSON.stringify({
-          type: "peer:action",
-          requestId: message.requestId,
-          action: message.action,
-          accountId: message.accountId,
-          payload: { ...(message.payload ?? {}), targetDeviceId: undefined }
-        } satisfies PeerActionMessage));
+        socket.send(
+          JSON.stringify({
+            type: "peer:action",
+            requestId: message.requestId,
+            action: message.action,
+            accountId: message.accountId,
+            payload: { ...(message.payload ?? {}), targetDeviceId: undefined }
+          } satisfies PeerActionMessage)
+        );
       } catch (error) {
         finish({
           type: "peer:action-result",
           requestId: message.requestId,
           status: "failed",
-          error: error instanceof Error ? `The peer action could not be sent: ${error.message}` : "The peer action could not be sent."
+          error:
+            error instanceof Error
+              ? `The peer action could not be sent: ${error.message}`
+              : "The peer action could not be sent."
         });
       }
     });
@@ -1512,9 +1533,17 @@ export class WebDashboardServer implements vscode.Disposable {
       !Number.isFinite(message.sentAt) ||
       typeof message.signature !== "string" ||
       Math.abs(Date.now() - message.sentAt) > 2 * 60_000
-    ) return false;
-    const unsigned = { type: "peer:vault" as const, deviceId: message.deviceId, sentAt: message.sentAt, vault: message.vault };
-    if (!(await this.encryptedSync?.verifyRealtimePeerPayload(peerVaultSignaturePayload(unsigned), message.signature))) {
+    )
+      return false;
+    const unsigned = {
+      type: "peer:vault" as const,
+      deviceId: message.deviceId,
+      sentAt: message.sentAt,
+      vault: message.vault
+    };
+    if (
+      !(await this.encryptedSync?.verifyRealtimePeerPayload(peerVaultSignaturePayload(unsigned), message.signature))
+    ) {
       return false;
     }
     await this.encryptedSync?.applyRealtimeEncryptedVault(message.vault);
@@ -1523,7 +1552,11 @@ export class WebDashboardServer implements vscode.Disposable {
     // connected peer set without another Settings Sync request.
     const serialized = JSON.stringify(message);
     for (const socket of this.peerSockets.values()) {
-      if (socket === sourceSocket || !this.authenticatedPeerSockets.has(socket) || socket.readyState !== WebSocket.OPEN) {
+      if (
+        socket === sourceSocket ||
+        !this.authenticatedPeerSockets.has(socket) ||
+        socket.readyState !== WebSocket.OPEN
+      ) {
         continue;
       }
       socket.send(serialized);
@@ -1558,7 +1591,9 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async handlePeerMessage(raw: string, sourceSocket: WebSocket): Promise<void> {
     try {
-      const message = JSON.parse(raw) as Partial<PeerSessionMessage> & Partial<PeerVaultMessage> & Partial<PeerActionMessage>;
+      const message = JSON.parse(raw) as Partial<PeerSessionMessage> &
+        Partial<PeerVaultMessage> &
+        Partial<PeerActionMessage>;
       if (message.type === "peer:vault") {
         await this.acceptPeerVault(message, sourceSocket);
         return;
@@ -1700,7 +1735,7 @@ export class WebDashboardServer implements vscode.Disposable {
           configureEncryptedSync: this.encryptedSync
             ? (passphrase, confirmation) => this.encryptedSync!.configure({ passphrase, confirmation })
             : undefined,
-          syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false) : undefined
+          syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false, true) : undefined
         },
         {
           type: "dashboard:action",
@@ -1948,9 +1983,7 @@ export class WebDashboardServer implements vscode.Disposable {
       accounts,
       usageHistory: await appendDashboardUsageSnapshot(this.context, { ...state, accounts }),
       dailyUsageCache: readDashboardDailyUsageCache(this.context),
-      peerAccounts: Object.fromEntries(
-        peerSessions.map((peer) => [peer.deviceId, peer.accounts ?? []])
-      )
+      peerAccounts: Object.fromEntries(peerSessions.map((peer) => [peer.deviceId, peer.accounts ?? []]))
     };
   }
 

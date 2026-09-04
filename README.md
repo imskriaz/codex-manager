@@ -125,7 +125,7 @@ Important combinations:
 ## Privacy and security
 
 - Account tokens remain in local VS Code SecretStorage and the Codex credential file. They are not sent to a Codex Manager server.
-- Encrypted sync stores an encrypted vault in VS Code Settings Sync. Vault changes are durably queued for a short five-second debounce, while the authenticated peer WebSocket delivers encrypted changes immediately when PCs are online. Settings Sync remains the durable fallback; use Sync Sessions Now to apply a downloaded vault manually on a receiving PC. Signed peer WebSocket/HTTP updates carry enablement and dashboard state in realtime without consuming Settings Sync requests. Account usage, switching, quota refreshes, and schedules do not generate durable sync traffic.
+- Encrypted sync stores an encrypted vault in VS Code Settings Sync. Vault changes are durably queued for a short five-second debounce, while the authenticated peer WebSocket delivers encrypted changes immediately when PCs are online. Settings Sync remains the durable fallback; newly downloaded vaults are applied while VS Code stays open, and Sync Sessions Now forces a download/merge/upload pass. Signed peer WebSocket/HTTP updates carry enablement and dashboard state in realtime without consuming Settings Sync requests. Account usage, switching, quota refreshes, and schedules do not generate durable sync traffic.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
 - Review the [MIT License](LICENSE) and only manage accounts you own or are authorized to use.

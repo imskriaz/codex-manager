@@ -8,4 +8,9 @@ describe("dashboard action timeouts", () => {
     expect(getActionTimeoutMs("enableAllValid")).toBe(30_000);
     expect(getActionTimeoutMs("disableAll")).toBe(30_000);
   });
+
+  it("waits for both Settings Sync passes before timing out the dashboard action", () => {
+    expect(getActionTimeoutMs("configureEncryptedSync")).toBe(135_000);
+    expect(getActionTimeoutMs("syncNow")).toBe(135_000);
+  });
 });

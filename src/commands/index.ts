@@ -5,10 +5,7 @@ import { CodexManagerAccountRecord } from "../core/types";
 import { AccountsRepository } from "../storage";
 import type { EncryptedSyncManager } from "../services/encryptedSync";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
-import {
-  CrossWindowOperationBusyError,
-  runCrossWindowExclusive
-} from "../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
 import { runWithPersistentOperation } from "../utils/persistentLog";
 
@@ -22,9 +19,7 @@ export function runRegisteredCommand<T>(
     const maxBusyRetries = options.retryBusy ? 20 : 0;
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await (operationKey
-          ? runCrossWindowExclusive(operationKey, label, async () => action())
-          : action());
+        return await (operationKey ? runCrossWindowExclusive(operationKey, label, async () => action()) : action());
       } catch (error) {
         if (!(error instanceof CrossWindowOperationBusyError) || attempt >= maxBusyRetries) {
           throw error;
@@ -48,8 +43,8 @@ export function runRegisteredCommand<T>(
               ? Promise.resolve(undefined)
               : vscode.window.showWarningMessage(detail)
             : /cancel(?:led|lation)/i.test(detail)
-            ? vscode.window.showInformationMessage(`${label} cancelled.`)
-            : vscode.window.showErrorMessage(`${label} failed: ${detail}`));
+              ? vscode.window.showInformationMessage(`${label} cancelled.`)
+              : vscode.window.showErrorMessage(`${label} failed: ${detail}`));
           throw error;
         }),
     { operationKey, retryBusy: options.retryBusy === true }
@@ -88,10 +83,7 @@ export function registerCommands(
   );
 
   const runCommand = runRegisteredCommand;
-  const runAccountCommand = <T>(
-    label: string,
-    action: () => T | Thenable<T>
-  ): Thenable<T> =>
+  const runAccountCommand = <T>(label: string, action: () => T | Thenable<T>): Thenable<T> =>
     runCommand(
       label,
       async () => {
@@ -103,11 +95,7 @@ export function registerCommands(
       },
       undefined
     );
-  const runSyncCommand = <T>(
-    label: string,
-    action: () => T | Thenable<T>,
-    announceBusy = true
-  ): Thenable<T> =>
+  const runSyncCommand = <T>(label: string, action: () => T | Thenable<T>, announceBusy = true): Thenable<T> =>
     runCommand(
       label,
       async () => {
@@ -166,9 +154,8 @@ export function registerCommands(
     vscode.commands.registerCommand("codexManager.toggleAccountEnabled", (item?: CodexManagerAccountRecord) =>
       runAccountCommand("Toggle account", () => service.toggleAccountEnabled(item))
     ),
-    vscode.commands.registerCommand(
-      "codexManager.openDetails",
-      (item?: CodexManagerAccountRecord) => runCommand("Open account details", () => service.openDetails(item))
+    vscode.commands.registerCommand("codexManager.openDetails", (item?: CodexManagerAccountRecord) =>
+      runCommand("Open account details", () => service.openDetails(item))
     ),
     vscode.commands.registerCommand("codexManager.openCodexHome", () =>
       runCommand("Open Codex home", () => service.openCodexHome())
@@ -191,10 +178,7 @@ export function registerCommands(
           "Open Keyboard Shortcuts"
         );
         if (choice === "Open Keyboard Shortcuts") {
-          await vscode.commands.executeCommand(
-            "workbench.action.openGlobalKeybindings",
-            "@ext:imskriaz.codex-manager"
-          );
+          await vscode.commands.executeCommand("workbench.action.openGlobalKeybindings", "@ext:imskriaz.codex-manager");
         }
       })
     ),
@@ -220,8 +204,10 @@ export function registerCommands(
         });
       }
     ),
-    vscode.commands.registerCommand("codexManager.setEncryptedSyncRegistryOverride", (enabled: boolean) =>
-      runSyncCommand("Set encrypted sync rescue override", () => sync?.setRegistryOverrideEnabled(enabled))
+    vscode.commands.registerCommand(
+      "codexManager.setEncryptedSyncRegistryOverride",
+      (enabled: boolean, options?: { passphrase?: string }) =>
+        runSyncCommand("Set encrypted sync rescue override", () => sync?.setRegistryOverrideEnabled(enabled, options))
     )
   );
 }

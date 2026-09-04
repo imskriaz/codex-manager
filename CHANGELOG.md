@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.4-pre1
+
+- Run real VS Code Settings Sync passes from both dashboard hosts and apply newly downloaded vaults while VS Code remains open, so accounts and refreshed credentials converge across PCs without a restart.
+- Merge realtime peer vaults instead of selecting a whole vault by PC wall-clock time, preserving concurrent account and credential changes.
+- Keep newly received accounts disabled until explicitly enabled on that PC, and prefer server-issued token freshness when device clocks disagree.
+- Keep encrypted-sync password entry inside the dashboard, pass in-screen rescue passwords through the VS Code command boundary, and extend the dashboard wait window for complete download/upload passes.
+
 ## 1.1.3
 
 - Synchronize Privacy Mode across the browser dashboard, VS Code dashboard, and account details, with visible success or failure feedback.

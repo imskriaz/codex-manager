@@ -277,7 +277,9 @@ async function runDashboardAction(
       if (typeof payload?.privacyMode !== "boolean") {
         throw new Error("The privacy mode request is invalid. Refresh the dashboard and try again.");
       }
-      if (!(await handleDashboardSettingUpdate("privacyMode", payload.privacyMode, vscode.ConfigurationTarget.Global))) {
+      if (
+        !(await handleDashboardSettingUpdate("privacyMode", payload.privacyMode, vscode.ConfigurationTarget.Global))
+      ) {
         throw new Error("Privacy mode could not be updated. Try again.");
       }
       ctx.schedulePublishState();
@@ -384,12 +386,11 @@ async function runDashboardAction(
           }
         };
       }
-      if ((await vscode.commands.executeCommand<boolean>("codexManager.configureEncryptedSync")) !== true) {
-        ctx.schedulePublishState();
-        throw new Error("The password was not set. Try again and complete the password prompts.");
-      }
+      // Passwords must be collected by the dashboard modal. Never fall back
+      // to a VS Code showInputBox, which is easy to miss and breaks the
+      // shared in-screen password flow.
       ctx.schedulePublishState();
-      return undefined;
+      throw new Error("Enter and confirm the shared password in the dashboard.");
     case "syncNow":
       if (ctx.hostKind === "browser" && ctx.syncEncryptedAccounts) {
         if (!(await ctx.syncEncryptedAccounts())) {
@@ -439,7 +440,8 @@ async function runDashboardAction(
       if (
         (await vscode.commands.executeCommand<boolean>(
           "codexManager.setEncryptedSyncRegistryOverride",
-          payload.enabled
+          payload.enabled,
+          { passphrase: payload.passphrase }
         )) !== true
       ) {
         ctx.schedulePublishState();
