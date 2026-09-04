@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createInitialState, reducer } from "../webview-src/dashboard/state";
 
 function createStorage(initial: Record<string, string> = {}): Storage {
   const values = new Map(Object.entries(initial));
@@ -15,9 +16,36 @@ function createStorage(initial: Record<string, string> = {}): Storage {
 }
 
 describe("dashboard preferences", () => {
-  it("restores privacy mode and account view choices from local storage", async () => {
+  it("takes privacy mode from every authoritative dashboard snapshot", () => {
+    const enabled = reducer(createInitialState(), {
+      type: "snapshot",
+      snapshot: {
+        accounts: [],
+        settings: {
+          privacyMode: true,
+          autoRefreshMinutes: 15,
+          autoRefreshCurrentMinutes: 1
+        }
+      } as never
+    });
+    const disabled = reducer(enabled, {
+      type: "snapshot",
+      snapshot: {
+        accounts: [],
+        settings: {
+          privacyMode: false,
+          autoRefreshMinutes: 15,
+          autoRefreshCurrentMinutes: 1
+        }
+      } as never
+    });
+
+    expect(enabled.privacyMode).toBe(true);
+    expect(disabled.privacyMode).toBe(false);
+  });
+
+  it("restores account view choices from local storage", async () => {
     const storage = createStorage({
-      "codexManager.dashboardPrivacyMode.v1": "true",
       "codexManager.dashboardUiPreferences.v2": JSON.stringify({
         filter: "attention",
         view: "list",
@@ -31,9 +59,7 @@ describe("dashboard preferences", () => {
       value: { localStorage: storage }
     });
 
-    const { loadPrivacyMode, loadUiPreferences, savePrivacyMode, saveUiPreferences } =
-      await import("../webview-src/dashboard/preferences");
-    expect(loadPrivacyMode()).toBe(true);
+    const { loadUiPreferences, saveUiPreferences } = await import("../webview-src/dashboard/preferences");
     expect(loadUiPreferences()).toMatchObject({
       filter: "attention",
       view: "list",
@@ -53,8 +79,6 @@ describe("dashboard preferences", () => {
       accountSearch: "bob",
       tagFilter: ["personal"]
     });
-    savePrivacyMode(false);
-    expect(storage.getItem("codexManager.dashboardPrivacyMode.v1")).toBe("false");
   });
 
   it("falls back safely when stored preferences are malformed", async () => {
@@ -63,8 +87,7 @@ describe("dashboard preferences", () => {
       value: { localStorage: createStorage({ "codexManager.dashboardUiPreferences.v2": "not-json" }) }
     });
 
-    const { loadPrivacyMode, loadUiPreferences } = await import("../webview-src/dashboard/preferences");
-    expect(loadPrivacyMode()).toBe(false);
+    const { loadUiPreferences } = await import("../webview-src/dashboard/preferences");
     expect(loadUiPreferences()).toMatchObject({
       filter: "all",
       view: "cards",

@@ -146,6 +146,6 @@ describe("saved account card presentation", () => {
 
   it("opens account details in the details pane instead of flipping the card", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
-    expect(source).toContain('onAction("details", account.id, { privacyMode: props.privacyMode })');
+    expect(source).toContain('onAction("details", account.id)');
   });
 });

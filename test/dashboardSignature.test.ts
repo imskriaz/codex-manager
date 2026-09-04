@@ -8,6 +8,7 @@ function createState(overrides?: {
   totalUsageMs?: number;
   runningDeviceName?: string;
   encryptedSyncNeedsSettingsSync?: boolean;
+  privacyMode?: boolean;
 }): DashboardState {
   return {
     lang: "zh",
@@ -17,6 +18,7 @@ function createState(overrides?: {
     encryptedSyncNeedsSettingsSync: overrides?.encryptedSyncNeedsSettingsSync,
     settings: {
       dashboardTheme: "dark",
+      privacyMode: overrides?.privacyMode,
       displayLanguage: "zh",
       autoRefreshMinutes: 0,
       autoRefreshCurrentMinutes: 0,
@@ -71,6 +73,13 @@ function createState(overrides?: {
 }
 
 describe("buildDashboardStateSignature", () => {
+  it("changes when shared privacy mode changes", () => {
+    const before = buildDashboardStateSignature(createState({ privacyMode: false }));
+    const after = buildDashboardStateSignature(createState({ privacyMode: true }));
+
+    expect(after).not.toBe(before);
+  });
+
   it("changes when reset credits expiry changes", () => {
     const before = buildDashboardStateSignature(createState({ resetCreditsAvailable: 1 }));
     const after = buildDashboardStateSignature(

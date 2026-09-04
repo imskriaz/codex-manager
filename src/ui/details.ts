@@ -52,8 +52,7 @@ const detailsPanelState: DetailsPanelState = {
 export function openDetailsPanel(
   context: vscode.ExtensionContext,
   repo: AccountsRepository,
-  account: CodexManagerAccountRecord,
-  options?: { privacyMode?: boolean }
+  account: CodexManagerAccountRecord
 ): void {
   const copy = getCopy();
   if (!detailsPanel) {
@@ -80,8 +79,36 @@ export function openDetailsPanel(
       detailsPanel = undefined;
     });
 
-    detailsPanel.webview.onDidReceiveMessage(async (message: { type?: string }) => {
+    detailsPanel.webview.onDidReceiveMessage(async (message: { type?: string; privacyMode?: boolean }) => {
       if (!detailsPanelState.repo || !detailsPanelState.accountId) {
+        return;
+      }
+
+      if (message.type === "details:set-privacy-mode") {
+        if (typeof message.privacyMode !== "boolean") {
+          void vscode.window.showErrorMessage("Privacy mode could not be updated because the request was invalid.");
+          return;
+        }
+        try {
+          await getCodexManagerConfiguration().update(
+            "privacyMode",
+            message.privacyMode,
+            vscode.ConfigurationTarget.Global
+          );
+          detailsPanelState.privacyMode = message.privacyMode;
+          await refreshDetailsPanel();
+          void vscode.window.showInformationMessage(
+            message.privacyMode
+              ? "Privacy mode enabled across Codex Manager."
+              : "Privacy mode disabled across Codex Manager."
+          );
+        } catch (error) {
+          detailsPanelState.privacyMode = getPrivacyModePreference();
+          await refreshDetailsPanel();
+          void vscode.window.showErrorMessage(
+            `Privacy mode could not be updated: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
         return;
       }
 
@@ -131,12 +158,14 @@ export function openDetailsPanel(
         !detailsPanel ||
         (!event.affectsConfiguration("codexManager.displayLanguage") &&
           !event.affectsConfiguration("codexManager.dashboardTheme") &&
+          !event.affectsConfiguration("codexManager.privacyMode") &&
           !event.affectsConfiguration("codexManager.quotaGreenThreshold") &&
           !event.affectsConfiguration("codexManager.quotaYellowThreshold"))
       ) {
         return;
       }
 
+      detailsPanelState.privacyMode = getPrivacyModePreference();
       void refreshDetailsPanel();
     });
   } else {
@@ -152,7 +181,7 @@ export function openDetailsPanel(
   detailsPanelState.scripts = scripts;
   detailsPanelState.usage = undefined;
   detailsPanelState.usageState = "loading";
-  detailsPanelState.privacyMode = options?.privacyMode === true;
+  detailsPanelState.privacyMode = getPrivacyModePreference();
   const requestId = ++detailsPanelRequestId;
   void refreshDetailsPanel();
 
@@ -458,6 +487,10 @@ function renderHtml(
 
 export function getDetailsThemePreference(): DashboardThemeOption {
   return normalizeDashboardTheme(getCodexManagerConfiguration().get<string>("dashboardTheme", "auto"));
+}
+
+export function getPrivacyModePreference(): boolean {
+  return getCodexManagerConfiguration().get<boolean>("privacyMode", false);
 }
 
 export function renderDetailsThemeAttributes(theme: DashboardThemeOption): string {

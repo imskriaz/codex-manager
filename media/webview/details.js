@@ -123,6 +123,9 @@
     privacyButton.addEventListener("click", () => {
       const hidden = !document.body.classList.contains("privacy-hidden");
       applyPrivacyMode(hidden);
+      if (vscode) {
+        vscode.postMessage({ type: "details:set-privacy-mode", privacyMode: hidden });
+      }
     });
   }
 

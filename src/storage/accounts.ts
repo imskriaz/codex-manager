@@ -38,7 +38,8 @@ import {
   previewSharedEntry,
   resolveSharedAccountIdentity,
   restoreSharedTokens,
-  toSharedAccountJson
+  toSharedAccountJson,
+  normalizeEpochMs
 } from "./sharedAccounts";
 import {
   applySharedAccountEntry,
@@ -511,11 +512,17 @@ export class AccountsRepository {
     };
 
     const previousTokens = await this.secretStore.getTokens(accountId);
+    const credentialsChanged = !previousTokens || !areTokenCredentialsEqual(previousTokens, effectiveTokens);
     await this.secretStore.setTokens(accountId, effectiveTokens);
     this.invalidateTokenCacheForAccount(accountId);
     await mirrorAideckCodexManagerAccount(account, effectiveTokens);
 
     let shouldWriteIndex = false;
+    if (credentialsChanged) {
+      account.credentialUpdatedAt = Date.now();
+      account.updatedAt = account.credentialUpdatedAt;
+      shouldWriteIndex = true;
+    }
     if (effectiveTokens.accountId && effectiveTokens.accountId !== account.accountId) {
       account.accountId = effectiveTokens.accountId;
       account.updatedAt = Date.now();
@@ -540,7 +547,7 @@ export class AccountsRepository {
     if (shouldWriteIndex) {
       this.writeIndex(index);
     }
-    if (!previousTokens || !areTokenCredentialsEqual(previousTokens, effectiveTokens)) {
+    if (credentialsChanged) {
       this.switchCoordinator?.onVaultMutation?.("credentials-changed");
     }
 
@@ -678,6 +685,7 @@ export class AccountsRepository {
         accountId?: string;
         organizationId?: string;
       };
+      credentialUpdatedAt?: number;
     } = {}
   ): Promise<CodexManagerAccountRecord> {
     let claims: ReturnType<typeof extractClaims>;
@@ -731,6 +739,9 @@ export class AccountsRepository {
       forceActive,
       now
     });
+    if (!existing || !previousTokens || !areTokenCredentialsEqual(previousTokens, tokens)) {
+      account.credentialUpdatedAt = options.credentialUpdatedAt ?? now;
+    }
 
     // 替换或添加账号
     index.accounts = index.accounts.filter((item) => item.id !== id);
@@ -925,7 +936,11 @@ export class AccountsRepository {
         allowRecoveryWrite: options.allowRecoveryWrite,
         persistImmediately: false,
         addedVia: "json",
-        identityFallback
+        identityFallback,
+        credentialUpdatedAt:
+          normalizeEpochMs(entry.credential_updated_at) ??
+          normalizeEpochMs(entry.last_used) ??
+          normalizeEpochMs(entry.added_at ?? undefined)
       });
       const index = options.allowRecoveryWrite ? await this.readIndexForRecovery() : await this.readIndex();
       const account = index.accounts.find((item) => item.id === created.id);
@@ -1265,6 +1280,7 @@ export class AccountsRepository {
           }
 
           account.updatedAt = Date.now();
+          account.credentialUpdatedAt = account.updatedAt;
           changed = true;
           this.switchCoordinator?.onVaultMutation?.("credentials-changed");
         }

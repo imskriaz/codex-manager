@@ -84,6 +84,50 @@ describe("isSafeExternalUrl", () => {
 });
 
 describe("executeDashboardActionMessage", () => {
+  it("updates shared privacy mode and returns visible completion feedback", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: vi.fn(),
+      update,
+      inspect: vi.fn()
+    } as never);
+    const context = createContext();
+
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action",
+      action: "setPrivacyMode",
+      requestId: "req-privacy-on",
+      payload: { privacyMode: true }
+    });
+
+    expect(update).toHaveBeenCalledWith("privacyMode", true, vscode.ConfigurationTarget.Global);
+    expect(context.schedulePublishState).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      status: "completed",
+      payload: { notice: { level: "info", message: "Privacy mode enabled across Codex Manager." } }
+    });
+  });
+
+  it("returns a visible failure when shared privacy mode cannot be saved", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: vi.fn(),
+      update: vi.fn().mockRejectedValue(new Error("settings are read-only")),
+      inspect: vi.fn()
+    } as never);
+    const context = createContext();
+
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action",
+      action: "setPrivacyMode",
+      requestId: "req-privacy-failed",
+      payload: { privacyMode: true }
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toContain("settings are read-only");
+    expect(context.schedulePublishState).not.toHaveBeenCalled();
+  });
+
   it("unloads live auth, clears runtime state, and returns visible reload feedback", async () => {
     const workspaceUpdate = vi.fn().mockResolvedValue(undefined);
     const syncActiveAccountFromAuthFile = vi.fn().mockResolvedValue(undefined);

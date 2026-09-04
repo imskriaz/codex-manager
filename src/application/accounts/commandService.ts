@@ -480,14 +480,14 @@ export class AccountsCommandService {
     }
   }
 
-  async openDetails(item?: CodexManagerAccountRecord, options?: { privacyMode?: boolean }): Promise<void> {
+  async openDetails(item?: CodexManagerAccountRecord): Promise<void> {
     const copy = getCommandCopy();
     const account = item ?? (await this.pickAccount(copy.pickInspectAccount));
     if (!account) {
       return;
     }
 
-    openDetailsPanel(this.context, this.repo, account, options);
+    openDetailsPanel(this.context, this.repo, account);
   }
 
   async openCodexHome(): Promise<void> {

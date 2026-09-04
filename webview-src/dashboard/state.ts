@@ -50,6 +50,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         snapshot: action.snapshot,
+        privacyMode: action.snapshot.settings.privacyMode === true,
         selectedAccountIds,
         lastEnabledAutoRefreshMinutes:
           action.snapshot.settings.autoRefreshMinutes > 0

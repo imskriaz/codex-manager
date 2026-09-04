@@ -6,6 +6,7 @@ import type {
   DashboardState
 } from "../../src/domain/dashboard/types";
 import { ModalShell } from "./components";
+import { getSensitiveDisplayValue } from "./helpers";
 import { useModalAccessibility } from "./primitives";
 
 export type BrowserActionRequest =
@@ -72,6 +73,7 @@ export function BrowserActionModal(props: {
   request?: BrowserActionRequest;
   accounts: DashboardAccountViewModel[];
   lang: DashboardState["lang"];
+  privacyMode: boolean;
   closeLabel: string;
   onCancel: (request: BrowserActionRequest) => void;
   onConfirm: (request: BrowserActionRequest, submittedTags?: string[]) => void;
@@ -133,7 +135,7 @@ export function BrowserActionModal(props: {
                   role="option"
                   onClick={() => props.onConfirm({ ...request, accountIds: [account.id] })}
                 >
-                  <span>{account.email}</span>
+                  <span>{getSensitiveDisplayValue(account.email, props.privacyMode, "email")}</span>
                   <small>{account.planTypeLabel} · {account.workspaceLabel}</small>
                 </button>
               ))}

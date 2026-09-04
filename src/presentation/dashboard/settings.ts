@@ -33,6 +33,7 @@ export async function handleDashboardSettingUpdate(
         updated = true;
       }
       break;
+    case "privacyMode":
     case "codexAppRestartEnabled":
     case "autoSwitchEnabled":
     case "hourlyQuotaControlEnabled":
@@ -213,7 +214,7 @@ function resolveConfigurationTarget(
   // Workspace access exposes local files, terminals, and CLI sessions. Keep
   // its master gate in this machine's user settings even if an older install
   // left a workspace-level override behind in a shared repository.
-  if (key === "cliIntegrationEnabled") {
+  if (key === "cliIntegrationEnabled" || key === "privacyMode") {
     return vscode.ConfigurationTarget.Global;
   }
   const inspected = config.inspect(key);

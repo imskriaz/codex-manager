@@ -1272,6 +1272,7 @@ export function createSyncEntry(entry: SharedCodexManagerAccountJson): SyncAccou
     added_at: entry.added_at,
     tokens: entry.tokens ? { ...entry.tokens } : undefined,
     created_at: entry.created_at,
+    credential_updated_at: entry.credential_updated_at,
     token_refresh_enabled: entry.token_refresh_enabled
   };
 }
@@ -1456,6 +1457,11 @@ function normalizeSyncTimestamp(value: number | null | undefined): number {
 }
 
 function compareEntryFreshness(left: SyncAccountEntry, right: SyncAccountEntry): number {
+  const credentialRevisionDelta =
+    normalizeSyncTimestamp(left.credential_updated_at) - normalizeSyncTimestamp(right.credential_updated_at);
+  if (credentialRevisionDelta !== 0) {
+    return credentialRevisionDelta;
+  }
   const tokenDelta = getTokenExpiry(left) - getTokenExpiry(right);
   if (tokenDelta !== 0) {
     return tokenDelta;
@@ -1547,7 +1553,7 @@ function validateSyncAccountEntry(value: unknown): asserts value is SyncAccountE
   const entry = value as SyncAccountEntry;
   const tokens = entry.tokens;
   const metadataValues = [entry.id, entry.email, entry.user_id, entry.account_id, entry.organization_id];
-  const timestamps = [entry.added_at, entry.created_at, entry.last_used];
+  const timestamps = [entry.added_at, entry.created_at, entry.last_used, entry.credential_updated_at];
   if (
     !getSyncAccountId(entry) ||
     metadataValues.some((item) => item !== undefined && item !== null && !isBoundedString(item, MAX_METADATA_LENGTH)) ||

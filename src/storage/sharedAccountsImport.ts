@@ -82,6 +82,8 @@ export function applySharedAccountEntry(account: CodexManagerAccountRecord, entr
   account.accountStructure = sanitizeOptionalValue(entry.account_structure) ?? account.accountStructure;
   account.createdAt = normalizeEpochMs(entry.created_at) ?? account.createdAt;
   account.updatedAt = normalizeEpochMs(entry.last_used) ?? normalizeEpochMs(entry.added_at ?? undefined) ?? Date.now();
+  account.credentialUpdatedAt =
+    normalizeEpochMs(entry.credential_updated_at) ?? account.credentialUpdatedAt ?? account.createdAt;
 
   if (entry.quota !== undefined) {
     account.quotaSummary = entry.quota ? normalizeQuotaSummary(fromSharedQuota(entry.quota)) : undefined;

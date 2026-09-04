@@ -66,6 +66,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.brandSub,
     state.onboardingCompleted ? "1" : "0",
     state.settings.dashboardTheme,
+    state.settings.privacyMode ? "1" : "0",
     state.settings.displayLanguage,
     state.settings.cliIntegrationEnabled ? "1" : "0",
     state.settings.codexCliPath ?? "",

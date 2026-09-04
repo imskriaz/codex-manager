@@ -33,7 +33,7 @@ describe("add account OAuth actions", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).toContain('modals.openReauthorizeModal(accountId, account?.email ?? "")');
     expect(source).toContain(
-      "resolveAccountModalTitle(snapshot.copy.addAccountModalTitle, modals.reauthorizeEmail)"
+      'getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email")'
     );
   });
 
@@ -42,6 +42,8 @@ describe("add account OAuth actions", () => {
     const modal = readFileSync("webview-src/dashboard/accountModals.tsx", "utf8");
     expect(source).toContain('action === "details" && isBrowserDashboard && accountId');
     expect(source).toContain("<AccountInfoModal");
+    expect(source).toContain("privacyMode={state.privacyMode}");
+    expect(modal).toContain('getSensitiveDisplayValue(account.email, props.privacyMode, "email")');
     expect(modal).toContain('className="dashboard-modal-compact account-info-modal"');
   });
 

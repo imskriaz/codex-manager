@@ -201,6 +201,8 @@ export interface CodexManagerAccountRecord {
   createdAt: number;
   /** 更新时间戳 (毫秒) */
   updatedAt: number;
+  /** Last credential replacement time (milliseconds), used to resolve encrypted-sync revisions. */
+  credentialUpdatedAt?: number;
 }
 
 /**
@@ -571,6 +573,7 @@ export interface SharedCodexManagerAccountJson {
   token_refresh_enabled?: boolean;
   created_at?: number;
   last_used?: number;
+  credential_updated_at?: number;
 }
 
 /** Manual transfer package containing saved accounts, extension settings, and diagnostics. */

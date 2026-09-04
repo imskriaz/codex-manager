@@ -32,6 +32,7 @@ import type {
   DashboardWorkspaceTerminalResult
 } from "../../src/domain/dashboard/types";
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
+import { getSensitiveDisplayValue } from "./helpers";
 
 export type CliSessionFeedback = DashboardNotice & { key: number };
 type WorkspaceTab = "terminal" | "files" | "reviews" | `file:${string}` | `review:${string}`;
@@ -70,6 +71,7 @@ const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
 
 export type CliSessionsPageProps = {
   dashboardMode?: boolean;
+  privacyMode: boolean;
   sessions: DashboardCliSessionSummary[];
   selectedSession?: DashboardCliSessionSummary;
   messages: DashboardCliSessionMessage[];
@@ -314,7 +316,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const renderSession = (session: DashboardCliSessionSummary): preact.ComponentChildren => session.archived ? (
     <div role="listitem" class="cli-session-row is-archived" key={session.id}>
-      <span class="cli-session-row-main"><strong>{session.title}</strong><small>{session.remote ? session.deviceName ?? "Remote" : "Archived"} · {relativeTime(session.updatedAt)}</small></span>
+        <span class="cli-session-row-main"><strong>{session.title}</strong><small>{session.remote ? getSensitiveDisplayValue(session.deviceName, props.privacyMode, "name", "Remote") : "Archived"} · {relativeTime(session.updatedAt)}</small></span>
       <span class="cli-session-row-actions">
         <IconButton label={`Restore ${session.title}`} disabled={props.mutating} onClick={() => props.onUnarchive(session)}><RestoreIcon /></IconButton>
         <IconButton label={`Delete ${session.title}`} disabled={props.mutating} danger onClick={() => setDeleteTarget(session)}><TrashIcon /></IconButton>
@@ -326,7 +328,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         <span class="cli-session-row-status" title={session.status === "running" ? "Running" : "Complete"} aria-label={session.status === "running" ? "Running" : "Complete"}>
           {session.status === "running" ? <span class="cli-session-spinner" aria-hidden="true" /> : <CheckIcon />}
         </span>
-        <span class={`cli-session-row-main ${session.projectPath ? "has-project" : ""}`}><strong>{session.title}</strong><small class="cli-session-row-meta">{session.projectPath ? <span class="cli-session-project" title={session.projectPath}><EmptyFolderIcon />{projectDisplayName(session.projectPath)}</span> : null}<span>{session.remote ? `${session.deviceName ?? "Remote"} · ` : ""}{relativeTime(session.updatedAt)}</span></small></span>
+        <span class={`cli-session-row-main ${session.projectPath ? "has-project" : ""}`}><strong>{session.title}</strong><small class="cli-session-row-meta">{session.projectPath ? <span class="cli-session-project" title={session.projectPath}><EmptyFolderIcon />{projectDisplayName(session.projectPath)}</span> : null}<span>{session.remote ? `${getSensitiveDisplayValue(session.deviceName, props.privacyMode, "name", "Remote")} · ` : ""}{relativeTime(session.updatedAt)}</span></small></span>
       </button>
       <span class="cli-session-row-actions">
         {session.status === "running" ? (session.canStop ? <IconButton label={`Stop ${session.title}`} disabled={props.mutating} onClick={() => props.onStop(session)}><StopIcon /></IconButton> : null) : <>
@@ -483,10 +485,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                if (unassigned.length > 0) projectGroups.unshift({ project: { id: `${pc.id}:recents`, label: "Recent", path: "" }, sessions: unassigned });
                return <section class="cli-pc-group" key={pc.id}>
                  <div class="cli-pc-group-heading">
-                   <button type="button" class={`cli-pc-group-toggle ${props.selectedPeerId === pc.id ? "is-selected" : ""}`} aria-expanded={!pcCollapsed} onClick={() => { props.onPeerChange?.(pc.id); toggleGroup(`pc:${pc.id}`); }}>
-                     <ChevronIcon /><span><strong>{pc.name}</strong><small>{`${pc.sessions.length} session${pc.sessions.length === 1 ? "" : "s"} · ${pc.connected ? "online" : "offline"}`}</small></span>
+                     <button type="button" class={`cli-pc-group-toggle ${props.selectedPeerId === pc.id ? "is-selected" : ""}`} aria-expanded={!pcCollapsed} onClick={() => { props.onPeerChange?.(pc.id); toggleGroup(`pc:${pc.id}`); }}>
+                     <ChevronIcon /><span><strong>{getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}</strong><small>{`${pc.sessions.length} session${pc.sessions.length === 1 ? "" : "s"} · ${pc.connected ? "online" : "offline"}`}</small></span>
                    </button>
-                   <button type="button" class="cli-pc-switch" aria-label={`Switch account on ${pc.name}`} title={`Switch account on ${pc.name}`} onClick={(event) => { event.stopPropagation(); if (pc.local) props.onSwitchAccount(); else props.onSwitchAccount(pc.id); }}><SwitchAccountIcon /></button>
+                   <button type="button" class="cli-pc-switch" aria-label={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} title={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} onClick={(event) => { event.stopPropagation(); if (pc.local) props.onSwitchAccount(); else props.onSwitchAccount(pc.id); }}><SwitchAccountIcon /></button>
                  </div>
                 {!pcCollapsed ? <div class="cli-pc-group-children">
                   {projectGroups.map(({ project, sessions }) => {
@@ -515,6 +517,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           {deleteTarget && deleteTarget.archived ? <DeleteConfirmation compact title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); setLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
           <SessionAccountFooter
             account={props.account}
+            privacyMode={props.privacyMode}
             accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined}
             localAccounts={props.localAccounts}
             peers={props.peers}
@@ -1345,6 +1348,7 @@ function PanelResizeHandle(props: {
 
 function SessionAccountFooter(props: {
   account?: DashboardAccountViewModel;
+  privacyMode: boolean;
   accounts?: DashboardAccountViewModel[];
   localAccounts?: DashboardAccountViewModel[];
   peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
@@ -1357,7 +1361,10 @@ function SessionAccountFooter(props: {
   const [popoverPosition, setPopoverPosition] = useState({ left: 8, bottom: 8 });
   const rootRef = useRef<HTMLElement>(null);
   const closeTimer = useRef<number>();
-  const accountLabel = props.account?.displayName?.trim() || props.account?.email?.trim() || "No active account";
+  const rawAccountLabel = props.account?.displayName?.trim() || props.account?.email?.trim();
+  const accountLabel = rawAccountLabel
+    ? getSensitiveDisplayValue(rawAccountLabel, props.privacyMode, rawAccountLabel.includes("@") ? "email" : "name")
+    : "No active account";
   const quotaMetrics = props.account?.metrics.filter((item) => item.visible && typeof item.percentage === "number") ?? [];
   const overall = quotaMetrics.length ? Math.min(...quotaMetrics.map((metric) => metric.percentage ?? 100)) : undefined;
   const fallbackPeer = { id: "local", name: "This PC", connected: true, local: true };
@@ -1450,7 +1457,7 @@ function SessionAccountFooter(props: {
             <button
               type="button"
               role="menuitem"
-              aria-label={`Switch account on ${peer.name}`}
+              aria-label={`Switch account on ${getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}`}
               aria-haspopup={hasChildren ? "menu" : undefined}
               aria-expanded={hasChildren ? expanded : undefined}
               onClick={() => {
@@ -1462,11 +1469,11 @@ function SessionAccountFooter(props: {
                 props.onSwitchAccount(peer.local ? undefined : peer.id);
               }}
             >
-              <span><strong>{peer.name}</strong><small>{enabledCount} enabled · {runningAccount ? `Running ${quotaDescription(runningAccount)}` : "No running account"}</small></span><ChevronIcon />
+              <span><strong>{getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}</strong><small>{enabledCount} enabled · {runningAccount ? `Running ${quotaDescription(runningAccount)}` : "No running account"}</small></span><ChevronIcon />
             </button>
-            {hasChildren && expanded ? <div class="cli-account-submenu" role="menu" aria-label={`Accounts on ${peer.name}`} onMouseEnter={openMenu} onFocus={openMenu}>
+            {hasChildren && expanded ? <div class="cli-account-submenu" role="menu" aria-label={`Accounts on ${getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}`} onMouseEnter={openMenu} onFocus={openMenu}>
               {accounts.map((account) => { const selected = account.isActive || account.isCurrentWindowAccount; return <button type="button" role="menuitem" aria-current={selected ? "true" : undefined} class={`cli-account-entry ${selected ? "is-active" : ""}`} key={account.id} onClick={() => { closeMenu(); props.onSwitchAccount(peer.local ? undefined : peer.id); }}>
-                <span><strong>{account.email || account.displayName || "Unnamed account"}</strong><small>{accountDescription(account)}</small></span>
+                <span><strong>{getSensitiveDisplayValue(account.email || account.displayName, props.privacyMode, account.email ? "email" : "name", "Unnamed account")}</strong><small>{accountDescription(account)}</small></span>
               </button>})}
     </div> : null}
           </div>;

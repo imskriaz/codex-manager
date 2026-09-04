@@ -1,10 +1,12 @@
 import * as vscode from "vscode";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveSubscriptionDisplay } from "../src/application/dashboard/buildDashboardState";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
 import {
   getDetailsThemePreference,
   getDetailsWorkspaceValue,
+  getPrivacyModePreference,
   renderDetailsBodyAttributes,
   renderDetailsThemeAttributes
 } from "../src/ui/details";
@@ -15,6 +17,15 @@ afterEach(() => {
 });
 
 describe("details theme", () => {
+  it("reads the shared privacy mode setting for account details", () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: (key: string, defaultValue?: unknown) => (key === "privacyMode" ? true : defaultValue),
+      update: vi.fn()
+    } as never);
+
+    expect(getPrivacyModePreference()).toBe(true);
+  });
+
   it("reads the configured dashboard theme for details pages", () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: (key: string, defaultValue?: unknown) => (key === "dashboardTheme" ? "light" : defaultValue),
@@ -42,6 +53,11 @@ describe("details theme", () => {
   it("renders the initial privacy mode for details pages", () => {
     expect(renderDetailsBodyAttributes(true)).toBe(' class="privacy-hidden" data-privacy-hidden="true"');
     expect(renderDetailsBodyAttributes(false)).toBe(' data-privacy-hidden="false"');
+  });
+
+  it("sends details privacy changes back to the shared host setting", () => {
+    const script = readFileSync("media/webview/details.js", "utf8");
+    expect(script).toContain('vscode.postMessage({ type: "details:set-privacy-mode", privacyMode: hidden })');
   });
 
   it("uses the localized personal workspace label when a personal account has no workspace name", () => {

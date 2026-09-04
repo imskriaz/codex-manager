@@ -6,6 +6,7 @@
 
 ## 1.1.2
 
+- Synchronize Privacy Mode across the browser dashboard, VS Code dashboard, and account details, with visible success or failure feedback.
 - Expand the manual OAuth callback field into a multiline editor with a full-width submit action.
 - Fence reset credits rejected as ineligible by provider credit ID so they disappear from the dashboard and automatic reset queue without affecting future credits.
 - Turn the current-account switch slot into an unload action with a reload icon, while keeping account loading available for other saved accounts.

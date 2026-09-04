@@ -10,6 +10,21 @@ import {
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
+  it("publishes privacy mode as a shared disabled-by-default setting", () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as never);
+
+    const manifest = JSON.parse(readFileSync("package.json", "utf8")) as {
+      contributes: { configuration: { properties: Record<string, { default?: unknown }> } };
+    };
+
+    expect(manifest.contributes.configuration.properties["codexManager.privacyMode"]?.default).toBe(false);
+    expect(new ExtensionSettingsStore().getDashboardSettings().privacyMode).toBe(false);
+  });
+
   it("defaults to enabled in both the extension manifest and runtime fallbacks", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),

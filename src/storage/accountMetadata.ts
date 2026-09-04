@@ -197,7 +197,8 @@ export function buildAccountRecordDraft(params: {
     quotaSummary: params.existing?.quotaSummary,
     quotaError: params.existing?.quotaError,
     createdAt: params.existing?.createdAt ?? params.now,
-    updatedAt: params.now
+    updatedAt: params.now,
+    credentialUpdatedAt: params.existing?.credentialUpdatedAt ?? params.now
   };
 }
 

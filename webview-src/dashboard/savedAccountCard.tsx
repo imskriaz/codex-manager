@@ -726,7 +726,7 @@ export function SavedAccountCard(props: {
                         disabled={props.busy || props.detailsPending}
                         onClick={() => {
                           setActionsOpen(false);
-                          onAction("details", account.id, { privacyMode });
+                          onAction("details", account.id);
                         }}
                       >
                         {props.detailsPending ? (
@@ -1022,7 +1022,7 @@ export function SavedAccountCard(props: {
                             disabled={props.busy || props.detailsPending}
                             onClick={() => {
                               setActionsOpen(false);
-                              onAction("details", account.id, { privacyMode: props.privacyMode });
+                              onAction("details", account.id);
                             }}
                           >
                             {props.detailsPending ? (

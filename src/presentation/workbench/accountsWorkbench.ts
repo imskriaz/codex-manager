@@ -91,6 +91,9 @@ export class AccountsWorkbench {
     });
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("codexManager.privacyMode")) {
+          this.webDashboard.publishRealtimeState();
+        }
         if (
           event.affectsConfiguration("codexManager.webDashboardEnabled") ||
           event.affectsConfiguration("codexManager.cloudflaredDomain") ||

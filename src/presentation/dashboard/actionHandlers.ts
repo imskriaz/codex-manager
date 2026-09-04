@@ -71,6 +71,7 @@ import { parseSharedJsonInput, toFailureMessage, toImportActionPayload } from ".
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
+  "setPrivacyMode",
   "importCurrent",
   "inspectCurrentAuth",
   "completeOnboarding",
@@ -272,6 +273,23 @@ async function runDashboardAction(
     case "addAccount":
       await vscode.commands.executeCommand("codexManager.addAccount");
       return undefined;
+    case "setPrivacyMode": {
+      if (typeof payload?.privacyMode !== "boolean") {
+        throw new Error("The privacy mode request is invalid. Refresh the dashboard and try again.");
+      }
+      if (!(await handleDashboardSettingUpdate("privacyMode", payload.privacyMode, vscode.ConfigurationTarget.Global))) {
+        throw new Error("Privacy mode could not be updated. Try again.");
+      }
+      ctx.schedulePublishState();
+      return {
+        notice: {
+          level: "info" as const,
+          message: payload.privacyMode
+            ? "Privacy mode enabled across Codex Manager."
+            : "Privacy mode disabled across Codex Manager."
+        }
+      };
+    }
     case "importCurrent":
       if (ctx.hostKind === "browser") {
         const imported = await ctx.repo.importCurrentAuth();
@@ -563,9 +581,7 @@ async function runDashboardAction(
       return undefined;
     case "details":
       if (account) {
-        await vscode.commands.executeCommand("codexManager.openDetails", account, {
-          privacyMode: payload?.privacyMode === true
-        });
+        await vscode.commands.executeCommand("codexManager.openDetails", account);
       }
       return undefined;
     case "switch":

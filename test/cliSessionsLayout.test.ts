@@ -183,7 +183,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain('min-height: 34px;');
     expect(css).toContain('.cli-account-entry > span:first-child:last-child');
     expect(css).toContain('.cli-account-parent > button small');
-    expect(source).toContain('Switch account on ${peer.name}');
+    expect(source).toContain('Switch account on ${getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}');
     expect(source).toContain('class="cli-session-search-line"');
     expect(source).toContain('class="cli-session-search-wrap"><SearchIcon />');
     expect(source).toContain('class="cli-session-tabs cli-session-state-toggle" role="tablist"');

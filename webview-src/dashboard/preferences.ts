@@ -11,7 +11,6 @@ export type UiPreferences = {
 
 export const UI_PREFERENCES_STORAGE_KEY = "codexManager.dashboardUiPreferences.v2";
 export const LEGACY_UI_PREFERENCES_STORAGE_KEY = "codexManager.dashboardUiPreferences.v1";
-export const PRIVACY_MODE_STORAGE_KEY = "codexManager.dashboardPrivacyMode.v1";
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   filter: "all",
@@ -46,21 +45,5 @@ export function saveUiPreferences(value: UiPreferences): void {
     window.localStorage.setItem(UI_PREFERENCES_STORAGE_KEY, JSON.stringify(value));
   } catch {
     // UI preferences are optional when storage is unavailable.
-  }
-}
-
-export function loadPrivacyMode(): boolean {
-  try {
-    return window.localStorage.getItem(PRIVACY_MODE_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
-
-export function savePrivacyMode(value: boolean): void {
-  try {
-    window.localStorage.setItem(PRIVACY_MODE_STORAGE_KEY, String(value));
-  } catch {
-    // Local storage may be unavailable in restricted webviews.
   }
 }

@@ -30,6 +30,7 @@ import {
 } from "./accountSorting";
 import {
   countAccountEnablement,
+  getSensitiveDisplayValue,
   isAccountAttention,
   isAccountClaimedByAnotherDevice,
   normalizeThresholds,
@@ -65,10 +66,8 @@ import { BrowserActionModal, type BrowserActionRequest } from "./browserActionMo
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import {
-  loadPrivacyMode,
   loadUiPreferences,
   saveUiPreferences,
-  savePrivacyMode,
   type AccountFilter,
   type UiPreferences
 } from "./preferences";
@@ -149,10 +148,7 @@ function isAccountSort(value: string | null): value is AccountSort {
 
 function App() {
   const isBrowserDashboard = document.documentElement.dataset["dashboardHost"] === "browser";
-  const [state, dispatch] = useReducer(reducer, undefined, () => ({
-    ...createInitialState(),
-    privacyMode: loadPrivacyMode()
-  }));
+  const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [announcementsOpen, setAnnouncementsOpen] = useState(false);
   const [accountSort, setAccountSort] = useState<AccountSort>(() => {
@@ -449,7 +445,7 @@ function App() {
           action: "reloadPrompt",
           accountId: message.payload.reloadAccountId,
           title: "Reload VS Code",
-          message: `${message.action === "switch" ? "The account was switched" : "The current account was imported"}${switchedAccount ? ` (${switchedAccount.email})` : ""}. Reload the VS Code extension host now to apply it to this window?`,
+          message: `${message.action === "switch" ? "The account was switched" : "The current account was imported"}${switchedAccount ? ` (${getSensitiveDisplayValue(switchedAccount.email, state.privacyMode, "email")})` : ""}. Reload the VS Code extension host now to apply it to this window?`,
           confirmLabel: "Reload"
         });
       }
@@ -954,10 +950,6 @@ function App() {
   }, [uiPreferences]);
 
   useEffect(() => {
-    savePrivacyMode(state.privacyMode);
-  }, [state.privacyMode]);
-
-  useEffect(() => {
     if (!snapshot?.usageHistory?.length) return;
     setUsageHistory((current) => {
       const next = isBrowserDashboard
@@ -1315,7 +1307,7 @@ function App() {
         action,
         accountId,
         title: "Remove account",
-        message: `Remove ${account?.email ?? "this account"} from Codex Manager?`,
+        message: `Remove ${getSensitiveDisplayValue(account?.email, state.privacyMode, "email", "this account")} from Codex Manager?`,
         confirmLabel: "Remove",
         danger: true
       });
@@ -1329,7 +1321,7 @@ function App() {
         action,
         accountId,
         title: "Reset your usage?",
-        message: `Reset the rate limit for ${account?.email ?? "this account"}? ${available} reset${available === 1 ? "" : "s"} available.`,
+        message: `Reset the rate limit for ${getSensitiveDisplayValue(account?.email, state.privacyMode, "email", "this account")}? ${available} reset${available === 1 ? "" : "s"} available.`,
         confirmLabel: "Reset Rate Limit"
       });
       return;
@@ -1360,7 +1352,7 @@ function App() {
       accountIds: [account.id],
       mode: "set",
       initialTags: account.tags,
-      title: `Edit tags: ${account.email}`
+      title: `Edit tags: ${getSensitiveDisplayValue(account.email, state.privacyMode, "email")}`
     });
   };
 
@@ -1585,7 +1577,10 @@ function App() {
     <AddAccountModal
       open={open}
       inline={inline}
-      title={resolveAccountModalTitle(snapshot.copy.addAccountModalTitle, modals.reauthorizeEmail)}
+      title={resolveAccountModalTitle(
+        snapshot.copy.addAccountModalTitle,
+        getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email")
+      )}
       tab={modals.addAccountTab}
       copy={snapshot.copy}
       oauthSession={modals.oauthSession}
@@ -1684,6 +1679,7 @@ function App() {
                   selectedPeer={selectedPeer}
                   selectedPeerId={selectedPeer.id}
                   lang={snapshot.lang}
+                  privacyMode={state.privacyMode}
                   open={pcPickerOpen}
                   onToggle={() => {
                     setCliSessionsMenuOpen(false);
@@ -1722,6 +1718,7 @@ function App() {
                   peers={pcOptions}
                   runningCount={runningCliSessionCount}
                   lang={snapshot.lang}
+                  privacyMode={state.privacyMode}
                   open={cliSessionsMenuOpen}
                   onToggle={() => {
                     setPcPickerOpen(false);
@@ -1741,7 +1738,13 @@ function App() {
                 title={privacyToggleLabel}
                 aria-label={privacyToggleLabel}
                 aria-pressed={state.privacyMode}
-                onClick={() => dispatch({ type: "toggle-privacy" })}
+                aria-busy={isActionPending("setPrivacyMode")}
+                disabled={isActionPending("setPrivacyMode")}
+                onClick={() => {
+                  const privacyMode = !state.privacyMode;
+                  dispatch({ type: "toggle-privacy" });
+                  sendAction("setPrivacyMode", undefined, { privacyMode });
+                }}
               >
                 <span class="button-face">
                   <span class="button-icon">{state.privacyMode ? <EyeOffIcon /> : <EyeIcon />}</span>
@@ -2081,10 +2084,10 @@ function App() {
               <div class="dashboard-notice is-info" role="status">
                 <span>
                   {snapshot.lang === "zh"
-                    ? `当前查看：${selectedPeer.name} · ${selectedPeer.sessionCount} 个会话 · 操作通过安全连接转发。`
+                    ? `当前查看：${getSensitiveDisplayValue(selectedPeer.name, state.privacyMode, "name")} · ${selectedPeer.sessionCount} 个会话 · 操作通过安全连接转发。`
                     : snapshot.lang === "zh-hant"
-                      ? `目前檢視：${selectedPeer.name} · ${selectedPeer.sessionCount} 個工作階段 · 操作會透過安全連線轉送。`
-                      : `Viewing ${selectedPeer.name} · ${selectedPeer.sessionCount} sessions · actions are relayed over the secure connection.`}
+                      ? `目前檢視：${getSensitiveDisplayValue(selectedPeer.name, state.privacyMode, "name")} · ${selectedPeer.sessionCount} 個工作階段 · 操作會透過安全連線轉送。`
+                      : `Viewing ${getSensitiveDisplayValue(selectedPeer.name, state.privacyMode, "name")} · ${selectedPeer.sessionCount} sessions · actions are relayed over the secure connection.`}
                 </span>
               </div>
             ) : null}
@@ -2213,6 +2216,7 @@ function App() {
       <AccountInfoModal
         account={isBrowserDashboard ? accountInfoAccount : undefined}
         lang={snapshot.lang}
+        privacyMode={state.privacyMode}
         closeLabel={snapshot.copy.closeModal}
         onClose={() => setAccountInfoAccountId(undefined)}
       />
@@ -2226,6 +2230,7 @@ function App() {
               : displayedAccounts
           }
           lang={snapshot.lang}
+          privacyMode={state.privacyMode}
           closeLabel={snapshot.copy.closeModal}
           onCancel={cancelBrowserAction}
           onConfirm={confirmBrowserAction}
@@ -2237,6 +2242,7 @@ function App() {
         ? createPortal(
             <CliSessionsPage
               dashboardMode={browserPath === "/dash"}
+              privacyMode={state.privacyMode}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
               messages={cliSessionMessages}
@@ -2450,7 +2456,10 @@ function App() {
 
       <ConfirmCancelOauthModal
         open={modals.confirmCancelOauthOpen}
-        title={resolveAccountModalTitle(snapshot.copy.addAccountModalTitle, modals.reauthorizeEmail)}
+        title={resolveAccountModalTitle(
+          snapshot.copy.addAccountModalTitle,
+          getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email")
+        )}
         copy={snapshot.copy}
         onClose={modals.closeConfirmCancelOauth}
         onConfirm={modals.confirmCancelOauth}
@@ -2797,6 +2806,7 @@ function PcPickerControl(props: {
   selectedPeer: DashboardPeerView;
   selectedPeerId: string;
   lang: string;
+  privacyMode: boolean;
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
@@ -2815,7 +2825,10 @@ function PcPickerControl(props: {
   const disabledLabel = isZh ? "已停用" : isHant ? "已停用" : "disabled";
   const sessionsLabel = isZh ? "个会话" : isHant ? "個工作階段" : "sessions";
   const pickerLabel = isZh ? "选择电脑" : isHant ? "選擇電腦" : "Select PC";
-  const peerName = (peer: DashboardPeerView): string => peer.name.trim() || (peer.local ? localLabel : pickerLabel);
+  const peerName = (peer: DashboardPeerView): string => {
+    const name = peer.name.trim() || (peer.local ? localLabel : pickerLabel);
+    return getSensitiveDisplayValue(name, props.privacyMode, "name");
+  };
   const peerStatus = (peer: DashboardPeerView): string => {
     const accounts = props.accountsByPeerId[peer.id] ?? [];
     const enabledCount = accounts.filter((account) => account.enabled).length;
@@ -2918,6 +2931,7 @@ function CliSessionsMenu(props: {
   peers: DashboardPeerView[];
   runningCount: number;
   lang: string;
+  privacyMode: boolean;
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
@@ -2935,7 +2949,10 @@ function CliSessionsMenu(props: {
   const onlineLabel = isZh ? "在线" : isHant ? "線上" : "Online";
   const offlineLabel = isZh ? "离线" : isHant ? "離線" : "Offline";
   const manageLabel = isZh ? "管理会话" : isHant ? "管理工作階段" : "Manage sessions";
-  const peerName = (peer: DashboardPeerView): string => peer.name.trim() || (peer.local ? localLabel : "PC");
+  const peerName = (peer: DashboardPeerView): string => {
+    const name = peer.name.trim() || (peer.local ? localLabel : "PC");
+    return getSensitiveDisplayValue(name, props.privacyMode, "name");
+  };
   const sessionLabel = (count: number): string => {
     if (isZh) {
       return `${count} 个会话`;

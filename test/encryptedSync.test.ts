@@ -722,6 +722,13 @@ describe("encrypted account sync", () => {
     expect(syncAccountsFingerprint([first])).not.toBe(syncAccountsFingerprint([refreshed]));
   });
 
+  it("prefers the newest credential revision when token expiry is unchanged", () => {
+    const older = { ...createEntry("one", 200, "older"), credential_updated_at: 1_000 };
+    const newer = { ...createEntry("one", 200, "newer"), credential_updated_at: 2_000 };
+
+    expect(mergeSyncAccounts([older], [newer])[0]?.tokens?.refresh_token).toBe("newer");
+  });
+
   it("clears the receiving PC's stale automation auth error when newer credentials are synchronized", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),

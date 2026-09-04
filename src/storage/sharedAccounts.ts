@@ -44,7 +44,8 @@ export function toSharedAccountJson(
     tags: account.tags?.length ? [...account.tags] : null,
     token_refresh_enabled: account.tokenRefreshEnabled === true,
     created_at: Math.floor(account.createdAt / 1000),
-    last_used: Math.floor(account.updatedAt / 1000)
+    last_used: Math.floor(account.updatedAt / 1000),
+    credential_updated_at: account.credentialUpdatedAt ?? account.createdAt
   };
 }
 

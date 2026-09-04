@@ -78,7 +78,9 @@ export function useDashboardActions(
       action,
       accountId,
       requestId,
-      payload: payload?.targetDeviceId
+      payload: action === "setPrivacyMode"
+        ? payload
+        : payload?.targetDeviceId
         ? payload
         : targetDeviceId && targetDeviceId !== "local"
           ? { ...(payload ?? {}), targetDeviceId }

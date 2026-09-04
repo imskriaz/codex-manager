@@ -3,6 +3,22 @@ import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
 
 describe("handleDashboardSettingUpdate", () => {
+  it("always stores privacy mode globally so every surface shares it", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn(),
+      update,
+      inspect: vi.fn(() => ({
+        key: "codexManager.privacyMode",
+        defaultValue: false,
+        workspaceValue: false
+      }))
+    } as never);
+
+    await expect(handleDashboardSettingUpdate("privacyMode", true)).resolves.toBe(true);
+    expect(update).toHaveBeenCalledWith("privacyMode", true, vscode.ConfigurationTarget.Global);
+  });
+
   it("stores a selected Codex CLI executable at machine scope", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.window.showOpenDialog).mockResolvedValue([{ fsPath: "C:\\Tools\\codex.exe" }] as never);

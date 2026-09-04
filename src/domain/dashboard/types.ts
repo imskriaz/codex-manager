@@ -9,6 +9,7 @@ import type {
 
 export type DashboardSettingKey =
   | "dashboardTheme"
+  | "privacyMode"
   | "codexAppRestartEnabled"
   | "codexAppRestartMode"
   | "backgroundTokenRefreshEnabled"
@@ -39,6 +40,8 @@ export type DashboardSettingKey =
 
 export interface DashboardSettings {
   dashboardTheme: DashboardThemeOption;
+  /** Shared privacy preference used by every dashboard and details surface. */
+  privacyMode?: boolean;
   codexAppRestartEnabled: boolean;
   codexAppRestartMode: "auto" | "manual";
   backgroundTokenRefreshEnabled: boolean;
@@ -491,6 +494,7 @@ export interface DashboardPeerView {
 
 export type DashboardActionName =
   | "addAccount"
+  | "setPrivacyMode"
   | "importCurrent"
   | "inspectCurrentAuth"
   | "completeOnboarding"

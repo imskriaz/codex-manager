@@ -7,7 +7,7 @@ import type {
 import { useEffect, useState } from "preact/hooks";
 import type { CodexImportPreviewSummary, CodexImportResultSummary } from "../../src/core/types";
 import { ImportPreviewPanel, ImportResultPanel, ModalShell } from "./components";
-import { createShareFileName, formatTemplate, maskSharedJson } from "./helpers";
+import { createShareFileName, formatTemplate, getSensitiveDisplayValue, maskSharedJson } from "./helpers";
 import { CopyIcon, DownloadIcon, EyeIcon, EyeOffIcon, GlobeIcon, ImportIcon, SuccessIcon } from "./icons";
 
 export function resolveCreateOAuthLinkLabel(lang: DashboardState["lang"]): string {
@@ -82,6 +82,7 @@ function resolveAccountInfoCopy(lang: DashboardState["lang"]): {
 export function AccountInfoModal(props: {
   account?: DashboardAccountViewModel;
   lang: DashboardState["lang"];
+  privacyMode: boolean;
   closeLabel: string;
   onClose: () => void;
 }) {
@@ -90,7 +91,7 @@ export function AccountInfoModal(props: {
   return (
     <ModalShell
       open={Boolean(account)}
-      title={account ? `${copy.title}: ${account.email}` : copy.title}
+      title={account ? `${copy.title}: ${getSensitiveDisplayValue(account.email, props.privacyMode, "email")}` : copy.title}
       closeLabel={props.closeLabel}
       className="dashboard-modal-compact account-info-modal"
       onClose={props.onClose}
@@ -102,9 +103,9 @@ export function AccountInfoModal(props: {
           <InfoRow label={copy.addedBy} value={account.addMethodLabel} />
           <InfoRow label={copy.created} value={account.addedAtLabel} />
           <InfoRow label={copy.status} value={account.healthLabel} />
-          <InfoRow label={copy.userId} value={account.userId ?? "—"} mono />
-          <InfoRow label={copy.accountId} value={account.accountId ?? "—"} mono />
-          <InfoRow label={copy.organizationId} value={account.organizationId ?? "—"} mono />
+          <InfoRow label={copy.userId} value={getSensitiveDisplayValue(account.userId, props.privacyMode, "id", "—")} mono />
+          <InfoRow label={copy.accountId} value={getSensitiveDisplayValue(account.accountId, props.privacyMode, "id", "—")} mono />
+          <InfoRow label={copy.organizationId} value={getSensitiveDisplayValue(account.organizationId, props.privacyMode, "id", "—")} mono />
           <InfoRow label={copy.tags} value={account.tags.length ? account.tags.join(", ") : copy.noTags} />
         </div>
       ) : null}

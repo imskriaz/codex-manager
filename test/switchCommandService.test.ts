@@ -8,6 +8,11 @@ import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/
 describe("manual account switch command", () => {
   beforeEach(() => {
     vi.mocked(vscode.commands.executeCommand).mockReset();
+    vi.mocked(vscode.workspace.getConfiguration).mockReset().mockReturnValue({
+      get: (_key: string, defaultValue?: unknown) => defaultValue,
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as never);
     vi.mocked(vscode.window.showQuickPick).mockReset();
     vi.mocked(vscode.window.showInformationMessage).mockReset();
     setCurrentWindowRuntimeAccountId(undefined);
@@ -46,6 +51,7 @@ describe("manual account switch command", () => {
     const { service, repo } = createServiceWithRepo([account]);
     setCurrentWindowRuntimeAccountId("account-before-switch");
     vi.mocked(vscode.window.showQuickPick).mockImplementation(async (items) => (items as never[])[0] as never);
+    enableAutomaticReload();
     vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
 
     await expect(service.switchAccount()).resolves.toMatchObject({
@@ -72,6 +78,7 @@ describe("manual account switch command", () => {
     setCurrentWindowRuntimeAccountId("account-before-switch");
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.window.showQuickPick).mockImplementation(async (items) => (items as never[])[0] as never);
+    enableAutomaticReload();
     vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command: string) => {
       if (command === "workbench.action.restartExtensionHost" || command === "workbench.action.reloadWindow") {
         throw new Error("reload unavailable");
@@ -99,6 +106,14 @@ describe("manual account switch command", () => {
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(`${current.email} is already the active account`);
   });
 });
+
+function enableAutomaticReload(): void {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+    get: (key: string, defaultValue?: unknown) => key === "autoSwitchReloadWindowEnabled" ? true : defaultValue,
+    update: vi.fn(),
+    inspect: vi.fn()
+  } as never);
+}
 
 describe("refresh all quota eligibility", () => {
   it("skips an account when its foreign claim is enforced with rescue off", () => {

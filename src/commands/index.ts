@@ -168,8 +168,7 @@ export function registerCommands(
     ),
     vscode.commands.registerCommand(
       "codexManager.openDetails",
-      (item?: CodexManagerAccountRecord, options?: { privacyMode?: boolean }) =>
-        runCommand("Open account details", () => service.openDetails(item, options))
+      (item?: CodexManagerAccountRecord) => runCommand("Open account details", () => service.openDetails(item))
     ),
     vscode.commands.registerCommand("codexManager.openCodexHome", () =>
       runCommand("Open Codex home", () => service.openCodexHome())

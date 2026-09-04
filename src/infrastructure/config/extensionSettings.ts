@@ -16,6 +16,7 @@ export class ExtensionSettingsStore {
 
     return {
       dashboardTheme: normalizeDashboardTheme(config.get<string>("dashboardTheme", "auto")),
+      privacyMode: config.get<boolean>("privacyMode", false),
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "manual",
       backgroundTokenRefreshEnabled: config.get<boolean>("backgroundTokenRefreshEnabled", false),
