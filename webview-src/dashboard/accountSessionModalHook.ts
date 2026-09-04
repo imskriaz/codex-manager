@@ -12,6 +12,7 @@ export function useAccountSessionModal(params: {
 }) {
   const [addAccountModalOpen, setAddAccountModalOpen] = useState(false);
   const [addAccountTab, setAddAccountTab] = useState<"oauth" | "import">("oauth");
+  const [reauthorizeEmail, setReauthorizeEmail] = useState<string>();
   const [confirmCancelOauthOpen, setConfirmCancelOauthOpen] = useState(false);
   const [importRecoveryMode, setImportRecoveryMode] = useState(false);
   const oauthPrepareAccountId = useRef<string | undefined>(undefined);
@@ -30,6 +31,7 @@ export function useAccountSessionModal(params: {
     oauth.cancelSession();
     oauthPrepareAccountId.current = undefined;
     setAddAccountModalOpen(false);
+    setReauthorizeEmail(undefined);
     setImportRecoveryMode(false);
     setAddAccountTab("oauth");
     oauth.reset();
@@ -47,14 +49,16 @@ export function useAccountSessionModal(params: {
   const openAddAccountModal = (): void => {
     oauthPrepareAccountId.current = undefined;
     setAddAccountModalOpen(true);
+    setReauthorizeEmail(undefined);
     setAddAccountTab("oauth");
     setImportRecoveryMode(false);
     oauth.reset();
     sharedImport.clearImportFeedback();
   };
 
-  const openReauthorizeModal = (accountId: string): void => {
+  const openReauthorizeModal = (accountId: string, email: string): void => {
     setAddAccountModalOpen(true);
+    setReauthorizeEmail(email);
     setAddAccountTab("oauth");
     setImportRecoveryMode(false);
     oauth.reset();
@@ -65,6 +69,7 @@ export function useAccountSessionModal(params: {
   const openRecoveryImportModal = (): void => {
     oauthPrepareAccountId.current = undefined;
     setAddAccountModalOpen(true);
+    setReauthorizeEmail(undefined);
     setAddAccountTab("import");
     setImportRecoveryMode(true);
     sharedImport.clearImportFeedback();
@@ -73,6 +78,7 @@ export function useAccountSessionModal(params: {
   const openImportModal = (): void => {
     oauthPrepareAccountId.current = undefined;
     setAddAccountModalOpen(true);
+    setReauthorizeEmail(undefined);
     setAddAccountTab("import");
     setImportRecoveryMode(false);
     sharedImport.clearImportFeedback();
@@ -92,6 +98,7 @@ export function useAccountSessionModal(params: {
     if (oauthResult.handled) {
       if (oauthResult.shouldCloseModal) {
         setAddAccountModalOpen(false);
+        setReauthorizeEmail(undefined);
         setAddAccountTab("oauth");
         setImportRecoveryMode(false);
       }
@@ -111,6 +118,7 @@ export function useAccountSessionModal(params: {
   return {
     addAccountModalOpen,
     addAccountTab,
+    reauthorizeEmail,
     oauthSession: oauth.oauthSession,
     oauthCallbackUrl: oauth.oauthCallbackUrl,
     oauthError: oauth.oauthError,

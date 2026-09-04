@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.3-pre1
+
+- Show the selected account email in the reauthorization dialog title while preserving the standard add-account title for other entry points.
+
 ## 1.1.2
 
 - Expand the manual OAuth callback field into a multiline editor with a full-width submit action.

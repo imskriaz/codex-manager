@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
-import { resolveCreateOAuthLinkLabel } from "../webview-src/dashboard/accountModals";
+import { resolveAccountModalTitle, resolveCreateOAuthLinkLabel } from "../webview-src/dashboard/accountModals";
 import { resolveAccountAccessAction } from "../webview-src/dashboard/savedAccountCard";
 
 describe("add account OAuth actions", () => {
@@ -21,6 +21,19 @@ describe("add account OAuth actions", () => {
     expect(source).not.toContain("oauth-link-status");
     expect(source).toMatch(
       /oauthLinkReady \? \([\s\S]*oauth-copy-btn[\s\S]*oauth-open-btn[\s\S]*\) : \([\s\S]*oauth-create-link-btn/
+    );
+  });
+
+  it("shows the selected email in the reauthorization modal title", () => {
+    expect(resolveAccountModalTitle("Add Codex Account", "person@example.com")).toBe(
+      "Re Auth person@example.com"
+    );
+    expect(resolveAccountModalTitle("Add Codex Account")).toBe("Add Codex Account");
+
+    const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(source).toContain('modals.openReauthorizeModal(accountId, account?.email ?? "")');
+    expect(source).toContain(
+      "resolveAccountModalTitle(snapshot.copy.addAccountModalTitle, modals.reauthorizeEmail)"
     );
   });
 

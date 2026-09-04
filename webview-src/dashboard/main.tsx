@@ -53,6 +53,7 @@ import {
   AddAccountModal,
   CliSessionsPage,
   ConfirmCancelOauthModal,
+  resolveAccountModalTitle,
   SettingsOverlay,
   ShareTokenModal
 } from "./panels";
@@ -1303,7 +1304,8 @@ function App() {
       return;
     }
     if (action === "reauthorize" && accountId) {
-      modals.openReauthorizeModal(accountId);
+      const account = displayedAccounts.find((candidate) => candidate.id === accountId);
+      modals.openReauthorizeModal(accountId, account?.email ?? "");
       return;
     }
     if (action === "remove" && accountId) {
@@ -1583,6 +1585,7 @@ function App() {
     <AddAccountModal
       open={open}
       inline={inline}
+      title={resolveAccountModalTitle(snapshot.copy.addAccountModalTitle, modals.reauthorizeEmail)}
       tab={modals.addAccountTab}
       copy={snapshot.copy}
       oauthSession={modals.oauthSession}
@@ -2447,6 +2450,7 @@ function App() {
 
       <ConfirmCancelOauthModal
         open={modals.confirmCancelOauthOpen}
+        title={resolveAccountModalTitle(snapshot.copy.addAccountModalTitle, modals.reauthorizeEmail)}
         copy={snapshot.copy}
         onClose={modals.closeConfirmCancelOauth}
         onConfirm={modals.confirmCancelOauth}

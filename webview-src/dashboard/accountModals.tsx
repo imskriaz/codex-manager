@@ -16,6 +16,11 @@ export function resolveCreateOAuthLinkLabel(lang: DashboardState["lang"]): strin
   return "Create Link";
 }
 
+export function resolveAccountModalTitle(defaultTitle: string, reauthorizeEmail?: string): string {
+  const email = reauthorizeEmail?.trim();
+  return email ? `Re Auth ${email}` : defaultTitle;
+}
+
 function resolveAccountInfoCopy(lang: DashboardState["lang"]): {
   title: string;
   workspace: string;
@@ -121,6 +126,7 @@ function InfoRow(props: { label: string; value: string; title?: string; mono?: b
 export function AddAccountModal(props: {
   open: boolean;
   inline?: boolean;
+  title: string;
   tab: "oauth" | "import";
   copy: DashboardCopy;
   oauthSession?: DashboardOAuthSessionDescriptor;
@@ -373,7 +379,7 @@ export function AddAccountModal(props: {
   return (
     <ModalShell
       open={props.open}
-      title={props.copy.addAccountModalTitle}
+      title={props.title}
       closeLabel={props.copy.closeModal}
       className="dashboard-modal-compact account-add-popover"
       closeOnBackdrop={false}
@@ -386,6 +392,7 @@ export function AddAccountModal(props: {
 
 export function ConfirmCancelOauthModal(props: {
   open: boolean;
+  title: string;
   copy: DashboardCopy;
   onClose: () => void;
   onConfirm: () => void;
@@ -393,7 +400,7 @@ export function ConfirmCancelOauthModal(props: {
   return (
     <ModalShell
       open={props.open}
-      title={props.copy.addAccountModalTitle}
+      title={props.title}
       closeLabel={props.copy.closeModal}
       className="dashboard-modal-compact dashboard-confirm-modal"
       onClose={props.onClose}
