@@ -117,7 +117,7 @@ All settings use the `codexManager.*` namespace. The dashboard explains each con
 Important combinations:
 
 - **CLI integration** enables dashboard session discovery and controls. It does not perform automatic CLI resume.
-- **Encrypted sync** requires VS Code Settings Sync and the same password on each machine. The password is never uploaded by the extension.
+- **Encrypted sync** requires VS Code Settings Sync and the same password value on each machine. Each machine stores its copy separately in VS Code Secret Storage; the password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
 - **Always-online host** is optional and requires encrypted sync before it can relay signed peer state.
 - **Cloudflared domain** is only a display/configuration value; the `cloudflared` process and DNS route are managed by you.
