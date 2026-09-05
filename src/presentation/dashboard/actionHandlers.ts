@@ -158,7 +158,7 @@ export type DashboardActionContext = {
   getAnnouncementOptions: () => AnnouncementOptions;
   /** Browser actions must never open VS Code-owned prompts or confirmations. */
   hostKind?: "webview" | "browser";
-  configureEncryptedSync?: (passphrase: string, confirmation: string) => Promise<boolean>;
+  configureEncryptedSync?: (passphrase: string, confirmation: string, currentPassphrase?: string) => Promise<boolean>;
   syncEncryptedAccounts?: () => Promise<boolean>;
   setEncryptedSyncRegistryOverride?: (enabled: boolean, passphrase?: string) => Promise<boolean>;
   getRemoteCliSessions?: () => DashboardCliSessionSummary[];
@@ -360,17 +360,18 @@ async function runDashboardAction(
         if (!ctx.configureEncryptedSync) {
           throw new Error("Encrypted sync is unavailable in the browser dashboard host.");
         }
-        if (!(await ctx.configureEncryptedSync(payload.passphrase, payload.passphraseConfirmation))) {
+        if (!(await ctx.configureEncryptedSync(payload.passphrase, payload.passphraseConfirmation, payload.currentPassphrase))) {
           throw new Error("Encrypted sync was not configured. Check the password and try again.");
         }
         ctx.schedulePublishState();
-        return { notice: { level: "info" as const, message: "Encrypted sync is configured." } };
+        return { notice: { level: "info" as const, message: "Shared sync password saved." } };
       }
       if (payload?.passphrase && payload.passphraseConfirmation) {
         if (
           !(await vscode.commands.executeCommand<boolean>("codexManager.configureEncryptedSync", {
             passphrase: payload.passphrase,
             confirmation: payload.passphraseConfirmation,
+            currentPassphrase: payload.currentPassphrase,
             deferSync: payload.deferSync === true
           }))
         ) {
@@ -381,8 +382,8 @@ async function runDashboardAction(
           notice: {
             level: "info" as const,
             message: payload.deferSync
-              ? "Encrypted sync is configured. Initial sync is continuing in the background."
-              : "Encrypted sync is configured."
+              ? "Shared sync password saved. Initial sync is continuing in the background."
+              : "Shared sync password saved."
           }
         };
       }
@@ -755,7 +756,12 @@ async function runDashboardAction(
       return { workspaceFile: await readWorkspaceFile(payload?.projectPath, payload?.filePath) };
     case "saveWorkspaceFile":
       return {
-        workspaceFile: await saveWorkspaceFile(payload?.projectPath, payload?.filePath, payload?.fileContent),
+        workspaceFile: await saveWorkspaceFile(
+          payload?.projectPath,
+          payload?.filePath,
+          payload?.fileContent,
+          payload?.fileRevision
+        ),
         notice: { level: "info" as const, message: "File saved." }
       };
     case "deleteWorkspaceFile": {
@@ -1064,7 +1070,7 @@ async function handleImportSharedJson(
     const result = payload?.recoveryMode
       ? await repo.restoreAccountsFromSharedJson(accountInput)
       : await repo.importSharedAccountsWithSummary(accountInput);
-    if (backup) {
+    if (backup && payload?.recoveryMode === true) {
       await applyBackupSettings(backup.settings);
       appendImportedDebugLogs(backup.logs);
       if (backup.activeAccountId && (await repo.getAccount(backup.activeAccountId))) {
@@ -1110,10 +1116,17 @@ async function handlePreviewImportSharedJson(
 
   const parsed = parseSharedJsonInput(jsonText, (message) => translate("message.sharedJsonParseFailed", { message }));
   const backup = parseAccountsBackup(parsed);
-  return {
-    importPreview: await repo.previewSharedAccountsImport(
+  const importPreview = await repo.previewSharedAccountsImport(
       backup ? backup.accounts : (parsed as Exclude<ReturnType<typeof parseSharedJsonInput>, CodexManagerBackup>)
-    )
+    );
+  return {
+    importPreview: {
+      ...importPreview,
+      backupSettingsAvailable: Boolean(backup),
+      restoreSettings: Boolean(backup && payload?.recoveryMode === true),
+      activeAccountAvailable: Boolean(backup?.activeAccountId),
+      restoreActiveAccount: Boolean(backup?.activeAccountId && payload?.recoveryMode === true)
+    }
   };
 }
 
@@ -1526,7 +1539,7 @@ async function handleEnableAllValid(repo: AccountsRepository, schedulePublishSta
 
   for (const account of accounts) {
     try {
-      const tokens = await repo.getTokens(account.id, { syncExternal: false });
+      const tokens = await repo.getTokens(account.id);
       const health = resolveAccountHealth(account, tokens, automation);
       const hasCredentials = Boolean(tokens?.accessToken?.trim() && tokens.idToken?.trim());
       if (!hasCredentials || health.kind === "reauthorize" || health.kind === "disabled") {

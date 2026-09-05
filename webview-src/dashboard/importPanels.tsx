@@ -11,6 +11,13 @@ export function ImportPreviewPanel(props: { copy: DashboardCopy; summary: CodexI
         <span>{props.copy.importJsonSummaryOverwrite}: {props.summary.overwriteCount}</span>
         <span>{props.copy.importJsonSummaryInvalid}: {props.summary.invalidCount}</span>
       </div>
+      {props.summary.backupSettingsAvailable ? (
+        <div class="modal-note">
+          {props.summary.restoreSettings
+            ? "Recovery mode will restore supported settings and the saved active account after importing sessions."
+            : "This backup contains settings and an active-account selection. This import will add sessions only."}
+        </div>
+      ) : null}
       {props.summary.invalidEntries.length ? (
         <div class="modal-summary-list">
           <div class="modal-summary-list-title">{props.copy.importJsonSummaryFailures}</div>

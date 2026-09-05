@@ -67,6 +67,7 @@ export type BrowserActionRequest =
       title: string;
       message: string;
       confirmPassword: boolean;
+      requireCurrentPassword?: boolean;
     };
 
 export function BrowserActionModal(props: {
@@ -83,11 +84,13 @@ export function BrowserActionModal(props: {
   const [tagText, setTagText] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
 
   useEffect(() => {
     setTagText(request?.kind === "tags" ? request.initialTags.join(", ") : "");
     setPassword("");
     setPasswordConfirmation("");
+    setCurrentPassword("");
   }, [request]);
 
   if (!request) {
@@ -210,23 +213,39 @@ export function BrowserActionModal(props: {
           class="modal-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!password || mismatch) {
+            if (!password || mismatch || (request.requireCurrentPassword && !currentPassword)) {
               return;
             }
-            props.onConfirm(request, [password, passwordConfirmation]);
+            props.onConfirm(request, request.requireCurrentPassword
+              ? [currentPassword, password, passwordConfirmation]
+              : [password, passwordConfirmation]);
           }}
         >
           <div class="modal-note">{request.message}</div>
+          {request.requireCurrentPassword ? (
+            <input
+              class="modal-input"
+              type="password"
+              name="codex-manager-current-password"
+              autoComplete="current-password"
+              spellcheck={false}
+              value={currentPassword}
+              placeholder="Current password"
+              aria-label="Current password"
+              autoFocus
+              onInput={(event) => setCurrentPassword(event.currentTarget.value)}
+            />
+          ) : null}
           <input
             class="modal-input"
             type="password"
             name="codex-manager-password"
-            autoComplete="current-password"
+            autoComplete={request.confirmPassword ? "new-password" : "current-password"}
             spellcheck={false}
             value={password}
             placeholder="Password"
             aria-label="Password"
-            autoFocus
+            autoFocus={!request.requireCurrentPassword}
             onInput={(event) => setPassword(event.currentTarget.value)}
           />
           {request.confirmPassword ? (
@@ -247,7 +266,7 @@ export function BrowserActionModal(props: {
             <button class="modal-secondary-btn" type="button" onClick={() => props.onCancel(request)}>
               {cancelLabel}
             </button>
-            <button class="modal-primary-btn" type="submit" disabled={!password || mismatch}>
+            <button class="modal-primary-btn" type="submit" disabled={!password || mismatch || (request.requireCurrentPassword && !currentPassword)}>
               {submitLabel}
             </button>
           </div>

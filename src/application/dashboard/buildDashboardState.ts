@@ -64,7 +64,7 @@ export async function buildDashboardState(
   const leasesByAccountId = new Map(getSyncedAccountLeases().map((lease) => [lease.accountId, lease]));
   const pendingEnablementAccountIds = new Set(getPendingEnablementAccountIds());
   const tokenEntries = await Promise.all(
-    accounts.map(async (account) => [account.id, await repo.getTokens(account.id, { syncExternal: false })] as const)
+    accounts.map(async (account) => [account.id, await repo.getTokens(account.id)] as const)
   );
   const tokensByAccountId = new Map(tokenEntries);
   const accountViewStateById = new Map(

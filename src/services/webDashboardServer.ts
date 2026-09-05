@@ -12,6 +12,7 @@ import { buildDashboardState } from "../application/dashboard/buildDashboardStat
 import { scheduleExtensionHostReload } from "../application/accounts/switchEffects";
 import type {
   DashboardAccountViewModel,
+  DashboardActionName,
   DashboardClientMessage,
   DashboardHostMessage,
   DashboardPeerView
@@ -68,6 +69,35 @@ const PEER_RECONNECT_DELAY_MS = 1_000;
 const PEER_HTTP_HEARTBEAT_TIMEOUT_MS = 10_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const CLI_SESSION_RECONCILE_MS = 30_000;
+
+export function getPeerActionTimeoutMs(action: DashboardActionName): number {
+  if (action === "sendCodexCliSessionMessage") {
+    return 15 * 60_000 + 15_000;
+  }
+  if (["runWorkspaceTerminalCommand", "saveWorkspaceFile", "pushWorkspaceBranch"].includes(action)) {
+    return 135_000;
+  }
+  if (
+    [
+      "switch",
+      "refresh",
+      "refreshAll",
+      "refreshToken",
+      "reauthorize",
+      "resyncProfile",
+      "getDailyUsage",
+      "startCodexCliSession",
+      "importSharedJson",
+      "completeOAuthSession"
+    ].includes(action)
+  ) {
+    return 120_000;
+  }
+  if (["restoreFromBackup", "restoreFromAuthJson", "commitWorkspaceChanges"].includes(action)) {
+    return 60_000;
+  }
+  return 30_000;
+}
 const CLI_SESSION_WATCH_DEBOUNCE_MS = 250;
 const WORKSPACE_VIEWER_LEASE_MS = 45_000;
 
@@ -298,6 +328,10 @@ export class WebDashboardServer implements vscode.Disposable {
   private deviceId: string;
   private peerStopped = true;
   private readonly sessions = new Map<string, number>();
+  private readonly browserSocketExpiresAt = new WeakMap<WebSocket, number>();
+  private readonly browserSocketExpiryTimers = new WeakMap<WebSocket, NodeJS.Timeout>();
+  private readonly browserSocketSessionFingerprint = new WeakMap<WebSocket, string>();
+  private readonly browserSocketPassphraseFingerprint = new WeakMap<WebSocket, string>();
   private readonly loginAttempts = new Map<string, LoginAttempt>();
   private readonly settingsStore = new ExtensionSettingsStore();
   private readonly announcements: AnnouncementService;
@@ -352,6 +386,10 @@ export class WebDashboardServer implements vscode.Disposable {
       } else {
         this.webSocketClients.add(socket);
         const removeClient = (): void => {
+          const expiryTimer = this.browserSocketExpiryTimers.get(socket);
+          if (expiryTimer) {
+            clearTimeout(expiryTimer);
+          }
           this.webSocketClients.delete(socket);
           this.workspaceViewerLastSeen.delete(socket);
           this.refreshCliSessionRealtimeLifecycle();
@@ -563,7 +601,7 @@ export class WebDashboardServer implements vscode.Disposable {
     response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     response.setHeader(
       "Content-Security-Policy",
-      "default-src 'none'; img-src 'self' https: data:; frame-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+      "default-src 'none'; img-src 'self' https: data:; media-src data:; frame-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     );
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
@@ -613,6 +651,14 @@ export class WebDashboardServer implements vscode.Disposable {
       this.sendHtml(response, loginPage(Boolean(await this.encryptedSync?.hasDashboardPassphrase()), "", returnPath));
       return;
     }
+    if (method === "POST" && path === "/logout") {
+      await this.forgetSession(readDashboardSessionToken(request));
+      response.statusCode = 303;
+      response.setHeader("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+      response.setHeader("Location", "/");
+      response.end();
+      return;
+    }
     if (method === "GET" && path === "/api/state") {
       await this.sendState(response);
       return;
@@ -626,7 +672,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "GET" && isWebDashboardPagePath(path)) {
-      this.sendHtml(response, dashboardPage());
+      this.sendHtml(response, dashboardPage(!isLocalWebDashboardRequest(request)));
       return;
     }
     response.statusCode = 404;
@@ -687,29 +733,21 @@ export class WebDashboardServer implements vscode.Disposable {
     // connection (for example Cloudflared) are still required to authenticate.
     if (isLocalWebDashboardRequest(request)) return true;
     if (!(await this.encryptedSync?.hasDashboardPassphrase())) return false;
-    const cookies = request.headers.cookie ?? "";
-    const token = cookies
-      .split(";")
-      .map((item) => item.trim())
-      .find((item) => item.startsWith(`${SESSION_COOKIE}=`))
-      ?.split("=")[1];
+    const token = readDashboardSessionToken(request);
     if (!token) return false;
     return this.isAuthorizedSessionToken(token);
   }
 
   private async isAuthorizedSessionToken(token: string): Promise<boolean> {
     if (!token || !/^[a-f0-9]{64}$/i.test(token)) return false;
-    let expiresAt = this.sessions.get(token);
-    if (!expiresAt) {
-      const persisted = normalizePersistedWebDashboardSessions(
-        await this.context.secrets.get(SESSION_SECRET_KEY),
-        Date.now()
-      );
-      const fingerprint = fingerprintWebDashboardSession(token);
-      expiresAt = persisted.find((session) => session.fingerprint === fingerprint)?.expiresAt;
-      if (expiresAt) {
-        this.sessions.set(token, expiresAt);
-      }
+    const persisted = normalizePersistedWebDashboardSessions(
+      await this.context.secrets.get(SESSION_SECRET_KEY),
+      Date.now()
+    );
+    const fingerprint = fingerprintWebDashboardSession(token);
+    const expiresAt = persisted.find((session) => session.fingerprint === fingerprint)?.expiresAt;
+    if (expiresAt) {
+      this.sessions.set(token, expiresAt);
     }
     if (!expiresAt || expiresAt <= Date.now()) {
       this.sessions.delete(token);
@@ -726,6 +764,20 @@ export class WebDashboardServer implements vscode.Disposable {
     ).filter((session) => session.fingerprint !== fingerprintWebDashboardSession(token));
     sessions.push({ fingerprint: fingerprintWebDashboardSession(token), expiresAt });
     await this.context.secrets.store(SESSION_SECRET_KEY, JSON.stringify(sessions.slice(-MAX_PERSISTED_SESSIONS)));
+  }
+
+  private async forgetSession(token: string | undefined): Promise<void> {
+    if (!token) {
+      return;
+    }
+    this.sessions.delete(token);
+    const fingerprint = fingerprintWebDashboardSession(token);
+    const sessions = normalizePersistedWebDashboardSessions(
+      await this.context.secrets.get(SESSION_SECRET_KEY),
+      Date.now()
+    ).filter((session) => session.fingerprint !== fingerprint);
+    await this.context.secrets.store(SESSION_SECRET_KEY, JSON.stringify(sessions));
+    this.closeRemoteBrowserSockets((socket) => this.browserSocketSessionFingerprint.get(socket) === fingerprint);
   }
 
   private async sendState(response: http.ServerResponse): Promise<void> {
@@ -793,7 +845,9 @@ export class WebDashboardServer implements vscode.Disposable {
   publishLocalStateChange(): void {
     this.publishLocalPeerState();
     void this.publishPeerVault();
-    this.publishRealtimeState();
+    void this.closeInvalidRemoteBrowserSockets()
+      .catch((error) => console.warn("[codexManager] browser session validation failed", error))
+      .finally(() => this.publishRealtimeState());
   }
 
   private startWebSocketHeartbeat(): void {
@@ -807,6 +861,9 @@ export class WebDashboardServer implements vscode.Disposable {
         workspacePresenceChanged = true;
       }
       if (workspacePresenceChanged) this.refreshCliSessionRealtimeLifecycle();
+      void this.closeInvalidRemoteBrowserSockets().catch((error) =>
+        console.warn("[codexManager] browser session validation failed", error)
+      );
       for (const socket of this.webSocketServer.clients) {
         if (socket.readyState !== WebSocket.OPEN) continue;
         if (now - (this.webSocketLastPong.get(socket) ?? 0) > 45_000) {
@@ -868,7 +925,8 @@ export class WebDashboardServer implements vscode.Disposable {
             getAnnouncementOptions: () => this.getAnnouncementOptions(),
             hostKind: "browser",
             configureEncryptedSync: this.encryptedSync
-              ? (passphrase, confirmation) => this.encryptedSync!.configure({ passphrase, confirmation })
+              ? (passphrase, confirmation, currentPassphrase) =>
+                  this.encryptedSync!.configure({ passphrase, confirmation, currentPassphrase })
               : undefined,
             // Browser actions must never open a VS Code input box. The
             // dashboard opens its password modal when configuration is needed;
@@ -957,9 +1015,9 @@ export class WebDashboardServer implements vscode.Disposable {
             type: "peer:action-result",
             requestId: message.requestId,
             status: "failed",
-            error: "The selected PC did not respond in time."
+            error: "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
           });
-        }, 30_000);
+        }, getPeerActionTimeoutMs(message.action));
         this.peerActionWaiters.set(message.requestId, (result) => {
           clearTimeout(timeout);
           resolve(this.decoratePeerActionResult(result, targetDeviceId));
@@ -1002,9 +1060,9 @@ export class WebDashboardServer implements vscode.Disposable {
           type: "peer:action-result",
           requestId: message.requestId,
           status: "failed",
-          error: "The selected PC did not respond in time."
+          error: "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
         });
-      }, 30_000);
+      }, getPeerActionTimeoutMs(message.action));
       const onMessage = (data: Buffer): void => {
         try {
           const result = JSON.parse(data.toString()) as PeerActionResultMessage;
@@ -1080,18 +1138,37 @@ export class WebDashboardServer implements vscode.Disposable {
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const isPeer = requestUrl.searchParams.get("peer") === "1";
     const domainConfigured = Boolean(this.settingsStore.getDashboardSettings().cloudflaredDomain?.trim());
+    const localBrowser = !isPeer && isLocalWebDashboardRequest(request);
+    const browserAuthorized = isPeer ? domainConfigured : await this.isAuthorized(request);
+    const browserPassphraseFingerprint = !isPeer && !localBrowser
+      ? await this.encryptedSync?.getDashboardPassphraseFingerprint()
+      : undefined;
     if (
       requestUrl.pathname !== "/ws" ||
       !isTrustedWebDashboardOrigin(
         request,
         normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "") || undefined
       ) ||
-      (isPeer ? !domainConfigured : !(await this.isAuthorized(request)))
+      !browserAuthorized
     ) {
       socket.destroy();
       return;
     }
     this.webSocketServer.handleUpgrade(request, socket, head, (client) => {
+      if (!isPeer && !localBrowser) {
+        const token = readDashboardSessionToken(request);
+        const expiresAt = token ? this.sessions.get(token) : undefined;
+        if (expiresAt) {
+          this.browserSocketExpiresAt.set(client, expiresAt);
+          this.browserSocketSessionFingerprint.set(client, fingerprintWebDashboardSession(token!));
+          const timer = setTimeout(() => client.close(4001, "Dashboard session expired"), Math.max(0, expiresAt - Date.now()));
+          timer.unref?.();
+          this.browserSocketExpiryTimers.set(client, timer);
+        }
+        if (browserPassphraseFingerprint) {
+          this.browserSocketPassphraseFingerprint.set(client, browserPassphraseFingerprint);
+        }
+      }
       this.webSocketServer.emit("connection", client, request);
     });
   }
@@ -1220,6 +1297,18 @@ export class WebDashboardServer implements vscode.Disposable {
   private async handleBrowserSocketMessage(raw: string, socket: WebSocket): Promise<void> {
     let message: DashboardClientMessage | undefined;
     try {
+      const expiresAt = this.browserSocketExpiresAt.get(socket);
+      const expectedFingerprint = this.browserSocketPassphraseFingerprint.get(socket);
+      const currentFingerprint = expectedFingerprint
+        ? await this.encryptedSync?.getDashboardPassphraseFingerprint()
+        : undefined;
+      if (
+        (expiresAt !== undefined && expiresAt <= Date.now()) ||
+        (expectedFingerprint !== undefined && currentFingerprint !== expectedFingerprint)
+      ) {
+        socket.close(4001, "Dashboard session expired");
+        return;
+      }
       const parsed = JSON.parse(raw) as unknown;
       if (!isDashboardClientMessage(parsed)) throw new Error("Invalid dashboard message.");
       message = parsed;
@@ -1232,6 +1321,21 @@ export class WebDashboardServer implements vscode.Disposable {
         if (hostMessage.type !== "dashboard:snapshot" && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify(hostMessage));
         }
+      }
+      const completedPasswordChangeRequestId =
+        message.type === "dashboard:action" && message.action === "configureEncryptedSync"
+          ? message.requestId
+          : undefined;
+      if (
+        completedPasswordChangeRequestId &&
+        result.messages.some(
+          (hostMessage) =>
+            hostMessage.type === "dashboard:action-result" &&
+            hostMessage.requestId === completedPasswordChangeRequestId &&
+            hostMessage.status === "completed"
+        )
+      ) {
+        this.closeRemoteBrowserSockets();
       }
       this.publishProcessedSnapshot(result.messages);
       if (result.reloadAfterResponse) {
@@ -1257,6 +1361,27 @@ export class WebDashboardServer implements vscode.Disposable {
         );
       }
     }
+  }
+
+  private closeRemoteBrowserSockets(predicate?: (socket: WebSocket) => boolean): void {
+    for (const client of this.webSocketClients) {
+      if (!this.browserSocketSessionFingerprint.has(client) || (predicate && !predicate(client))) {
+        continue;
+      }
+      if (client.readyState === WebSocket.OPEN) {
+        client.close(4001, "Dashboard session expired");
+      }
+    }
+  }
+
+  private async closeInvalidRemoteBrowserSockets(): Promise<void> {
+    const currentFingerprint = await this.encryptedSync?.getDashboardPassphraseFingerprint();
+    const now = Date.now();
+    this.closeRemoteBrowserSockets((socket) => {
+      const expectedFingerprint = this.browserSocketPassphraseFingerprint.get(socket);
+      const expiresAt = this.browserSocketExpiresAt.get(socket);
+      return expiresAt === undefined || expiresAt <= now || expectedFingerprint !== currentFingerprint;
+    });
   }
 
   private async broadcastRealtimeSnapshot(): Promise<void> {
@@ -1733,7 +1858,8 @@ export class WebDashboardServer implements vscode.Disposable {
           getAnnouncementOptions: () => this.getAnnouncementOptions(),
           hostKind: "browser",
           configureEncryptedSync: this.encryptedSync
-            ? (passphrase, confirmation) => this.encryptedSync!.configure({ passphrase, confirmation })
+            ? (passphrase, confirmation, currentPassphrase) =>
+                this.encryptedSync!.configure({ passphrase, confirmation, currentPassphrase })
             : undefined,
           syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false, true) : undefined
         },
@@ -2126,8 +2252,11 @@ function loginPage(configured: boolean, error = "", returnPath = "/"): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Codex Manager password.</p><form method="post" action="${action}"><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" autofocus required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
 }
 
-function dashboardPage(): string {
-  return `<!DOCTYPE html><html lang="en" data-theme="auto" data-dashboard-host="browser"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0d1117"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><div id="app"></div><script src="/assets/browserHost.js"></script><script src="/assets/dashboard.js"></script></body></html>`;
+function dashboardPage(showLogout: boolean): string {
+  const logout = showLogout
+    ? `<form method="post" action="/logout" style="position:fixed;right:12px;bottom:12px;z-index:40000"><button type="submit" title="Sign out of the remote dashboard" style="padding:7px 10px;border:1px solid currentColor;border-radius:7px;background:var(--bg-elevated,#172033);color:var(--text-primary,#fff)">Sign out</button></form>`
+    : "";
+  return `<!DOCTYPE html><html lang="en" data-theme="auto" data-dashboard-host="browser"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0d1117"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><div id="app"></div>${logout}<script src="/assets/browserHost.js"></script><script src="/assets/dashboard.js"></script></body></html>`;
 }
 
 const BASE_CSS = `:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111827;color:#edf2ff}body{margin:0;background:#111827}main{max-width:1100px;margin:0 auto;padding:28px 20px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}h1{font-size:22px;margin:0;text-wrap:balance}label{display:block;margin-top:18px;font-size:14px;font-weight:700}button{border:0;border-radius:8px;padding:10px 14px;background:#4f8cff;color:#fff;font-weight:700;cursor:pointer;touch-action:manipulation}button:hover{background:#6aa0ff}button:focus-visible,input:focus-visible{outline:2px solid #8bb8ff;outline-offset:3px}input{display:block;width:100%;box-sizing:border-box;padding:11px;border-radius:8px;border:1px solid #43516d;background:#1b2537;color:#fff;margin:8px 0 12px}.login{max-width:380px;margin:12vh auto}.login p{color:#a8b3c9;line-height:1.5}.error{color:#ff8c9b;margin-top:12px}`;
@@ -2194,6 +2323,15 @@ export function isForwardedHttpsRequest(request: Pick<http.IncomingMessage, "hea
   } catch {
     return false;
   }
+}
+
+function readDashboardSessionToken(request: Pick<http.IncomingMessage, "headers">): string | undefined {
+  const cookies = request.headers.cookie ?? "";
+  return cookies
+    .split(";")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(`${SESSION_COOKIE}=`))
+    ?.slice(SESSION_COOKIE.length + 1);
 }
 
 /**

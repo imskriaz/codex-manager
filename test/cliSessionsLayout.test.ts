@@ -303,7 +303,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(source).toContain("if (props.dashboardMode)");
-    expect(source).toContain("setRailCollapsed(false);");
+    expect(source).toContain("setRailCollapsed(window.innerWidth <= 760);");
     expect(source).toContain("if (newChatProject !== undefined)");
     expect(source).toContain("setContextCollapsed(true);");
     expect(source).toContain("if (props.selectedSession && window.innerWidth >= 1180) setContextCollapsed(false);");

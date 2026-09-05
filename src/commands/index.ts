@@ -184,7 +184,7 @@ export function registerCommands(
     ),
     vscode.commands.registerCommand(
       "codexManager.configureEncryptedSync",
-      (options?: { passphrase?: string; confirmation?: string; deferSync?: boolean }) =>
+      (options?: { passphrase?: string; confirmation?: string; currentPassphrase?: string; deferSync?: boolean }) =>
         runSyncCommand("Configure encrypted sync", () => sync?.configure(options))
     ),
     vscode.commands.registerCommand(

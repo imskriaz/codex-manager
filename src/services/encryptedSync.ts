@@ -20,6 +20,7 @@ import {
 
 const SYNC_KEY = "codexManager.encryptedSync.v1";
 const PASSPHRASE_KEY = "codexManager.encryptedSync.passphrase";
+const DASHBOARD_SESSION_SECRET_KEY = "codexManager.webDashboard.sessions.v1";
 const DEVICE_KEY = "codexManager.encryptedSync.deviceId";
 const LOCAL_DELETIONS_KEY = "codexManager.encryptedSync.localDeletions.v1";
 const LOCAL_ENABLEMENT_KEY = "codexManager.encryptedSync.localEnablement.v1";
@@ -439,6 +440,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
     return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
   }
 
+  async getDashboardPassphraseFingerprint(): Promise<string | undefined> {
+    const stored = await this.context.secrets.get(PASSPHRASE_KEY);
+    return stored ? crypto.createHash("sha256").update(stored, "utf8").digest("base64url") : undefined;
+  }
+
   async signRealtimePeerPayload(payload: string): Promise<string | undefined> {
     if (!this.isEnabled()) return undefined;
     const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
@@ -548,7 +554,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     return encryptedSyncRegistryOverrideEnabled || !this.findForeignEnablement(accountId);
   }
 
-  /** Keep stale Aideck mirror files from bypassing synchronized deletions. */
+  /** Return whether a synchronized deletion is still pending. */
   isAccountDeletionPending(accountId: string): boolean {
     return (
       this.pendingDeletionAccountIds.has(accountId) ||
@@ -688,8 +694,13 @@ export class EncryptedSyncManager implements vscode.Disposable {
     return true;
   }
 
-  async configure(options?: { passphrase?: string; confirmation?: string; deferSync?: boolean }): Promise<boolean> {
-    const rawRemote = this.context.globalState.get<string>(SYNC_KEY);
+  async configure(options?: {
+    passphrase?: string;
+    confirmation?: string;
+    currentPassphrase?: string;
+    deferSync?: boolean;
+  }): Promise<boolean> {
+    let rawRemote = this.context.globalState.get<string>(SYNC_KEY);
     const passphrase = options?.passphrase;
     if (!passphrase) {
       void vscode.window.showWarningMessage(
@@ -698,29 +709,54 @@ export class EncryptedSyncManager implements vscode.Disposable {
       return false;
     }
 
+    if (options.confirmation !== undefined && options.confirmation !== passphrase) {
+      void vscode.window.showErrorMessage("The passwords did not match.");
+      return false;
+    }
+
+    const storedPassphrase = await this.context.secrets.get(PASSPHRASE_KEY);
+    const rotating = Boolean(storedPassphrase && storedPassphrase !== passphrase);
+    if (rotating && options.currentPassphrase !== storedPassphrase) {
+      void vscode.window.showErrorMessage("The current password is incorrect.");
+      return false;
+    }
+
+    let verifiedPayload: SyncPayload | undefined;
     if (rawRemote) {
       try {
-        const verified = await decryptSyncPayload(rawRemote, passphrase);
+        verifiedPayload = await decryptSyncPayload(rawRemote, rotating ? storedPassphrase! : passphrase);
+        if (rotating) {
+          const previousRaw = rawRemote;
+          rawRemote = await encryptSyncPayload(verifiedPayload, passphrase);
+          await this.context.globalState.update(SYNC_KEY, rawRemote);
+          try {
+            await this.context.secrets.store(PASSPHRASE_KEY, passphrase);
+          } catch (error) {
+            await this.context.globalState.update(SYNC_KEY, previousRaw);
+            throw error;
+          }
+        }
         this.lastRemoteRaw = rawRemote;
-        this.lastRemotePayload = verified;
+        this.lastRemotePayload = verifiedPayload;
         this.lastRemotePassphraseHash = crypto.createHash("sha256").update(passphrase, "utf8").digest("base64");
       } catch {
         return false;
       }
-    } else {
-      const confirmation = options?.confirmation;
-      if (confirmation === undefined || confirmation !== passphrase) {
-        void vscode.window.showErrorMessage("The passwords did not match.");
-        return false;
-      }
+    } else if (options.confirmation === undefined) {
+      void vscode.window.showErrorMessage("Confirm the new password.");
+      return false;
     }
 
-    await this.context.secrets.store(PASSPHRASE_KEY, passphrase);
+    if (!rotating) await this.context.secrets.store(PASSPHRASE_KEY, passphrase);
+    if (storedPassphrase !== passphrase) {
+      await this.context.secrets.delete(DASHBOARD_SESSION_SECRET_KEY);
+    }
     encryptedSyncNeedsConfiguration = false;
     this.mutationVersion += 1;
     this.realtimeVaultCache = undefined;
     if (!this.isEnabled()) {
-      await getCodexManagerConfiguration().update("encryptedSyncEnabled", true, vscode.ConfigurationTarget.Global);
+      this.onStateChanged?.();
+      return true;
     }
     this.startDownloadedVaultPolling();
     this.markVaultDirty("sync-configured", VAULT_SYNC_DEBOUNCE_DELAY_MS);

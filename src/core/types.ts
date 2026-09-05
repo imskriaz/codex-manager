@@ -175,7 +175,7 @@ export interface CodexManagerAccountRecord {
   accountName?: string;
   /** 账号标签 */
   tags?: string[];
-  /** 添加来源（用于兼容 Aideck 卡片背面展示） */
+  /** Account import source shown in account details. */
   addedVia?: string;
   /** 账号结构类型 (personal/team/organization) */
   accountStructure?: string;
@@ -602,6 +602,10 @@ export interface CodexImportPreviewSummary {
   overwriteCount: number;
   invalidCount: number;
   invalidEntries: CodexImportPreviewIssue[];
+  backupSettingsAvailable?: boolean;
+  restoreSettings?: boolean;
+  activeAccountAvailable?: boolean;
+  restoreActiveAccount?: boolean;
 }
 
 export interface CodexImportResultIssue {

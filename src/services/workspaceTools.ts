@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
+import * as crypto from "crypto";
 import { promises as fs } from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -49,7 +50,10 @@ export function resolveWorkspaceProjectPath(projectPath: string | undefined): st
   const fallback = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   const requested = path.resolve(projectPath?.trim() || fallback);
   const allowed = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(folder.uri.fsPath));
-  if (allowed.length === 0 || allowed.some((root) => requested === root || requested.startsWith(`${root}${path.sep}`))) {
+  if (
+    (allowed.length === 0 && requested === path.resolve(fallback)) ||
+    allowed.some((root) => requested === root || requested.startsWith(`${root}${path.sep}`))
+  ) {
     return requested;
   }
   throw new Error("The selected project is not an open workspace folder.");
@@ -128,22 +132,23 @@ export async function readWorkspaceFile(
   }
   if (preview) {
     const buffer = snapshot.buffer;
+    const revision = workspaceFileRevision(buffer);
     if (preview.kind === "document") {
       const converted = await mammoth.convertToHtml({ buffer });
-      return { path: relative, content: converted.value, language: "html", kind: "document", mimeType: preview.mimeType, size: snapshot.size };
+      return { path: relative, content: converted.value, language: "html", kind: "document", mimeType: preview.mimeType, size: snapshot.size, revision };
     }
-    return { path: relative, content: "", language: preview.kind, kind: preview.kind, mimeType: preview.mimeType, size: snapshot.size, dataUrl: `data:${preview.mimeType};base64,${buffer.toString("base64")}` };
+    return { path: relative, content: "", language: preview.kind, kind: preview.kind, mimeType: preview.mimeType, size: snapshot.size, revision, dataUrl: `data:${preview.mimeType};base64,${buffer.toString("base64")}` };
   }
   const content = snapshot.buffer.toString("utf8");
   if (content.includes("\0")) throw new Error("Binary files cannot be edited in the dashboard.");
-  return { path: relative, content, language: languageForFile(relative), kind: "text", mimeType: textMimeTypeForFile(relative), size: snapshot.size };
+  return { path: relative, content, language: languageForFile(relative), kind: "text", mimeType: textMimeTypeForFile(relative), size: snapshot.size, revision: workspaceFileRevision(snapshot.buffer) };
 }
 
 export async function deleteWorkspaceFile(
   projectPath: string | undefined,
   filePath: string | undefined
 ): Promise<string> {
-  const { relative, absolute } = resolveWorkspaceFile(projectPath, filePath);
+  const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
   const stat = await fs.stat(absolute);
   if (!stat.isFile()) throw new Error("Only files can be deleted from the project tree.");
   await fs.unlink(absolute);
@@ -194,29 +199,55 @@ export function focusWorkspaceTerminal(terminalId: string | undefined): Dashboar
 export async function saveWorkspaceFile(
   projectPath: string | undefined,
   filePath: string | undefined,
-  content: string | undefined
+  content: string | undefined,
+  expectedRevision: string | undefined
 ): Promise<DashboardWorkspaceFile> {
   if (typeof content !== "string") throw new Error("The editor content is missing. Reload the file and try again.");
+  if (!expectedRevision) {
+    throw new Error("The file version is missing. Reload the file before saving.");
+  }
   if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) throw new Error("Keep edited files under 1 MB.");
   const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
   const stat = await fs.stat(absolute);
   if (!stat.isFile()) throw new Error("Choose a file from the project tree.");
+  const currentSnapshot = await readSafeFileSnapshot(absolute, {
+    maxBytes: MAX_FILE_BYTES,
+    rejectIfLarger: true,
+    timeoutMs: WORKSPACE_READ_TIMEOUT_MS
+  });
+  if (workspaceFileRevision(currentSnapshot.buffer) !== expectedRevision) {
+    throw new Error("The file changed after it was opened. Your draft was kept; reload the file and review the newer version before saving.");
+  }
   // Write beside the original and replace it in one rename. A direct writeFile
   // truncates first, so a competing editor or interrupted process can leave a
   // zero-byte/partially written workspace file. The destination is untouched
   // if the other app has changed it while the editor was open.
   const temporaryPath = `${absolute}.${process.pid}.${Date.now()}.codex-manager.tmp`;
   await fs.writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" });
+  await fs.chmod(temporaryPath, stat.mode).catch(() => undefined);
   try {
     const current = await fs.stat(absolute);
     if (current.size !== stat.size || current.mtimeMs !== stat.mtimeMs) {
+      throw new Error("The file changed in another app while it was open. Reload it before saving.");
+    }
+    const latestSnapshot = await readSafeFileSnapshot(absolute, {
+      maxBytes: MAX_FILE_BYTES,
+      rejectIfLarger: true,
+      timeoutMs: WORKSPACE_READ_TIMEOUT_MS
+    });
+    if (workspaceFileRevision(latestSnapshot.buffer) !== expectedRevision) {
       throw new Error("The file changed in another app while it was open. Reload it before saving.");
     }
     await fs.rename(temporaryPath, absolute);
   } finally {
     await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
   }
-  return { path: relative, content, language: languageForFile(relative), kind: "text", mimeType: textMimeTypeForFile(relative), size: Buffer.byteLength(content, "utf8") };
+  const contentBuffer = Buffer.from(content, "utf8");
+  return { path: relative, content, language: languageForFile(relative), kind: "text", mimeType: textMimeTypeForFile(relative), size: contentBuffer.byteLength, revision: workspaceFileRevision(contentBuffer) };
+}
+
+function workspaceFileRevision(content: Buffer): string {
+  return crypto.createHash("sha256").update(content).digest("base64url");
 }
 
 function previewTypeForFile(filePath: string): { kind: "image" | "audio" | "video" | "pdf" | "document"; mimeType: string } | undefined {

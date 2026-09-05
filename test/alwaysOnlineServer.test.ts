@@ -35,9 +35,11 @@ describe("always-online relay peer lifecycle", () => {
 
   it("bounds pending peer-action routing state", () => {
     const source = readFileSync("tools/always-online-server.js", "utf8");
-    expect(source).toContain("const pendingActionTimeoutMs = 30000;");
-    expect(source).toContain("rememberPendingAction(message.requestId, socket);");
-    expect(source).toContain("const origin = takePendingAction(message.requestId);");
+    expect(source).toContain("function peerActionTimeoutMs(action)");
+    expect(source).toContain("rememberPendingAction(message, socket, destination.socket)");
+    expect(source).toContain("const origin = takePendingAction(message.requestId, socket)");
+    expect(source).toContain("pending.destinationSocket !== sourceSocket");
+    expect(source).toContain("The operation outcome is unknown");
   });
 
   it("force-closes peer sockets and bounds relay shutdown", () => {

@@ -123,7 +123,7 @@ export type CliSessionsPageProps = {
   onReadFile: (filePath: string, projectPath?: string) => void;
   onClearFile: () => void;
   onDeleteFile: (filePath: string, projectPath?: string) => void;
-  onSaveFile: (filePath: string, content: string, projectPath?: string) => void;
+  onSaveFile: (filePath: string, content: string, revision: string, projectPath?: string) => void;
   onSend: (input: {
     text: string;
     model?: string;
@@ -413,7 +413,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 
   useEffect(() => {
     if (props.dashboardMode) {
-      setRailCollapsed(false);
+      setRailCollapsed(window.innerWidth <= 760);
       setContextCollapsed(true);
       return;
     }
@@ -674,7 +674,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onReadFile={(filePath) => props.onReadFile(filePath, selectedProjectPath)}
           onClearFile={props.onClearFile}
           onDeleteFile={(filePath) => props.onDeleteFile(filePath, selectedProjectPath)}
-          onSaveFile={(filePath, content) => props.onSaveFile(filePath, content, selectedProjectPath)}
+          onSaveFile={(filePath, content) =>
+            props.onSaveFile(filePath, content, props.workspaceFilesByPath[filePath]?.revision ?? "", selectedProjectPath)
+          }
           onResizePointerDown={(event) => beginPanelResize("terminal", event)}
           onResizeKeyDown={(event) => adjustPanelWithKeyboard("terminal", event.key, event.shiftKey)}
           onResizeReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}

@@ -35,8 +35,6 @@ export const BLOCKING_GLOBAL_ACTIONS = new Set<DashboardActionName>([
   "exportAuthFile"
 ]);
 
-let actionRequestSequence = 0;
-
 export function getActionTimeoutMs(action: DashboardActionName): number {
   switch (action) {
     case "refreshView":
@@ -103,8 +101,7 @@ export function getActionTimeoutMs(action: DashboardActionName): number {
 }
 
 export function createActionRequestId(): string {
-  actionRequestSequence += 1;
-  return `dashboard-action-${actionRequestSequence}`;
+  return `dashboard-action-${crypto.randomUUID()}`;
 }
 
 export function postMessageToHost(message: DashboardClientMessage): void {

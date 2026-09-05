@@ -139,7 +139,7 @@ export function useAccountSessionModal(params: {
     handleCompleteOAuth: oauth.handleCompleteOAuth,
     handleImportFileSelected: sharedImport.handleImportFileSelected,
     handleImportTextChange: sharedImport.handleImportTextChange,
-    handlePreviewImport: sharedImport.handlePreviewImport,
+    handlePreviewImport: () => sharedImport.handlePreviewImport(importRecoveryMode),
     handleSubmitImport: () => sharedImport.handleSubmitImport(importRecoveryMode),
     applyActionResult,
     handleEscape,

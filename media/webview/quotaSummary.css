@@ -12900,6 +12900,38 @@ body.is-dashboard-workspace-route #dashboard-main {
   display: none;
 }
 .workspace-route-dashboard-hidden { display: none !important; }
+@media (max-width: 760px) {
+  body.is-dashboard-workspace-route #dashboard-main {
+    inset: 0;
+  }
+  .cli-workspace.is-dashboard-mode .cli-session-rail {
+    position: fixed;
+    z-index: 20000;
+    inset: 0 auto 0 0;
+    width: min(320px, 86vw);
+    box-shadow: 12px 0 30px rgb(0 0 0 / 30%);
+    transition: transform 160ms ease;
+  }
+  .cli-workspace.is-dashboard-mode.is-rail-collapsed .cli-session-rail {
+    transform: translateX(-100%);
+  }
+  .cli-workspace.is-dashboard-mode .cli-rail-toggle {
+    position: fixed;
+    z-index: 20010;
+    top: 8px;
+    left: 8px;
+    width: 40px;
+    height: 40px;
+  }
+  .cli-workspace.is-dashboard-mode .cli-panel-resizer:first-of-type {
+    display: none;
+  }
+  .cli-workspace.is-dashboard-mode .overview-actions button,
+  .cli-workspace.is-dashboard-mode .overview-top-actions button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}
 .cli-workspace { font-size: 13px; }
 .cli-workspace .cli-session-rail { grid-template-rows: auto auto auto auto minmax(0, 1fr) auto; padding: 5px 5px 0; }
 .cli-workspace .cli-rail-header { min-height: 32px; margin-bottom: 2px; }

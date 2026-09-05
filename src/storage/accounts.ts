@@ -92,7 +92,7 @@ import {
   subscriptionMissingOrExpired
 } from "../services/subscription";
 import { buildAccountStorageId } from "../utils/accountIdentity";
-import { extractClaims, isTokenExpired } from "../utils/jwt";
+import { extractClaims } from "../utils/jwt";
 import { getQuotaIssueKind } from "../utils/quotaIssue";
 import {
   CrossWindowOperationBusyError,
@@ -100,14 +100,6 @@ import {
   runCentralAccountOperationWithCooldown
 } from "../utils/crossWindowOperations";
 import { AccountError, StorageError, createError, ErrorCode } from "../core/errors";
-import {
-  AideckMirrorTokenSnapshot,
-  listAideckCodexSharedAccounts,
-  mirrorAideckCodexManagerAccount,
-  mirrorAideckCurrentAccount,
-  removeAideckCodexManagerAccount,
-  readAideckCodexTokens
-} from "./aideckCodexStorage";
 
 /** 缓存失效时间 (毫秒) */
 const CACHE_TTL_MS = 5000;
@@ -139,8 +131,6 @@ export interface AccountSwitchCoordinator {
   onVaultMutation?(reason: "account-added" | "credentials-changed" | "token-refresh-setting-changed"): void;
   prepareAccountEnablement?(accountId: string, enabled: boolean): Promise<void>;
   completeAccountEnablement?(accountId: string, enabled: boolean): Promise<void>;
-  /** Prevent compatibility-mirror imports from bypassing a synced deletion. */
-  isAccountDeletionPending?(accountId: string): boolean;
 }
 
 export class AccountsRepository {
@@ -181,7 +171,7 @@ export class AccountsRepository {
    */
   async init(
     options: { deferSync?: boolean } = {}
-  ): Promise<{ authSyncCompleted: boolean; mirrorSyncCompleted: boolean }> {
+  ): Promise<{ authSyncCompleted: boolean }> {
     try {
       await fs.mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
     } catch (cause) {
@@ -193,68 +183,19 @@ export class AccountsRepository {
         console.warn("[codexManager] unable to migrate the active auth.json format:", error);
       });
       if (options.deferSync) {
-        return { authSyncCompleted: true, mirrorSyncCompleted: true };
+        return { authSyncCompleted: true };
       }
       await runCrossWindowExclusive("background:account-auth-sync", "Account auth sync", () =>
         this.runAndFlush(() => this.syncActiveAccountFromAuthFileInternal())
       );
-      await runCrossWindowExclusive("background:account-mirror-sync", "Account mirror sync", () =>
-        this.runAndFlush(() => this.syncFromAideckMirrorInternal())
-      );
-      return { authSyncCompleted: true, mirrorSyncCompleted: true };
+      return { authSyncCompleted: true };
     } catch (cause) {
       if (isIndexHealthError(cause)) {
         console.error("[codexManager] accounts index init failed:", cause);
-        return { authSyncCompleted: false, mirrorSyncCompleted: false };
+        return { authSyncCompleted: false };
       }
       throw cause;
     }
-  }
-
-  async syncFromAideckMirror(): Promise<CodexManagerAccountRecord[]> {
-    return runCrossWindowExclusive("background:account-mirror-sync", "Account mirror sync", () =>
-      this.runAndFlush(() => this.syncFromAideckMirrorInternal())
-    );
-  }
-
-  private async syncFromAideckMirrorInternal(): Promise<CodexManagerAccountRecord[]> {
-    const sharedAccounts = await listAideckCodexSharedAccounts();
-    if (sharedAccounts.length === 0) {
-      return [];
-    }
-
-    let index: CodexManagerIndex;
-    try {
-      index = await this.readIndex();
-    } catch (error) {
-      if (isIndexHealthError(error)) {
-        return [];
-      }
-      throw error;
-    }
-
-    const existingIds = new Set(index.accounts.map((account) => account.id));
-    const missing = sharedAccounts.filter((entry) => {
-      try {
-        const preview = previewSharedEntry(entry);
-        if (!preview.storageId || existingIds.has(preview.storageId)) {
-          return false;
-        }
-        return !this.switchCoordinator?.isAccountDeletionPending?.(preview.storageId);
-      } catch {
-        return false;
-      }
-    });
-
-    if (missing.length === 0) {
-      return [];
-    }
-
-    const imported = await this.importSharedAccountsInternal(missing);
-    if (imported.length > 0) {
-      console.info(`[codexManager] imported ${imported.length} account(s) from Aideck mirror`);
-    }
-    return imported;
   }
 
   /**
@@ -286,7 +227,6 @@ export class AccountsRepository {
       this.startupSyncTimer = undefined;
       void runCentralAccountOperationWithCooldown("Deferred startup account sync", 5 * 60 * 1000, async () => {
         await this.syncActiveAccountFromAuthFile();
-        await this.syncFromAideckMirror();
       })
         .then(() => {
           // Even when another window already completed the cooldown-protected
@@ -454,7 +394,7 @@ export class AccountsRepository {
    */
   async getTokens(
     accountId: string,
-    options: { syncExternal?: boolean; bypassCache?: boolean } = {}
+    options: { bypassCache?: boolean } = {}
   ): Promise<CodexTokens | undefined> {
     try {
       // 内存缓存命中直接返回，避免 Dashboard 刷新时重复读 Keychain
@@ -465,31 +405,7 @@ export class AccountsRepository {
 
       const storedTokens = await this.secretStore.getTokens(accountId);
       this.tokenCache.set(accountId, { tokens: storedTokens, cachedAt: Date.now() });
-
-      if (options.syncExternal === false) {
-        return storedTokens;
-      }
-
-      const index = await this.readIndex();
-      const account = index.accounts.find((item) => item.id === accountId);
-      if (!account) {
-        return storedTokens;
-      }
-
-      const aideckTokens = await readAideckCodexTokens(accountId);
-      const mergedTokens = mergeExternalTokens(storedTokens, aideckTokens, account);
-
-      if (!mergedTokens) {
-        return storedTokens;
-      }
-
-      if (!storedTokens || shouldSyncTokensFromAuthFile(storedTokens, mergedTokens)) {
-        await this.secretStore.setTokens(accountId, mergedTokens);
-        this.invalidateTokenCacheForAccount(accountId);
-        clearQuotaCacheForAccount(accountId);
-      }
-
-      return mergedTokens;
+      return storedTokens;
     } catch (cause) {
       throw new StorageError(`Failed to get tokens for ${accountId}`, {
         code: ErrorCode.STORAGE_SECRET_ACCESS_FAILED,
@@ -515,7 +431,6 @@ export class AccountsRepository {
     const credentialsChanged = !previousTokens || !areTokenCredentialsEqual(previousTokens, effectiveTokens);
     await this.secretStore.setTokens(accountId, effectiveTokens);
     this.invalidateTokenCacheForAccount(accountId);
-    await mirrorAideckCodexManagerAccount(account, effectiveTokens);
 
     let shouldWriteIndex = false;
     if (credentialsChanged) {
@@ -541,7 +456,6 @@ export class AccountsRepository {
         ...effectiveTokens,
         accountId: account.accountId ?? effectiveTokens.accountId
       });
-      await mirrorAideckCurrentAccount(accountId);
     }
 
     if (shouldWriteIndex) {
@@ -590,7 +504,6 @@ export class AccountsRepository {
     ) {
       account.updatedAt = Date.now();
       account.dismissedHealthIssueKey = undefined;
-      await mirrorAideckCodexManagerAccount(account, tokens);
       this.writeIndex(index);
     }
 
@@ -604,7 +517,6 @@ export class AccountsRepository {
       throw createError.accountNotFound(accountId);
     }
 
-    await mirrorAideckCodexManagerAccount(account, await this.secretStore.getTokens(accountId));
     this.writeIndex(index);
     return account;
   }
@@ -616,7 +528,6 @@ export class AccountsRepository {
       throw createError.accountNotFound(accountId);
     }
 
-    await mirrorAideckCodexManagerAccount(account, await this.secretStore.getTokens(accountId));
     this.writeIndex(index);
     return account;
   }
@@ -626,11 +537,6 @@ export class AccountsRepository {
     const updated = addAccountTagsToIndex(index, accountIds, tags, Date.now());
 
     if (updated.length > 0) {
-      await Promise.all(
-        updated.map(async (account) =>
-          mirrorAideckCodexManagerAccount(account, await this.secretStore.getTokens(account.id))
-        )
-      );
       this.writeIndex(index);
     }
 
@@ -642,11 +548,6 @@ export class AccountsRepository {
     const updated = removeAccountTagsFromIndex(index, accountIds, tags, Date.now());
 
     if (updated.length > 0) {
-      await Promise.all(
-        updated.map(async (account) =>
-          mirrorAideckCodexManagerAccount(account, await this.secretStore.getTokens(account.id))
-        )
-      );
       this.writeIndex(index);
     }
 
@@ -759,10 +660,6 @@ export class AccountsRepository {
     };
     await this.secretStore.setTokens(id, storedTokens);
     this.invalidateTokenCache();
-    await mirrorAideckCodexManagerAccount(account, storedTokens);
-    if (account.isActive) {
-      await mirrorAideckCurrentAccount(id);
-    }
 
     if (options.persistImmediately) {
       await this.persistRecoveredIndex(index, options.restoreSource ?? "shared_json");
@@ -965,7 +862,6 @@ export class AccountsRepository {
       };
       await this.secretStore.setTokens(account.id, storedTokens);
       this.invalidateTokenCache();
-      await mirrorAideckCodexManagerAccount(account, storedTokens);
 
       if (options.persistImmediately) {
         await this.persistRecoveredIndex(index, options.restoreSource ?? "shared_json");
@@ -1049,8 +945,6 @@ export class AccountsRepository {
       throw createError.accountNotFound(accountId);
     }
 
-    await mirrorAideckCodexManagerAccount(nextAccount, effectiveTokens);
-    await mirrorAideckCurrentAccount(accountId);
     this.writeIndex(index);
     if (backgroundRotation) {
       void backgroundRotation();
@@ -1071,7 +965,6 @@ export class AccountsRepository {
     await this.secretStore.deleteTokens(accountId);
     this.invalidateTokenCache();
     clearQuotaCacheForAccount(accountId);
-    await removeAideckCodexManagerAccount(accountId);
     this.writeIndex(index);
   }
 
@@ -1210,17 +1103,9 @@ export class AccountsRepository {
       };
       await this.secretStore.setTokens(accountId, effectiveNextTokens);
       this.invalidateTokenCache();
-      await mirrorAideckCodexManagerAccount(account, effectiveNextTokens);
       if (account.isActive) {
         await writeAuthFile(effectiveNextTokens);
-        await mirrorAideckCurrentAccount(accountId);
       }
-    }
-    if (storedTokens && !nextStoredTokens) {
-      await mirrorAideckCodexManagerAccount(account, {
-        ...storedTokens,
-        accountId: account.accountId ?? storedTokens.accountId
-      });
     }
 
     this.writeIndex(index);
@@ -1266,8 +1151,6 @@ export class AccountsRepository {
         if (shouldSyncTokensFromAuthFile(storedTokens, nextTokens)) {
           await this.secretStore.setTokens(derivedId, nextTokens);
           this.invalidateTokenCache();
-          await mirrorAideckCodexManagerAccount(account, nextTokens);
-          await mirrorAideckCurrentAccount(derivedId);
           clearQuotaCacheForAccount(derivedId);
 
           if (nextTokens.accountId && nextTokens.accountId !== account.accountId) {
@@ -1621,43 +1504,6 @@ function toComparableTokenSnapshot(tokens: CodexTokens | undefined): string {
   });
 }
 
-function mergeExternalTokens(
-  current: CodexTokens | undefined,
-  external: AideckMirrorTokenSnapshot | undefined,
-  account?: CodexManagerAccountRecord
-): CodexTokens | undefined {
-  if (!external) {
-    return current;
-  }
-
-  if (!canAdoptExternalMirrorTokens(current, external, account)) {
-    return current;
-  }
-
-  if (
-    current?.accessToken &&
-    external.accessToken &&
-    current.accessToken !== external.accessToken &&
-    !isTokenExpired(current.accessToken, 0) &&
-    isTokenExpired(external.accessToken, 0)
-  ) {
-    return current;
-  }
-
-  const merged: CodexTokens = {
-    idToken: external.idToken ?? current?.idToken ?? "",
-    accessToken: external.accessToken ?? current?.accessToken ?? "",
-    refreshToken: external.refreshToken ?? current?.refreshToken,
-    accountId: external.accountId ?? current?.accountId
-  };
-
-  if (!merged.idToken || !merged.accessToken) {
-    return current;
-  }
-
-  return merged;
-}
-
 function areTokenCredentialsEqual(left: CodexTokens, right: CodexTokens): boolean {
   return (
     left.idToken === right.idToken &&
@@ -1665,149 +1511,6 @@ function areTokenCredentialsEqual(left: CodexTokens, right: CodexTokens): boolea
     (left.refreshToken ?? "") === (right.refreshToken ?? "") &&
     (left.accountId ?? "") === (right.accountId ?? "")
   );
-}
-
-function canAdoptExternalMirrorTokens(
-  current: CodexTokens | undefined,
-  external: AideckMirrorTokenSnapshot,
-  account?: CodexManagerAccountRecord
-): boolean {
-  const externalClaims = safeExtractTokenClaims(external);
-  if (!isMirrorSnapshotInternallyConsistent(external, externalClaims)) {
-    return false;
-  }
-
-  if (
-    hasRequiredIdentityMismatch(
-      account?.email ? normalizeEmailIdentity(account.email) : undefined,
-      externalClaims?.email
-    ) ||
-    hasRequiredIdentityMismatch(account?.userId, externalClaims?.userId) ||
-    hasRequiredIdentityMismatch(account?.accountId, external.accountId ?? externalClaims?.accountId) ||
-    hasRequiredIdentityMismatch(account?.organizationId, externalClaims?.organizationId)
-  ) {
-    return false;
-  }
-
-  const expected = buildExpectedMirrorIdentity(account, current);
-  const candidate = buildExternalMirrorIdentity(external, externalClaims);
-  if (
-    hasRequiredIdentityMismatch(expected.email, candidate.email) ||
-    hasRequiredIdentityMismatch(expected.userId, candidate.userId) ||
-    hasRequiredIdentityMismatch(expected.accountId, candidate.accountId) ||
-    hasRequiredIdentityMismatch(expected.organizationId, candidate.organizationId)
-  ) {
-    return false;
-  }
-
-  return Boolean(candidate.accountId || candidate.organizationId || candidate.email || candidate.userId);
-}
-
-function buildExpectedMirrorIdentity(
-  account: CodexManagerAccountRecord | undefined,
-  current: CodexTokens | undefined
-): {
-  email?: string;
-  userId?: string;
-  accountId?: string;
-  organizationId?: string;
-} {
-  const claims = safeExtractTokenClaims(current);
-  return {
-    email: normalizeEmailIdentity(account?.email ?? claims?.email),
-    userId: account?.userId ?? claims?.userId,
-    accountId: account?.accountId ?? current?.accountId ?? claims?.accountId,
-    organizationId: account?.organizationId ?? claims?.organizationId
-  };
-}
-
-function buildExternalMirrorIdentity(
-  external: AideckMirrorTokenSnapshot,
-  claims:
-    | {
-        email?: string;
-        userId?: string;
-        accountId?: string;
-        organizationId?: string;
-      }
-    | undefined = safeExtractTokenClaims(external)
-): {
-  email?: string;
-  userId?: string;
-  accountId?: string;
-  organizationId?: string;
-} {
-  return {
-    email: normalizeEmailIdentity(external.email ?? claims?.email),
-    userId: external.userId ?? claims?.userId,
-    accountId: external.accountId ?? claims?.accountId,
-    organizationId: external.organizationId ?? claims?.organizationId
-  };
-}
-
-function safeExtractTokenClaims(tokens: Partial<CodexTokens> | undefined):
-  | {
-      email?: string;
-      userId?: string;
-      accountId?: string;
-      organizationId?: string;
-    }
-  | undefined {
-  if (!tokens?.idToken) {
-    return undefined;
-  }
-
-  try {
-    const claims = extractClaims(tokens.idToken, tokens.accessToken);
-    return {
-      email: normalizeEmailIdentity(claims.email),
-      userId: claims.userId,
-      accountId: claims.accountId,
-      organizationId: claims.organizationId
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function normalizeEmailIdentity(email: string | undefined): string | undefined {
-  const trimmed = email?.trim().toLowerCase();
-  return trimmed || undefined;
-}
-
-function isMirrorSnapshotInternallyConsistent(
-  external: AideckMirrorTokenSnapshot,
-  claims:
-    | {
-        email?: string;
-        userId?: string;
-        accountId?: string;
-        organizationId?: string;
-      }
-    | undefined
-): boolean {
-  if (!external.idToken) {
-    return true;
-  }
-
-  if (!claims) {
-    return false;
-  }
-
-  return !(
-    hasRequiredIdentityMismatch(normalizeEmailIdentity(external.email), claims.email) ||
-    hasRequiredIdentityMismatch(external.userId, claims.userId) ||
-    hasRequiredIdentityMismatch(external.accountId, claims.accountId) ||
-    hasRequiredIdentityMismatch(external.organizationId, claims.organizationId)
-  );
-}
-
-function hasRequiredIdentityMismatch(expected: string | undefined, candidate: string | undefined): boolean {
-  // Some exported/legacy tokens intentionally omit email or organization
-  // claims (and access tokens may be opaque). An absent claim is unknown, not
-  // evidence that the mirror belongs to another account; only a contradiction
-  // should block adoption.
-  return Boolean(expected && candidate && expected !== candidate);
 }
 
 /**

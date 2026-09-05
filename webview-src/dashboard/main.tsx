@@ -1446,10 +1446,12 @@ function App() {
       return;
     }
     if (request.kind === "password") {
+      const rotating = request.action === "configureEncryptedSync" && request.requireCurrentPassword === true;
       sendAction(request.action, undefined, {
         enabled: request.enabled,
-        passphrase: submittedTags?.[0],
-        passphraseConfirmation: submittedTags?.[1]
+        currentPassphrase: rotating ? submittedTags?.[0] : undefined,
+        passphrase: rotating ? submittedTags?.[1] : submittedTags?.[0],
+        passphraseConfirmation: rotating ? submittedTags?.[2] : submittedTags?.[1]
       });
       return;
     }
@@ -1488,9 +1490,10 @@ function App() {
       action: "configureEncryptedSync",
       title: configured ? "Change password" : "Set password",
       message: configured
-        ? "Enter a new shared password. The same password must be used on every PC."
+        ? "Enter the current password and a new shared password. Existing browser sessions will be signed out, and every PC must use the new password."
         : "Create the one shared password used for encrypted sync, remote dashboard login, and protected controls.",
-      confirmPassword: true
+      confirmPassword: true,
+      requireCurrentPassword: configured
     });
   };
 
@@ -2340,10 +2343,11 @@ function App() {
                   targetDeviceId: selectedCliSession?.deviceId
                 })
               }
-              onSaveFile={(filePath, fileContent, projectPath) =>
+              onSaveFile={(filePath, fileContent, fileRevision, projectPath) =>
                 sendAction("saveWorkspaceFile", undefined, {
                   filePath,
                   fileContent,
+                  fileRevision,
                   projectPath,
                   targetDeviceId: selectedCliSession?.deviceId
                 })

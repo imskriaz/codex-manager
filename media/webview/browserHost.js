@@ -48,9 +48,13 @@
         console.error("[codex-manager] realtime dashboard message", error);
       }
     });
-    socket.addEventListener("close", () => {
+    socket.addEventListener("close", (event) => {
       if (realtimeSocket === socket) realtimeSocket = undefined;
       dispatch({ type: "dashboard:connection", transport: "websocket", connected: false });
+      if (event.code === 4001) {
+        window.location.reload();
+        return;
+      }
       if (reconnectTimer !== undefined) return;
       const delay = reconnectDelayMs;
       reconnectDelayMs = Math.min(reconnectDelayMs * 2, maxReconnectDelayMs);

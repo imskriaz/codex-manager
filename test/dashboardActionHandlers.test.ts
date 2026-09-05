@@ -600,9 +600,94 @@ describe("executeDashboardActionMessage", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(configureEncryptedSync).toHaveBeenCalledWith("secret-passphrase", "secret-passphrase");
+    expect(configureEncryptedSync).toHaveBeenCalledWith("secret-passphrase", "secret-passphrase", undefined);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("codexManager.configureEncryptedSync");
-    expect(result.payload?.notice?.message).toMatch(/configured/i);
+    expect(result.payload?.notice?.message).toMatch(/password saved/i);
+  });
+
+  it("imports backup accounts without applying settings or switching accounts in ordinary import mode", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn(),
+      update,
+      inspect: vi.fn()
+    } as never);
+    const repo = {
+      importSharedAccountsWithSummary: vi.fn().mockResolvedValue({
+        successCount: 0,
+        overwriteCount: 0,
+        invalidCount: 0,
+        failures: []
+      }),
+      restoreAccountsFromSharedJson: vi.fn(),
+      getAccount: vi.fn(),
+      switchAccount: vi.fn()
+    } as unknown as DashboardActionContext["repo"];
+    const backup = {
+      format: "codex-manager-backup",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      accounts: [],
+      activeAccountId: "account-1",
+      settings: { dashboardTheme: "dark" },
+      logs: []
+    };
+
+    const result = await executeDashboardActionMessage(
+      { ...createContext(), repo },
+      {
+        type: "dashboard:action",
+        action: "importSharedJson",
+        requestId: "req-safe-backup-import",
+        payload: { jsonText: JSON.stringify(backup) }
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(repo.importSharedAccountsWithSummary).toHaveBeenCalledWith([]);
+    expect(repo.restoreAccountsFromSharedJson).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("applies backup settings and the active account only in explicit recovery mode", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn(),
+      update,
+      inspect: vi.fn()
+    } as never);
+    const repo = {
+      importSharedAccountsWithSummary: vi.fn(),
+      restoreAccountsFromSharedJson: vi.fn().mockResolvedValue({ restoredCount: 0 }),
+      getAccount: vi.fn().mockResolvedValue({ id: "account-1" }),
+      switchAccount: vi.fn().mockResolvedValue(undefined)
+    } as unknown as DashboardActionContext["repo"];
+    const backup = {
+      format: "codex-manager-backup",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      accounts: [],
+      activeAccountId: "account-1",
+      settings: { dashboardTheme: "dark" },
+      logs: []
+    };
+
+    const result = await executeDashboardActionMessage(
+      { ...createContext(), repo },
+      {
+        type: "dashboard:action",
+        action: "importSharedJson",
+        requestId: "req-recovery-import",
+        payload: { jsonText: JSON.stringify(backup), recoveryMode: true }
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(repo.restoreAccountsFromSharedJson).toHaveBeenCalledWith([]);
+    expect(repo.importSharedAccountsWithSummary).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith("dashboardTheme", "dark", vscode.ConfigurationTarget.Global);
+    expect(repo.switchAccount).toHaveBeenCalledWith("account-1");
   });
 
   it("does not block a reload prompt when another window already has the same action in flight", async () => {

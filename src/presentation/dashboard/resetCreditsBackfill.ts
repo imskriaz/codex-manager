@@ -65,7 +65,7 @@ async function backfillMissingResetCreditExpiriesInternal(
       inflightResetCreditsBackfills.add(account.id);
       resetCreditsBackfillCooldownUntil.set(account.id, now + RESET_CREDITS_BACKFILL_COOLDOWN_MS);
       try {
-        const tokens = await repo.getTokens(account.id, { syncExternal: false });
+        const tokens = await repo.getTokens(account.id);
         if (!tokens?.accessToken) {
           logNetworkEvent("resetCredits.backfill", {
             accountId: account.id,

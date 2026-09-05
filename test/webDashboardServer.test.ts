@@ -248,6 +248,16 @@ describe("browser dashboard request boundaries", () => {
     expect(source).not.toContain('searchParams.get("mobile")');
   });
 
+  it("expires, revokes, and signs out authenticated browser WebSocket sessions", () => {
+    const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
+    expect(source).toContain('setTimeout(() => client.close(4001, "Dashboard session expired")');
+    expect(source).toContain("this.browserSocketSessionFingerprint.set");
+    expect(source).toContain("this.closeRemoteBrowserSockets();");
+    expect(source).toContain("this.closeInvalidRemoteBrowserSockets()");
+    expect(source).toContain('method === "POST" && path === "/logout"');
+    expect(source).toContain("this.closeRemoteBrowserSockets((socket)");
+  });
+
   it("watches active and archived session metadata without watching unrelated auth files", () => {
     expect(isCliSessionWatchPath("session_index.jsonl")).toBe(true);
     expect(isCliSessionWatchPath("sessions\\2026\\rollout.jsonl")).toBe(true);

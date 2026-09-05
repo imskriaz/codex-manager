@@ -764,7 +764,12 @@ export function SavedAccountCard(props: {
         class={`saved-card-container ${cardStateClass} ${lowQuota ? "low-quota" : ""} ${actionsOpen ? "has-open-menu" : ""}`}
       >
         <div class={`saved-card-inner ${flipped ? "flipped" : ""}`}>
-          <section class={`saved-card saved-card-front ${cardStateClass}`} aria-label={emailDisplay}>
+          <section
+            class={`saved-card saved-card-front ${cardStateClass}`}
+            aria-label={emailDisplay}
+            aria-hidden={flipped}
+            inert={flipped}
+          >
             <div class="saved-head">
               <div class="saved-title">
                 <div class="saved-identity-line">
@@ -1055,7 +1060,9 @@ export function SavedAccountCard(props: {
           <div
             class={`saved-card saved-card-back ${cardStateClass}`}
             role="button"
-            tabIndex={0}
+            tabIndex={flipped ? 0 : -1}
+            aria-hidden={!flipped}
+            inert={!flipped}
             aria-label={copy.detailsBtn}
             onClick={() => setFlipped(false)}
             onKeyDown={(event) => handleFlipKey(event, false)}

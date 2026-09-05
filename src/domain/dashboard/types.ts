@@ -603,6 +603,7 @@ export interface DashboardActionPayload {
   projectPath?: string;
   filePath?: string;
   fileContent?: string;
+  fileRevision?: string;
   command?: string;
   terminalId?: string;
   terminalName?: string;
@@ -617,6 +618,8 @@ export interface DashboardActionPayload {
   /** Secret collected by a browser passphrase modal. Never persisted in dashboard state. */
   passphrase?: string;
   passphraseConfirmation?: string;
+  /** Existing shared password required when rotating to a new value. */
+  currentPassphrase?: string;
   /** Save sync configuration now and perform the initial network sync in the background. */
   deferSync?: boolean;
   /** Target PC for a hub-routed action; omitted for local execution. */
@@ -737,6 +740,7 @@ export interface DashboardWorkspaceFile {
   kind: "text" | "image" | "audio" | "video" | "pdf" | "document";
   mimeType: string;
   size: number;
+  revision: string;
   dataUrl?: string;
 }
 

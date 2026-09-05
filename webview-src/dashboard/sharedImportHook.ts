@@ -34,10 +34,11 @@ export function useSharedImportModal(params: {
     clearImportFeedback();
   };
 
-  const handlePreviewImport = (): void => {
+  const handlePreviewImport = (recoveryMode: boolean): void => {
     setImportState((current) => ({ ...current, importJsonError: undefined }));
     params.sendAction("previewImportSharedJson", undefined, {
-      jsonText: importJsonText
+      jsonText: importJsonText,
+      recoveryMode
     });
   };
 

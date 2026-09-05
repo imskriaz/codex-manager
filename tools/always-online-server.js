@@ -19,7 +19,6 @@ const hostKey = String(config.hostKey || "");
 const adminToken = String(config.adminToken || "");
 const peers = new Map();
 const pendingActions = new Map();
-const pendingActionTimeoutMs = 30000;
 const startedAt = Date.now();
 let WebSocketServer;
 try {
@@ -77,20 +76,40 @@ function closePeerSocket(socket) {
   else if (typeof socket.close === "function") socket.close();
 }
 
-function rememberPendingAction(requestId, socket) {
-  const previous = pendingActions.get(requestId);
-  if (previous) clearTimeout(previous.timer);
-  const timer = setTimeout(() => pendingActions.delete(requestId), pendingActionTimeoutMs);
-  timer.unref();
-  pendingActions.set(requestId, { socket, timer });
+function peerActionTimeoutMs(action) {
+  if (action === "sendCodexCliSessionMessage") return 15 * 60 * 1000 + 15 * 1000;
+  if (["runWorkspaceTerminalCommand", "saveWorkspaceFile", "pushWorkspaceBranch"].includes(action)) return 135000;
+  if (["switch", "refresh", "refreshAll", "refreshToken", "reauthorize", "resyncProfile", "getDailyUsage", "startCodexCliSession", "importSharedJson", "completeOAuthSession"].includes(action)) return 120000;
+  if (["restoreFromBackup", "restoreFromAuthJson", "commitWorkspaceChanges"].includes(action)) return 60000;
+  return 30000;
 }
 
-function takePendingAction(requestId) {
+function rememberPendingAction(message, originSocket, destinationSocket) {
+  if (pendingActions.has(message.requestId)) return false;
+  const timer = setTimeout(() => {
+    const pending = pendingActions.get(message.requestId);
+    if (!pending || pending.originSocket !== originSocket) return;
+    pendingActions.delete(message.requestId);
+    if (originSocket.readyState === 1) {
+      originSocket.send(JSON.stringify({
+        type: "peer:action-result",
+        requestId: message.requestId,
+        status: "failed",
+        error: "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
+      }));
+    }
+  }, peerActionTimeoutMs(message.action));
+  timer.unref();
+  pendingActions.set(message.requestId, { originSocket, destinationSocket, timer });
+  return true;
+}
+
+function takePendingAction(requestId, sourceSocket) {
   const pending = pendingActions.get(requestId);
-  if (!pending) return undefined;
+  if (!pending || pending.destinationSocket !== sourceSocket) return undefined;
   pendingActions.delete(requestId);
   clearTimeout(pending.timer);
-  return pending.socket;
+  return pending.originSocket;
 }
 
 const httpServer = http.createServer((request, response) => {
@@ -128,7 +147,7 @@ const httpServer = http.createServer((request, response) => {
   response.statusCode = 404; response.end("Not found");
 });
 
-const wsServer = new WebSocketServer({ server: httpServer, path: "/ws" });
+const wsServer = new WebSocketServer({ server: httpServer, path: "/ws", maxPayload: 2 * 1024 * 1024 });
 wsServer.on("connection", (socket, request) => {
   const query = new URL(request.url || "/ws", "http://127.0.0.1").searchParams;
   if (query.get("peer") !== "1") { socket.close(); return; }
@@ -143,19 +162,28 @@ wsServer.on("connection", (socket, request) => {
         socket.send(JSON.stringify(aggregate()));
         broadcast(aggregate());
       } else if (message.type === "peer:action" && deviceId && peers.get(deviceId)?.socket === socket) {
+        if (typeof message.requestId !== "string" || message.requestId.length > 256 ||
+            typeof message.action !== "string" || message.action.length > 128) {
+          socket.close();
+          return;
+        }
         const target = message.payload && message.payload.targetDeviceId;
         const destination = target && target !== "local" ? peers.get(target) : undefined;
         if (!destination || destination.socket.readyState !== 1) {
           socket.send(JSON.stringify({ type: "peer:action-result", requestId: message.requestId, status: "failed", error: "The selected PC is offline." }));
           return;
         }
-        rememberPendingAction(message.requestId, socket);
+        if (!rememberPendingAction(message, socket, destination.socket)) {
+          socket.send(JSON.stringify({ type: "peer:action-result", requestId: message.requestId, status: "failed", error: "That action request is already pending. Try again." }));
+          return;
+        }
         destination.socket.send(JSON.stringify({
           ...message,
           payload: message.payload ? { ...message.payload, targetDeviceId: undefined } : message.payload
         }));
-      } else if (message.type === "peer:action-result" && typeof message.requestId === "string") {
-        const origin = takePendingAction(message.requestId);
+      } else if (message.type === "peer:action-result" && typeof message.requestId === "string" &&
+                 deviceId && peers.get(deviceId)?.socket === socket) {
+        const origin = takePendingAction(message.requestId, socket);
         if (origin && origin.readyState === 1) origin.send(JSON.stringify(message));
       }
     } catch { socket.close(); }

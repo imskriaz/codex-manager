@@ -31,7 +31,7 @@ describe("encrypted account sync", () => {
     vi.restoreAllMocks();
   });
 
-  it("saves onboarding sync configuration without waiting for the initial network sync", async () => {
+  it("saves a shared password without silently enabling or starting encrypted sync", async () => {
     const context = {
       subscriptions: [] as vscode.Disposable[],
       globalState: { get: vi.fn(() => undefined), update: vi.fn(async () => undefined), setKeysForSync: vi.fn() },
@@ -50,8 +50,45 @@ describe("encrypted account sync", () => {
     ).resolves.toBe(true);
 
     expect(context.secrets.store).toHaveBeenCalledWith("codexManager.encryptedSync.passphrase", PASSPHRASE);
-    expect(queue).toHaveBeenCalledTimes(1);
+    expect(queue).not.toHaveBeenCalled();
     expect(sync).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("requires the current password and re-encrypts the vault when rotating it", async () => {
+    const oldPassword = "old shared password";
+    const newPassword = "new shared password";
+    const state = new Map<string, unknown>([
+      ["codexManager.encryptedSync.v1", await encryptSyncPayload(createPayload([createEntry("one", 100)]), oldPassword)]
+    ]);
+    const secretValues = new Map<string, string>([["codexManager.encryptedSync.passphrase", oldPassword]]);
+    const context = {
+      subscriptions: [] as vscode.Disposable[],
+      globalState: {
+        get: <T>(key: string) => state.get(key) as T | undefined,
+        update: vi.fn(async (key: string, value: unknown) => state.set(key, value)),
+        setKeysForSync: vi.fn()
+      },
+      secrets: {
+        get: vi.fn(async (key: string) => secretValues.get(key)),
+        store: vi.fn(async (key: string, value: string) => secretValues.set(key, value)),
+        delete: vi.fn(async (key: string) => secretValues.delete(key))
+      }
+    } as unknown as vscode.ExtensionContext;
+    const manager = new EncryptedSyncManager(context, {} as never);
+
+    await expect(
+      manager.configure({ passphrase: newPassword, confirmation: newPassword, currentPassphrase: "incorrect" })
+    ).resolves.toBe(false);
+    await expect(decryptSyncPayload(state.get("codexManager.encryptedSync.v1") as string, oldPassword)).resolves.toBeDefined();
+
+    await expect(
+      manager.configure({ passphrase: newPassword, confirmation: newPassword, currentPassphrase: oldPassword })
+    ).resolves.toBe(true);
+    await expect(decryptSyncPayload(state.get("codexManager.encryptedSync.v1") as string, newPassword)).resolves.toBeDefined();
+    await expect(decryptSyncPayload(state.get("codexManager.encryptedSync.v1") as string, oldPassword)).rejects.toThrow();
+    expect(context.secrets.delete).toHaveBeenCalledWith("codexManager.webDashboard.sessions.v1");
+    expect(secretValues.get("codexManager.encryptedSync.passphrase")).toBe(newPassword);
     manager.dispose();
   });
 
