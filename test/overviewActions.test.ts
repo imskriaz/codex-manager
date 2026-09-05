@@ -117,7 +117,7 @@ describe("overview actions", () => {
     expect(overview).toContain("placeholder={!providedAccount}");
     expect(overview).toContain("!providedAccount ||");
     expect(overview).toContain("overview-inline-add-panel");
-    expect(main).toContain("emptyAccountContent={!overviewAccount ? renderAddAccount(true, true) : undefined}");
+    expect(main).toContain("!overviewAccount && !modals.addAccountModalOpen ? renderAddAccount(true, true) : undefined");
     expect(overview).toContain('resolveOverviewToolbarLabel("sync", props.lang)');
   });
 

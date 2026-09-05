@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.5-pre1
+
+- Open the selected account's reauthorization dialog even when no current account is loaded, and hide the inline add-account form while the dialog is open.
+- Keep the normal Add Account title when there is no reauthorization target, including with Privacy Mode enabled.
+
 ## 1.1.4
 
 - Add an on/off Cross-PC sync toggle in Data Sync, enabled by default, while preserving saved off choices across restarts and keeping first-run setup available.

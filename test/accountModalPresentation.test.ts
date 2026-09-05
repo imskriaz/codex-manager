@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import { resolveAccountModalTitle, resolveCreateOAuthLinkLabel } from "../webview-src/dashboard/accountModals";
 import { resolveAccountAccessAction } from "../webview-src/dashboard/savedAccountCard";
+import { getSensitiveDisplayValue } from "../webview-src/dashboard/helpers";
 
 describe("add account OAuth actions", () => {
   it("uses one context-specific access action per account", () => {
@@ -33,7 +34,25 @@ describe("add account OAuth actions", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).toContain('modals.openReauthorizeModal(accountId, account?.email ?? "")');
     expect(source).toContain(
-      'getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email")'
+      'getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email", "")'
+    );
+  });
+
+  it.each([false, true])("preserves the add-account title with privacy mode %s", (privacyMode) => {
+    const email = getSensitiveDisplayValue(undefined, privacyMode, "email", "");
+    expect(resolveAccountModalTitle("Add Codex Account", email)).toBe("Add Codex Account");
+  });
+
+  it("keeps the reauthorization dialog available when no current account exists", () => {
+    const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(source).toContain("{renderAddAccount(false, modals.addAccountModalOpen)}");
+    expect(source).not.toContain("overviewAccount ? renderAddAccount(false,");
+  });
+
+  it("hides the inline account flow while an explicit account dialog is open", () => {
+    const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(source).toMatch(
+      /emptyAccountContent=\{\s*!overviewAccount && !modals\.addAccountModalOpen \? renderAddAccount\(true, true\) : undefined\s*\}/
     );
   });
 

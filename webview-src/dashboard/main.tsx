@@ -1582,7 +1582,7 @@ function App() {
       inline={inline}
       title={resolveAccountModalTitle(
         snapshot.copy.addAccountModalTitle,
-        getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email")
+        getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email", "")
       )}
       tab={modals.addAccountTab}
       copy={snapshot.copy}
@@ -1811,7 +1811,9 @@ function App() {
             consumeResetCreditPending={Boolean(
               overviewAccount && isActionPending("consumeResetCredit", overviewAccount.id)
             )}
-            emptyAccountContent={!overviewAccount ? renderAddAccount(true, true) : undefined}
+            emptyAccountContent={
+              !overviewAccount && !modals.addAccountModalOpen ? renderAddAccount(true, true) : undefined
+            }
             metricPriority={uiPreferences.metricPriority}
             dailyUsage={overviewAccount ? dailyUsageByAccount[overviewAccount.id] : undefined}
             dailyUsagePending={Boolean(overviewAccount && isActionPending("getDailyUsage", overviewAccount.id))}
@@ -2458,13 +2460,13 @@ function App() {
           )
         : null}
 
-      {overviewAccount ? renderAddAccount(false, modals.addAccountModalOpen) : null}
+      {renderAddAccount(false, modals.addAccountModalOpen)}
 
       <ConfirmCancelOauthModal
         open={modals.confirmCancelOauthOpen}
         title={resolveAccountModalTitle(
           snapshot.copy.addAccountModalTitle,
-          getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email")
+          getSensitiveDisplayValue(modals.reauthorizeEmail, state.privacyMode, "email", "")
         )}
         copy={snapshot.copy}
         onClose={modals.closeConfirmCancelOauth}
