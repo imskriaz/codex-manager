@@ -72,6 +72,7 @@ import { parseSharedJsonInput, toFailureMessage, toImportActionPayload } from ".
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
   "setPrivacyMode",
+  "setCrossPcSyncEnabled",
   "importCurrent",
   "inspectCurrentAuth",
   "completeOnboarding",
@@ -270,6 +271,21 @@ async function runDashboardAction(
   const translate = t(ctx.resolveLanguage());
 
   switch (action) {
+    case "setCrossPcSyncEnabled": {
+      if (typeof payload?.enabled !== "boolean") {
+        throw new Error("The cross-PC sync request is invalid. Refresh the dashboard and try again.");
+      }
+      await handleDashboardSettingUpdate("encryptedSyncEnabled", payload.enabled, vscode.ConfigurationTarget.Global);
+      ctx.schedulePublishState();
+      return {
+        notice: {
+          level: "info",
+          message: payload.enabled
+            ? "Cross-PC sync enabled on this PC. Set the shared Password in General if sync needs configuration."
+            : "Cross-PC sync disabled on this PC. Your saved accounts and password are preserved."
+        }
+      };
+    }
     case "addAccount":
       await vscode.commands.executeCommand("codexManager.addAccount");
       return undefined;

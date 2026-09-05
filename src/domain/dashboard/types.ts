@@ -495,6 +495,7 @@ export interface DashboardPeerView {
 export type DashboardActionName =
   | "addAccount"
   | "setPrivacyMode"
+  | "setCrossPcSyncEnabled"
   | "importCurrent"
   | "inspectCurrentAuth"
   | "completeOnboarding"

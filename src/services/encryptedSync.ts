@@ -147,10 +147,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
   ) {}
 
   async start(): Promise<void> {
-    this.context.globalState.setKeysForSync([SYNC_KEY]);
+    this.context.globalState.setKeysForSync(this.isEnabled() ? [SYNC_KEY] : []);
     this.context.subscriptions.push(this);
     this.configurationSubscription = vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration("codexManager.encryptedSyncEnabled")) return;
+      this.context.globalState.setKeysForSync(this.isEnabled() ? [SYNC_KEY] : []);
       if (!this.isEnabled()) {
         this.stopDownloadedVaultPolling();
         if (this.startupVaultMergeTimer) {
@@ -196,8 +197,15 @@ export class EncryptedSyncManager implements vscode.Disposable {
     // machine participates in encrypted sync. Merely being signed in to VS
     // Code is not: auto-enabling for every signed-in user caused expensive
     // Settings Sync work during unrelated extension-host startups.
-    if (remoteVault && !this.isEnabled()) {
+    const syncSetting = getCodexManagerConfiguration().inspect<boolean>("encryptedSyncEnabled");
+    const explicitlyDisabled = [
+      syncSetting?.globalValue,
+      syncSetting?.workspaceValue,
+      syncSetting?.workspaceFolderValue
+    ].includes(false);
+    if (remoteVault && !this.isEnabled() && !explicitlyDisabled) {
       await getCodexManagerConfiguration().update("encryptedSyncEnabled", true, vscode.ConfigurationTarget.Global);
+      this.context.globalState.setKeysForSync([SYNC_KEY]);
       encryptedSyncNeedsConfiguration = true;
     }
     if (this.isEnabled()) {

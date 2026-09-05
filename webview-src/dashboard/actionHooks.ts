@@ -78,7 +78,7 @@ export function useDashboardActions(
       action,
       accountId,
       requestId,
-      payload: action === "setPrivacyMode"
+      payload: action === "setPrivacyMode" || action === "setCrossPcSyncEnabled"
         ? payload
         : payload?.targetDeviceId
         ? payload

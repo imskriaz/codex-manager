@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
+  it("shows a warning when the cross-PC sync toggle times out", () => {
+    expect(noticeFromActionTimeout("setCrossPcSyncEnabled")).toMatchObject({
+      level: "warning",
+      message: expect.stringMatching(/did not finish in time.*try again/i)
+    });
+  });
   it("surfaces the host error from every failed action result", () => {
     expect(
       noticeFromActionResult({

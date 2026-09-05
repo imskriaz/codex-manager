@@ -66,6 +66,8 @@ export function SettingsOverlay(props: {
   onImportBackup: () => void;
   onConfigureSync: () => void;
   onSyncNow: () => void;
+  onSetCrossPcSyncEnabled: (enabled: boolean) => void;
+  crossPcSyncPending: boolean;
   onSetRegistryOverride: (enabled: boolean) => void;
   registryOverridePending: boolean;
 }) {
@@ -723,11 +725,17 @@ export function SettingsOverlay(props: {
                   </button>
                 </div>
               </SettingsSegmentBlock>
-              <div class="settings-block settings-block-wide">
-                <div class="settings-block-head">
-                  <div class="settings-block-title">{transferCopy.syncTitle}</div>
-                  <div class="settings-block-sub">{transferCopy.syncSub}</div>
-                </div>
+              <SettingsToggleBlock
+                title={transferCopy.syncTitle}
+                sub={transferCopy.syncSub}
+                enabled={props.settings.encryptedSyncEnabled}
+                disabled={props.crossPcSyncPending}
+                className="settings-block-wide"
+                onToggle={props.onSetCrossPcSyncEnabled}
+              >
+                {props.encryptedSyncNeedsConfiguration ? (
+                  <div class="settings-note settings-notice-warning">{passwordCopy.needsConfiguration}</div>
+                ) : null}
                 {props.encryptedSyncNeedsSettingsSync ? (
                   <div class="settings-note settings-notice-warning">{transferCopy.syncNeedsSettingsSync}</div>
                 ) : null}
@@ -737,12 +745,12 @@ export function SettingsOverlay(props: {
                     class="settings-action-btn"
                     type="button"
                     onClick={props.onSyncNow}
-                    disabled={!props.settings.encryptedSyncEnabled}
+                    disabled={!props.settings.encryptedSyncEnabled || props.crossPcSyncPending}
                   >
                     {transferCopy.syncNow}
                   </button>
                 </div>
-              </div>
+              </SettingsToggleBlock>
               <SettingsToggleBlock
                 title={resolveRegistryOverrideText("title", props.lang)}
                 sub={resolveRegistryOverrideText("sub", props.lang)}
@@ -1014,9 +1022,9 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
       exportLabel: "导出全部会话",
       importLabel: "导入全部会话",
       note: "导出文件包含登录令牌，请使用安全方式传输并在完成后删除。",
-      syncTitle: "加密 VS Code 同步",
-      syncSub: "通过 VS Code Settings Sync 按操作同步会话和电脑占用。",
-      syncNote: "同步会记录启用账号的电脑。每次切换后运行同步，即可在电脑之间共享最新登记。",
+      syncTitle: "跨电脑同步",
+      syncSub: "启用或停用此电脑的加密会话和账号启用登记同步。停用后保留账号和密码。",
+      syncNote: "通过 VS Code Settings Sync 和实时电脑连接同步。请在“常规”中设置相同的共享密码。",
       syncNeedsSettingsSync:
         "此电脑上的 VS Code Settings Sync 尚未启用。请登录 VS Code 并启用 Settings Sync，然后重试。",
       syncNow: "立即同步"
@@ -1029,9 +1037,9 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
       exportLabel: "匯出全部工作階段",
       importLabel: "匯入全部工作階段",
       note: "匯出檔案包含登入權杖，請使用安全方式傳輸並在完成後刪除。",
-      syncTitle: "加密 VS Code 同步",
-      syncSub: "透過 VS Code Settings Sync 按操作同步工作階段和啟用登錄。",
-      syncNote: "同步會記錄啟用帳號的電腦。每次切換後執行同步，即可在電腦之間分享最新登錄。",
+      syncTitle: "跨電腦同步",
+      syncSub: "啟用或停用此電腦的加密工作階段和帳號啟用登錄同步。停用後保留帳號和密碼。",
+      syncNote: "透過 VS Code Settings Sync 和即時電腦連線同步。請在「一般」中設定相同的共用密碼。",
       syncNeedsSettingsSync:
         "此電腦上的 VS Code Settings Sync 尚未啟用。請登入 VS Code 並啟用 Settings Sync，然後重試。",
       syncNow: "立即同步"
@@ -1043,10 +1051,10 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
     exportLabel: "Export all sessions",
     importLabel: "Import all sessions",
     note: "The export contains login tokens. Transfer it securely and delete it when finished.",
-    syncTitle: "Encrypted VS Code sync",
-    syncSub: "Sync sessions and the enable/disable registry through VS Code Settings Sync.",
+    syncTitle: "Cross-PC sync",
+    syncSub: "Enable or disable encrypted session and account enablement sync on this PC. Turning it off keeps your saved accounts and password.",
     syncNote:
-      "The registry records which PC has an account enabled. Run Sync after each toggle to share the latest registry across PCs.",
+      "Uses VS Code Settings Sync and realtime PC connections. Set the same shared Password in General on each PC.",
     syncNeedsSettingsSync:
       "VS Code Settings Sync is not active on this PC. Sign in to VS Code and turn on Settings Sync, then try again.",
     syncNow: "Sync now"

@@ -2137,6 +2137,8 @@ function App() {
       </main>
 
       <SettingsOverlay
+        onSetCrossPcSyncEnabled={(enabled) => sendAction("setCrossPcSyncEnabled", undefined, { enabled })}
+        crossPcSyncPending={isActionPending("setCrossPcSyncEnabled")}
         open={state.settingsOpen}
         copy={snapshot.copy}
         lang={snapshot.lang}

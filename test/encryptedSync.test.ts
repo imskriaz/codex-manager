@@ -394,6 +394,52 @@ describe("encrypted account sync", () => {
     expect(entry).not.toHaveProperty("enabled");
   });
 
+  it("keeps an explicit off choice after restart and resumes only when enabled", async () => {
+    vi.useFakeTimers();
+    let enabled = false;
+    const configUpdate = vi.fn();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" ? enabled : fallback,
+      update: configUpdate,
+      inspect: () => ({ globalValue: enabled })
+    } as unknown as vscode.WorkspaceConfiguration);
+    let onChange!: (event: vscode.ConfigurationChangeEvent) => void;
+    vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((listener) => {
+      onChange = listener;
+      return { dispose: vi.fn() };
+    });
+    const context = {
+      subscriptions: [],
+      globalState: {
+        get: (key: string) => key === "codexManager.encryptedSync.v1" ? "saved-vault" : undefined,
+        update: vi.fn(), setKeysForSync: vi.fn()
+      },
+      secrets: { get: vi.fn(async () => PASSPHRASE), store: vi.fn(), delete: vi.fn() }
+    } as unknown as vscode.ExtensionContext;
+    const manager = new EncryptedSyncManager(context, {} as never);
+    const sync = vi.spyOn(manager, "syncNow").mockResolvedValue(true);
+    await manager.start();
+    expect(configUpdate).not.toHaveBeenCalled();
+    expect(context.globalState.setKeysForSync).toHaveBeenLastCalledWith([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sync).not.toHaveBeenCalled();
+    await expect(manager.signRealtimePeerPayload("peer")).resolves.toBeUndefined();
+    await expect(manager.getRealtimeRelayKey()).resolves.toBeUndefined();
+    await expect(manager.getRealtimeEncryptedVault()).resolves.toBeUndefined();
+    await expect(manager.applyRealtimeEncryptedVault("peer-vault")).resolves.toBe(false);
+    enabled = true;
+    onChange({ affectsConfiguration: () => true } as vscode.ConfigurationChangeEvent);
+    expect(context.globalState.setKeysForSync).toHaveBeenLastCalledWith(["codexManager.encryptedSync.v1"]);
+    await expect(manager.signRealtimePeerPayload("peer")).resolves.toEqual(expect.any(String));
+    enabled = false;
+    onChange({ affectsConfiguration: () => true } as vscode.ConfigurationChangeEvent);
+    expect(context.globalState.setKeysForSync).toHaveBeenLastCalledWith([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sync).not.toHaveBeenCalled();
+    expect(context.secrets.delete).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
   it("keeps startup free of Settings Sync network work and stays idle during account use", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
