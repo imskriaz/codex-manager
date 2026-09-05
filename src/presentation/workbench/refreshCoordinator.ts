@@ -30,7 +30,8 @@ export class WorkbenchRefreshCoordinator {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly repo: AccountsRepository,
-    private readonly statusBar: AccountsStatusBarProvider
+    private readonly statusBar: AccountsStatusBarProvider,
+    private readonly canAutomateAccount: (accountId: string) => boolean | Promise<boolean> = () => true
   ) {}
 
   async initializeObservedAuthIdentity(): Promise<void> {
@@ -189,6 +190,13 @@ export class WorkbenchRefreshCoordinator {
         // The import is performed by this extension host, so keep its runtime
         // account identity in sync without prompting for a window reload.
         setCurrentWindowRuntimeAccountId(account.id);
+        if (!(await this.canAutomateAccount(account.id))) {
+          console.info(
+            `[codexManager] skipped background quota refresh for ${account.email}; another PC owns this account`
+          );
+          view.refresh();
+          return;
+        }
         let result: Awaited<ReturnType<typeof refreshImportedAccountQuota>>;
         try {
           result = await refreshImportedAccountQuota(this.repo, account.id);

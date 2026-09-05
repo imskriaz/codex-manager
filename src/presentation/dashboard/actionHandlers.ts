@@ -281,8 +281,8 @@ async function runDashboardAction(
         notice: {
           level: "info",
           message: payload.enabled
-            ? "Cross-PC sync enabled on this PC. Set the shared Password in General if sync needs configuration."
-            : "Cross-PC sync disabled on this PC. Your saved accounts and password are preserved."
+            ? "Cross-PC claim checks enabled. Full account and token sync remains controlled by its separate setting."
+            : "Cross-PC claim checks disabled. Cross-PC account and token sync is inactive on this PC."
         }
       };
     }
@@ -376,7 +376,13 @@ async function runDashboardAction(
         if (!ctx.configureEncryptedSync) {
           throw new Error("Encrypted sync is unavailable in the browser dashboard host.");
         }
-        if (!(await ctx.configureEncryptedSync(payload.passphrase, payload.passphraseConfirmation, payload.currentPassphrase))) {
+        if (
+          !(await ctx.configureEncryptedSync(
+            payload.passphrase,
+            payload.passphraseConfirmation,
+            payload.currentPassphrase
+          ))
+        ) {
           throw new Error("Encrypted sync was not configured. Check the password and try again.");
         }
         ctx.schedulePublishState();
@@ -412,16 +418,16 @@ async function runDashboardAction(
       if (ctx.hostKind === "browser" && ctx.syncEncryptedAccounts) {
         if (!(await ctx.syncEncryptedAccounts())) {
           throw new Error(
-            "Encrypted account sync did not complete. Make sure VS Code Settings Sync is active on this PC, then try again."
+            "Cross-PC claim sync did not complete. Make sure VS Code Settings Sync is active on this PC, then try again."
           );
         }
         ctx.schedulePublishState();
-        return { notice: { level: "info" as const, message: "Encrypted account sync completed." } };
+        return { notice: { level: "info" as const, message: "Cross-PC claim sync completed." } };
       }
       if ((await vscode.commands.executeCommand<boolean>("codexManager.syncNow")) !== true) {
         ctx.schedulePublishState();
         throw new Error(
-          "Encrypted account sync did not complete. Make sure VS Code Settings Sync is active on this PC, then try again."
+          "Cross-PC claim sync did not complete. Make sure VS Code Settings Sync is active on this PC, then try again."
         );
       }
       ctx.schedulePublishState();
@@ -922,6 +928,7 @@ async function handleExportBackup(repo: AccountsRepository) {
       ([key, value]) =>
         key !== "resolvedCodexAppPath" &&
         key !== "encryptedSyncEnabled" &&
+        key !== "fullCrossPcAccountSyncEnabled" &&
         key !== "encryptedSyncRegistryOverrideEnabled" &&
         ["string", "number", "boolean"].includes(typeof value)
     )
@@ -1133,8 +1140,8 @@ async function handlePreviewImportSharedJson(
   const parsed = parseSharedJsonInput(jsonText, (message) => translate("message.sharedJsonParseFailed", { message }));
   const backup = parseAccountsBackup(parsed);
   const importPreview = await repo.previewSharedAccountsImport(
-      backup ? backup.accounts : (parsed as Exclude<ReturnType<typeof parseSharedJsonInput>, CodexManagerBackup>)
-    );
+    backup ? backup.accounts : (parsed as Exclude<ReturnType<typeof parseSharedJsonInput>, CodexManagerBackup>)
+  );
   return {
     importPreview: {
       ...importPreview,

@@ -5,6 +5,7 @@ import {
   ExtensionSettingsStore,
   getCodexManagerConfiguration,
   normalizeAutoRefreshMinutes,
+  normalizeCurrentAutoRefreshMinutes,
   normalizeAutoSwitchLockMinutes,
   normalizeAutoSwitchThreshold,
   normalizeAutoResetWeeklyThreshold,
@@ -45,6 +46,7 @@ export async function handleDashboardSettingUpdate(
     case "quotaWarningEnabled":
     case "debugNetwork":
     case "encryptedSyncEnabled":
+    case "fullCrossPcAccountSyncEnabled":
     case "webDashboardEnabled":
     case "webDashboardAlwaysOnlineEnabled":
       if (typeof value === "boolean") {
@@ -130,9 +132,14 @@ export async function handleDashboardSettingUpdate(
       }
       break;
     case "autoRefreshMinutes":
-    case "autoRefreshCurrentMinutes":
       if (typeof value === "number") {
         await updateDashboardConfiguration(config, key, normalizeAutoRefreshMinutes(value), target);
+        updated = true;
+      }
+      break;
+    case "autoRefreshCurrentMinutes":
+      if (typeof value === "number") {
+        await updateDashboardConfiguration(config, key, normalizeCurrentAutoRefreshMinutes(value), target);
         updated = true;
       }
       break;
@@ -169,7 +176,14 @@ export function normalizeCloudflaredDomain(value: string): string | undefined {
   const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   try {
     const parsed = new URL(candidate);
-    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== "/" ||
+      parsed.search ||
+      parsed.hash
+    ) {
       return undefined;
     }
     return parsed.origin;
@@ -179,22 +193,25 @@ export function normalizeCloudflaredDomain(value: string): string | undefined {
 }
 
 function snapToAllowed(value: number, allowed: readonly number[], fallback: number): number {
-  if (!Number.isFinite(value)) {return fallback;}
-  return allowed.reduce((closest, candidate) =>
-    Math.abs(candidate - value) < Math.abs(closest - value) ? candidate : closest
-  , fallback);
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return allowed.reduce(
+    (closest, candidate) => (Math.abs(candidate - value) < Math.abs(closest - value) ? candidate : closest),
+    fallback
+  );
 }
 
 function hasExplicitConfigurationValue(config: vscode.WorkspaceConfiguration, key: string): boolean {
   const inspected = config.inspect?.(key);
   return Boolean(
     inspected &&
-      (inspected.workspaceFolderLanguageValue !== undefined ||
-        inspected.workspaceFolderValue !== undefined ||
-        inspected.workspaceLanguageValue !== undefined ||
-        inspected.workspaceValue !== undefined ||
-        inspected.globalLanguageValue !== undefined ||
-        inspected.globalValue !== undefined)
+    (inspected.workspaceFolderLanguageValue !== undefined ||
+      inspected.workspaceFolderValue !== undefined ||
+      inspected.workspaceLanguageValue !== undefined ||
+      inspected.workspaceValue !== undefined ||
+      inspected.globalLanguageValue !== undefined ||
+      inspected.globalValue !== undefined)
   );
 }
 
@@ -214,7 +231,12 @@ function resolveConfigurationTarget(
   // Workspace access exposes local files, terminals, and CLI sessions. Keep
   // its master gate in this machine's user settings even if an older install
   // left a workspace-level override behind in a shared repository.
-  if (key === "cliIntegrationEnabled" || key === "privacyMode" || key === "encryptedSyncEnabled") {
+  if (
+    key === "cliIntegrationEnabled" ||
+    key === "privacyMode" ||
+    key === "encryptedSyncEnabled" ||
+    key === "fullCrossPcAccountSyncEnabled"
+  ) {
     return vscode.ConfigurationTarget.Global;
   }
   const inspected = config.inspect(key);

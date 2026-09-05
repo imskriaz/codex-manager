@@ -41,6 +41,7 @@ describe("dashboard preferences", () => {
     });
 
     expect(enabled.privacyMode).toBe(true);
+    expect(enabled.lastEnabledAutoRefreshCurrentMinutes).toBe(1);
     expect(disabled.privacyMode).toBe(false);
   });
 

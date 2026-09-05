@@ -54,7 +54,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         selectedAccountIds,
         lastEnabledAutoRefreshMinutes:
           action.snapshot.settings.autoRefreshMinutes > 0
-            ? action.snapshot.settings.autoRefreshMinutes
+            ? Math.max(5, action.snapshot.settings.autoRefreshMinutes)
             : state.lastEnabledAutoRefreshMinutes,
         lastEnabledAutoRefreshCurrentMinutes:
           action.snapshot.settings.autoRefreshCurrentMinutes > 0
@@ -100,7 +100,7 @@ export function reducer(state: AppState, action: AppAction): AppState {
         },
         lastEnabledAutoRefreshMinutes:
           typeof action.patch.autoRefreshMinutes === "number" && action.patch.autoRefreshMinutes > 0
-            ? action.patch.autoRefreshMinutes
+            ? Math.max(5, action.patch.autoRefreshMinutes)
             : state.lastEnabledAutoRefreshMinutes,
         lastEnabledAutoRefreshCurrentMinutes:
           typeof action.patch.autoRefreshCurrentMinutes === "number" && action.patch.autoRefreshCurrentMinutes > 0

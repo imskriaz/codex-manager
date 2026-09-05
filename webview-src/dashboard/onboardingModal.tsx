@@ -48,14 +48,15 @@ export function OnboardingModal(props: {
     props.lang === "zh"
       ? {
           welcome: "开始使用 Codex Manager",
-          agreement: "在保存账号之前，请确认你了解这些凭据会保存在本机并可选择加密同步。",
+          agreement: "保存账号前，请确认凭据默认只保存在本机；只有单独启用完整跨电脑账号同步后才会传输凭据。",
           termsTitle: "条款与责任",
-          terms: "本项目按“现状”提供，不作任何形式的保证。作者和贡献者不对因使用、误用、依赖或无法使用本项目而造成的损失承担责任。",
+          terms:
+            "本项目按“现状”提供，不作任何形式的保证。作者和贡献者不对因使用、误用、依赖或无法使用本项目而造成的损失承担责任。",
           accept: "接受并继续",
           setup: "连接你的工作区",
-          setupSub: "立即保存配置并继续。首次同步将在后台使用客户端加密运行。",
-          sync: "启用加密同步",
-          syncHint: "在已登录 VS Code Settings Sync 的设备之间共享账号会话。",
+          setupSub: "立即保存配置并继续。首次账号占用声明同步将在后台使用客户端加密运行。",
+          sync: "启用跨电脑账号占用检查",
+          syncHint: "在已登录 VS Code Settings Sync 的设备之间仅共享账号 ID 和电脑占用声明。",
           password: "密码",
           confirm: "确认密码",
           dashboard: "启用 Web Dashboard",
@@ -73,14 +74,15 @@ export function OnboardingModal(props: {
       : props.lang === "zh-hant"
         ? {
             welcome: "開始使用 Codex Manager",
-            agreement: "儲存帳號前，請確認你了解憑證會保存在本機，並可選擇加密同步。",
+            agreement: "儲存帳號前，請確認憑證預設只保存在本機；只有另外啟用完整跨電腦帳號同步後才會傳輸憑證。",
             termsTitle: "條款與責任",
-            terms: "本專案按「現狀」提供，不作任何形式的保證。作者與貢獻者不對因使用、誤用、依賴或無法使用本專案而造成的損失承擔責任。",
+            terms:
+              "本專案按「現狀」提供，不作任何形式的保證。作者與貢獻者不對因使用、誤用、依賴或無法使用本專案而造成的損失承擔責任。",
             accept: "接受並繼續",
             setup: "連接你的工作區",
-            setupSub: "立即儲存設定並繼續。首次同步會在背景以用戶端加密執行。",
-            sync: "啟用加密同步",
-            syncHint: "在已登入 VS Code Settings Sync 的裝置之間共享帳號工作階段。",
+            setupSub: "立即儲存設定並繼續。首次帳號占用聲明同步會在背景以用戶端加密執行。",
+            sync: "啟用跨電腦帳號占用檢查",
+            syncHint: "在已登入 VS Code Settings Sync 的裝置之間只共享帳號 ID 和電腦占用聲明。",
             password: "密碼",
             confirm: "確認密碼",
             dashboard: "啟用 Web Dashboard",
@@ -98,16 +100,16 @@ export function OnboardingModal(props: {
         : {
             welcome: "Welcome to Codex Manager",
             agreement:
-              "Before saving accounts, confirm that you understand credentials stay on this PC and can be shared only through encrypted sync.",
+              "Before saving accounts, confirm that credentials stay on this PC unless Full cross-PC account sync is separately enabled.",
             termsTitle: "Terms and responsibility",
             terms:
               "This project is provided as-is without warranties. The author and contributors are not liable for losses caused by use, misuse, reliance on, or inability to use this project.",
             accept: "Accept & continue",
             setup: "Connect your workspace",
             setupSub:
-              "Save the configuration now and continue immediately. Initial sync runs in the background with client-side encryption.",
-            sync: "Enable encrypted sync",
-            syncHint: "Share account sessions across devices signed in to VS Code Settings Sync.",
+              "Save the configuration now and continue immediately. Initial claim sync runs in the background with client-side encryption.",
+            sync: "Enable cross-PC claim checks",
+            syncHint: "Share only account IDs and PC ownership claims through VS Code Settings Sync.",
             password: "Password",
             confirm: "Confirm password",
             dashboard: "Enable Web Dashboard",
@@ -161,7 +163,8 @@ export function OnboardingModal(props: {
           <div class="onboarding-callout">
             <strong>Private by default</strong>
             <span>
-              Accounts are stored in VS Code Secret Storage. Encrypted sync is opt-in and protected by your shared password.
+              Accounts are stored in VS Code Secret Storage. Encrypted sync is opt-in and protected by your shared
+              password.
             </span>
           </div>
           <div class="onboarding-terms" role="note">
@@ -320,7 +323,8 @@ export function OnboardingModal(props: {
                 <strong>Quick setup</strong>
                 <code>cloudflared tunnel --url http://127.0.0.1:39875</code>
                 <span>
-                  Point the tunnel at your local dashboard. Set the shared Password under General settings before remote login.
+                  Point the tunnel at your local dashboard. Set the shared Password under General settings before remote
+                  login.
                 </span>
               </div>
             </>

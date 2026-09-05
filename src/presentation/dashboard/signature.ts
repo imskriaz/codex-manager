@@ -57,7 +57,10 @@ export function buildDashboardStateSignature(state: DashboardState): string {
       .join("|")
   ].join(":");
   const dailyUsageSignature = (state.dailyUsageCache ?? [])
-    .map((entry) => `${entry.accountId}:${entry.fetchedAt}:${entry.usage.days}:${entry.usage.points.map((point) => `${point.date}:${point.totalTokens}`).join(",")}`)
+    .map(
+      (entry) =>
+        `${entry.accountId}:${entry.fetchedAt}:${entry.usage.days}:${entry.usage.points.map((point) => `${point.date}:${point.totalTokens}`).join(",")}`
+    )
     .join("|");
 
   return [
@@ -76,6 +79,8 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.autoRefreshMinutes,
     state.settings.autoRefreshCurrentMinutes,
     state.settings.usageHistoryRetentionDays,
+    state.settings.encryptedSyncEnabled ? "1" : "0",
+    state.settings.fullCrossPcAccountSyncEnabled ? "1" : "0",
     state.encryptedSyncNeedsConfiguration ? "1" : "0",
     state.encryptedSyncNeedsSettingsSync ? "1" : "0",
     state.encryptedSyncLastCompletedAt ?? "",
@@ -87,9 +92,9 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.autoSwitchReloadWindowEnabled ? "1" : "0",
     state.settings.autoSwitchRefreshAllBeforeSwitchEnabled ? "1" : "0",
     state.settings.autoSwitchHourlyThreshold,
-        state.settings.autoSwitchWeeklyThreshold,
-        state.settings.autoResetEnabled ? "1" : "0",
-        state.settings.autoResetWeeklyThreshold ?? 1,
+    state.settings.autoSwitchWeeklyThreshold,
+    state.settings.autoResetEnabled ? "1" : "0",
+    state.settings.autoResetWeeklyThreshold ?? 1,
     state.settings.autoSwitchLockMinutes,
     state.settings.quotaWarningEnabled ? "1" : "0",
     state.settings.quotaWarningThreshold,

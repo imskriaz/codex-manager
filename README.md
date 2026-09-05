@@ -37,7 +37,7 @@ The screenshots below use representative, privacy-safe data so you can preview t
 - VS Code 1.96 or newer.
 - A working Codex installation and a writable `CODEX_HOME` (the default Codex location is used when `CODEX_HOME` is not set).
 - Node.js 20 or newer only when building from source.
-- A signed-in VS Code Settings Sync account for encrypted sync.
+- A signed-in VS Code Settings Sync account for optional cross-PC claim checks.
 - `cloudflared` only when publishing the browser dashboard outside the local machine.
 
 ## Install
@@ -94,7 +94,7 @@ Open the Command Palette and search for `Codex Manager`.
 | Show Quota Summary | Open the VS Code dashboard. |
 | Keyboard Shortcuts & Help | View dashboard shortcuts and help. |
 | Open Latest Session in VS Code | Open the newest local CLI session. |
-| Sync Sessions Now | Run encrypted Settings Sync using the shared password configured in General. |
+| Sync Cross-PC Claims Now | Synchronize encrypted account ownership claims using the shared password configured in General. |
 | Open Persistent Logs | Open the current redacted JSONL diagnostic log. |
 
 ## Browser dashboard and Cloudflare
@@ -102,7 +102,7 @@ Open the Command Palette and search for `Codex Manager`.
 The browser dashboard is disabled by default and listens on `http://127.0.0.1:39875` when enabled. In the dashboard Settings:
 
 1. Turn on **Web dashboard**.
-2. Set the shared **Password** in General; remote dashboard login and encrypted sync use that same password.
+2. Set the shared **Password** in General; remote dashboard login and optional cross-PC claim checks use that same password.
 3. If the dashboard must remain available after VS Code closes, turn on **Always-online WebSocket host** on one always-on PC.
 4. For a public HTTPS address, set **Cloudflared domain** to the final URL (for example `https://codex.example.com`) and configure the tunnel to forward to `http://127.0.0.1:39875`.
 
@@ -119,13 +119,13 @@ Important combinations:
 - **CLI integration** enables dashboard session discovery and controls. It does not perform automatic CLI resume.
 - **Encrypted sync** requires VS Code Settings Sync and the same password value on each machine. Each machine stores its copy separately in VS Code Secret Storage; the password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
-- **Always-online host** is optional and requires encrypted sync before it can relay signed peer state.
+- **Always-online host** is optional and requires cross-PC claim checks before it can relay signed peer state.
 - **Cloudflared domain** is only a display/configuration value; the `cloudflared` process and DNS route are managed by you.
 
 ## Privacy and security
 
 - Account tokens remain in local VS Code SecretStorage and the Codex credential file. They are not sent to a Codex Manager server.
-- Encrypted sync stores an encrypted vault in VS Code Settings Sync. Vault changes are durably queued for a short five-second debounce, while the authenticated peer WebSocket delivers encrypted changes immediately when PCs are online. Settings Sync remains the durable fallback; newly downloaded vaults are applied while VS Code stays open, and Sync Sessions Now forces a download/merge/upload pass. Signed peer WebSocket/HTTP updates carry enablement and dashboard state in realtime without consuming Settings Sync requests. Account usage, switching, quota refreshes, and schedules do not generate durable sync traffic.
+- Cross-PC claim checks synchronize encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Full cross-PC account sync** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
 - Review the [MIT License](LICENSE) and only manage accounts you own or are authorized to use.

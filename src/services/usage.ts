@@ -3,7 +3,7 @@ import { APIError } from "../core/errors";
 import { DAILY_USAGE_BREAKDOWN_URL } from "../infrastructure/config/apiEndpoints";
 import { extractClaims } from "../utils/jwt";
 import { logNetworkEvent } from "../utils/debug";
-import { fetchWithTimeout } from "../utils/network";
+import { fetchWithTimeout, summarizeNetworkBody } from "../utils/network";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -42,7 +42,7 @@ export async function fetchDailyUsageBreakdown(
     status: response.status,
     ok: response.ok,
     url: url.toString(),
-    bodyPreview: raw
+    bodyPreview: summarizeNetworkBody(raw)
   });
   if (!response.ok) {
     throw new APIError(`Daily usage breakdown API returned ${response.status}: ${raw.slice(0, 200)}`, {

@@ -79,7 +79,8 @@ export function registerCommands(
             throw error;
           }
         }
-      : undefined
+      : undefined,
+    (accountId) => sync?.canAutomateAccount(accountId) ?? true
   );
 
   const runCommand = runRegisteredCommand;
@@ -192,7 +193,7 @@ export function registerCommands(
       (options?: { announceSuccess?: boolean; backgroundIfBusy?: boolean }) => {
         const backgroundIfBusy = options?.backgroundIfBusy === true;
         const task = runSyncCommand(
-          "Encrypted account sync",
+          "Cross-PC claim sync",
           () => sync?.syncNow(true, options?.announceSuccess ?? true),
           !backgroundIfBusy
         );

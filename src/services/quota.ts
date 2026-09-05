@@ -28,7 +28,13 @@ import { shouldRetryWithoutWorkspace } from "./workspaceRetry";
 import { QUOTA_USAGE_URL, RESET_CREDITS_CONSUME_URL, RESET_CREDITS_URL } from "../infrastructure/config/apiEndpoints";
 import { extractClaims } from "../utils/jwt";
 import { logNetworkEvent } from "../utils/debug";
-import { fetchWithTimeout, isRetriableHttpStatus, isRetriableNetworkError, retryWithBackoff } from "../utils/network";
+import {
+  fetchWithTimeout,
+  isRetriableHttpStatus,
+  isRetriableNetworkError,
+  retryWithBackoff,
+  summarizeNetworkBody
+} from "../utils/network";
 
 /** 配额缓存失效时间 (毫秒) - 避免短时间内重复刷新 */
 const QUOTA_CACHE_TTL_MS = 30000; // 30 秒
@@ -187,7 +193,7 @@ async function requestQuotaUsage(
         status: response.status,
         ok: response.ok,
         url: QUOTA_USAGE_URL,
-        bodyPreview: raw
+        bodyPreview: summarizeNetworkBody(raw)
       });
 
       return {
@@ -691,7 +697,7 @@ export async function fetchResetCredits(
     status: response.status,
     ok: response.ok,
     url: RESET_CREDITS_URL,
-    bodyPreview: raw
+    bodyPreview: summarizeNetworkBody(raw)
   });
 
   if (!response.ok) {
@@ -754,7 +760,7 @@ export async function consumeResetCredit(accessToken: string, accountId?: string
     status: response.status,
     ok: response.ok,
     url: RESET_CREDITS_CONSUME_URL,
-    bodyPreview: raw
+    bodyPreview: summarizeNetworkBody(raw)
   });
 
   if (!response.ok) {

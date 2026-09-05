@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.5
+
+- Keep cross-PC ownership claims active while gating encrypted account and token sharing behind a separate Full cross-PC account sync setting that defaults off; also coordinate background provider work through claims, keep one-minute current-account polling configurable, pace provider requests, honor rate-limit cooldowns, and redact diagnostics.
+
 ## 1.1.4
 
 - Add an on/off Cross-PC sync toggle in Data Sync, enabled by default, while preserving saved off choices across restarts and keeping first-run setup available.
@@ -131,4 +135,3 @@ Codex Manager now provides a cleaner, more dependable way to manage accounts and
 ## 1.0.0
 
 - Initial release.
-

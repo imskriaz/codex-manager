@@ -55,7 +55,8 @@ export class AccountsCommandService {
     private readonly repo: AccountsRepository,
     private readonly view: RefreshView,
     private readonly canRefreshAccount: (accountId: string) => boolean = () => true,
-    private readonly syncAccountChange?: () => Promise<boolean | undefined>
+    private readonly syncAccountChange?: () => Promise<boolean | undefined>,
+    private readonly canAutomateAccount: (accountId: string) => boolean = canRefreshAccount
   ) {}
 
   async addAccount(): Promise<void> {
@@ -176,9 +177,9 @@ export class AccountsCommandService {
         }
         this.view.refresh();
 
-        // Reauthorization changes the credentials that are shared with other
-        // PCs. Publish the replacement after the local validation/profile
-        // refresh so the next PC receives the complete, current session.
+        // Publish the account change after local validation/profile refresh.
+        // The sync manager includes credentials only when the separate full
+        // cross-PC account-sync setting is enabled.
         let synced: boolean | undefined;
         if (this.syncAccountChange) {
           synced = await this.syncAccountChange();
@@ -186,9 +187,7 @@ export class AccountsCommandService {
 
         if (result.error) {
           const syncSuffix =
-            synced === false
-              ? " Encrypted sync could not be completed; run Sync Now to share the new credentials."
-              : "";
+            synced === false ? " Cross-PC sync could not be completed; run Sync Cross-PC Claims Now to retry." : "";
           void vscode.window.showWarningMessage(
             `${copy.importedButQuotaFailed(updated.email, result.error.message)}${syncSuffix}${formatQueuedActivationSuffix(queuedActivation)}`
           );
@@ -197,7 +196,7 @@ export class AccountsCommandService {
 
         if (synced === false) {
           void vscode.window.showWarningMessage(
-            `${copy.importedAndRefreshed(updated.email)} Encrypted sync could not be completed; run Sync Now to share the new credentials.${formatQueuedActivationSuffix(queuedActivation)}`
+            `${copy.importedAndRefreshed(updated.email)} Cross-PC sync could not be completed; run Sync Cross-PC Claims Now to retry.${formatQueuedActivationSuffix(queuedActivation)}`
           );
           return;
         }
@@ -341,9 +340,10 @@ export class AccountsCommandService {
     const currentId = options?.excludeCurrent ? allAccounts.find((account) => account.isActive)?.id : undefined;
     const respectQuotaCheckGap = options?.silent && options.respectQuotaCheckGap !== false;
     const quotaCheckGapMs = getAutoRefreshMinutes() * 60_000;
+    const accountEligibility = options?.silent ? this.canAutomateAccount : this.canRefreshAccount;
     const accounts = (options?.silent ? allAccounts.filter((account) => account.enabled !== false) : allAccounts)
       .filter((account) => account.id !== currentId)
-      .filter((account) => canIncludeInRefreshAll(account, this.canRefreshAccount))
+      .filter((account) => canIncludeInRefreshAll(account, accountEligibility))
       .filter(
         (account) =>
           !respectQuotaCheckGap ||
@@ -367,7 +367,8 @@ export class AccountsCommandService {
                 refreshSingleQuotaSafely(this.repo, this.view, account.id, {
                   allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
                   forceRefresh: options.forceRefresh,
-                  skipDisabled: true
+                  skipDisabled: true,
+                  canUseAccount: this.canAutomateAccount
                 })
               );
             } catch (error) {
@@ -403,7 +404,9 @@ export class AccountsCommandService {
     }
 
     this.view.refresh();
-    const switched = await maybeAutoSwitchForActiveQuota(this.repo, this.view);
+    const switched = await maybeAutoSwitchForActiveQuota(this.repo, this.view, {
+      canUseAccount: options?.silent ? this.canAutomateAccount : undefined
+    });
     if (!switched) {
       await maybeWarnForActiveQuota(this.repo);
     }

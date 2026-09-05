@@ -11,6 +11,7 @@ import { buildDashboardStateSignature } from "../src/presentation/dashboard/sign
 import { runWithConcurrencyLimit } from "../src/utils/concurrency";
 import {
   normalizeAutoRefreshMinutes,
+  normalizeCurrentAutoRefreshMinutes,
   normalizeUsageHistoryRetentionDays
 } from "../src/infrastructure/config/extensionSettings";
 
@@ -78,13 +79,21 @@ describe("dashboard action utils", () => {
 });
 
 describe("scheduler settings helpers", () => {
-  it("normalizes auto refresh minutes to off or 1-60", () => {
+  it("normalizes auto refresh minutes to off or 5-60", () => {
     expect(normalizeAutoRefreshMinutes(-1)).toBe(0);
     expect(normalizeAutoRefreshMinutes(0)).toBe(0);
-    expect(normalizeAutoRefreshMinutes(0.4)).toBe(1);
-    expect(normalizeAutoRefreshMinutes(1.4)).toBe(1);
+    expect(normalizeAutoRefreshMinutes(0.4)).toBe(5);
+    expect(normalizeAutoRefreshMinutes(1.4)).toBe(5);
     expect(normalizeAutoRefreshMinutes(59.6)).toBe(60);
     expect(normalizeAutoRefreshMinutes(90)).toBe(60);
+  });
+
+  it("allows one-minute active-account polling for fresh quota state", () => {
+    expect(normalizeCurrentAutoRefreshMinutes(0)).toBe(0);
+    expect(normalizeCurrentAutoRefreshMinutes(1)).toBe(1);
+    expect(normalizeCurrentAutoRefreshMinutes(4.4)).toBe(4);
+    expect(normalizeCurrentAutoRefreshMinutes(12)).toBe(12);
+    expect(normalizeCurrentAutoRefreshMinutes(90)).toBe(60);
   });
 
   it("normalizes quota history retention to the 7-day default or 1-90 days", () => {

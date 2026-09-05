@@ -171,6 +171,25 @@ describe("refreshSingleQuota token automation state", () => {
     expect(refreshQuotaMock).not.toHaveBeenCalled();
   });
 
+  it("rechecks cross-PC ownership before an automatic quota request", async () => {
+    const repo = {
+      getAccount: vi.fn(),
+      getTokens: vi.fn()
+    };
+    const canUseAccount = vi.fn(() => false);
+
+    await expect(
+      refreshSingleQuotaSafely(repo as unknown as AccountsRepository, { refresh: vi.fn() }, account.id, {
+        canUseAccount
+      })
+    ).resolves.toBe(false);
+
+    expect(canUseAccount).toHaveBeenCalledWith(account.id);
+    expect(repo.getAccount).not.toHaveBeenCalled();
+    expect(repo.getTokens).not.toHaveBeenCalled();
+    expect(refreshQuotaMock).not.toHaveBeenCalled();
+  });
+
   it("shows a visible warning when the timed current-account refresh fails", async () => {
     const repo = {
       getAccount: vi.fn(async () => account),
@@ -509,6 +528,35 @@ describe("refreshSingleQuota token automation state", () => {
     ).resolves.toBe(true);
 
     expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id);
+  });
+
+  it("excludes foreign-owned accounts from background auto switching", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: vi.fn((key: string, defaultValue?: unknown) => {
+        const values: Record<string, unknown> = {
+          autoSwitchEnabled: true,
+          autoSwitchHourlyThreshold: 20,
+          autoSwitchWeeklyThreshold: 20
+        };
+        return values[key] ?? defaultValue;
+      }),
+      update: vi.fn()
+    } as never);
+
+    const active = createAccount("active", true, 5, 5);
+    const foreignCandidate = createAccount("foreign-candidate", false, 90, 90);
+    const repo = {
+      listAccounts: vi.fn(async () => [active, foreignCandidate]),
+      switchAccount: vi.fn(async () => undefined)
+    };
+    const canUseAccount = vi.fn((accountId: string) => accountId !== foreignCandidate.id);
+
+    await expect(
+      maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() }, { canUseAccount })
+    ).resolves.toBe(false);
+
+    expect(canUseAccount).toHaveBeenCalledWith(foreignCandidate.id);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
   });
 
   it("uses weekly quota to break a tie in 5-hour quota", async () => {

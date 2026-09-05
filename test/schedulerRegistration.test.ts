@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 
-const { refreshSingleQuotaSafelyMock, maybeAutoSwitchForActiveQuotaMock, maybeWarnForActiveQuotaMock } = vi.hoisted(() => ({
-  refreshSingleQuotaSafelyMock: vi.fn(),
-  maybeAutoSwitchForActiveQuotaMock: vi.fn(),
-  maybeWarnForActiveQuotaMock: vi.fn()
-}));
+const { refreshSingleQuotaSafelyMock, maybeAutoSwitchForActiveQuotaMock, maybeWarnForActiveQuotaMock } = vi.hoisted(
+  () => ({
+    refreshSingleQuotaSafelyMock: vi.fn(),
+    maybeAutoSwitchForActiveQuotaMock: vi.fn(),
+    maybeWarnForActiveQuotaMock: vi.fn()
+  })
+);
 
 vi.mock("../src/application/accounts/quota", () => ({
   refreshSingleQuotaSafely: refreshSingleQuotaSafelyMock,
@@ -60,15 +62,38 @@ describe("auto refresh scheduler", () => {
         allowTokenRefresh: false,
         forceRefresh: true,
         announceFailure: false,
-        skipDisabled: false
+        skipDisabled: false,
+        canUseAccount: expect.any(Function)
       })
     );
-    await vi.waitFor(() => expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledWith(repo, expect.anything()));
+    await vi.waitFor(() =>
+      expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledWith(repo, expect.anything(), {
+        canUseAccount: expect.any(Function)
+      })
+    );
     expect(maybeWarnForActiveQuotaMock).toHaveBeenCalledWith(repo);
 
     expect(refreshSingleQuotaSafelyMock.mock.invocationCallOrder[0]).toBeLessThan(
       maybeAutoSwitchForActiveQuotaMock.mock.invocationCallOrder[0]!
     );
+    disposable.dispose();
+  });
+
+  it("does not poll a current account owned by another PC", async () => {
+    const current = { id: "foreign-owned", isActive: true, enabled: true };
+    const repo = { listAccounts: vi.fn(async () => [current]) } as unknown as AccountsRepository;
+    const canRefreshAccount = vi.fn(() => false);
+    const disposable = registerAutoRefreshScheduler({
+      context: { subscriptions: [] } as never,
+      repo,
+      onRefresh: vi.fn(),
+      canRefreshAccount
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(canRefreshAccount).toHaveBeenCalledWith(current.id));
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    expect(maybeAutoSwitchForActiveQuotaMock).not.toHaveBeenCalled();
     disposable.dispose();
   });
 
@@ -101,11 +126,12 @@ describe("auto refresh scheduler", () => {
         allowTokenRefresh: false,
         forceRefresh: true,
         announceFailure: false,
-        skipDisabled: true
+        skipDisabled: true,
+        canUseAccount: expect.any(Function)
       })
     );
     expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
     disposable.dispose();
   });
@@ -120,7 +146,11 @@ describe("auto refresh scheduler", () => {
       quotaSummary: { hourlyResetTime: resetAt }
     };
     const repo = { listAccounts: vi.fn(async () => [account]) } as unknown as AccountsRepository;
-    const disposable = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    const disposable = registerAutoRefreshScheduler({
+      context: { subscriptions: [] } as never,
+      repo,
+      onRefresh: vi.fn()
+    });
     disposable.dispose();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
@@ -188,12 +218,14 @@ describe("auto refresh scheduler", () => {
 
     expect(executeCommand).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    await vi.waitFor(() => expect(executeCommand).toHaveBeenCalledWith("codexManager.refreshAllQuotas", {
-      silent: true,
-      forceRefresh: true,
-      excludeCurrent: false,
-      respectQuotaCheckGap: false
-    }));
+    await vi.waitFor(() =>
+      expect(executeCommand).toHaveBeenCalledWith("codexManager.refreshAllQuotas", {
+        silent: true,
+        forceRefresh: true,
+        excludeCurrent: false,
+        respectQuotaCheckGap: false
+      })
+    );
 
     accounts[1].quotaSummary.weeklyPercentage = 50;
     await vi.advanceTimersByTimeAsync(5 * 60_000);
@@ -217,7 +249,8 @@ describe("auto refresh scheduler", () => {
       allowTokenRefresh: false,
       forceRefresh: true,
       announceFailure: false,
-      skipDisabled: false
+      skipDisabled: false,
+      canUseAccount: expect.any(Function)
     });
     disposable.dispose();
   });
@@ -336,6 +369,32 @@ describe("auto refresh scheduler", () => {
     expect(repo.listAccounts).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(repo.listAccounts).toHaveBeenCalled());
+    expect(repo.getTokens).not.toHaveBeenCalled();
+    disposable.dispose();
+  });
+
+  it("does not rotate tokens for an account owned by another PC", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((key: string, fallback?: unknown) => (key === "backgroundTokenRefreshEnabled" ? true : fallback)),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as never);
+    const repo = {
+      listAccounts: vi.fn(async () => [{ id: "foreign-owned", enabled: true, tokenRefreshEnabled: true }]),
+      getTokens: vi.fn()
+    } as unknown as AccountsRepository;
+    const canRefreshAccount = vi.fn(() => false);
+    const disposable = registerTokenRefreshScheduler({
+      context: { subscriptions: [] } as never,
+      repo,
+      view: { refresh: vi.fn() },
+      checkIntervalMs: 60_000,
+      skewSeconds: 300,
+      canRefreshAccount
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(() => expect(canRefreshAccount).toHaveBeenCalledWith("foreign-owned"));
     expect(repo.getTokens).not.toHaveBeenCalled();
     disposable.dispose();
   });

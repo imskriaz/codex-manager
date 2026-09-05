@@ -84,6 +84,7 @@ type RefreshSingleQuotaOptions = {
   forceRefresh?: boolean;
   refreshView?: boolean;
   warnQuota?: boolean;
+  canUseAccount?: (accountId: string) => boolean;
 };
 
 export async function refreshSingleQuota(
@@ -179,8 +180,8 @@ async function refreshSingleQuotaInternal(
     view.refresh();
   }
   if (warnQuota && account.isActive) {
-    await refreshAllBeforeWarningIfNeeded(repo, view, updatedAccount, announce);
-    await maybeAutoSwitchForActiveQuota(repo, view);
+    await refreshAllBeforeWarningIfNeeded(repo, view, updatedAccount, announce, options.canUseAccount);
+    await maybeAutoSwitchForActiveQuota(repo, view, { canUseAccount: options.canUseAccount });
   }
   if (warnQuota) {
     // Keep the warning check independent from auto-switch. If auto-switch
@@ -333,16 +334,21 @@ export async function refreshSingleQuotaSafely(
     forceRefresh?: boolean;
     announceFailure?: boolean;
     skipDisabled?: boolean;
+    canUseAccount?: (accountId: string) => boolean;
   } = {}
 ): Promise<boolean> {
   try {
+    if (options.canUseAccount && !options.canUseAccount(accountId)) {
+      return false;
+    }
     const result = await refreshSingleQuota(repo, view, accountId, {
       announce: false,
       allowTokenRefresh: options.allowTokenRefresh,
       skipDisabled: options.skipDisabled ?? true,
       forceRefresh: options.forceRefresh ?? false,
       refreshView: false,
-      warnQuota: false
+      warnQuota: false,
+      canUseAccount: options.canUseAccount
     });
     return !result.error && !result.skipped;
   } catch (error) {
@@ -380,7 +386,11 @@ export async function maybeWarnForActiveQuota(repo: AccountsRepository): Promise
 export async function maybeAutoSwitchForActiveQuota(
   repo: AccountsRepository,
   view: RefreshView,
-  options: { ignoreEnabled?: boolean; userInitiated?: boolean } = {}
+  options: {
+    ignoreEnabled?: boolean;
+    userInitiated?: boolean;
+    canUseAccount?: (accountId: string) => boolean;
+  } = {}
 ): Promise<boolean> {
   if (autoSwitchInFlight) {
     return autoSwitchInFlight;
@@ -406,7 +416,11 @@ export async function maybeAutoSwitchForActiveQuota(
 async function evaluateAutoSwitchForActiveQuota(
   repo: AccountsRepository,
   view: RefreshView,
-  options: { ignoreEnabled?: boolean; userInitiated?: boolean }
+  options: {
+    ignoreEnabled?: boolean;
+    userInitiated?: boolean;
+    canUseAccount?: (accountId: string) => boolean;
+  }
 ): Promise<boolean> {
   const config = getCodexManagerConfiguration();
   if (!options.ignoreEnabled && !config.get<boolean>(AUTO_SWITCH_ENABLED, false)) {
@@ -456,6 +470,7 @@ async function evaluateAutoSwitchForActiveQuota(
     .filter(
       (account) =>
         !account.isActive &&
+        (options.canUseAccount?.(account.id) ?? true) &&
         (options.ignoreEnabled || account.enabled !== false) &&
         !!account.quotaSummary &&
         !account.quotaError &&
@@ -531,6 +546,7 @@ async function evaluateAutoSwitchForActiveQuota(
         .filter(
           (account) =>
             !account.isActive &&
+            (options.canUseAccount?.(account.id) ?? true) &&
             (options.ignoreEnabled || account.enabled !== false) &&
             !account.quotaError &&
             hasCurrentSessionQuotaSnapshot(account) &&
@@ -627,6 +643,7 @@ async function evaluateAutoSwitchForActiveQuota(
     latestActive.id !== active.id ||
     !latestNext ||
     latestNext.isActive ||
+    !(options.canUseAccount?.(latestNext.id) ?? true) ||
     (!options.ignoreEnabled && latestNext.enabled === false) ||
     latestNext.quotaError ||
     !latestNext.quotaSummary ||
@@ -707,7 +724,8 @@ async function refreshAllBeforeWarningIfNeeded(
   repo: AccountsRepository,
   view: RefreshView,
   account: CodexManagerAccountRecord,
-  bypassGap: boolean
+  bypassGap: boolean,
+  canUseAccount?: (accountId: string) => boolean
 ): Promise<void> {
   if (!account.isActive || !account.quotaSummary || account.enabled === false) {
     return;
@@ -724,7 +742,7 @@ async function refreshAllBeforeWarningIfNeeded(
       account.quotaSummary.hourlyPercentage <= warningThresholds.hourly) ||
     (hasComparableWeeklyWindow(account) && account.quotaSummary.weeklyPercentage <= warningThresholds.weekly);
   if (warningThresholdReached) {
-    await refreshAllBeforeAutoSwitchIfDue(repo, view, config, bypassGap);
+    await refreshAllBeforeAutoSwitchIfDue(repo, view, config, bypassGap, canUseAccount);
   }
 }
 
@@ -738,7 +756,8 @@ async function refreshAllBeforeAutoSwitchIfDue(
   repo: AccountsRepository,
   view: RefreshView,
   config: vscode.WorkspaceConfiguration,
-  bypassGap = false
+  bypassGap = false,
+  canUseAccount?: (accountId: string) => boolean
 ): Promise<boolean> {
   if (!config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false)) {
     return true;
@@ -756,7 +775,9 @@ async function refreshAllBeforeAutoSwitchIfDue(
   lastAutoSwitchSafetyRefreshAt = now;
   let allRefreshed = true;
   const task = (async (): Promise<boolean> => {
-    const accounts = (await repo.listAccounts()).filter((account) => account.enabled !== false && !account.isActive);
+    const accounts = (await repo.listAccounts()).filter(
+      (account) => account.enabled !== false && !account.isActive && (canUseAccount?.(account.id) ?? true)
+    );
     for (const account of accounts) {
       if (
         !bypassGap &&
@@ -770,7 +791,8 @@ async function refreshAllBeforeAutoSwitchIfDue(
         allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
         forceRefresh: true,
         announceFailure: false,
-        skipDisabled: true
+        skipDisabled: true,
+        canUseAccount
       });
       if (!refreshed) allRefreshed = false;
     }

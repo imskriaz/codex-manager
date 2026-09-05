@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.1.4");
+    expect(manifest.version).toBe("1.1.5");
   });
 
   it("ships a Marketplace changelog", () => {
@@ -206,8 +206,14 @@ describe("extension manifest configuration", () => {
       scope: "machine",
       ignoreSync: true
     });
-    expect(properties?.["codexManager.encryptedSyncEnabled"]?.markdownDescription).toContain("Major vault changes");
-    expect(properties?.["codexManager.encryptedSyncEnabled"]?.markdownDescription).toContain("WebSocket/HTTP");
+    expect(properties?.["codexManager.fullCrossPcAccountSyncEnabled"]).toMatchObject({
+      scope: "machine",
+      ignoreSync: true
+    });
+    expect(properties?.["codexManager.fullCrossPcAccountSyncEnabled"]?.markdownDescription).toContain(
+      "Disabled by default"
+    );
+    expect(properties?.["codexManager.fullCrossPcAccountSyncEnabled"]?.markdownDescription).toContain("tokens");
     expect(properties?.["codexManager.encryptedSyncScheduleMinutes"]).toBeUndefined();
   });
 });

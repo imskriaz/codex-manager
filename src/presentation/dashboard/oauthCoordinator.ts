@@ -246,9 +246,8 @@ function resolveOAuthCompletion(
   result: QueuedAccountActivationResult,
   synced?: boolean
 ): DashboardNotice {
-  const syncSuffix = synced === false
-    ? " Encrypted sync could not be completed; run Sync Now to share the new credentials."
-    : "";
+  const syncSuffix =
+    synced === false ? " Cross-PC sync could not be completed; run Sync Cross-PC Claims Now to retry." : "";
   if (result.status === "activated") {
     return {
       level: synced === false ? "warning" : "info",

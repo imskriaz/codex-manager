@@ -18,8 +18,10 @@ import { formatTemplate, formatTimestamp } from "./helpers";
 import { renderRemoveIcon } from "./icons";
 import { useModalAccessibility } from "./primitives";
 
-const AUTO_REFRESH_VALUES = Array.from({ length: 60 }, (_, index) => index + 1);
-const AUTO_REFRESH_SCALE_VALUES = [1, 15, 30, 45, 60];
+const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
+const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
+const CURRENT_AUTO_REFRESH_VALUES = Array.from({ length: 60 }, (_, index) => index + 1);
+const CURRENT_AUTO_REFRESH_SCALE_VALUES = [1, 15, 30, 45, 60];
 const USAGE_HISTORY_RETENTION_VALUES = [1, 3, 7, 14, 30, 60, 90];
 const AUTO_SWITCH_VALUES = Array.from({ length: 21 }, (_, index) => index);
 const AUTO_RESET_VALUES = Array.from({ length: 100 }, (_, index) => index + 1);
@@ -71,6 +73,10 @@ export function SettingsOverlay(props: {
   onSetRegistryOverride: (enabled: boolean) => void;
   registryOverridePending: boolean;
 }) {
+  const safeCurrentRefreshMinutes =
+    props.settings.autoRefreshCurrentMinutes > 0 ? Math.max(1, props.settings.autoRefreshCurrentMinutes) : 0;
+  const safeAllRefreshMinutes =
+    props.settings.autoRefreshMinutes > 0 ? Math.max(5, props.settings.autoRefreshMinutes) : 0;
   const accessibility = useModalAccessibility(props.open, props.onClose);
   const [activeTab, setActiveTab] = useState<SettingsTabId>("general");
   const patchAndSend = (key: DashboardSettingKey, value: string | number | boolean) => {
@@ -304,7 +310,7 @@ export function SettingsOverlay(props: {
                         ? "简要设置：cloudflared tunnel --url http://127.0.0.1:39875；先设置面板密码，再把此 HTTPS 域名分享给其他电脑。"
                         : props.lang === "zh-hant"
                           ? "簡要設定：cloudflared tunnel --url http://127.0.0.1:39875；先設定面板密碼，再將此 HTTPS 網域分享給其他電腦。"
-                            : "Quick setup: set the Password in General, run cloudflared tunnel --url http://127.0.0.1:39875, then sign in remotely with it."}
+                          : "Quick setup: set the Password in General, run cloudflared tunnel --url http://127.0.0.1:39875, then sign in remotely with it."}
                     </div>
                   </div>
                 </div>
@@ -452,15 +458,15 @@ export function SettingsOverlay(props: {
                 <SettingsToggleBlock
                   title={props.copy.autoRefreshCurrentTitle}
                   sub={props.copy.autoRefreshCurrentSub}
-                  enabled={props.settings.autoRefreshCurrentMinutes > 0}
+                  enabled={safeCurrentRefreshMinutes > 0}
                   onToggle={props.onAutoRefreshCurrentToggle}
                 >
-                  <div class={`settings-stack ${props.settings.autoRefreshCurrentMinutes > 0 ? "" : "is-hidden"}`}>
+                  <div class={`settings-stack ${safeCurrentRefreshMinutes > 0 ? "" : "is-hidden"}`}>
                     <SettingsDiscreteSlider
-                      value={props.settings.autoRefreshCurrentMinutes}
-                      values={AUTO_REFRESH_VALUES}
+                      value={safeCurrentRefreshMinutes}
+                      values={CURRENT_AUTO_REFRESH_VALUES}
                       accent="violet"
-                      scaleValues={AUTO_REFRESH_SCALE_VALUES}
+                      scaleValues={CURRENT_AUTO_REFRESH_SCALE_VALUES}
                       valueLabel={(value) => formatTemplate(props.copy.autoRefreshValueTemplate, value)}
                       description={(value) => formatTemplate(props.copy.autoRefreshCurrentValueDescTemplate, value)}
                       onPreview={(value) => props.onPatchSettings({ autoRefreshCurrentMinutes: value })}
@@ -471,12 +477,12 @@ export function SettingsOverlay(props: {
                 <SettingsToggleBlock
                   title={props.copy.autoRefreshTitle}
                   sub={props.copy.autoRefreshSub}
-                  enabled={props.settings.autoRefreshMinutes > 0}
+                  enabled={safeAllRefreshMinutes > 0}
                   onToggle={props.onAutoRefreshToggle}
                 >
-                  <div class={`settings-stack ${props.settings.autoRefreshMinutes > 0 ? "" : "is-hidden"}`}>
+                  <div class={`settings-stack ${safeAllRefreshMinutes > 0 ? "" : "is-hidden"}`}>
                     <SettingsDiscreteSlider
-                      value={props.settings.autoRefreshMinutes}
+                      value={safeAllRefreshMinutes}
                       values={AUTO_REFRESH_VALUES}
                       accent="violet"
                       scaleValues={AUTO_REFRESH_SCALE_VALUES}
@@ -752,6 +758,21 @@ export function SettingsOverlay(props: {
                 </div>
               </SettingsToggleBlock>
               <SettingsToggleBlock
+                title={resolveFullAccountSyncText("title", props.lang)}
+                sub={resolveFullAccountSyncText("sub", props.lang)}
+                enabled={Boolean(props.settings.fullCrossPcAccountSyncEnabled)}
+                disabled={!props.settings.encryptedSyncEnabled}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("fullCrossPcAccountSyncEnabled", enabled)}
+              >
+                <div class="settings-note settings-notice-warning">
+                  {resolveFullAccountSyncText(
+                    props.settings.fullCrossPcAccountSyncEnabled ? "enabled" : "disabled",
+                    props.lang
+                  )}
+                </div>
+              </SettingsToggleBlock>
+              <SettingsToggleBlock
                 title={resolveRegistryOverrideText("title", props.lang)}
                 sub={resolveRegistryOverrideText("sub", props.lang)}
                 enabled={props.settings.encryptedSyncRegistryOverrideEnabled}
@@ -969,7 +990,10 @@ function resolveUsageHistoryCopy(
   };
 }
 
-function resolvePasswordCopy(lang: DashboardState["lang"], configured: boolean): {
+function resolvePasswordCopy(
+  lang: DashboardState["lang"],
+  configured: boolean
+): {
   title: string;
   sub: string;
   note: string;
@@ -997,7 +1021,7 @@ function resolvePasswordCopy(lang: DashboardState["lang"], configured: boolean):
   return {
     title: "Password",
     sub: "Set one shared password for Codex Manager's protected features.",
-    note: "The same password protects encrypted sync, remote dashboard login, multi-PC connections, and recovery controls.",
+    note: "The same password protects cross-PC claim checks, optional full account sync, remote dashboard login, multi-PC connections, and recovery controls.",
     needsConfiguration: "Set the password again before protected features can continue.",
     configure: configured ? "Change Password" : "Set Password"
   };
@@ -1022,9 +1046,9 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
       exportLabel: "导出全部会话",
       importLabel: "导入全部会话",
       note: "导出文件包含登录令牌，请使用安全方式传输并在完成后删除。",
-      syncTitle: "跨电脑同步",
-      syncSub: "启用或停用此电脑的加密会话和账号启用登记同步。停用后保留账号和密码。",
-      syncNote: "通过 VS Code Settings Sync 和实时电脑连接同步。请在“常规”中设置相同的共享密码。",
+      syncTitle: "跨电脑账号占用检查",
+      syncSub: "同步账号 ID 和电脑占用声明，以防多台电脑同时执行后台操作。",
+      syncNote: "通过 VS Code Settings Sync 和实时电脑连接同步加密声明。请在“常规”中设置相同的共享密码。",
       syncNeedsSettingsSync:
         "此电脑上的 VS Code Settings Sync 尚未启用。请登录 VS Code 并启用 Settings Sync，然后重试。",
       syncNow: "立即同步"
@@ -1037,9 +1061,9 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
       exportLabel: "匯出全部工作階段",
       importLabel: "匯入全部工作階段",
       note: "匯出檔案包含登入權杖，請使用安全方式傳輸並在完成後刪除。",
-      syncTitle: "跨電腦同步",
-      syncSub: "啟用或停用此電腦的加密工作階段和帳號啟用登錄同步。停用後保留帳號和密碼。",
-      syncNote: "透過 VS Code Settings Sync 和即時電腦連線同步。請在「一般」中設定相同的共用密碼。",
+      syncTitle: "跨電腦帳號占用檢查",
+      syncSub: "同步帳號 ID 和電腦占用聲明，避免多台電腦同時執行背景操作。",
+      syncNote: "透過 VS Code Settings Sync 和即時電腦連線同步加密聲明。請在「一般」中設定相同的共用密碼。",
       syncNeedsSettingsSync:
         "此電腦上的 VS Code Settings Sync 尚未啟用。請登入 VS Code 並啟用 Settings Sync，然後重試。",
       syncNow: "立即同步"
@@ -1051,10 +1075,10 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
     exportLabel: "Export all sessions",
     importLabel: "Import all sessions",
     note: "The export contains login tokens. Transfer it securely and delete it when finished.",
-    syncTitle: "Cross-PC sync",
-    syncSub: "Enable or disable encrypted session and account enablement sync on this PC. Turning it off keeps your saved accounts and password.",
+    syncTitle: "Cross-PC claim checks",
+    syncSub: "Share account IDs and PC ownership claims to prevent duplicate background work across PCs.",
     syncNote:
-      "Uses VS Code Settings Sync and realtime PC connections. Set the same shared Password in General on each PC.",
+      "Uses VS Code Settings Sync and realtime PC connections for encrypted claims. Set the same shared Password in General on each PC.",
     syncNeedsSettingsSync:
       "VS Code Settings Sync is not active on this PC. Sign in to VS Code and turn on Settings Sync, then try again.",
     syncNow: "Sync now"
@@ -1063,6 +1087,31 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
 
 function resolveRetentionValueLabel(value: number, lang: DashboardState["lang"]): string {
   return lang === "zh" ? `${value} 天` : lang === "zh-hant" ? `${value} 天` : `${value} days`;
+}
+
+function resolveFullAccountSyncText(
+  kind: "title" | "sub" | "enabled" | "disabled",
+  lang: DashboardState["lang"]
+): string {
+  const english = {
+    title: "Full cross-PC account sync",
+    sub: "Share encrypted account sessions and tokens between PCs. Off by default; claim checks work without it.",
+    enabled: "Enabled: sessions and tokens can synchronize to other PCs using the shared password.",
+    disabled: "Disabled: every session and token stays local to this PC. Only ownership claims are shared."
+  };
+  const simplified = {
+    title: "完整跨电脑账号同步",
+    sub: "在电脑之间共享加密账号会话和令牌。默认关闭；账号占用检查无需开启此项。",
+    enabled: "已启用：会话和令牌可使用共享密码同步到其他电脑。",
+    disabled: "已关闭：所有会话和令牌仅保存在本机，只共享账号占用声明。"
+  };
+  const traditional = {
+    title: "完整跨電腦帳號同步",
+    sub: "在電腦之間共享加密帳號工作階段和權杖。預設關閉；帳號占用檢查無需開啟此項。",
+    enabled: "已啟用：工作階段和權杖可使用共用密碼同步到其他電腦。",
+    disabled: "已關閉：所有工作階段和權杖只保留在本機，只共享帳號占用聲明。"
+  };
+  return (lang === "zh" ? simplified : lang === "zh-hant" ? traditional : english)[kind];
 }
 
 function resolveRetentionDescription(value: number, lang: DashboardState["lang"]): string {

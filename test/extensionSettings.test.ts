@@ -10,17 +10,23 @@ import {
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
-  it("defaults cross-PC sync to on while preserving an explicit off choice", () => {
+  it("keeps claim checks on while full cross-PC account sync defaults off", () => {
     const manifest = JSON.parse(readFileSync("package.json", "utf8"));
     expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncEnabled"].default).toBe(true);
+    expect(manifest.contributes.configuration.properties["codexManager.fullCrossPcAccountSyncEnabled"].default).toBe(
+      false
+    );
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (_key: string, fallback?: unknown) => fallback,
-      inspect: vi.fn(), update: vi.fn()
+      inspect: vi.fn(),
+      update: vi.fn()
     } as never);
     expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncEnabled).toBe(true);
+    expect(new ExtensionSettingsStore().getDashboardSettings().fullCrossPcAccountSyncEnabled).toBe(false);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" ? false : fallback,
-      inspect: vi.fn(), update: vi.fn()
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? false : fallback),
+      inspect: vi.fn(),
+      update: vi.fn()
     } as never);
     expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncEnabled).toBe(false);
   });
@@ -50,9 +56,7 @@ describe("5-hour quota control defaults", () => {
       contributes: { configuration: { properties: Record<string, { default?: unknown }> } };
     };
 
-    expect(
-      manifest.contributes.configuration.properties["codexManager.hourlyQuotaControlEnabled"]?.default
-    ).toBe(true);
+    expect(manifest.contributes.configuration.properties["codexManager.hourlyQuotaControlEnabled"]?.default).toBe(true);
     expect(new ExtensionSettingsStore().getDashboardSettings().hourlyQuotaControlEnabled).toBe(true);
     expect(isHourlyQuotaControlEnabled()).toBe(true);
   });
@@ -61,7 +65,7 @@ describe("5-hour quota control defaults", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
       update: vi.fn(),
-      inspect: vi.fn((key: string) => key === "quotaWarningWeeklyThreshold" ? { defaultValue: 1 } : undefined)
+      inspect: vi.fn((key: string) => (key === "quotaWarningWeeklyThreshold" ? { defaultValue: 1 } : undefined))
     } as never);
 
     const settings = new ExtensionSettingsStore().getDashboardSettings();
@@ -76,10 +80,12 @@ describe("5-hour quota control defaults", () => {
     expect(normalizeQuotaWarningThreshold(10.6)).toBe(11);
     expect(normalizeQuotaWarningWeeklyThreshold(1)).toBe(1);
     expect(normalizeQuotaWarningWeeklyThreshold(4)).toBe(4);
-    expect(getQuotaWarningThresholds({
-      get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
-      update: vi.fn(),
-      inspect: vi.fn((key: string) => key === "quotaWarningWeeklyThreshold" ? { defaultValue: 1 } : undefined)
-    } as never)).toEqual({ hourly: 10, weekly: 1 });
+    expect(
+      getQuotaWarningThresholds({
+        get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
+        update: vi.fn(),
+        inspect: vi.fn((key: string) => (key === "quotaWarningWeeklyThreshold" ? { defaultValue: 1 } : undefined))
+      } as never)
+    ).toEqual({ hourly: 10, weekly: 1 });
   });
 });

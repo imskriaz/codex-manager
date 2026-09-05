@@ -341,7 +341,7 @@ export function OverviewSection(props: {
                           ? "设置加密同步后，可在其他电脑安全加载账号。"
                           : props.lang === "zh-hant"
                             ? "設定加密同步後，可在其他電腦安全載入帳號。"
-                            : "Set up encrypted sync to load your accounts securely on another PC."
+                            : "Import or add accounts on this PC. Sessions and tokens stay local unless full sync is explicitly enabled."
                         : emptySub}
                   </div>
                 </div>

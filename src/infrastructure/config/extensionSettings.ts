@@ -22,7 +22,7 @@ export class ExtensionSettingsStore {
       backgroundTokenRefreshEnabled: config.get<boolean>("backgroundTokenRefreshEnabled", false),
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15)),
-      autoRefreshCurrentMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
+      autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
       hourlyQuotaControlEnabled: config.get<boolean>("hourlyQuotaControlEnabled", true),
@@ -43,6 +43,7 @@ export class ExtensionSettingsStore {
       quotaYellowThreshold: thresholds.yellow,
       debugNetwork: config.get<boolean>("debugNetwork", false),
       encryptedSyncEnabled: config.get<boolean>("encryptedSyncEnabled", true),
+      fullCrossPcAccountSyncEnabled: config.get<boolean>("fullCrossPcAccountSyncEnabled", false),
       // Runtime-owned and passphrase-gated; buildDashboardState replaces this placeholder.
       encryptedSyncRegistryOverrideEnabled: false,
       webDashboardEnabled: config.get<boolean>("webDashboardEnabled", false),
@@ -75,6 +76,13 @@ export function normalizeAutoRefreshMinutes(value: number): number {
     return 0;
   }
 
+  return Math.max(5, Math.min(60, Math.round(value)));
+}
+
+export function normalizeCurrentAutoRefreshMinutes(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
   return Math.max(1, Math.min(60, Math.round(value)));
 }
 
@@ -95,7 +103,7 @@ export function getAutoRefreshMinutes(): number {
 }
 
 export function getAutoRefreshCurrentMinutes(): number {
-  return normalizeAutoRefreshMinutes(getCodexManagerConfiguration().get<number>("autoRefreshCurrentMinutes", 1));
+  return normalizeCurrentAutoRefreshMinutes(getCodexManagerConfiguration().get<number>("autoRefreshCurrentMinutes", 1));
 }
 
 export function isAutoSwitchRefreshAllBeforeSwitchEnabled(): boolean {

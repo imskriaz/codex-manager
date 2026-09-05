@@ -77,7 +77,9 @@ describe("dashboard OAuth encrypted sync", () => {
     );
 
     expect(result?.notice?.level).toBe("warning");
-    expect(result?.notice?.message).toMatch(/run Sync Now/i);
-    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringMatching(/run Sync Now/i));
+    expect(result?.notice?.message).toMatch(/run Sync Cross-PC Claims Now/i);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/run Sync Cross-PC Claims Now/i)
+    );
   });
 });

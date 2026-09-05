@@ -24,10 +24,7 @@ import {
   markTokenAutomationSweepFinished,
   markTokenAutomationSweepStarted
 } from "./tokenAutomationState";
-import {
-  CrossWindowOperationBusyError,
-  runCrossWindowExclusive
-} from "../../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../../utils/crossWindowOperations";
 import { hasCodexManagerAccountAutoQueueCapability } from "../../application/accounts/autoQueueOrder";
 
 const CURRENT_REFRESH_FAILURE_BACKOFF_MULTIPLIER = 5;
@@ -127,19 +124,20 @@ export function registerAutoRefreshScheduler(params: {
           handledQuotaResets.add(`${account.id}:${resetAt}`);
         }
         try {
-          await runCrossWindowExclusive(`background:quota-reset-refresh:${account.id}`, "Quota reset refresh", async () => {
-            refreshedAny = await refreshSingleQuotaSafely(
-              params.repo,
-              { refresh: params.onRefresh },
-              account.id,
-              {
-                forceRefresh: true,
-                allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
-                skipDisabled: true,
-                announceFailure: false
-              }
-            ) || refreshedAny;
-          });
+          await runCrossWindowExclusive(
+            `background:quota-reset-refresh:${account.id}`,
+            "Quota reset refresh",
+            async () => {
+              refreshedAny =
+                (await refreshSingleQuotaSafely(params.repo, { refresh: params.onRefresh }, account.id, {
+                  forceRefresh: true,
+                  allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
+                  skipDisabled: true,
+                  announceFailure: false,
+                  canUseAccount: params.canRefreshAccount
+                })) || refreshedAny;
+            }
+          );
         } catch (error) {
           if (!(error instanceof CrossWindowOperationBusyError)) {
             console.warn(`[codexManager] quota reset refresh failed for ${account.email}:`, error);
@@ -147,14 +145,22 @@ export function registerAutoRefreshScheduler(params: {
         }
       }
       if (refreshedAny) {
-        const switched = await maybeAutoSwitchForActiveQuota(params.repo, { refresh: params.onRefresh });
+        const switched = await maybeAutoSwitchForActiveQuota(
+          params.repo,
+          { refresh: params.onRefresh },
+          {
+            canUseAccount: params.canRefreshAccount
+          }
+        );
         if (!switched) {
           await maybeWarnForActiveQuota(params.repo);
         }
         params.onRefresh();
       }
       // Retain only keys still represented by the current snapshots.
-      const currentKeys = new Set(accounts.flatMap((account) => quotaResetTimes(account).map((at) => `${account.id}:${at}`)));
+      const currentKeys = new Set(
+        accounts.flatMap((account) => quotaResetTimes(account).map((at) => `${account.id}:${at}`))
+      );
       for (const key of handledQuotaResets) {
         if (!currentKeys.has(key)) handledQuotaResets.delete(key);
       }
@@ -181,23 +187,26 @@ export function registerAutoRefreshScheduler(params: {
       const excludeCurrent = getAutoRefreshCurrentMinutes() > 0;
       const safetyRefresh = isAutoSwitchRefreshAllBeforeSwitchEnabled();
       const shouldRefresh = safetyRefresh ? allAccountsNeedCapabilityRefresh(params.repo) : Promise.resolve(true);
-      void shouldRefresh.then((needed) => {
-        if (!needed) return;
-        const refreshOptions = {
-          silent: true,
-          forceRefresh: true,
-          // Once every account is below an automatic-switch limit, refresh the
-          // active account too; otherwise safety mode can leave the whole set
-          // stale while the normal all-account sweep is suppressed.
-          excludeCurrent: safetyRefresh ? false : excludeCurrent
-        } as { silent: true; forceRefresh: true; excludeCurrent: boolean; respectQuotaCheckGap?: boolean };
-        if (safetyRefresh) {
-          refreshOptions.respectQuotaCheckGap = false;
-        }
-        return vscode.commands.executeCommand("codexManager.refreshAllQuotas", refreshOptions);
-      }).catch(() => undefined).finally(() => {
-        allInFlight = false;
-      });
+      void shouldRefresh
+        .then((needed) => {
+          if (!needed) return;
+          const refreshOptions = {
+            silent: true,
+            forceRefresh: true,
+            // Once every account is below an automatic-switch limit, refresh the
+            // active account too; otherwise safety mode can leave the whole set
+            // stale while the normal all-account sweep is suppressed.
+            excludeCurrent: safetyRefresh ? false : excludeCurrent
+          } as { silent: true; forceRefresh: true; excludeCurrent: boolean; respectQuotaCheckGap?: boolean };
+          if (safetyRefresh) {
+            refreshOptions.respectQuotaCheckGap = false;
+          }
+          return vscode.commands.executeCommand("codexManager.refreshAllQuotas", refreshOptions);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          allInFlight = false;
+        });
     };
 
     const scheduleCurrentRefresh = (delayMs: number): void => {
@@ -231,13 +240,20 @@ export function registerAutoRefreshScheduler(params: {
               // Timed refreshes are background maintenance. Keep failures in the
               // automation state/logs without interrupting the user's workspace
               // with a notification toast. Manual refreshes still announce errors.
-              announceFailure: false
+              announceFailure: false,
+              canUseAccount: params.canRefreshAccount
             });
             if (!refreshed) {
               failed = true;
               return;
             }
-            const switched = await maybeAutoSwitchForActiveQuota(params.repo, { refresh: params.onRefresh });
+            const switched = await maybeAutoSwitchForActiveQuota(
+              params.repo,
+              { refresh: params.onRefresh },
+              {
+                canUseAccount: params.canRefreshAccount
+              }
+            );
             if (!switched) {
               await maybeWarnForActiveQuota(params.repo);
             }

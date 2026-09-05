@@ -16,7 +16,7 @@ import {
 } from "../dashboard";
 import { unloadDisabledActiveAccountOnStartup } from "./startupAccountSafety";
 
-const TOKEN_REFRESH_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const TOKEN_REFRESH_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 const TOKEN_REFRESH_SKEW_SECONDS = 5 * 60;
 
 export class AccountsWorkbench {
@@ -31,8 +31,10 @@ export class AccountsWorkbench {
   constructor(private readonly context: vscode.ExtensionContext) {
     this.repo = new AccountsRepository(context);
     this.statusBar = new AccountsStatusBarProvider(context, this.repo);
-    this.refreshCoordinator = new WorkbenchRefreshCoordinator(context, this.repo, this.statusBar);
     this.encryptedSync = new EncryptedSyncManager(context, this.repo);
+    this.refreshCoordinator = new WorkbenchRefreshCoordinator(context, this.repo, this.statusBar, (accountId) =>
+      this.encryptedSync.canAutomateAccountAfterVaultRefresh(accountId)
+    );
     this.webDashboard = new WebDashboardServer(context, this.repo, this.encryptedSync);
     this.alwaysOnlineServer = new AlwaysOnlineServer(context, this.encryptedSync);
     this.repo.setAccountSwitchCoordinator(this.encryptedSync);
@@ -168,7 +170,7 @@ export class AccountsWorkbench {
           context: this.context,
           repo: this.repo,
           onRefresh: refreshers.refresh,
-          canRefreshAccount: (accountId) => this.encryptedSync.canRefreshAccount(accountId)
+          canRefreshAccount: (accountId) => this.encryptedSync.canAutomateAccount(accountId)
         })
       );
     });
@@ -180,7 +182,7 @@ export class AccountsWorkbench {
           view: refreshers,
           checkIntervalMs: TOKEN_REFRESH_CHECK_INTERVAL_MS,
           skewSeconds: TOKEN_REFRESH_SKEW_SECONDS,
-          canRefreshAccount: (accountId) => this.encryptedSync.canRefreshAccount(accountId)
+          canRefreshAccount: (accountId) => this.encryptedSync.canAutomateAccount(accountId)
         })
       );
     });

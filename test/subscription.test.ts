@@ -9,7 +9,8 @@ vi.mock("../src/utils/debug", () => ({
 }));
 
 vi.mock("../src/utils/network", () => ({
-  fetchWithTimeout: fetchWithTimeoutMock
+  fetchWithTimeout: fetchWithTimeoutMock,
+  summarizeNetworkBody: (raw: string) => raw
 }));
 
 import { fetchSubscriptionStatus, shouldAttemptSubscriptionRefresh } from "../src/services/subscription";

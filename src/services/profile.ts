@@ -12,7 +12,13 @@
 import { CodexTokens } from "../core/types";
 import { extractClaims } from "../utils/jwt";
 import { shouldRetryWithoutWorkspace } from "./workspaceRetry";
-import { fetchWithTimeout, isRetriableHttpStatus, isRetriableNetworkError, retryWithBackoff } from "../utils/network";
+import {
+  fetchWithTimeout,
+  isRetriableHttpStatus,
+  isRetriableNetworkError,
+  retryWithBackoff,
+  summarizeNetworkBody
+} from "../utils/network";
 import { APIError } from "../core/errors";
 import { logNetworkEvent } from "../utils/debug";
 import { ACCOUNT_CHECK_URL } from "../infrastructure/config/apiEndpoints";
@@ -141,7 +147,11 @@ export async function fetchRemoteAccountProfile(
   return profile;
 }
 
-async function requestAccountProfile(url: string, accessToken: string, accountId?: string): Promise<{
+async function requestAccountProfile(
+  url: string,
+  accessToken: string,
+  accountId?: string
+): Promise<{
   ok: boolean;
   status: number;
   raw: string;
@@ -174,7 +184,7 @@ async function requestAccountProfile(url: string, accessToken: string, accountId
         status: response.status,
         ok: response.ok,
         url,
-        bodyPreview: raw
+        bodyPreview: summarizeNetworkBody(raw)
       });
 
       return {
@@ -255,8 +265,16 @@ function parseAccountProfile(
       readField(selected, ["organization_id", "org_id", "workspace_id"]) ??
       readField(payload, ["organization_id", "org_id"]),
     subscriptionActiveUntil:
-      readScalarField(selected, ["subscription_active_until", "subscriptionActiveUntil", "chatgpt_subscription_active_until"]) ??
-      readScalarField(payload, ["subscription_active_until", "subscriptionActiveUntil", "chatgpt_subscription_active_until"]) ??
+      readScalarField(selected, [
+        "subscription_active_until",
+        "subscriptionActiveUntil",
+        "chatgpt_subscription_active_until"
+      ]) ??
+      readScalarField(payload, [
+        "subscription_active_until",
+        "subscriptionActiveUntil",
+        "chatgpt_subscription_active_until"
+      ]) ??
       undefined,
     accountName: readField(selected, [
       "name",

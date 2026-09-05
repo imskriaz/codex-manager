@@ -25,7 +25,8 @@ vi.mock("../src/utils/network", () => ({
   fetchWithTimeout: fetchWithTimeoutMock,
   isRetriableHttpStatus: vi.fn(() => false),
   isRetriableNetworkError: vi.fn(() => false),
-  retryWithBackoff: async <T>(operation: () => Promise<T>) => operation()
+  retryWithBackoff: async <T>(operation: () => Promise<T>) => operation(),
+  summarizeNetworkBody: (raw: string) => raw
 }));
 
 import { clearQuotaCacheForAccount, refreshQuota } from "../src/services/quota";

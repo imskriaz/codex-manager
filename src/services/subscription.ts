@@ -8,7 +8,7 @@
  */
 
 import type { CodexManagerAccountRecord } from "../core/types";
-import { fetchWithTimeout } from "../utils/network";
+import { fetchWithTimeout, summarizeNetworkBody } from "../utils/network";
 import { logNetworkEvent } from "../utils/debug";
 import { APIError } from "../core/errors";
 import { isFreePlanType } from "../utils/quotaLabels";
@@ -53,10 +53,7 @@ export function shouldAttemptSubscriptionRefresh(account: CodexManagerAccountRec
 /**
  * 标记订阅查询失败，记录回退时间（对齐 cockpit mark_subscription_retry_pending）
  */
-export function markSubscriptionRetryPending(
-  account: CodexManagerAccountRecord,
-  error?: string
-): void {
+export function markSubscriptionRetryPending(account: CodexManagerAccountRecord, error?: string): void {
   const now = Date.now();
   account.subscriptionQueryLastAttemptAt = now;
   account.subscriptionQueryNextRetryAt = now + SUBSCRIPTION_RETRY_INTERVAL_SECONDS * 1000;
@@ -82,13 +79,7 @@ export async function fetchSubscriptionStatus(
   accountStructure?: string
 ): Promise<SubscriptionStatusSnapshot> {
   // 第一步：accounts/check
-  const snapshot = await fetchAccountCheck(
-    accessToken,
-    accountId,
-    organizationId,
-    accountName,
-    accountStructure
-  );
+  const snapshot = await fetchAccountCheck(accessToken, accountId, organizationId, accountName, accountStructure);
 
   // 第二步：如果 expires_at 缺失/过期，降级到 subscriptions
   if (!subscriptionMissingOrExpired(snapshot.subscriptionActiveUntil)) {
@@ -113,9 +104,7 @@ export async function fetchSubscriptionStatus(
     planType: subscriptions?.planType ?? snapshot.planType,
     subscriptionActiveUntil: subscriptions?.subscriptionActiveUntil ?? snapshot.subscriptionActiveUntil
   };
-  return subscriptionMissingOrExpired(merged.subscriptionActiveUntil)
-    ? sanitizeInactiveSubscription(merged)
-    : merged;
+  return subscriptionMissingOrExpired(merged.subscriptionActiveUntil) ? sanitizeInactiveSubscription(merged) : merged;
 }
 
 function sanitizeInactiveSubscription(snapshot: SubscriptionStatusSnapshot): SubscriptionStatusSnapshot {
@@ -131,11 +120,7 @@ function currentTimezoneOffsetMin(): number {
   return -new Date().getTimezoneOffset();
 }
 
-function buildSubscriptionHeaders(
-  accessToken: string,
-  targetPath: string,
-  accountId?: string
-): Headers {
+function buildSubscriptionHeaders(accessToken: string, targetPath: string, accountId?: string): Headers {
   const headers = new Headers({
     Authorization: `Bearer ${accessToken}`,
     Accept: "application/json",
@@ -170,7 +155,7 @@ async function fetchAccountCheck(
     url: SUBSCRIPTION_ACCOUNTS_CHECK_URL,
     status: response.status,
     ok: response.ok,
-    bodyPreview: raw
+    bodyPreview: summarizeNetworkBody(raw)
   });
 
   if (!response.ok) {
@@ -184,10 +169,7 @@ async function fetchAccountCheck(
   return parseAccountCheckSnapshot(payload, accountId, organizationId, accountName, accountStructure);
 }
 
-async function fetchSubscriptions(
-  accessToken: string,
-  accountId: string
-): Promise<SubscriptionStatusSnapshot> {
+async function fetchSubscriptions(accessToken: string, accountId: string): Promise<SubscriptionStatusSnapshot> {
   const url = `${SUBSCRIPTIONS_URL}?account_id=${encodeURIComponent(accountId)}`;
   const headers = buildSubscriptionHeaders(accessToken, "/backend-api/subscriptions");
 
@@ -199,7 +181,7 @@ async function fetchSubscriptions(
     accountId,
     status: response.status,
     ok: response.ok,
-    bodyPreview: raw
+    bodyPreview: summarizeNetworkBody(raw)
   });
 
   if (!response.ok) {
@@ -271,10 +253,7 @@ function parseAccountCheckSnapshot(
   };
 }
 
-function matchesWorkspaceName(
-  record: Record<string, unknown>,
-  accountName: string | undefined
-): boolean {
+function matchesWorkspaceName(record: Record<string, unknown>, accountName: string | undefined): boolean {
   const normalizedName = accountName?.trim().toLowerCase();
   if (!normalizedName) {
     return false;
@@ -291,10 +270,7 @@ function matchesWorkspaceName(
   return candidateName?.toLowerCase() === normalizedName;
 }
 
-function matchesWorkspaceStructure(
-  record: Record<string, unknown>,
-  accountStructure: string | undefined
-): boolean {
+function matchesWorkspaceStructure(record: Record<string, unknown>, accountStructure: string | undefined): boolean {
   const normalizedStructure = accountStructure?.trim().toLowerCase();
   if (!normalizedStructure) {
     return false;

@@ -87,25 +87,35 @@ describe("executeDashboardActionMessage", () => {
   it.each([true, false])("saves cross-PC sync as %s and reports completion", async (enabled) => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
-      get: vi.fn(), update, inspect: vi.fn()
+      get: vi.fn(),
+      update,
+      inspect: vi.fn()
     } as never);
     const context = createContext();
     const result = await executeDashboardActionMessage(context, {
-      type: "dashboard:action", action: "setCrossPcSyncEnabled", requestId: "sync-toggle", payload: { enabled }
+      type: "dashboard:action",
+      action: "setCrossPcSyncEnabled",
+      requestId: "sync-toggle",
+      payload: { enabled }
     });
     expect(update).toHaveBeenCalledWith("encryptedSyncEnabled", enabled, vscode.ConfigurationTarget.Global);
     expect(context.schedulePublishState).toHaveBeenCalledOnce();
     expect(result.status).toBe("completed");
-    expect(result.payload?.notice?.message).toContain(`Cross-PC sync ${enabled ? "enabled" : "disabled"} on this PC`);
+    expect(result.payload?.notice?.message).toContain(`Cross-PC claim checks ${enabled ? "enabled" : "disabled"}`);
   });
 
   it("returns cross-PC sync save failures to the initiating dashboard", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
-      get: vi.fn(), update: vi.fn().mockRejectedValue(new Error("Settings are read-only")), inspect: vi.fn()
+      get: vi.fn(),
+      update: vi.fn().mockRejectedValue(new Error("Settings are read-only")),
+      inspect: vi.fn()
     } as never);
     const context = createContext();
     const result = await executeDashboardActionMessage(context, {
-      type: "dashboard:action", action: "setCrossPcSyncEnabled", requestId: "sync-toggle-failed", payload: { enabled: false }
+      type: "dashboard:action",
+      action: "setCrossPcSyncEnabled",
+      requestId: "sync-toggle-failed",
+      payload: { enabled: false }
     });
     expect(result.status).toBe("failed");
     expect(result.errorMessage).toContain("Settings are read-only");
@@ -114,7 +124,9 @@ describe("executeDashboardActionMessage", () => {
 
   it("rejects an invalid cross-PC sync toggle", async () => {
     const result = await executeDashboardActionMessage(createContext(), {
-      type: "dashboard:action", action: "setCrossPcSyncEnabled", requestId: "sync-toggle-invalid"
+      type: "dashboard:action",
+      action: "setCrossPcSyncEnabled",
+      requestId: "sync-toggle-invalid"
     });
     expect(result.status).toBe("failed");
     expect(result.errorMessage).toContain("request is invalid");

@@ -6,10 +6,11 @@ describe("first-run onboarding", () => {
     const modal = readFileSync("webview-src/dashboard/onboardingModal.tsx", "utf8");
     expect(modal).toContain('type OnboardingStep = "agreement" | "setup" | "import" | "cloudflare" | "donation"');
     expect(modal).toContain("Accept & continue");
-    expect(modal).toContain("Enable encrypted sync");
+    expect(modal).toContain("Enable cross-PC claim checks");
+    expect(modal).toContain("Share only account IDs and PC ownership claims");
     expect(modal).toContain("Cloudflared hostname");
     expect(modal).toContain("cloudflared tunnel --url http://127.0.0.1:39875");
-    expect(modal).toContain("Set the shared Password under General settings before remote login.");
+    expect(modal).toContain("Set the shared Password under General settings before remote");
     expect(modal).not.toContain("dashboardPassword");
     expect(modal).toContain('type="password"');
     expect(modal).toContain('password: "Password"');

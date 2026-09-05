@@ -86,6 +86,38 @@ describe("workbench external account synchronization", () => {
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
 
+  it("binds local auth.json without polling an account owned by another PC", async () => {
+    vi.mocked(readAuthFile).mockResolvedValue({
+      tokens: { id_token: "id-token", access_token: "access-token" }
+    } as never);
+    const account = {
+      id: "foreign-owned",
+      email: "foreign@example.com",
+      isActive: true,
+      createdAt: 1,
+      updatedAt: 2
+    };
+    const repo = {
+      listAccounts: vi.fn(async () => []),
+      importCurrentAuth: vi.fn(async () => account)
+    };
+    const view = { refresh: vi.fn(), markObservedAuthIdentity: vi.fn() };
+    const canAutomateAccount = vi.fn(() => false);
+    const coordinator = new WorkbenchRefreshCoordinator(
+      {} as vscode.ExtensionContext,
+      repo as never,
+      {} as never,
+      canAutomateAccount
+    );
+
+    await coordinator.autoImportCurrentAccountIfNeeded(view);
+
+    expect(repo.importCurrentAuth).toHaveBeenCalledOnce();
+    expect(canAutomateAccount).toHaveBeenCalledWith(account.id);
+    expect(refreshImportedAccountQuota).not.toHaveBeenCalled();
+    expect(view.refresh).toHaveBeenCalledOnce();
+  });
+
   it("keeps background binding failures quiet and leaves diagnostics in the log", async () => {
     vi.mocked(readAuthFile).mockResolvedValue({
       tokens: { id_token: "id-token", access_token: "access-token" }

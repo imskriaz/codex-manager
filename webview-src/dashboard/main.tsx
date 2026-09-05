@@ -65,12 +65,7 @@ import { scheduleDashboardToastDismiss } from "./toast";
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
-import {
-  loadUiPreferences,
-  saveUiPreferences,
-  type AccountFilter,
-  type UiPreferences
-} from "./preferences";
+import { loadUiPreferences, saveUiPreferences, type AccountFilter, type UiPreferences } from "./preferences";
 import type { CliSessionFeedback } from "./cliSessionsModal";
 import {
   invalidateCliSessionCache,
@@ -1491,7 +1486,7 @@ function App() {
       title: configured ? "Change password" : "Set password",
       message: configured
         ? "Enter the current password and a new shared password. Existing browser sessions will be signed out, and every PC must use the new password."
-        : "Create the one shared password used for encrypted sync, remote dashboard login, and protected controls.",
+        : "Create the one shared password used for cross-PC claim checks, optional full account sync, remote dashboard login, and protected controls.",
       confirmPassword: true,
       requireCurrentPassword: configured
     });

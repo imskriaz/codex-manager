@@ -33,6 +33,7 @@ export type DashboardSettingKey =
   | "quotaYellowThreshold"
   | "debugNetwork"
   | "encryptedSyncEnabled"
+  | "fullCrossPcAccountSyncEnabled"
   | "webDashboardEnabled"
   | "webDashboardAlwaysOnlineEnabled"
   | "cloudflaredDomain"
@@ -73,6 +74,7 @@ export interface DashboardSettings {
   quotaYellowThreshold: number;
   debugNetwork: boolean;
   encryptedSyncEnabled: boolean;
+  fullCrossPcAccountSyncEnabled?: boolean;
   encryptedSyncRegistryOverrideEnabled: boolean;
   webDashboardEnabled: boolean;
   /** Keep a detached Node relay alive after VS Code closes. */
