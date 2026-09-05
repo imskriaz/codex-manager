@@ -353,7 +353,7 @@ export class WebDashboardServer implements vscode.Disposable {
       repo,
       () => undefined,
       async () => {
-        if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false)) {
+        if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true)) {
           return undefined;
         }
         return this.encryptedSync

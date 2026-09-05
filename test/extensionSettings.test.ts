@@ -10,6 +10,20 @@ import {
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
+  it("defaults cross-PC sync to on while preserving an explicit off choice", () => {
+    const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+    expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncEnabled"].default).toBe(true);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (_key: string, fallback?: unknown) => fallback,
+      inspect: vi.fn(), update: vi.fn()
+    } as never);
+    expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncEnabled).toBe(true);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" ? false : fallback,
+      inspect: vi.fn(), update: vi.fn()
+    } as never);
+    expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncEnabled).toBe(false);
+  });
   it("publishes privacy mode as a shared disabled-by-default setting", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),

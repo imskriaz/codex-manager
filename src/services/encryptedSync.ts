@@ -193,21 +193,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
     // The initial value is handled by the delayed local-only startup merge.
     // Polling is reserved for values that arrive after activation.
     this.lastHandledDownloadedVaultRaw = remoteVault;
-    // A vault already downloaded by VS Code is an explicit signal that this
-    // machine participates in encrypted sync. Merely being signed in to VS
-    // Code is not: auto-enabling for every signed-in user caused expensive
-    // Settings Sync work during unrelated extension-host startups.
-    const syncSetting = getCodexManagerConfiguration().inspect<boolean>("encryptedSyncEnabled");
-    const explicitlyDisabled = [
-      syncSetting?.globalValue,
-      syncSetting?.workspaceValue,
-      syncSetting?.workspaceFolderValue
-    ].includes(false);
-    if (remoteVault && !this.isEnabled() && !explicitlyDisabled) {
-      await getCodexManagerConfiguration().update("encryptedSyncEnabled", true, vscode.ConfigurationTarget.Global);
-      this.context.globalState.setKeysForSync([SYNC_KEY]);
-      encryptedSyncNeedsConfiguration = true;
-    }
+    // Sync defaults to enabled. Never override an explicit off choice,
+    // even when a previously downloaded vault is still stored locally.
     if (this.isEnabled()) {
       this.startDownloadedVaultPolling();
       if (this.pendingVaultMutationReasons.size > 0) {
@@ -1096,7 +1083,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   private isEnabled(): boolean {
-    return getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false);
+    return getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true);
   }
 
   private async getOrPromptForPassphrase(interactive: boolean): Promise<string | undefined> {
@@ -1329,7 +1316,7 @@ export function getEncryptedSyncStatus(): {
 }
 
 export function getSyncedAccountLeases(now = Date.now()): SyncedAccountLeaseView[] {
-  if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false)) return [];
+  if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true)) return [];
   return visibleAccountEnablement
     .filter((entry) => entry.enabled)
     .map((entry) => ({

@@ -471,7 +471,7 @@ export class AccountsCommandService {
     try {
       await this.repo.setAccountEnabled(account.id, account.enabled === false);
       this.view.refresh();
-      const syncEnabled = getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false);
+      const syncEnabled = getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true);
       void vscode.window.showInformationMessage(
         syncEnabled ? "Account updated. Encrypted sync is queued." : "Account updated."
       );

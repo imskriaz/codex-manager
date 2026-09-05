@@ -15,7 +15,8 @@ export async function resolveOnboardingCompleted(
   // from their durable data, then persist the result in extension globalState.
   const establishedInstallation =
     state.accounts.length > 0 ||
-    state.settings.encryptedSyncEnabled ||
+    (state.settings.encryptedSyncEnabled &&
+      vscode.workspace.getConfiguration("codexManager").inspect<boolean>("encryptedSyncEnabled")?.globalValue === true) ||
     state.settings.webDashboardEnabled ||
     Boolean(state.settings.cloudflaredDomain?.trim());
   if (establishedInstallation) {

@@ -42,7 +42,7 @@ export class ExtensionSettingsStore {
       quotaGreenThreshold: thresholds.green,
       quotaYellowThreshold: thresholds.yellow,
       debugNetwork: config.get<boolean>("debugNetwork", false),
-      encryptedSyncEnabled: config.get<boolean>("encryptedSyncEnabled", false),
+      encryptedSyncEnabled: config.get<boolean>("encryptedSyncEnabled", true),
       // Runtime-owned and passphrase-gated; buildDashboardState replaces this placeholder.
       encryptedSyncRegistryOverrideEnabled: false,
       webDashboardEnabled: config.get<boolean>("webDashboardEnabled", false),

@@ -103,7 +103,7 @@ class DashboardPanelController {
         this.schedulePublishState();
       },
       async () => {
-        if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", false)) {
+        if (!getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true)) {
           return undefined;
         }
         return vscode.commands.executeCommand<boolean>("codexManager.syncNow", { announceSuccess: false });

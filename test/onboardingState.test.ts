@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type * as vscode from "vscode";
+import * as vscode from "vscode";
 import type { DashboardState } from "../src/domain/dashboard/types";
 import {
   markOnboardingCompleted,
@@ -28,6 +28,26 @@ function createState(established: boolean) {
 }
 
 describe("durable onboarding completion", () => {
+  it("does not treat default-on sync as completed first-run setup", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      inspect: () => ({ defaultValue: true })
+    } as never);
+    const context = createContext();
+    const state = createState(false);
+    state.settings.encryptedSyncEnabled = true;
+    await expect(resolveOnboardingCompleted(context, state)).resolves.toBe(false);
+    expect(context.globalState.update).not.toHaveBeenCalled();
+  });
+
+  it("still recognizes sync explicitly enabled by an established install", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      inspect: () => ({ defaultValue: true, globalValue: true })
+    } as never);
+    const context = createContext();
+    const state = createState(false);
+    state.settings.encryptedSyncEnabled = true;
+    await expect(resolveOnboardingCompleted(context, state)).resolves.toBe(true);
+  });
   it("honors a completion marker stored in extension global state", async () => {
     const context = createContext(true);
 

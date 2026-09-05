@@ -32,6 +32,10 @@ describe("encrypted account sync", () => {
   });
 
   it("saves a shared password without silently enabling or starting encrypted sync", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" ? false : fallback,
+      update: vi.fn(), inspect: vi.fn()
+    } as unknown as vscode.WorkspaceConfiguration);
     const context = {
       subscriptions: [] as vscode.Disposable[],
       globalState: { get: vi.fn(() => undefined), update: vi.fn(async () => undefined), setKeysForSync: vi.fn() },
@@ -444,7 +448,7 @@ describe("encrypted account sync", () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (_key: string, fallback?: unknown) => fallback,
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
