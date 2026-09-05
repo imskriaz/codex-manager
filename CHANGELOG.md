@@ -2,6 +2,7 @@
 
 ## 1.1.4
 
+- Add an on/off Cross-PC sync toggle in Data Sync, enabled by default, while preserving saved off choices across restarts and keeping first-run setup available.
 - Run real VS Code Settings Sync passes from both dashboard hosts and apply newly downloaded vaults while VS Code remains open, so accounts and refreshed credentials converge across PCs without a restart.
 - Merge realtime peer vaults instead of selecting a whole vault by PC wall-clock time, preserving concurrent account and credential changes.
 - Keep newly received accounts disabled until explicitly enabled on that PC, and prefer server-issued token freshness when device clocks disagree.
