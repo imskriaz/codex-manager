@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canRunAccountOnThisPc } from "../webview-src/dashboard/accountRunPolicy";
 
 describe("dashboard account run policy", () => {
-  it("blocks an account claimed by another PC", () => {
+  it("allows manually switching an account claimed by another PC", () => {
     expect(
       canRunAccountOnThisPc(
         {
@@ -12,21 +12,21 @@ describe("dashboard account run policy", () => {
         },
         false
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("blocks another switch while a dashboard action is busy", () => {
     expect(canRunAccountOnThisPc({ enabled: true }, true)).toBe(false);
   });
 
-  it("allows a locally enabled foreign claim only while emergency bypass is active", () => {
+  it("allows a foreign claim without requiring emergency bypass", () => {
     const account = {
       enabled: true,
       runningDeviceName: "Office PC",
       runningOnThisDevice: false
     };
 
-    expect(canRunAccountOnThisPc(account, false)).toBe(false);
+    expect(canRunAccountOnThisPc(account, false)).toBe(true);
     expect(canRunAccountOnThisPc(account, false, true)).toBe(true);
   });
 
@@ -37,7 +37,7 @@ describe("dashboard account run policy", () => {
       runningOnThisDevice: false
     };
 
-    expect(canRunAccountOnThisPc(account, false)).toBe(false);
+    expect(canRunAccountOnThisPc(account, false)).toBe(true);
     expect(canRunAccountOnThisPc(account, false, true)).toBe(true);
     expect(canRunAccountOnThisPc({ enabled: false }, false, true)).toBe(true);
     expect(canRunAccountOnThisPc({ enabled: false }, false)).toBe(true);
@@ -52,7 +52,7 @@ describe("dashboard account run policy", () => {
     };
 
     expect(canRunAccountOnThisPc(account, false)).toBe(true);
-    expect(canRunAccountOnThisPc({ ...account, runningDeviceOnline: undefined }, false)).toBe(false);
-    expect(canRunAccountOnThisPc({ ...account, runningDeviceOnline: true }, false)).toBe(false);
+    expect(canRunAccountOnThisPc({ ...account, runningDeviceOnline: undefined }, false)).toBe(true);
+    expect(canRunAccountOnThisPc({ ...account, runningDeviceOnline: true }, false)).toBe(true);
   });
 });

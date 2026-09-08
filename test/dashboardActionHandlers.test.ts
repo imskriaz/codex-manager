@@ -502,6 +502,69 @@ describe("executeDashboardActionMessage", () => {
     setCurrentWindowRuntimeAccountId(undefined);
   });
 
+  it("password-enables Rescue before manually switching a claimed account", async () => {
+    setCurrentWindowRuntimeAccountId("current-window-account");
+    const account = {
+      id: "claimed-target",
+      email: "claimed@example.com",
+      isActive: false,
+      tokenRefreshEnabled: false
+    };
+    const repo = {
+      getAccount: vi.fn().mockResolvedValue(account),
+      switchAccount: vi.fn().mockResolvedValue({ ...account, isActive: true }),
+      flush: vi.fn().mockResolvedValue(undefined)
+    } as unknown as DashboardActionContext["repo"];
+    const setEncryptedSyncRegistryOverride = vi.fn().mockResolvedValue(true);
+    const context = {
+      ...createContext(),
+      repo,
+      hostKind: "browser" as const,
+      setEncryptedSyncRegistryOverride
+    };
+
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action",
+      action: "switch",
+      requestId: "req-claimed-switch",
+      accountId: account.id,
+      payload: { passphrase: "shared-password" }
+    });
+
+    expect(result.status).toBe("completed");
+    expect(setEncryptedSyncRegistryOverride).toHaveBeenCalledWith(true, "shared-password");
+    expect(repo.switchAccount).toHaveBeenCalledWith(account.id, { forceTokenRefresh: false });
+    expect(result.payload?.notice?.message).toMatch(/Rescue override is enabled/i);
+    expect(result.payload?.notice?.message).toMatch(/automation still avoids foreign claims/i);
+    setCurrentWindowRuntimeAccountId(undefined);
+  });
+
+  it("does not switch a claimed account when Rescue password verification fails", async () => {
+    const account = { id: "claimed-target", email: "claimed@example.com", isActive: false };
+    const repo = {
+      getAccount: vi.fn().mockResolvedValue(account),
+      switchAccount: vi.fn()
+    } as unknown as DashboardActionContext["repo"];
+    const context = {
+      ...createContext(),
+      repo,
+      hostKind: "browser" as const,
+      setEncryptedSyncRegistryOverride: vi.fn().mockResolvedValue(false)
+    };
+
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action",
+      action: "switch",
+      requestId: "req-claimed-switch-wrong-password",
+      accountId: account.id,
+      payload: { passphrase: "wrong-password" }
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toMatch(/not switched.*password/i);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
   it("revalidates a browser switch target and avoids switching an account that became active", async () => {
     const stale = {
       id: "browser-race-target",

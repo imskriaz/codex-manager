@@ -10,6 +10,7 @@
  */
 
 import * as fs from "fs/promises";
+import * as fsSync from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -47,7 +48,13 @@ import {
   previewSharedAccountsImportEntries,
   toSharedEntries
 } from "./sharedAccountsImport";
-import { countAvailableBackups, isFileNotFoundError, readIndexSnapshot } from "./accountsPersistence";
+import {
+  countAvailableBackups,
+  isFileNotFoundError,
+  readIndexSnapshot,
+  writeIndexAtomically,
+  writeIndexAtomicallySync
+} from "./accountsPersistence";
 import {
   isIndexHealthError,
   markUnrecoverableIndex,
@@ -136,6 +143,8 @@ export interface AccountSwitchCoordinator {
 export class AccountsRepository {
   private readonly secretStore: SecretStore;
   private readonly indexPath: string;
+  /** A user-owned mirror survives uninstall/reinstall of the extension. */
+  private readonly durableIndexPath: string | undefined;
   private readonly state = createAccountsRepositoryState();
   private indexReadInFlight: Promise<CodexManagerIndex> | undefined;
   /** 按账号串行化切号/刷新，避免并发刷新同一账号 token */
@@ -159,9 +168,24 @@ export class AccountsRepository {
     this.tokenCache.delete(accountId);
   }
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  constructor(private readonly context: vscode.ExtensionContext, durableIndexPath?: string) {
     this.secretStore = new SecretStore(context.secrets);
     this.indexPath = path.join(context.globalStorageUri.fsPath, INDEX_FILE);
+    // Extension global storage is removed by some uninstall flows. Keep a
+    // metadata-only mirror under the user's Codex home so reinstall can
+    // restore the account list. Test shims do not provide extensionUri, so
+    // they remain isolated from a real user's durable data.
+    this.durableIndexPath =
+      durableIndexPath ??
+      (context.extensionUri
+        ? path.join(
+          process.env["CODEX_HOME"]?.trim()
+            ? process.env["CODEX_HOME"].replace(/^['"]|['"]$/g, "")
+            : path.join(os.homedir(), ".codex"),
+          "codex-manager",
+          INDEX_FILE
+        )
+        : undefined);
   }
 
   /**
@@ -1390,6 +1414,23 @@ export class AccountsRepository {
       return cloneIndex(snapshot);
     } catch (cause) {
       if (isFileNotFoundError(cause)) {
+        const durable = await this.readDurableIndex();
+        if (durable) {
+          try {
+            await persistIndexWithBackups({
+              state: this.state,
+              indexPath: this.indexPath,
+              index: durable,
+              tempSuffix: INDEX_TEMP_SUFFIX,
+              backupCount: INDEX_BACKUP_COUNT
+            });
+          } catch (restoreError) {
+            console.warn("[codexManager] restored durable account metadata in memory; local index write failed:", restoreError);
+          }
+          this.state.cache = { data: cloneIndex(durable), timestamp: Date.now() };
+          this.state.indexHealth = { ...this.state.indexHealth, status: "healthy" };
+          return cloneIndex(durable);
+        }
         return restoreMissingIndex(this.state, this.indexPath, INDEX_BACKUP_COUNT);
       }
 
@@ -1443,6 +1484,7 @@ export class AccountsRepository {
       tempSuffix: INDEX_TEMP_SUFFIX,
       backupCount: INDEX_BACKUP_COUNT
     });
+    await this.persistDurableIndex(index);
   }
 
   /**
@@ -1456,6 +1498,45 @@ export class AccountsRepository {
       tempSuffix: INDEX_TEMP_SUFFIX,
       backupCount: INDEX_BACKUP_COUNT
     });
+    this.persistDurableIndexSync(index);
+  }
+
+  private async readDurableIndex(): Promise<CodexManagerIndex | undefined> {
+    if (!this.durableIndexPath) return undefined;
+    try {
+      return await readIndexSnapshot(this.durableIndexPath);
+    } catch (error) {
+      if (!isFileNotFoundError(error)) {
+        console.warn("[codexManager] durable account metadata could not be read:", error);
+      }
+      return undefined;
+    }
+  }
+
+  private async persistDurableIndex(index: CodexManagerIndex): Promise<void> {
+    if (!this.durableIndexPath) return;
+    try {
+      await fs.mkdir(path.dirname(this.durableIndexPath), { recursive: true, mode: 0o700 });
+      await writeIndexAtomically(this.durableIndexPath, index, INDEX_TEMP_SUFFIX);
+      await fs.chmod(this.durableIndexPath, 0o600).catch(() => undefined);
+    } catch (error) {
+      console.warn("[codexManager] durable account metadata could not be saved:", error);
+    }
+  }
+
+  private persistDurableIndexSync(index: CodexManagerIndex): void {
+    if (!this.durableIndexPath) return;
+    try {
+      fsSync.mkdirSync(path.dirname(this.durableIndexPath), { recursive: true, mode: 0o700 });
+      writeIndexAtomicallySync(this.durableIndexPath, index, INDEX_TEMP_SUFFIX);
+      try {
+        fsSync.chmodSync(this.durableIndexPath, 0o600);
+      } catch {
+        // Windows ACLs are inherited from the user's Codex directory.
+      }
+    } catch (error) {
+      console.warn("[codexManager] durable account metadata could not be saved during shutdown:", error);
+    }
   }
 
   private async persistRecoveredIndex(

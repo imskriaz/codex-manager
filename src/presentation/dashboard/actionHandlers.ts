@@ -418,7 +418,7 @@ async function runDashboardAction(
       if (ctx.hostKind === "browser" && ctx.syncEncryptedAccounts) {
         if (!(await ctx.syncEncryptedAccounts())) {
           throw new Error(
-            "Cross-PC claim sync did not complete. Make sure VS Code Settings Sync is active on this PC, then try again."
+            "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
           );
         }
         ctx.schedulePublishState();
@@ -427,7 +427,7 @@ async function runDashboardAction(
       if ((await vscode.commands.executeCommand<boolean>("codexManager.syncNow")) !== true) {
         ctx.schedulePublishState();
         throw new Error(
-          "Cross-PC claim sync did not complete. Make sure VS Code Settings Sync is active on this PC, then try again."
+          "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
         );
       }
       ctx.schedulePublishState();
@@ -610,6 +610,22 @@ async function runDashboardAction(
       }
       return undefined;
     case "switch":
+      let rescueEnabledForSwitch = false;
+      if (payload?.passphrase) {
+        const enabled =
+          ctx.hostKind === "browser"
+            ? await ctx.setEncryptedSyncRegistryOverride?.(true, payload.passphrase)
+            : await vscode.commands.executeCommand<boolean>(
+                "codexManager.setEncryptedSyncRegistryOverride",
+                true,
+                { passphrase: payload.passphrase }
+              );
+        if (enabled !== true) {
+          ctx.schedulePublishState();
+          throw new Error("The claimed account was not switched. Check the shared password and try again.");
+        }
+        rescueEnabledForSwitch = true;
+      }
       if (ctx.hostKind === "browser") {
         if (!account) {
           throw new Error("Choose an account in the browser dashboard, then try again.");
@@ -639,7 +655,7 @@ async function runDashboardAction(
         return {
           notice: {
             level: "info" as const,
-            message: `Switched to ${currentAccount.email}.${reloadRequired ? " Reloading Codex…" : ""}`
+            message: `Switched to ${currentAccount.email}.${rescueEnabledForSwitch ? " Rescue override is enabled on this PC; automation still avoids foreign claims." : ""}${reloadRequired ? " Reloading Codex…" : ""}`
           },
           reloadScheduled: reloadRequired
         };
@@ -671,8 +687,8 @@ async function runDashboardAction(
             notice: {
               level: "info" as const,
               message: reloadRequired
-                ? `Switched to ${result.account.email}. Reloading Codex…`
-                : `Switched to ${result.account.email}.`
+                ? `Switched to ${result.account.email}.${rescueEnabledForSwitch ? " Rescue override is enabled; automation still avoids foreign claims." : ""} Reloading Codex…`
+                : `Switched to ${result.account.email}.${rescueEnabledForSwitch ? " Rescue override is enabled; automation still avoids foreign claims." : ""}`
             },
             reloadScheduled: reloadRequired
           };

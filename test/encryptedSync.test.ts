@@ -1,4 +1,7 @@
 import * as crypto from "crypto";
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 import * as zlib from "zlib";
 import * as vscode from "vscode";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +25,7 @@ import {
   getTokenAutomationSnapshot,
   markTokenAutomationRefreshFailure
 } from "../src/presentation/workbench/tokenAutomationState";
+import { removeTestDirectory } from "./testFilesystem";
 
 const PASSPHRASE = "correct horse battery staple";
 
@@ -123,6 +127,106 @@ describe("encrypted account sync", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(sync).toHaveBeenCalledWith(false, false, true);
     manager.dispose();
+  });
+
+  it("uses an authenticated realtime publisher when VS Code Settings Sync is signed out", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as unknown as vscode.WorkspaceConfiguration);
+    vi.mocked(vscode.window.showErrorMessage).mockClear();
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("not signed in"));
+    const context = {
+      subscriptions: [] as vscode.Disposable[],
+      globalState: { get: vi.fn(() => undefined), update: vi.fn(async () => undefined), setKeysForSync: vi.fn() },
+      secrets: {
+        get: vi.fn(async (key: string) =>
+          key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one"
+        ),
+        store: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined)
+      }
+    } as unknown as vscode.ExtensionContext;
+    const repo = { flush: vi.fn(async () => undefined) };
+    const manager = new EncryptedSyncManager(context, repo as never);
+    const publishRealtime = vi.fn(async () => true);
+    manager.setRealtimeSyncPublisher(publishRealtime);
+
+    await expect(manager.syncNow(true, false, true)).resolves.toBe(true);
+
+    expect(publishRealtime).toHaveBeenCalledOnce();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining("sync is unavailable"));
+    manager.dispose();
+    vi.mocked(vscode.commands.executeCommand).mockReset().mockResolvedValue(undefined);
+  });
+
+  it("restores credentials from the encrypted user-owned vault after reinstall", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-durable-vault-"));
+    const vaultPath = path.join(directory, "encrypted-accounts-vault.json");
+    const entry = createEntry("durable-account", 500, "durable-refresh-token");
+    const createContext = () => {
+      const state = new Map<string, unknown>();
+      return {
+        subscriptions: [] as vscode.Disposable[],
+        globalState: {
+          get: <T>(key: string, fallback?: T) => (state.has(key) ? (state.get(key) as T) : fallback),
+          update: vi.fn(async (key: string, value: unknown) => state.set(key, value)),
+          setKeysForSync: vi.fn()
+        },
+        secrets: {
+          get: vi.fn(async (key: string) =>
+            key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one"
+          ),
+          store: vi.fn(async () => undefined),
+          delete: vi.fn(async () => undefined)
+        }
+      } as unknown as vscode.ExtensionContext;
+    };
+
+    try {
+      const sourceRepo = {
+        invalidateCachedIndex: vi.fn(),
+        listAccounts: vi.fn(async () => [{ id: entry.id }]),
+        exportSharedAccounts: vi.fn(async () => [entry]),
+        importSharedAccountsWithSummary: vi.fn(),
+        flush: vi.fn(async () => undefined)
+      };
+      const source = new EncryptedSyncManager(createContext(), sourceRepo as never, vaultPath);
+      await source.start();
+      await vi.waitFor(async () => expect(await fs.readFile(vaultPath, "utf8")).toContain("ciphertext"));
+      const rawVault = await fs.readFile(vaultPath, "utf8");
+      expect(rawVault).not.toContain("durable-refresh-token");
+      source.dispose();
+
+      let restoredEntries: SyncAccountEntry[] = [];
+      const restoredRepo = {
+        invalidateCachedIndex: vi.fn(),
+        listAccounts: vi.fn(async () => restoredEntries.map((account) => ({ id: account.id }))),
+        exportSharedAccounts: vi.fn(async () => restoredEntries),
+        importSharedAccountsWithSummary: vi.fn(async (accounts: SyncAccountEntry[]) => {
+          restoredEntries = accounts;
+          return {
+            total: accounts.length,
+            successCount: accounts.length,
+            overwriteCount: 0,
+            failedCount: 0,
+            importedEmails: accounts.map((account) => account.email ?? ""),
+            failures: []
+          };
+        }),
+        flush: vi.fn(async () => undefined)
+      };
+      const restored = new EncryptedSyncManager(createContext(), restoredRepo as never, vaultPath);
+
+      await restored.start();
+
+      expect(restoredRepo.importSharedAccountsWithSummary).toHaveBeenCalledOnce();
+      expect(restoredEntries[0]?.tokens?.refresh_token).toBe("durable-refresh-token");
+      restored.dispose();
+    } finally {
+      await removeTestDirectory(directory);
+    }
   });
 
   it("queues background sync after a local account removal so its tombstone is published", async () => {

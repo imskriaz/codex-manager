@@ -62,7 +62,9 @@ export type BrowserActionRequest =
     }
   | {
       kind: "password";
-      action: Extract<DashboardActionName, "configureEncryptedSync" | "setEncryptedSyncRegistryOverride">;
+      action: Extract<DashboardActionName, "configureEncryptedSync" | "setEncryptedSyncRegistryOverride" | "switch">;
+      accountId?: string;
+      targetDeviceId?: string;
       enabled?: boolean;
       title: string;
       message: string;

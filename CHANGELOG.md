@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.6-pre.0
+
+- Preserve saved account metadata and a password-encrypted credential vault under the user-owned Codex directory so uninstalling and reinstalling the extension does not discard accounts.
+- Allow explicit switching to foreign-claimed accounts through the shared-password Rescue flow while keeping background refresh and automatic switching claim-safe.
+- Fall back to authenticated peer WebSockets when VS Code Settings Sync is signed out, including direct encrypted-vault delivery to connected peers.
+
 ## 1.1.5
 
 - Keep cross-PC ownership claims active while gating encrypted account and token sharing behind a separate Full cross-PC account sync setting that defaults off; also coordinate background provider work through claims, keep one-minute current-account polling configurable, pace provider requests, honor rate-limit cooldowns, and redact diagnostics.

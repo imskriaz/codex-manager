@@ -80,7 +80,8 @@ export function registerCommands(
           }
         }
       : undefined,
-    (accountId) => sync?.canAutomateAccount(accountId) ?? true
+    (accountId) => sync?.canAutomateAccount(accountId) ?? true,
+    sync ? (passphrase) => sync.setRegistryOverrideEnabled(true, { passphrase }) : undefined
   );
 
   const runCommand = runRegisteredCommand;

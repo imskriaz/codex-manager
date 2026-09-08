@@ -14,6 +14,7 @@ describe("manual account switch command", () => {
       inspect: vi.fn()
     } as never);
     vi.mocked(vscode.window.showQuickPick).mockReset();
+    vi.mocked(vscode.window.showInputBox).mockReset();
     vi.mocked(vscode.window.showInformationMessage).mockReset();
     setCurrentWindowRuntimeAccountId(undefined);
   });
@@ -104,6 +105,31 @@ describe("manual account switch command", () => {
 
     expect(repo.switchAccount).not.toHaveBeenCalled();
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(`${current.email} is already the active account`);
+  });
+
+  it("password-enables Rescue before a Command Palette switch to a claimed account", async () => {
+    const account = createAccount();
+    const { repo } = createServiceWithRepo([account]);
+    const enableRescue = vi.fn().mockResolvedValue(true);
+    const service = new AccountsCommandService(
+      {} as vscode.ExtensionContext,
+      repo,
+      { refresh: vi.fn(), markObservedAuthIdentity: vi.fn() },
+      () => false,
+      undefined,
+      () => false,
+      enableRescue
+    );
+    setCurrentWindowRuntimeAccountId(account.id);
+    vi.mocked(vscode.window.showInputBox).mockResolvedValue("shared-password");
+
+    await expect(service.switchAccount(account)).resolves.toMatchObject({ status: "switched" });
+
+    expect(vscode.window.showInputBox).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Switch claimed account", password: true })
+    );
+    expect(enableRescue).toHaveBeenCalledWith("shared-password");
+    expect(repo.switchAccount).toHaveBeenCalledWith(account.id, { forceTokenRefresh: false });
   });
 });
 

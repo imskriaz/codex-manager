@@ -56,7 +56,8 @@ export class AccountsCommandService {
     private readonly view: RefreshView,
     private readonly canRefreshAccount: (accountId: string) => boolean = () => true,
     private readonly syncAccountChange?: () => Promise<boolean | undefined>,
-    private readonly canAutomateAccount: (accountId: string) => boolean = canRefreshAccount
+    private readonly canAutomateAccount: (accountId: string) => boolean = canRefreshAccount,
+    private readonly enableRescueForManualSwitch?: (passphrase: string) => Promise<boolean>
   ) {}
 
   async addAccount(): Promise<void> {
@@ -234,6 +235,22 @@ export class AccountsCommandService {
     if (account.isActive) {
       void vscode.window.showInformationMessage(copy.alreadyActive(formatAccountToastLabel(account)));
       return { status: "already-active", account };
+    }
+
+    if (!this.canRefreshAccount(account.id)) {
+      const passphrase = await vscode.window.showInputBox({
+        title: "Switch claimed account",
+        prompt: "Enter the shared password to enable Rescue on this PC and switch the claimed account.",
+        password: true,
+        ignoreFocusOut: true
+      });
+      if (!passphrase) {
+        void vscode.window.showInformationMessage("Claimed account switch cancelled.");
+        return { status: "cancelled" };
+      }
+      if (!this.enableRescueForManualSwitch || !(await this.enableRescueForManualSwitch(passphrase))) {
+        throw new Error("The claimed account was not switched. Check the shared password and try again.");
+      }
     }
 
     await this.withProgress(copy.progressSwitch(account.email), async () => {

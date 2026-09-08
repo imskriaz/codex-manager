@@ -1,5 +1,7 @@
 import * as crypto from "crypto";
+import * as fs from "fs/promises";
 import * as os from "os";
+import * as path from "path";
 import * as zlib from "zlib";
 import * as vscode from "vscode";
 import type { SharedCodexManagerAccountJson } from "../core/types";
@@ -50,6 +52,7 @@ const MAX_ENVELOPE_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_LENGTH = 4096;
 const MAX_TOKEN_LENGTH = 512 * 1024;
 const VAULT_AUTHENTICATION_ERROR = "The password is incorrect or the synchronized data was modified.";
+const DURABLE_VAULT_FILE = "encrypted-accounts-vault.json";
 let encryptedSyncNeedsConfiguration = false;
 let encryptedSyncNeedsSettingsSync = false;
 let visibleAccountEnablement: SyncAccountEnablement[] = [];
@@ -136,6 +139,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private backgroundSyncRetryDelayMs = VAULT_SYNC_DEBOUNCE_DELAY_MS;
   private readonly pendingVaultMutationReasons = new Set<string>();
   private vaultDirtyPersistence: Promise<void> = Promise.resolve();
+  private durableVaultWriteChain: Promise<void> = Promise.resolve();
+  private readonly durableVaultPath: string | undefined;
+  private realtimeSyncPublisher: (() => Promise<boolean>) | undefined;
   private onStateChanged: (() => void) | undefined;
   private applyingRemote = false;
   private localEnablementDefaults = new Map<string, boolean>();
@@ -143,8 +149,21 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly repo: AccountsRepository
-  ) {}
+    private readonly repo: AccountsRepository,
+    durableVaultPath?: string
+  ) {
+    this.durableVaultPath =
+      durableVaultPath ??
+      (context.extensionUri
+        ? path.join(
+            process.env["CODEX_HOME"]?.trim()
+              ? process.env["CODEX_HOME"].replace(/^['"]|['"]$/g, "")
+              : path.join(os.homedir(), ".codex"),
+            "codex-manager",
+            DURABLE_VAULT_FILE
+          )
+        : undefined);
+  }
 
   async start(): Promise<void> {
     this.context.globalState.setKeysForSync(this.isEnabled() ? [SYNC_KEY] : []);
@@ -199,7 +218,24 @@ export class EncryptedSyncManager implements vscode.Disposable {
     // the first render. Without this, an enabled sync setting with a missing
     // secret looked configured and a dashboard Sync click fell through to the
     // extension-host password prompt.
-    encryptedSyncNeedsConfiguration = !(await this.context.secrets.get(PASSPHRASE_KEY));
+    const storedPassphrase = await this.context.secrets.get(PASSPHRASE_KEY);
+    encryptedSyncNeedsConfiguration = !storedPassphrase;
+    if (storedPassphrase) {
+      try {
+        const restored = await this.restoreDurableVault(storedPassphrase);
+        if (restored > 0) {
+          void vscode.window.showInformationMessage(
+            `Restored ${restored} saved Codex account${restored === 1 ? "" : "s"} from the durable local vault.`
+          );
+        }
+        this.queueDurableVaultSave();
+      } catch (error) {
+        console.warn("[codexManager] durable local account vault could not be restored:", error);
+        void vscode.window.showWarningMessage(
+          `Saved account recovery could not complete: ${error instanceof Error ? error.message : String(error)}. Re-enter the shared password and try again.`
+        );
+      }
+    }
     const remoteVault = this.context.globalState.get<string>(SYNC_KEY);
     // The initial value is handled by the delayed local-only startup merge.
     // Polling is reserved for values that arrive after activation.
@@ -237,6 +273,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     this.configurationSubscription = undefined;
     this.pendingVaultMutationReasons.clear();
     this.clearVisibleEnablement();
+    this.realtimeSyncPublisher = undefined;
   }
 
   /** Queue pending local mutations without surfacing background lock contention. */
@@ -278,6 +315,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (this.disposed || this.applyingRemote || (!change.addedAccountIds.length && !change.removedAccountIds.length)) {
       return;
     }
+    this.queueDurableVaultSave();
     for (const accountId of change.addedAccountIds) this.pendingDeletionAccountIds.delete(accountId);
     for (const accountId of change.removedAccountIds) this.pendingDeletionAccountIds.add(accountId);
     this.mutationVersion += 1;
@@ -388,6 +426,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   /** Mark a durable vault mutation without coupling frequent realtime updates to VS Code Settings Sync. */
   onVaultMutation(reason: EncryptedSyncMutationReason): void {
     if (this.disposed || this.applyingRemote || !reason.trim()) return;
+    this.queueDurableVaultSave();
     if (
       !this.isFullAccountSyncEnabled() &&
       (reason === "credentials-changed" || reason === "token-refresh-setting-changed")
@@ -420,6 +459,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   setOnStateChanged(callback: () => void): void {
     this.onStateChanged = callback;
+  }
+
+  /** Let authenticated peer WebSockets carry sync when VS Code Settings Sync is signed out. */
+  setRealtimeSyncPublisher(publisher: (() => Promise<boolean>) | undefined): void {
+    this.realtimeSyncPublisher = publisher;
   }
 
   /** Presence is authoritative only while a peer heartbeat transport is healthy. */
@@ -791,6 +835,15 @@ export class EncryptedSyncManager implements vscode.Disposable {
       await this.context.secrets.delete(DASHBOARD_SESSION_SECRET_KEY);
     }
     encryptedSyncNeedsConfiguration = false;
+    try {
+      await this.restoreDurableVault(rotating ? storedPassphrase! : passphrase);
+      await this.persistDurableVault(passphrase);
+    } catch (error) {
+      console.warn("[codexManager] durable local account vault password update failed:", error);
+      void vscode.window.showWarningMessage(
+        `The shared password was saved, but durable account recovery did not complete: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
     this.mutationVersion += 1;
     this.realtimeVaultCache = undefined;
     if (!this.isEnabled()) {
@@ -862,7 +915,20 @@ export class EncryptedSyncManager implements vscode.Disposable {
     // A globalState update only confirms a local write. Ask VS Code's own
     // Settings Sync service to run first so a signed-out or disabled machine
     // cannot be reported as successfully synchronized.
-    if (syncSettings && !skipInitialSettingsSync && !(await this.ensureSettingsSyncReady(interactive))) {
+    if (syncSettings && !skipInitialSettingsSync && !(await this.ensureSettingsSyncReady(false))) {
+      if (await this.realtimeSyncPublisher?.()) {
+        // The product has an authenticated cross-PC transport, so sync is
+        // available even though the optional Settings Sync transport is not.
+        encryptedSyncNeedsSettingsSync = false;
+        encryptedSyncLastCompletedAt = Date.now();
+        this.onStateChanged?.();
+        return true;
+      }
+      if (interactive) {
+        void vscode.window.showErrorMessage(
+          "Cross-PC sync is unavailable. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
+        );
+      }
       return false;
     }
 
@@ -1222,6 +1288,66 @@ export class EncryptedSyncManager implements vscode.Disposable {
     const canonical = canonicalizeSyncAccountEnablement(entries).slice(-MAX_ENABLEMENT_RECORDS);
     await this.context.globalState.update(LOCAL_ENABLEMENT_KEY, canonical);
     this.updateVisibleEnablement(canonical, deviceId);
+  }
+
+  private queueDurableVaultSave(): void {
+    if (!this.durableVaultPath || this.disposed) return;
+    this.durableVaultWriteChain = this.durableVaultWriteChain
+      .catch(() => undefined)
+      .then(async () => {
+        const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
+        if (passphrase) await this.persistDurableVault(passphrase);
+      });
+    void this.durableVaultWriteChain.catch((error) => {
+      console.warn("[codexManager] durable local account vault could not be saved:", error);
+      void vscode.window.showWarningMessage(
+        `Accounts are saved in VS Code, but the reinstall-safe vault could not be updated: ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
+  }
+
+  private async persistDurableVault(passphrase: string): Promise<void> {
+    if (!this.durableVaultPath) return;
+    await this.mutationChain.catch(() => undefined);
+    this.repo.invalidateCachedIndex?.();
+    const records = await this.repo.listAccounts();
+    const accounts = await this.repo.exportSharedAccounts(records.map((account) => account.id));
+    const payload = await this.createPayload(accounts.map(createSyncEntry), [], this.readLocalEnablement());
+    const encrypted = await encryptSyncPayload(payload, passphrase);
+    await writePrivateFileAtomically(this.durableVaultPath, encrypted);
+  }
+
+  private async restoreDurableVault(passphrase: string): Promise<number> {
+    if (!this.durableVaultPath) return 0;
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.durableVaultPath, "utf8");
+    } catch (error) {
+      if (isFileNotFoundError(error)) return 0;
+      throw error;
+    }
+    const durable = await decryptSyncPayload(raw, passphrase);
+    const records = await this.repo.listAccounts();
+    const local = (await this.repo.exportSharedAccounts(records.map((account) => account.id))).map(createSyncEntry);
+    const merged = mergeSyncAccounts(local, durable.accounts, []);
+    const localById = new Map(local.map((entry) => [getSyncAccountId(entry), entry]));
+    const changed = merged.filter((entry) => {
+      const current = localById.get(getSyncAccountId(entry));
+      return !current || syncEntryFingerprint(current) !== syncEntryFingerprint(entry);
+    });
+    if (!changed.length) return 0;
+
+    this.applyingRemote = true;
+    try {
+      const result = await this.repo.importSharedAccountsWithSummary(changed);
+      if (result.failedCount > 0) {
+        throw new Error(`Could not restore ${result.failedCount} saved account${result.failedCount === 1 ? "" : "s"}.`);
+      }
+      await this.repo.flush?.();
+      return result.successCount;
+    } finally {
+      this.applyingRemote = false;
+    }
   }
 
   private async markEnablementPending(accountIds: readonly string[]): Promise<void> {
@@ -1597,6 +1723,45 @@ function isValidSyncAccountDeletion(value: unknown): value is SyncAccountDeletio
 
 function getAccountCreationTime(entry: SyncAccountEntry): number {
   return Math.max(normalizeSyncTimestamp(entry.added_at), normalizeSyncTimestamp(entry.created_at));
+}
+
+async function writePrivateFileAtomically(filePath: string, contents: string): Promise<void> {
+  const directory = path.dirname(filePath);
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  try {
+    await fs.writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
+    await fs.chmod(tempPath, 0o600).catch(() => undefined);
+    try {
+      await fs.rename(tempPath, filePath);
+    } catch (error) {
+      if (!isTransientFileReplaceError(error)) throw error;
+      await fs.copyFile(tempPath, filePath);
+      await fs.unlink(tempPath).catch(() => undefined);
+    }
+    await fs.chmod(filePath, 0o600).catch(() => undefined);
+  } catch (error) {
+    await fs.unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+function isTransientFileReplaceError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      ["EACCES", "EBUSY", "EEXIST", "EPERM"].includes(String((error as { code?: unknown }).code))
+  );
 }
 
 function normalizeSyncTimestamp(value: number | null | undefined): number {

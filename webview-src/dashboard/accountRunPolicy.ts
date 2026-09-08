@@ -1,18 +1,14 @@
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
 
 /**
- * Manual actions stay available when account automation is disabled. The
- * enablement flag is an auto-queue rule; only an in-progress action or an
- * active claim by another PC can prevent a user-initiated switch.
+ * Manual actions stay available when account automation is disabled or when
+ * another PC currently claims the account. Claims are an automation safety
+ * fence; they must not lock a user out of an explicit switch.
  */
 export function canRunAccountOnThisPc(
-  account: Pick<DashboardAccountViewModel, "runningDeviceName" | "runningOnThisDevice" | "runningDeviceOnline">,
+  _account: Pick<DashboardAccountViewModel, "runningDeviceName" | "runningOnThisDevice" | "runningDeviceOnline">,
   busy: boolean,
-  registryOverrideEnabled = false
+  _registryOverrideEnabled = false
 ): boolean {
-  return (
-    !busy &&
-    (registryOverrideEnabled ||
-      !Boolean(account.runningDeviceName && !account.runningOnThisDevice && account.runningDeviceOnline !== false))
-  );
+  return !busy;
 }

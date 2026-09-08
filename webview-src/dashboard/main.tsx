@@ -1286,6 +1286,21 @@ function App() {
     accountId?: string,
     payload?: DashboardActionPayload
   ): void => {
+    if (action === "switch" && accountId) {
+      const account = displayedAccounts.find((candidate) => candidate.id === accountId);
+      const claimedElsewhere = Boolean(account?.runningDeviceName && !account.runningOnThisDevice);
+      if (claimedElsewhere && !snapshot.settings.encryptedSyncRegistryOverrideEnabled) {
+        setBrowserActionRequest({
+          kind: "password",
+          action: "switch",
+          accountId,
+          title: "Switch claimed account",
+          message: `Enter the shared password to enable Rescue on this PC and switch to ${getSensitiveDisplayValue(account?.email, state.privacyMode, "email", "this account")}. Automation will continue to avoid foreign-claimed accounts.`,
+          confirmPassword: false
+        });
+        return;
+      }
+    }
     if (action === "details" && isBrowserDashboard && accountId) {
       setAccountInfoAccountId(accountId);
       return;
@@ -1428,7 +1443,24 @@ function App() {
     if (request.kind === "switch") {
       const accountId = request.accountIds[0];
       if (accountId) {
-        sendAction("switch", accountId, { targetDeviceId: request.targetDeviceId });
+        const account = (request.targetDeviceId
+          ? snapshot.peerAccounts?.[request.targetDeviceId] ?? []
+          : displayedAccounts
+        ).find((candidate) => candidate.id === accountId);
+        const claimedElsewhere = Boolean(account?.runningDeviceName && !account.runningOnThisDevice);
+        if (claimedElsewhere && !snapshot.settings.encryptedSyncRegistryOverrideEnabled) {
+          setBrowserActionRequest({
+            kind: "password",
+            action: "switch",
+            accountId,
+            targetDeviceId: request.targetDeviceId,
+            title: "Switch claimed account",
+            message: `Enter the shared password to enable Rescue on that PC and switch to ${getSensitiveDisplayValue(account?.email, state.privacyMode, "email", "this account")}.`,
+            confirmPassword: false
+          });
+        } else {
+          sendAction("switch", accountId, { targetDeviceId: request.targetDeviceId });
+        }
       }
       return;
     }
@@ -1442,8 +1474,9 @@ function App() {
     }
     if (request.kind === "password") {
       const rotating = request.action === "configureEncryptedSync" && request.requireCurrentPassword === true;
-      sendAction(request.action, undefined, {
+      sendAction(request.action, request.accountId, {
         enabled: request.enabled,
+        targetDeviceId: request.targetDeviceId,
         currentPassphrase: rotating ? submittedTags?.[0] : undefined,
         passphrase: rotating ? submittedTags?.[1] : submittedTags?.[0],
         passphraseConfirmation: rotating ? submittedTags?.[2] : submittedTags?.[1]

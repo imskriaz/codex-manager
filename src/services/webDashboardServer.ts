@@ -361,6 +361,7 @@ export class WebDashboardServer implements vscode.Disposable {
           : vscode.commands.executeCommand<boolean>("codexManager.syncNow", { announceSuccess: false });
       }
     );
+    this.encryptedSync?.setRealtimeSyncPublisher?.(() => this.publishPeerVault(true));
     this.dashboardRealtimeSubscription = subscribeDashboardRealtime((message) => {
       if (this.webSocketClients.size === 0 || message.type === "dashboard:snapshot") return;
       const serialized = JSON.stringify(message);
@@ -576,6 +577,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.encryptedSync?.setRealtimeSyncPublisher?.(undefined);
     this.dashboardRealtimeSubscription();
     this.oauth.dispose();
     void this.stop();
@@ -1748,6 +1750,7 @@ export class WebDashboardServer implements vscode.Disposable {
       this.authenticatedPeerSockets.add(sourceSocket);
       this.peerSockets.set(message.deviceId!, sourceSocket);
       await this.sendPeerAggregate(sourceSocket);
+      void this.publishPeerVault(true);
       void this.broadcastPeerAggregate();
       this.publishRealtimeState();
     } catch {
@@ -2016,16 +2019,24 @@ export class WebDashboardServer implements vscode.Disposable {
     socket.send(JSON.stringify((await this.readLocalPeerSessions()) satisfies PeerSessionMessage));
   }
 
-  private async publishPeerVault(): Promise<void> {
+  private async publishPeerVault(force = false): Promise<boolean> {
     const socket = this.peerSocket;
-    if (!socket || socket.readyState !== UndiciWebSocket.OPEN) return;
+    const incoming = [...this.peerSockets.values()].filter(
+      (candidate) => this.authenticatedPeerSockets.has(candidate) && candidate.readyState === WebSocket.OPEN
+    );
+    const outgoingOpen = Boolean(socket && socket.readyState === UndiciWebSocket.OPEN);
+    if (!outgoingOpen && incoming.length === 0) return false;
     const vault = await this.encryptedSync?.getRealtimeEncryptedVault();
-    if (!vault || vault === this.lastPublishedPeerVault) return;
+    if (!vault) return false;
+    if (!force && vault === this.lastPublishedPeerVault) return true;
     const unsigned = { type: "peer:vault" as const, deviceId: this.deviceId, sentAt: Date.now(), vault };
     const signature = await this.encryptedSync?.signRealtimePeerPayload(peerVaultSignaturePayload(unsigned));
-    if (!signature) return;
-    socket.send(JSON.stringify({ ...unsigned, signature } satisfies PeerVaultMessage));
+    if (!signature) return false;
+    const serialized = JSON.stringify({ ...unsigned, signature } satisfies PeerVaultMessage);
+    if (outgoingOpen) socket!.send(serialized);
+    for (const candidate of incoming) candidate.send(serialized);
     this.lastPublishedPeerVault = vault;
+    return true;
   }
 
   private startPeerHttpHeartbeat(): void {

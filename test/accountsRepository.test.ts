@@ -474,4 +474,39 @@ describe("AccountsRepository token persistence", () => {
 
     repo.dispose();
   });
+
+  it("restores account metadata from the user-owned index after extension storage is replaced", async () => {
+    const firstStorage = path.join(tempDir, "extension-storage-before-uninstall");
+    const reinstalledStorage = path.join(tempDir, "extension-storage-after-reinstall");
+    const durableIndex = path.join(tempDir, "user-codex-home", "codex-manager", "accounts-index.json");
+    const secrets = new Map<string, string>();
+    const createContext = (storagePath: string) =>
+      ({
+        globalStorageUri: { fsPath: storagePath },
+        secrets: {
+          get: vi.fn(async (key: string) => secrets.get(key)),
+          store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+          delete: vi.fn(async (key: string) => secrets.delete(key))
+        }
+      }) as unknown as vscode.ExtensionContext;
+
+    const beforeUninstall = new AccountsRepository(createContext(firstStorage), durableIndex);
+    const saved = await beforeUninstall.upsertFromTokens(createTokens("acct_reinstall", "kept@example.com"));
+    await beforeUninstall.flush();
+    beforeUninstall.dispose();
+
+    expect(JSON.parse(await fs.readFile(durableIndex, "utf8"))).toMatchObject({
+      accounts: [expect.objectContaining({ id: saved.id, email: "kept@example.com" })]
+    });
+    expect(await fs.stat(reinstalledStorage).catch(() => undefined)).toBeUndefined();
+
+    const afterReinstall = new AccountsRepository(createContext(reinstalledStorage), durableIndex);
+    const restored = await afterReinstall.listAccounts();
+
+    expect(restored).toEqual([expect.objectContaining({ id: saved.id, email: "kept@example.com" })]);
+    expect(JSON.parse(await fs.readFile(path.join(reinstalledStorage, "accounts-index.json"), "utf8"))).toMatchObject({
+      accounts: [expect.objectContaining({ id: saved.id })]
+    });
+    afterReinstall.dispose();
+  });
 });

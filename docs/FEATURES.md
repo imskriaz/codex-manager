@@ -19,7 +19,7 @@ Exports contain account metadata and encrypted/token material needed for the sel
 
 ### Switch and remove
 
-Select an account and run **Switch Account**. The extension atomically updates the active Codex `auth.json` and can restart the Codex desktop app. **Remove Account** deletes the saved account after confirmation; it does not revoke the provider session.
+Select an account and run **Switch Account**. The extension atomically updates the active Codex `auth.json` and can restart the Codex desktop app. A claimed account remains manually selectable; Codex Manager asks for the shared password, enables Rescue on that PC, and completes the explicit switch while automation continues to avoid the foreign claim. **Remove Account** deletes the saved account after confirmation; it does not revoke the provider session.
 
 ## Quota and automation
 
@@ -52,11 +52,11 @@ Enable `cliIntegrationEnabled` to read local CLI indexes/transcripts on demand. 
 
 ## Encrypted sync
 
-1. Sign in to VS Code Settings Sync on each machine.
+1. Connect the PCs through the authenticated peer WebSocket, or sign in to VS Code Settings Sync for the durable fallback.
 2. Set the shared **Password** in General, then enable `encryptedSyncEnabled`.
 3. Enter the same password on every machine, then run **Sync Sessions Now**.
 
-The vault is encrypted before it is written to Settings Sync. The password is not uploaded. Disable sync on a machine to stop it participating; local accounts remain available.
+The vault is encrypted before it is sent through a peer WebSocket or written to Settings Sync. The password is not uploaded. A complete password-encrypted local vault and account metadata index are also kept in `CODEX_HOME/codex-manager` so extension uninstall/reinstall does not remove saved accounts. Disable sync on a machine to stop it participating; local accounts remain available.
 
 Add/import, removal, reauthorization, enable/disable, credential replacement, and token-refresh setting changes mark the encrypted vault for a durable sync. Background changes are coalesced for five seconds and retried with bounded backoff. When the authenticated peer WebSocket is online, the changed encrypted vault is delivered and merged immediately. Settings Sync remains the durable fallback; newly downloaded vaults are detected and applied while VS Code stays open, and **Sync Sessions Now** forces a download/merge/upload pass. Signed WebSocket peer updates remain realtime; quota refreshes, account switching, usage, schedules, and heartbeat traffic never request a durable sync.
 
