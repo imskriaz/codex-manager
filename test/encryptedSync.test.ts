@@ -163,7 +163,8 @@ describe("encrypted account sync", () => {
 
   it("restores credentials from the encrypted user-owned vault after reinstall", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-durable-vault-"));
-    const vaultPath = path.join(directory, "encrypted-accounts-vault.json");
+    const legacyVaultPath = path.join(directory, "encrypted-accounts-vault.json");
+    const vaultPath = path.join(directory, "accounts", "durable-account@example.com.json");
     const entry = createEntry("durable-account", 500, "durable-refresh-token");
     const createContext = () => {
       const state = new Map<string, unknown>();
@@ -192,7 +193,7 @@ describe("encrypted account sync", () => {
         importSharedAccountsWithSummary: vi.fn(),
         flush: vi.fn(async () => undefined)
       };
-      const source = new EncryptedSyncManager(createContext(), sourceRepo as never, vaultPath);
+      const source = new EncryptedSyncManager(createContext(), sourceRepo as never, legacyVaultPath);
       await source.start();
       await vi.waitFor(async () => expect(await fs.readFile(vaultPath, "utf8")).toContain("ciphertext"));
       const rawVault = await fs.readFile(vaultPath, "utf8");
@@ -217,13 +218,206 @@ describe("encrypted account sync", () => {
         }),
         flush: vi.fn(async () => undefined)
       };
-      const restored = new EncryptedSyncManager(createContext(), restoredRepo as never, vaultPath);
+      const restored = new EncryptedSyncManager(createContext(), restoredRepo as never, legacyVaultPath);
 
       await restored.start();
 
       expect(restoredRepo.importSharedAccountsWithSummary).toHaveBeenCalledOnce();
       expect(restoredEntries[0]?.tokens?.refresh_token).toBe("durable-refresh-token");
       restored.dispose();
+    } finally {
+      await removeTestDirectory(directory);
+    }
+  });
+
+  it("stores each account in its own email-named encrypted file and recovers around one corrupt file", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-account-vaults-"));
+    const legacyVaultPath = path.join(directory, "encrypted-accounts-vault.json");
+    const accountsDirectory = path.join(directory, "accounts");
+    const entries = [
+      createEntry("first", 500, "first-refresh-token"),
+      createEntry("second", 600, "second-refresh-token")
+    ];
+    const createContext = () => {
+      const state = new Map<string, unknown>();
+      return {
+        subscriptions: [] as vscode.Disposable[],
+        globalState: {
+          get: <T>(key: string, fallback?: T) => (state.has(key) ? (state.get(key) as T) : fallback),
+          update: vi.fn(async (key: string, value: unknown) => state.set(key, value)),
+          setKeysForSync: vi.fn()
+        },
+        secrets: {
+          get: vi.fn(async (key: string) =>
+            key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one"
+          ),
+          store: vi.fn(async () => undefined),
+          delete: vi.fn(async () => undefined)
+        }
+      } as unknown as vscode.ExtensionContext;
+    };
+
+    try {
+      const sourceRepo = {
+        invalidateCachedIndex: vi.fn(),
+        listAccounts: vi.fn(async () => entries.map((entry) => ({ id: entry.id, email: entry.email }))),
+        exportSharedAccounts: vi.fn(async (ids: string[]) => entries.filter((entry) => ids.includes(entry.id!))),
+        flush: vi.fn(async () => undefined)
+      };
+      const source = new EncryptedSyncManager(createContext(), sourceRepo as never, legacyVaultPath);
+      await source.start();
+      await vi.waitFor(async () =>
+        expect((await fs.readdir(accountsDirectory)).sort()).toEqual([
+          "first@example.com.json",
+          "second@example.com.json"
+        ])
+      );
+      for (const fileName of await fs.readdir(accountsDirectory)) {
+        const raw = await fs.readFile(path.join(accountsDirectory, fileName), "utf8");
+        expect(raw).toContain("ciphertext");
+        expect(raw).not.toContain("refresh-token");
+      }
+      source.dispose();
+
+      await fs.writeFile(path.join(accountsDirectory, "second@example.com.json"), "damaged", "utf8");
+      vi.mocked(vscode.window.showWarningMessage).mockClear();
+      let restoredEntries: SyncAccountEntry[] = [];
+      const restoredRepo = {
+        invalidateCachedIndex: vi.fn(),
+        listAccounts: vi.fn(async () => restoredEntries.map((entry) => ({ id: entry.id, email: entry.email }))),
+        exportSharedAccounts: vi.fn(async (ids: string[]) =>
+          restoredEntries.filter((entry) => ids.includes(entry.id!))
+        ),
+        importSharedAccountsWithSummary: vi.fn(async (accounts: SyncAccountEntry[]) => {
+          restoredEntries = accounts;
+          return {
+            total: accounts.length,
+            successCount: accounts.length,
+            overwriteCount: 0,
+            failedCount: 0,
+            importedEmails: accounts.map((account) => account.email ?? ""),
+            failures: []
+          };
+        }),
+        flush: vi.fn(async () => undefined)
+      };
+      const restored = new EncryptedSyncManager(createContext(), restoredRepo as never, legacyVaultPath);
+
+      await restored.start();
+
+      expect(restoredEntries.map((entry) => entry.email)).toEqual(["first@example.com"]);
+      expect(restoredEntries[0]?.tokens?.refresh_token).toBe("first-refresh-token");
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining("1 saved account vault file")
+      );
+      await expect(fs.readFile(path.join(accountsDirectory, "second@example.com.json"), "utf8")).resolves.toBe(
+        "damaged"
+      );
+      restored.dispose();
+    } finally {
+      await removeTestDirectory(directory);
+    }
+  });
+
+  it("deletes only the intentionally removed account vault file", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-account-vault-delete-"));
+    const legacyVaultPath = path.join(directory, "encrypted-accounts-vault.json");
+    const accountsDirectory = path.join(directory, "accounts");
+    let entries = [createEntry("kept", 500), createEntry("removed", 600)];
+    const state = new Map<string, unknown>();
+    const context = {
+      subscriptions: [] as vscode.Disposable[],
+      globalState: {
+        get: <T>(key: string, fallback?: T) => (state.has(key) ? (state.get(key) as T) : fallback),
+        update: vi.fn(async (key: string, value: unknown) => state.set(key, value)),
+        setKeysForSync: vi.fn()
+      },
+      secrets: {
+        get: vi.fn(async (key: string) =>
+          key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one"
+        ),
+        store: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined)
+      }
+    } as unknown as vscode.ExtensionContext;
+    const repo = {
+      invalidateCachedIndex: vi.fn(),
+      listAccounts: vi.fn(async () => entries.map((entry) => ({ id: entry.id, email: entry.email }))),
+      exportSharedAccounts: vi.fn(async (ids: string[]) => entries.filter((entry) => ids.includes(entry.id!))),
+      flush: vi.fn(async () => undefined)
+    };
+
+    try {
+      const manager = new EncryptedSyncManager(context, repo as never, legacyVaultPath);
+      await manager.start();
+      await vi.waitFor(async () => expect(await fs.readdir(accountsDirectory)).toHaveLength(2), { timeout: 10_000 });
+
+      entries = entries.filter((entry) => entry.id !== "removed");
+      manager.onAccountsMutated({ addedAccountIds: [], removedAccountIds: ["removed"] });
+
+      await vi.waitFor(async () => expect(await fs.readdir(accountsDirectory)).toEqual(["kept@example.com.json"]), {
+        timeout: 10_000
+      });
+      manager.dispose();
+    } finally {
+      await removeTestDirectory(directory);
+    }
+  });
+
+  it("migrates the combined legacy vault into per-account email files", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-account-vault-migrate-"));
+    const legacyVaultPath = path.join(directory, "encrypted-accounts-vault.json");
+    const accountsDirectory = path.join(directory, "accounts");
+    const legacyEntries = [createEntry("legacy-one", 500), createEntry("legacy-two", 600)];
+    await fs.writeFile(legacyVaultPath, await encryptSyncPayload(createPayload(legacyEntries), PASSPHRASE), "utf8");
+    let restoredEntries: SyncAccountEntry[] = [];
+    const state = new Map<string, unknown>();
+    const context = {
+      subscriptions: [] as vscode.Disposable[],
+      globalState: {
+        get: <T>(key: string, fallback?: T) => (state.has(key) ? (state.get(key) as T) : fallback),
+        update: vi.fn(async (key: string, value: unknown) => state.set(key, value)),
+        setKeysForSync: vi.fn()
+      },
+      secrets: {
+        get: vi.fn(async (key: string) =>
+          key === "codexManager.encryptedSync.passphrase" ? PASSPHRASE : "device-one"
+        ),
+        store: vi.fn(async () => undefined),
+        delete: vi.fn(async () => undefined)
+      }
+    } as unknown as vscode.ExtensionContext;
+    const repo = {
+      invalidateCachedIndex: vi.fn(),
+      listAccounts: vi.fn(async () => restoredEntries.map((entry) => ({ id: entry.id, email: entry.email }))),
+      exportSharedAccounts: vi.fn(async (ids: string[]) => restoredEntries.filter((entry) => ids.includes(entry.id!))),
+      importSharedAccountsWithSummary: vi.fn(async (accounts: SyncAccountEntry[]) => {
+        restoredEntries = accounts;
+        return {
+          total: accounts.length,
+          successCount: accounts.length,
+          overwriteCount: 0,
+          failedCount: 0,
+          importedEmails: accounts.map((account) => account.email ?? ""),
+          failures: []
+        };
+      }),
+      flush: vi.fn(async () => undefined)
+    };
+
+    try {
+      const manager = new EncryptedSyncManager(context, repo as never, legacyVaultPath);
+      await manager.start();
+
+      await vi.waitFor(async () =>
+        expect((await fs.readdir(accountsDirectory)).sort()).toEqual([
+          "legacy-one@example.com.json",
+          "legacy-two@example.com.json"
+        ])
+      );
+      await vi.waitFor(async () => await expect(fs.access(legacyVaultPath)).rejects.toThrow());
+      expect(restoredEntries).toHaveLength(2);
+      manager.dispose();
     } finally {
       await removeTestDirectory(directory);
     }
@@ -803,12 +997,30 @@ describe("encrypted account sync", () => {
     expect(isEncryptedSyncRegistryOverrideEnabled()).toBe(false);
     expect(state.get("codexManager.encryptedSync.enablementOverride.v1")).toBeUndefined();
 
+    vi.mocked(vscode.commands.executeCommand).mockClear().mockResolvedValue(undefined);
     await expect(manager.setRegistryOverrideEnabled(true, { passphrase: PASSPHRASE })).resolves.toBe(true);
     expect(isEncryptedSyncRegistryOverrideEnabled()).toBe(true);
     expect(state.get("codexManager.encryptedSync.enablementOverride.v1")).toBe(true);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.refreshAllQuotas", {
+      silent: true,
+      forceRefresh: true,
+      excludeCurrent: false,
+      respectQuotaCheckGap: false
+    });
 
     await expect(manager.setRegistryOverrideEnabled(false)).resolves.toBe(true);
     expect(isEncryptedSyncRegistryOverrideEnabled()).toBe(false);
+
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("quota service unavailable"));
+    vi.mocked(vscode.window.showWarningMessage).mockClear();
+    await expect(manager.setRegistryOverrideEnabled(true, { passphrase: PASSPHRASE })).resolves.toBe(true);
+    await vi.waitFor(() =>
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringMatching(/Rescue override is enabled.*immediate quota refresh failed.*scheduled refresh/i)
+      )
+    );
+    expect(isEncryptedSyncRegistryOverrideEnabled()).toBe(true);
+    await expect(manager.setRegistryOverrideEnabled(false)).resolves.toBe(true);
     manager.dispose();
   });
 
@@ -1006,11 +1218,18 @@ describe("encrypted account sync", () => {
     manager.setOnlineDeviceIds(undefined);
     await expect(manager.prepareAccountSwitch("one")).rejects.toThrow(/Office PC/i);
 
+    vi.mocked(vscode.commands.executeCommand).mockClear().mockResolvedValue(undefined);
     await expect(manager.setRegistryOverrideEnabled(true, { passphrase: PASSPHRASE })).resolves.toBe(true);
     await expect(manager.prepareAccountSwitch("one")).resolves.toBeUndefined();
     await expect(manager.prepareAccountEnablement("one", true)).resolves.toBeUndefined();
     expect(manager.canRefreshAccount("one")).toBe(true);
-    expect(manager.canAutomateAccount("one")).toBe(false);
+    expect(manager.canAutomateAccount("one")).toBe(true);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.refreshAllQuotas", {
+      silent: true,
+      forceRefresh: true,
+      excludeCurrent: false,
+      respectQuotaCheckGap: false
+    });
     await expect(manager.completeAccountEnablement("one", true)).resolves.toBeUndefined();
     expect(repo.setAccountEnabledFromSync).not.toHaveBeenCalled();
     await expect(manager.setRegistryOverrideEnabled(false)).resolves.toBe(true);

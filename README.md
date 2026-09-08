@@ -124,7 +124,7 @@ Important combinations:
 
 ## Privacy and security
 
-- Account tokens remain in local VS Code SecretStorage, the Codex credential file, and a password-encrypted reinstall-safe vault under `CODEX_HOME/codex-manager` (normally `~/.codex/codex-manager`). They are not sent to a Codex Manager server.
+- Account tokens remain in local VS Code SecretStorage, the Codex credential file, and separate password-encrypted, email-named recovery files under `~/.codex-manager/accounts`. They are not sent to a Codex Manager server.
 - Cross-PC claim checks synchronize encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Full cross-PC account sync** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
@@ -132,7 +132,7 @@ Important combinations:
 
 ## Troubleshooting
 
-- **No accounts appear after reinstall:** enter the same shared Password so Codex Manager can unlock its reinstall-safe local vault. Confirm `CODEX_HOME` points to the same Codex installation.
+- **No accounts appear after reinstall:** enter the same shared Password so Codex Manager can unlock the account files under `~/.codex-manager/accounts`.
 - **Quota refresh fails:** run **Refresh Quota**, check your network/proxy settings, and inspect **Open Persistent Logs** for the operation ID.
 - **Switch did not affect Codex:** close/restart the Codex desktop app or enable the extension’s app-restart setting. Verify the active `auth.json` in **Open Codex Home**.
 - **Browser dashboard cannot connect:** confirm Web dashboard is enabled, the shared Password is configured in General, and the Cloudflare route points to `http://127.0.0.1:39875`.

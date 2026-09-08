@@ -535,7 +535,7 @@ describe("executeDashboardActionMessage", () => {
     expect(setEncryptedSyncRegistryOverride).toHaveBeenCalledWith(true, "shared-password");
     expect(repo.switchAccount).toHaveBeenCalledWith(account.id, { forceTokenRefresh: false });
     expect(result.payload?.notice?.message).toMatch(/Rescue override is enabled/i);
-    expect(result.payload?.notice?.message).toMatch(/automation still avoids foreign claims/i);
+    expect(result.payload?.notice?.message).toMatch(/automation resumed for enabled accounts/i);
     setCurrentWindowRuntimeAccountId(undefined);
   });
 

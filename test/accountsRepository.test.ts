@@ -155,11 +155,11 @@ describe("AccountsRepository token persistence", () => {
       ...createTokens("acct_durable", "durable@example.com"),
       refreshToken: "replacement-refresh-token"
     });
-    expect(onVaultMutation).toHaveBeenCalledWith("credentials-changed");
+    expect(onVaultMutation).toHaveBeenCalledWith("credentials-changed", [account.id]);
 
     onVaultMutation.mockClear();
     await repo.setAccountTokenRefreshEnabled(account.id, true);
-    expect(onVaultMutation).toHaveBeenCalledWith("token-refresh-setting-changed");
+    expect(onVaultMutation).toHaveBeenCalledWith("token-refresh-setting-changed", [account.id]);
 
     onVaultMutation.mockClear();
     await repo.setAccountQueuePriority(account.id, true);
@@ -508,5 +508,37 @@ describe("AccountsRepository token persistence", () => {
       accounts: [expect.objectContaining({ id: saved.id })]
     });
     afterReinstall.dispose();
+  });
+
+  it("migrates account metadata from the former Codex-home folder into .codex-manager", async () => {
+    const firstStorage = path.join(tempDir, "extension-storage-before-folder-move");
+    const reinstalledStorage = path.join(tempDir, "extension-storage-after-folder-move");
+    const legacyIndex = path.join(tempDir, ".codex", "codex-manager", "accounts-index.json");
+    const durableIndex = path.join(tempDir, ".codex-manager", "accounts-index.json");
+    const secrets = new Map<string, string>();
+    const createContext = (storagePath: string) =>
+      ({
+        globalStorageUri: { fsPath: storagePath },
+        secrets: {
+          get: vi.fn(async (key: string) => secrets.get(key)),
+          store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+          delete: vi.fn(async (key: string) => secrets.delete(key))
+        }
+      }) as unknown as vscode.ExtensionContext;
+
+    const formerVersion = new AccountsRepository(createContext(firstStorage), legacyIndex);
+    const saved = await formerVersion.upsertFromTokens(createTokens("acct_folder_move", "moved@example.com"));
+    await formerVersion.flush();
+    formerVersion.dispose();
+
+    const currentVersion = new AccountsRepository(createContext(reinstalledStorage), durableIndex, legacyIndex);
+    const restored = await currentVersion.listAccounts();
+
+    expect(restored).toEqual([expect.objectContaining({ id: saved.id, email: "moved@example.com" })]);
+    expect(JSON.parse(await fs.readFile(durableIndex, "utf8"))).toMatchObject({
+      accounts: [expect.objectContaining({ id: saved.id })]
+    });
+    await expect(fs.access(legacyIndex)).rejects.toThrow();
+    currentVersion.dispose();
   });
 });

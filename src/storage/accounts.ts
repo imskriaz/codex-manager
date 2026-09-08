@@ -135,7 +135,10 @@ export interface AccountSwitchCoordinator {
   completeAccountSwitch(accountId: string): Promise<void>;
   cancelAccountSwitch(accountId: string): Promise<void>;
   onAccountsMutated?(change: { addedAccountIds: string[]; removedAccountIds: string[] }): void;
-  onVaultMutation?(reason: "account-added" | "credentials-changed" | "token-refresh-setting-changed"): void;
+  onVaultMutation?(
+    reason: "account-added" | "credentials-changed" | "token-refresh-setting-changed",
+    accountIds?: readonly string[]
+  ): void;
   prepareAccountEnablement?(accountId: string, enabled: boolean): Promise<void>;
   completeAccountEnablement?(accountId: string, enabled: boolean): Promise<void>;
 }
@@ -145,6 +148,8 @@ export class AccountsRepository {
   private readonly indexPath: string;
   /** A user-owned mirror survives uninstall/reinstall of the extension. */
   private readonly durableIndexPath: string | undefined;
+  /** Temporary migration source used by the first reinstall-safe prerelease. */
+  private readonly legacyDurableIndexPath: string | undefined;
   private readonly state = createAccountsRepositoryState();
   private indexReadInFlight: Promise<CodexManagerIndex> | undefined;
   /** 按账号串行化切号/刷新，避免并发刷新同一账号 token */
@@ -168,24 +173,25 @@ export class AccountsRepository {
     this.tokenCache.delete(accountId);
   }
 
-  constructor(private readonly context: vscode.ExtensionContext, durableIndexPath?: string) {
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    durableIndexPath?: string,
+    legacyDurableIndexPath?: string
+  ) {
     this.secretStore = new SecretStore(context.secrets);
     this.indexPath = path.join(context.globalStorageUri.fsPath, INDEX_FILE);
     // Extension global storage is removed by some uninstall flows. Keep a
-    // metadata-only mirror under the user's Codex home so reinstall can
+    // metadata-only mirror under the user's .codex-manager folder so reinstall can
     // restore the account list. Test shims do not provide extensionUri, so
     // they remain isolated from a real user's durable data.
     this.durableIndexPath =
-      durableIndexPath ??
-      (context.extensionUri
-        ? path.join(
-          process.env["CODEX_HOME"]?.trim()
-            ? process.env["CODEX_HOME"].replace(/^['"]|['"]$/g, "")
-            : path.join(os.homedir(), ".codex"),
-          "codex-manager",
-          INDEX_FILE
-        )
-        : undefined);
+      durableIndexPath ?? (context.extensionUri ? path.join(os.homedir(), ".codex-manager", INDEX_FILE) : undefined);
+    const codexHome = process.env["CODEX_HOME"]?.trim()
+      ? process.env["CODEX_HOME"].replace(/^['"]|['"]$/g, "")
+      : path.join(os.homedir(), ".codex");
+    this.legacyDurableIndexPath =
+      legacyDurableIndexPath ??
+      (durableIndexPath || !context.extensionUri ? undefined : path.join(codexHome, "codex-manager", INDEX_FILE));
   }
 
   /**
@@ -193,9 +199,7 @@ export class AccountsRepository {
    * - 创建存储目录
    * - 同步激活账号状态
    */
-  async init(
-    options: { deferSync?: boolean } = {}
-  ): Promise<{ authSyncCompleted: boolean }> {
+  async init(options: { deferSync?: boolean } = {}): Promise<{ authSyncCompleted: boolean }> {
     try {
       await fs.mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
     } catch (cause) {
@@ -344,7 +348,10 @@ export class AccountsRepository {
       throw createError.storageIndexRecoveryFailed(this.indexPath, this.state.indexHealth.lastErrorMessage);
     }
 
-    this.switchCoordinator?.onVaultMutation?.("credentials-changed");
+    this.switchCoordinator?.onVaultMutation?.(
+      "credentials-changed",
+      restored.accounts.map((account) => account.id)
+    );
     return {
       source: "backup",
       restoredCount: restored.accounts.length,
@@ -416,10 +423,7 @@ export class AccountsRepository {
   /**
    * 获取账号的令牌
    */
-  async getTokens(
-    accountId: string,
-    options: { bypassCache?: boolean } = {}
-  ): Promise<CodexTokens | undefined> {
+  async getTokens(accountId: string, options: { bypassCache?: boolean } = {}): Promise<CodexTokens | undefined> {
     try {
       // 内存缓存命中直接返回，避免 Dashboard 刷新时重复读 Keychain
       const cached = this.tokenCache.get(accountId);
@@ -486,7 +490,7 @@ export class AccountsRepository {
       this.writeIndex(index);
     }
     if (credentialsChanged) {
-      this.switchCoordinator?.onVaultMutation?.("credentials-changed");
+      this.switchCoordinator?.onVaultMutation?.("credentials-changed", [account.id]);
     }
 
     return account;
@@ -696,7 +700,7 @@ export class AccountsRepository {
       this.writeIndex(index);
     }
     if (existing && (!previousTokens || !areTokenCredentialsEqual(previousTokens, storedTokens))) {
-      this.switchCoordinator?.onVaultMutation?.("credentials-changed");
+      this.switchCoordinator?.onVaultMutation?.("credentials-changed", [id]);
     }
 
     return account;
@@ -1060,7 +1064,9 @@ export class AccountsRepository {
       throw createError.accountNotFound(accountId);
     }
     this.writeIndex(index);
-    if (previous !== enabled) this.switchCoordinator?.onVaultMutation?.("token-refresh-setting-changed");
+    if (previous !== enabled) {
+      this.switchCoordinator?.onVaultMutation?.("token-refresh-setting-changed", [accountId]);
+    }
     return account;
   }
 
@@ -1189,7 +1195,7 @@ export class AccountsRepository {
           account.updatedAt = Date.now();
           account.credentialUpdatedAt = account.updatedAt;
           changed = true;
-          this.switchCoordinator?.onVaultMutation?.("credentials-changed");
+          this.switchCoordinator?.onVaultMutation?.("credentials-changed", [derivedId]);
         }
       }
     }
@@ -1425,7 +1431,10 @@ export class AccountsRepository {
               backupCount: INDEX_BACKUP_COUNT
             });
           } catch (restoreError) {
-            console.warn("[codexManager] restored durable account metadata in memory; local index write failed:", restoreError);
+            console.warn(
+              "[codexManager] restored durable account metadata in memory; local index write failed:",
+              restoreError
+            );
           }
           this.state.cache = { data: cloneIndex(durable), timestamp: Date.now() };
           this.state.indexHealth = { ...this.state.indexHealth, status: "healthy" };
@@ -1508,6 +1517,21 @@ export class AccountsRepository {
     } catch (error) {
       if (!isFileNotFoundError(error)) {
         console.warn("[codexManager] durable account metadata could not be read:", error);
+        return undefined;
+      }
+    }
+
+    if (!this.legacyDurableIndexPath) return undefined;
+    try {
+      const legacy = await readIndexSnapshot(this.legacyDurableIndexPath);
+      await this.persistDurableIndex(legacy);
+      await fs.unlink(this.legacyDurableIndexPath).catch((error) => {
+        if (!isFileNotFoundError(error)) throw error;
+      });
+      return legacy;
+    } catch (error) {
+      if (!isFileNotFoundError(error)) {
+        console.warn("[codexManager] legacy durable account metadata could not be migrated:", error);
       }
       return undefined;
     }

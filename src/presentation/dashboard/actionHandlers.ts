@@ -455,7 +455,7 @@ async function runDashboardAction(
           notice: {
             level: payload.enabled ? ("warning" as const) : ("info" as const),
             message: payload.enabled
-              ? "Rescue override enabled on this PC. Foreign-PC claims are warning-only."
+              ? "Rescue override enabled on this PC. Automation resumed for enabled accounts and quota refresh started; foreign-PC claims are warning-only."
               : "Rescue override disabled. The synchronized registry is enforced again."
           }
         };
@@ -615,11 +615,9 @@ async function runDashboardAction(
         const enabled =
           ctx.hostKind === "browser"
             ? await ctx.setEncryptedSyncRegistryOverride?.(true, payload.passphrase)
-            : await vscode.commands.executeCommand<boolean>(
-                "codexManager.setEncryptedSyncRegistryOverride",
-                true,
-                { passphrase: payload.passphrase }
-              );
+            : await vscode.commands.executeCommand<boolean>("codexManager.setEncryptedSyncRegistryOverride", true, {
+                passphrase: payload.passphrase
+              });
         if (enabled !== true) {
           ctx.schedulePublishState();
           throw new Error("The claimed account was not switched. Check the shared password and try again.");
@@ -655,7 +653,7 @@ async function runDashboardAction(
         return {
           notice: {
             level: "info" as const,
-            message: `Switched to ${currentAccount.email}.${rescueEnabledForSwitch ? " Rescue override is enabled on this PC; automation still avoids foreign claims." : ""}${reloadRequired ? " Reloading Codex…" : ""}`
+            message: `Switched to ${currentAccount.email}.${rescueEnabledForSwitch ? " Rescue override is enabled on this PC; automation resumed for enabled accounts." : ""}${reloadRequired ? " Reloading Codex…" : ""}`
           },
           reloadScheduled: reloadRequired
         };
@@ -687,8 +685,8 @@ async function runDashboardAction(
             notice: {
               level: "info" as const,
               message: reloadRequired
-                ? `Switched to ${result.account.email}.${rescueEnabledForSwitch ? " Rescue override is enabled; automation still avoids foreign claims." : ""} Reloading Codex…`
-                : `Switched to ${result.account.email}.${rescueEnabledForSwitch ? " Rescue override is enabled; automation still avoids foreign claims." : ""}`
+                ? `Switched to ${result.account.email}.${rescueEnabledForSwitch ? " Rescue override is enabled; automation resumed for enabled accounts." : ""} Reloading Codex…`
+                : `Switched to ${result.account.email}.${rescueEnabledForSwitch ? " Rescue override is enabled; automation resumed for enabled accounts." : ""}`
             },
             reloadScheduled: reloadRequired
           };

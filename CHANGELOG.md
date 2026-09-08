@@ -1,9 +1,9 @@
 # Changelog
 
-## 1.1.6-pre.0
+## 1.1.6
 
-- Preserve saved account metadata and a password-encrypted credential vault under the user-owned Codex directory so uninstalling and reinstalling the extension does not discard accounts.
-- Allow explicit switching to foreign-claimed accounts through the shared-password Rescue flow while keeping background refresh and automatic switching claim-safe.
+- Preserve saved account metadata under `~/.codex-manager` and store every account in its own password-encrypted, email-named file so uninstalling and reinstalling the extension does not discard accounts and one damaged file cannot block recovery of the others.
+- Allow explicit switching to foreign-claimed accounts through the shared-password Rescue flow. While Rescue is active, enabled accounts immediately resume automation and scheduled quota refresh despite foreign claims.
 - Fall back to authenticated peer WebSockets when VS Code Settings Sync is signed out, including direct encrypted-vault delivery to connected peers.
 
 ## 1.1.5
