@@ -20,7 +20,8 @@ describe("account switch reload effects", () => {
     await expect(autoReloadWindowForAccount("next-account")).resolves.toBe(true);
 
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart");
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "workbench.action.restartExtensionHost");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
   });
 
@@ -39,8 +40,22 @@ describe("account switch reload effects", () => {
     ).resolves.toBe(true);
 
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart");
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "workbench.action.restartExtensionHost");
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.reloadWindow");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(4, "workbench.action.reloadWindow");
+  });
+
+  it("continues a requested reload if clearing stale notifications fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command: string) => {
+      if (command === "notifications.clearAll") throw new Error("Clear unavailable");
+      return undefined;
+    });
+
+    await expect(autoReloadWindowForAccount("next-account")).resolves.toBe(true);
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("notifications.clearAll");
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
   });
 
   it("reports a delayed unload reload failure to both its host callback and VS Code", async () => {

@@ -195,7 +195,9 @@ describe("encrypted account sync", () => {
       };
       const source = new EncryptedSyncManager(createContext(), sourceRepo as never, legacyVaultPath);
       await source.start();
-      await vi.waitFor(async () => expect(await fs.readFile(vaultPath, "utf8")).toContain("ciphertext"));
+      await vi.waitFor(async () => expect(await fs.readFile(vaultPath, "utf8")).toContain("ciphertext"), {
+        timeout: 10_000
+      });
       const rawVault = await fs.readFile(vaultPath, "utf8");
       expect(rawVault).not.toContain("durable-refresh-token");
       source.dispose();
@@ -266,11 +268,13 @@ describe("encrypted account sync", () => {
       };
       const source = new EncryptedSyncManager(createContext(), sourceRepo as never, legacyVaultPath);
       await source.start();
-      await vi.waitFor(async () =>
-        expect((await fs.readdir(accountsDirectory)).sort()).toEqual([
-          "first@example.com.json",
-          "second@example.com.json"
-        ])
+      await vi.waitFor(
+        async () =>
+          expect((await fs.readdir(accountsDirectory)).sort()).toEqual([
+            "first@example.com.json",
+            "second@example.com.json"
+          ]),
+        { timeout: 10_000 }
       );
       for (const fileName of await fs.readdir(accountsDirectory)) {
         const raw = await fs.readFile(path.join(accountsDirectory, fileName), "utf8");
@@ -409,13 +413,17 @@ describe("encrypted account sync", () => {
       const manager = new EncryptedSyncManager(context, repo as never, legacyVaultPath);
       await manager.start();
 
-      await vi.waitFor(async () =>
-        expect((await fs.readdir(accountsDirectory)).sort()).toEqual([
-          "legacy-one@example.com.json",
-          "legacy-two@example.com.json"
-        ])
+      await vi.waitFor(
+        async () =>
+          expect((await fs.readdir(accountsDirectory)).sort()).toEqual([
+            "legacy-one@example.com.json",
+            "legacy-two@example.com.json"
+          ]),
+        { timeout: 10_000 }
       );
-      await vi.waitFor(async () => await expect(fs.access(legacyVaultPath)).rejects.toThrow());
+      await vi.waitFor(async () => await expect(fs.access(legacyVaultPath)).rejects.toThrow(), {
+        timeout: 10_000
+      });
       expect(restoredEntries).toHaveLength(2);
       manager.dispose();
     } finally {

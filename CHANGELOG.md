@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.7
+
+- Replace passive VS Code info and warning pop-ups with one discreet status-bar notice that disappears after ten seconds and clears when the extension reloads. Keep errors and actionable prompts visible as native notifications.
+- Show one dashboard notice at a time, replacing the previous notice and clearing it after ten seconds or on reload; close matching browser push notifications on replacement, timeout, and reload.
+- Replace an unanswered VS Code choice when a newer Codex Manager choice arrives, and clear the VS Code notification center when Codex Manager initiates an extension-host or window reload.
+
 ## 1.1.6
 
 - Preserve saved account metadata under `~/.codex-manager` and store every account in its own password-encrypted, email-named file so uninstalling and reinstalling the extension does not discard accounts and one damaged file cannot block recovery of the others.

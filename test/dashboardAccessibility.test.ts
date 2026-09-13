@@ -106,11 +106,12 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(source).not.toContain("announcement-button-badge");
   });
 
-  it("queues concurrent notifications without allowing background result spam", () => {
+  it("shows only the newest notification without allowing background result spam", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const feedback = readFileSync("webview-src/dashboard/actionFeedback.ts", "utf8");
     expect(source).toContain("dashboard-notice-stack");
-    expect(source).toContain(".slice(-4)");
+    expect(source).toContain("createDashboardToastController(setNotice)");
+    expect(source).not.toContain(".slice(-4)");
     expect(feedback).toContain('"listCodexCliSessions"');
     expect(feedback).toContain("completed.`");
   });

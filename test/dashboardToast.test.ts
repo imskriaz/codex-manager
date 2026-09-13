@@ -1,8 +1,10 @@
 import { readFileSync } from "fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createDashboardToastController,
   DASHBOARD_TOAST_DURATION_MS,
-  scheduleDashboardToastDismiss
+  scheduleDashboardToastDismiss,
+  type DashboardToast
 } from "../webview-src/dashboard/toast";
 
 describe("dashboard toast", () => {
@@ -33,7 +35,62 @@ describe("dashboard toast", () => {
     expect(onDismiss).not.toHaveBeenCalled();
   });
 
-  it("portals stacked notices above dashboard dialogs", () => {
+  it("replaces the visible toast and gives the newest notice a full ten seconds", () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn<(toast: DashboardToast | undefined) => void>();
+    const controller = createDashboardToastController(onChange);
+
+    controller.show({ level: "info", message: "First" });
+    const first = onChange.mock.lastCall?.[0];
+    vi.advanceTimersByTime(5_000);
+    controller.show({ level: "warning", message: "Second" });
+    const second = onChange.mock.lastCall?.[0];
+
+    expect(first?.message).toBe("First");
+    expect(second?.message).toBe("Second");
+    expect(second?.id).not.toBe(first?.id);
+    expect(onChange).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(5_000);
+    expect(onChange).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(5_000);
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+    controller.dispose();
+  });
+
+  it("cancels the timer on manual dismissal and ignores stale dismissals", () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn<(toast: DashboardToast | undefined) => void>();
+    const controller = createDashboardToastController(onChange);
+
+    controller.show({ level: "info", message: "First" });
+    const firstId = onChange.mock.lastCall?.[0]?.id;
+    controller.show({ level: "info", message: "Second" });
+    const secondId = onChange.mock.lastCall?.[0]?.id;
+    controller.dismiss(firstId!);
+    expect(onChange.mock.lastCall?.[0]?.message).toBe("Second");
+
+    controller.dismiss(secondId!);
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+    vi.advanceTimersByTime(DASHBOARD_TOAST_DURATION_MS);
+    expect(onChange).toHaveBeenCalledTimes(3);
+    controller.dispose();
+  });
+
+  it("cancels a pending toast when the dashboard unmounts or reloads", () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn<(toast: DashboardToast | undefined) => void>();
+    const controller = createDashboardToastController(onChange);
+
+    controller.show({ level: "error", message: "Temporary failure" });
+    controller.dispose();
+    vi.advanceTimersByTime(DASHBOARD_TOAST_DURATION_MS);
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    controller.show({ level: "info", message: "Late message" });
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("portals the current notice above dashboard dialogs", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
 
@@ -42,5 +99,14 @@ describe("dashboard toast", () => {
     expect(css).toMatch(/--dashboard-z-toast:\s*40000/);
     expect(css).toMatch(/\.dashboard-notice-stack\s*\{[\s\S]*?z-index:\s*var\(--dashboard-z-toast\)/);
     expect(css).toMatch(/\.dashboard-notice-stack \.dashboard-notice\s*\{[\s\S]*?position:\s*relative/);
+  });
+
+  it("closes browser push notifications on replacement, timeout, and reload", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+
+    expect(main).toMatch(/if \(lastBrowserPushKeyRef\.current === notificationKey\) return;\s+closeBrowserPush\(\)/);
+    expect(main).toContain('window.addEventListener("pagehide", closeBrowserPush)');
+    expect(main).toContain("cancelBrowserPushDismissRef.current = scheduleDashboardToastDismiss");
+    expect(main).toContain("notification.close()");
   });
 });

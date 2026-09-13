@@ -146,6 +146,13 @@ export function deferWindowReloadForAccount(accountId: string): boolean {
 
 async function reloadExtensionHostWithWindowFallback(): Promise<void> {
   await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart");
+  // This is the user's explicit reload boundary: discard accumulated native
+  // choices and notices before the extension host (or window) restarts.
+  try {
+    await vscode.commands.executeCommand("notifications.clearAll");
+  } catch (error) {
+    console.warn("[codexManager] could not clear VS Code notifications before reload", error);
+  }
   try {
     await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
   } catch (error) {

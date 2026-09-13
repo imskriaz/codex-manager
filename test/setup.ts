@@ -22,6 +22,7 @@ vi.mock("vscode", () => ({
     showWarningMessage: vi.fn(),
     showInformationMessage: vi.fn(),
     showErrorMessage: vi.fn(),
+    setStatusBarMessage: vi.fn(() => ({ dispose: vi.fn() })),
     withProgress: vi.fn(async (_options, task) =>
       task(
         { report: vi.fn() },

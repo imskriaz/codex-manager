@@ -61,7 +61,7 @@ import {
 import { SavedAccountCard } from "./savedAccountCard";
 import { createInitialState, reducer } from "./state";
 import { resolveDashboardThemeFromMedia } from "./theme";
-import { scheduleDashboardToastDismiss } from "./toast";
+import { createDashboardToastController, scheduleDashboardToastDismiss, type DashboardToast } from "./toast";
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
@@ -195,25 +195,55 @@ function App() {
   }, [selectedCliSession]);
   const [dailyUsageByAccount, setDailyUsageByAccount] = useState<Record<string, CodexDailyUsageBreakdown>>({});
   const [dailyUsageErrorByAccount, setDailyUsageErrorByAccount] = useState<Record<string, string>>({});
-  const [notices, setNotices] = useState<Array<DashboardNotice & { id: number }>>([]);
-  const nextNoticeIdRef = useRef(0);
+  const [notice, setNotice] = useState<DashboardToast>();
+  const noticeControllerRef = useRef<ReturnType<typeof createDashboardToastController>>();
+  noticeControllerRef.current ??= createDashboardToastController(setNotice);
+  useEffect(() => () => noticeControllerRef.current?.dispose(), []);
   const browserPushPermissionRef = useRef<Promise<NotificationPermission | undefined>>();
   const lastBrowserPushKeyRef = useRef<string>();
+  const browserPushRef = useRef<Notification>();
+  const cancelBrowserPushDismissRef = useRef<() => void>();
+  const browserPushGenerationRef = useRef(0);
+  const closeBrowserPush = useCallback(() => {
+    browserPushGenerationRef.current += 1;
+    cancelBrowserPushDismissRef.current?.();
+    cancelBrowserPushDismissRef.current = undefined;
+    browserPushRef.current?.close();
+    browserPushRef.current = undefined;
+  }, []);
+  useEffect(() => {
+    window.addEventListener("pagehide", closeBrowserPush);
+    return () => {
+      window.removeEventListener("pagehide", closeBrowserPush);
+      closeBrowserPush();
+    };
+  }, [closeBrowserPush]);
   const pushBrowserNotification = useCallback(
     (notice: DashboardNotice) => {
       const major = notice.level !== "info" || Boolean(notice.actions?.length);
       if (!isBrowserDashboard || !major || typeof Notification === "undefined") {
+        closeBrowserPush();
+        lastBrowserPushKeyRef.current = undefined;
         return;
       }
       const notificationKey = notice.notificationId ?? `${notice.level}:${notice.message}`;
       if (lastBrowserPushKeyRef.current === notificationKey) return;
+      closeBrowserPush();
       lastBrowserPushKeyRef.current = notificationKey;
+      const generation = browserPushGenerationRef.current;
       const show = () => {
-        if (Notification.permission !== "granted") return;
+        if (browserPushGenerationRef.current !== generation || Notification.permission !== "granted") return;
         try {
           const notification = new Notification("Codex Manager", {
             body: notice.message,
             tag: `codex-manager-${notice.notificationId ?? notice.level}`
+          });
+          browserPushRef.current = notification;
+          cancelBrowserPushDismissRef.current = scheduleDashboardToastDismiss(() => {
+            if (browserPushRef.current !== notification) return;
+            notification.close();
+            browserPushRef.current = undefined;
+            cancelBrowserPushDismissRef.current = undefined;
           });
           notification.onclick = () => window.focus();
         } catch {
@@ -228,19 +258,12 @@ function App() {
       browserPushPermissionRef.current ??= Notification.requestPermission().catch(() => undefined);
       void browserPushPermissionRef.current.then(show);
     },
-    [isBrowserDashboard]
+    [closeBrowserPush, isBrowserDashboard]
   );
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const showNotice = useCallback(
     (next: DashboardNotice) => {
-      const id = ++nextNoticeIdRef.current;
-      setNotices((current) => {
-        if (current.some((notice) => notice.level === next.level && notice.message === next.message)) return current;
-        return [...current, { ...next, id }].slice(-4);
-      });
-      scheduleDashboardToastDismiss(() => {
-        setNotices((current) => current.filter((notice) => notice.id !== id));
-      });
+      noticeControllerRef.current?.show(next);
       pushBrowserNotification(next);
     },
     [pushBrowserNotification]
@@ -1649,25 +1672,26 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
-      {notices.length
+      {notice
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
-              {notices.map((notice) => (
-                <div
-                  key={notice.id}
-                  class={`dashboard-notice is-${notice.level}`}
-                  role={notice.level === "error" ? "alert" : "status"}
+              <div
+                key={notice.id}
+                class={`dashboard-notice is-${notice.level}`}
+                role={notice.level === "error" ? "alert" : "status"}
+              >
+                <span>{notice.message}</span>
+                <button
+                  type="button"
+                  aria-label="Dismiss notification"
+                  onClick={() => {
+                    noticeControllerRef.current?.dismiss(notice.id);
+                    closeBrowserPush();
+                  }}
                 >
-                  <span>{notice.message}</span>
-                  <button
-                    type="button"
-                    aria-label="Dismiss notification"
-                    onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+                  ×
+                </button>
+              </div>
             </div>,
             document.body
           )

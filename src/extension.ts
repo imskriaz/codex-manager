@@ -7,8 +7,10 @@ import {
 } from "./infrastructure/config/proxyEnvironment";
 import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOperations";
 import { disposePersistentLogging, registerPersistentLogging } from "./utils/persistentLog";
+import { enableTransientVscodeNotices } from "./utils/notificationMirror";
 
 let workbench: AccountsWorkbench | undefined;
+let transientNotices: vscode.Disposable | undefined;
 
 /**
  * 激活扩展
@@ -16,6 +18,7 @@ let workbench: AccountsWorkbench | undefined;
  * @param context - 扩展上下文
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  transientNotices = enableTransientVscodeNotices();
   try {
     await registerPersistentLogging(context);
   } catch (error) {
@@ -66,6 +69,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 export async function deactivate(): Promise<void> {
   workbench?.shutdown();
   workbench = undefined;
+  transientNotices?.dispose();
+  transientNotices = undefined;
   disposeCodexProxyEnvironment();
   await disposePersistentLogging();
 }

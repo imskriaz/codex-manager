@@ -7,6 +7,7 @@ import type { EncryptedSyncManager } from "../services/encryptedSync";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
+import { runWithNativeCommandWarnings } from "../utils/notificationMirror";
 import { runWithPersistentOperation } from "../utils/persistentLog";
 
 export function runRegisteredCommand<T>(
@@ -28,7 +29,7 @@ export function runRegisteredCommand<T>(
       }
     }
   };
-  return runWithPersistentOperation(
+  return runWithNativeCommandWarnings(() => runWithPersistentOperation(
     `command:${label}`,
     () =>
       Promise.resolve()
@@ -48,7 +49,7 @@ export function runRegisteredCommand<T>(
           throw error;
         }),
     { operationKey, retryBusy: options.retryBusy === true }
-  );
+  ));
 }
 
 /**
