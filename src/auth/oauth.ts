@@ -172,10 +172,12 @@ export function needsRefresh(accessToken: string, skewSeconds = TOKEN_REFRESH_SK
 }
 
 export function needsTokenRefresh(
-  tokens: Pick<CodexTokens, "idToken" | "accessToken">,
+  tokens: Pick<CodexTokens, "accessToken">,
   skewSeconds = TOKEN_REFRESH_SKEW_SECONDS
 ): boolean {
-  return isTokenExpired(tokens.accessToken, skewSeconds) || isTokenExpired(tokens.idToken, skewSeconds);
+  // The provider may omit id_token on refresh, leaving the previous ID token
+  // in storage. Its expiry does not invalidate a still-usable access token.
+  return isTokenExpired(tokens.accessToken, skewSeconds);
 }
 
 export function prepareOAuthLoginSession(port = CALLBACK_PORT): PreparedOAuthLoginSession {

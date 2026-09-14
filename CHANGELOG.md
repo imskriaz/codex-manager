@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.10-pre1
+
+- Judge token refresh and account health by access-token expiry so an older ID token retained after refresh does not cause repeated refresh attempts or a false expiry warning.
+
 ## 1.1.9
 
 - Treat 5-hour quota as zero for sorting when the main weekly quota is exhausted, and place accounts with a missing main quota last.

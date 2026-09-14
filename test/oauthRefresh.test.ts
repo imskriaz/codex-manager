@@ -8,7 +8,7 @@ vi.mock("undici", () => ({
   fetch: fetchMock
 }));
 
-import { refreshTokens } from "../src/auth/oauth";
+import { needsTokenRefresh, refreshTokens } from "../src/auth/oauth";
 import { APIError } from "../src/core/errors";
 
 function tokenResponse(payload: Record<string, unknown>, status = 200): Response {
@@ -17,6 +17,10 @@ function tokenResponse(payload: Record<string, unknown>, status = 200): Response
     status,
     text: async () => JSON.stringify(payload)
   } as Response;
+}
+
+function tokenExpiringAt(epochSeconds: number): string {
+  return `header.${Buffer.from(JSON.stringify({ exp: epochSeconds })).toString("base64url")}.signature`;
 }
 
 describe("OAuth token refresh reliability", () => {
@@ -38,6 +42,20 @@ describe("OAuth token refresh reliability", () => {
 
     expect(first).toEqual(second);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not repeatedly refresh a valid access token when the provider omits a replacement ID token", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const expiredIdToken = tokenExpiringAt(now - 60);
+    const validAccessToken = tokenExpiringAt(now + 3600);
+    fetchMock.mockResolvedValue(tokenResponse({ access_token: validAccessToken, refresh_token: "refresh-2" }));
+
+    const refreshed = await refreshTokens("refresh-1", expiredIdToken);
+
+    expect(refreshed.idToken).toBe(expiredIdToken);
+    expect(needsTokenRefresh(refreshed)).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(needsTokenRefresh({ accessToken: tokenExpiringAt(now + 60) })).toBe(true);
   });
 
   it("does not retry invalid refresh grants", async () => {
