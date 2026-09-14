@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.10-pre1
+## 1.2.0
 
 - Judge token refresh and account health by access-token expiry so an older ID token retained after refresh does not cause repeated refresh attempts or a false expiry warning.
 
