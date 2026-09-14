@@ -11,6 +11,54 @@ export type DashboardAutoQueueCapabilityThresholds = {
   weeklyThreshold: number;
 };
 
+type DashboardMetric = DashboardAccountViewModel["metrics"][number];
+
+function mainQuotaMetric(account: DashboardAccountViewModel): DashboardMetric | undefined {
+  return (account.metrics ?? []).find(
+    (metric) =>
+      metric.key === "weekly" &&
+      metric.visible &&
+      typeof metric.percentage === "number" &&
+      Number.isFinite(metric.percentage)
+  );
+}
+
+export function isDashboardMainQuotaMissing(account: DashboardAccountViewModel): boolean {
+  return mainQuotaMetric(account) === undefined;
+}
+
+function sortingPercentage(account: DashboardAccountViewModel, metric: DashboardMetric): number | undefined {
+  return metric.key === "hourly" && (mainQuotaMetric(account)?.percentage ?? 1) <= 0 ? 0 : metric.percentage;
+}
+
+export function compareDashboardQuotaBalance(
+  left: DashboardAccountViewModel,
+  right: DashboardAccountViewModel,
+  metricPriority: string
+): number {
+  const valuesFor = (account: DashboardAccountViewModel): Array<number | undefined> => {
+    const metrics = account.metrics.filter(
+      (metric) => metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage)
+    );
+    if (!metrics.length) return [undefined];
+    const percentages = metrics.map((metric) => sortingPercentage(account, metric) as number);
+    const preferred = metrics.find((metric) => metric.key.includes(metricPriority)) ?? metrics[0];
+    if (!preferred) return [undefined];
+    return [Math.min(...percentages), sortingPercentage(account, preferred), ...percentages];
+  };
+  const leftValues = valuesFor(left);
+  const rightValues = valuesFor(right);
+  for (let index = 0; index < leftValues.length; index += 1) {
+    const leftValue = leftValues[index];
+    const rightValue = rightValues[index];
+    if (leftValue === undefined && rightValue === undefined) continue;
+    if (leftValue === undefined) return 1;
+    if (rightValue === undefined) return -1;
+    if (leftValue !== rightValue) return rightValue - leftValue;
+  }
+  return left.email.localeCompare(right.email);
+}
+
 export function isDashboardAccountOutOfQuota(account: DashboardAccountViewModel): boolean {
   if (account.healthKind === "quota") return true;
   return (account.metrics ?? []).some(
@@ -27,23 +75,29 @@ export function compareDashboardAutoQueueAccounts(
   right: DashboardAccountViewModel,
   thresholds?: DashboardAutoQueueCapabilityThresholds
 ): number {
-  const metricForPeriod = (account: DashboardAccountViewModel, period: "hourly" | "weekly" | "monthly") =>
-    account.metrics.find(
+  const orderValue = (account: DashboardAccountViewModel) => {
+    const mainQuota = mainQuotaMetric(account);
+    const mainExhausted = (mainQuota?.percentage ?? 1) <= 0;
+    const hourly = account.metrics.find(
       (metric) =>
         metric.visible &&
-        metric.period === period &&
+        metric.key === "hourly" &&
         typeof metric.percentage === "number" &&
         Number.isFinite(metric.percentage)
     );
-  const orderValue = (account: DashboardAccountViewModel) => ({
-    windows: (["hourly", "weekly", "monthly"] as const).map((period) => {
-      const metric = metricForPeriod(account, period);
-      return { percentage: metric?.percentage, resetAt: metric?.resetAt };
-    }),
-    credits: account.creditsUnlimited ? Number.POSITIVE_INFINITY : account.creditsBalance,
-    subscriptionExpiresAt: account.subscriptionExpiresAt,
-    lastQuotaAt: account.lastQuotaAt
-  });
+    return {
+      windows: (["hourly", "weekly", "monthly"] as const).map((period) => {
+        const metric = period === "hourly" ? hourly : mainQuota?.period === period ? mainQuota : undefined;
+        return {
+          percentage: metric ? sortingPercentage(account, metric) : undefined,
+          resetAt: mainExhausted && metric ? undefined : metric?.resetAt
+        };
+      }),
+      credits: account.creditsUnlimited ? Number.POSITIVE_INFINITY : account.creditsBalance,
+      subscriptionExpiresAt: account.subscriptionExpiresAt,
+      lastQuotaAt: account.lastQuotaAt
+    };
+  };
   const leftOrder = orderValue(left);
   const rightOrder = orderValue(right);
   const leftCapable = hasDashboardAutoQueueCapability(left, thresholds);
@@ -133,6 +187,8 @@ export function sortWithQueuedAccount(
   compare: (left: DashboardAccountViewModel, right: DashboardAccountViewModel) => number
 ): DashboardAccountViewModel[] {
   return [...accounts].sort((left, right) => {
+    const missingMainQuotaDifference = Number(isDashboardMainQuotaMissing(left)) - Number(isDashboardMainQuotaMissing(right));
+    if (missingMainQuotaDifference !== 0) return missingMainQuotaDifference;
     const quotaGroupDifference = Number(isDashboardAccountOutOfQuota(left)) - Number(isDashboardAccountOutOfQuota(right));
     if (quotaGroupDifference !== 0) return quotaGroupDifference;
 

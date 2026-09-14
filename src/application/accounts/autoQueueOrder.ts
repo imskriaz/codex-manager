@@ -13,6 +13,8 @@ export function compareCodexManagerAccountAutoQueueOrder(
   right: CodexManagerAccountRecord,
   options?: { nowMs?: number; staleAfterMs?: number }
 ): number {
+  const missingMainQuotaDifference = Number(!hasComparableWeeklyWindow(left)) - Number(!hasComparableWeeklyWindow(right));
+  if (missingMainQuotaDifference !== 0) return missingMainQuotaDifference;
   const leftOrder = toOrderValue(left);
   const rightOrder = toOrderValue(right);
   const leftCapable = hasCodexManagerAccountAutoQueueCapability(left);
@@ -134,12 +136,15 @@ export function hasComparableWeeklyWindow(account: CodexManagerAccountRecord): b
 
 function toOrderValue(account: CodexManagerAccountRecord) {
   const quota = account.quotaSummary;
-  const hourly = hasComparableHourlyWindow(account)
-    ? { percentage: quota?.hourlyPercentage, resetAt: quota?.hourlyResetTime }
-    : {};
   const hasLongWindow = hasComparableWeeklyWindow(account);
+  const mainExhausted = hasLongWindow && (quota?.weeklyPercentage ?? 1) <= 0;
+  const hourly = hasComparableHourlyWindow(account)
+    ? { percentage: mainExhausted ? 0 : quota?.hourlyPercentage, resetAt: mainExhausted ? undefined : quota?.hourlyResetTime }
+    : {};
   const isMonthly = hasLongWindow && isMonthlyQuotaWindow(account.planType, quota?.weeklyWindowMinutes);
-  const longWindow = hasLongWindow ? { percentage: quota?.weeklyPercentage, resetAt: quota?.weeklyResetTime } : {};
+  const longWindow = hasLongWindow
+    ? { percentage: quota?.weeklyPercentage, resetAt: mainExhausted ? undefined : quota?.weeklyResetTime }
+    : {};
 
   return {
     windows: [hourly, isMonthly ? {} : longWindow, isMonthly ? longWindow : {}],

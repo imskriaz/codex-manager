@@ -118,6 +118,21 @@ describe("auto queue order", () => {
     expect(hasCodexManagerAccountAutoQueueCapability(exhaustedWeekly)).toBe(false);
   });
 
+  it("ignores 5-hour quota and reset priority when weekly quota is zero", () => {
+    const now = Date.now() / 1_000;
+    const highHourly = account("high-hourly", { hourly: 100, hourlyResetAt: now + 10 * 60, weekly: 0 });
+    const lowHourly = account("low-hourly", { hourly: 10, hourlyResetAt: now + 60 * 60, weekly: 0 });
+
+    expect(compareCodexManagerAccountAutoQueueOrder(highHourly, lowHourly)).toBe(0);
+  });
+
+  it("places an account with missing weekly quota last, even if its 5-hour quota is full", () => {
+    const missingWeekly = account("missing-weekly", { hourly: 100 });
+    const exhaustedWeekly = account("exhausted-weekly", { hourly: 0, weekly: 0 });
+
+    expect(sortedIds(missingWeekly, exhaustedWeekly)).toEqual(["exhausted-weekly", "missing-weekly"]);
+  });
+
   it("uses automatic-switch thresholds instead of merely checking for quota above zero", () => {
     const belowWeeklySwitchLimit = account("below-weekly-limit", { hourly: 90, weekly: 10 });
     const aboveWeeklySwitchLimit = account("above-weekly-limit", { hourly: 90, weekly: 25 });

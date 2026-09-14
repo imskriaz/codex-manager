@@ -24,6 +24,7 @@ import { BatchSelectionBar, OverviewSection, RecoveryPanel } from "./components"
 import { postMessageToHost } from "./host";
 import {
   compareDashboardAutoQueueAccounts,
+  compareDashboardQuotaBalance,
   type DashboardAutoQueueCapabilityThresholds,
   hasDashboardAutoQueueCapability,
   sortWithQueuedAccount
@@ -2575,12 +2576,6 @@ function sortAccounts(
     account.metrics.find(
       (metric) => metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage)
     );
-  const compareDefinedNumbers = (left: number | undefined, right: number | undefined, direction: 1 | -1): number => {
-    if (left === undefined && right === undefined) return 0;
-    if (left === undefined) return 1;
-    if (right === undefined) return -1;
-    return direction * (left - right);
-  };
   const compareAutoQueue = (left: DashboardAccountViewModel, right: DashboardAccountViewModel): number => {
     if (left.isActive !== right.isActive) return left.isActive ? -1 : 1;
     if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
@@ -2611,33 +2606,6 @@ function sortAccounts(
   if (sort === "auto-queue") {
     return sortWithQueuedAccount(accounts, compareAutoQueue);
   }
-
-  const compareQuotaBalance = (
-    left: DashboardAccountViewModel,
-    right: DashboardAccountViewModel,
-    quotaSort: "balance-desc" | "balance-asc"
-  ): number => {
-    const quotaValue = (account: DashboardAccountViewModel, priority: MetricPriority): number | undefined =>
-      metricFor(account, priority)?.percentage;
-    const valuesFor = (account: DashboardAccountViewModel): Array<number | undefined> => {
-      const metrics = account.metrics
-        .filter(
-          (metric) => metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage)
-        )
-        .map((metric) => metric.percentage as number);
-      if (!metrics.length) return [undefined];
-      const preferred = quotaValue(account, metricPriority);
-      return [Math.min(...metrics), preferred, ...metrics];
-    };
-    const leftValues = valuesFor(left);
-    const rightValues = valuesFor(right);
-    const direction: 1 | -1 = quotaSort === "balance-asc" ? 1 : -1;
-    for (let index = 0; index < leftValues.length; index += 1) {
-      const difference = compareDefinedNumbers(leftValues[index], rightValues[index], direction);
-      if (difference !== 0) return difference;
-    }
-    return left.email.localeCompare(right.email);
-  };
 
   const valueFor = (account: DashboardAccountViewModel): number | string | undefined => {
     if (sort === "email") {
@@ -2672,7 +2640,7 @@ function sortAccounts(
 
   return sortWithQueuedAccount(accounts, (left, right) => {
     if (sort === "quota") {
-      return compareQuotaBalance(left, right, "balance-desc");
+      return compareDashboardQuotaBalance(left, right, metricPriority);
     }
     const leftValue = valueFor(left);
     const rightValue = valueFor(right);

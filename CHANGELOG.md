@@ -2,6 +2,7 @@
 
 ## 1.1.9
 
+- Treat 5-hour quota as zero for sorting when the main weekly quota is exhausted, and place accounts with a missing main quota last.
 - Revalidate the selected account's quota thresholds immediately before automatic switching so a concurrent quota update cannot switch into an exhausted account.
 - Keep accounts with available quota ahead of exhausted accounts while preserving the selected sorting order inside each group.
 - Highlight accounts with an exhausted quota window using a light red background in card and table views.

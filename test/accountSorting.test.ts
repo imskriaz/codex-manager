@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compareDashboardAutoQueueAccounts,
+  compareDashboardQuotaBalance,
   hasDashboardAutoQueueCapability,
   isDashboardAccountOutOfQuota,
   sortWithQueuedAccount
@@ -44,6 +45,35 @@ describe("sortWithQueuedAccount", () => {
     expect(descending.map((item) => item.id)).toEqual(["in-z", "in-a", "out-a", "out-z"]);
     expect(accounts.map((item) => item.id)).toEqual(["out-z", "in-z", "out-a", "in-a"]);
   });
+
+  it("places a missing main quota after accounts with a known zero weekly quota", () => {
+    const account = (id: string, metrics: Array<Record<string, unknown>>) =>
+      ({ id, email: `${id}@example.com`, healthKind: "healthy", isActive: false, switchQueued: false, metrics }) as any;
+    const missing = account("missing", [{ key: "hourly", period: "hourly", visible: true, percentage: 100 }]);
+    const exhausted = account("exhausted", [{ key: "weekly", period: "weekly", visible: true, percentage: 0 }]);
+    const available = account("available", [{ key: "weekly", period: "weekly", visible: true, percentage: 50 }]);
+
+    expect(sortWithQueuedAccount([missing, exhausted, available], () => 0).map((item) => item.id)).toEqual([
+      "available", "exhausted", "missing"
+    ]);
+  });
+});
+
+describe("compareDashboardQuotaBalance", () => {
+  it("treats 5-hour quota as zero when the main weekly quota is zero", () => {
+    const account = (id: string, hourly: number) =>
+      ({
+        id,
+        email: `${id}@example.com`,
+        metrics: [
+          { key: "hourly", period: "hourly", visible: true, percentage: hourly },
+          { key: "weekly", period: "weekly", visible: true, percentage: 0 }
+        ]
+      }) as any;
+
+    expect(compareDashboardQuotaBalance(account("a", 10), account("b", 100), "hourly")).toBeLessThan(0);
+    expect(compareDashboardQuotaBalance(account("b", 100), account("a", 10), "hourly")).toBeGreaterThan(0);
+  });
 });
 
 describe("isDashboardAccountOutOfQuota", () => {
@@ -61,6 +91,49 @@ describe("isDashboardAccountOutOfQuota", () => {
 });
 
 describe("compareDashboardAutoQueueAccounts", () => {
+  it("ignores 5-hour quota and reset priority when the main weekly quota is zero", () => {
+    const now = Date.now() / 1_000;
+    const account = (hourly: number, resetAt: number) =>
+      ({
+        creditsBalance: 0,
+        creditsUnlimited: false,
+        metrics: [
+          { key: "hourly", period: "hourly", visible: true, percentage: hourly, resetAt },
+          { key: "weekly", period: "weekly", visible: true, percentage: 0 }
+        ]
+      }) as any;
+
+    expect(compareDashboardAutoQueueAccounts(account(100, now + 10 * 60), account(10, now + 60 * 60))).toBe(0);
+  });
+
+  it("uses the main quota rather than a weekly code-review metric for monthly plans", () => {
+    const account = (hourly: number) =>
+      ({
+        creditsBalance: 0,
+        creditsUnlimited: false,
+        metrics: [
+          { key: "hourly", period: "hourly", visible: true, percentage: hourly },
+          { key: "review", period: "weekly", visible: true, percentage: 100 },
+          { key: "weekly", period: "monthly", visible: true, percentage: 0 }
+        ]
+      }) as any;
+
+    expect(compareDashboardAutoQueueAccounts(account(100), account(10))).toBe(0);
+  });
+
+  it("does not substitute an additional hourly limit for a missing main 5-hour metric", () => {
+    const account = (additionalHourly: number) =>
+      ({
+        creditsBalance: 0,
+        creditsUnlimited: false,
+        metrics: [
+          { key: "additional-0-hourly", period: "hourly", visible: true, percentage: additionalHourly },
+          { key: "weekly", period: "weekly", visible: true, percentage: 0 }
+        ]
+      }) as any;
+
+    expect(compareDashboardAutoQueueAccounts(account(100), account(10))).toBe(0);
+  });
   it("ignores exhausted quota until a refresh reports quota after reset", () => {
     const now = Date.now() / 1_000;
     const base = {
