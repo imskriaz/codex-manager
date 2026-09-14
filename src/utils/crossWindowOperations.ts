@@ -45,21 +45,19 @@ export class CrossWindowOperationCoordinator {
   private initializeTask: Promise<void> | undefined;
 
   constructor(
-    globalStoragePath: string,
+    storageRootPath: string,
     private readonly heartbeatMs = DEFAULT_HEARTBEAT_MS,
     private readonly staleAfterMs = DEFAULT_STALE_AFTER_MS
   ) {
-    this.lockRoot = path.resolve(globalStoragePath, LOCK_DIRECTORY_NAME);
+    this.lockRoot = path.resolve(storageRootPath, LOCK_DIRECTORY_NAME);
   }
 
   initialize(): Promise<void> {
-    this.initializeTask ??= fs
-      .mkdir(this.lockRoot, { recursive: true })
-      .then(() =>
-        this.cleanupAbandonedLocks().catch((error: unknown) => {
-          console.warn("[codexManager] cross-window operation cleanup skipped:", error);
-        })
-      );
+    this.initializeTask ??= fs.mkdir(this.lockRoot, { recursive: true }).then(() =>
+      this.cleanupAbandonedLocks().catch((error: unknown) => {
+        console.warn("[codexManager] cross-window operation cleanup skipped:", error);
+      })
+    );
     return this.initializeTask;
   }
 
@@ -263,7 +261,7 @@ export class CrossWindowOperationCoordinator {
 }
 
 let sharedCoordinator: CrossWindowOperationCoordinator | undefined;
-let sharedGlobalStoragePath: string | undefined;
+let sharedStorageRootPath: string | undefined;
 
 export async function runCentralAccountOperationWithCooldown<T>(
   operationLabel: string,
@@ -271,9 +269,7 @@ export async function runCentralAccountOperationWithCooldown<T>(
   task: () => Promise<T>
 ): Promise<{ ran: boolean; value?: T }> {
   return runCentralAccountOperation(operationLabel, async () => {
-    const markerPath = sharedGlobalStoragePath
-      ? path.join(sharedGlobalStoragePath, STARTUP_COOLDOWN_FILE)
-      : undefined;
+    const markerPath = sharedStorageRootPath ? path.join(sharedStorageRootPath, STARTUP_COOLDOWN_FILE) : undefined;
     if (markerPath) {
       try {
         const marker = JSON.parse(await fs.readFile(markerPath, "utf8")) as { completedAt?: unknown };
@@ -296,17 +292,17 @@ export async function runCentralAccountOperationWithCooldown<T>(
   });
 }
 
-export async function configureCrossWindowOperationCoordinator(globalStoragePath: string): Promise<void> {
-  const coordinator = new CrossWindowOperationCoordinator(globalStoragePath);
+export async function configureCrossWindowOperationCoordinator(storageRootPath: string): Promise<void> {
+  const coordinator = new CrossWindowOperationCoordinator(storageRootPath);
   try {
     await coordinator.initialize();
     sharedCoordinator = coordinator;
-    sharedGlobalStoragePath = globalStoragePath;
+    sharedStorageRootPath = storageRootPath;
   } catch (error) {
     // Do not retain a rejected singleton. A later activation can retry cleanly
     // while this window continues in read/local mode.
     sharedCoordinator = undefined;
-    sharedGlobalStoragePath = undefined;
+    sharedStorageRootPath = undefined;
     throw error;
   }
 }

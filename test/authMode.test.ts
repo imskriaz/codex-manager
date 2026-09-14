@@ -2,7 +2,13 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildCodexAuthFile, ensureCodexAuthFileFormat, unloadAuthFile, writeAuthFile } from "../src/codex/authFile";
+import {
+  buildCodexAuthFile,
+  ensureCodexAuthFileFormat,
+  replaceAuthFileWithRetry,
+  unloadAuthFile,
+  writeAuthFile
+} from "../src/codex/authFile";
 import type { CodexManagerAccountRecord, CodexTokens } from "../src/core/types";
 import { toSharedAccountJson } from "../src/storage/sharedAccounts";
 import { removeTestDirectory } from "./testFilesystem";
@@ -48,6 +54,25 @@ describe("Codex auth mode compatibility", () => {
     expect(authFile.auth_mode).toBe("chatgpt");
     expect(authFile.OPENAI_API_KEY).toBeNull();
     expect(authFile.tokens.access_token).toBe("access-token");
+  });
+
+  it("keeps the previous auth.json intact when Windows locks the replacement", async () => {
+    const authPath = path.join(tempCodexHome, "auth.json");
+    const stagedPath = path.join(tempCodexHome, ".auth.json.tmp-test");
+    await fs.writeFile(authPath, "previous-valid-auth", "utf8");
+    await fs.writeFile(stagedPath, "complete-new-auth", "utf8");
+
+    await expect(
+      replaceAuthFileWithRetry(stagedPath, authPath, {
+        rename: async () => {
+          throw Object.assign(new Error("auth.json is locked"), { code: "EBUSY" });
+        },
+        wait: async () => undefined
+      })
+    ).rejects.toThrow("auth.json is locked");
+
+    await expect(fs.readFile(authPath, "utf8")).resolves.toBe("previous-valid-auth");
+    await expect(fs.readFile(stagedPath, "utf8")).resolves.toBe("complete-new-auth");
   });
 
   it("unloads the live auth file without failing when it is already absent", async () => {

@@ -117,7 +117,7 @@ export class WorkbenchRefreshCoordinator {
     const watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(path.dirname(authPath), path.basename(authPath))
     );
-    const accountsIndexPath = path.join(this.context.globalStorageUri.fsPath, "accounts-index.json");
+    const accountsIndexPath = this.repo.accountsIndexPath;
     const accountsIndexWatcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(path.dirname(accountsIndexPath), path.basename(accountsIndexPath))
     );

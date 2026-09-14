@@ -4,6 +4,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import { redactDebugText } from "./debug";
+import { getCodexManagerStorageRoot } from "./storageRoot";
 
 export const PERSISTENT_LOG_RETENTION_DAYS = 3;
 const LOG_FILE_PREFIX = "codex-manager-";
@@ -160,10 +161,13 @@ export class PersistentFileLogger {
   }
 }
 
-export async function registerPersistentLogging(context: vscode.ExtensionContext): Promise<void> {
+export async function registerPersistentLogging(
+  context: vscode.ExtensionContext,
+  storageRoot = getCodexManagerStorageRoot()
+): Promise<void> {
   await disposePersistentLogging();
   const logger = new PersistentFileLogger(
-    path.join(context.globalStorageUri.fsPath, "logs"),
+    path.join(storageRoot, "logs"),
     PERSISTENT_LOG_RETENTION_DAYS,
     () => new Date(),
     (error) => {

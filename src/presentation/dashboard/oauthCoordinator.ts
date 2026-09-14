@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
 import {
   completeOAuthLoginSession,
+  listenForPreparedOAuthLoginSession,
   prepareOAuthLoginSession,
-  PreparedOAuthLoginSession,
-  runPreparedOAuthLoginSession
+  PreparedOAuthLoginSession
 } from "../../auth/oauth";
 import { refreshImportedAccountQuota } from "../../application/accounts/quota";
 import {
@@ -17,7 +17,7 @@ import { buildAccountStorageId } from "../../utils/accountIdentity";
 import { extractClaims } from "../../utils/jwt";
 
 export class DashboardOAuthCoordinator {
-  private static readonly SESSION_TTL_MS = 15 * 60 * 1000;
+  private static readonly SESSION_TTL_MS = 10 * 60 * 1000;
   private readonly oauthSessions = new Map<string, PreparedOAuthLoginSession>();
   private readonly oauthSessionCreatedAt = new Map<string, number>();
   private readonly oauthSessionAccountIds = new Map<string, string | undefined>();
@@ -107,7 +107,7 @@ export class DashboardOAuthCoordinator {
     try {
       const source = new vscode.CancellationTokenSource();
       this.oauthCancellationSources.set(oauthSessionId, source);
-      const tokens = await runPreparedOAuthLoginSession(session, source.token);
+      const tokens = await listenForPreparedOAuthLoginSession(session, source.token);
       const created = await this.upsertAuthorizedAccount(oauthSessionId, tokens);
       await refreshImportedAccountQuota(this.repo, created.id);
       let synced: boolean | undefined;

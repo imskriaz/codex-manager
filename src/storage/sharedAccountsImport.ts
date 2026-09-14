@@ -16,7 +16,9 @@ import {
   sanitizeOptionalValue
 } from "./sharedAccounts";
 
-export function toSharedEntries(input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]): SharedCodexManagerAccountJson[] {
+export function toSharedEntries(
+  input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]
+): SharedCodexManagerAccountJson[] {
   const entries = Array.isArray(input) ? input : [input];
   return entries.map(normalizeSharedAccountImportEntry);
 }
@@ -56,21 +58,26 @@ export function createSharedImportIssue(
   index: number,
   error: unknown
 ): CodexImportResultIssue {
+  const metadata = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : undefined;
   return {
     index,
-    accountId: sanitizeOptionalValue(entry.account_id) ?? sanitizeOptionalValue(entry.id),
-    email: sanitizeOptionalValue(entry.email),
+    accountId: sanitizeOptionalValue(metadata?.account_id) ?? sanitizeOptionalValue(metadata?.id),
+    email: sanitizeOptionalValue(metadata?.email),
     message: typeof error === "string" ? error : getErrorMessage(error)
   };
 }
 
-export function applySharedAccountEntry(account: CodexManagerAccountRecord, entry: SharedCodexManagerAccountJson): void {
+export function applySharedAccountEntry(
+  account: CodexManagerAccountRecord,
+  entry: SharedCodexManagerAccountJson
+): void {
   // account.enabled and account.queuePriority intentionally remain untouched:
   // they belong to this PC, even when the rest of the session metadata came
   // from another machine.
   account.userId = sanitizeOptionalValue(entry.user_id) ?? account.userId;
   account.planType = sanitizeOptionalValue(entry.plan_type) ?? account.planType;
-  account.subscriptionActiveUntil = sanitizeOptionalValue(entry.subscription_active_until) ?? account.subscriptionActiveUntil;
+  account.subscriptionActiveUntil =
+    sanitizeOptionalValue(entry.subscription_active_until) ?? account.subscriptionActiveUntil;
   account.accountId = sanitizeOptionalValue(entry.account_id) ?? account.accountId;
   account.organizationId = sanitizeOptionalValue(entry.organization_id) ?? account.organizationId;
   account.accountName = sanitizeOptionalValue(entry.account_name) ?? account.accountName;

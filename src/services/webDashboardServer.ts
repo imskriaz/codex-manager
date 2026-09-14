@@ -50,6 +50,7 @@ import {
   saveDashboardUsageHistory
 } from "./dashboardUsageHistory";
 import { subscribeDashboardRealtime } from "./dashboardRealtime";
+import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 
 const WEB_DASHBOARD_PORT = 39875;
 const LEGACY_PASSWORD_SECRET_KEY = "codexManager.webDashboard.passwordHash.v1";
@@ -348,7 +349,7 @@ export class WebDashboardServer implements vscode.Disposable {
   ) {
     this.deviceId = context.globalState?.get<string>("codexManager.webDashboard.deviceId") ?? crypto.randomUUID();
     void context.globalState?.update("codexManager.webDashboard.deviceId", this.deviceId);
-    this.announcements = new AnnouncementService(context.globalStorageUri.fsPath, context.extensionUri.fsPath);
+    this.announcements = new AnnouncementService(getCodexManagerStorageRoot(), context.extensionUri.fsPath);
     this.oauth = new DashboardOAuthCoordinator(
       repo,
       () => undefined,
@@ -1017,7 +1018,8 @@ export class WebDashboardServer implements vscode.Disposable {
             type: "peer:action-result",
             requestId: message.requestId,
             status: "failed",
-            error: "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
+            error:
+              "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
           });
         }, getPeerActionTimeoutMs(message.action));
         this.peerActionWaiters.set(message.requestId, (result) => {
@@ -1062,7 +1064,8 @@ export class WebDashboardServer implements vscode.Disposable {
           type: "peer:action-result",
           requestId: message.requestId,
           status: "failed",
-          error: "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
+          error:
+            "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
         });
       }, getPeerActionTimeoutMs(message.action));
       const onMessage = (data: Buffer): void => {
@@ -1142,9 +1145,8 @@ export class WebDashboardServer implements vscode.Disposable {
     const domainConfigured = Boolean(this.settingsStore.getDashboardSettings().cloudflaredDomain?.trim());
     const localBrowser = !isPeer && isLocalWebDashboardRequest(request);
     const browserAuthorized = isPeer ? domainConfigured : await this.isAuthorized(request);
-    const browserPassphraseFingerprint = !isPeer && !localBrowser
-      ? await this.encryptedSync?.getDashboardPassphraseFingerprint()
-      : undefined;
+    const browserPassphraseFingerprint =
+      !isPeer && !localBrowser ? await this.encryptedSync?.getDashboardPassphraseFingerprint() : undefined;
     if (
       requestUrl.pathname !== "/ws" ||
       !isTrustedWebDashboardOrigin(
@@ -1163,7 +1165,10 @@ export class WebDashboardServer implements vscode.Disposable {
         if (expiresAt) {
           this.browserSocketExpiresAt.set(client, expiresAt);
           this.browserSocketSessionFingerprint.set(client, fingerprintWebDashboardSession(token!));
-          const timer = setTimeout(() => client.close(4001, "Dashboard session expired"), Math.max(0, expiresAt - Date.now()));
+          const timer = setTimeout(
+            () => client.close(4001, "Dashboard session expired"),
+            Math.max(0, expiresAt - Date.now())
+          );
           timer.unref?.();
           this.browserSocketExpiryTimers.set(client, timer);
         }

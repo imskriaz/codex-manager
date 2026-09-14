@@ -1,6 +1,13 @@
 import { vi } from "vitest";
 
 vi.mock("vscode", () => ({
+  CancellationTokenSource: class {
+    token = { isCancellationRequested: false, onCancellationRequested: vi.fn(() => ({ dispose: vi.fn() })) };
+    cancel(): void {
+      this.token.isCancellationRequested = true;
+    }
+    dispose(): void {}
+  },
   env: {
     language: "en"
   },

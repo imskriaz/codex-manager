@@ -14,7 +14,11 @@ import { AnnouncementService, type AnnouncementOptions } from "../../services/an
 import { renderDashboardShell } from "./shell";
 import { buildDashboardStateSignature } from "./signature";
 import { executeDashboardActionMessage } from "./actionHandlers";
-import { clearDashboardCodexAppPath, clearDashboardCodexCliPath, dispatchDashboardClientMessage } from "./messageDispatcher";
+import {
+  clearDashboardCodexAppPath,
+  clearDashboardCodexCliPath,
+  dispatchDashboardClientMessage
+} from "./messageDispatcher";
 import { DashboardOAuthCoordinator } from "./oauthCoordinator";
 import { backfillMissingResetCreditExpiries } from "./resetCreditsBackfill";
 import { consumeDashboardActionPrompts, withDashboardNotificationSuppression } from "../../utils/notificationPolicy";
@@ -25,6 +29,7 @@ import { resolveOnboardingCompleted } from "../../services/onboarding";
 import { readCodexCliSessions, resolveCodexHome } from "../../services/codexSessionResume";
 import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindings";
 import { publishDashboardRealtime } from "../../services/dashboardRealtime";
+import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
 const REOPEN_AFTER_HOST_RESTART_KEY = "codexManager.reopenDashboardAfterHostRestart";
@@ -32,10 +37,12 @@ const REOPEN_AFTER_HOST_RESTART_KEY = "codexManager.reopenDashboardAfterHostRest
 function isLocalCliSessionWatchPath(filename: string | Buffer | null): boolean {
   if (filename === null) return true;
   const normalized = String(filename).replace(/\\/g, "/").toLowerCase();
-  return normalized === "session_index.jsonl"
-    || normalized.startsWith("sessions/")
-    || normalized.startsWith("archived_sessions/")
-    || normalized.startsWith("thread-writer-locks/");
+  return (
+    normalized === "session_index.jsonl" ||
+    normalized.startsWith("sessions/") ||
+    normalized.startsWith("archived_sessions/") ||
+    normalized.startsWith("thread-writer-locks/")
+  );
 }
 
 let dashboardPanelController: DashboardPanelController | undefined;
@@ -54,7 +61,12 @@ type PublishDashboardSnapshotParams = {
 };
 
 export async function publishDashboardSnapshot(params: PublishDashboardSnapshotParams): Promise<string | undefined> {
-  const baseState = await buildDashboardState(params.repo, params.settingsStore, params.logoUri, params.announcementsState);
+  const baseState = await buildDashboardState(
+    params.repo,
+    params.settingsStore,
+    params.logoUri,
+    params.announcementsState
+  );
   const state = {
     ...baseState,
     onboardingCompleted: await resolveOnboardingCompleted(params.context, baseState),
@@ -96,7 +108,7 @@ class DashboardPanelController {
     private readonly context: vscode.ExtensionContext,
     private readonly repo: AccountsRepository
   ) {
-    this.announcements = new AnnouncementService(context.globalStorageUri.fsPath, context.extensionUri.fsPath);
+    this.announcements = new AnnouncementService(getCodexManagerStorageRoot(), context.extensionUri.fsPath);
     this.oauth = new DashboardOAuthCoordinator(
       repo,
       () => {
@@ -313,9 +325,13 @@ class DashboardPanelController {
       result.status === "completed" &&
       (message.action === "unloadAuth" || result.payload?.reloadScheduled === true)
     ) {
-      scheduleExtensionHostReload((errorMessage) => {
-        void this.postNotice("error", errorMessage).catch(() => undefined);
-      }, 150, message.action === "switch" ? "The account switched" : "Codex auth was unloaded");
+      scheduleExtensionHostReload(
+        (errorMessage) => {
+          void this.postNotice("error", errorMessage).catch(() => undefined);
+        },
+        150,
+        message.action === "switch" ? "The account switched" : "Codex auth was unloaded"
+      );
     }
   }
 
@@ -415,22 +431,26 @@ class DashboardPanelController {
   private publishCliSessionsRealtime(): Promise<void> {
     if (this.cliSessionPublish) return this.cliSessionPublish;
     this.cliSessionPublish = (async () => {
-      if (!this.panel || !this.webviewReady || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
+      if (
+        !this.panel ||
+        !this.webviewReady ||
+        !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)
+      )
+        return;
       const sessions = await readCodexCliSessions();
       const stabilized = await stabilizeSessionProjectPaths(this.context, sessions);
-      await this.postActionResult(
-        `realtime-cli-${Date.now()}`,
-        "listCodexCliSessions",
-        "completed",
-        undefined,
-        { cliSessions: stabilized, realtimeRevision: ++this.cliSessionRealtimeRevision }
-      );
-    })().catch((error: unknown) => {
-      const detail = error instanceof Error ? error.message : String(error);
-      return this.postNotice("warning", `Realtime sessions could not refresh: ${detail}`);
-    }).finally(() => {
-      this.cliSessionPublish = undefined;
-    });
+      await this.postActionResult(`realtime-cli-${Date.now()}`, "listCodexCliSessions", "completed", undefined, {
+        cliSessions: stabilized,
+        realtimeRevision: ++this.cliSessionRealtimeRevision
+      });
+    })()
+      .catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        return this.postNotice("warning", `Realtime sessions could not refresh: ${detail}`);
+      })
+      .finally(() => {
+        this.cliSessionPublish = undefined;
+      });
     return this.cliSessionPublish;
   }
 

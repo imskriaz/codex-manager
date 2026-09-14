@@ -5,8 +5,8 @@ import type {
   DashboardState
 } from "../../src/domain/dashboard/types";
 import { useEffect, useState } from "preact/hooks";
-import type { CodexImportPreviewSummary, CodexImportResultSummary } from "../../src/core/types";
-import { ImportPreviewPanel, ImportResultPanel, ModalShell } from "./components";
+import type { CodexImportResultSummary } from "../../src/core/types";
+import { ImportResultPanel, ModalShell } from "./components";
 import { createShareFileName, formatTemplate, getSensitiveDisplayValue, maskSharedJson } from "./helpers";
 import { CopyIcon, DownloadIcon, EyeIcon, EyeOffIcon, GlobeIcon, ImportIcon, SuccessIcon } from "./icons";
 
@@ -91,7 +91,9 @@ export function AccountInfoModal(props: {
   return (
     <ModalShell
       open={Boolean(account)}
-      title={account ? `${copy.title}: ${getSensitiveDisplayValue(account.email, props.privacyMode, "email")}` : copy.title}
+      title={
+        account ? `${copy.title}: ${getSensitiveDisplayValue(account.email, props.privacyMode, "email")}` : copy.title
+      }
       closeLabel={props.closeLabel}
       className="dashboard-modal-compact account-info-modal"
       onClose={props.onClose}
@@ -103,9 +105,21 @@ export function AccountInfoModal(props: {
           <InfoRow label={copy.addedBy} value={account.addMethodLabel} />
           <InfoRow label={copy.created} value={account.addedAtLabel} />
           <InfoRow label={copy.status} value={account.healthLabel} />
-          <InfoRow label={copy.userId} value={getSensitiveDisplayValue(account.userId, props.privacyMode, "id", "—")} mono />
-          <InfoRow label={copy.accountId} value={getSensitiveDisplayValue(account.accountId, props.privacyMode, "id", "—")} mono />
-          <InfoRow label={copy.organizationId} value={getSensitiveDisplayValue(account.organizationId, props.privacyMode, "id", "—")} mono />
+          <InfoRow
+            label={copy.userId}
+            value={getSensitiveDisplayValue(account.userId, props.privacyMode, "id", "—")}
+            mono
+          />
+          <InfoRow
+            label={copy.accountId}
+            value={getSensitiveDisplayValue(account.accountId, props.privacyMode, "id", "—")}
+            mono
+          />
+          <InfoRow
+            label={copy.organizationId}
+            value={getSensitiveDisplayValue(account.organizationId, props.privacyMode, "id", "—")}
+            mono
+          />
           <InfoRow label={copy.tags} value={account.tags.length ? account.tags.join(", ") : copy.noTags} />
         </div>
       ) : null}
@@ -135,7 +149,6 @@ export function AddAccountModal(props: {
   oauthError?: string;
   importJsonText: string;
   importJsonError?: string;
-  importPreview?: CodexImportPreviewSummary;
   importResult?: CodexImportResultSummary;
   copyFeedbackKey: string | null;
   lang: DashboardState["lang"];
@@ -143,7 +156,6 @@ export function AddAccountModal(props: {
   startOAuthAutoPending: boolean;
   completeOAuthPending: boolean;
   importCurrentPending: boolean;
-  previewImportPending: boolean;
   importSharedPending: boolean;
   onClose: () => void;
   onSelectTab: (tab: "oauth" | "import") => void;
@@ -155,7 +167,6 @@ export function AddAccountModal(props: {
   onImportCurrent: () => void;
   onImportFileSelected: (file: File) => void;
   onImportTextChange: (value: string) => void;
-  onPreviewImport: () => void;
   onSubmitImport: () => void;
 }) {
   const oauthLinkReady = Boolean(props.oauthSession?.authUrl);
@@ -204,7 +215,6 @@ export function AddAccountModal(props: {
                     <button
                       class="modal-mini-btn modal-icon-btn oauth-open-btn"
                       type="button"
-                      disabled={props.startOAuthAutoPending}
                       aria-label={props.copy.openInBrowser}
                       title={props.copy.openInBrowser}
                       onClick={() => {
@@ -324,7 +334,6 @@ export function AddAccountModal(props: {
               Back
             </button>
           </div>
-          {props.importPreview ? <ImportPreviewPanel copy={props.copy} summary={props.importPreview} /> : null}
           {props.importResult ? <ImportResultPanel copy={props.copy} summary={props.importResult} /> : null}
           {props.importJsonError ? <div class="modal-error">{props.importJsonError}</div> : null}
           <div class="modal-actions account-add-file-actions">
@@ -347,28 +356,18 @@ export function AddAccountModal(props: {
               />
             </label>
             <button
-              class="modal-secondary-btn"
+              class="modal-primary-btn"
               type="button"
-              disabled={!props.importJsonText.trim() || props.previewImportPending}
-              onClick={props.onPreviewImport}
+              disabled={!props.importJsonText.trim() || props.importSharedPending}
+              onClick={props.onSubmitImport}
             >
-              {props.previewImportPending ? "..." : props.copy.importJsonValidate}
+              {!props.importSharedPending ? (
+                <span class="modal-btn-icon" aria-hidden="true">
+                  <ImportIcon />
+                </span>
+              ) : null}
+              {props.importSharedPending ? "..." : props.copy.importJsonSubmit}
             </button>
-            {props.importPreview ? (
-              <button
-                class="modal-primary-btn"
-                type="button"
-                disabled={props.importPreview.valid <= 0 || props.importSharedPending}
-                onClick={props.onSubmitImport}
-              >
-                {!props.importSharedPending ? (
-                  <span class="modal-btn-icon" aria-hidden="true">
-                    <ImportIcon />
-                  </span>
-                ) : null}
-                {props.importSharedPending ? "..." : props.copy.importJsonSubmit}
-              </button>
-            ) : null}
           </div>
         </div>
       ) : null}

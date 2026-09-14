@@ -1,3 +1,4 @@
+import * as path from "path";
 import * as vscode from "vscode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchRefreshCoordinator } from "../src/presentation/workbench/refreshCoordinator";
@@ -145,6 +146,46 @@ describe("workbench external account synchronization", () => {
       "keychain unavailable"
     );
     warn.mockRestore();
+  });
+
+  it("watches the repository's canonical account index path", () => {
+    const watchedPatterns: Array<{ base: string; pattern: string }> = [];
+    class RelativePattern {
+      constructor(
+        readonly base: string,
+        readonly pattern: string
+      ) {}
+    }
+    const createWatcher = () => ({
+      onDidChange: vi.fn(),
+      onDidCreate: vi.fn(),
+      onDidDelete: vi.fn(),
+      dispose: vi.fn()
+    });
+    (vscode as unknown as { RelativePattern: typeof RelativePattern }).RelativePattern = RelativePattern;
+    (
+      vscode.workspace as unknown as {
+        createFileSystemWatcher: (pattern: RelativePattern) => ReturnType<typeof createWatcher>;
+      }
+    ).createFileSystemWatcher = vi.fn((pattern) => {
+      watchedPatterns.push(pattern);
+      return createWatcher();
+    });
+
+    const accountsIndexPath = path.join("C:", "Users", "test", ".codex-manager", "accounts-index.json");
+    const coordinator = new WorkbenchRefreshCoordinator(
+      { subscriptions: [] } as unknown as vscode.ExtensionContext,
+      { accountsIndexPath } as never,
+      {} as never
+    );
+
+    const disposable = coordinator.registerAuthFileWatcher({ refresh: vi.fn(), markObservedAuthIdentity: vi.fn() });
+
+    expect(watchedPatterns).toContainEqual({
+      base: path.dirname(accountsIndexPath),
+      pattern: path.basename(accountsIndexPath)
+    });
+    disposable.dispose();
   });
 
   it("reloads a window changed by another window without showing a notification", async () => {

@@ -163,9 +163,14 @@ async function writeAuthJsonAtomic(filePath: string, content: string): Promise<v
     `.${path.basename(filePath)}.tmp.${process.pid}.${crypto.randomBytes(4).toString("hex")}`
   );
   // Tokens are credentials: keep the staging file private even before rename.
-  await fs.writeFile(tmpPath, content, { encoding: "utf8", mode: 0o600 });
-  await fs.chmod(tmpPath, 0o600).catch(() => undefined);
+  const handle = await fs.open(tmpPath, "wx", 0o600);
   try {
+    try {
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await replaceAuthFileWithRetry(tmpPath, filePath);
   } catch (error) {
     await fs.unlink(tmpPath).catch(() => undefined);
@@ -173,12 +178,18 @@ async function writeAuthJsonAtomic(filePath: string, content: string): Promise<v
   }
 }
 
-async function replaceAuthFileWithRetry(tmpPath: string, filePath: string): Promise<void> {
+export async function replaceAuthFileWithRetry(
+  tmpPath: string,
+  filePath: string,
+  operations: { rename?: typeof fs.rename; wait?: (ms: number) => Promise<void> } = {}
+): Promise<void> {
+  const rename = operations.rename ?? fs.rename;
+  const wait = operations.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const delays = [20, 50, 100, 200, 400];
   let lastError: unknown;
   for (let attempt = 0; attempt <= delays.length; attempt += 1) {
     try {
-      await fs.rename(tmpPath, filePath);
+      await rename(tmpPath, filePath);
       await fs.chmod(filePath, 0o600).catch(() => undefined);
       return;
     } catch (error) {
@@ -190,21 +201,13 @@ async function replaceAuthFileWithRetry(tmpPath: string, filePath: string): Prom
       if (!(code === "EACCES" || code === "EBUSY" || code === "EPERM") || attempt === delays.length) {
         break;
       }
-      await new Promise<void>((resolve) => setTimeout(resolve, delays[attempt]!));
+      await wait(delays[attempt]!);
     }
   }
 
-  const code =
-    typeof lastError === "object" && lastError !== null && "code" in lastError
-      ? String((lastError as { code?: unknown }).code)
-      : "";
-  if (code === "EACCES" || code === "EBUSY" || code === "EPERM") {
-    await fs.copyFile(tmpPath, filePath);
-    await fs.chmod(filePath, 0o600).catch(() => undefined);
-    await fs.unlink(tmpPath).catch(() => undefined);
-    return;
-  }
-  throw lastError;
+  // Never copy over the live auth.json: copyFile truncates it first and an
+  // extension update can terminate the host before the replacement completes.
+  throw lastError instanceof Error ? lastError : new Error("Unable to replace Codex auth.json safely.");
 }
 
 /**
@@ -255,7 +258,9 @@ async function deleteCodexKeychainCredential(): Promise<void> {
           resolve();
           return;
         }
-        reject(error instanceof Error ? error : new Error("Failed to remove the Codex keychain credential", { cause: error }));
+        reject(
+          error instanceof Error ? error : new Error("Failed to remove the Codex keychain credential", { cause: error })
+        );
       }
     );
   });

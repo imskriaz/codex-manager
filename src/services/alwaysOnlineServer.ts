@@ -5,6 +5,7 @@ import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import * as vscode from "vscode";
 import type { EncryptedSyncManager } from "./encryptedSync";
+import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 
 /** Reuses the normal dashboard port; the detached relay takes over when the
  * VS Code-managed server releases it. */
@@ -48,17 +49,16 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   /** Release the shared port while the VS Code dashboard is active. */
   async prepareForVscodeSession(): Promise<void> {
     this.sessionActive = true;
-    const enabled = vscode.workspace.getConfiguration("codexManager").get<boolean>("webDashboardAlwaysOnlineEnabled", false);
+    const enabled = vscode.workspace
+      .getConfiguration("codexManager")
+      .get<boolean>("webDashboardAlwaysOnlineEnabled", false);
     if (!enabled) return;
     try {
-      const configPath = path.join(this.context.globalStorageUri.fsPath, CONFIG_FILE);
+      const storage = getCodexManagerStorageRoot();
+      const configPath = path.join(storage, CONFIG_FILE);
       const config = JSON.parse(await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>;
       if (config.adminToken) {
-        await waitForRelayShutdown(
-          ALWAYS_ONLINE_RELAY_PORT,
-          config.adminToken,
-          path.join(this.context.globalStorageUri.fsPath, PID_FILE)
-        );
+        await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, config.adminToken, path.join(storage, PID_FILE));
       }
     } catch {
       // No previous relay is normal on first activation.
@@ -89,7 +89,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   }
 
   async stop(): Promise<void> {
-    const storage = this.context.globalStorageUri.fsPath;
+    const storage = getCodexManagerStorageRoot();
     const configPath = path.join(storage, CONFIG_FILE);
     let adminToken: string | undefined;
     try {
@@ -123,7 +123,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     if (!hostKey) {
       throw new Error("Enable and configure Encrypted Sync first; it supplies the relay's peer authentication key.");
     }
-    const storage = this.context.globalStorageUri.fsPath;
+    const storage = getCodexManagerStorageRoot();
     await fs.mkdir(storage, { recursive: true });
     const storedAdminToken = await this.context.secrets.get(SECRET_KEY);
     const adminToken = storedAdminToken ?? cryptoRandomToken();
@@ -158,13 +158,16 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: node === process.execPath ? "1" : process.env["ELECTRON_RUN_AS_NODE"] }
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: node === process.execPath ? "1" : process.env["ELECTRON_RUN_AS_NODE"]
+      }
     });
     this.child.unref();
   }
 
   private async prepareRelayFiles(): Promise<{ configPath: string; scriptTarget: string }> {
-    const storage = this.context.globalStorageUri.fsPath;
+    const storage = getCodexManagerStorageRoot();
     await fs.mkdir(storage, { recursive: true });
     const scriptSource = path.join(this.context.extensionUri.fsPath, "tools", "always-online-server.js");
     const scriptTarget = path.join(storage, "always-online-server.js");
@@ -203,7 +206,10 @@ function relayIsHealthy(port: number): Promise<boolean> {
       response.once("end", () => resolve(isAlwaysOnlineRelayHealthResponse(response.statusCode, body)));
     });
     request.on("error", () => resolve(false));
-    request.on("timeout", () => { request.destroy(); resolve(false); });
+    request.on("timeout", () => {
+      request.destroy();
+      resolve(false);
+    });
   });
 }
 
@@ -211,7 +217,9 @@ export function isAlwaysOnlineRelayHealthResponse(statusCode: number | undefined
   if (statusCode !== 200 || body.length > 4096) return false;
   try {
     const payload = JSON.parse(body) as { ok?: unknown; service?: unknown; port?: unknown };
-    return payload.ok === true && payload.service === "codex-manager-relay" && payload.port === ALWAYS_ONLINE_RELAY_PORT;
+    return (
+      payload.ok === true && payload.service === "codex-manager-relay" && payload.port === ALWAYS_ONLINE_RELAY_PORT
+    );
   } catch {
     return false;
   }
@@ -224,7 +232,10 @@ function portIsOccupied(port: number): Promise<boolean> {
       resolve(true);
     });
     request.on("error", (error: NodeJS.ErrnoException) => resolve(error.code !== "ECONNREFUSED"));
-    request.on("timeout", () => { request.destroy(); resolve(true); });
+    request.on("timeout", () => {
+      request.destroy();
+      resolve(true);
+    });
   });
 }
 
@@ -232,11 +243,13 @@ function waitForRelay(port: number): Promise<boolean> {
   const startedAt = Date.now();
   return new Promise((resolve) => {
     const poll = () => {
-      relayIsHealthy(port).then((ok) => {
-        if (ok) resolve(true);
-        else if (Date.now() - startedAt > 8_000) resolve(false);
-        else setTimeout(poll, 150);
-      }).catch(() => resolve(false));
+      relayIsHealthy(port)
+        .then((ok) => {
+          if (ok) resolve(true);
+          else if (Date.now() - startedAt > 8_000) resolve(false);
+          else setTimeout(poll, 150);
+        })
+        .catch(() => resolve(false));
     };
     poll();
   });
@@ -244,16 +257,30 @@ function waitForRelay(port: number): Promise<boolean> {
 
 function requestShutdown(port: number, token: string): Promise<void> {
   return new Promise((resolve) => {
-    const request = http.request({ host: "127.0.0.1", port, path: "/shutdown", method: "POST", headers: { "X-Codex-Admin": token }, timeout: 1_000 }, (response) => {
-      response.resume();
-      response.once("end", () => resolve());
-    });
+    const request = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/shutdown",
+        method: "POST",
+        headers: { "X-Codex-Admin": token },
+        timeout: 1_000
+      },
+      (response) => {
+        response.resume();
+        response.once("end", () => resolve());
+      }
+    );
     request.on("error", () => resolve());
     request.end();
   });
 }
 
-async function writeStartupLauncher(context: vscode.ExtensionContext, configPath: string, scriptPath: string): Promise<void> {
+async function writeStartupLauncher(
+  context: vscode.ExtensionContext,
+  configPath: string,
+  scriptPath: string
+): Promise<void> {
   if (process.platform !== "win32") return;
   const appData = process.env["APPDATA"];
   const startup = appData ? path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup") : undefined;
@@ -267,7 +294,11 @@ async function writeStartupLauncher(context: vscode.ExtensionContext, configPath
 async function removeStartupLauncher(context: vscode.ExtensionContext): Promise<void> {
   const appData = process.env["APPDATA"];
   if (process.platform !== "win32" || !appData) return;
-  try { await fs.unlink(path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", STARTUP_FILE)); } catch { /* already removed */ }
+  try {
+    await fs.unlink(path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", STARTUP_FILE));
+  } catch {
+    /* already removed */
+  }
   void context;
 }
 
@@ -291,10 +322,10 @@ async function waitForRelayShutdown(port: number, token: string, pidPath: string
   }
 }
 
-export function relayConfigPath(globalStoragePath: string): string {
-  return path.join(globalStoragePath, CONFIG_FILE);
+export function relayConfigPath(storageRoot: string): string {
+  return path.join(storageRoot, CONFIG_FILE);
 }
 
-export function relayPidPath(globalStoragePath: string): string {
-  return path.join(globalStoragePath, PID_FILE);
+export function relayPidPath(storageRoot: string): string {
+  return path.join(storageRoot, PID_FILE);
 }

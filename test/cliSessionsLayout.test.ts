@@ -270,7 +270,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('typeof realtimeRevision === "number"');
     expect(main).toContain("sessionChanged");
     expect(panel).not.toContain("readCodexCliComposerConfig");
-    expect(panel).toContain("{ cliSessions: stabilized, realtimeRevision:");
+    expect(panel).toMatch(/\{\s*cliSessions: stabilized,\s*realtimeRevision:/);
   });
 
   it("keeps realtime action callbacks stable and isolates the browser workspace route", () => {

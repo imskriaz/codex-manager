@@ -74,11 +74,14 @@ describe("persistent diagnostics", () => {
     const root = await makeTemporaryDirectory();
     const subscriptions: Array<{ dispose(): unknown }> = [];
     (vscode.commands as unknown as { registerCommand: unknown }).registerCommand = vi.fn(() => ({ dispose: vi.fn() }));
-    await registerPersistentLogging({
-      globalStorageUri: { fsPath: root },
-      extensionPath: path.join(root, "extension"),
-      subscriptions
-    } as never);
+    await registerPersistentLogging(
+      {
+        globalStorageUri: { fsPath: root },
+        extensionPath: path.join(root, "extension"),
+        subscriptions
+      } as never,
+      root
+    );
 
     await expect(
       runWithPersistentOperation("command:Refresh quota", async () => {
@@ -106,11 +109,14 @@ describe("persistent diagnostics", () => {
   it("correlates nested operations into one trace", async () => {
     const root = await makeTemporaryDirectory();
     (vscode.commands as unknown as { registerCommand: unknown }).registerCommand = vi.fn(() => ({ dispose: vi.fn() }));
-    await registerPersistentLogging({
-      globalStorageUri: { fsPath: root },
-      extensionPath: path.join(root, "extension"),
-      subscriptions: []
-    } as never);
+    await registerPersistentLogging(
+      {
+        globalStorageUri: { fsPath: root },
+        extensionPath: path.join(root, "extension"),
+        subscriptions: []
+      } as never,
+      root
+    );
 
     await runWithPersistentOperation("dashboard-message:action:refresh", async () =>
       runWithPersistentOperation("command:Refresh quota", async () => undefined)
@@ -133,18 +139,21 @@ describe("persistent diagnostics", () => {
     const root = await makeTemporaryDirectory();
     const logger = new PersistentFileLogger(root);
     await logger.initialize();
-    expect(() => logger.write("info", "test", "safe bigint", {
-      sequence: BigInt("9007199254740993")
-    })).not.toThrow();
-    expect(() => logger.write("info", "test", "safe oversized value", {
-      huge: "x".repeat(70_000)
-    })).not.toThrow();
+    expect(() =>
+      logger.write("info", "test", "safe bigint", {
+        sequence: BigInt("9007199254740993")
+      })
+    ).not.toThrow();
+    expect(() =>
+      logger.write("info", "test", "safe oversized value", {
+        huge: "x".repeat(70_000)
+      })
+    ).not.toThrow();
     await expect(logger.flush()).resolves.toBeUndefined();
     const content = await fs.readFile(logger.currentLogPath, "utf8");
     expect(content).toContain('"truncated":true');
     expect(content).toContain("[bigint:9007199254740993]");
   }, 30_000);
-
 });
 
 async function makeTemporaryDirectory(): Promise<string> {

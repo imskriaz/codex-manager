@@ -11,6 +11,9 @@ import {
 import type { CodexManagerIndex, CodexManagerRestoreResult } from "../core/types";
 import { createError, ErrorCode, StorageError, getErrorMessage } from "../core/errors";
 import type { AccountsRepositoryState } from "./accountsRepositoryState";
+import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
+
+const INDEX_PERSIST_OPERATION_KEY = "accounts:index-persist";
 
 export function isIndexHealthError(error: unknown): boolean {
   return (
@@ -60,6 +63,14 @@ export async function readIndexForRecovery(
   state: AccountsRepositoryState,
   readIndex: () => Promise<CodexManagerIndex>
 ): Promise<CodexManagerIndex> {
+  // Once recovery has started, build on its in-memory snapshot even though
+  // the on-disk health fence remains closed until the full index is persisted.
+  if (state.pendingSave) {
+    return cloneIndex(state.pendingSave);
+  }
+  if (state.cache) {
+    return cloneIndex(state.cache.data);
+  }
   try {
     return await readIndex();
   } catch (error) {
@@ -89,9 +100,11 @@ export async function persistRecoveredIndex(params: {
     params.state.saveDebounceTimer = null;
   }
   params.state.pendingSave = null;
-  await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
-  await backupCurrentIndex(params.indexPath, params.backupCount);
-  await writeIndexAtomically(params.indexPath, params.index, params.tempSuffix);
+  await runCrossWindowExclusive(INDEX_PERSIST_OPERATION_KEY, "Account index recovery", async () => {
+    await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
+    await backupCurrentIndex(params.indexPath, params.backupCount);
+    await writeIndexAtomically(params.indexPath, params.index, params.tempSuffix);
+  });
   params.state.isDirty = false;
   params.state.cache = {
     data: cloneIndex(params.index),

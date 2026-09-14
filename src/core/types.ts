@@ -219,7 +219,7 @@ export type CodexIndexHealthStatus = "healthy" | "restored_from_backup" | "corru
 
 export interface CodexIndexHealthSummary {
   status: CodexIndexHealthStatus;
-  lastRestoreSource?: "backup" | "auth_json" | "shared_json";
+  lastRestoreSource?: "backup" | "auth_json" | "shared_json" | "oauth";
   availableBackups: number;
   lastErrorMessage?: string;
   lastRecoveredAt?: number;

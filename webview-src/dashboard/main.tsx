@@ -1236,7 +1236,6 @@ function App() {
   const startOAuthAutoPending = isActionPending("startOAuthAutoFlow");
   const completeOAuthPending = isActionPending("completeOAuthSession");
   const importSharedPending = isActionPending("importSharedJson");
-  const previewImportPending = isActionPending("previewImportSharedJson");
   const restoreBackupPending = isActionPending("restoreFromBackup");
   const restoreAuthPending = isActionPending("restoreFromAuthJson");
   const sharePending = isActionPending("shareTokens");
@@ -1466,9 +1465,8 @@ function App() {
     if (request.kind === "switch") {
       const accountId = request.accountIds[0];
       if (accountId) {
-        const account = (request.targetDeviceId
-          ? snapshot.peerAccounts?.[request.targetDeviceId] ?? []
-          : displayedAccounts
+        const account = (
+          request.targetDeviceId ? (snapshot.peerAccounts?.[request.targetDeviceId] ?? []) : displayedAccounts
         ).find((candidate) => candidate.id === accountId);
         const claimedElsewhere = Boolean(account?.runningDeviceName && !account.runningOnThisDevice);
         if (claimedElsewhere && !snapshot.settings.encryptedSyncRegistryOverrideEnabled) {
@@ -1642,7 +1640,6 @@ function App() {
       oauthError={modals.oauthError}
       importJsonText={modals.importJsonText}
       importJsonError={modals.importJsonError}
-      importPreview={modals.importPreview}
       importResult={modals.importResult}
       copyFeedbackKey={modals.copyFeedbackKey}
       lang={snapshot.lang}
@@ -1650,7 +1647,6 @@ function App() {
       startOAuthAutoPending={startOAuthAutoPending}
       completeOAuthPending={completeOAuthPending}
       importCurrentPending={isActionPending("importCurrent")}
-      previewImportPending={previewImportPending}
       importSharedPending={importSharedPending}
       onClose={() => modals.closeAddAccountModal(completeOAuthPending)}
       onSelectTab={modals.handleAddAccountTabChange}
@@ -1662,7 +1658,6 @@ function App() {
       onImportCurrent={() => sendAction("importCurrent")}
       onImportFileSelected={modals.handleImportFileSelected}
       onImportTextChange={modals.handleImportTextChange}
-      onPreviewImport={modals.handlePreviewImport}
       onSubmitImport={modals.handleSubmitImport}
     />
   );

@@ -94,7 +94,7 @@ export function getActionTimeoutMs(action: DashboardActionName): number {
     case "addAccount":
     case "importCurrent":
     case "startOAuthAutoFlow":
-      return 300_000;
+      return 10 * 60_000 + 30_000;
     default:
       return 30_000;
   }

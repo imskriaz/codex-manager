@@ -11,12 +11,10 @@ import type {
   DashboardCliSessionSummary,
   DashboardCliSandboxMode
 } from "../domain/dashboard/types";
-import {
-  CrossWindowOperationBusyError,
-  runCrossWindowExclusive
-} from "../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
+import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -62,7 +60,8 @@ let runningTurnWrite: Promise<void> = Promise.resolve();
 let cliAvailabilityCache: { key: string; available: boolean; checkedAt: number } | undefined;
 let cliAvailabilityProbe: Promise<boolean> | undefined;
 let cliAvailabilityProbeKey: string | undefined;
-let cliModelListCache: { codexHome: string; models: DashboardCliComposerConfig["models"]; fetchedAt: number } | undefined;
+let cliModelListCache:
+  { codexHome: string; models: DashboardCliComposerConfig["models"]; fetchedAt: number } | undefined;
 let cliModelListProbe: Promise<DashboardCliComposerConfig["models"]> | undefined;
 let cliModelListProbeHome: string | undefined;
 const cliTranscriptPathCache = new Map<string, { path?: string; expiresAt: number }>();
@@ -84,11 +83,14 @@ type CliTranscriptReadResult = {
   windowed: boolean;
 };
 const cliTranscriptMessageCache = new Map<string, CliTranscriptMessageCache>();
-const cliTranscriptMetadataCache = new Map<string, {
-  projectPath?: string;
-  sessionSurface?: DashboardCliSessionSummary["sessionSurface"];
-  expiresAt: number;
-}>();
+const cliTranscriptMetadataCache = new Map<
+  string,
+  {
+    projectPath?: string;
+    sessionSurface?: DashboardCliSessionSummary["sessionSurface"];
+    expiresAt: number;
+  }
+>();
 const CLI_TRANSCRIPT_METADATA_CACHE_TTL_MS = 60_000;
 let cliExecutableCache: { signature: string; executable: CodexCliExecutable; resolvedAt: number } | undefined;
 
@@ -125,10 +127,7 @@ export async function readCodexCliSessions(
   // Only scan transcripts that can actually be rendered. Large histories may
   // contain thousands of index entries while the dashboard shows at most 30
   // active and 30 archived sessions.
-  const transcriptPaths = await findCliSessionTranscripts(
-    codexHome,
-    new Set(visibleEntries.map((entry) => entry.id))
-  );
+  const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(visibleEntries.map((entry) => entry.id)));
   return Promise.all(
     visibleEntries.map((entry) =>
       toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id))
@@ -186,7 +185,7 @@ async function toCliSessionSummary(
   transcriptPath?: string
 ): Promise<DashboardCliSessionSummary> {
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
-  const running = !archived && await isCliSessionRunning(codexHome, entry.id, transcriptPath);
+  const running = !archived && (await isCliSessionRunning(codexHome, entry.id, transcriptPath));
   const canStop = running && activeCliTurns.has(entry.id);
   return {
     id: entry.id,
@@ -261,13 +260,17 @@ function resolveCliSessionSurface(originator: unknown, source: unknown): Dashboa
   const sourceLabel = typeof source === "string" ? source.toLowerCase() : "";
   const originatorLabel = typeof originator === "string" ? originator.toLowerCase() : "";
   if (sourceLabel === "vscode" || originatorLabel.includes("vscode")) return "vscode";
-  if (sourceLabel === "exec" || sourceLabel === "cli" || originatorLabel.includes("cli") || originatorLabel.includes("sdk")) return "cli";
+  if (
+    sourceLabel === "exec" ||
+    sourceLabel === "cli" ||
+    originatorLabel.includes("cli") ||
+    originatorLabel.includes("sdk")
+  )
+    return "cli";
   return originatorLabel || sourceLabel ? "other" : undefined;
 }
 
-export async function readCodexCliComposerConfig(
-  codexHome = resolveCodexHome()
-): Promise<DashboardCliComposerConfig> {
+export async function readCodexCliComposerConfig(codexHome = resolveCodexHome()): Promise<DashboardCliComposerConfig> {
   const [modelsRaw, configRaw] = await Promise.all([
     readSmallOptionalFile(path.join(codexHome, "models_cache.json"), MAX_MODELS_CACHE_BYTES),
     readSmallOptionalFile(path.join(codexHome, "config.toml"), MAX_CONFIG_BYTES)
@@ -285,13 +288,15 @@ export async function readCodexCliComposerConfig(
   const configuredSandbox = readTomlString(configRaw, "sandbox_mode");
   return {
     models,
-    ...(vscode.workspace.workspaceFolders?.length ? {
-      projects: vscode.workspace.workspaceFolders.map((folder) => ({
-        id: folder.uri.fsPath,
-        label: folder.name,
-        path: folder.uri.fsPath
-      }))
-    } : {}),
+    ...(vscode.workspace.workspaceFolders?.length
+      ? {
+          projects: vscode.workspace.workspaceFolders.map((folder) => ({
+            id: folder.uri.fsPath,
+            label: folder.name,
+            path: folder.uri.fsPath
+          }))
+        }
+      : {}),
     defaultModel: models.some((model) => model.id === configuredModel) ? configuredModel : models[0]?.id,
     defaultReasoningEffort: REASONING_EFFORT_PATTERN.test(configuredEffort ?? "")
       ? configuredEffort
@@ -355,10 +360,16 @@ export async function sendCodexCliSessionMessage(options: {
       } catch (error) {
         const launchError = error instanceof Error ? error : new Error(String(error));
         void forgetTrackedCliTurn(options.sessionId, startedAt).catch(() => undefined);
-        recordPersistentEvent("error", "session-resume", "Codex resume command failed to start", {
-          sessionRef,
-          reason: launchError.message
-        }, launchError);
+        recordPersistentEvent(
+          "error",
+          "session-resume",
+          "Codex resume command failed to start",
+          {
+            sessionRef,
+            reason: launchError.message
+          },
+          launchError
+        );
         reject(launchError);
         return;
       }
@@ -372,10 +383,16 @@ export async function sendCodexCliSessionMessage(options: {
           childPid: child.pid
         }).catch((journalError) => {
           console.warn("[codexManager] unable to record the CLI child process", journalError);
-          recordPersistentEvent("error", "session-resume", "CLI child process could not be recorded in the recovery journal", {
-            sessionRef,
-            reason: journalError instanceof Error ? journalError.message : String(journalError)
-          }, journalError);
+          recordPersistentEvent(
+            "error",
+            "session-resume",
+            "CLI child process could not be recorded in the recovery journal",
+            {
+              sessionRef,
+              reason: journalError instanceof Error ? journalError.message : String(journalError)
+            },
+            journalError
+          );
         });
       }
       let stderr = "";
@@ -391,20 +408,32 @@ export async function sendCodexCliSessionMessage(options: {
         activeCliTurns.delete(options.sessionId);
         await forgetTrackedCliTurn(options.sessionId, startedAt).catch((cleanupError) => {
           console.warn("[codexManager] unable to clear the completed CLI turn journal entry", cleanupError);
-          recordPersistentEvent("error", "session-resume", "Completed CLI recovery record could not be cleared", {
-            sessionRef,
-            reason: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-          }, cleanupError);
+          recordPersistentEvent(
+            "error",
+            "session-resume",
+            "Completed CLI recovery record could not be cleared",
+            {
+              sessionRef,
+              reason: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+            },
+            cleanupError
+          );
         });
       };
       const timeout = setTimeout(() => {
         timedOut = true;
         child.kill();
         const error = new Error("Codex did not finish within 15 minutes. The turn was stopped; try a smaller request.");
-        recordPersistentEvent("error", "session-resume", "Codex resume command timed out", {
-          sessionRef,
-          reason: error.message
-        }, error);
+        recordPersistentEvent(
+          "error",
+          "session-resume",
+          "Codex resume command timed out",
+          {
+            sessionRef,
+            reason: error.message
+          },
+          error
+        );
         // Resolve the dashboard action immediately instead of waiting forever
         // for a misbehaving process to acknowledge the stop signal. The child
         // stays registered until its close/error event, preventing a new turn.
@@ -418,10 +447,16 @@ export async function sendCodexCliSessionMessage(options: {
       child.on("error", (error) => {
         void cleanupProcess().then(() => {
           if (resultSettled) return;
-          recordPersistentEvent("error", "session-resume", "Codex resume command failed to start", {
-            sessionRef,
-            reason: error.message
-          }, error);
+          recordPersistentEvent(
+            "error",
+            "session-resume",
+            "Codex resume command failed to start",
+            {
+              sessionRef,
+              reason: error.message
+            },
+            error
+          );
           settleResult(() => reject(error));
         });
       });
@@ -430,10 +465,16 @@ export async function sendCodexCliSessionMessage(options: {
           if (resultSettled) return;
           if (signal !== null && !timedOut) {
             const error = new CodexCliTurnCancelledError();
-            recordPersistentEvent("warning", "session-resume", "Codex resume command was cancelled", {
-              sessionRef,
-              reason: error.message
-            }, error);
+            recordPersistentEvent(
+              "warning",
+              "session-resume",
+              "Codex resume command was cancelled",
+              {
+                sessionRef,
+                reason: error.message
+              },
+              error
+            );
             settleResult(() => reject(error));
           } else if (code === 0) {
             recordPersistentEvent("info", "session-resume", "Codex resume command completed successfully", {
@@ -443,12 +484,18 @@ export async function sendCodexCliSessionMessage(options: {
             settleResult(resolve);
           } else {
             const error = new Error(normalizeCliError(stderr) || `Codex exited with code ${code ?? "unknown"}.`);
-            recordPersistentEvent("error", "session-resume", "Codex resume command failed", {
-              sessionRef,
-              exitCode: code,
-              signal,
-              reason: error.message
-            }, error);
+            recordPersistentEvent(
+              "error",
+              "session-resume",
+              "Codex resume command failed",
+              {
+                sessionRef,
+                exitCode: code,
+                signal,
+                reason: error.message
+              },
+              error
+            );
             settleResult(() => reject(error));
           }
         });
@@ -457,10 +504,16 @@ export async function sendCodexCliSessionMessage(options: {
         if (resultSettled) return;
         child.kill();
         const writeError = new Error(`Codex could not receive the prompt: ${error.message}`);
-        recordPersistentEvent("error", "session-resume", "Codex prompt write failed", {
-          sessionRef,
-          reason: writeError.message
-        }, error);
+        recordPersistentEvent(
+          "error",
+          "session-resume",
+          "Codex prompt write failed",
+          {
+            sessionRef,
+            reason: writeError.message
+          },
+          error
+        );
         settleResult(() => reject(writeError));
       });
       try {
@@ -469,10 +522,16 @@ export async function sendCodexCliSessionMessage(options: {
         child.kill();
         const detail = error instanceof Error ? error.message : String(error);
         const writeError = new Error(`Codex could not receive the prompt: ${detail}`);
-        recordPersistentEvent("error", "session-resume", "Codex prompt write failed", {
-          sessionRef,
-          reason: writeError.message
-        }, error);
+        recordPersistentEvent(
+          "error",
+          "session-resume",
+          "Codex prompt write failed",
+          {
+            sessionRef,
+            reason: writeError.message
+          },
+          error
+        );
         settleResult(() => reject(writeError));
       }
     });
@@ -489,10 +548,14 @@ async function readLiveCliModels(codexHome: string): Promise<DashboardCliCompose
   cliModelListProbeHome = normalizedHome;
   cliModelListProbe = (async () => {
     try {
-      const response = await runCodexAppServerRequest<{ data?: unknown }>("model/list", {
-        includeHidden: false,
-        limit: 100
-      }, APP_SERVER_MODEL_LIST_TIMEOUT_MS);
+      const response = await runCodexAppServerRequest<{ data?: unknown }>(
+        "model/list",
+        {
+          includeHidden: false,
+          limit: 100
+        },
+        APP_SERVER_MODEL_LIST_TIMEOUT_MS
+      );
       return parseCliModels(JSON.stringify(response));
     } catch {
       // The composer can still open with an empty model list when the live
@@ -581,8 +644,8 @@ export async function startCodexCliSession(options: {
       for (const line of stdout.split(/\r?\n/)) {
         try {
           const event = JSON.parse(line) as Record<string, unknown>;
-          const candidate = event["thread_id"] ?? event["threadId"] ??
-            (event["thread"] as Record<string, unknown> | undefined)?.["id"];
+          const candidate =
+            event["thread_id"] ?? event["threadId"] ?? (event["thread"] as Record<string, unknown> | undefined)?.["id"];
           if (typeof candidate === "string" && SESSION_ID_PATTERN.test(candidate)) {
             sessionId = candidate;
             break;
@@ -606,7 +669,11 @@ export async function startCodexCliSession(options: {
       child.stdin.end(text, "utf8");
     } catch (error) {
       child.kill();
-      finish(() => reject(new Error(`Codex could not receive the prompt: ${error instanceof Error ? error.message : String(error)}`)));
+      finish(() =>
+        reject(
+          new Error(`Codex could not receive the prompt: ${error instanceof Error ? error.message : String(error)}`)
+        )
+      );
     }
   });
 }
@@ -719,12 +786,18 @@ export async function readCodexCliSessionMessages(
     return messages;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    recordPersistentEvent("error", "session-viewer", "Workspace session read failed", {
-      sessionRef,
-      reader: "direct-jsonl",
-      reason,
-      durationMs: Date.now() - startedAt
-    }, error);
+    recordPersistentEvent(
+      "error",
+      "session-viewer",
+      "Workspace session read failed",
+      {
+        sessionRef,
+        reader: "direct-jsonl",
+        reason,
+        durationMs: Date.now() - startedAt
+      },
+      error
+    );
     throw error;
   }
 }
@@ -792,22 +865,51 @@ function parseAppServerThreadItem(
   }
   if (type === "agentMessage") {
     const content = parseUserInputs(item["content"]);
-    const text = (typeof item["text"] === "string" ? item["text"] : (content.text || readHumanText(item["content"]) || "")).trim();
+    const text = (
+      typeof item["text"] === "string" ? item["text"] : content.text || readHumanText(item["content"]) || ""
+    ).trim();
     return text || content.images.length
-      ? { id, kind: "message", role: "assistant", text: text.slice(0, MAX_SESSION_MESSAGE_CHARS), ...(content.images.length ? { images: content.images } : {}), timestamp }
+      ? {
+          id,
+          kind: "message",
+          role: "assistant",
+          text: text.slice(0, MAX_SESSION_MESSAGE_CHARS),
+          ...(content.images.length ? { images: content.images } : {}),
+          timestamp
+        }
       : undefined;
   }
   if (type === "reasoning") {
     const summary = readStringArray(item["summary"]);
     const content = readStringArray(item["content"]);
-    return { id, kind: "reasoning", title: "Reasoning", text: (summary.join("\n\n") || content.join("\n\n") || "Codex reasoned about the next step.").slice(0, MAX_SESSION_MESSAGE_CHARS), status, timestamp };
+    return {
+      id,
+      kind: "reasoning",
+      title: "Reasoning",
+      text: (summary.join("\n\n") || content.join("\n\n") || "Codex reasoned about the next step.").slice(
+        0,
+        MAX_SESSION_MESSAGE_CHARS
+      ),
+      status,
+      timestamp
+    };
   }
   if (type === "plan") {
-    return { id, kind: "plan", title: "Plan", text: readDisplayText(item["text"], "Codex prepared a plan."), status, timestamp };
+    return {
+      id,
+      kind: "plan",
+      title: "Plan",
+      text: readDisplayText(item["text"], "Codex prepared a plan."),
+      status,
+      timestamp
+    };
   }
   if (type === "commandExecution") {
     const command = readCommandText(item["command"] ?? item["cmd"] ?? item["argv"]);
-    const output = typeof item["aggregatedOutput"] === "string" ? item["aggregatedOutput"].slice(0, MAX_SESSION_MESSAGE_CHARS) : undefined;
+    const output =
+      typeof item["aggregatedOutput"] === "string"
+        ? item["aggregatedOutput"].slice(0, MAX_SESSION_MESSAGE_CHARS)
+        : undefined;
     return {
       id,
       kind: "command",
@@ -824,47 +926,151 @@ function parseAppServerThreadItem(
   }
   if (type === "fileChange") {
     const changes = parseCliFileChanges(item["changes"]);
-    return { id, kind: "file-change", title: status === "inProgress" ? "Editing files" : `Edited ${changes.length} ${changes.length === 1 ? "file" : "files"}`, text: changes.map((change) => change.path).join("\n") || "File changes", changes, status, timestamp };
+    return {
+      id,
+      kind: "file-change",
+      title:
+        status === "inProgress"
+          ? "Editing files"
+          : `Edited ${changes.length} ${changes.length === 1 ? "file" : "files"}`,
+      text: changes.map((change) => change.path).join("\n") || "File changes",
+      changes,
+      status,
+      timestamp
+    };
   }
   if (type === "customToolCall" || type === "custom_tool_call") {
     const name = typeof item["name"] === "string" ? item["name"] : "tool";
     const input = typeof item["input"] === "string" ? item["input"].trim() : safeDisplayJson(item["input"]);
     const images = readImageSources(item);
     const error = readHumanError(item["error"]);
-    if (images.length) return { id, kind: "image", title: "Generated image", text: `${images.length} image${images.length === 1 ? "" : "s"} generated.`, images: images.map((src) => ({ src, alt: "Generated image" })), status: error ? "failed" : status, timestamp };
+    if (images.length)
+      return {
+        id,
+        kind: "image",
+        title: "Generated image",
+        text: `${images.length} image${images.length === 1 ? "" : "s"} generated.`,
+        images: images.map((src) => ({ src, alt: "Generated image" })),
+        status: error ? "failed" : status,
+        timestamp
+      };
     const result = readHumanText(item["result"] ?? item["output"]);
     const failed = Boolean(error) || status === "failed";
-    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${name}` : failed ? `${name} failed` : `Used ${name}`, subtitle: name, text: status === "inProgress" ? `${name} is running.` : error ?? result ?? `${name} completed.`, arguments: input, result: error ?? result, debug: safeDisplayJson(item), status: failed ? "failed" : status, timestamp };
+    return {
+      id,
+      kind: "tool-call",
+      title: status === "inProgress" ? `Using ${name}` : failed ? `${name} failed` : `Used ${name}`,
+      subtitle: name,
+      text: status === "inProgress" ? `${name} is running.` : (error ?? result ?? `${name} completed.`),
+      arguments: input,
+      result: error ?? result,
+      debug: safeDisplayJson(item),
+      status: failed ? "failed" : status,
+      timestamp
+    };
   }
   if (type === "mcpToolCall" || type === "dynamicToolCall") {
-    const server = typeof item["server"] === "string" ? item["server"] : typeof item["namespace"] === "string" ? item["namespace"] : "Tool";
+    const server =
+      typeof item["server"] === "string"
+        ? item["server"]
+        : typeof item["namespace"] === "string"
+          ? item["namespace"]
+          : "Tool";
     const tool = typeof item["tool"] === "string" ? item["tool"] : "call";
     const error = readHumanError(item["error"]);
-    const debug = safeDisplayJson({ arguments: item["arguments"], error: item["error"], result: item["result"] ?? item["contentItems"] ?? item["success"] });
+    const debug = safeDisplayJson({
+      arguments: item["arguments"],
+      error: item["error"],
+      result: item["result"] ?? item["contentItems"] ?? item["success"]
+    });
     const failed = Boolean(error) || status === "failed";
-    return { id, kind: "tool-call", title: status === "inProgress" ? `Using ${tool}` : failed ? `${tool} failed` : `Used ${tool}`, subtitle: server, text: error ?? `${server} used ${tool}.`, arguments: safeDisplayJson(item["arguments"]), result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]), debug, durationMs, status: failed ? "failed" : status, timestamp };
+    return {
+      id,
+      kind: "tool-call",
+      title: status === "inProgress" ? `Using ${tool}` : failed ? `${tool} failed` : `Used ${tool}`,
+      subtitle: server,
+      text: error ?? `${server} used ${tool}.`,
+      arguments: safeDisplayJson(item["arguments"]),
+      result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]),
+      debug,
+      durationMs,
+      status: failed ? "failed" : status,
+      timestamp
+    };
   }
   if (type === "collabToolCall" || type === "collabAgentToolCall" || type === "subAgentActivity") {
-    const tool = typeof item["tool"] === "string" ? item["tool"] : typeof item["kind"] === "string" ? item["kind"] : "Agent activity";
-    return { id, kind: "collaboration", title: status === "inProgress" ? "Working with an agent" : "Agent activity", text: typeof item["prompt"] === "string" ? item["prompt"].slice(0, MAX_SESSION_MESSAGE_CHARS) : tool, subtitle: tool, status, timestamp };
+    const tool =
+      typeof item["tool"] === "string"
+        ? item["tool"]
+        : typeof item["kind"] === "string"
+          ? item["kind"]
+          : "Agent activity";
+    return {
+      id,
+      kind: "collaboration",
+      title: status === "inProgress" ? "Working with an agent" : "Agent activity",
+      text: typeof item["prompt"] === "string" ? item["prompt"].slice(0, MAX_SESSION_MESSAGE_CHARS) : tool,
+      subtitle: tool,
+      status,
+      timestamp
+    };
   }
   if (type === "webSearch") {
     const query = typeof item["query"] === "string" ? item["query"] : safeDisplayJson(item["action"]);
-    return { id, kind: "web-search", title: "Searched the web", text: query || "Web search", status: status === "unknown" ? "completed" : status, timestamp };
+    return {
+      id,
+      kind: "web-search",
+      title: "Searched the web",
+      text: query || "Web search",
+      status: status === "unknown" ? "completed" : status,
+      timestamp
+    };
   }
   if (type === "imageView" || type === "ImageView" || type === "imageGeneration" || type === "ImageGeneration") {
     const viewed = type === "imageView" || type === "ImageView";
     const images = readImageSources(item).map((src) => ({ src, alt: viewed ? "Viewed image" : "Generated image" }));
-    return { id, kind: "image", title: viewed ? "Viewed image" : "Generated image", text: images.length ? mediaDisplayLabel(images[0]!.src) : readDisplayText(item["path"], viewed ? "Image" : "Image generation"), ...(images.length ? { images } : {}), status, timestamp };
+    return {
+      id,
+      kind: "image",
+      title: viewed ? "Viewed image" : "Generated image",
+      text: images.length
+        ? mediaDisplayLabel(images[0]!.src)
+        : readDisplayText(item["path"], viewed ? "Image" : "Image generation"),
+      ...(images.length ? { images } : {}),
+      status,
+      timestamp
+    };
   }
   if (type === "enteredReviewMode" || type === "exitedReviewMode") {
-    return { id, kind: "review", title: type === "enteredReviewMode" ? "Started review" : "Completed review", text: readDisplayText(item["review"], "Code review"), status, timestamp };
+    return {
+      id,
+      kind: "review",
+      title: type === "enteredReviewMode" ? "Started review" : "Completed review",
+      text: readDisplayText(item["review"], "Code review"),
+      status,
+      timestamp
+    };
   }
   if (type === "contextCompaction") {
-    return { id, kind: "compaction", title: "Compacted conversation", text: "Codex condensed earlier context to continue working.", status: "completed", timestamp };
+    return {
+      id,
+      kind: "compaction",
+      title: "Compacted conversation",
+      text: "Codex condensed earlier context to continue working.",
+      status: "completed",
+      timestamp
+    };
   }
   if (type === "sleep") {
-    return { id, kind: "tool-call", title: "Waited", text: `Waited ${formatDuration(typeof item["durationMs"] === "number" ? item["durationMs"] : 0)}.`, durationMs, status, timestamp };
+    return {
+      id,
+      kind: "tool-call",
+      title: "Waited",
+      text: `Waited ${formatDuration(typeof item["durationMs"] === "number" ? item["durationMs"] : 0)}.`,
+      durationMs,
+      status,
+      timestamp
+    };
   }
   return undefined;
 }
@@ -875,20 +1081,27 @@ function parseCliFileChanges(value: unknown): NonNullable<DashboardCliSessionMes
       if (!change || typeof change !== "object") return [];
       const detail = change as Record<string, unknown>;
       if (typeof detail["path"] !== "string") return [];
-      return [{
-        path: detail["path"],
-        kind: typeof detail["kind"] === "string" ? detail["kind"] : "update",
-        diff: typeof detail["diff"] === "string" ? detail["diff"].slice(0, MAX_SESSION_MESSAGE_CHARS) : undefined
-      }];
+      return [
+        {
+          path: detail["path"],
+          kind: typeof detail["kind"] === "string" ? detail["kind"] : "update",
+          diff: typeof detail["diff"] === "string" ? detail["diff"].slice(0, MAX_SESSION_MESSAGE_CHARS) : undefined
+        }
+      ];
     });
   }
   if (!value || typeof value !== "object") return [];
   return Object.entries(value as Record<string, unknown>).map(([filePath, change]) => {
-    const detail = change && typeof change === "object" ? change as Record<string, unknown> : {};
+    const detail = change && typeof change === "object" ? (change as Record<string, unknown>) : {};
     const diff = detail["diff"] ?? detail["unified_diff"];
     return {
       path: filePath,
-      kind: typeof detail["kind"] === "string" ? detail["kind"] : typeof detail["type"] === "string" ? detail["type"] : "update",
+      kind:
+        typeof detail["kind"] === "string"
+          ? detail["kind"]
+          : typeof detail["type"] === "string"
+            ? detail["type"]
+            : "update",
       diff: typeof diff === "string" ? diff.slice(0, MAX_SESSION_MESSAGE_CHARS) : undefined
     };
   });
@@ -901,10 +1114,24 @@ function parseUserInputs(value: unknown): { text: string; images: Array<{ src: s
   for (const entry of value) {
     if (!entry || typeof entry !== "object") continue;
     const item = entry as Record<string, unknown>;
-    if ((item["type"] === "text" || item["type"] === "Text" || item["type"] === "input_text" || item["type"] === "output_text") && typeof item["text"] === "string") parts.push(item["text"]);
-    else if (item["type"] === "image" || item["type"] === "Image" || item["type"] === "localImage" || item["type"] === "input_image" || item["type"] === "output_image") {
+    if (
+      (item["type"] === "text" ||
+        item["type"] === "Text" ||
+        item["type"] === "input_text" ||
+        item["type"] === "output_text") &&
+      typeof item["text"] === "string"
+    )
+      parts.push(item["text"]);
+    else if (
+      item["type"] === "image" ||
+      item["type"] === "Image" ||
+      item["type"] === "localImage" ||
+      item["type"] === "input_image" ||
+      item["type"] === "output_image"
+    ) {
       const src = readSafeImageSource(item);
-      if (src) images.push({ src, alt: typeof item["alt"] === "string" ? item["alt"].slice(0, 200) : "Attached image" });
+      if (src)
+        images.push({ src, alt: typeof item["alt"] === "string" ? item["alt"].slice(0, 200) : "Attached image" });
       else parts.push("[Image unavailable]");
     } else if (item["type"] === "skill" && typeof item["name"] === "string") parts.push(`[Skill: ${item["name"]}]`);
   }
@@ -912,7 +1139,8 @@ function parseUserInputs(value: unknown): { text: string; images: Array<{ src: s
 }
 
 function readSafeImageSource(item: Record<string, unknown>): string | undefined {
-  const nested = item["image"] && typeof item["image"] === "object" ? item["image"] as Record<string, unknown> : undefined;
+  const nested =
+    item["image"] && typeof item["image"] === "object" ? (item["image"] as Record<string, unknown>) : undefined;
   // MCP and Responses image content commonly carries raw base64 in `data`
   // alongside an image MIME type rather than a complete data URL.
   const rawData = item["data"];
@@ -923,10 +1151,23 @@ function readSafeImageSource(item: Record<string, unknown>): string | undefined 
       return `data:${rawMime};base64,${compact}`;
     }
   }
-  for (const candidate of [item["image_url"], item["imageUrl"], item["url"], item["data"], item["path"], item["output_path"], nested?.["url"], nested?.["path"]]) {
+  for (const candidate of [
+    item["image_url"],
+    item["imageUrl"],
+    item["url"],
+    item["data"],
+    item["path"],
+    item["output_path"],
+    nested?.["url"],
+    nested?.["path"]
+  ]) {
     if (typeof candidate !== "string") continue;
     const value = candidate.trim();
-    if (/^(?:https?:\/\/|file:\/\/|data:image\/(?:png|jpeg|jpg|gif|webp);base64,)/i.test(value) || path.isAbsolute(value)) return value;
+    if (
+      /^(?:https?:\/\/|file:\/\/|data:image\/(?:png|jpeg|jpg|gif|webp);base64,)/i.test(value) ||
+      path.isAbsolute(value)
+    )
+      return value;
   }
   return undefined;
 }
@@ -941,13 +1182,20 @@ function readImageSources(item: Record<string, unknown>): string[] {
   };
   const visit = (value: unknown, depth = 0): void => {
     if (depth > 4 || sources.length >= 20 || value === null || value === undefined) return;
-    if (typeof value === "string") { add(value); return; }
+    if (typeof value === "string") {
+      add(value);
+      return;
+    }
     if (typeof value !== "object" || visited.has(value)) return;
     visited.add(value);
-    if (Array.isArray(value)) { for (const entry of value) visit(entry, depth + 1); return; }
+    if (Array.isArray(value)) {
+      for (const entry of value) visit(entry, depth + 1);
+      return;
+    }
     const record = value as Record<string, unknown>;
     add(readSafeImageSource(record));
-    for (const key of ["image", "images", "result", "output", "content", "contentItems", "content_items", "data"]) visit(record[key], depth + 1);
+    for (const key of ["image", "images", "result", "output", "content", "contentItems", "content_items", "data"])
+      visit(record[key], depth + 1);
   };
   visit(item);
   return sources.slice(0, 20);
@@ -955,7 +1203,11 @@ function readImageSources(item: Record<string, unknown>): string[] {
 
 function mediaDisplayLabel(source: string): string {
   try {
-    const parsed = source.startsWith("file:") ? localPathFromSource(source) : source.startsWith("http") ? new URL(source).pathname : source;
+    const parsed = source.startsWith("file:")
+      ? localPathFromSource(source)
+      : source.startsWith("http")
+        ? new URL(source).pathname
+        : source;
     return path.basename(parsed) || "Image";
   } catch {
     return "Image";
@@ -964,33 +1216,47 @@ function mediaDisplayLabel(source: string): string {
 
 async function hydrateSessionImages(messages: DashboardCliSessionMessage[]): Promise<DashboardCliSessionMessage[]> {
   let totalBytes = 0;
-  return Promise.all(messages.map(async (message) => {
-    if (!message.images?.length) return message;
-    const images: Array<{ src: string; alt?: string }> = [];
-    for (const image of message.images) {
-      if (/^(?:https?:\/\/|data:image\/)/i.test(image.src)) {
-        images.push(image);
-        continue;
+  return Promise.all(
+    messages.map(async (message) => {
+      if (!message.images?.length) return message;
+      const images: Array<{ src: string; alt?: string }> = [];
+      for (const image of message.images) {
+        if (/^(?:https?:\/\/|data:image\/)/i.test(image.src)) {
+          images.push(image);
+          continue;
+        }
+        if (totalBytes >= MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
+        let localPath: string;
+        try {
+          localPath = image.src.startsWith("file:") ? localPathFromSource(image.src) : image.src;
+        } catch {
+          continue;
+        }
+        try {
+          const snapshot = await readSafeFileSnapshot(localPath, {
+            maxBytes: MAX_SESSION_IMAGE_BYTES,
+            rejectIfLarger: true
+          });
+          if (totalBytes + snapshot.size > MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
+          totalBytes += snapshot.size;
+          const buffer = snapshot.buffer;
+          const mimeType = sniffImageMime(buffer);
+          if (!mimeType) {
+            totalBytes -= snapshot.size;
+            continue;
+          }
+          images.push({
+            src: `data:${mimeType};base64,${buffer.toString("base64")}`,
+            alt: image.alt ?? mediaDisplayLabel(image.src)
+          });
+        } catch {
+          /* A deleted temp image is a normal unavailable preview. */
+        }
       }
-      if (totalBytes >= MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
-      let localPath: string;
-      try { localPath = image.src.startsWith("file:") ? localPathFromSource(image.src) : image.src; } catch { continue; }
-      try {
-        const snapshot = await readSafeFileSnapshot(localPath, {
-          maxBytes: MAX_SESSION_IMAGE_BYTES,
-          rejectIfLarger: true
-        });
-        if (totalBytes + snapshot.size > MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
-        totalBytes += snapshot.size;
-        const buffer = snapshot.buffer;
-        const mimeType = sniffImageMime(buffer);
-        if (!mimeType) { totalBytes -= snapshot.size; continue; }
-        images.push({ src: `data:${mimeType};base64,${buffer.toString("base64")}`, alt: image.alt ?? mediaDisplayLabel(image.src) });
-      } catch { /* A deleted temp image is a normal unavailable preview. */ }
-    }
-    if (images.length) return { ...message, images };
-    return message;
-  }));
+      if (images.length) return { ...message, images };
+      return message;
+    })
+  );
 }
 
 function localPathFromSource(source: string): string {
@@ -1001,18 +1267,31 @@ function localPathFromSource(source: string): string {
 }
 
 function sniffImageMime(buffer: Buffer): string | undefined {
-  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
+    return "image/png";
   if (buffer.length >= 3 && buffer[0] === 255 && buffer[1] === 216 && buffer[2] === 255) return "image/jpeg";
-  if (buffer.length >= 6 && (buffer.subarray(0, 6).toString("ascii") === "GIF87a" || buffer.subarray(0, 6).toString("ascii") === "GIF89a")) return "image/gif";
-  if (buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (
+    buffer.length >= 6 &&
+    (buffer.subarray(0, 6).toString("ascii") === "GIF87a" || buffer.subarray(0, 6).toString("ascii") === "GIF89a")
+  )
+    return "image/gif";
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buffer.subarray(8, 12).toString("ascii") === "WEBP"
+  )
+    return "image/webp";
   if (buffer.length >= 2 && buffer.subarray(0, 2).toString("ascii") === "BM") return "image/bmp";
-  if (buffer.length >= 4 && buffer[0] === 0 && buffer[1] === 0 && buffer[2] === 1 && buffer[3] === 0) return "image/x-icon";
+  if (buffer.length >= 4 && buffer[0] === 0 && buffer[1] === 0 && buffer[2] === 1 && buffer[3] === 0)
+    return "image/x-icon";
   return undefined;
 }
 
 function readStringArray(value: unknown): string[] {
   if (typeof value === "string" && value.trim()) return [value.trim()];
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim())) : [];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()))
+    : [];
 }
 
 function readDisplayText(value: unknown, fallback: string): string {
@@ -1027,7 +1306,9 @@ function readCommandText(value: unknown): string {
   }
   if (value && typeof value === "object") {
     const command = value as Record<string, unknown>;
-    const executable = readCommandText(command["command"] ?? command["cmd"] ?? command["program"] ?? command["executable"]);
+    const executable = readCommandText(
+      command["command"] ?? command["cmd"] ?? command["program"] ?? command["executable"]
+    );
     const args = readStringArray(command["args"] ?? command["arguments"] ?? command["argv"]);
     const combined = [executable === "Command" ? "" : executable, ...args].filter(Boolean).join(" ").trim();
     if (combined) return combined.slice(0, MAX_SESSION_MESSAGE_CHARS);
@@ -1051,12 +1332,16 @@ function readHumanError(value: unknown): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
   for (const key of ["message", "error", "text"]) {
-    if (typeof candidate[key] === "string" && candidate[key].trim()) return candidate[key].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
+    if (typeof candidate[key] === "string" && candidate[key].trim())
+      return candidate[key].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
   }
   const content = candidate["content"];
   if (Array.isArray(content)) {
-    const text = content.find((entry) => entry && typeof entry === "object" && typeof (entry as Record<string, unknown>)["text"] === "string") as Record<string, unknown> | undefined;
-    if (typeof text?.["text"] === "string" && text["text"].trim()) return text["text"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
+    const text = content.find(
+      (entry) => entry && typeof entry === "object" && typeof (entry as Record<string, unknown>)["text"] === "string"
+    ) as Record<string, unknown> | undefined;
+    if (typeof text?.["text"] === "string" && text["text"].trim())
+      return text["text"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
   }
   return undefined;
 }
@@ -1069,8 +1354,10 @@ function readHumanText(value: unknown): string | undefined {
   }
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
-  if (typeof candidate["message"] === "string" && candidate["message"].trim()) return candidate["message"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
-  if (typeof candidate["text"] === "string" && candidate["text"].trim()) return candidate["text"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
+  if (typeof candidate["message"] === "string" && candidate["message"].trim())
+    return candidate["message"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
+  if (typeof candidate["text"] === "string" && candidate["text"].trim())
+    return candidate["text"].trim().slice(0, MAX_SESSION_MESSAGE_CHARS);
   if (candidate["content"] !== undefined) return readHumanText(candidate["content"]);
   return readHumanError(value);
 }
@@ -1086,10 +1373,12 @@ function isLegacyToolOutputFailure(value: unknown): boolean {
   }
   if (typeof value !== "string") return false;
   const text = value.trim();
-  return /^(?:execution\s+)?error\s*:/i.test(text)
-    || /^error\b/i.test(text)
-    || /^tool\s+(?:call\s+)?failed\b/i.test(text)
-    || /^command\s+failed\b/i.test(text);
+  return (
+    /^(?:execution\s+)?error\s*:/i.test(text) ||
+    /^error\b/i.test(text) ||
+    /^tool\s+(?:call\s+)?failed\b/i.test(text) ||
+    /^command\s+failed\b/i.test(text)
+  );
 }
 
 function normalizeCliItemStatus(value: unknown): DashboardCliSessionMessage["status"] {
@@ -1115,11 +1404,7 @@ function validateSessionId(sessionId: string): void {
   if (!SESSION_ID_PATTERN.test(sessionId)) throw new Error("The session identifier is invalid.");
 }
 
-function runCliSessionMutation<T>(
-  sessionId: string,
-  operationLabel: string,
-  task: () => Promise<T>
-): Promise<T> {
+function runCliSessionMutation<T>(sessionId: string, operationLabel: string, task: () => Promise<T>): Promise<T> {
   return runCrossWindowExclusive(`codex:session:${sessionId.toLowerCase()}`, operationLabel, task);
 }
 
@@ -1128,7 +1413,10 @@ function resolveCliProjectPath(projectPath: string | undefined): string {
   if (!projectPath) return fallback;
   const requested = path.resolve(projectPath);
   const allowed = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(folder.uri.fsPath));
-  if (allowed.length === 0 || allowed.some((root) => requested === root || requested.startsWith(`${root}${path.sep}`))) {
+  if (
+    allowed.length === 0 ||
+    allowed.some((root) => requested === root || requested.startsWith(`${root}${path.sep}`))
+  ) {
     return requested;
   }
   throw new Error("The selected project is not an open workspace folder.");
@@ -1155,7 +1443,9 @@ async function assertUsableCliProjectPath(projectPath: string): Promise<void> {
     if (!stat.isDirectory()) throw new Error("The selected project path is not a folder.");
   } catch (error) {
     if (error instanceof Error && error.message === "The selected project path is not a folder.") throw error;
-    throw new Error("The selected project folder is unavailable. Choose an open, accessible workspace folder and try again.");
+    throw new Error(
+      "The selected project folder is unavailable. Choose an open, accessible workspace folder and try again."
+    );
   }
 }
 
@@ -1171,9 +1461,11 @@ function parseCliModels(raw: string | undefined): DashboardCliComposerConfig["mo
     const models = source
       .map((value) => value as Record<string, unknown>)
       .map((model) => {
-        const id = [model["slug"], model["id"], model["model"]].find(
-          (candidate): candidate is string => typeof candidate === "string" && MODEL_ID_PATTERN.test(candidate.trim())
-        )?.trim();
+        const id = [model["slug"], model["id"], model["model"]]
+          .find(
+            (candidate): candidate is string => typeof candidate === "string" && MODEL_ID_PATTERN.test(candidate.trim())
+          )
+          ?.trim();
         if (!id) return undefined;
         const hidden = model["hidden"] === true || model["visibility"] === "hide" || model["visibility"] === "hidden";
         const visibility = model["visibility"];
@@ -1199,7 +1491,8 @@ function parseCliModels(raw: string | undefined): DashboardCliComposerConfig["mo
               if (!level || typeof level !== "object") return undefined;
               const value = level as Record<string, unknown>;
               return [value["effort"], value["reasoningEffort"]].find(
-                (candidate): candidate is string => typeof candidate === "string" && REASONING_EFFORT_PATTERN.test(candidate)
+                (candidate): candidate is string =>
+                  typeof candidate === "string" && REASONING_EFFORT_PATTERN.test(candidate)
               );
             })
             .filter((effort): effort is string => Boolean(effort))
@@ -1208,8 +1501,7 @@ function parseCliModels(raw: string | undefined): DashboardCliComposerConfig["mo
       .filter((model): model is NonNullable<typeof model> => Boolean(model))
       .map((model) => ({
         ...model,
-        defaultReasoningEffort:
-          model.defaultReasoningEffort ?? model.reasoningEfforts[0]
+        defaultReasoningEffort: model.defaultReasoningEffort ?? model.reasoningEfforts[0]
       }));
     // Routers commonly merge static, live, alias and custom catalogs. Keep the
     // first visible definition for a model ID so the picker remains stable.
@@ -1243,9 +1535,7 @@ export function getCodexCliPathCandidates(
 ): string[] {
   const pathApi = platform === "win32" ? path.win32 : path.posix;
   const pathDelimiter = platform === "win32" ? ";" : ":";
-  const candidates: Array<string | undefined> = [
-    environment["CODEX_CLI_PATH"]
-  ];
+  const candidates: Array<string | undefined> = [environment["CODEX_CLI_PATH"]];
   if (platform === "win32") {
     const localAppData = environment["LOCALAPPDATA"] ?? pathApi.join(os.homedir(), "AppData", "Local");
     const appData = environment["APPDATA"] ?? pathApi.join(os.homedir(), "AppData", "Roaming");
@@ -1275,11 +1565,15 @@ export function getCodexCliPathCandidates(
       ...(platform === "win32" ? [pathApi.join(entry, "codex.cmd"), pathApi.join(entry, "codex.bat")] : [])
     );
   }
-  return candidates.filter((candidate, index, all): candidate is string => Boolean(candidate) && all.indexOf(candidate) === index);
+  return candidates.filter(
+    (candidate, index, all): candidate is string => Boolean(candidate) && all.indexOf(candidate) === index
+  );
 }
 
 async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
-  const configuredPath = (vscode.workspace.getConfiguration("codexManager").get<string>("codexCliPath", "") ?? "").trim();
+  const configuredPath = (
+    vscode.workspace.getConfiguration("codexManager").get<string>("codexCliPath", "") ?? ""
+  ).trim();
   const bundledExtensionPath = vscode.extensions?.getExtension(CODEX_EXTENSION_ID)?.extensionPath;
   const signature = JSON.stringify({
     configuredPath,
@@ -1289,9 +1583,18 @@ async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
     path: process.env["PATH"],
     bundledExtensionPath
   });
-  if (cliExecutableCache?.signature === signature && Date.now() - cliExecutableCache.resolvedAt < CLI_AVAILABILITY_CACHE_TTL_MS) {
+  if (
+    cliExecutableCache?.signature === signature &&
+    Date.now() - cliExecutableCache.resolvedAt < CLI_AVAILABILITY_CACHE_TTL_MS
+  ) {
     const cachedCandidate = cliExecutableCache.executable.prefixArgs[0] ?? cliExecutableCache.executable.command;
-    if (cachedCandidate === process.execPath || await fs.stat(cachedCandidate).then((stat) => stat.isFile()).catch(() => false)) {
+    if (
+      cachedCandidate === process.execPath ||
+      (await fs
+        .stat(cachedCandidate)
+        .then((stat) => stat.isFile())
+        .catch(() => false))
+    ) {
       return cliExecutableCache.executable;
     }
     cliExecutableCache = undefined;
@@ -1304,20 +1607,32 @@ async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
           bundledExtensionPath,
           "bin",
           process.platform === "win32"
-            ? process.arch === "arm64" ? "windows-arm64" : "windows-x86_64"
+            ? process.arch === "arm64"
+              ? "windows-arm64"
+              : "windows-x86_64"
             : process.platform === "darwin"
-              ? process.arch === "arm64" ? "macos-aarch64" : "macos-x86_64"
-              : process.arch === "arm64" ? "linux-aarch64" : "linux-x86_64",
+              ? process.arch === "arm64"
+                ? "macos-aarch64"
+                : "macos-x86_64"
+              : process.arch === "arm64"
+                ? "linux-aarch64"
+                : "linux-x86_64",
           process.platform === "win32" ? "codex.exe" : "codex"
         )
       : undefined
   ].filter((candidate): candidate is string => Boolean(candidate));
   for (const candidate of candidates) {
-    if (await fs.stat(candidate).then((stat) => stat.isFile()).catch(() => false)) {
+    if (
+      await fs
+        .stat(candidate)
+        .then((stat) => stat.isFile())
+        .catch(() => false)
+    ) {
       const extension = path.extname(candidate).toLowerCase();
-      const executable = extension === ".js" || extension === ".cjs" || extension === ".mjs"
-        ? { command: process.execPath, prefixArgs: [candidate] }
-        : { command: candidate, prefixArgs: [], shell: extension === ".cmd" || extension === ".bat" };
+      const executable =
+        extension === ".js" || extension === ".cjs" || extension === ".mjs"
+          ? { command: process.execPath, prefixArgs: [candidate] }
+          : { command: candidate, prefixArgs: [], shell: extension === ".cmd" || extension === ".bat" };
       cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
       return executable;
     }
@@ -1326,7 +1641,13 @@ async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
     const npmScript = process.env["APPDATA"]
       ? path.join(process.env["APPDATA"], "npm", "node_modules", "@openai", "codex", "bin", "codex.js")
       : undefined;
-    if (npmScript && await fs.stat(npmScript).then((stat) => stat.isFile()).catch(() => false)) {
+    if (
+      npmScript &&
+      (await fs
+        .stat(npmScript)
+        .then((stat) => stat.isFile())
+        .catch(() => false))
+    ) {
       const executable = { command: process.execPath, prefixArgs: [npmScript] };
       cliExecutableCache = { signature, executable, resolvedAt: Date.now() };
       return executable;
@@ -1428,9 +1749,11 @@ async function runCodexCliUtility(args: string[], label: string): Promise<void> 
       if (Buffer.byteLength(stderr, "utf8") < MAX_CLI_OUTPUT_BYTES) stderr += chunk.toString("utf8");
     });
     child.on("error", (error) => finish(() => reject(error)));
-    child.on("close", (code) => finish(() => code === 0
-      ? resolve()
-      : reject(new Error(normalizeCliError(stderr) || `Codex could not ${label}.`))));
+    child.on("close", (code) =>
+      finish(() =>
+        code === 0 ? resolve() : reject(new Error(normalizeCliError(stderr) || `Codex could not ${label}.`))
+      )
+    );
   });
 }
 
@@ -1472,14 +1795,20 @@ async function runCodexAppServerRequest<T = unknown>(
         finish(() => reject(error instanceof Error ? error : new Error(String(error))));
       }
     };
-    const timeout = setTimeout(() => finish(() => reject(new Error("Codex did not respond to the session action in time."))), timeoutMs);
+    const timeout = setTimeout(
+      () => finish(() => reject(new Error("Codex did not respond to the session action in time."))),
+      timeoutMs
+    );
     child.stderr.on("data", (chunk: Buffer) => {
       if (Buffer.byteLength(stderr, "utf8") < MAX_CLI_OUTPUT_BYTES) stderr += chunk.toString("utf8");
     });
     child.stdin.on("error", (error) => finish(() => reject(error)));
     child.on("error", (error) => finish(() => reject(error)));
     child.on("close", (code) => {
-      if (!settled) finish(() => reject(new Error(normalizeCliError(stderr) || `Codex app server exited with code ${code ?? "unknown"}.`)));
+      if (!settled)
+        finish(() =>
+          reject(new Error(normalizeCliError(stderr) || `Codex app server exited with code ${code ?? "unknown"}.`))
+        );
     });
     lines.on("line", (line) => {
       try {
@@ -1494,7 +1823,8 @@ async function runCodexAppServerRequest<T = unknown>(
           write({ method, id: 2, params });
         } else if (message.id === 2) {
           if (message.error) {
-            const detail = typeof message.error.message === "string" ? message.error.message : "Codex rejected the session action.";
+            const detail =
+              typeof message.error.message === "string" ? message.error.message : "Codex rejected the session action.";
             finish(() => reject(new Error(detail)));
           } else {
             finish(() => resolve(message.result as T));
@@ -1523,7 +1853,14 @@ async function runCodexAppServerRequest<T = unknown>(
 }
 
 function normalizeCliError(value: string): string {
-  return value.replace(/\x1b\[[0-9;]*m/g, "").trim().split(/\r?\n/).filter(Boolean).slice(-4).join(" ").slice(0, 1200);
+  return value
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .slice(-4)
+    .join(" ")
+    .slice(0, 1200);
 }
 
 function parseCliSessionEntry(line: string): CliSessionIndexEntry | undefined {
@@ -1554,25 +1891,50 @@ function normalizeTimestamp(value: string | undefined): string | undefined {
 }
 
 /** Read the local journal of dashboard-started CLI turns interrupted by a reload. */
-export async function readTrackedCliTurns(codexHome = resolveCodexHome()): Promise<TrackedCliTurn[]> {
-  return (await readTrackedCliTurnsWithDiagnostics(codexHome)).turns;
+export async function readTrackedCliTurns(storageRoot?: string, legacyPathOverride?: string): Promise<TrackedCliTurn[]> {
+  const canonicalRoot = storageRoot ?? getCodexManagerStorageRoot();
+  const legacyPath = legacyPathOverride ?? (storageRoot ? undefined : path.join(resolveCodexHome(), RUNNING_TURNS_FILE));
+  return (await readTrackedCliTurnsWithDiagnostics(canonicalRoot, legacyPath)).turns;
 }
 
-async function readTrackedCliTurnsWithDiagnostics(codexHome: string = resolveCodexHome()): Promise<{
+async function readTrackedCliTurnsWithDiagnostics(
+  storageRoot: string,
+  legacyPath?: string
+): Promise<{
   turns: TrackedCliTurn[];
   failure?: string;
+  sourcePath?: string;
 }> {
-  const filePath = path.join(codexHome, RUNNING_TURNS_FILE);
+  const canonicalPath = path.join(storageRoot, RUNNING_TURNS_FILE);
+  let filePath = canonicalPath;
   let stat: Awaited<ReturnType<typeof fs.stat>> | undefined;
   try {
     stat = await fs.stat(filePath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return { turns: [] };
-    return { turns: [], failure: `recovery journal could not be inspected: ${error instanceof Error ? error.message : String(error)}` };
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT" && legacyPath && legacyPath !== canonicalPath) {
+      filePath = legacyPath;
+      try {
+        stat = await fs.stat(filePath);
+      } catch (legacyError) {
+        if ((legacyError as NodeJS.ErrnoException)?.code === "ENOENT") return { turns: [] };
+        return {
+          turns: [],
+          failure: `recovery journal could not be inspected: ${legacyError instanceof Error ? legacyError.message : String(legacyError)}`
+        };
+      }
+    } else if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return { turns: [] };
+    } else {
+      return {
+        turns: [],
+        failure: `recovery journal could not be inspected: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
   }
   if (!stat) return { turns: [] };
   if (!stat.isFile()) return { turns: [], failure: "recovery journal path is not a file" };
-  if (stat.size > MAX_RUNNING_TURNS_BYTES) return { turns: [], failure: "recovery journal is too large to read safely" };
+  if (stat.size > MAX_RUNNING_TURNS_BYTES)
+    return { turns: [], failure: "recovery journal is too large to read safely" };
   const raw = await fs.readFile(filePath, "utf8").catch(() => undefined);
   if (raw === undefined) return { turns: [], failure: "recovery journal could not be read" };
   if (!raw.trim()) return { turns: [] };
@@ -1583,9 +1945,12 @@ async function readTrackedCliTurnsWithDiagnostics(codexHome: string = resolveCod
     for (const entry of value) {
       if (isTrackedCliTurn(entry) && !unique.has(entry.id)) unique.set(entry.id, entry);
     }
-    return { turns: [...unique.values()].slice(0, MAX_TRACKED_CLI_TURNS) };
+    return { turns: [...unique.values()].slice(0, MAX_TRACKED_CLI_TURNS), sourcePath: filePath };
   } catch (error) {
-    return { turns: [], failure: `recovery journal contains invalid JSON: ${error instanceof Error ? error.message : String(error)}` };
+    return {
+      turns: [],
+      failure: `recovery journal contains invalid JSON: ${error instanceof Error ? error.message : String(error)}`
+    };
   }
 }
 
@@ -1595,10 +1960,15 @@ async function claimTrackedCliTurn(turn: TrackedCliTurn): Promise<void> {
   }
   await updateTrackedCliTurns((turns) => {
     const existing = turns.find((candidate) => candidate.id === turn.id);
-    if (existing && Date.now() - existing.startedAt <= MAX_TRACKED_TURN_AGE_MS &&
+    if (
+      existing &&
+      Date.now() - existing.startedAt <= MAX_TRACKED_TURN_AGE_MS &&
       ((existing.childPid && isProcessAlive(existing.childPid)) ||
-        (!existing.childPid && existing.ownerPid && isProcessAlive(existing.ownerPid)))) {
-      throw new Error("Codex is already working in this session (possibly in another VS Code window). Wait for it to finish or stop the current turn.");
+        (!existing.childPid && existing.ownerPid && isProcessAlive(existing.ownerPid)))
+    ) {
+      throw new Error(
+        "Codex is already working in this session (possibly in another VS Code window). Wait for it to finish or stop the current turn."
+      );
     }
     return [turn, ...turns.filter((candidate) => candidate.id !== turn.id)].slice(0, MAX_TRACKED_CLI_TURNS);
   });
@@ -1621,27 +1991,43 @@ async function rememberTrackedCliTurn(turn: TrackedCliTurn): Promise<void> {
 }
 
 async function forgetTrackedCliTurn(sessionId: string, startedAt?: number): Promise<void> {
-  await updateTrackedCliTurns((turns) => turns.filter((turn) => turn.id !== sessionId || (startedAt !== undefined && turn.startedAt !== startedAt)));
+  await updateTrackedCliTurns((turns) =>
+    turns.filter((turn) => turn.id !== sessionId || (startedAt !== undefined && turn.startedAt !== startedAt))
+  );
 }
 
 async function updateTrackedCliTurns(transform: (turns: TrackedCliTurn[]) => TrackedCliTurn[]): Promise<void> {
-  const codexHome = resolveCodexHome();
-  const filePath = path.join(codexHome, RUNNING_TURNS_FILE);
+  const storageRoot = getCodexManagerStorageRoot();
+  const filePath = path.join(storageRoot, RUNNING_TURNS_FILE);
+  const legacyPath = path.join(resolveCodexHome(), RUNNING_TURNS_FILE);
   const operation = runningTurnWrite.then(async () => {
     await runJournalExclusive(async () => {
-      const tracked = await readTrackedCliTurnsWithDiagnostics(codexHome);
+      const tracked = await readTrackedCliTurnsWithDiagnostics(storageRoot, legacyPath);
       if (tracked.failure) {
         throw new Error(`Cannot update the recovery journal because it is unreadable: ${tracked.failure}`);
       }
       const current = tracked.turns;
       const next = transform(current);
-      await fs.mkdir(codexHome, { recursive: true });
-      const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      await fs.mkdir(storageRoot, { recursive: true, mode: 0o700 });
+      const temporaryPath = `${filePath}.${process.pid}.${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
+      const handle = await fs.open(temporaryPath, "wx", 0o600);
+      let preserveTemporary = false;
       try {
-        await fs.writeFile(temporaryPath, JSON.stringify(next), "utf8");
-        await replaceFile(temporaryPath, filePath);
+        await handle.writeFile(JSON.stringify(next), "utf8");
+        await handle.sync();
+        await handle.close();
+        try {
+          await replaceFile(temporaryPath, filePath);
+        } catch (error) {
+          preserveTemporary = true;
+          throw error;
+        }
+        if (tracked.sourcePath === legacyPath && legacyPath !== filePath) {
+          await fs.unlink(legacyPath).catch(() => undefined);
+        }
       } finally {
-        await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+        await handle.close().catch(() => undefined);
+        if (!preserveTemporary) await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
       }
     });
   });
@@ -1652,11 +2038,7 @@ async function updateTrackedCliTurns(transform: (turns: TrackedCliTurn[]) => Tra
 async function runJournalExclusive(task: () => Promise<void>): Promise<void> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await runCrossWindowExclusive(
-        "codex:running-turn-journal",
-        "Codex CLI recovery journal update",
-        task
-      );
+      return await runCrossWindowExclusive("codex:running-turn-journal", "Codex CLI recovery journal update", task);
     } catch (error) {
       if (!(error instanceof CrossWindowOperationBusyError) || attempt >= JOURNAL_LOCK_RETRIES) throw error;
       await new Promise<void>((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
@@ -1665,25 +2047,39 @@ async function runJournalExclusive(task: () => Promise<void>): Promise<void> {
 }
 
 async function replaceFile(source: string, destination: string): Promise<void> {
-  try {
-    await fs.rename(source, destination);
-  } catch (error) {
-    if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    await fs.rm(destination, { force: true });
-    await fs.rename(source, destination);
+  let lastError: unknown;
+  for (const delayMs of [0, 20, 50, 100, 200, 400]) {
+    if (delayMs) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    try {
+      await fs.rename(source, destination);
+      return;
+    } catch (error) {
+      lastError = error;
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (!["EACCES", "EBUSY", "EPERM"].includes(code ?? "")) throw error;
+    }
   }
+  // Keep the previous live journal intact; the complete temp remains available
+  // for diagnostics when Windows has not released the destination yet.
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function isTrackedCliTurn(value: unknown): value is TrackedCliTurn {
   if (!value || typeof value !== "object") return false;
   const turn = value as Partial<TrackedCliTurn>;
-  return typeof turn.id === "string" && SESSION_ID_PATTERN.test(turn.id) &&
-    typeof turn.projectPath === "string" && turn.projectPath.length > 0 &&
-    typeof turn.startedAt === "number" && Number.isFinite(turn.startedAt) && turn.startedAt > 0 &&
+  return (
+    typeof turn.id === "string" &&
+    SESSION_ID_PATTERN.test(turn.id) &&
+    typeof turn.projectPath === "string" &&
+    turn.projectPath.length > 0 &&
+    typeof turn.startedAt === "number" &&
+    Number.isFinite(turn.startedAt) &&
+    turn.startedAt > 0 &&
     turn.startedAt <= Date.now() + 5 * 60 * 1000 &&
     (turn.ownerPid === undefined || isValidPid(turn.ownerPid)) &&
     (turn.childPid === undefined || isValidPid(turn.childPid)) &&
-    (turn.observedRunning === undefined || typeof turn.observedRunning === "boolean");
+    (turn.observedRunning === undefined || typeof turn.observedRunning === "boolean")
+  );
 }
 
 function isValidPid(value: unknown): value is number {
@@ -1703,7 +2099,11 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-async function isCliSessionRunning(codexHome: string, sessionId: string, knownTranscriptPath?: string): Promise<boolean> {
+async function isCliSessionRunning(
+  codexHome: string,
+  sessionId: string,
+  knownTranscriptPath?: string
+): Promise<boolean> {
   const lockPath = path.join(codexHome, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
   const stat = await fs.stat(lockPath).catch(() => undefined);
   if (!stat) return false;
@@ -1725,7 +2125,10 @@ async function isCliSessionRunning(codexHome: string, sessionId: string, knownTr
  * implementation repeated the recursive walk once per session, which made a
  * large session history turn a dashboard refresh into O(sessions * files).
  */
-async function findCliSessionTranscripts(codexHome: string, sessionIds: ReadonlySet<string>): Promise<Map<string, string>> {
+async function findCliSessionTranscripts(
+  codexHome: string,
+  sessionIds: ReadonlySet<string>
+): Promise<Map<string, string>> {
   const found = new Map<string, string>();
   if (sessionIds.size === 0) return found;
   const homeKey = path.resolve(codexHome);
@@ -1775,7 +2178,14 @@ async function findCliSessionTranscript(codexHome: string, sessionId: string): P
   const cacheKey = `${path.resolve(codexHome)}\u0000${sessionId}`;
   const cached = cliTranscriptPathCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    if (!cached.path || await fs.stat(cached.path).then((stat) => stat.isFile()).catch(() => false)) return cached.path;
+    if (
+      !cached.path ||
+      (await fs
+        .stat(cached.path)
+        .then((stat) => stat.isFile())
+        .catch(() => false))
+    )
+      return cached.path;
     cliTranscriptPathCache.delete(cacheKey);
   }
   const root = path.join(codexHome, SESSION_DIRECTORY);
@@ -1792,14 +2202,18 @@ async function findCliSessionTranscript(codexHome: string, sessionId: string): P
       if (entry.isDirectory()) {
         pending.push(candidate);
       } else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(sessionId)) {
-        cliTranscriptPathCache.set(cacheKey, { path: candidate, expiresAt: Date.now() + CLI_TRANSCRIPT_PATH_CACHE_TTL_MS });
+        cliTranscriptPathCache.set(cacheKey, {
+          path: candidate,
+          expiresAt: Date.now() + CLI_TRANSCRIPT_PATH_CACHE_TTL_MS
+        });
         return candidate;
       }
     }
   }
   const archived = await fs.readdir(path.join(codexHome, "archived_sessions"), { withFileTypes: true }).catch(() => []);
   const archivedEntry = archived.find(
-    (entry) => !entry.isSymbolicLink() && entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(sessionId)
+    (entry) =>
+      !entry.isSymbolicLink() && entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(sessionId)
   );
   const result = archivedEntry ? path.join(codexHome, "archived_sessions", archivedEntry.name) : undefined;
   cliTranscriptPathCache.set(cacheKey, { path: result, expiresAt: Date.now() + CLI_TRANSCRIPT_PATH_CACHE_TTL_MS });
@@ -1839,8 +2253,12 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
         readMode = "cached";
         return stat.size;
       }
-      if (cached && stat.size >= cached.size && stat.mtimeMs >= cached.mtimeMs &&
-          stat.size - cached.offset <= MAX_SESSION_TRANSCRIPT_READ_BYTES) {
+      if (
+        cached &&
+        stat.size >= cached.size &&
+        stat.mtimeMs >= cached.mtimeMs &&
+        stat.size - cached.offset <= MAX_SESSION_TRANSCRIPT_READ_BYTES
+      ) {
         readMode = "appended";
         return cached.offset;
       }
@@ -1944,36 +2362,67 @@ function parseCliTranscriptLines(raw: string, startingSequence: number): Dashboa
   return messages;
 }
 
-function mergeCliTranscriptMessage(messages: DashboardCliSessionMessage[], message: DashboardCliSessionMessage): boolean {
+function mergeCliTranscriptMessage(
+  messages: DashboardCliSessionMessage[],
+  message: DashboardCliSessionMessage
+): boolean {
   // The JSON event stream reports an activity more than once (for example
   // item_started followed by item_completed). Replace the earlier snapshot
   // in place so the workspace shows the live command/reasoning without
   // duplicating it when the final result arrives.
-  let existingIndex = message.kind && message.kind !== "message"
-    ? messages.findIndex((candidate) => candidate.id === message.id && candidate.kind !== "message" && (candidate.kind === message.kind || message.kind === "image" || message.kind === "tool-call"))
-    : -1;
-  if (existingIndex < 0 && message.kind && message.kind !== "message" && message.kind !== "reasoning" && message.kind !== "tool-call") {
+  let existingIndex =
+    message.kind && message.kind !== "message"
+      ? messages.findIndex(
+          (candidate) =>
+            candidate.id === message.id &&
+            candidate.kind !== "message" &&
+            (candidate.kind === message.kind || message.kind === "image" || message.kind === "tool-call")
+        )
+      : -1;
+  if (
+    existingIndex < 0 &&
+    message.kind &&
+    message.kind !== "message" &&
+    message.kind !== "reasoning" &&
+    message.kind !== "tool-call"
+  ) {
     for (let index = messages.length - 1; index >= Math.max(0, messages.length - 2); index -= 1) {
       const candidate = messages[index]!;
-      if (candidate.kind === "tool-call" && candidate.status === "inProgress") { existingIndex = index; break; }
+      if (candidate.kind === "tool-call" && candidate.status === "inProgress") {
+        existingIndex = index;
+        break;
+      }
     }
   }
   if (existingIndex < 0 && (!message.kind || message.kind === "message")) {
     for (let index = messages.length - 1; index >= Math.max(0, messages.length - 3); index -= 1) {
       const candidate = messages[index]!;
-      if (candidate.role === message.role && candidate.text.trim() === message.text.trim()) { existingIndex = index; break; }
+      if (candidate.role === message.role && candidate.text.trim() === message.text.trim()) {
+        existingIndex = index;
+        break;
+      }
     }
   }
   if (existingIndex >= 0) {
     const existing = messages[existingIndex]!;
     const images = [...(existing.images ?? [])];
-    for (const image of message.images ?? []) if (!images.some((candidate) => candidate.src === image.src)) images.push(image);
+    for (const image of message.images ?? [])
+      if (!images.some((candidate) => candidate.src === image.src)) images.push(image);
     const keepConcreteActivity = existing.kind && existing.kind !== "tool-call" && message.kind === "tool-call";
-    const terminalStatus = existing.status === "failed" || existing.status === "declined" || existing.status === "interrupted"
-      ? existing.status
-      : message.status;
+    const terminalStatus =
+      existing.status === "failed" || existing.status === "declined" || existing.status === "interrupted"
+        ? existing.status
+        : message.status;
     messages[existingIndex] = keepConcreteActivity
-      ? { ...message, ...existing, id: existing.id, status: terminalStatus, result: message.result ?? existing.result, debug: existing.debug ?? message.debug, ...(images.length ? { images: images.slice(0, 20) } : {}) }
+      ? {
+          ...message,
+          ...existing,
+          id: existing.id,
+          status: terminalStatus,
+          result: message.result ?? existing.result,
+          debug: existing.debug ?? message.debug,
+          ...(images.length ? { images: images.slice(0, 20) } : {})
+        }
       : { ...existing, ...message, id: existing.id, ...(images.length ? { images: images.slice(0, 20) } : {}) };
     return false;
   }
@@ -1991,23 +2440,39 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     const timestamp = typeof value.timestamp === "string" ? normalizeTimestamp(value.timestamp) : undefined;
     const eventPayload = value.type === "event_msg" ? value.payload : undefined;
     if (eventPayload?.["type"] === "user_message") {
-      return parsePersistedUserMessage(eventPayload, `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "user"}`, timestamp);
+      return parsePersistedUserMessage(
+        eventPayload,
+        `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "user"}`,
+        timestamp
+      );
     }
     if (eventPayload && ["item_started", "item_updated", "item_completed"].includes(String(eventPayload["type"]))) {
       const item = normalizePersistedActivity(eventPayload["item"]);
       const activityTimestamp = typeof value.timestamp === "string" ? value.timestamp : "activity";
       if (!item) return undefined;
       const eventType = String(eventPayload["type"]);
-      const status = eventType === "item_started"
-        ? "inProgress"
-        : eventType === "item_completed"
-          ? "completed"
-          : (normalizeCliItemStatus(item["status"]) === "unknown" ? "inProgress" : normalizeCliItemStatus(item["status"]));
+      const status =
+        eventType === "item_started"
+          ? "inProgress"
+          : eventType === "item_completed"
+            ? "completed"
+            : normalizeCliItemStatus(item["status"]) === "unknown"
+              ? "inProgress"
+              : normalizeCliItemStatus(item["status"]);
       return parseAppServerThreadItem(item, `${sequence}-${activityTimestamp}`, status, timestamp);
     }
     const payload = value.type === "response_item" ? value.payload : undefined;
-    if (payload?.["type"] === "custom_tool_call" || payload?.["type"] === "function_call" || payload?.["type"] === "tool_search_call") {
-      const callId = typeof payload["call_id"] === "string" ? payload["call_id"] : typeof payload["id"] === "string" ? payload["id"] : `${sequence}-tool`;
+    if (
+      payload?.["type"] === "custom_tool_call" ||
+      payload?.["type"] === "function_call" ||
+      payload?.["type"] === "tool_search_call"
+    ) {
+      const callId =
+        typeof payload["call_id"] === "string"
+          ? payload["call_id"]
+          : typeof payload["id"] === "string"
+            ? payload["id"]
+            : `${sequence}-tool`;
       const name = typeof payload["name"] === "string" ? payload["name"] : "tool";
       const rawInput = payload["input"] ?? payload["arguments"];
       const input = typeof rawInput === "string" ? rawInput.trim() : safeDisplayJson(rawInput);
@@ -2023,21 +2488,51 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
         timestamp
       };
     }
-    if (payload?.["type"] === "custom_tool_call_output" || payload?.["type"] === "function_call_output" || payload?.["type"] === "tool_search_output") {
-      const callId = typeof payload["call_id"] === "string" ? payload["call_id"] : typeof payload["id"] === "string" ? payload["id"] : `${sequence}-tool`;
+    if (
+      payload?.["type"] === "custom_tool_call_output" ||
+      payload?.["type"] === "function_call_output" ||
+      payload?.["type"] === "tool_search_output"
+    ) {
+      const callId =
+        typeof payload["call_id"] === "string"
+          ? payload["call_id"]
+          : typeof payload["id"] === "string"
+            ? payload["id"]
+            : `${sequence}-tool`;
       const output = payload["output"];
       const images = readImageSources({ output });
       const outputStatus = normalizeCliItemStatus(payload["status"]);
       const failure = outputStatus === "failed" || Boolean(payload["error"]) || isLegacyToolOutputFailure(output);
       if (images.length) {
-        return { id: callId, kind: "image", title: "Generated image", text: `${images.length} image${images.length === 1 ? "" : "s"} generated.`, images: images.map((src) => ({ src, alt: "Generated image" })), status: failure ? "failed" : "completed", timestamp };
+        return {
+          id: callId,
+          kind: "image",
+          title: "Generated image",
+          text: `${images.length} image${images.length === 1 ? "" : "s"} generated.`,
+          images: images.map((src) => ({ src, alt: "Generated image" })),
+          status: failure ? "failed" : "completed",
+          timestamp
+        };
       }
       const result = readHumanText(output) || "Tool completed.";
-      return { id: callId, kind: "tool-call", title: failure ? "Tool failed" : "Tool completed", text: result.slice(0, MAX_SESSION_MESSAGE_CHARS), result: result.slice(0, MAX_SESSION_MESSAGE_CHARS), status: failure ? "failed" : "completed", timestamp };
+      return {
+        id: callId,
+        kind: "tool-call",
+        title: failure ? "Tool failed" : "Tool completed",
+        text: result.slice(0, MAX_SESSION_MESSAGE_CHARS),
+        result: result.slice(0, MAX_SESSION_MESSAGE_CHARS),
+        status: failure ? "failed" : "completed",
+        timestamp
+      };
     }
     const role = payload?.["role"];
     if (payload?.["type"] !== "message" || (role !== "user" && role !== "assistant")) return undefined;
-    if (role === "assistant" && payload["phase"] && payload["phase"] !== "commentary" && payload["phase"] !== "final_answer") {
+    if (
+      role === "assistant" &&
+      payload["phase"] &&
+      payload["phase"] !== "commentary" &&
+      payload["phase"] !== "final_answer"
+    ) {
       return undefined;
     }
     if (!Array.isArray(payload["content"])) return undefined;
@@ -2045,7 +2540,15 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     const images: Array<{ src: string; alt?: string }> = [];
     for (const item of payload["content"]) {
       if (!item || typeof item !== "object") continue;
-      const content = item as { type?: unknown; text?: unknown; image_url?: unknown; imageUrl?: unknown; url?: unknown; data?: unknown; path?: unknown };
+      const content = item as {
+        type?: unknown;
+        text?: unknown;
+        image_url?: unknown;
+        imageUrl?: unknown;
+        url?: unknown;
+        data?: unknown;
+        path?: unknown;
+      };
       if ((content.type === "input_text" || content.type === "output_text") && typeof content.text === "string") {
         const text = content.text.trim();
         if (text) parts.push(text);
@@ -2074,77 +2577,103 @@ function isInternalSessionContext(text: string, payload: Record<string, unknown>
   const metadata = payload["internal_chat_message_metadata_passthrough"];
   if (metadata && typeof metadata === "object") {
     const kinds = (metadata as Record<string, unknown>)["content_item_kinds"];
-    if (Array.isArray(kinds) && kinds.length > 0 && !kinds.includes("user.text") && !kinds.includes("user.image")) return true;
+    if (Array.isArray(kinds) && kinds.length > 0 && !kinds.includes("user.text") && !kinds.includes("user.image"))
+      return true;
   }
   const trimmed = text.trimStart();
-  return trimmed.startsWith("<recommended_plugins>")
-    || trimmed.startsWith("<skills_instructions>")
-    || trimmed.startsWith("<environment_context>")
-    || trimmed.startsWith("The following is the Codex agent history whose request action you are assessing.")
-    || trimmed.startsWith("The following is the Codex agent history added since your last approval assessment.");
+  return (
+    trimmed.startsWith("<recommended_plugins>") ||
+    trimmed.startsWith("<skills_instructions>") ||
+    trimmed.startsWith("<environment_context>") ||
+    trimmed.startsWith("The following is the Codex agent history whose request action you are assessing.") ||
+    trimmed.startsWith("The following is the Codex agent history added since your last approval assessment.")
+  );
 }
 
-function parsePersistedUserMessage(payload: Record<string, unknown>, id: string, timestamp?: string): DashboardCliSessionMessage | undefined {
-  const item = payload["item"] && typeof payload["item"] === "object" ? payload["item"] as Record<string, unknown> : payload;
+function parsePersistedUserMessage(
+  payload: Record<string, unknown>,
+  id: string,
+  timestamp?: string
+): DashboardCliSessionMessage | undefined {
+  const item =
+    payload["item"] && typeof payload["item"] === "object" ? (payload["item"] as Record<string, unknown>) : payload;
   const content = parseUserInputs(item["content"] ?? payload["content"]);
   const directImages: unknown[] = [
-    ...(Array.isArray(payload["images"]) ? payload["images"] as unknown[] : []),
-    ...(Array.isArray(payload["local_images"]) ? payload["local_images"] as unknown[] : [])
+    ...(Array.isArray(payload["images"]) ? (payload["images"] as unknown[]) : []),
+    ...(Array.isArray(payload["local_images"]) ? (payload["local_images"] as unknown[]) : [])
   ];
   for (const image of directImages) {
-    const src = typeof image === "string" ? readSafeImageSource({ url: image }) : image && typeof image === "object" ? readSafeImageSource(image as Record<string, unknown>) : undefined;
-    if (src && !content.images.some((candidate) => candidate.src === src)) content.images.push({ src, alt: "Attached image" });
+    const src =
+      typeof image === "string"
+        ? readSafeImageSource({ url: image })
+        : image && typeof image === "object"
+          ? readSafeImageSource(image as Record<string, unknown>)
+          : undefined;
+    if (src && !content.images.some((candidate) => candidate.src === src))
+      content.images.push({ src, alt: "Attached image" });
   }
   const text = content.text || (typeof payload["message"] === "string" ? payload["message"].trim() : "");
-  return text || content.images.length ? { id, kind: "message", role: "user", text: text.slice(0, MAX_SESSION_MESSAGE_CHARS), ...(content.images.length ? { images: content.images.slice(0, 20) } : {}), timestamp } : undefined;
+  return text || content.images.length
+    ? {
+        id,
+        kind: "message",
+        role: "user",
+        text: text.slice(0, MAX_SESSION_MESSAGE_CHARS),
+        ...(content.images.length ? { images: content.images.slice(0, 20) } : {}),
+        timestamp
+      }
+    : undefined;
 }
 
 function normalizePersistedActivity(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") return undefined;
   const item = value as Record<string, unknown>;
   const persistedType = typeof item["type"] === "string" ? item["type"] : "";
-  const type = ({
-    Reasoning: "reasoning",
-    reasoning: "reasoning",
-    CommandExecution: "commandExecution",
-    commandExecution: "commandExecution",
-    command_execution: "commandExecution",
-    FileChange: "fileChange",
-    fileChange: "fileChange",
-    file_change: "fileChange",
-    McpToolCall: "mcpToolCall",
-    mcpToolCall: "mcpToolCall",
-    mcp_tool_call: "mcpToolCall",
-    CollabAgentToolCall: "collabAgentToolCall",
-    collabAgentToolCall: "collabAgentToolCall",
-    SubAgentActivity: "subAgentActivity",
-    subAgentActivity: "subAgentActivity",
-    ImageView: "imageView",
-    imageView: "imageView",
-    ContextCompaction: "contextCompaction",
-    contextCompaction: "contextCompaction",
-    UserMessage: "userMessage",
-    userMessage: "userMessage",
-    user_message: "userMessage",
-    AgentMessage: "agentMessage",
-    agentMessage: "agentMessage",
-    agent_message: "agentMessage",
-    ImageGeneration: "imageGeneration",
-    imageGeneration: "imageGeneration",
-    image_generation: "imageGeneration",
-    GeneratedImage: "imageGeneration",
-    generatedImage: "imageGeneration",
-    dynamicToolCall: "dynamicToolCall",
-    DynamicToolCall: "dynamicToolCall",
-    Extension: item["kind"] === "web.search" ? "webSearch" : ""
-  } as Record<string, string>)[persistedType];
+  const type = (
+    {
+      Reasoning: "reasoning",
+      reasoning: "reasoning",
+      CommandExecution: "commandExecution",
+      commandExecution: "commandExecution",
+      command_execution: "commandExecution",
+      FileChange: "fileChange",
+      fileChange: "fileChange",
+      file_change: "fileChange",
+      McpToolCall: "mcpToolCall",
+      mcpToolCall: "mcpToolCall",
+      mcp_tool_call: "mcpToolCall",
+      CollabAgentToolCall: "collabAgentToolCall",
+      collabAgentToolCall: "collabAgentToolCall",
+      SubAgentActivity: "subAgentActivity",
+      subAgentActivity: "subAgentActivity",
+      ImageView: "imageView",
+      imageView: "imageView",
+      ContextCompaction: "contextCompaction",
+      contextCompaction: "contextCompaction",
+      UserMessage: "userMessage",
+      userMessage: "userMessage",
+      user_message: "userMessage",
+      AgentMessage: "agentMessage",
+      agentMessage: "agentMessage",
+      agent_message: "agentMessage",
+      ImageGeneration: "imageGeneration",
+      imageGeneration: "imageGeneration",
+      image_generation: "imageGeneration",
+      GeneratedImage: "imageGeneration",
+      generatedImage: "imageGeneration",
+      dynamicToolCall: "dynamicToolCall",
+      DynamicToolCall: "dynamicToolCall",
+      Extension: item["kind"] === "web.search" ? "webSearch" : ""
+    } as Record<string, string>
+  )[persistedType];
   if (!type) return undefined;
-  const changes = item["changes"] && typeof item["changes"] === "object" && !Array.isArray(item["changes"])
-    ? Object.entries(item["changes"] as Record<string, unknown>).map(([filePath, change]) => {
-        const detail = change && typeof change === "object" ? change as Record<string, unknown> : {};
-        return { path: filePath, kind: detail["type"] ?? "update", diff: detail["unified_diff"] };
-      })
-    : item["changes"];
+  const changes =
+    item["changes"] && typeof item["changes"] === "object" && !Array.isArray(item["changes"])
+      ? Object.entries(item["changes"] as Record<string, unknown>).map(([filePath, change]) => {
+          const detail = change && typeof change === "object" ? (change as Record<string, unknown>) : {};
+          return { path: filePath, kind: detail["type"] ?? "update", diff: detail["unified_diff"] };
+        })
+      : item["changes"];
   return {
     ...item,
     type,

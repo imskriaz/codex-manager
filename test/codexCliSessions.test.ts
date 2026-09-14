@@ -179,6 +179,28 @@ describe("Codex session integration", () => {
     ]);
   });
 
+  it("reads a former Codex-home journal only until the canonical journal exists", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-journal-migration-"));
+    roots.push(root);
+    const canonicalRoot = path.join(root, ".codex-manager");
+    const legacyPath = path.join(root, ".codex", "codex-manager-running-turns.json");
+    await mkdir(path.dirname(legacyPath), { recursive: true });
+    await writeFile(legacyPath, JSON.stringify([{ id: sessionId, projectPath: "D:/old", startedAt: 123 }]));
+
+    await expect(readTrackedCliTurns(canonicalRoot, legacyPath)).resolves.toEqual([
+      { id: sessionId, projectPath: "D:/old", startedAt: 123 }
+    ]);
+
+    await mkdir(canonicalRoot, { recursive: true });
+    await writeFile(
+      path.join(canonicalRoot, "codex-manager-running-turns.json"),
+      JSON.stringify([{ id: sessionId, projectPath: "D:/new", startedAt: 456 }])
+    );
+    await expect(readTrackedCliTurns(canonicalRoot, legacyPath)).resolves.toEqual([
+      { id: sessionId, projectPath: "D:/new", startedAt: 456 }
+    ]);
+  });
+
   it("surfaces live custom tool calls and image output", () => {
     const running = parseCodexAppServerThreadItems({
       thread: { turns: [{ status: "inProgress", items: [{ type: "customToolCall", id: "call-1", name: "search", input: "query=Codex" }] }] }

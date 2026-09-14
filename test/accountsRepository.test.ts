@@ -111,7 +111,7 @@ describe("AccountsRepository token persistence", () => {
       "utf8"
     );
 
-    const repo = new AccountsRepository(context);
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     const updatedTokens = createTokens("acct_123");
 
     await repo.updateQuota("account-1", undefined, undefined, updatedTokens);
@@ -138,7 +138,7 @@ describe("AccountsRepository token persistence", () => {
     } as unknown as vscode.ExtensionContext;
     const onAccountsMutated = vi.fn();
     const onVaultMutation = vi.fn();
-    const repo = new AccountsRepository(context);
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     repo.setAccountSwitchCoordinator({
       prepareAccountSwitch: vi.fn(async () => undefined),
       completeAccountSwitch: vi.fn(async () => undefined),
@@ -226,7 +226,7 @@ describe("AccountsRepository token persistence", () => {
       last_refresh: new Date().toISOString()
     });
 
-    const repo = new AccountsRepository(context);
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     await repo.syncActiveAccountFromAuthFile();
 
     expect(writeAuthFileMock).not.toHaveBeenCalled();
@@ -284,7 +284,7 @@ describe("AccountsRepository token persistence", () => {
       "utf8"
     );
 
-    const repo = new AccountsRepository(context);
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     const imported = await repo.upsertFromTokens(createTokens("acct_new", "new@example.com"), true);
     const accounts = await repo.listAccounts();
 
@@ -311,7 +311,7 @@ describe("AccountsRepository token persistence", () => {
         })
       }
     } as unknown as vscode.ExtensionContext;
-    const repo = new AccountsRepository(context);
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     const existing = await repo.upsertFromTokens(createTokens("acct_existing", "existing@example.com"));
     const oldIdToken = createJwt({
       "https://api.openai.com/auth": {
@@ -382,7 +382,7 @@ describe("AccountsRepository token persistence", () => {
         })
       }
     } as unknown as vscode.ExtensionContext;
-    const repo = new AccountsRepository(context);
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     const originalTokens = createTokens("acct_sync", "sync@example.com");
     const account = await repo.upsertFromTokens(originalTokens);
     const authError = {
@@ -463,7 +463,7 @@ describe("AccountsRepository token persistence", () => {
       "utf8"
     );
 
-    const repo = new AccountsRepository(context);
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     await repo.updateResetCreditsSnapshot("account-1", 1, undefined);
 
     expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsNextExpiresAt).toBe(1_785_109_796);
@@ -504,10 +504,97 @@ describe("AccountsRepository token persistence", () => {
     const restored = await afterReinstall.listAccounts();
 
     expect(restored).toEqual([expect.objectContaining({ id: saved.id, email: "kept@example.com" })]);
-    expect(JSON.parse(await fs.readFile(path.join(reinstalledStorage, "accounts-index.json"), "utf8"))).toMatchObject({
+    expect(JSON.parse(await fs.readFile(durableIndex, "utf8"))).toMatchObject({
       accounts: [expect.objectContaining({ id: saved.id })]
     });
+    await expect(fs.access(path.join(reinstalledStorage, "accounts-index.json"))).rejects.toThrow();
     afterReinstall.dispose();
+  });
+
+  it("rebuilds a corrupt canonical index from multiple durable account entries", async () => {
+    const canonicalIndex = path.join(tempDir, ".codex-manager", "accounts-index.json");
+    await fs.mkdir(path.dirname(canonicalIndex), { recursive: true });
+    await fs.writeFile(canonicalIndex, Buffer.alloc(4096));
+    const secrets = new Map<string, string>();
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempDir, "unused-global-storage") },
+      secrets: {
+        get: vi.fn(async (key: string) => secrets.get(key)),
+        store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+        delete: vi.fn(async (key: string) => secrets.delete(key))
+      }
+    } as unknown as vscode.ExtensionContext;
+    const repo = new AccountsRepository(context, canonicalIndex);
+
+    const first = createTokens("acct_recover_1", "recover-one@example.com");
+    const second = createTokens("acct_recover_2", "recover-two@example.com");
+    const result = await repo.importSharedAccountsWithSummary([
+      {
+        email: "recover-one@example.com",
+        account_id: first.accountId,
+        tokens: {
+          id_token: first.idToken,
+          access_token: first.accessToken,
+          refresh_token: first.refreshToken,
+          account_id: first.accountId
+        }
+      },
+      {
+        email: "recover-two@example.com",
+        account_id: second.accountId,
+        tokens: {
+          id_token: second.idToken,
+          access_token: second.accessToken,
+          refresh_token: second.refreshToken,
+          account_id: second.accountId
+        }
+      }
+    ]);
+
+    expect(result).toMatchObject({ total: 2, successCount: 2, failedCount: 0 });
+    expect(await repo.listAccounts()).toHaveLength(2);
+    expect(JSON.parse(await fs.readFile(canonicalIndex, "utf8")).accounts).toHaveLength(2);
+    expect((await repo.getIndexHealthSummary()).status).toBe("healthy");
+    repo.dispose();
+  });
+
+  it("lets OAuth and current-account imports replace an unrecoverable index", async () => {
+    const canonicalIndex = path.join(tempDir, ".codex-manager", "accounts-index.json");
+    await fs.mkdir(path.dirname(canonicalIndex), { recursive: true });
+    await fs.writeFile(canonicalIndex, Buffer.alloc(1024));
+    const secrets = new Map<string, string>();
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempDir, "unused-global-storage") },
+      secrets: {
+        get: vi.fn(async (key: string) => secrets.get(key)),
+        store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+        delete: vi.fn(async (key: string) => secrets.delete(key))
+      }
+    } as unknown as vscode.ExtensionContext;
+    const repo = new AccountsRepository(context, canonicalIndex);
+    const oauth = await repo.upsertFromTokens(createTokens("acct_oauth_recovery", "oauth-recovery@example.com"));
+    expect(oauth.email).toBe("oauth-recovery@example.com");
+    expect((await repo.getIndexHealthSummary()).status).toBe("healthy");
+
+    await fs.writeFile(canonicalIndex, Buffer.alloc(1024));
+    repo.invalidateCachedIndex();
+    const secondRepo = new AccountsRepository(context, canonicalIndex);
+    const currentTokens = createTokens("acct_current_recovery", "current-recovery@example.com");
+    readAuthFileMock.mockResolvedValue({
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: currentTokens.idToken,
+        access_token: currentTokens.accessToken,
+        refresh_token: currentTokens.refreshToken,
+        account_id: currentTokens.accountId
+      },
+      last_refresh: new Date().toISOString()
+    });
+    const current = await secondRepo.importCurrentAuth();
+    expect(current.email).toBe("current-recovery@example.com");
+    expect((await secondRepo.getIndexHealthSummary()).status).toBe("healthy");
+    repo.dispose();
+    secondRepo.dispose();
   });
 
   it("migrates account metadata from the former Codex-home folder into .codex-manager", async () => {

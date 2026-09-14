@@ -250,7 +250,7 @@ describe("browser dashboard request boundaries", () => {
 
   it("expires, revokes, and signs out authenticated browser WebSocket sessions", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
-    expect(source).toContain('setTimeout(() => client.close(4001, "Dashboard session expired")');
+    expect(source).toMatch(/setTimeout\(\s*\(\) => client\.close\(4001, "Dashboard session expired"\)/);
     expect(source).toContain("this.browserSocketSessionFingerprint.set");
     expect(source).toContain("this.closeRemoteBrowserSockets();");
     expect(source).toContain("this.closeInvalidRemoteBrowserSockets()");

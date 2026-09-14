@@ -10,7 +10,6 @@
  */
 
 import * as fs from "fs/promises";
-import * as fsSync from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -51,9 +50,8 @@ import {
 import {
   countAvailableBackups,
   isFileNotFoundError,
-  readIndexSnapshot,
-  writeIndexAtomically,
-  writeIndexAtomicallySync
+  readLatestValidTempIndex,
+  readIndexSnapshot
 } from "./accountsPersistence";
 import {
   isIndexHealthError,
@@ -70,7 +68,6 @@ import {
   flushPendingSave,
   markPendingSave,
   markRecoveryPending,
-  persistIndexSyncWithBackups,
   persistIndexWithBackups,
   readPendingOrCachedIndex
 } from "./accountsWriteCoordinator";
@@ -101,6 +98,7 @@ import {
 import { buildAccountStorageId } from "../utils/accountIdentity";
 import { extractClaims } from "../utils/jwt";
 import { getQuotaIssueKind } from "../utils/quotaIssue";
+import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import {
   CrossWindowOperationBusyError,
   runCrossWindowExclusive,
@@ -146,10 +144,8 @@ export interface AccountSwitchCoordinator {
 export class AccountsRepository {
   private readonly secretStore: SecretStore;
   private readonly indexPath: string;
-  /** A user-owned mirror survives uninstall/reinstall of the extension. */
-  private readonly durableIndexPath: string | undefined;
-  /** Temporary migration source used by the first reinstall-safe prerelease. */
-  private readonly legacyDurableIndexPath: string | undefined;
+  /** Read-only migration sources; production writes only to indexPath. */
+  private readonly legacyIndexPaths: string[];
   private readonly state = createAccountsRepositoryState();
   private indexReadInFlight: Promise<CodexManagerIndex> | undefined;
   /** 按账号串行化切号/刷新，避免并发刷新同一账号 token */
@@ -173,25 +169,23 @@ export class AccountsRepository {
     this.tokenCache.delete(accountId);
   }
 
-  constructor(
-    private readonly context: vscode.ExtensionContext,
-    durableIndexPath?: string,
-    legacyDurableIndexPath?: string
-  ) {
+  constructor(context: vscode.ExtensionContext, indexPathOverride?: string, legacyDurableIndexPath?: string) {
     this.secretStore = new SecretStore(context.secrets);
-    this.indexPath = path.join(context.globalStorageUri.fsPath, INDEX_FILE);
-    // Extension global storage is removed by some uninstall flows. Keep a
-    // metadata-only mirror under the user's .codex-manager folder so reinstall can
-    // restore the account list. Test shims do not provide extensionUri, so
-    // they remain isolated from a real user's durable data.
-    this.durableIndexPath =
-      durableIndexPath ?? (context.extensionUri ? path.join(os.homedir(), ".codex-manager", INDEX_FILE) : undefined);
+    // Production has one cross-platform, reinstall-safe source of truth.
+    // Tests must opt into another path explicitly so production can never
+    // silently fall back to an extension-version-owned directory.
+    this.indexPath = indexPathOverride ?? path.join(getCodexManagerStorageRoot(), INDEX_FILE);
     const codexHome = process.env["CODEX_HOME"]?.trim()
       ? process.env["CODEX_HOME"].replace(/^['"]|['"]$/g, "")
       : path.join(os.homedir(), ".codex");
-    this.legacyDurableIndexPath =
-      legacyDurableIndexPath ??
-      (durableIndexPath || !context.extensionUri ? undefined : path.join(codexHome, "codex-manager", INDEX_FILE));
+    this.legacyIndexPaths = [
+      ...(legacyDurableIndexPath ? [legacyDurableIndexPath] : []),
+      ...(context.extensionUri && !indexPathOverride ? [path.join(codexHome, "codex-manager", INDEX_FILE)] : [])
+    ].filter((candidate, index, all) => candidate !== this.indexPath && all.indexOf(candidate) === index);
+  }
+
+  get accountsIndexPath(): string {
+    return this.indexPath;
   }
 
   /**
@@ -201,9 +195,10 @@ export class AccountsRepository {
    */
   async init(options: { deferSync?: boolean } = {}): Promise<{ authSyncCompleted: boolean }> {
     try {
-      await fs.mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
+      await fs.mkdir(path.dirname(this.indexPath), { recursive: true, mode: 0o700 });
+      await fs.chmod(path.dirname(this.indexPath), 0o700).catch(() => undefined);
     } catch (cause) {
-      throw createError.storageWriteFailed(this.context.globalStorageUri.fsPath, cause);
+      throw createError.storageWriteFailed(path.dirname(this.indexPath), cause);
     }
 
     try {
@@ -238,15 +233,11 @@ export class AccountsRepository {
       clearTimeout(this.startupSyncTimer);
       this.startupSyncTimer = undefined;
     }
-    try {
-      disposeWriteCoordinator(this.state, (index) => {
-        this.persistIndexSync(index);
-      });
-    } catch (error) {
-      // Deactivation is best-effort. A write owned by another VS Code window
-      // must not escape and fail the entire extension host shutdown.
-      console.error("[codexManager] final account index flush failed during deactivation:", error);
-    }
+    // Extension updates can deactivate several hosts at once. Never perform a
+    // synchronous shared-file write here: normal user actions flush before
+    // returning, and losing a final debounced background snapshot is safer
+    // than allowing concurrent shutdown writers to corrupt the whole vault.
+    disposeWriteCoordinator(this.state);
   }
 
   scheduleStartupSync(onComplete: () => void, delayMs = 5_000): void {
@@ -598,7 +589,12 @@ export class AccountsRepository {
    * @returns 账号记录
    */
   async upsertFromTokens(tokens: CodexTokens, forceActive = false): Promise<CodexManagerAccountRecord> {
-    return this.upsertFromTokensInternal(tokens, forceActive);
+    const recovering = (await this.getIndexHealthSummary()).status === "corrupted_unrecoverable";
+    return this.upsertFromTokensInternal(
+      tokens,
+      forceActive,
+      recovering ? { allowRecoveryWrite: true, persistImmediately: true, restoreSource: "oauth" } : undefined
+    );
   }
 
   private async upsertFromTokensInternal(
@@ -724,6 +720,7 @@ export class AccountsRepository {
       });
     }
 
+    const recovering = (await this.getIndexHealthSummary()).status === "corrupted_unrecoverable";
     return this.upsertFromTokensInternal(
       {
         idToken: auth.tokens.id_token,
@@ -733,7 +730,10 @@ export class AccountsRepository {
       },
       true,
       {
-        addedVia: "local"
+        addedVia: "local",
+        ...(recovering
+          ? { allowRecoveryWrite: true, persistImmediately: true, restoreSource: "auth_json" as const }
+          : {})
       }
     );
   }
@@ -798,12 +798,22 @@ export class AccountsRepository {
   async importSharedAccounts(
     input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]
   ): Promise<CodexManagerAccountRecord[]> {
+    if ((await this.getIndexHealthSummary()).status === "corrupted_unrecoverable") {
+      const result = await this.restoreSharedAccountsWithSummary(input);
+      if (result.successCount === 0) {
+        throw new Error(result.failures[0]?.message ?? "No accounts could be recovered from the JSON input.");
+      }
+      return (await this.listAccounts()).filter((account) => result.importedEmails.includes(account.email));
+    }
     return this.importSharedAccountsInternal(input);
   }
 
   async importSharedAccountsWithSummary(
     input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]
   ): Promise<CodexImportResultSummary> {
+    if ((await this.getIndexHealthSummary()).status === "corrupted_unrecoverable") {
+      return this.restoreSharedAccountsWithSummary(input);
+    }
     const entries = toSharedEntries(input);
     const preview = await this.previewSharedAccountsImport(entries);
     const failures: CodexImportResultIssue[] = [];
@@ -823,6 +833,46 @@ export class AccountsRepository {
       } catch (error) {
         failures.push(createSharedImportIssue(entry, index, error));
       }
+    }
+
+    return {
+      total: entries.length,
+      successCount,
+      overwriteCount: preview.overwriteCount,
+      failedCount: failures.length,
+      importedEmails,
+      failures
+    };
+  }
+
+  /** Rebuild a damaged canonical index from independently encrypted account files. */
+  async restoreSharedAccountsWithSummary(
+    input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]
+  ): Promise<CodexImportResultSummary> {
+    const entries = toSharedEntries(input);
+    const preview = await this.previewSharedAccountsImport(entries);
+    const failures: CodexImportResultIssue[] = [];
+    const importedEmails: string[] = [];
+    let successCount = 0;
+
+    for (const [entryIndex, entry] of entries.entries()) {
+      try {
+        const imported = await this.importSharedAccountsInternal(entry, { allowRecoveryWrite: true });
+        const first = imported[0];
+        if (!first) {
+          failures.push(createSharedImportIssue(entry, entryIndex, "Recovery returned no account"));
+          continue;
+        }
+        successCount += 1;
+        importedEmails.push(first.email);
+      } catch (error) {
+        failures.push(createSharedImportIssue(entry, entryIndex, error));
+      }
+    }
+
+    if (successCount > 0) {
+      const recovered = await this.readIndexForRecovery();
+      await this.persistRecoveredIndex(recovered, "shared_json");
     }
 
     return {
@@ -893,6 +943,8 @@ export class AccountsRepository {
 
       if (options.persistImmediately) {
         await this.persistRecoveredIndex(index, options.restoreSource ?? "shared_json");
+      } else if (options.allowRecoveryWrite) {
+        markRecoveryPending(this.state, index);
       } else {
         this.writeIndex(index);
       }
@@ -1420,30 +1472,49 @@ export class AccountsRepository {
       return cloneIndex(snapshot);
     } catch (cause) {
       if (isFileNotFoundError(cause)) {
-        const durable = await this.readDurableIndex();
-        if (durable) {
+        const interrupted = await readLatestValidTempIndex(this.indexPath, INDEX_TEMP_SUFFIX);
+        const legacy = interrupted ? undefined : await this.readLegacyIndex();
+        const migrated = interrupted ?? legacy?.index;
+        if (migrated) {
+          let persisted = false;
           try {
             await persistIndexWithBackups({
               state: this.state,
               indexPath: this.indexPath,
-              index: durable,
+              index: migrated,
               tempSuffix: INDEX_TEMP_SUFFIX,
               backupCount: INDEX_BACKUP_COUNT
             });
+            persisted = true;
           } catch (restoreError) {
             console.warn(
-              "[codexManager] restored durable account metadata in memory; local index write failed:",
+              "[codexManager] restored account metadata in memory; canonical index write failed:",
               restoreError
             );
           }
-          this.state.cache = { data: cloneIndex(durable), timestamp: Date.now() };
+          if (persisted && legacy) {
+            await fs.unlink(legacy.filePath).catch((error) => {
+              if (!isFileNotFoundError(error)) {
+                console.warn(
+                  `[codexManager] migrated legacy index could not be removed from ${legacy.filePath}:`,
+                  error
+                );
+              }
+            });
+          }
+          this.state.cache = { data: cloneIndex(migrated), timestamp: Date.now() };
           this.state.indexHealth = { ...this.state.indexHealth, status: "healthy" };
-          return cloneIndex(durable);
+          return cloneIndex(migrated);
         }
         return restoreMissingIndex(this.state, this.indexPath, INDEX_BACKUP_COUNT);
       }
 
       console.error("[codexManager] failed to read accounts index, attempting recovery:", cause);
+      const interrupted = await readLatestValidTempIndex(this.indexPath, INDEX_TEMP_SUFFIX);
+      if (interrupted) {
+        await this.persistRecoveredIndex(interrupted, "backup");
+        return cloneIndex(interrupted);
+      }
       const restored = await this.tryRestoreFromBackups("backup", cause);
       if (restored) {
         return cloneIndex(restored);
@@ -1493,74 +1564,19 @@ export class AccountsRepository {
       tempSuffix: INDEX_TEMP_SUFFIX,
       backupCount: INDEX_BACKUP_COUNT
     });
-    await this.persistDurableIndex(index);
   }
 
-  /**
-   * 持久化索引到文件 (同步模式，用于 dispose 时)
-   */
-  private persistIndexSync(index: CodexManagerIndex): void {
-    persistIndexSyncWithBackups({
-      state: this.state,
-      indexPath: this.indexPath,
-      index,
-      tempSuffix: INDEX_TEMP_SUFFIX,
-      backupCount: INDEX_BACKUP_COUNT
-    });
-    this.persistDurableIndexSync(index);
-  }
-
-  private async readDurableIndex(): Promise<CodexManagerIndex | undefined> {
-    if (!this.durableIndexPath) return undefined;
-    try {
-      return await readIndexSnapshot(this.durableIndexPath);
-    } catch (error) {
-      if (!isFileNotFoundError(error)) {
-        console.warn("[codexManager] durable account metadata could not be read:", error);
-        return undefined;
-      }
-    }
-
-    if (!this.legacyDurableIndexPath) return undefined;
-    try {
-      const legacy = await readIndexSnapshot(this.legacyDurableIndexPath);
-      await this.persistDurableIndex(legacy);
-      await fs.unlink(this.legacyDurableIndexPath).catch((error) => {
-        if (!isFileNotFoundError(error)) throw error;
-      });
-      return legacy;
-    } catch (error) {
-      if (!isFileNotFoundError(error)) {
-        console.warn("[codexManager] legacy durable account metadata could not be migrated:", error);
-      }
-      return undefined;
-    }
-  }
-
-  private async persistDurableIndex(index: CodexManagerIndex): Promise<void> {
-    if (!this.durableIndexPath) return;
-    try {
-      await fs.mkdir(path.dirname(this.durableIndexPath), { recursive: true, mode: 0o700 });
-      await writeIndexAtomically(this.durableIndexPath, index, INDEX_TEMP_SUFFIX);
-      await fs.chmod(this.durableIndexPath, 0o600).catch(() => undefined);
-    } catch (error) {
-      console.warn("[codexManager] durable account metadata could not be saved:", error);
-    }
-  }
-
-  private persistDurableIndexSync(index: CodexManagerIndex): void {
-    if (!this.durableIndexPath) return;
-    try {
-      fsSync.mkdirSync(path.dirname(this.durableIndexPath), { recursive: true, mode: 0o700 });
-      writeIndexAtomicallySync(this.durableIndexPath, index, INDEX_TEMP_SUFFIX);
+  private async readLegacyIndex(): Promise<{ index: CodexManagerIndex; filePath: string } | undefined> {
+    for (const legacyPath of this.legacyIndexPaths) {
       try {
-        fsSync.chmodSync(this.durableIndexPath, 0o600);
-      } catch {
-        // Windows ACLs are inherited from the user's Codex directory.
+        return { index: await readIndexSnapshot(legacyPath), filePath: legacyPath };
+      } catch (error) {
+        if (!isFileNotFoundError(error)) {
+          console.warn(`[codexManager] legacy account metadata could not be migrated from ${legacyPath}:`, error);
+        }
       }
-    } catch (error) {
-      console.warn("[codexManager] durable account metadata could not be saved during shutdown:", error);
     }
+    return undefined;
   }
 
   private async persistRecoveredIndex(

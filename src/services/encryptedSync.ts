@@ -9,6 +9,7 @@ import { AccountsRepository } from "../storage";
 import { CrossWindowOperationBusyError, runEncryptedSyncOperation } from "../utils/crossWindowOperations";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { clearTokenAutomationError } from "../presentation/workbench/tokenAutomationState";
+import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { canonicalizeSyncAccountLeases, isValidSyncAccountLease, type SyncAccountLease } from "./syncLeases";
 import {
   canonicalizeSyncAccountEnablement,
@@ -177,7 +178,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     this.durableAccountsDirectory = explicitLegacyVaultPath
       ? path.join(path.dirname(explicitLegacyVaultPath), DURABLE_ACCOUNTS_DIRECTORY)
       : context.extensionUri
-        ? path.join(os.homedir(), ".codex-manager", DURABLE_ACCOUNTS_DIRECTORY)
+        ? path.join(getCodexManagerStorageRoot(), DURABLE_ACCOUNTS_DIRECTORY)
         : undefined;
   }
 
@@ -1405,7 +1406,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
     for (const filePath of await listDurableAccountVaultFiles(this.durableAccountsDirectory)) {
       try {
-        const durable = await decryptSyncPayload(await fs.readFile(filePath, "utf8"), passphrase);
+        const durable = await readDurableAccountVault(filePath, passphrase);
         if (durable.accounts.length !== 1) {
           throw new Error("Each durable account vault must contain exactly one account.");
         }
@@ -1436,8 +1437,16 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (durableAccounts.length === 0 && failedFiles.length > 0) throw firstFailure;
     if (durableAccounts.length === 0) return { restoredCount: 0, failedFiles };
 
-    const records = await this.repo.listAccounts();
-    const local = (await this.repo.exportSharedAccounts(records.map((account) => account.id))).map(createSyncEntry);
+    let local: SyncAccountEntry[] = [];
+    try {
+      const records = await this.repo.listAccounts();
+      local = (await this.repo.exportSharedAccounts(records.map((account) => account.id))).map(createSyncEntry);
+    } catch (error) {
+      const health = await this.repo.getIndexHealthSummary();
+      if (health.status !== "corrupted_unrecoverable") throw error;
+      // The durable encrypted files are a recovery source. A damaged metadata
+      // index must not prevent them from rebuilding a fresh canonical index.
+    }
     const merged = mergeSyncAccounts(local, durableAccounts, []);
     const localById = new Map(local.map((entry) => [getSyncAccountId(entry), entry]));
     const changed = merged.filter((entry) => {
@@ -1448,7 +1457,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
     this.applyingRemote = true;
     try {
-      const result = await this.repo.importSharedAccountsWithSummary(changed);
+      const restoreFromDurableVault = this.repo.restoreSharedAccountsWithSummary?.bind(this.repo);
+      const result = restoreFromDurableVault
+        ? await restoreFromDurableVault(changed)
+        : await this.repo.importSharedAccountsWithSummary(changed);
       if (result.failedCount > 0) {
         throw new Error(`Could not restore ${result.failedCount} saved account${result.failedCount === 1 ? "" : "s"}.`);
       }
@@ -1907,9 +1919,22 @@ function durableAccountFileBase(email: unknown): string {
 async function listDurableAccountVaultFiles(directory: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(directory, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(DURABLE_ACCOUNT_FILE_SUFFIX))
-      .map((entry) => path.join(directory, entry.name))
+    const canonicalNames = new Set<string>();
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const lower = entry.name.toLowerCase();
+      if (lower.endsWith(DURABLE_ACCOUNT_FILE_SUFFIX)) {
+        canonicalNames.add(entry.name);
+        continue;
+      }
+      const tempMarker = `${DURABLE_ACCOUNT_FILE_SUFFIX}.tmp-`;
+      const markerIndex = lower.indexOf(tempMarker);
+      if (markerIndex >= 0) {
+        canonicalNames.add(entry.name.slice(0, markerIndex + DURABLE_ACCOUNT_FILE_SUFFIX.length));
+      }
+    }
+    return [...canonicalNames]
+      .map((name) => path.join(directory, name))
       .sort((left, right) => left.localeCompare(right));
   } catch (error) {
     if (isFileNotFoundError(error)) return [];
@@ -1921,21 +1946,71 @@ async function writePrivateFileAtomically(filePath: string, contents: string): P
   const directory = path.dirname(filePath);
   const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  let preserveTemp = false;
   try {
-    await fs.writeFile(tempPath, contents, { encoding: "utf8", mode: 0o600 });
+    const handle = await fs.open(tempPath, "wx", 0o600);
+    try {
+      await handle.writeFile(contents, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await fs.chmod(tempPath, 0o600).catch(() => undefined);
     try {
       await fs.rename(tempPath, filePath);
     } catch (error) {
       if (!isTransientFileReplaceError(error)) throw error;
-      await fs.copyFile(tempPath, filePath);
-      await fs.unlink(tempPath).catch(() => undefined);
+      // Never truncate the last healthy encrypted account file. Keep the
+      // complete temp file for the next startup and retry later.
+      preserveTemp = true;
+      throw error;
     }
     await fs.chmod(filePath, 0o600).catch(() => undefined);
   } catch (error) {
-    await fs.unlink(tempPath).catch(() => undefined);
+    if (!preserveTemp) await fs.unlink(tempPath).catch(() => undefined);
     throw error;
   }
+}
+
+async function readDurableAccountVault(filePath: string, passphrase: string): Promise<SyncPayload> {
+  const directory = path.dirname(filePath);
+  const canonicalName = path.basename(filePath);
+  const prefix = `${canonicalName}.tmp-`;
+  const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+  const paths = [
+    filePath,
+    ...entries
+      .filter((entry) => entry.isFile() && entry.name.startsWith(prefix))
+      .map((entry) => path.join(directory, entry.name))
+  ];
+  const ranked = await Promise.all(
+    paths.map(async (candidatePath) => {
+      const stat = await fs.stat(candidatePath).catch(() => undefined);
+      return stat ? { candidatePath, modifiedAt: stat.mtimeMs } : undefined;
+    })
+  );
+  let firstError: unknown;
+  for (const candidate of ranked
+    .filter((value): value is { candidatePath: string; modifiedAt: number } => Boolean(value))
+    .sort((left, right) => right.modifiedAt - left.modifiedAt)) {
+    try {
+      const recovered = await decryptSyncPayload(await fs.readFile(candidate.candidatePath, "utf8"), passphrase);
+      if (recovered.accounts.length !== 1)
+        throw new Error("Each durable account vault must contain exactly one account.");
+      if (candidate.candidatePath !== filePath) {
+        await fs.rename(candidate.candidatePath, filePath).catch(() => undefined);
+      }
+      return recovered;
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  if (firstError instanceof Error) throw firstError;
+  throw new Error(
+    firstError === undefined
+      ? `No recoverable account vault snapshot exists for ${canonicalName}.`
+      : `Account vault recovery failed for ${canonicalName}.`
+  );
 }
 
 function isFileNotFoundError(error: unknown): boolean {

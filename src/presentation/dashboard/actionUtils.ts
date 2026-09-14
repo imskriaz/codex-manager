@@ -16,7 +16,11 @@ export function parseSharedJsonInput(
     throw new Error(message);
   }
   if (normalized.length > 32 * 1024 * 1024) {
-    throw new Error(onParseError ? onParseError("JSON input exceeds the 32 MB safety limit") : "JSON input exceeds the 32 MB safety limit");
+    throw new Error(
+      onParseError
+        ? onParseError("JSON input exceeds the 32 MB safety limit")
+        : "JSON input exceeds the 32 MB safety limit"
+    );
   }
 
   try {
@@ -29,7 +33,7 @@ export function parseSharedJsonInput(
 
 export function toImportActionPayload(
   result: CodexManagerRestoreResult | CodexImportResultSummary
-): Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] {
+): NonNullable<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"]> {
   if ("successCount" in result) {
     return {
       importedCount: result.successCount,

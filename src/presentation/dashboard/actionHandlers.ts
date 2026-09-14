@@ -68,6 +68,7 @@ import {
 } from "../workbench/windowRuntimeAccount";
 import { promptForTags } from "../tagEditor";
 import { parseSharedJsonInput, toFailureMessage, toImportActionPayload } from "./actionUtils";
+import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
@@ -516,7 +517,7 @@ async function runDashboardAction(
     case "openExternalUrl":
       return handleOpenExternalUrl(payload);
     case "downloadJsonFile":
-      return handleDownloadJsonFile(ctx.context, payload);
+      return handleDownloadJsonFile(payload);
     case "importSharedJson":
       return handleImportSharedJson(ctx.repo, ctx.schedulePublishState, payload, translate);
     case "previewImportSharedJson":
@@ -1060,7 +1061,7 @@ export function isSafeExternalUrl(value: string): boolean {
   }
 }
 
-async function handleDownloadJsonFile(context: vscode.ExtensionContext, payload: DashboardActionPayload | undefined) {
+async function handleDownloadJsonFile(payload: DashboardActionPayload | undefined) {
   const text = payload?.text ?? "";
   const defaultName = payload?.filename?.trim() ?? "codex-manager-share.json";
   if (!text) {
@@ -1068,7 +1069,7 @@ async function handleDownloadJsonFile(context: vscode.ExtensionContext, payload:
   }
 
   const target = await vscode.window.showSaveDialog({
-    defaultUri: vscode.Uri.joinPath(context.globalStorageUri, defaultName),
+    defaultUri: vscode.Uri.file(path.join(getCodexManagerStorageRoot(), defaultName)),
     filters: {
       JSON: ["json"]
     },
@@ -1107,6 +1108,17 @@ async function handleImportSharedJson(
     const result = payload?.recoveryMode
       ? await repo.restoreAccountsFromSharedJson(accountInput)
       : await repo.importSharedAccountsWithSummary(accountInput);
+    const attemptedCount = Array.isArray(accountInput) ? accountInput.length : 1;
+    const importedCount = "successCount" in result ? result.successCount : result.restoredCount;
+    if (importedCount === 0) {
+      throw new Error(
+        "failures" in result && result.failures[0]
+          ? `No accounts were imported. First error: ${result.failures[0].message}`
+          : attemptedCount === 0
+            ? "The JSON file contains no accounts to import."
+            : "No accounts were imported. Check that the file contains valid account tokens."
+      );
+    }
     if (backup && payload?.recoveryMode === true) {
       await applyBackupSettings(backup.settings);
       appendImportedDebugLogs(backup.logs);
@@ -1115,12 +1127,19 @@ async function handleImportSharedJson(
       }
     }
     schedulePublishState();
-    void vscode.window.showInformationMessage(
-      translate(payload?.recoveryMode ? "message.restoreFromSharedSuccess" : "message.importSharedJsonSuccess", {
-        count: "successCount" in result ? result.successCount : result.restoredCount
-      })
-    );
-    return toImportActionPayload(result);
+    const response = toImportActionPayload(result);
+    if ("failedCount" in result && result.failedCount > 0) {
+      const warning = `Imported ${result.successCount} account${result.successCount === 1 ? "" : "s"}; ${result.failedCount} failed. First error: ${result.failures[0]?.message ?? "unknown error"}`;
+      response.notice = { level: "warning", message: warning };
+      void vscode.window.showWarningMessage(warning);
+    } else {
+      void vscode.window.showInformationMessage(
+        translate(payload?.recoveryMode ? "message.restoreFromSharedSuccess" : "message.importSharedJsonSuccess", {
+          count: importedCount
+        })
+      );
+    }
+    return response;
   } catch (error) {
     const message = translate(
       payload?.recoveryMode ? "message.restoreFromSharedFailed" : "message.importSharedJsonFailed",

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.8
+
+- Make `~/.codex-manager` the single cross-platform filesystem root for the live account index, validated backups, encrypted per-account vaults, logs, coordination state, announcements, running-turn journal, and always-online relay files, with one-time migration from the former Codex-home files.
+- Prevent update-time index and active-auth corruption by removing truncating Windows copy fallbacks, fsyncing unique temporary snapshots, validating and atomically rotating index backups, recovering completed temporary writes, serializing index writers across windows, and avoiding shutdown-time index writes.
+- Recover a damaged account index automatically from healthy encrypted per-account files, and allow OAuth, current-account, and JSON imports to rebuild the index instead of being blocked by the corruption fence.
+- Start the OAuth callback listener as soon as the authorization link is created, automatically copy the link while keeping the copy button, and expire unattended listeners after ten minutes.
+- Import account JSON directly on Submit without a separate validation step, and report full failures or partial successes clearly. Keep encrypted cross-PC sync and its local-only account-enable behavior intact.
+
 ## 1.1.7
 
 - Replace passive VS Code info and warning pop-ups with one discreet status-bar notice that disappears after ten seconds and clears when the extension reloads. Keep errors and actionable prompts visible as native notifications.

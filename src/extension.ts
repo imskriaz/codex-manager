@@ -8,6 +8,7 @@ import {
 import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOperations";
 import { disposePersistentLogging, registerPersistentLogging } from "./utils/persistentLog";
 import { enableTransientVscodeNotices } from "./utils/notificationMirror";
+import { getCodexManagerStorageRoot } from "./utils/storageRoot";
 
 let workbench: AccountsWorkbench | undefined;
 let transientNotices: vscode.Disposable | undefined;
@@ -39,7 +40,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.window.showWarningMessage(`Codex Manager proxy setup failed. The extension will continue: ${detail}`);
   }
   try {
-    await configureCrossWindowOperationCoordinator(context.globalStorageUri.fsPath);
+    await configureCrossWindowOperationCoordinator(getCodexManagerStorageRoot());
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error("[codexManager] cross-window coordination initialization failed", error);

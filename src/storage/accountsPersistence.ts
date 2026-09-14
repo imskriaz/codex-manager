@@ -1,12 +1,8 @@
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
+import * as path from "path";
 import { CodexManagerIndex } from "../core/types";
-import {
-  countAvailableBackupsSync,
-  getBackupPath,
-  parseAccountsIndex,
-  readCurrentIndexForBackupSync
-} from "./accountsIndex";
+import { getBackupPath, parseAccountsIndex, readCurrentIndexForBackupSync } from "./accountsIndex";
 
 const REPLACE_RETRY_DELAYS_MS = [20, 50, 100, 200, 400];
 const TRANSIENT_REPLACE_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
@@ -19,7 +15,9 @@ export async function readIndexSnapshot(filePath: string): Promise<CodexManagerI
 export async function countAvailableBackups(indexPath: string, backupCount: number): Promise<number> {
   const results = await Promise.all(
     Array.from({ length: backupCount }, (_, index) =>
-      fs.access(getBackupPath(indexPath, index + 1)).then(() => true).catch(() => false)
+      readIndexSnapshot(getBackupPath(indexPath, index + 1))
+        .then(() => true)
+        .catch(() => false)
     )
   );
   return results.filter(Boolean).length;
@@ -36,7 +34,8 @@ export async function backupCurrentIndex(indexPath: string, backupCount: number)
     const from = getBackupPath(indexPath, slot - 1);
     const to = getBackupPath(indexPath, slot);
     try {
-      await fs.copyFile(from, to);
+      const snapshot = await readIndexSnapshot(from);
+      await writeIndexAtomically(to, snapshot, ".tmp");
     } catch (error) {
       if (!isFileNotFoundError(error)) {
         console.error(`[codexManager] failed to rotate backup ${slot - 1} -> ${slot}:`, error);
@@ -44,7 +43,7 @@ export async function backupCurrentIndex(indexPath: string, backupCount: number)
     }
   }
 
-  await fs.writeFile(getBackupPath(indexPath, 1), current, "utf8");
+  await writeIndexAtomically(getBackupPath(indexPath, 1), current, ".tmp");
 }
 
 export function backupCurrentIndexSync(indexPath: string, backupCount: number): void {
@@ -57,7 +56,9 @@ export function backupCurrentIndexSync(indexPath: string, backupCount: number): 
     const from = getBackupPath(indexPath, slot - 1);
     const to = getBackupPath(indexPath, slot);
     try {
-      fsSync.copyFileSync(from, to);
+      const raw = fsSync.readFileSync(from, "utf8");
+      const snapshot = parseAccountsIndex(raw, from);
+      writeIndexAtomicallySync(to, snapshot, ".tmp");
     } catch (error) {
       if (!isFileNotFoundError(error)) {
         console.error(`[codexManager] failed to rotate backup ${slot - 1} -> ${slot}:`, error);
@@ -65,27 +66,82 @@ export function backupCurrentIndexSync(indexPath: string, backupCount: number): 
     }
   }
 
-  fsSync.writeFileSync(getBackupPath(indexPath, 1), current, "utf8");
+  writeIndexAtomicallySync(getBackupPath(indexPath, 1), parseAccountsIndex(current, indexPath), ".tmp");
 }
 
 export async function writeIndexAtomically(
   indexPath: string,
   index: CodexManagerIndex,
-  tempSuffix: string
+  tempSuffix: string,
+  operations: { rename?: typeof fs.rename; wait?: (ms: number) => Promise<void> } = {}
 ): Promise<void> {
   const serialized = JSON.stringify(index, null, 2);
   const tempPath = createUniqueTempPath(indexPath, tempSuffix);
   parseAccountsIndex(serialized, tempPath);
-  await fs.writeFile(tempPath, serialized, "utf8");
-  await replaceFileWithRetry(tempPath, indexPath);
+  const handle = await fs.open(tempPath, "wx", 0o600);
+  try {
+    await handle.writeFile(serialized, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await replaceFileWithRetry(tempPath, indexPath, operations);
+  await fs.chmod(indexPath, 0o600).catch(() => undefined);
 }
 
 export function writeIndexAtomicallySync(indexPath: string, index: CodexManagerIndex, tempSuffix: string): void {
   const serialized = JSON.stringify(index, null, 2);
   const tempPath = createUniqueTempPath(indexPath, tempSuffix);
   parseAccountsIndex(serialized, tempPath);
-  fsSync.writeFileSync(tempPath, serialized, "utf8");
+  const descriptor = fsSync.openSync(tempPath, "wx", 0o600);
+  try {
+    fsSync.writeFileSync(descriptor, serialized, "utf8");
+    fsSync.fsyncSync(descriptor);
+  } finally {
+    fsSync.closeSync(descriptor);
+  }
   replaceFileWithRetrySync(tempPath, indexPath);
+  try {
+    fsSync.chmodSync(indexPath, 0o600);
+  } catch {
+    // Windows protects the user-owned folder through inherited ACLs.
+  }
+}
+
+/** Recover a validated snapshot left behind when shutdown interrupted replacement. */
+export async function readLatestValidTempIndex(
+  indexPath: string,
+  tempSuffix: string
+): Promise<CodexManagerIndex | undefined> {
+  const directory = path.dirname(indexPath);
+  const prefix = `${path.basename(indexPath)}${tempSuffix}-`;
+  let entries: string[];
+  try {
+    entries = await fs.readdir(directory);
+  } catch (error) {
+    if (isFileNotFoundError(error)) return undefined;
+    throw error;
+  }
+
+  const candidates = await Promise.all(
+    entries
+      .filter((name) => name.startsWith(prefix))
+      .map(async (name) => {
+        const filePath = path.join(directory, name);
+        const stat = await fs.stat(filePath).catch(() => undefined);
+        return stat?.isFile() ? { filePath, modifiedAt: stat.mtimeMs } : undefined;
+      })
+  );
+  for (const candidate of candidates
+    .filter((value): value is { filePath: string; modifiedAt: number } => Boolean(value))
+    .sort((left, right) => right.modifiedAt - left.modifiedAt)) {
+    try {
+      return await readIndexSnapshot(candidate.filePath);
+    } catch {
+      // Keep searching older candidates; invalid files remain available for diagnostics.
+    }
+  }
+  return undefined;
 }
 
 function createUniqueTempPath(indexPath: string, tempSuffix: string): string {
@@ -93,29 +149,31 @@ function createUniqueTempPath(indexPath: string, tempSuffix: string): string {
   return `${indexPath}${tempSuffix}-${nonce}`;
 }
 
-async function replaceFileWithRetry(tempPath: string, indexPath: string): Promise<void> {
+async function replaceFileWithRetry(
+  tempPath: string,
+  indexPath: string,
+  operations: { rename?: typeof fs.rename; wait?: (ms: number) => Promise<void> } = {}
+): Promise<void> {
+  const rename = operations.rename ?? fs.rename;
+  const wait = operations.wait ?? delay;
   let lastError: unknown;
   for (let attempt = 0; attempt <= REPLACE_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
-      await fs.rename(tempPath, indexPath);
+      await rename(tempPath, indexPath);
       return;
     } catch (error) {
       lastError = error;
       if (!isTransientReplaceError(error) || attempt === REPLACE_RETRY_DELAYS_MS.length) {
         break;
       }
-      await delay(REPLACE_RETRY_DELAYS_MS[attempt]!);
+      await wait(REPLACE_RETRY_DELAYS_MS[attempt]!);
     }
   }
 
-  // Windows security tools can hold the destination long enough for rename to
-  // keep returning EPERM. copyFile safely replaces the complete destination
-  // contents while preserving the validated temporary file as the source.
-  if (isTransientReplaceError(lastError)) {
-    await fs.copyFile(tempPath, indexPath);
-    await fs.unlink(tempPath).catch(() => undefined);
-    return;
-  }
+  // Never copy over the live file as a fallback. copyFile truncates the
+  // destination first and an extension update can terminate the host before
+  // bytes are copied, leaving a full-length all-zero index. Keep the validated
+  // temp snapshot for startup recovery and leave the previous live file intact.
   throw lastError;
 }
 
@@ -134,16 +192,8 @@ function replaceFileWithRetrySync(tempPath: string, indexPath: string): void {
     }
   }
 
-  if (isTransientReplaceError(lastError)) {
-    fsSync.copyFileSync(tempPath, indexPath);
-    try {
-      fsSync.unlinkSync(tempPath);
-    } catch {
-      // The completed destination is authoritative; a locked temp file is safe
-      // to leave for later operating-system cleanup.
-    }
-    return;
-  }
+  // Asynchronous persistence owns normal writes. Shutdown must not truncate a
+  // shared live index merely because another process still has it open.
   throw lastError;
 }
 
@@ -161,7 +211,17 @@ function delay(ms: number): Promise<void> {
 }
 
 export function countAvailableBackupsSyncSafe(indexPath: string, backupCount: number): number {
-  return countAvailableBackupsSync(indexPath, backupCount);
+  let count = 0;
+  for (let slot = 1; slot <= backupCount; slot += 1) {
+    const backupPath = getBackupPath(indexPath, slot);
+    try {
+      parseAccountsIndex(fsSync.readFileSync(backupPath, "utf8"), backupPath);
+      count += 1;
+    } catch {
+      // Only validated backups are reported as available.
+    }
+  }
+  return count;
 }
 
 export function isFileNotFoundError(error: unknown): boolean {
@@ -170,11 +230,9 @@ export function isFileNotFoundError(error: unknown): boolean {
   );
 }
 
-async function readCurrentIndexForBackup(indexPath: string): Promise<string | undefined> {
+async function readCurrentIndexForBackup(indexPath: string): Promise<CodexManagerIndex | undefined> {
   try {
-    const raw = await fs.readFile(indexPath, "utf8");
-    parseAccountsIndex(raw, indexPath);
-    return raw;
+    return await readIndexSnapshot(indexPath);
   } catch (error) {
     if (!isFileNotFoundError(error)) {
       console.warn("[codexManager] skipped index backup because current index is unreadable");

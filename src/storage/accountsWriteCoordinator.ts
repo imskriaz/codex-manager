@@ -1,40 +1,23 @@
 import * as fs from "fs/promises";
-import * as fsSync from "fs";
 import * as path from "path";
 import { cloneIndex } from "./accountsIndex";
-import {
-  backupCurrentIndex,
-  backupCurrentIndexSync,
-  countAvailableBackups,
-  countAvailableBackupsSyncSafe,
-  writeIndexAtomically,
-  writeIndexAtomicallySync
-} from "./accountsPersistence";
+import { backupCurrentIndex, countAvailableBackups, writeIndexAtomically } from "./accountsPersistence";
 import type { CodexManagerIndex } from "../core/types";
 import { createError } from "../core/errors";
 import type { AccountsRepositoryState } from "./accountsRepositoryState";
+import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 
-export function disposeWriteCoordinator(
-  state: AccountsRepositoryState,
-  persistSync: (index: CodexManagerIndex) => void
-): void {
+const INDEX_PERSIST_OPERATION_KEY = "accounts:index-persist";
+
+export function disposeWriteCoordinator(state: AccountsRepositoryState): void {
   if (state.saveDebounceTimer) {
     clearTimeout(state.saveDebounceTimer);
     state.saveDebounceTimer = null;
   }
 
-  if (!state.isDirty) {
-    return;
-  }
-
-  const latestIndex = state.pendingSave ?? state.cache?.data;
-  if (latestIndex) {
-    persistSync(latestIndex);
-  }
   state.pendingSave = null;
   state.isDirty = false;
 }
-
 export function readPendingOrCachedIndex(
   state: AccountsRepositoryState,
   cacheTtlMs: number
@@ -137,35 +120,16 @@ export async function persistIndexWithBackups(params: {
   backupCount: number;
 }): Promise<void> {
   try {
-    await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
-    await backupCurrentIndex(params.indexPath, params.backupCount);
-    await writeIndexAtomically(params.indexPath, params.index, params.tempSuffix);
-    const availableBackups = await countAvailableBackups(params.indexPath, params.backupCount);
-    params.state.indexHealth =
-      params.state.indexHealth.status === "corrupted_unrecoverable"
-        ? { status: "healthy", availableBackups }
-        : { ...params.state.indexHealth, availableBackups };
-  } catch (cause) {
-    throw createError.storageWriteFailed(params.indexPath, cause);
-  }
-}
-
-export function persistIndexSyncWithBackups(params: {
-  state: AccountsRepositoryState;
-  indexPath: string;
-  index: CodexManagerIndex;
-  tempSuffix: string;
-  backupCount: number;
-}): void {
-  try {
-    fsSync.mkdirSync(path.dirname(params.indexPath), { recursive: true });
-    backupCurrentIndexSync(params.indexPath, params.backupCount);
-    writeIndexAtomicallySync(params.indexPath, params.index, params.tempSuffix);
-    const availableBackups = countAvailableBackupsSyncSafe(params.indexPath, params.backupCount);
-    params.state.indexHealth =
-      params.state.indexHealth.status === "corrupted_unrecoverable"
-        ? { status: "healthy", availableBackups }
-        : { ...params.state.indexHealth, availableBackups };
+    await runCrossWindowExclusive(INDEX_PERSIST_OPERATION_KEY, "Account index save", async () => {
+      await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
+      await backupCurrentIndex(params.indexPath, params.backupCount);
+      await writeIndexAtomically(params.indexPath, params.index, params.tempSuffix);
+      const availableBackups = await countAvailableBackups(params.indexPath, params.backupCount);
+      params.state.indexHealth =
+        params.state.indexHealth.status === "corrupted_unrecoverable"
+          ? { status: "healthy", availableBackups }
+          : { ...params.state.indexHealth, availableBackups };
+    });
   } catch (cause) {
     throw createError.storageWriteFailed(params.indexPath, cause);
   }

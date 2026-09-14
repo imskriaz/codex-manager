@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const oauthMocks = vi.hoisted(() => ({
   complete: vi.fn(),
+  listen: vi.fn(),
   prepare: vi.fn()
 }));
 const quotaMocks = vi.hoisted(() => ({ refresh: vi.fn() }));
@@ -10,6 +11,7 @@ const activationMocks = vi.hoisted(() => ({ activate: vi.fn() }));
 
 vi.mock("../src/auth/oauth", () => ({
   completeOAuthLoginSession: oauthMocks.complete,
+  listenForPreparedOAuthLoginSession: oauthMocks.listen,
   prepareOAuthLoginSession: oauthMocks.prepare,
   runPreparedOAuthLoginSession: vi.fn()
 }));
@@ -32,6 +34,11 @@ describe("dashboard OAuth encrypted sync", () => {
       verifier: "verifier"
     });
     oauthMocks.complete.mockResolvedValue({
+      idToken: "id-token",
+      accessToken: "access-token",
+      refreshToken: "refresh-token"
+    });
+    oauthMocks.listen.mockResolvedValue({
       idToken: "id-token",
       accessToken: "access-token",
       refreshToken: "refresh-token"
@@ -61,6 +68,24 @@ describe("dashboard OAuth encrypted sync", () => {
     expect(result?.email).toBe("one@example.com");
     expect(result?.notice).toBeUndefined();
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  it("starts the callback listener for a prepared link without opening the browser", async () => {
+    const repo = {
+      upsertFromTokens: vi.fn().mockResolvedValue({ id: "one", email: "one@example.com" })
+    };
+    const coordinator = new DashboardOAuthCoordinator(repo as never, vi.fn());
+    const prepared = coordinator.prepareSession((key) => key);
+
+    await expect(coordinator.startAutoFlow(prepared?.oauthSession?.sessionId, (key) => key)).resolves.toMatchObject({
+      email: "one@example.com"
+    });
+
+    expect(oauthMocks.listen).toHaveBeenCalledOnce();
+    expect(oauthMocks.listen).toHaveBeenCalledWith(
+      expect.objectContaining({ authUrl: "https://auth.example.test" }),
+      expect.any(Object)
+    );
   });
 
   it("returns a warning to the browser dashboard when credential sync needs retry", async () => {

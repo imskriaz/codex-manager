@@ -32,6 +32,7 @@ export const TOKEN_REFRESH_SKEW_SECONDS = 300;
 // of the responses on providers that rotate refresh tokens).
 const inFlightTokenRefreshes = new Map<string, Promise<CodexTokens>>();
 const TOKEN_REFRESH_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
+export const OAUTH_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface OAuthSession {
   state: string;
@@ -242,6 +243,21 @@ export async function runPreparedOAuthLoginSession(
   return exchangeCodeForTokens(code, session.verifier, session.redirectUri);
 }
 
+/** Listen immediately after link creation; opening the browser is a separate UI action. */
+export async function listenForPreparedOAuthLoginSession(
+  session: PreparedOAuthLoginSession,
+  cancellationToken?: vscode.CancellationToken
+): Promise<CodexTokens> {
+  const runtimeSession: OAuthSession = {
+    state: session.state,
+    verifier: session.verifier,
+    server: http.createServer(),
+    redirectUri: session.redirectUri
+  };
+  const code = await createCodeWaiter(runtimeSession, cancellationToken).promise;
+  return exchangeCodeForTokens(code, session.verifier, session.redirectUri);
+}
+
 export function extractCodeFromCallbackUrl(callbackUrl: string, redirectUri: string, expectedState: string): string {
   const validationError = validateManualCallback(callbackUrl, redirectUri, expectedState);
   if (validationError) {
@@ -289,7 +305,7 @@ function createCodeWaiter(session: OAuthSession, cancellationToken?: vscode.Canc
             })
           );
         });
-      }, 300_000);
+      }, OAUTH_CALLBACK_TIMEOUT_MS);
 
       cancelDisposable = cancellationToken?.onCancellationRequested(() => {
         finish(() => {

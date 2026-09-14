@@ -724,9 +724,11 @@ describe("executeDashboardActionMessage", () => {
     } as never);
     const repo = {
       importSharedAccountsWithSummary: vi.fn().mockResolvedValue({
-        successCount: 0,
+        total: 1,
+        successCount: 1,
         overwriteCount: 0,
-        invalidCount: 0,
+        failedCount: 0,
+        importedEmails: ["account@example.com"],
         failures: []
       }),
       restoreAccountsFromSharedJson: vi.fn(),
@@ -737,7 +739,7 @@ describe("executeDashboardActionMessage", () => {
       format: "codex-manager-backup",
       version: 1,
       exportedAt: new Date().toISOString(),
-      accounts: [],
+      accounts: [{ email: "account@example.com" }],
       activeAccountId: "account-1",
       settings: { dashboardTheme: "dark" },
       logs: []
@@ -754,10 +756,67 @@ describe("executeDashboardActionMessage", () => {
     );
 
     expect(result.status).toBe("completed");
-    expect(repo.importSharedAccountsWithSummary).toHaveBeenCalledWith([]);
+    expect(repo.importSharedAccountsWithSummary).toHaveBeenCalledWith([{ email: "account@example.com" }]);
     expect(repo.restoreAccountsFromSharedJson).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
     expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("reports a direct JSON import with no valid accounts as a failure and notification", async () => {
+    const repo = {
+      importSharedAccountsWithSummary: vi.fn().mockResolvedValue({
+        total: 1,
+        successCount: 0,
+        overwriteCount: 0,
+        failedCount: 1,
+        importedEmails: [],
+        failures: [{ index: 0, message: "Shared account JSON does not include valid tokens" }]
+      })
+    } as unknown as DashboardActionContext["repo"];
+
+    const result = await executeDashboardActionMessage(
+      { ...createContext(), repo },
+      {
+        type: "dashboard:action",
+        action: "importSharedJson",
+        requestId: "req-invalid-direct-import",
+        payload: { jsonText: JSON.stringify({ email: "account@example.com" }) }
+      }
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toContain("does not include valid tokens");
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("does not include valid tokens")
+    );
+  });
+
+  it("reports partial JSON import as a warning while preserving the successful result", async () => {
+    const repo = {
+      importSharedAccountsWithSummary: vi.fn().mockResolvedValue({
+        total: 2,
+        successCount: 1,
+        overwriteCount: 0,
+        failedCount: 1,
+        importedEmails: ["account@example.com"],
+        failures: [{ index: 1, message: "Missing tokens" }]
+      })
+    } as unknown as DashboardActionContext["repo"];
+
+    const result = await executeDashboardActionMessage(
+      { ...createContext(), repo },
+      {
+        type: "dashboard:action",
+        action: "importSharedJson",
+        requestId: "req-partial-direct-import",
+        payload: { jsonText: JSON.stringify([{ email: "account@example.com" }, {}]) }
+      }
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.payload?.importResult?.successCount).toBe(1);
+    expect(result.payload?.notice?.level).toBe("warning");
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("Missing tokens"));
   });
 
   it("applies backup settings and the active account only in explicit recovery mode", async () => {
@@ -769,7 +828,9 @@ describe("executeDashboardActionMessage", () => {
     } as never);
     const repo = {
       importSharedAccountsWithSummary: vi.fn(),
-      restoreAccountsFromSharedJson: vi.fn().mockResolvedValue({ restoredCount: 0 }),
+      restoreAccountsFromSharedJson: vi
+        .fn()
+        .mockResolvedValue({ restoredCount: 1, restoredEmails: ["account@example.com"] }),
       getAccount: vi.fn().mockResolvedValue({ id: "account-1" }),
       switchAccount: vi.fn().mockResolvedValue(undefined)
     } as unknown as DashboardActionContext["repo"];
@@ -777,7 +838,7 @@ describe("executeDashboardActionMessage", () => {
       format: "codex-manager-backup",
       version: 1,
       exportedAt: new Date().toISOString(),
-      accounts: [],
+      accounts: [{ email: "account@example.com" }],
       activeAccountId: "account-1",
       settings: { dashboardTheme: "dark" },
       logs: []
@@ -794,7 +855,7 @@ describe("executeDashboardActionMessage", () => {
     );
 
     expect(result.status).toBe("completed");
-    expect(repo.restoreAccountsFromSharedJson).toHaveBeenCalledWith([]);
+    expect(repo.restoreAccountsFromSharedJson).toHaveBeenCalledWith([{ email: "account@example.com" }]);
     expect(repo.importSharedAccountsWithSummary).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith("dashboardTheme", "dark", vscode.ConfigurationTarget.Global);
     expect(repo.switchAccount).toHaveBeenCalledWith("account-1");
