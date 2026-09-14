@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 import { resolveOverviewAccount } from "../webview-src/dashboard/helpers";
-import { reduceOAuthActionResult, reduceSharedImportActionResult } from "../webview-src/dashboard/sessionModalState";
+import {
+  isCurrentOAuthActionResult,
+  reduceOAuthActionResult,
+  reduceOAuthAuthorized,
+  reduceSharedImportActionResult
+} from "../webview-src/dashboard/sessionModalState";
 
 describe("reduceOAuthActionResult", () => {
   it("stores prepared oauth sessions and resets on completion", () => {
@@ -41,6 +46,30 @@ describe("reduceOAuthActionResult", () => {
     expect(completed.shouldCloseModal).toBe(true);
     expect(completed.next.oauthSession).toBeUndefined();
     expect(completed.next.oauthCallbackUrl).toBe("");
+  });
+
+  it("closes only the modal for the authorized OAuth session", () => {
+    const state = {
+      oauthSession: { sessionId: "oauth-current", authUrl: "https://example.com", redirectUri: "vscode://callback" },
+      oauthFlowStarted: true,
+      oauthCallbackUrl: ""
+    };
+    expect(reduceOAuthAuthorized(state, "oauth-old")).toEqual({ matched: false, next: state });
+    expect(reduceOAuthAuthorized(state, "oauth-current")).toMatchObject({
+      matched: true,
+      next: { oauthSession: undefined, oauthFlowStarted: false }
+    });
+  });
+
+  it("ignores a late OAuth result from an earlier modal", () => {
+    const message = {
+      type: "dashboard:action-result" as const,
+      requestId: "old-request",
+      action: "startOAuthAutoFlow" as const,
+      status: "completed" as const
+    };
+    expect(isCurrentOAuthActionResult(message, { start: "current-request" })).toBe(false);
+    expect(isCurrentOAuthActionResult(message, { start: "old-request" })).toBe(true);
   });
 });
 

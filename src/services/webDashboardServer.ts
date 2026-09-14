@@ -49,7 +49,7 @@ import {
   readDashboardDailyUsageCache,
   saveDashboardUsageHistory
 } from "./dashboardUsageHistory";
-import { subscribeDashboardRealtime } from "./dashboardRealtime";
+import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 
 const WEB_DASHBOARD_PORT = 39875;
@@ -360,6 +360,9 @@ export class WebDashboardServer implements vscode.Disposable {
         return this.encryptedSync
           ? this.encryptedSync.syncNow(true, false)
           : vscode.commands.executeCommand<boolean>("codexManager.syncNow", { announceSuccess: false });
+      },
+      (oauthSessionId, email) => {
+        publishDashboardRealtime({ type: "dashboard:oauth-authorized", oauthSessionId, email });
       }
     );
     this.encryptedSync?.setRealtimeSyncPublisher?.(() => this.publishPeerVault(true));
@@ -2239,6 +2242,7 @@ export function normalizeWebDashboardReturnPath(pathname: string): string {
 export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
     let body = "";
+    let bodyBytes = 0;
     let settled = false;
     const finish = (callback: () => void): void => {
       if (settled) {
@@ -2248,18 +2252,21 @@ export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes
       callback();
     };
     request.setEncoding("utf8");
-    request.on("data", (chunk) => {
+    request.on("data", (chunk: string) => {
       if (settled) {
         return;
       }
-      body += chunk;
-      if (Buffer.byteLength(body, "utf8") > maxBytes) {
+      bodyBytes += Buffer.byteLength(chunk, "utf8");
+      if (bodyBytes > maxBytes) {
         finish(() => reject(new RequestBodyTooLargeError("Request body too large")));
+        return;
       }
+      body += chunk;
     });
     request.on("end", () => finish(() => resolve(body)));
     request.on("error", (error) => finish(() => reject(error)));
     request.on("aborted", () => finish(() => reject(new Error("Request aborted"))));
+    request.on("close", () => finish(() => reject(new Error("Request closed before body completed"))));
   });
 }
 

@@ -27,11 +27,24 @@ export async function fetchWithTimeout(
   timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
   timeoutLabel = "Request"
 ): Promise<Response> {
-  await acquireProviderRequestSlot();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const callerSignal = init.signal;
+  const onCallerAbort = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) {
+    onCallerAbort();
+  } else {
+    callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  }
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  let acquired = false;
 
   try {
+    await acquireProviderRequestSlot(controller.signal);
+    acquired = true;
     const dispatcher = getCodexProxyDispatcher();
     if (dispatcher) {
       const response = (await undiciFetch(
@@ -52,7 +65,7 @@ export async function fetchWithTimeout(
     noteProviderResponse(response);
     return response;
   } catch (error) {
-    if (isAbortError(error)) {
+    if (timedOut) {
       throw new NetworkError(`${timeoutLabel} timed out after ${Math.round(timeoutMs / 1000)}s`, {
         code: ErrorCode.NETWORK_ERROR,
         cause: error,
@@ -62,14 +75,16 @@ export async function fetchWithTimeout(
     throw error;
   } finally {
     clearTimeout(timer);
-    releaseProviderRequestSlot();
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+    if (acquired) releaseProviderRequestSlot();
   }
 }
 
-async function acquireProviderRequestSlot(): Promise<void> {
+async function acquireProviderRequestSlot(signal: AbortSignal): Promise<void> {
   while (providerInFlight >= PROVIDER_MAX_CONCURRENCY) {
-    await new Promise<void>((resolve) => providerWaiters.push(resolve));
+    await waitForProviderSlot(signal);
   }
+  throwIfAborted(signal);
   const now = Date.now();
   if (providerLastObservedAt > 0 && now + 1000 < providerLastObservedAt) {
     // Test clocks and system clock corrections can move backwards. Do not
@@ -81,21 +96,69 @@ async function acquireProviderRequestSlot(): Promise<void> {
   const requestAt = Math.max(now, providerNextRequestAt, providerCooldownUntil);
   providerInFlight += 1;
   providerNextRequestAt = requestAt + PROVIDER_MIN_REQUEST_SPACING_MS;
-  let readyAt = requestAt;
-  while (true) {
-    const observedAt = Date.now();
-    const waitMs = Math.min(10 * 60_000, Math.max(readyAt - observedAt, 0));
-    if (waitMs > 0) {
-      await new Promise<void>((resolve) => realSetTimeout(resolve, waitMs));
+  try {
+    let readyAt = requestAt;
+    while (true) {
+      const observedAt = Date.now();
+      const waitMs = Math.min(10 * 60_000, Math.max(readyAt - observedAt, 0));
+      if (waitMs > 0) {
+        await waitForProviderDelay(waitMs, signal);
+      }
+      throwIfAborted(signal);
+      providerLastObservedAt = Date.now();
+      if (providerLastObservedAt >= providerCooldownUntil) {
+        break;
+      }
+      // A request already waiting for its spacing slot may observe a 429 from
+      // another request. Recheck the shared cooldown before it reaches the provider.
+      readyAt = providerCooldownUntil;
     }
-    providerLastObservedAt = Date.now();
-    if (providerLastObservedAt >= providerCooldownUntil) {
-      break;
-    }
-    // A request already waiting for its spacing slot may observe a 429 from
-    // another request. Recheck the shared cooldown before it reaches the provider.
-    readyAt = providerCooldownUntil;
+  } catch (error) {
+    releaseProviderRequestSlot();
+    throw error;
   }
+}
+
+function waitForProviderSlot(signal: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  return new Promise<void>((resolve, reject) => {
+    const waiter = () => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => {
+      const index = providerWaiters.indexOf(waiter);
+      if (index >= 0) providerWaiters.splice(index, 1);
+      reject(abortReason(signal));
+    };
+    providerWaiters.push(waiter);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
+function waitForProviderDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  throwIfAborted(signal);
+  return new Promise<void>((resolve, reject) => {
+    const timer = realSetTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortReason(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortReason(signal);
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new DOMException("The request was aborted", "AbortError");
 }
 
 function releaseProviderRequestSlot(): void {
@@ -117,10 +180,6 @@ function parseRetryAfter(value: string | null): number | undefined {
   if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 10 * 60_000);
   const at = Date.parse(value);
   return Number.isFinite(at) ? Math.max(0, Math.min(at - Date.now(), 10 * 60_000)) : undefined;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError";
 }
 
 export async function retryWithBackoff<T>(

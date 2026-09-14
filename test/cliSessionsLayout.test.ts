@@ -267,7 +267,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain(
       "setCliComposerConfig(message.payload?.cliComposerConfig ?? cliComposerConfig)"
     );
-    expect(main).toContain('typeof realtimeRevision === "number"');
+    expect(main).toContain("classifyCliSessionListResult");
     expect(main).toContain("sessionChanged");
     expect(panel).not.toContain("readCodexCliComposerConfig");
     expect(panel).toMatch(/\{\s*cliSessions: stabilized,\s*realtimeRevision:/);

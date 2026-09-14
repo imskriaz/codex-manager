@@ -88,6 +88,26 @@ describe("dashboard OAuth encrypted sync", () => {
     );
   });
 
+  it("reports durable authorization before slower account follow-up work finishes", async () => {
+    let finishQuota!: () => void;
+    quotaMocks.refresh.mockImplementationOnce(
+      () => new Promise<void>((resolve) => { finishQuota = resolve; })
+    );
+    const repo = {
+      upsertFromTokens: vi.fn().mockResolvedValue({ id: "one", email: "one@example.com" })
+    };
+    const notifyAuthorized = vi.fn();
+    const coordinator = new DashboardOAuthCoordinator(repo as never, vi.fn(), undefined, notifyAuthorized);
+    const prepared = coordinator.prepareSession((key) => key);
+
+    const completion = coordinator.startAutoFlow(prepared?.oauthSession?.sessionId, (key) => key);
+    await vi.waitFor(() => expect(notifyAuthorized).toHaveBeenCalledOnce());
+
+    expect(notifyAuthorized).toHaveBeenCalledWith(prepared?.oauthSession?.sessionId, "one@example.com");
+    finishQuota();
+    await expect(completion).resolves.toMatchObject({ email: "one@example.com" });
+  });
+
   it("returns a warning to the browser dashboard when credential sync needs retry", async () => {
     const repo = {
       upsertFromTokens: vi.fn().mockResolvedValue({ id: "one", email: "one@example.com" })

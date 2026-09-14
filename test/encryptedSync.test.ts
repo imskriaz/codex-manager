@@ -32,7 +32,48 @@ const PASSPHRASE = "correct horse battery staple";
 describe("encrypted account sync", () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.clearAllMocks();
     vi.restoreAllMocks();
+  });
+
+  it("shares first-time device identity creation and retries a failed secret read", async () => {
+    const secrets = new Map<string, string>();
+    let releaseRead: (() => void) | undefined;
+    const firstRead = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let reads = 0;
+    const context = {
+      secrets: {
+        get: vi.fn(async (key: string) => {
+          reads += 1;
+          if (reads === 1) {
+            await firstRead;
+            throw new Error("Secret Storage unavailable");
+          }
+          return secrets.get(key);
+        }),
+        store: vi.fn(async (key: string, value: string) => {
+          secrets.set(key, value);
+        })
+      }
+    } as unknown as vscode.ExtensionContext;
+    const manager = new EncryptedSyncManager(context, {} as never);
+
+    const failedFirst = manager.getPresenceDeviceId();
+    const failedSecond = manager.getPresenceDeviceId();
+    expect(context.secrets.get).toHaveBeenCalledTimes(1);
+    releaseRead?.();
+    await expect(failedFirst).rejects.toThrow("Secret Storage unavailable");
+    await expect(failedSecond).rejects.toThrow("Secret Storage unavailable");
+
+    const first = manager.getPresenceDeviceId();
+    const second = manager.getPresenceDeviceId();
+    expect(await first).toBe(await second);
+    expect(context.secrets.get).toHaveBeenCalledTimes(2);
+    expect(context.secrets.store).toHaveBeenCalledTimes(1);
+    expect(await manager.getPresenceDeviceId()).toBe(await first);
+    manager.dispose();
   });
 
   it("saves a shared password without silently enabling or starting encrypted sync", async () => {

@@ -14,6 +14,33 @@ export type SharedImportState = {
   importResult?: CodexImportResultSummary;
 };
 
+export function reduceOAuthAuthorized(
+  state: OAuthModalState,
+  oauthSessionId: string
+): { matched: boolean; next: OAuthModalState } {
+  if (state.oauthSession?.sessionId !== oauthSessionId) return { matched: false, next: state };
+  return {
+    matched: true,
+    next: {
+      oauthSession: undefined,
+      oauthFlowStarted: false,
+      oauthCallbackUrl: "",
+      oauthError: undefined
+    }
+  };
+}
+
+export function isCurrentOAuthActionResult(
+  message: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>,
+  requestIds: { prepare?: string; start?: string; complete?: string }
+): boolean {
+  const requestKind = message.action === "prepareOAuthSession" ? "prepare"
+    : message.action === "startOAuthAutoFlow" ? "start"
+    : message.action === "completeOAuthSession" ? "complete"
+    : undefined;
+  return !requestKind || requestIds[requestKind] === message.requestId;
+}
+
 export function reduceOAuthActionResult(
   state: OAuthModalState,
   message: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>

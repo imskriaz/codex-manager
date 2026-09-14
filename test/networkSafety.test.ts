@@ -64,4 +64,42 @@ describe("provider network safety", () => {
 
     await expect(Promise.all(requests)).resolves.toHaveLength(3);
   });
+
+  it("times out while queued and never starts an expired request", async () => {
+    vi.resetModules();
+    const pending: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchWithTimeout } = await import("../src/utils/network");
+
+    const first = fetchWithTimeout("https://example.test/one", {}, 2_000);
+    const second = fetchWithTimeout("https://example.test/two", {}, 2_000);
+    const expired = fetchWithTimeout("https://example.test/expired", {}, 30, "Queued request");
+    await expect(expired).rejects.toThrow("Queued request timed out");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 1_000 });
+    pending[0]!(new Response("ok"));
+    pending[1]!(new Response("ok"));
+    await Promise.all([first, second]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("honors caller cancellation while waiting for a provider slot", async () => {
+    vi.resetModules();
+    const pending: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => pending.push(resolve)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchWithTimeout } = await import("../src/utils/network");
+
+    const first = fetchWithTimeout("https://example.test/one", {}, 2_000);
+    const second = fetchWithTimeout("https://example.test/two", {}, 2_000);
+    const controller = new AbortController();
+    const cancelled = fetchWithTimeout("https://example.test/cancelled", { signal: controller.signal }, 2_000);
+    controller.abort(new DOMException("Cancelled by caller", "AbortError"));
+    await expect(cancelled).rejects.toThrow("Cancelled by caller");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 1_000 });
+    pending[0]!(new Response("ok"));
+    pending[1]!(new Response("ok"));
+    await Promise.all([first, second]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

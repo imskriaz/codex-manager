@@ -161,6 +161,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private applyingRemote = false;
   private localEnablementDefaults = new Map<string, boolean>();
   private readonly pendingDeletionAccountIds = new Set<string>();
+  private deviceIdPromise: Promise<string> | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -1596,14 +1597,27 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (changed) this.onStateChanged?.();
   }
 
-  private async getDeviceId(): Promise<string> {
-    const existing = await this.context.secrets.get(DEVICE_KEY);
-    if (existing) {
-      return existing;
+  private getDeviceId(): Promise<string> {
+    if (this.deviceIdPromise) {
+      return this.deviceIdPromise;
     }
-    const created = crypto.randomUUID();
-    await this.context.secrets.store(DEVICE_KEY, created);
-    return created;
+    // Share the first Secret Storage read/write across startup and realtime
+    // callers. Otherwise two callers can persist and publish different IDs.
+    const pending = Promise.resolve(this.context.secrets.get(DEVICE_KEY)).then(async (existing) => {
+      if (existing) {
+        return existing;
+      }
+      const created = crypto.randomUUID();
+      await this.context.secrets.store(DEVICE_KEY, created);
+      return created;
+    });
+    this.deviceIdPromise = pending;
+    void pending.catch(() => {
+      if (this.deviceIdPromise === pending) {
+        this.deviceIdPromise = undefined;
+      }
+    });
+    return pending;
   }
 
   private async readRemotePayload(raw: string, passphrase: string): Promise<SyncPayload> {

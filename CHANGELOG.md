@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.9
+
+- Start encrypted sync restoration and relay handoff concurrently so the dashboard waits only for the slower independent startup step.
+- Bound provider request timeouts across queue and rate-limit waits, honor caller cancellation, and stop oversized or incomplete dashboard requests promptly.
+- Generate cryptographically random relay admin tokens and rotate older tokens while preserving a safe shutdown path for an existing relay.
+- Show clear cancellation and timeout results during onboarding and explicit session refreshes instead of leaving the initiating view waiting.
+- Close the matching browser OAuth modal as soon as the authorized account is saved, while slower quota and sync follow-up continues with visible final feedback.
+
 ## 1.1.8
 
 - Make `~/.codex-manager` the single cross-platform filesystem root for the live account index, validated backups, encrypted per-account vaults, logs, coordination state, announcements, running-turn journal, and always-online relay files, with one-time migration from the former Codex-home files.

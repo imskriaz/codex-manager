@@ -1,6 +1,6 @@
+import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as http from "http";
-import * as os from "os";
 import * as path from "path";
 import { spawn, type ChildProcess } from "child_process";
 import * as vscode from "vscode";
@@ -16,7 +16,12 @@ const SECRET_KEY = "codexManager.webDashboard.alwaysOnlineAdminToken.v1";
 const STARTUP_FILE = "CodexManagerAlwaysOnline.cmd";
 
 type RelayConfig = { port: number; hostKey: string; adminToken: string; pidPath: string; modulePaths: string[] };
-type PreparedRelay = RelayConfig & { configPath: string; scriptTarget: string; previousKey?: string };
+type PreparedRelay = RelayConfig & {
+  configPath: string;
+  scriptTarget: string;
+  previousKey?: string;
+  previousAdminToken?: string;
+};
 
 export class AlwaysOnlineServer implements vscode.Disposable {
   private child: ChildProcess | undefined;
@@ -71,10 +76,14 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     if (existingPid) {
       // A changed encrypted-sync passphrase changes the relay key; restart so
       // peers are not split across two authentication keys.
-      if (prepared.previousKey === prepared.hostKey) {
+      if (prepared.previousKey === prepared.hostKey && prepared.previousAdminToken === prepared.adminToken) {
         return "already-running";
       }
-      await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, prepared.adminToken, prepared.pidPath);
+      await waitForRelayShutdown(
+        ALWAYS_ONLINE_RELAY_PORT,
+        prepared.previousAdminToken ?? prepared.adminToken,
+        prepared.pidPath
+      );
     }
     if (await relayIsHealthy(prepared.port)) {
       return "already-running";
@@ -97,8 +106,15 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     } catch {
       // A missing config means the relay was never enabled.
     }
-    if (adminToken) {
-      await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, adminToken, path.join(storage, PID_FILE));
+    const pidPath = path.join(storage, PID_FILE);
+    const shutdownTokens = new Set(
+      [adminToken, this.preparedRelay?.previousAdminToken].filter((value): value is string => !!value)
+    );
+    for (const token of shutdownTokens) {
+      await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, token, pidPath);
+      if (!(await readLivePid(pidPath)) && !(await relayIsHealthy(ALWAYS_ONLINE_RELAY_PORT))) {
+        break;
+      }
     }
     this.child = undefined;
     this.preparedRelay = undefined;
@@ -125,19 +141,47 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     }
     const storage = getCodexManagerStorageRoot();
     await fs.mkdir(storage, { recursive: true });
+    const previousConfig = await readPreviousRelayConfig(path.join(storage, CONFIG_FILE));
     const storedAdminToken = await this.context.secrets.get(SECRET_KEY);
-    const adminToken = storedAdminToken ?? cryptoRandomToken();
-    if (!storedAdminToken) await this.context.secrets.store(SECRET_KEY, adminToken);
+    let adminToken = storedAdminToken;
+    if (!adminToken || isLegacyRelayAdminToken(adminToken)) {
+      const replacement = createRelayAdminToken();
+      try {
+        await this.context.secrets.store(SECRET_KEY, replacement);
+        adminToken = replacement;
+      } catch (error) {
+        if (!adminToken) {
+          throw error;
+        }
+        // Keep an existing relay usable if Secret Storage cannot persist the
+        // rotation. Retry on the next preparation instead of losing the key.
+        console.warn("[codexManager] relay admin token rotation failed", error);
+        void vscode.window.showWarningMessage(
+          "The relay admin token could not be rotated. Retry after Secret Storage is available."
+        );
+      }
+    }
+    const pidPath = path.join(storage, PID_FILE);
+    if (previousConfig?.adminToken && previousConfig.adminToken !== adminToken) {
+      // Keep the old config on disk until the old process has exited. If the
+      // host crashes after Secret Storage rotates, the next startup can still
+      // authenticate shutdown with the previous config token.
+      await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, previousConfig.adminToken, pidPath);
+      if ((await readLivePid(pidPath)) || (await relayIsHealthy(ALWAYS_ONLINE_RELAY_PORT))) {
+        throw new Error("The previous relay did not stop; its admin token was not rotated on disk.");
+      }
+    }
     const { configPath, scriptTarget } = await this.prepareRelayFiles();
     const prepared: PreparedRelay = {
       port: ALWAYS_ONLINE_RELAY_PORT,
       hostKey,
       adminToken,
-      pidPath: path.join(storage, PID_FILE),
+      pidPath,
       modulePaths: [this.context.extensionUri.fsPath, path.join(this.context.extensionUri.fsPath, "node_modules")],
       configPath,
       scriptTarget,
-      previousKey: await readPreviousRelayKey(configPath)
+      previousKey: previousConfig?.hostKey,
+      previousAdminToken: previousConfig?.adminToken
     };
     const config: RelayConfig = {
       port: prepared.port,
@@ -176,17 +220,20 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   }
 }
 
-async function readPreviousRelayKey(configPath: string): Promise<string | undefined> {
+async function readPreviousRelayConfig(configPath: string): Promise<Partial<RelayConfig> | undefined> {
   try {
-    const parsed = JSON.parse(await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>;
-    return parsed.hostKey;
+    return JSON.parse(await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>;
   } catch {
     return undefined;
   }
 }
 
-function cryptoRandomToken(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${os.hostname()}`;
+export function createRelayAdminToken(): string {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+export function isLegacyRelayAdminToken(token: string): boolean {
+  return token.length < 43 || /^[0-9a-z]{7,12}-[0-9a-z]{4,13}-.+$/i.test(token);
 }
 
 function resolveNodeExecutable(): string {
@@ -272,6 +319,10 @@ function requestShutdown(port: number, token: string): Promise<void> {
       }
     );
     request.on("error", () => resolve());
+    request.on("timeout", () => {
+      request.destroy();
+      resolve();
+    });
     request.end();
   });
 }
@@ -316,7 +367,10 @@ async function readLivePid(pidPath: string): Promise<number | undefined> {
 async function waitForRelayShutdown(port: number, token: string, pidPath: string): Promise<void> {
   const deadline = Date.now() + 4_000;
   while (Date.now() < deadline) {
-    if (!(await readLivePid(pidPath))) return;
+    const [pid, healthy] = await Promise.all([readLivePid(pidPath), relayIsHealthy(port)]);
+    if (!pid && !healthy) {
+      return;
+    }
     await requestShutdown(port, token);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

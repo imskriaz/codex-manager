@@ -40,6 +40,11 @@ export function useDashboardModals(params: {
         }
         shareModal.applyActionResult(message);
         return;
+      case "dashboard:oauth-authorized":
+        if (accountModal.applyOAuthAuthorized(message.oauthSessionId)) {
+          params.onNotice({ level: "info", message: "Account authorized. Finishing setup…" });
+        }
+        return;
       case "dashboard:notice":
         params.onNotice(message);
         return;

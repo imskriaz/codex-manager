@@ -120,6 +120,26 @@ describe("readDashboardRequestBody", () => {
 
     await expect(pending).rejects.toThrow("Request aborted");
   });
+
+  it("counts streamed UTF-8 bytes against the limit", async () => {
+    const request = createRequest();
+    const pending = readDashboardRequestBody(request, 5);
+
+    request.emit("data", "é");
+    request.emit("data", "😀");
+
+    await expect(pending).rejects.toThrow("Request body too large");
+  });
+
+  it("rejects when the request closes before its body ends", async () => {
+    const request = createRequest();
+    const pending = readDashboardRequestBody(request, 10);
+
+    request.emit("data", "partial");
+    request.emit("close");
+
+    await expect(pending).rejects.toThrow("Request closed before body completed");
+  });
 });
 
 describe("isWebDashboardPagePath", () => {

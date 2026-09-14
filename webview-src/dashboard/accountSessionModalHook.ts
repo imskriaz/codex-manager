@@ -107,6 +107,17 @@ export function useAccountSessionModal(params: {
     return sharedImport.applyActionResult(message);
   };
 
+  const applyOAuthAuthorized = (oauthSessionId: string): boolean => {
+    if (!oauth.applyAuthorized(oauthSessionId)) return false;
+    oauthPrepareAccountId.current = undefined;
+    setAddAccountModalOpen(false);
+    setReauthorizeEmail(undefined);
+    setConfirmCancelOauthOpen(false);
+    setAddAccountTab("oauth");
+    setImportRecoveryMode(false);
+    return true;
+  };
+
   const handleEscape = (completeOAuthPending: boolean): boolean => {
     if (!addAccountModalOpen) {
       return false;
@@ -140,6 +151,7 @@ export function useAccountSessionModal(params: {
     handleImportTextChange: sharedImport.handleImportTextChange,
     handleSubmitImport: () => sharedImport.handleSubmitImport(importRecoveryMode),
     applyActionResult,
+    applyOAuthAuthorized,
     handleEscape,
     closeAddAccountModal,
     closeConfirmCancelOauth: () => setConfirmCancelOauthOpen(false),

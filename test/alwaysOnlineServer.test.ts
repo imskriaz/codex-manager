@@ -1,8 +1,21 @@
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
-import { isAlwaysOnlineRelayHealthResponse } from "../src/services/alwaysOnlineServer";
+import {
+  createRelayAdminToken,
+  isAlwaysOnlineRelayHealthResponse,
+  isLegacyRelayAdminToken
+} from "../src/services/alwaysOnlineServer";
 
 describe("always-online WebSocket relay handoff", () => {
+  it("generates an unpredictable admin token without host details", () => {
+    const first = createRelayAdminToken();
+    const second = createRelayAdminToken();
+    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(second).not.toBe(first);
+    expect(isLegacyRelayAdminToken(first)).toBe(false);
+    expect(isLegacyRelayAdminToken("m9abcdef-1234567890-example-host")).toBe(true);
+  });
+
   it("does not mistake the password dashboard HTML for a healthy relay", () => {
     expect(isAlwaysOnlineRelayHealthResponse(200, "<!doctype html><title>Codex Manager</title>")).toBe(false);
     expect(
@@ -18,6 +31,15 @@ describe("always-online WebSocket relay handoff", () => {
     const relay = readFileSync("tools/always-online-server.js", "utf8");
 
     expect(service).toContain("await this.prepareRelay();");
+    expect(service.indexOf("previousConfig.adminToken, pidPath")).toBeLessThan(
+      service.indexOf("await fs.writeFile(configPath, JSON.stringify(config)")
+    );
+    const shutdownRequest = service.slice(
+      service.indexOf("function requestShutdown("),
+      service.indexOf("async function writeStartupLauncher(")
+    );
+    expect(shutdownRequest).toContain('request.on("timeout", () => {');
+    expect(shutdownRequest).toContain("request.destroy();");
     expect(service).toContain("this.spawnPreparedRelay(this.preparedRelay);");
     expect(service).not.toContain("void this.start().catch");
     expect(relay.indexOf("fs.writeFileSync(pidPath")).toBeLessThan(relay.indexOf("bind();"));

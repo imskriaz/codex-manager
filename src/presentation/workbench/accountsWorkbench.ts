@@ -64,7 +64,7 @@ export class AccountsWorkbench {
     await measureStep("disabledActiveAccountFence", async () => {
       await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
     });
-    await measureStep("encryptedSync.start", async () => {
+    const encryptedSyncStartup = measureStep("encryptedSync.start", async () => {
       // Settings Sync is an optional transport. A broken provider, stale
       // secret, or unavailable sync service must never prevent the local
       // account manager (and its schedulers) from starting.
@@ -78,9 +78,12 @@ export class AccountsWorkbench {
         );
       }
     });
-    await measureStep("alwaysOnlineServer.prepare", async () => {
+    const relayHandoff = measureStep("alwaysOnlineServer.prepare", async () => {
       await this.alwaysOnlineServer.prepareForVscodeSession();
     });
+    // Vault recovery and the previous relay's shutdown use independent state.
+    // Start both promptly, but finish the handoff before binding the dashboard.
+    await Promise.all([encryptedSyncStartup, relayHandoff]);
     await measureStep("webDashboard.start", async () => {
       try {
         await this.webDashboard.start();

@@ -64,6 +64,8 @@ import { resolveDashboardThemeFromMedia } from "./theme";
 import { createDashboardToastController, scheduleDashboardToastDismiss, type DashboardToast } from "./toast";
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
+import { onboardingFailureMessage } from "./onboardingFeedback";
+import { classifyCliSessionListResult } from "./cliSessionListResult";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type AccountFilter, type UiPreferences } from "./preferences";
 import type { CliSessionFeedback } from "./cliSessionsModal";
@@ -188,7 +190,7 @@ function App() {
   const [workspaceTerminals, setWorkspaceTerminals] = useState<DashboardWorkspaceTerminalInfo[]>([]);
   const [workspaceFiles, setWorkspaceFiles] = useState<DashboardWorkspaceFileEntry[]>([]);
   const [workspaceFilesByPath, setWorkspaceFilesByPath] = useState<Record<string, DashboardWorkspaceFile>>({});
-  const explicitCliRefreshRef = useRef(false);
+  const explicitCliRefreshRef = useRef<string>();
   const selectedCliSessionRef = useRef<DashboardCliSessionSummary>();
   useEffect(() => {
     selectedCliSessionRef.current = selectedCliSession;
@@ -270,11 +272,25 @@ function App() {
   );
   const lastTerminalNoticeAtRef = useRef<number>();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const handleActionTimeout = useCallback((action: DashboardActionName, requestId: string) => {
+    if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
+      explicitCliRefreshRef.current = undefined;
+      setCliSessionFeedback({ key: Date.now(), level: "warning", message: "Refreshing sessions did not finish in time. Try again." });
+    }
+    if (!onboardingOpen) return;
+    const isPendingStep = onboardingPendingRef.current.has(action);
+    const isImportStep = onboardingStep === "import" && onboardingBusy && action === "importCurrent";
+    if (!isPendingStep && !isImportStep) return;
+    onboardingPendingRef.current.delete(action);
+    setOnboardingBusy(false);
+    setOnboardingError(onboardingFailureMessage(action, "timed-out"));
+  }, [onboardingBusy, onboardingOpen, onboardingStep]);
   const { patchSettings, sendAction, sendSetting, isActionPending, hasGlobalPendingAction } = useDashboardActions(
     state,
     dispatch,
     showNotice,
-    selectedPeerId
+    selectedPeerId,
+    handleActionTimeout
   );
   const snapshot = state.snapshot;
   useEffect(() => {
@@ -315,11 +331,11 @@ function App() {
   const lastCliRealtimeRevisionRef = useRef(0);
   const lastCliMessageRequestRef = useRef<{ sessionId: string; at: number }>();
   const requestCliSessions = useCallback(
-    (force = false): void => {
+    (force = false): string | undefined => {
       const now = Date.now();
       if (!force && now - lastCliListRequestAtRef.current < 2_000) return;
       lastCliListRequestAtRef.current = now;
-      sendAction("listCodexCliSessions");
+      return sendAction("listCodexCliSessions");
     },
     [sendAction]
   );
@@ -339,11 +355,11 @@ function App() {
     [cliSessions, sendAction]
   );
   const requestWorkspaceEnvironment = useCallback(
-    (projectPath?: string): void => sendAction("getWorkspaceEnvironment", undefined, { projectPath }),
+    (projectPath?: string): void => { sendAction("getWorkspaceEnvironment", undefined, { projectPath }); },
     [sendAction]
   );
   const requestWorkspaceTerminals = useCallback(
-    (): void => sendAction("listWorkspaceTerminals", undefined, {}),
+    (): void => { sendAction("listWorkspaceTerminals", undefined, {}); },
     [sendAction]
   );
   const lastAutomaticWorkspaceLoadRef = useRef<string>();
@@ -371,7 +387,7 @@ function App() {
             }
             setOnboardingOpen(false);
           } else {
-            setOnboardingError(message.error ?? "Setup completion could not be saved. Try again.");
+            setOnboardingError(onboardingFailureMessage(onboardingAction, message.status, message.error));
           }
         }
         if (onboardingAction === "inspectCurrentAuth" && message.status === "completed") {
@@ -379,10 +395,10 @@ function App() {
           setCurrentAuthAlreadyAdded(message.payload?.currentAuthAlreadyAdded === true);
         }
         if (onboardingPendingRef.current.has(onboardingAction)) {
-          if (message.status === "failed") {
+          if (message.status !== "completed") {
             onboardingPendingRef.current.clear();
             setOnboardingBusy(false);
-            setOnboardingError(message.error ?? "Onboarding could not complete this step. Try again.");
+            setOnboardingError(onboardingFailureMessage(onboardingAction, message.status, message.error));
           } else if (message.status === "completed") {
             onboardingPendingRef.current.delete(onboardingAction);
             if (onboardingPendingRef.current.size === 0 && onboardingStep === "setup") {
@@ -396,9 +412,9 @@ function App() {
           if (message.status === "completed") {
             setOnboardingBusy(false);
             setOnboardingImportCompleted(true);
-          } else if (message.status === "failed") {
+          } else {
             setOnboardingBusy(false);
-            setOnboardingError(message.error ?? "The current account could not be imported.");
+            setOnboardingError(onboardingFailureMessage(onboardingAction, message.status, message.error));
           }
         }
       }
@@ -484,13 +500,18 @@ function App() {
       }
       if (message.type === "dashboard:action-result" && message.action === "listCodexCliSessions") {
         const realtimeRevision = message.payload?.realtimeRevision;
-        if (typeof realtimeRevision === "number") {
-          if (realtimeRevision <= lastCliRealtimeRevisionRef.current) return;
-          lastCliRealtimeRevisionRef.current = realtimeRevision;
-        }
-        const explicitRefresh = explicitCliRefreshRef.current;
-        explicitCliRefreshRef.current = false;
+        const result = classifyCliSessionListResult(
+          message.requestId,
+          realtimeRevision,
+          lastCliRealtimeRevisionRef.current,
+          explicitCliRefreshRef.current
+        );
+        if (!result.apply && !result.explicitRefresh) return;
+        lastCliRealtimeRevisionRef.current = result.nextRealtimeRevision;
+        const explicitRefresh = result.explicitRefresh;
+        if (explicitRefresh) explicitCliRefreshRef.current = undefined;
         if (message.status === "completed") {
+          if (result.apply) {
           const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessions);
           setCliSessions(sessions);
           // Realtime list pushes intentionally omit the heavier composer
@@ -499,8 +520,6 @@ function App() {
           setCliComposerConfig(message.payload?.cliComposerConfig ?? cliComposerConfig);
           void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig });
           setCliSessionsError(undefined);
-          if (explicitRefresh)
-            setCliSessionFeedback({ key: Date.now(), level: "info", message: "Sessions refreshed." });
           const routeId = getCliSessionIdFromPath(window.location.pathname);
           if (routeId) {
             const routeSession = sessions.find((session) => session.id === routeId);
@@ -538,6 +557,9 @@ function App() {
               requestCliSessionMessages(routeId);
             }
           }
+          }
+          if (explicitRefresh)
+            setCliSessionFeedback({ key: Date.now(), level: "info", message: "Sessions refreshed." });
         } else {
           setCliSessionsError(message.error ?? "Sessions could not be loaded.");
           if (explicitRefresh)
@@ -2336,8 +2358,7 @@ function App() {
               onPeerChange={setSelectedPeerId}
               onDashboard={() => navigateDashboardPath("/dash", setBrowserPath)}
               onRefresh={() => {
-                explicitCliRefreshRef.current = true;
-                requestCliSessions(true);
+                explicitCliRefreshRef.current = requestCliSessions(true);
               }}
               onSelect={selectCliSession}
               onBackToList={() => {

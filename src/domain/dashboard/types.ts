@@ -853,6 +853,11 @@ export type DashboardHostMessage =
       payload?: DashboardActionResultPayload;
       error?: string;
     }
+  | {
+      type: "dashboard:oauth-authorized";
+      oauthSessionId: string;
+      email: string;
+    }
   | ({ type: "dashboard:notice" } & DashboardNotice)
   | { type: "dashboard:notification-dismissed"; notificationId: string };
 

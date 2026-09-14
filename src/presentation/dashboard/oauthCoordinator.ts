@@ -26,7 +26,8 @@ export class DashboardOAuthCoordinator {
   constructor(
     private readonly repo: AccountsRepository,
     private readonly schedulePublishState: () => void,
-    private readonly syncAccountChange?: () => Promise<boolean | undefined>
+    private readonly syncAccountChange?: () => Promise<boolean | undefined>,
+    private readonly notifyAuthorized?: (sessionId: string, email: string) => void
   ) {}
 
   dispose(): void {
@@ -109,19 +110,11 @@ export class DashboardOAuthCoordinator {
       this.oauthCancellationSources.set(oauthSessionId, source);
       const tokens = await listenForPreparedOAuthLoginSession(session, source.token);
       const created = await this.upsertAuthorizedAccount(oauthSessionId, tokens);
-      await refreshImportedAccountQuota(this.repo, created.id);
-      let synced: boolean | undefined;
-      if (this.syncAccountChange) {
-        synced = await this.syncAccountChange();
-      }
-      const queuedActivation = await activateQueuedAccountIfCurrentMissing(this.repo);
+      this.schedulePublishState();
+      this.reportAuthorized(oauthSessionId, created.email);
+      const completion = await this.finishAuthorizedAccount(created.id, created.email, translate);
       this.cancelSession(oauthSessionId);
       this.schedulePublishState();
-      const completion = resolveOAuthCompletion(
-        translate("message.oauthCompleted", { email: created.email }),
-        queuedActivation,
-        synced
-      );
       showOAuthCompletion(completion);
       return {
         email: created.email,
@@ -170,26 +163,15 @@ export class DashboardOAuthCoordinator {
     try {
       const tokens = await completeOAuthLoginSession(session, callbackUrl.trim());
       const created = await this.upsertAuthorizedAccount(oauthSessionId, tokens);
-      // Reauthorization must validate the new credentials and clear any stale
-      // auth error before publishing the dashboard state. Keep the account
-      // visible even when quota is temporarily unavailable.
-      await refreshImportedAccountQuota(this.repo, created.id);
-      let synced: boolean | undefined;
-      if (this.syncAccountChange) {
-        synced = await this.syncAccountChange();
-      }
-      const queuedActivation = await activateQueuedAccountIfCurrentMissing(this.repo);
+      this.schedulePublishState();
+      this.reportAuthorized(oauthSessionId, created.email);
+      const completion = await this.finishAuthorizedAccount(created.id, created.email, translate);
       this.oauthCancellationSources.get(oauthSessionId)?.dispose();
       this.oauthCancellationSources.delete(oauthSessionId);
       this.oauthSessions.delete(oauthSessionId);
       this.oauthSessionCreatedAt.delete(oauthSessionId);
       this.oauthSessionAccountIds.delete(oauthSessionId);
       this.schedulePublishState();
-      const completion = resolveOAuthCompletion(
-        translate("message.oauthCompleted", { email: created.email }),
-        queuedActivation,
-        synced
-      );
       showOAuthCompletion(completion);
       return {
         email: created.email,
@@ -201,6 +183,38 @@ export class DashboardOAuthCoordinator {
       });
       void vscode.window.showErrorMessage(message);
       throw new Error(message);
+    }
+  }
+
+  private reportAuthorized(sessionId: string, email: string): void {
+    try {
+      this.notifyAuthorized?.(sessionId, email);
+    } catch (error) {
+      // A disconnected dashboard must not turn a saved account into an auth failure.
+      console.warn("[codexManager] OAuth success notification failed", error);
+    }
+  }
+
+  private async finishAuthorizedAccount(
+    accountId: string,
+    email: string,
+    translate: (key: TranslationKey, values?: TranslationParams) => string
+  ): Promise<DashboardNotice> {
+    const baseMessage = translate("message.oauthCompleted", { email });
+    try {
+      // Reauthorization clears stale auth errors during upsert. Quota, sync,
+      // and queued activation are follow-up work; a failure here must not
+      // report the already-saved authorization as failed.
+      await refreshImportedAccountQuota(this.repo, accountId);
+      const synced = await this.syncAccountChange?.();
+      const queuedActivation = await activateQueuedAccountIfCurrentMissing(this.repo);
+      return resolveOAuthCompletion(baseMessage, queuedActivation, synced);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return {
+        level: "warning",
+        message: `${baseMessage}. Follow-up account setup could not be completed: ${detail}. Refresh the account or retry sync.`
+      };
     }
   }
 

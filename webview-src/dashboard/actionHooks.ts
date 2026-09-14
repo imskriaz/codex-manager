@@ -9,9 +9,12 @@ export function useDashboardActions(
   state: AppState,
   dispatch: AppDispatch,
   onNotice: (notice: DashboardNotice) => void,
-  targetDeviceId?: string
+  targetDeviceId?: string,
+  onActionTimeout?: (action: DashboardActionName, requestId: string) => void
 ) {
   const actionTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const onActionTimeoutRef = useRef(onActionTimeout);
+  onActionTimeoutRef.current = onActionTimeout;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -34,6 +37,7 @@ export function useDashboardActions(
       const timeoutId = window.setTimeout(() => {
         dispatch({ type: "resolve-action", requestId: request.requestId });
         onNotice(noticeFromActionTimeout(request.action));
+        onActionTimeoutRef.current?.(request.action, request.requestId);
       }, getActionTimeoutMs(request.action));
 
       actionTimeoutsRef.current.set(request.requestId, timeoutId);
@@ -86,6 +90,7 @@ export function useDashboardActions(
           ? { ...(payload ?? {}), targetDeviceId }
           : payload
     });
+    return requestId;
   }, [dispatch, targetDeviceId]);
 
   const sendSetting = useCallback((key: DashboardSettingKey, value: string | number | boolean): void => {

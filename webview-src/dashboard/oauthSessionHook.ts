@@ -1,7 +1,7 @@
 import { useRef, useState } from "preact/hooks";
 import type { DashboardHostMessage } from "../../src/domain/dashboard/types";
 import type { SendAction } from "./hookTypes";
-import { reduceOAuthActionResult, type OAuthModalState } from "./sessionModalState";
+import { isCurrentOAuthActionResult, reduceOAuthActionResult, reduceOAuthAuthorized, type OAuthModalState } from "./sessionModalState";
 
 export function useOAuthSessionModal(params: {
   sendAction: SendAction;
@@ -14,6 +14,7 @@ export function useOAuthSessionModal(params: {
     oauthCallbackUrl: ""
   });
   const actionInFlight = useRef<"prepare" | "start" | "complete" | undefined>(undefined);
+  const actionRequestIds = useRef<{ prepare?: string; start?: string; complete?: string }>({});
   const oauthCopyPending = useRef(false);
 
   const reset = (): void => {
@@ -24,6 +25,7 @@ export function useOAuthSessionModal(params: {
       oauthError: undefined
     });
     actionInFlight.current = undefined;
+    actionRequestIds.current = {};
     oauthCopyPending.current = false;
   };
 
@@ -41,7 +43,7 @@ export function useOAuthSessionModal(params: {
       return;
     }
     actionInFlight.current = "prepare";
-    params.sendAction("prepareOAuthSession", params.getPrepareAccountId?.());
+    actionRequestIds.current.prepare = params.sendAction("prepareOAuthSession", params.getPrepareAccountId?.());
   };
 
   const handleCopyOauthLink = (): void => {
@@ -97,7 +99,7 @@ export function useOAuthSessionModal(params: {
       oauthFlowStarted: true,
       oauthError: undefined
     }));
-    params.sendAction("completeOAuthSession", undefined, {
+    actionRequestIds.current.complete = params.sendAction("completeOAuthSession", undefined, {
       oauthSessionId: oauthState.oauthSession.sessionId,
       callbackUrl: oauthState.oauthCallbackUrl
     });
@@ -106,6 +108,9 @@ export function useOAuthSessionModal(params: {
   const applyActionResult = (
     message: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>
   ): { handled: boolean; shouldCloseModal?: boolean } => {
+    if (!isCurrentOAuthActionResult(message, actionRequestIds.current)) {
+      return { handled: false };
+    }
     const copyOutcome = resolveOAuthCopyActionOutcome(message, oauthCopyPending.current);
     if (copyOutcome) {
       oauthCopyPending.current = false;
@@ -125,14 +130,16 @@ export function useOAuthSessionModal(params: {
     }
     if (message.action === "startOAuthAutoFlow" || message.action === "completeOAuthSession") {
       actionInFlight.current = undefined;
+      actionRequestIds.current[message.action === "startOAuthAutoFlow" ? "start" : "complete"] = undefined;
     }
     if (message.action === "prepareOAuthSession") {
       actionInFlight.current = undefined;
+      actionRequestIds.current.prepare = undefined;
       const session = message.status === "completed" ? message.payload?.oauthSession : undefined;
       if (session) {
         copyOauthLink(session.authUrl);
         actionInFlight.current = "start";
-        params.sendAction("startOAuthAutoFlow", undefined, { oauthSessionId: session.sessionId });
+        actionRequestIds.current.start = params.sendAction("startOAuthAutoFlow", undefined, { oauthSessionId: session.sessionId });
       }
     }
     setOauthState(reduced.next);
@@ -140,6 +147,16 @@ export function useOAuthSessionModal(params: {
       handled: true,
       shouldCloseModal: reduced.shouldCloseModal
     };
+  };
+
+  const applyAuthorized = (oauthSessionId: string): boolean => {
+    const reduced = reduceOAuthAuthorized(oauthState, oauthSessionId);
+    if (!reduced.matched) return false;
+    actionInFlight.current = undefined;
+    actionRequestIds.current = {};
+    oauthCopyPending.current = false;
+    setOauthState(reduced.next);
+    return true;
   };
 
   return {
@@ -154,6 +171,7 @@ export function useOAuthSessionModal(params: {
     handleStartOAuthAutoFlow,
     handleCompleteOAuth,
     applyActionResult,
+    applyAuthorized,
     setOauthCallbackUrl: (value: string) => {
       setOauthState((current) => ({ ...current, oauthCallbackUrl: value }));
     }

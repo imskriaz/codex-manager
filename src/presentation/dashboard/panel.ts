@@ -119,6 +119,13 @@ class DashboardPanelController {
           return undefined;
         }
         return vscode.commands.executeCommand<boolean>("codexManager.syncNow", { announceSuccess: false });
+      },
+      (oauthSessionId, email) => {
+        void this.panel?.webview.postMessage({
+          type: "dashboard:oauth-authorized",
+          oauthSessionId,
+          email
+        } satisfies DashboardHostMessage);
       }
     );
   }
