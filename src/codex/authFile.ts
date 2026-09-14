@@ -16,6 +16,12 @@ import { CodexAuthFile, CodexTokens } from "../core/types";
 
 /** macOS 下 Codex 读取凭证的 Keychain service */
 const CODEX_KEYCHAIN_SERVICE = "Codex Auth";
+const AUTH_READ_RETRY_DELAYS_MS = [20, 50, 100];
+
+// Serialize all auth.json mutations. Account switching and background token
+// refresh can complete at the same time; without a queue the slower write can
+// replace a newer account's credentials.
+let authFileOperationChain: Promise<void> = Promise.resolve();
 
 /**
  * 获取 Codex 主目录
@@ -43,22 +49,173 @@ export function getAuthJsonPath(): string {
  * @returns 认证文件内容，如果不存在则返回 undefined
  */
 export async function readAuthFile(): Promise<CodexAuthFile | undefined> {
-  try {
-    const raw = await fs.readFile(getAuthJsonPath(), "utf8");
-    return JSON.parse(raw) as CodexAuthFile;
-  } catch (error) {
-    // 文件不存在是正常情况（首次启动或未登录）
-    if (isFileNotFound(error)) {
+  return enqueueAuthFileOperation(async () => {
+    const filePath = getAuthJsonPath();
+    let primaryMissing = false;
+    try {
+      const parsed = await readAuthCandidate(filePath);
+      if (parsed) return parsed;
+    } catch (error) {
+      primaryMissing = isFileNotFound(error);
+      if (!primaryMissing) {
+        console.warn("[codexManager] unable to read auth.json:", getErrorMessage(error));
+      }
+    }
+
+    // A process crash can leave a fully fsynced staging file behind while the
+    // final rename never happened. Recover only when auth.json is absent; a
+    // malformed existing file is left untouched for safe manual inspection.
+    if (!primaryMissing) {
       return undefined;
     }
-    // 文件损坏 / 权限错误 / JSON 解析错误 → 打日志方便排查
-    console.warn("[codexManager] unable to read auth.json:", error instanceof Error ? error.message : String(error));
+    const recovered = await readLatestValidAuthTemp(filePath);
+    if (recovered) {
+      try {
+        await replaceAuthFileWithRetry(recovered.filePath, filePath);
+        return recovered.auth;
+      } catch (error) {
+        console.warn("[codexManager] unable to promote recovered auth.json:", getErrorMessage(error));
+      }
+    }
     return undefined;
-  }
+  });
 }
 
 function isFileNotFound(error: unknown): boolean {
   return error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function enqueueAuthFileOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = authFileOperationChain.catch(() => undefined).then(operation);
+  authFileOperationChain = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+async function readAuthCandidate(filePath: string): Promise<CodexAuthFile> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= AUTH_READ_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const raw = await fs.readFile(filePath, "utf8");
+      return parseAuthFile(raw);
+    } catch (error) {
+      lastError = error;
+      const retryable = isTransientFileError(error) || error instanceof SyntaxError;
+      if (!retryable || attempt === AUTH_READ_RETRY_DELAYS_MS.length) break;
+      await delay(AUTH_READ_RETRY_DELAYS_MS[attempt]!);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Unable to read Codex auth.json.");
+}
+
+function parseAuthFile(raw: string): CodexAuthFile {
+  const value: unknown = JSON.parse(raw);
+  if (!isRecord(value)) throw new Error("Codex auth.json must contain a JSON object.");
+
+  const apiKey = value["OPENAI_API_KEY"];
+  if (apiKey !== undefined && apiKey !== null && typeof apiKey !== "string") {
+    throw new Error("Codex auth.json contains an invalid OPENAI_API_KEY.");
+  }
+  if (value["auth_mode"] !== undefined && typeof value["auth_mode"] !== "string") {
+    throw new Error("Codex auth.json contains an invalid auth_mode.");
+  }
+  const tokens = value["tokens"];
+  if (tokens !== undefined) {
+    if (!isRecord(tokens)) throw new Error("Codex auth.json contains invalid tokens.");
+    if (typeof tokens["id_token"] !== "string" || !tokens["id_token"].trim()) {
+      throw new Error("Codex auth.json is missing tokens.id_token.");
+    }
+    if (typeof tokens["access_token"] !== "string" || !tokens["access_token"].trim()) {
+      throw new Error("Codex auth.json is missing tokens.access_token.");
+    }
+    for (const key of ["refresh_token", "account_id"] as const) {
+      if (tokens[key] !== undefined && typeof tokens[key] !== "string") {
+        throw new Error(`Codex auth.json contains an invalid tokens.${key}.`);
+      }
+    }
+  }
+  const hasTokenCredentials =
+    isRecord(tokens) &&
+    typeof tokens["id_token"] === "string" &&
+    Boolean(tokens["id_token"].trim()) &&
+    typeof tokens["access_token"] === "string" &&
+    Boolean(tokens["access_token"].trim());
+  const hasApiKeyCredentials = typeof apiKey === "string" && Boolean(apiKey.trim());
+  if (!hasTokenCredentials && !hasApiKeyCredentials) {
+    throw new Error("Codex auth.json does not contain usable credentials.");
+  }
+  if (value["last_refresh"] !== undefined && typeof value["last_refresh"] !== "string") {
+    throw new Error("Codex auth.json contains an invalid last_refresh.");
+  }
+
+  return value as unknown as CodexAuthFile;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isTransientFileError(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("code" in error)) return false;
+  return ["EACCES", "EBUSY", "EPERM", "EAGAIN"].includes(String((error as { code?: unknown }).code));
+}
+
+async function readLatestValidAuthTemp(
+  filePath: string
+): Promise<{ filePath: string; auth: CodexAuthFile } | undefined> {
+  const directory = path.dirname(filePath);
+  const prefix = `.${path.basename(filePath)}.tmp.`;
+  let entries: string[];
+  try {
+    entries = await fs.readdir(directory);
+  } catch (error) {
+    if (isFileNotFound(error)) return undefined;
+    throw error;
+  }
+  const candidates = await Promise.all(
+    entries
+      .filter((name) => name.startsWith(prefix))
+      .map(async (name) => {
+        const candidatePath = path.join(directory, name);
+        const stat = await fs.stat(candidatePath).catch(() => undefined);
+        return stat?.isFile() ? { filePath: candidatePath, modifiedAt: stat.mtimeMs } : undefined;
+      })
+  );
+  for (const candidate of candidates
+    .filter((value): value is { filePath: string; modifiedAt: number } => Boolean(value))
+    .sort((left, right) => right.modifiedAt - left.modifiedAt)) {
+    try {
+      return { filePath: candidate.filePath, auth: await readAuthCandidate(candidate.filePath) };
+    } catch {
+      // Ignore incomplete or stale staging files and continue with older ones.
+    }
+  }
+  return undefined;
+}
+
+function assertWritableTokens(tokens: CodexTokens): void {
+  if (!tokens || typeof tokens.idToken !== "string" || !tokens.idToken.trim()) {
+    throw new Error("Cannot write auth.json without a valid id token.");
+  }
+  if (typeof tokens.accessToken !== "string" || !tokens.accessToken.trim()) {
+    throw new Error("Cannot write auth.json without a valid access token.");
+  }
+  if (tokens.refreshToken !== undefined && typeof tokens.refreshToken !== "string") {
+    throw new Error("Cannot write auth.json with an invalid refresh token.");
+  }
+  if (tokens.accountId !== undefined && typeof tokens.accountId !== "string") {
+    throw new Error("Cannot write auth.json with an invalid account id.");
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -71,11 +228,14 @@ function isFileNotFound(error: unknown): boolean {
  * @param tokens - 认证令牌
  */
 export async function writeAuthFile(tokens: CodexTokens): Promise<void> {
-  const authFile = buildCodexAuthFile(tokens);
-  const content = JSON.stringify(authFile, null, 2);
+  return enqueueAuthFileOperation(async () => {
+    assertWritableTokens(tokens);
+    const authFile = buildCodexAuthFile(tokens);
+    const content = JSON.stringify(authFile, null, 2);
 
-  await writeAuthJsonAtomic(getAuthJsonPath(), content);
-  await syncCodexKeychain(content);
+    await writeAuthJsonAtomic(getAuthJsonPath(), content);
+    await syncCodexKeychain(content);
+  });
 }
 
 /**
@@ -84,8 +244,10 @@ export async function writeAuthFile(tokens: CodexTokens): Promise<void> {
  * to one later.
  */
 export async function unloadAuthFile(): Promise<void> {
-  await deleteCodexKeychainCredential();
-  await fs.rm(getAuthJsonPath(), { force: true });
+  return enqueueAuthFileOperation(async () => {
+    await deleteCodexKeychainCredential();
+    await fs.rm(getAuthJsonPath(), { force: true });
+  });
 }
 
 /**
@@ -93,46 +255,46 @@ export async function unloadAuthFile(): Promise<void> {
  * credentials and last_refresh are preserved byte-for-value in the new JSON.
  */
 export async function ensureCodexAuthFileFormat(): Promise<boolean> {
-  const filePath = getAuthJsonPath();
-  let parsed: CodexAuthFile;
-  try {
-    parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as CodexAuthFile;
-  } catch (error) {
-    if (isFileNotFound(error)) {
+  return enqueueAuthFileOperation(async () => {
+    const filePath = getAuthJsonPath();
+    let parsed: CodexAuthFile;
+    try {
+      parsed = await readAuthCandidate(filePath);
+    } catch (error) {
+      if (isFileNotFound(error)) return false;
+      throw error;
+    }
+
+    if (parsed.auth_mode === "chatgpt") {
       return false;
     }
-    throw error;
-  }
+    if (
+      parsed.OPENAI_API_KEY != null ||
+      typeof parsed.tokens?.id_token !== "string" ||
+      !parsed.tokens.id_token ||
+      typeof parsed.tokens.access_token !== "string" ||
+      !parsed.tokens.access_token
+    ) {
+      // Never relabel API-key or unrecognized credential formats.
+      return false;
+    }
 
-  if (parsed.auth_mode === "chatgpt") {
-    return false;
-  }
-  if (
-    parsed.OPENAI_API_KEY !== null ||
-    typeof parsed.tokens?.id_token !== "string" ||
-    !parsed.tokens.id_token ||
-    typeof parsed.tokens.access_token !== "string" ||
-    !parsed.tokens.access_token
-  ) {
-    // Never relabel API-key or unrecognized credential formats.
-    return false;
-  }
-
-  const normalized: CodexAuthFile = {
-    auth_mode: "chatgpt",
-    OPENAI_API_KEY: null,
-    tokens: {
-      id_token: parsed.tokens.id_token,
-      access_token: parsed.tokens.access_token,
-      refresh_token: parsed.tokens.refresh_token ?? "",
-      account_id: parsed.tokens.account_id ?? ""
-    },
-    last_refresh: parsed.last_refresh ?? ""
-  };
-  const content = JSON.stringify(normalized, null, 2);
-  await writeAuthJsonAtomic(filePath, content);
-  await syncCodexKeychain(content);
-  return true;
+    const normalized: CodexAuthFile = {
+      auth_mode: "chatgpt",
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: parsed.tokens.id_token,
+        access_token: parsed.tokens.access_token,
+        refresh_token: parsed.tokens.refresh_token ?? "",
+        account_id: parsed.tokens.account_id ?? ""
+      },
+      last_refresh: parsed.last_refresh ?? ""
+    };
+    const content = JSON.stringify(normalized, null, 2);
+    await writeAuthJsonAtomic(filePath, content);
+    await syncCodexKeychain(content);
+    return true;
+  });
 }
 
 /**

@@ -23,6 +23,7 @@ import {
 import { ActionButton } from "./primitives";
 import { MetricRow, renderHealthPill } from "./accountMetricPrimitives";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
+import { isDashboardAccountOutOfQuota } from "./accountSorting";
 
 export function resolvePrimaryAccountControl(
   account: Pick<DashboardAccountViewModel, "healthKind" | "dismissedHealth">
@@ -325,6 +326,7 @@ export function SavedAccountCard(props: {
       ? copy.resyncProfileBtn
       : copy.syncProfileBtn;
   const hasErrorHealth = isAccountAttention(account);
+  const outOfQuota = isDashboardAccountOutOfQuota(account);
   const healthReason = resolveCardHealthReason(account);
   const accessAction = resolveAccountAccessAction(account);
   const accessActionLabel =
@@ -347,6 +349,7 @@ export function SavedAccountCard(props: {
     props.busy ? "is-busy" : "",
     props.selected ? "selected" : "",
     hasErrorHealth ? "health-error" : "",
+    outOfQuota ? "out-of-quota" : "",
     runningOnOtherDevice ? "remote-device" : ""
   ]
     .filter(Boolean)

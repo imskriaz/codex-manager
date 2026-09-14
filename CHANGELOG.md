@@ -2,6 +2,12 @@
 
 ## 1.1.9
 
+- Revalidate the selected account's quota thresholds immediately before automatic switching so a concurrent quota update cannot switch into an exhausted account.
+- Keep accounts with available quota ahead of exhausted accounts while preserving the selected sorting order inside each group.
+- Highlight accounts with an exhausted quota window using a light red background in card and table views.
+- Serialize local `auth.json` reads, writes, migrations, and unloads so account switches and background token updates cannot interleave within an extension host.
+- Validate auth-file structure and outgoing credentials, retry transient read failures, and recover a fully written private staging file when the canonical file is missing after an interrupted atomic replacement.
+- Preserve an existing malformed `auth.json` for diagnosis instead of silently replacing or using it as another account.
 - Start encrypted sync restoration and relay handoff concurrently so the dashboard waits only for the slower independent startup step.
 - Bound provider request timeouts across queue and rate-limit waits, honor caller cancellation, and stop oversized or incomplete dashboard requests promptly.
 - Generate cryptographically random relay admin tokens and rotate older tokens while preserving a safe shutdown path for an existing relay.

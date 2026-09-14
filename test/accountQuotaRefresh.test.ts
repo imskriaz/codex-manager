@@ -1475,6 +1475,31 @@ describe("quota warning window validation", () => {
     expect(repo.switchAccount).not.toHaveBeenCalled();
   });
 
+  it("cancels auto-switch when the selected account loses quota during evaluation", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: vi.fn((key: string, defaultValue?: unknown) => {
+        const values: Record<string, unknown> = {
+          autoSwitchEnabled: true,
+          hourlyQuotaControlEnabled: false,
+          autoSwitchWeeklyThreshold: 10
+        };
+        return values[key] ?? defaultValue;
+      })
+    } as never);
+    const active = createAccount("quota-race-active", true, 80, 5);
+    const target = createAccount("quota-race-target", false, 90, 90);
+    const exhaustedTarget = { ...target, quotaSummary: createQuotaSummary({ hourly: 90, weekly: 0 }) };
+    const repo = {
+      listAccounts: vi.fn().mockResolvedValueOnce([active, target]).mockResolvedValueOnce([active, exhaustedTarget]),
+      switchAccount: vi.fn()
+    };
+
+    const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
+
+    expect(switched).toBe(false);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
   it("cancels a warning when the account becomes inactive before notification display", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {

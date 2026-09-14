@@ -100,6 +100,15 @@ describe("saved account card presentation", () => {
     expect(styles).toMatch(/\.saved-reset-badge\s*{[^}]*font-weight:\s*400/s);
   });
 
+  it("gives exhausted accounts a light red background in card and table layouts", () => {
+    const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
+
+    expect(source).toContain('outOfQuota ? "out-of-quota" : ""');
+    expect(styles).toMatch(/\.saved-card\.out-of-quota,[\s\S]*\.saved-table-row\.out-of-quota\s*{[^}]*background:/);
+    expect(styles).toMatch(/background:\s*color-mix\(in srgb, var\(--danger\) 9%, var\(--bg-surface\)\)/);
+  });
+
   it("keeps raw provider errors out of the card health reason", () => {
     expect(
       resolveCardHealthReason({

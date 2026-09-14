@@ -11,6 +11,17 @@ export type DashboardAutoQueueCapabilityThresholds = {
   weeklyThreshold: number;
 };
 
+export function isDashboardAccountOutOfQuota(account: DashboardAccountViewModel): boolean {
+  if (account.healthKind === "quota") return true;
+  return (account.metrics ?? []).some(
+    (metric) =>
+      metric.visible &&
+      typeof metric.percentage === "number" &&
+      Number.isFinite(metric.percentage) &&
+      metric.percentage <= 0
+  );
+}
+
 export function compareDashboardAutoQueueAccounts(
   left: DashboardAccountViewModel,
   right: DashboardAccountViewModel,
@@ -122,6 +133,9 @@ export function sortWithQueuedAccount(
   compare: (left: DashboardAccountViewModel, right: DashboardAccountViewModel) => number
 ): DashboardAccountViewModel[] {
   return [...accounts].sort((left, right) => {
+    const quotaGroupDifference = Number(isDashboardAccountOutOfQuota(left)) - Number(isDashboardAccountOutOfQuota(right));
+    if (quotaGroupDifference !== 0) return quotaGroupDifference;
+
     const rank = (account: DashboardAccountViewModel): number => (account.isActive ? 0 : account.switchQueued ? 1 : 2);
     return rank(left) - rank(right) || compare(left, right);
   });

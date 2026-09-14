@@ -13996,3 +13996,18 @@ body.is-dashboard-workspace-route #dashboard-main {
 .cli-workspace .cli-session-row:not(.is-archived):focus-within .cli-session-row-main {
   grid-template-columns: minmax(0, 1fr);
 }
+
+/* Exhausted accounts remain visibly distinct in both layouts and themes. */
+.saved-card.out-of-quota,
+.saved-table-row.out-of-quota {
+  border-color: color-mix(in srgb, var(--danger) 48%, var(--border-default));
+  background: color-mix(in srgb, var(--danger) 9%, var(--bg-surface));
+}
+.saved-card-container:hover .saved-card.out-of-quota,
+.saved-card.out-of-quota:hover,
+.saved-card.out-of-quota:focus-within,
+.saved-table-row.out-of-quota:hover,
+.saved-table-row.out-of-quota:focus-within {
+  border-color: color-mix(in srgb, var(--danger) 62%, var(--border-default));
+  background: color-mix(in srgb, var(--danger) 11%, var(--bg-surface));
+}

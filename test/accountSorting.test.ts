@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareDashboardAutoQueueAccounts,
   hasDashboardAutoQueueCapability,
+  isDashboardAccountOutOfQuota,
   sortWithQueuedAccount
 } from "../webview-src/dashboard/accountSorting";
 
@@ -16,6 +17,46 @@ describe("sortWithQueuedAccount", () => {
     const sorted = sortWithQueuedAccount(accounts, (left, right) => left.id.localeCompare(right.id));
 
     expect(sorted.map((account) => account.id)).toEqual(["active", "queued", "healthy"]);
+  });
+
+  it("keeps exhausted accounts in a trailing group while preserving each group's sort order", () => {
+    const account = (id: string, percentage: number, overrides: Record<string, unknown> = {}) =>
+      ({
+        id,
+        email: `${id}@example.com`,
+        healthKind: "healthy",
+        isActive: false,
+        switchQueued: false,
+        metrics: [{ key: "weekly", visible: true, percentage }],
+        ...overrides
+      }) as any;
+    const accounts = [
+      account("out-z", 0),
+      account("in-z", 20),
+      account("out-a", 0, { isActive: true }),
+      account("in-a", 80)
+    ];
+
+    const sorted = sortWithQueuedAccount(accounts, (left, right) => left.id.localeCompare(right.id));
+    const descending = sortWithQueuedAccount(accounts, (left, right) => right.id.localeCompare(left.id));
+
+    expect(sorted.map((item) => item.id)).toEqual(["in-a", "in-z", "out-a", "out-z"]);
+    expect(descending.map((item) => item.id)).toEqual(["in-z", "in-a", "out-a", "out-z"]);
+    expect(accounts.map((item) => item.id)).toEqual(["out-z", "in-z", "out-a", "in-a"]);
+  });
+});
+
+describe("isDashboardAccountOutOfQuota", () => {
+  it("recognizes an exhausted visible metric or explicit quota health state", () => {
+    const withPercentage = (percentage: number) =>
+      ({ healthKind: "healthy", metrics: [{ key: "weekly", visible: true, percentage }] }) as any;
+
+    expect(isDashboardAccountOutOfQuota(withPercentage(1))).toBe(false);
+    expect(isDashboardAccountOutOfQuota(withPercentage(0))).toBe(true);
+    expect(isDashboardAccountOutOfQuota({ healthKind: "quota", metrics: [] } as any)).toBe(true);
+    expect(
+      isDashboardAccountOutOfQuota({ healthKind: "healthy", metrics: [{ visible: false, percentage: 0 }] } as any)
+    ).toBe(false);
   });
 });
 

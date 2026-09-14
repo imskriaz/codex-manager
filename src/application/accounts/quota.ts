@@ -647,14 +647,23 @@ async function evaluateAutoSwitchForActiveQuota(
     (!options.ignoreEnabled && latestNext.enabled === false) ||
     latestNext.quotaError ||
     !latestNext.quotaSummary ||
-    !hasFreshQuotaSnapshot(latestNext)
+    !hasFreshQuotaSnapshot(latestNext) ||
+    !hasCodexManagerAccountAutoQueueCapability(latestNext, {
+      hourlyEnabled: hourlyQuotaControlEnabled,
+      hourlyThreshold,
+      weeklyThreshold
+    }) ||
+    (activeHourlyTriggered &&
+      (!hasComparableHourlyWindow(latestNext) || latestNext.quotaSummary.hourlyPercentage <= hourlyThreshold)) ||
+    (activeWeeklyTriggered &&
+      (!hasComparableWeeklyWindow(latestNext) || latestNext.quotaSummary.weeklyPercentage <= weeklyThreshold))
   ) {
     if (options.userInitiated) {
       void vscode.window.showWarningMessage("Auto Select cancelled — account state changed. Refresh and try again.");
     }
     return false;
   }
-  await repo.switchAccount(next.id);
+  await repo.switchAccount(latestNext.id);
   console.info("[codexManager] auto switch completed", {
     trigger:
       activeHourlyTriggered && activeWeeklyTriggered
@@ -668,8 +677,8 @@ async function evaluateAutoSwitchForActiveQuota(
   recordAutoSwitchReason({
     fromAccountId: active.id,
     fromEmail: active.email,
-    toAccountId: next.id,
-    toEmail: next.email,
+    toAccountId: latestNext.id,
+    toEmail: latestNext.email,
     trigger:
       activeHourlyTriggered && activeWeeklyTriggered
         ? "hourly_and_weekly"
@@ -681,15 +690,15 @@ async function evaluateAutoSwitchForActiveQuota(
     weeklyThreshold,
     createdAt: Date.now()
   });
-  view.markObservedAuthIdentity?.(next.id);
+  view.markObservedAuthIdentity?.(latestNext.id);
   view.refresh();
 
-  const decisionReason = getCodexManagerAccountAutoQueueEfficiency(next, autoQueueScoringOptions()).reason;
-  const switchMessage = buildAutoSwitchSuccessMessage(next, false, decisionReason);
+  const decisionReason = getCodexManagerAccountAutoQueueEfficiency(latestNext, autoQueueScoringOptions()).reason;
+  const switchMessage = buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
 
-  if (!needsWindowReloadForAccount(next.id)) {
+  if (!needsWindowReloadForAccount(latestNext.id)) {
     recordAutoSwitchDashboardNotice(switchMessage, "info", {
-      accountId: next.id,
+      accountId: latestNext.id,
       switchResult: "switched"
     });
     void vscode.window.showInformationMessage(switchMessage);
@@ -698,13 +707,13 @@ async function evaluateAutoSwitchForActiveQuota(
 
   if (config.get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
     await handleCodexAppRestartPreference({ allowManualPrompt: false });
-    queueAutoSwitchNotice(buildAutoSwitchSuccessMessage(next, true), next.id);
+    queueAutoSwitchNotice(buildAutoSwitchSuccessMessage(latestNext, true), latestNext.id);
     try {
-      const reloaded = await autoReloadWindowForAccount(next.id);
+      const reloaded = await autoReloadWindowForAccount(latestNext.id);
       if (!reloaded) {
         consumeAutoSwitchNotice();
-        const skippedMessage = `Switched to ${next.email}; reload not needed.`;
-        recordAutoSwitchDashboardNotice(skippedMessage, "warning", { accountId: next.id });
+        const skippedMessage = `Switched to ${latestNext.email}; reload not needed.`;
+        recordAutoSwitchDashboardNotice(skippedMessage, "warning", { accountId: latestNext.id });
         void vscode.window.showWarningMessage(skippedMessage);
       }
     } catch (error) {
@@ -714,7 +723,7 @@ async function evaluateAutoSwitchForActiveQuota(
     return true;
   }
 
-  await promptWindowReloadForAccount(next, {
+  await promptWindowReloadForAccount(latestNext, {
     message: `${switchMessage} Reload VS Code?`
   });
   return true;
