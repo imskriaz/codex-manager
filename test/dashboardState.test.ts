@@ -1,5 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const { needsTokenRefreshMock, refreshTokensMock } = vi.hoisted(() => ({
+  needsTokenRefreshMock: vi.fn(),
+  refreshTokensMock: vi.fn()
+}));
+
+vi.mock("../src/auth/oauth", () => ({
+  needsTokenRefresh: needsTokenRefreshMock,
+  refreshTokens: refreshTokensMock
+}));
+
 import {
+  buildDashboardState,
   buildMetrics,
   resolveTerminalNotice,
   resolveDashboardQueuedSwitch,
@@ -18,6 +30,58 @@ describe("sortDashboardAccounts", () => {
     const sorted = sortDashboardAccounts(accounts, "current");
 
     expect(sorted.map((account) => account.id)).toEqual(["current", "active", "other"]);
+  });
+});
+
+describe("buildDashboardState token recovery", () => {
+  it("tries one refresh for an expired access token before rendering reauthorization", async () => {
+    needsTokenRefreshMock.mockImplementation((tokens: { accessToken: string }) => tokens.accessToken === "access-1");
+    refreshTokensMock.mockResolvedValue({
+      idToken: "id-2",
+      accessToken: "access-2",
+      refreshToken: "refresh-2"
+    });
+
+    const account = {
+      id: "expired-account",
+      email: "expired@example.com",
+      isActive: false,
+      createdAt: 1,
+      updatedAt: 1,
+      quotaError: { code: "auth", message: "token expired" }
+    };
+    const repo = {
+      getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }),
+      listAccounts: vi.fn().mockResolvedValue([account]),
+      getTokens: vi.fn().mockResolvedValueOnce({
+        idToken: "id-1",
+        accessToken: "access-1",
+        refreshToken: "refresh-1"
+      }).mockResolvedValue({
+        idToken: "id-2",
+        accessToken: "access-2",
+        refreshToken: "refresh-2"
+      }),
+      updateTokens: vi.fn().mockResolvedValue({ ...account, quotaError: undefined })
+    };
+    const settingsStore = {
+      resolveLanguage: () => "en",
+      getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" })
+    };
+
+    const first = await buildDashboardState(repo as never, settingsStore as never, "logo", {
+      announcements: [],
+      unreadIds: []
+    });
+    const second = await buildDashboardState(repo as never, settingsStore as never, "logo", {
+      announcements: [],
+      unreadIds: []
+    });
+
+    expect(refreshTokensMock).toHaveBeenCalledTimes(1);
+    expect(repo.updateTokens).toHaveBeenCalledTimes(1);
+    expect(first.accounts[0]?.healthKind).toBe("healthy");
+    expect(second.accounts[0]?.healthKind).toBe("healthy");
   });
 });
 

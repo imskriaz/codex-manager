@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1
+
+- Try one automatic refresh of an expired access token while building account cards, so valid refresh credentials recover before the reauthorization control is shown in both the VS Code and browser dashboards.
+- Prevent repeated dashboard renders from retrying the same failed refresh token indefinitely, while preserving the reauthorization state when recovery fails.
+
 ## 1.2.0
 
 - Judge token refresh and account health by access-token expiry so an older ID token retained after refresh does not cause repeated refresh attempts or a false expiry warning.

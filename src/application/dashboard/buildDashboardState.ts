@@ -16,9 +16,14 @@ import {
   getQueuedAccountSwitch
 } from "../../presentation/workbench/windowRuntimeAccount";
 import { getQuotaIssueKind } from "../../utils/quotaIssue";
-import { getTokenAutomationSnapshot } from "../../presentation/workbench/tokenAutomationState";
+import {
+  getTokenAutomationSnapshot,
+  markTokenAutomationRefreshFailure,
+  markTokenAutomationRefreshSuccess
+} from "../../presentation/workbench/tokenAutomationState";
 import { getAutoSwitchRuntimeSnapshot } from "../../presentation/workbench/autoSwitchState";
 import { getAccountAutomationState, isHealthDismissed, resolveAccountHealth } from "../accounts/health";
+import { needsTokenRefresh, refreshTokens } from "../../auth/oauth";
 import {
   isFreePlanType,
   isMonthlyQuotaWindow,
@@ -34,6 +39,11 @@ import {
   getSyncedAccountLeases,
   isEncryptedSyncRegistryOverrideEnabled
 } from "../../services/encryptedSync";
+
+// A dashboard snapshot can be rebuilt several times while an expired account
+// remains on screen. Keep the first refresh attempt tied to the current
+// refresh token so a failed provider grant does not become a request storm.
+const dashboardRefreshAttempts = new Map<string, string>();
 
 export async function buildDashboardState(
   repo: AccountsRepository,
@@ -57,15 +67,36 @@ export async function buildDashboardState(
   const copy = getDashboardCopy(lang);
   const encryptedSyncStatus = getEncryptedSyncStatus();
   const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
-  const tokenAutomation = getTokenAutomationSnapshot();
   const autoSwitchRuntime = getAutoSwitchRuntimeSnapshot();
   const activeAccount = accounts.find((account) => account.isActive);
   const queuedSwitch = resolveDashboardQueuedSwitch(accounts, getQueuedAccountSwitch());
   const leasesByAccountId = new Map(getSyncedAccountLeases().map((lease) => [lease.accountId, lease]));
   const pendingEnablementAccountIds = new Set(getPendingEnablementAccountIds());
   const tokenEntries = await Promise.all(
-    accounts.map(async (account) => [account.id, await repo.getTokens(account.id)] as const)
+    accounts.map(async (account) => {
+      let tokens = await repo.getTokens(account.id, { bypassCache: true });
+      if (tokens && needsTokenRefresh(tokens, 0) && tokens.refreshToken?.trim()) {
+        const refreshToken = tokens.refreshToken.trim();
+        if (dashboardRefreshAttempts.get(account.id) !== refreshToken) {
+          dashboardRefreshAttempts.set(account.id, refreshToken);
+          try {
+            const refreshed = await refreshTokens(refreshToken, tokens.idToken);
+            tokens = {
+              ...refreshed,
+              accountId: refreshed.accountId ?? account.accountId ?? tokens.accountId
+            };
+            const updatedAccount = await repo.updateTokens(account.id, tokens);
+            Object.assign(account, updatedAccount);
+            markTokenAutomationRefreshSuccess(account.id);
+          } catch (error) {
+            markTokenAutomationRefreshFailure(account.id, toDashboardRefreshFailureMessage(error));
+          }
+        }
+      }
+      return [account.id, tokens] as const;
+    })
   );
+  const tokenAutomation = getTokenAutomationSnapshot();
   const tokensByAccountId = new Map(tokenEntries);
   const accountViewStateById = new Map(
     accounts.map((account) => {
@@ -124,6 +155,10 @@ export async function buildDashboardState(
     ),
     connectedPeers
   };
+}
+
+function toDashboardRefreshFailureMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function resolveTerminalNotice(
