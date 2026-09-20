@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.4
+
+- Route Sync button clicks directly to encrypted cross-PC synchronization. Password setup and password changes remain available through their dedicated controls instead of being opened by a normal Sync action.
+
 ## 1.2.3
 
 - Show a red account-card background only when the primary weekly or monthly quota is exhausted. An empty 5-hour quota alone no longer colors the entire card.

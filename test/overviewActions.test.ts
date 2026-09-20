@@ -92,6 +92,18 @@ describe("overview actions", () => {
     expect(resolveOverviewRefreshMode(true)).toBe("sync");
   });
 
+  it("routes every Sync click to sync instead of opening password setup", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const start = main.indexOf("const handleSyncNow = (): void => {");
+    const end = main.indexOf("\n  };", start);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const handler = main.slice(start, end);
+    expect(handler).toContain('sendAction("syncNow");');
+    expect(handler).not.toContain("handleConfigureEncryptedSync");
+  });
+
   it("keeps toolbar labels compact", () => {
     expect(
       ["add", "import", "sync", "setup", "refresh", "lock", "disableRescue"].map((action) =>
