@@ -2,10 +2,7 @@ import * as vscode from "vscode";
 import { unloadAuthFile } from "../../codex";
 import type { AccountsRepository } from "../../storage";
 import { readCurrentAuthAccountStorageId } from "../../utils/accountIdentity";
-import {
-  CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY,
-  setCurrentWindowRuntimeAccountId
-} from "./windowRuntimeAccount";
+import { getCurrentWindowRuntimeAccountKey, setCurrentWindowRuntimeAccountId } from "./windowRuntimeAccount";
 
 /**
  * A disabled current account may remain loaded only until this VS Code session
@@ -31,7 +28,7 @@ export async function unloadDisabledActiveAccountOnStartup(
   try {
     await unload();
     await repo.syncActiveAccountFromAuthFile();
-    await context.workspaceState.update(CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY, undefined);
+    await context.workspaceState.update(getCurrentWindowRuntimeAccountKey(), undefined);
     setCurrentWindowRuntimeAccountId(undefined);
     void vscode.window.showInformationMessage(
       `${disabledActive.email} was disabled and has been automatically unloaded after restart.`

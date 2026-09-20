@@ -17,6 +17,7 @@ import {
 import { formatTemplate, formatTimestamp } from "./helpers";
 import { renderRemoveIcon } from "./icons";
 import { useModalAccessibility } from "./primitives";
+import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
 
 const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
 const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
@@ -73,6 +74,7 @@ export function SettingsOverlay(props: {
   onSetRegistryOverride: (enabled: boolean) => void;
   registryOverridePending: boolean;
 }) {
+  const longQuotaLabel = resolveLongQuotaSettingsLabel(props.lang, props.copy.weeklyLabel);
   const safeCurrentRefreshMinutes =
     props.settings.autoRefreshCurrentMinutes > 0 ? Math.max(1, props.settings.autoRefreshCurrentMinutes) : 0;
   const safeAllRefreshMinutes =
@@ -597,7 +599,7 @@ export function SettingsOverlay(props: {
                     valueLabel={(value) => `${value}%`}
                     description={(value) =>
                       formatTemplate(props.copy.autoSwitchThresholdDescTemplate, {
-                        label: props.copy.weeklyLabel,
+                        label: longQuotaLabel,
                         value
                       })
                     }
@@ -623,7 +625,7 @@ export function SettingsOverlay(props: {
                         description={(value) =>
                           formatTemplate(
                             props.copy.autoResetThresholdDescTemplate ??
-                              "Reset a candidate when its weekly quota is {value}% or lower.",
+                              "Reset a candidate when its weekly or monthly quota is {value}% or lower.",
                             value
                           )
                         }
@@ -679,7 +681,7 @@ export function SettingsOverlay(props: {
                     scaleValues={WEEKLY_WARNING_SCALE_VALUES}
                     valueLabel={(value) => `${value}%`}
                     description={(value) =>
-                      `${props.copy.weeklyLabel}: ${formatTemplate(props.copy.warningValueDescTemplate, value)}`
+                      `${longQuotaLabel}: ${formatTemplate(props.copy.warningValueDescTemplate, value)}`
                     }
                     onPreview={(value) => props.onPatchSettings({ quotaWarningWeeklyThreshold: value })}
                     onCommit={(value) => patchAndSend("quotaWarningWeeklyThreshold", value)}

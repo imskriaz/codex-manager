@@ -41,7 +41,6 @@ export function toSharedAccountJson(
           timestamp: account.quotaError.timestamp
         }
       : null,
-    tags: account.tags?.length ? [...account.tags] : null,
     token_refresh_enabled: account.tokenRefreshEnabled === true,
     created_at: Math.floor(account.createdAt / 1000),
     last_used: Math.floor(account.updatedAt / 1000),
@@ -98,21 +97,6 @@ export function restoreSharedTokens(entry: SharedCodexManagerAccountJson): Codex
     refreshToken: sanitizeOptionalValue(entry.tokens?.refresh_token),
     accountId: sanitizeOptionalValue(entry.tokens?.account_id) ?? sanitizeOptionalValue(entry.account_id)
   };
-}
-
-export function normalizeAccountTags(tags: unknown, fallback?: string[] | null): string[] | undefined {
-  const source = Array.isArray(tags) ? tags : Array.isArray(fallback) ? fallback : [];
-  const normalized = Array.from(
-    new Map(
-      source
-        .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
-        .filter(Boolean)
-        .slice(0, 20)
-        .map((tag) => [tag.toLowerCase(), tag.slice(0, 24)])
-    ).values()
-  ).slice(0, 10);
-
-  return normalized.length ? normalized : undefined;
 }
 
 export function fromSharedQuota(quota: NonNullable<SharedCodexManagerAccountJson["quota"]>): CodexQuotaSummary {

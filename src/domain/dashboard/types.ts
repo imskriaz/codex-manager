@@ -132,9 +132,10 @@ export interface DashboardCopy {
   tokenAutomationQuota: string;
   resyncProfileBtn: string;
   syncProfileBtn: string;
-  editTagsBtn: string;
-  addTagsBtn: string;
-  removeTagsBtn: string;
+  /** Legacy translation keys retained so older resource bundles remain loadable. */
+  editTagsBtn?: string;
+  addTagsBtn?: string;
+  removeTagsBtn?: string;
   batchActionsTitle: string;
   batchRefreshBtn: string;
   batchResyncBtn: string;
@@ -146,14 +147,14 @@ export interface DashboardCopy {
   batchResultFailed: string;
   batchResultOverwrite: string;
   batchResultFailures: string;
-  tagsLabel: string;
-  tagsPlaceholder: string;
-  tagsHelp: string;
-  tagsRequiredError: string;
-  tagsTooManyError: string;
-  tagsTooLongError: string;
-  saveTagsBtn: string;
-  clearTagsBtn: string;
+  tagsLabel?: string;
+  tagsPlaceholder?: string;
+  tagsHelp?: string;
+  tagsRequiredError?: string;
+  tagsTooManyError?: string;
+  tagsTooLongError?: string;
+  saveTagsBtn?: string;
+  clearTagsBtn?: string;
   lockAutoSwitchBtn: string;
   unlockAutoSwitchBtn: string;
   autoSwitchLockedUntil: string;
@@ -373,7 +374,6 @@ export interface DashboardAccountViewModel {
   email: string;
   authMode?: "chatgpt" | "oauth";
   accountName?: string;
-  tags: string[];
   authProviderLabel: string;
   accountStructureLabel: string;
   workspaceLabel: string;
@@ -435,14 +435,7 @@ export interface DashboardTokenAutomationViewModel {
 }
 
 export type DashboardBatchResultKind =
-  | "tags_set"
-  | "tags_add"
-  | "tags_remove"
-  | "batch_refresh"
-  | "batch_resync"
-  | "batch_remove"
-  | "enable_all_valid"
-  | "disable_all";
+  "batch_refresh" | "batch_resync" | "batch_remove" | "enable_all_valid" | "disable_all";
 
 export interface DashboardBatchResultFailure {
   accountId?: string;
@@ -525,7 +518,6 @@ export type DashboardActionName =
   | "cancelOAuthSession"
   | "startOAuthAutoFlow"
   | "completeOAuthSession"
-  | "updateTags"
   | "setAutoSwitchLock"
   | "batchRefresh"
   | "batchResyncProfile"
@@ -590,8 +582,6 @@ export interface DashboardActionPayload {
   callbackUrl?: string;
   issueKey?: string;
   recoveryMode?: boolean;
-  tags?: string[];
-  mode?: "set" | "add" | "remove";
   lockMinutes?: number;
   announcementId?: string;
   privacyMode?: boolean;
@@ -616,8 +606,6 @@ export interface DashboardActionPayload {
   confirmed?: boolean;
   /** Explicit dashboard Reload button intent; bypasses stale runtime markers. */
   forceReload?: boolean;
-  /** Tags collected by the browser dashboard instead of a VS Code input box. */
-  submittedTags?: string[];
   /** Secret collected by a browser passphrase modal. Never persisted in dashboard state. */
   passphrase?: string;
   passphraseConfirmation?: string;

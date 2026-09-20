@@ -20,6 +20,7 @@ vi.mock("../src/codex", async (importOriginal) => {
 });
 
 import { AccountsRepository } from "../src/storage";
+import { getCodexHomeStateKey } from "../src/codex";
 import { buildAccountStorageId } from "../src/utils/accountIdentity";
 import { removeTestDirectory } from "./testFilesystem";
 
@@ -509,6 +510,51 @@ describe("AccountsRepository token persistence", () => {
     });
     await expect(fs.access(path.join(reinstalledStorage, "accounts-index.json"))).rejects.toThrow();
     afterReinstall.dispose();
+  });
+
+  it("keeps active account selections independent across CODEX_HOME values", async () => {
+    const durableIndex = path.join(tempDir, "scoped-active", "accounts-index.json");
+    const secrets = new Map<string, string>();
+    const context = {
+      globalStorageUri: { fsPath: path.join(tempDir, "extension-storage") },
+      secrets: {
+        get: vi.fn(async (key: string) => secrets.get(key)),
+        store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+        delete: vi.fn(async (key: string) => secrets.delete(key))
+      }
+    } as unknown as vscode.ExtensionContext;
+    const firstHome = path.join(tempDir, "codex-home-a");
+    const secondHome = path.join(tempDir, "codex-home-b");
+    const previousHome = process.env.CODEX_HOME;
+    let firstRepo: AccountsRepository | undefined;
+    let secondRepo: AccountsRepository | undefined;
+
+    try {
+      process.env.CODEX_HOME = firstHome;
+      firstRepo = new AccountsRepository(context, durableIndex);
+      process.env.CODEX_HOME = secondHome;
+      secondRepo = new AccountsRepository(context, durableIndex);
+
+      const first = await firstRepo.upsertFromTokens(createTokens("acct_home_a", "home-a@example.com"), true);
+      const second = await firstRepo.upsertFromTokens(createTokens("acct_home_b", "home-b@example.com"));
+      await firstRepo.flush();
+
+      await secondRepo.switchAccount(second.id);
+      await secondRepo.flush();
+      firstRepo.invalidateCachedIndex();
+
+      expect((await firstRepo.listAccounts()).find((account) => account.isActive)?.id).toBe(first.id);
+      expect((await secondRepo.listAccounts()).find((account) => account.isActive)?.id).toBe(second.id);
+      expect(JSON.parse(await fs.readFile(durableIndex, "utf8")).activeAccountIdsByCodexHome).toEqual({
+        [getCodexHomeStateKey(firstHome)]: first.id,
+        [getCodexHomeStateKey(secondHome)]: second.id
+      });
+    } finally {
+      firstRepo?.dispose();
+      secondRepo?.dispose();
+      if (previousHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousHome;
+    }
   });
 
   it("rebuilds a corrupt canonical index from multiple durable account entries", async () => {

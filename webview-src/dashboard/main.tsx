@@ -161,7 +161,6 @@ function App() {
     }
   });
   const [uiPreferences, setUiPreferences] = useState<UiPreferences>(loadUiPreferences);
-  const [tagFilterOpen, setTagFilterOpen] = useState(false);
   const [shareExportCount, setShareExportCount] = useState(0);
   const [usageHistory, setUsageHistory] = useState<DashboardUsageSample[]>(loadUsageHistory);
   const [accountInfoAccountId, setAccountInfoAccountId] = useState<string>();
@@ -273,19 +272,26 @@ function App() {
   );
   const lastTerminalNoticeAtRef = useRef<number>();
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const handleActionTimeout = useCallback((action: DashboardActionName, requestId: string) => {
-    if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
-      explicitCliRefreshRef.current = undefined;
-      setCliSessionFeedback({ key: Date.now(), level: "warning", message: "Refreshing sessions did not finish in time. Try again." });
-    }
-    if (!onboardingOpen) return;
-    const isPendingStep = onboardingPendingRef.current.has(action);
-    const isImportStep = onboardingStep === "import" && onboardingBusy && action === "importCurrent";
-    if (!isPendingStep && !isImportStep) return;
-    onboardingPendingRef.current.delete(action);
-    setOnboardingBusy(false);
-    setOnboardingError(onboardingFailureMessage(action, "timed-out"));
-  }, [onboardingBusy, onboardingOpen, onboardingStep]);
+  const handleActionTimeout = useCallback(
+    (action: DashboardActionName, requestId: string) => {
+      if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
+        explicitCliRefreshRef.current = undefined;
+        setCliSessionFeedback({
+          key: Date.now(),
+          level: "warning",
+          message: "Refreshing sessions did not finish in time. Try again."
+        });
+      }
+      if (!onboardingOpen) return;
+      const isPendingStep = onboardingPendingRef.current.has(action);
+      const isImportStep = onboardingStep === "import" && onboardingBusy && action === "importCurrent";
+      if (!isPendingStep && !isImportStep) return;
+      onboardingPendingRef.current.delete(action);
+      setOnboardingBusy(false);
+      setOnboardingError(onboardingFailureMessage(action, "timed-out"));
+    },
+    [onboardingBusy, onboardingOpen, onboardingStep]
+  );
   const { patchSettings, sendAction, sendSetting, isActionPending, hasGlobalPendingAction } = useDashboardActions(
     state,
     dispatch,
@@ -356,13 +362,14 @@ function App() {
     [cliSessions, sendAction]
   );
   const requestWorkspaceEnvironment = useCallback(
-    (projectPath?: string): void => { sendAction("getWorkspaceEnvironment", undefined, { projectPath }); },
+    (projectPath?: string): void => {
+      sendAction("getWorkspaceEnvironment", undefined, { projectPath });
+    },
     [sendAction]
   );
-  const requestWorkspaceTerminals = useCallback(
-    (): void => { sendAction("listWorkspaceTerminals", undefined, {}); },
-    [sendAction]
-  );
+  const requestWorkspaceTerminals = useCallback((): void => {
+    sendAction("listWorkspaceTerminals", undefined, {});
+  }, [sendAction]);
   const lastAutomaticWorkspaceLoadRef = useRef<string>();
   const modals = useDashboardModals({
     dispatch,
@@ -513,51 +520,51 @@ function App() {
         if (explicitRefresh) explicitCliRefreshRef.current = undefined;
         if (message.status === "completed") {
           if (result.apply) {
-          const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessions);
-          setCliSessions(sessions);
-          // Realtime list pushes intentionally omit the heavier composer
-          // catalog. Preserve the last known catalog so the response box does
-          // not disappear while sessions update in the background.
-          setCliComposerConfig(message.payload?.cliComposerConfig ?? cliComposerConfig);
-          void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig });
-          setCliSessionsError(undefined);
-          const routeId = getCliSessionIdFromPath(window.location.pathname);
-          if (routeId) {
-            const routeSession = sessions.find((session) => session.id === routeId);
-            if (routeSession?.archived) {
-              setSelectedCliSession(routeSession);
-              setCliSessionMessages([]);
-              setCliSessionFeedback({
-                key: Date.now(),
-                level: "warning",
-                message: "This session is archived. Restore it below to continue the conversation."
-              });
-            } else if (routeSession) {
-              const previousRouteSession =
-                selectedCliSessionRef.current?.id === routeId ? selectedCliSessionRef.current : undefined;
-              const sessionChanged =
-                !previousRouteSession ||
-                previousRouteSession.updatedAt !== routeSession.updatedAt ||
-                previousRouteSession.status !== routeSession.status ||
-                previousRouteSession.projectPath !== routeSession.projectPath ||
-                previousRouteSession.runningBy !== routeSession.runningBy ||
-                previousRouteSession.canStop !== routeSession.canStop;
-              setSelectedCliSession(routeSession);
-              // A running turn appends activity events to its transcript while
-              // the session index can keep the same updatedAt. Refresh the
-              // selected transcript on every realtime tick so commands and
-              // reasoning appear as they happen instead of only showing the
-              // generic Working indicator until the turn exits.
-              if (typeof realtimeRevision !== "number" || sessionChanged || routeSession.status === "running") {
-                requestCliSessionMessages(routeId, routeSession.deviceId, typeof realtimeRevision !== "number");
+            const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessions);
+            setCliSessions(sessions);
+            // Realtime list pushes intentionally omit the heavier composer
+            // catalog. Preserve the last known catalog so the response box does
+            // not disappear while sessions update in the background.
+            setCliComposerConfig(message.payload?.cliComposerConfig ?? cliComposerConfig);
+            void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig });
+            setCliSessionsError(undefined);
+            const routeId = getCliSessionIdFromPath(window.location.pathname);
+            if (routeId) {
+              const routeSession = sessions.find((session) => session.id === routeId);
+              if (routeSession?.archived) {
+                setSelectedCliSession(routeSession);
+                setCliSessionMessages([]);
+                setCliSessionFeedback({
+                  key: Date.now(),
+                  level: "warning",
+                  message: "This session is archived. Restore it below to continue the conversation."
+                });
+              } else if (routeSession) {
+                const previousRouteSession =
+                  selectedCliSessionRef.current?.id === routeId ? selectedCliSessionRef.current : undefined;
+                const sessionChanged =
+                  !previousRouteSession ||
+                  previousRouteSession.updatedAt !== routeSession.updatedAt ||
+                  previousRouteSession.status !== routeSession.status ||
+                  previousRouteSession.projectPath !== routeSession.projectPath ||
+                  previousRouteSession.runningBy !== routeSession.runningBy ||
+                  previousRouteSession.canStop !== routeSession.canStop;
+                setSelectedCliSession(routeSession);
+                // A running turn appends activity events to its transcript while
+                // the session index can keep the same updatedAt. Refresh the
+                // selected transcript on every realtime tick so commands and
+                // reasoning appear as they happen instead of only showing the
+                // generic Working indicator until the turn exits.
+                if (typeof realtimeRevision !== "number" || sessionChanged || routeSession.status === "running") {
+                  requestCliSessionMessages(routeId, routeSession.deviceId, typeof realtimeRevision !== "number");
+                }
+              } else if (selectedCliSession?.id === routeId) {
+                // A newly forked session can take a moment to appear in Codex's local index.
+              } else {
+                setCliSessionMessagesError(undefined);
+                requestCliSessionMessages(routeId);
               }
-            } else if (selectedCliSession?.id === routeId) {
-              // A newly forked session can take a moment to appear in Codex's local index.
-            } else {
-              setCliSessionMessagesError(undefined);
-              requestCliSessionMessages(routeId);
             }
-          }
           }
           if (explicitRefresh)
             setCliSessionFeedback({ key: Date.now(), level: "info", message: "Sessions refreshed." });
@@ -1145,20 +1152,6 @@ function App() {
     void readCliSessionMessagesCache(session.id).then((cached) => setCliSessionMessages(cached ?? []));
     requestCliSessionMessages(session.id, session.deviceId);
   };
-  const availableTags = useMemo(
-    () =>
-      [...new Set(displayedAccounts.flatMap((account) => account.tags))].sort((left, right) =>
-        left.localeCompare(right)
-      ),
-    [displayedAccounts]
-  );
-  useEffect(() => {
-    setUiPreferences((current) => {
-      const filtered = current.tagFilter.filter((tag) => availableTags.includes(tag));
-      return filtered.length === current.tagFilter.length ? current : { ...current, tagFilter: filtered };
-    });
-    if (!availableTags.length) setTagFilterOpen(false);
-  }, [availableTags]);
   const sortedAccounts = useMemo(
     () =>
       sortAccounts(
@@ -1167,7 +1160,6 @@ function App() {
           uiPreferences.accountSearch,
           uiPreferences.filter,
           snapshot.settings.quotaYellowThreshold,
-          uiPreferences.tagFilter,
           {
             hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
             hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
@@ -1192,7 +1184,6 @@ function App() {
       snapshot.settings.encryptedSyncRegistryOverrideEnabled,
       uiPreferences.accountSearch,
       uiPreferences.filter,
-      uiPreferences.tagFilter,
       accountSort,
       uiPreferences.metricPriority
     ]
@@ -1266,9 +1257,6 @@ function App() {
   const batchRefreshPending = isActionPending("batchRefresh");
   const batchResyncPending = isActionPending("batchResyncProfile");
   const batchRemovePending = isActionPending("batchRemove");
-  const batchTagsPending = state.pendingActions.some(
-    (request) => request.action === "updateTags" && request.accountId == null
-  );
   const syncPending = isActionPending("syncNow") || isActionPending("configureEncryptedSync");
   const brandSubtitle = resolveBrandSubtitle(
     snapshot.brandSub,
@@ -1400,30 +1388,6 @@ function App() {
     sendAction("exportBackup");
   };
 
-  const handleEditAccountTags = (account: DashboardAccountViewModel): void => {
-    setBrowserActionRequest({
-      kind: "tags",
-      accountId: account.id,
-      accountIds: [account.id],
-      mode: "set",
-      initialTags: account.tags,
-      title: `Edit tags: ${getSensitiveDisplayValue(account.email, state.privacyMode, "email")}`
-    });
-  };
-
-  const handleBatchTagMutation = (mode: "add" | "remove"): void => {
-    if (!selectedCount) {
-      return;
-    }
-    setBrowserActionRequest({
-      kind: "tags",
-      accountIds: state.selectedAccountIds,
-      mode,
-      initialTags: [],
-      title: mode === "add" ? "Add tags" : "Remove tags"
-    });
-  };
-
   const openBrowserSwitchPicker = (targetDeviceId?: string): void => {
     const accountsForTarget = targetDeviceId ? (snapshot.peerAccounts?.[targetDeviceId] ?? []) : displayedAccounts;
     const accountIds = accountsForTarget
@@ -1452,10 +1416,10 @@ function App() {
     setBrowserActionRequest({ kind: "switch", accountIds, targetDeviceId });
   };
 
-  const confirmBrowserAction = (request: BrowserActionRequest, submittedTags?: string[]): void => {
+  const confirmBrowserAction = (request: BrowserActionRequest, submittedValues?: string[]): void => {
     setBrowserActionRequest(undefined);
     if (request.kind === "quotaWarning") {
-      const choice = submittedTags?.[0];
+      const choice = submittedValues?.[0];
       if (choice === "switch" && request.switchAccountId) {
         sendAction("switch", request.switchAccountId);
       } else if (choice === "reset") {
@@ -1469,12 +1433,12 @@ function App() {
       postMessageToHost({
         type: "dashboard:notification-response",
         notificationId: request.notificationId,
-        action: submittedTags?.[0]
+        action: submittedValues?.[0]
       });
       return;
     }
     if (request.kind === "disabledActiveAccount") {
-      if (submittedTags?.[0] === "unload") {
+      if (submittedValues?.[0] === "unload") {
         sendAction("unloadAuth");
       } else {
         showNotice({
@@ -1508,22 +1472,14 @@ function App() {
       }
       return;
     }
-    if (request.kind === "tags") {
-      sendAction("updateTags", request.accountId, {
-        accountIds: request.accountIds,
-        mode: request.mode,
-        submittedTags: submittedTags ?? []
-      });
-      return;
-    }
     if (request.kind === "password") {
       const rotating = request.action === "configureEncryptedSync" && request.requireCurrentPassword === true;
       sendAction(request.action, request.accountId, {
         enabled: request.enabled,
         targetDeviceId: request.targetDeviceId,
-        currentPassphrase: rotating ? submittedTags?.[0] : undefined,
-        passphrase: rotating ? submittedTags?.[1] : submittedTags?.[0],
-        passphraseConfirmation: rotating ? submittedTags?.[2] : submittedTags?.[1]
+        currentPassphrase: rotating ? submittedValues?.[0] : undefined,
+        passphrase: rotating ? submittedValues?.[1] : submittedValues?.[0],
+        passphraseConfirmation: rotating ? submittedValues?.[2] : submittedValues?.[1]
       });
       return;
     }
@@ -1541,17 +1497,15 @@ function App() {
     const message =
       request.kind === "switch"
         ? "Account switch cancelled."
-        : request.kind === "tags"
-          ? "Tag update cancelled."
-          : request.kind === "password"
-            ? `${request.title} cancelled.`
-            : request.kind === "notification"
-              ? "Notification dismissed."
-              : request.kind === "disabledActiveAccount"
-                ? "The disabled account remains loaded for this VS Code session and will unload automatically after restart."
-                : request.action === "reloadPrompt"
-                  ? "Reload postponed. Use Reload when you are ready."
-                  : `${request.title} cancelled.`;
+        : request.kind === "password"
+          ? `${request.title} cancelled.`
+          : request.kind === "notification"
+            ? "Notification dismissed."
+            : request.kind === "disabledActiveAccount"
+              ? "The disabled account remains loaded for this VS Code session and will unload automatically after restart."
+              : request.action === "reloadPrompt"
+                ? "Reload postponed. Use Reload when you are ready."
+                : `${request.title} cancelled.`;
     showNotice({ level: "info", message });
   };
 
@@ -2028,7 +1982,6 @@ function App() {
                   resyncPending={batchResyncPending}
                   removePending={batchRemovePending}
                   sharePending={sharePending}
-                  tagsPending={batchTagsPending}
                   onRefresh={() => sendAction("batchRefresh", undefined, { accountIds: state.selectedAccountIds })}
                   onResync={() => sendAction("batchResyncProfile", undefined, { accountIds: state.selectedAccountIds })}
                   onRemove={() => {
@@ -2043,8 +1996,6 @@ function App() {
                     });
                   }}
                   onShare={handleShareTokens}
-                  onAddTags={() => handleBatchTagMutation("add")}
-                  onRemoveTags={() => handleBatchTagMutation("remove")}
                 />
               ) : null}
             </div>
@@ -2117,25 +2068,6 @@ function App() {
                   ))}
                 </select>
               </label>
-              {availableTags.length > 0 ? (
-                <TagFilterControl
-                  availableTags={availableTags}
-                  selectedTags={uiPreferences.tagFilter}
-                  open={tagFilterOpen}
-                  lang={snapshot.lang}
-                  onToggleOpen={() => setTagFilterOpen((current) => !current)}
-                  onToggleTag={(tag) =>
-                    setUiPreferences((current) => ({
-                      ...current,
-                      tagFilter: current.tagFilter.includes(tag)
-                        ? current.tagFilter.filter((value) => value !== tag)
-                        : [...current.tagFilter, tag]
-                    }))
-                  }
-                  onClear={() => setUiPreferences((current) => ({ ...current, tagFilter: [] }))}
-                  onClose={() => setTagFilterOpen(false)}
-                />
-              ) : null}
               <div class="dashboard-view-controls">
                 <button
                   type="button"
@@ -2186,7 +2118,6 @@ function App() {
                   queuePriorityPending={isActionPending("setAccountQueuePriority", account.id)}
                   tokenRefreshPending={isActionPending("setAccountTokenRefreshEnabled", account.id)}
                   manualTokenRefreshPending={isActionPending("refreshToken", account.id)}
-                  updateTagsPending={isActionPending("updateTags", account.id)}
                   consumeResetCreditPending={isActionPending("consumeResetCredit", account.id)}
                   exportPending={isActionPending("shareTokens") || isActionPending("exportAuthFile")}
                   selected={selectedAccountIds.has(account.id)}
@@ -2194,7 +2125,6 @@ function App() {
                   compactRow={uiPreferences.view === "list"}
                   onToggleSelected={() => dispatch({ type: "toggle-select", accountId: account.id })}
                   onExportAuth={() => handleExportAccount(account.id)}
-                  onEditTags={() => handleEditAccountTags(account)}
                   onAction={handleAccountAction}
                 />
               ))}
@@ -2720,14 +2650,13 @@ function filterAccounts(
   query: string,
   filter: AccountFilter,
   threshold: number,
-  selectedTags: string[],
   capabilityThresholds: DashboardAutoQueueCapabilityThresholds
 ): DashboardAccountViewModel[] {
   const normalized = query.trim().toLocaleLowerCase();
   return accounts.filter((account) => {
     const matchesQuery =
       !normalized ||
-      [account.email, account.displayName, account.accountName, account.workspaceLabel, ...account.tags]
+      [account.email, account.displayName, account.accountName, account.workspaceLabel]
         .filter(Boolean)
         .some((value) => value!.toLocaleLowerCase().includes(normalized));
     const percentages = account.metrics
@@ -2746,100 +2675,8 @@ function filterAccounts(
       (filter === "claimed" && isAccountClaimedByAnotherDevice(account)) ||
       (filter === "capable" && hasDashboardAutoQueueCapability(account, capabilityThresholds)) ||
       (filter === "incapable" && !hasDashboardAutoQueueCapability(account, capabilityThresholds));
-    const matchesTags = selectedTags.length === 0 || selectedTags.some((tag) => account.tags.includes(tag));
-    return matchesQuery && matchesFilter && matchesTags;
+    return matchesQuery && matchesFilter;
   });
-}
-
-function TagFilterControl(props: {
-  availableTags: string[];
-  selectedTags: string[];
-  open: boolean;
-  lang: string;
-  onToggleOpen: () => void;
-  onToggleTag: (tag: string) => void;
-  onClear: () => void;
-  onClose: () => void;
-}) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const [popoverPosition, setPopoverPosition] = useState({ top: 0, right: 0 });
-  useEffect(() => {
-    if (!props.open) return;
-    const updatePosition = (): void => {
-      const rect = rootRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      setPopoverPosition({ top: rect.bottom + 5, right: Math.max(8, window.innerWidth - rect.right) });
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [props.open]);
-  useEffect(() => {
-    if (!props.open) return;
-    const closeOutside = (event: PointerEvent): void => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) props.onClose();
-    };
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") props.onClose();
-    };
-    window.addEventListener("pointerdown", closeOutside);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("pointerdown", closeOutside);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [props.open, props.onClose]);
-
-  const label = resolveUiText("tags", props.lang);
-  const triggerLabel = props.selectedTags.length ? `${label} (${props.selectedTags.length})` : label;
-  return (
-    <div class="dashboard-tag-filter" ref={rootRef}>
-      <button
-        type="button"
-        class={`dashboard-tag-filter-trigger ${props.open ? "active" : ""}`}
-        aria-haspopup="menu"
-        aria-expanded={props.open}
-        aria-label={label}
-        onClick={props.onToggleOpen}
-      >
-        <span>{triggerLabel}</span>
-        <DropdownChevronIcon open={props.open} />
-      </button>
-      {props.open
-        ? createPortal(
-            <div
-              ref={popoverRef}
-              class="dashboard-tag-filter-popover"
-              role="menu"
-              style={{ top: `${popoverPosition.top}px`, right: `${popoverPosition.right}px` }}
-            >
-              {props.availableTags.map((tag) => (
-                <label class="dashboard-tag-filter-option" key={tag}>
-                  <input
-                    type="checkbox"
-                    checked={props.selectedTags.includes(tag)}
-                    onChange={() => props.onToggleTag(tag)}
-                  />
-                  <span>{tag}</span>
-                </label>
-              ))}
-              {props.selectedTags.length ? (
-                <button type="button" class="dashboard-tag-filter-clear" onClick={props.onClear}>
-                  {resolveUiText("clearTagsFilter", props.lang)}
-                </button>
-              ) : null}
-            </div>,
-            document.body
-          )
-        : null}
-    </div>
-  );
 }
 
 function PcPickerControl(props: {
@@ -3146,8 +2983,6 @@ function resolveUiText(key: string, lang: string): string {
     claimed: zh ? "已被占用" : hant ? "已被占用" : "Claimed",
     weeklyShort: zh ? "周配额" : hant ? "週配額" : "Weekly",
     metric: zh ? "主指标" : hant ? "主指標" : "Metric",
-    tags: zh ? "标签" : hant ? "標籤" : "Tags",
-    clearTagsFilter: zh ? "清除标签筛选" : hant ? "清除標籤篩選" : "Clear tag filter",
     weekly: zh ? "每周配额" : hant ? "每週配額" : "Weekly quota",
     hourly: zh ? "5小时配额" : hant ? "5小時配額" : "5-hour quota",
     review: zh ? "代码审查" : hant ? "程式碼審查" : "Code review",

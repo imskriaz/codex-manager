@@ -10,20 +10,22 @@
  */
 
 import * as fs from "fs/promises";
-import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { SecretStore } from "./secrets";
-import { createEmptyIndex, cloneIndex, markActive, syncActiveAccountState } from "./accountsIndex";
 import {
-  addAccountTags as addAccountTagsToIndex,
+  createEmptyIndex,
+  cloneIndex,
+  markActive,
+  scopeActiveAccountState,
+  syncActiveAccountState
+} from "./accountsIndex";
+import {
   dismissAccountHealthIssue,
   removeAccountFromIndex,
-  removeAccountTags as removeAccountTagsFromIndex,
   setAccountEnabled as setAccountEnabledOnIndex,
   setAccountQueuePriority as setAccountQueuePriorityOnIndex,
   setAccountTokenRefreshEnabled as setAccountTokenRefreshEnabledOnIndex,
-  setAccountTags as setAccountTagsOnIndex,
   setStatusBarVisibility as setStatusBarVisibilityOnIndex,
   switchActiveAccount
 } from "./accountMutations";
@@ -71,7 +73,14 @@ import {
   persistIndexWithBackups,
   readPendingOrCachedIndex
 } from "./accountsWriteCoordinator";
-import { buildCodexAuthFile, ensureCodexAuthFileFormat, readAuthFile, writeAuthFile } from "../codex";
+import {
+  buildCodexAuthFile,
+  ensureCodexAuthFileFormat,
+  getCodexHome,
+  getCodexHomeStateKey,
+  readAuthFile,
+  writeAuthFile
+} from "../codex";
 import { refreshTokens } from "../auth/oauth";
 import { createKeyedMutex } from "../utils/concurrency";
 import {
@@ -144,6 +153,7 @@ export interface AccountSwitchCoordinator {
 export class AccountsRepository {
   private readonly secretStore: SecretStore;
   private readonly indexPath: string;
+  private readonly codexHomeStateKey: string;
   /** Read-only migration sources; production writes only to indexPath. */
   private readonly legacyIndexPaths: string[];
   private readonly state = createAccountsRepositoryState();
@@ -153,6 +163,7 @@ export class AccountsRepository {
   /** getTokens 内存缓存，减少 SecretStore/Keychain 重复读取 */
   private readonly tokenCache = new Map<string, TokenCacheEntry>();
   private switchCoordinator: AccountSwitchCoordinator | undefined;
+  private homeScopeMigrationPending = false;
 
   /** 防止重复释放 */
   private disposed = false;
@@ -171,13 +182,12 @@ export class AccountsRepository {
 
   constructor(context: vscode.ExtensionContext, indexPathOverride?: string, legacyDurableIndexPath?: string) {
     this.secretStore = new SecretStore(context.secrets);
+    this.codexHomeStateKey = getCodexHomeStateKey();
     // Production has one cross-platform, reinstall-safe source of truth.
     // Tests must opt into another path explicitly so production can never
     // silently fall back to an extension-version-owned directory.
     this.indexPath = indexPathOverride ?? path.join(getCodexManagerStorageRoot(), INDEX_FILE);
-    const codexHome = process.env["CODEX_HOME"]?.trim()
-      ? process.env["CODEX_HOME"].replace(/^['"]|['"]$/g, "")
-      : path.join(os.homedir(), ".codex");
+    const codexHome = getCodexHome();
     this.legacyIndexPaths = [
       ...(legacyDurableIndexPath ? [legacyDurableIndexPath] : []),
       ...(context.extensionUri && !indexPathOverride ? [path.join(codexHome, "codex-manager", INDEX_FILE)] : [])
@@ -540,39 +550,6 @@ export class AccountsRepository {
     return account;
   }
 
-  async setAccountTags(accountId: string, tags: string[]): Promise<CodexManagerAccountRecord> {
-    const index = await this.readIndex();
-    const account = setAccountTagsOnIndex(index, accountId, tags, Date.now());
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
-
-    this.writeIndex(index);
-    return account;
-  }
-
-  async addAccountTags(accountIds: string[], tags: string[]): Promise<CodexManagerAccountRecord[]> {
-    const index = await this.readIndex();
-    const updated = addAccountTagsToIndex(index, accountIds, tags, Date.now());
-
-    if (updated.length > 0) {
-      this.writeIndex(index);
-    }
-
-    return updated;
-  }
-
-  async removeAccountTags(accountIds: string[], tags: string[]): Promise<CodexManagerAccountRecord[]> {
-    const index = await this.readIndex();
-    const updated = removeAccountTagsFromIndex(index, accountIds, tags, Date.now());
-
-    if (updated.length > 0) {
-      this.writeIndex(index);
-    }
-
-    return updated;
-  }
-
   async previewSharedAccountsImport(
     input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]
   ): Promise<CodexImportPreviewSummary> {
@@ -673,7 +650,7 @@ export class AccountsRepository {
     index.accounts.push(account);
 
     if (forceActive) {
-      markActive(index, id);
+      markActive(index, id, Date.now(), this.codexHomeStateKey);
       reconcileStatusBarSelections(index, id, previousActiveId);
     }
 
@@ -1020,7 +997,7 @@ export class AccountsRepository {
 
     await writeAuthFile(effectiveTokens);
 
-    const nextAccount = switchActiveAccount(index, accountId);
+    const nextAccount = switchActiveAccount(index, accountId, Date.now(), this.codexHomeStateKey);
     if (!nextAccount) {
       throw createError.accountNotFound(accountId);
     }
@@ -1213,7 +1190,8 @@ export class AccountsRepository {
     const derivedId = claims?.email
       ? buildAccountStorageId(claims.email, claims.accountId, claims.organizationId)
       : undefined;
-    let changed = syncActiveAccountState(index, derivedId);
+    let changed = this.homeScopeMigrationPending;
+    changed = syncActiveAccountState(index, derivedId, Date.now(), this.codexHomeStateKey) || changed;
     if (derivedId && previousActiveId !== derivedId) {
       reconcileStatusBarSelections(index, derivedId, previousActiveId);
       changed = true;
@@ -1429,11 +1407,7 @@ export class AccountsRepository {
    * 打开 Codex Home 目录
    */
   async openCodexHome(): Promise<void> {
-    const codexHome = process.env["CODEX_HOME"]?.trim()
-      ? process.env["CODEX_HOME"].replace(/^['"]|['"]$/g, "")
-      : path.join(os.homedir(), ".codex");
-
-    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(path.join(codexHome, "auth.json")));
+    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(path.join(getCodexHome(), "auth.json")));
   }
 
   /**
@@ -1441,9 +1415,16 @@ export class AccountsRepository {
    */
   private async readIndex(): Promise<CodexManagerIndex> {
     if (this.indexReadInFlight) return this.indexReadInFlight;
-    const pending = this.readIndexInternal().finally(() => {
-      if (this.indexReadInFlight === pending) this.indexReadInFlight = undefined;
-    });
+    const pending = this.readIndexInternal()
+      .then((index) => {
+        if (scopeActiveAccountState(index, this.codexHomeStateKey)) {
+          this.homeScopeMigrationPending = true;
+        }
+        return index;
+      })
+      .finally(() => {
+        if (this.indexReadInFlight === pending) this.indexReadInFlight = undefined;
+      });
     this.indexReadInFlight = pending;
     return pending;
   }
@@ -1538,6 +1519,7 @@ export class AccountsRepository {
    */
   private writeIndex(index: CodexManagerIndex, options: { notifyAccountSync?: boolean } = {}): void {
     assertWriteAllowed(this.state);
+    this.homeScopeMigrationPending = false;
     const previousIndex = this.state.pendingSave ?? this.state.cache?.data;
     const previousIds = new Set(previousIndex?.accounts.map((account) => account.id) ?? []);
     const nextIds = new Set(index.accounts.map((account) => account.id));
@@ -1562,7 +1544,8 @@ export class AccountsRepository {
       indexPath: this.indexPath,
       index,
       tempSuffix: INDEX_TEMP_SUFFIX,
-      backupCount: INDEX_BACKUP_COUNT
+      backupCount: INDEX_BACKUP_COUNT,
+      activeCodexHomeKey: this.codexHomeStateKey
     });
   }
 

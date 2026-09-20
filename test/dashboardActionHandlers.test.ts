@@ -200,7 +200,10 @@ describe("executeDashboardActionMessage", () => {
     expect(unloadAuthFileMock).toHaveBeenCalledOnce();
     expect(context.repo.setAccountEnabled).toHaveBeenCalledWith("active-account", false);
     expect(syncActiveAccountFromAuthFile).toHaveBeenCalledOnce();
-    expect(workspaceUpdate).toHaveBeenCalledWith("codexManager.currentWindowRuntimeAccountId", undefined);
+    expect(workspaceUpdate).toHaveBeenCalledWith(
+      expect.stringMatching(/^codexManager\.currentWindowRuntimeAccountId\./),
+      undefined
+    );
     expect(context.schedulePublishState).toHaveBeenCalledOnce();
     expect(result.status).toBe("completed");
     expect(result.payload?.notice).toEqual({
@@ -668,29 +671,6 @@ describe("executeDashboardActionMessage", () => {
     expect(result.status).toBe("completed");
     expect(repo.removeAccount).toHaveBeenCalledWith(account.id);
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
-  });
-
-  it("accepts submitted tags from the VS Code dashboard popover without opening a native prompt", async () => {
-    const account = { id: "webview-tags-target", email: "tags@example.com", tags: ["old"] };
-    const repo = {
-      getAccount: vi.fn().mockResolvedValue(account),
-      setAccountTags: vi.fn().mockResolvedValue(undefined),
-      flush: vi.fn().mockResolvedValue(undefined)
-    } as unknown as DashboardActionContext["repo"];
-    const context = { ...createContext(), repo, hostKind: "webview" as const };
-    vi.mocked(vscode.window.showInputBox).mockClear();
-
-    const result = await executeDashboardActionMessage(context, {
-      type: "dashboard:action",
-      action: "updateTags",
-      requestId: "req-webview-tags-submitted",
-      accountId: account.id,
-      payload: { mode: "set", submittedTags: ["team", "priority"] }
-    });
-
-    expect(result.status).toBe("completed");
-    expect(repo.setAccountTags).toHaveBeenCalledWith(account.id, ["team", "priority"]);
-    expect(vscode.window.showInputBox).not.toHaveBeenCalled();
   });
 
   it("uses the port host encrypted-sync callbacks instead of VS Code prompts", async () => {

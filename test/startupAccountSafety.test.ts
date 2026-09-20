@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import type * as vscode from "vscode";
 import { unloadDisabledActiveAccountOnStartup } from "../src/presentation/workbench/startupAccountSafety";
+import { getCurrentWindowRuntimeAccountKey } from "../src/presentation/workbench/windowRuntimeAccount";
 
 describe("disabled active account startup safety", () => {
   it("automatically unloads an account that stayed disabled across restart", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     const unload = vi.fn().mockResolvedValue(undefined);
     const repo = {
-      listAccounts: vi.fn().mockResolvedValue([
-        { id: "active", email: "active@example.com", isActive: true, enabled: false }
-      ]),
+      listAccounts: vi
+        .fn()
+        .mockResolvedValue([{ id: "active", email: "active@example.com", isActive: true, enabled: false }]),
       syncActiveAccountFromAuthFile: vi.fn().mockResolvedValue(undefined)
     };
     const context = { workspaceState: { update } } as unknown as vscode.ExtensionContext;
@@ -20,15 +21,15 @@ describe("disabled active account startup safety", () => {
 
     expect(unload).toHaveBeenCalledOnce();
     expect(repo.syncActiveAccountFromAuthFile).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledWith("codexManager.currentWindowRuntimeAccountId", undefined);
+    expect(update).toHaveBeenCalledWith(getCurrentWindowRuntimeAccountKey(), undefined);
   });
 
   it("leaves an enabled current account loaded", async () => {
     const unload = vi.fn().mockResolvedValue(undefined);
     const repo = {
-      listAccounts: vi.fn().mockResolvedValue([
-        { id: "active", email: "active@example.com", isActive: true, enabled: true }
-      ]),
+      listAccounts: vi
+        .fn()
+        .mockResolvedValue([{ id: "active", email: "active@example.com", isActive: true, enabled: true }]),
       syncActiveAccountFromAuthFile: vi.fn()
     };
     const context = { workspaceState: { update: vi.fn() } } as unknown as vscode.ExtensionContext;

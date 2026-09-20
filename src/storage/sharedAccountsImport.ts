@@ -10,7 +10,6 @@ import { normalizeQuotaSummary } from "../utils/quotaWindows";
 import {
   fromSharedQuota,
   fromSharedQuotaError,
-  normalizeAccountTags,
   normalizeEpochMs,
   previewSharedEntry,
   sanitizeOptionalValue
@@ -81,7 +80,6 @@ export function applySharedAccountEntry(
   account.accountId = sanitizeOptionalValue(entry.account_id) ?? account.accountId;
   account.organizationId = sanitizeOptionalValue(entry.organization_id) ?? account.organizationId;
   account.accountName = sanitizeOptionalValue(entry.account_name) ?? account.accountName;
-  account.tags = normalizeAccountTags(entry.tags, account.tags);
   if (entry.token_refresh_enabled !== undefined) {
     account.tokenRefreshEnabled = entry.token_refresh_enabled !== false;
   }

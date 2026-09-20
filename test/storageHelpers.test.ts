@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { CodexManagerAccountRecord } from "../src/core/types";
 import { buildAccountStorageId } from "../src/utils/accountIdentity";
-import { cloneIndex, markActive, parseAccountsIndex, syncActiveAccountState } from "../src/storage/accountsIndex";
+import {
+  cloneIndex,
+  markActive,
+  parseAccountsIndex,
+  scopeActiveAccountState,
+  syncActiveAccountState
+} from "../src/storage/accountsIndex";
 import { buildAccountRecordDraft } from "../src/storage/accountMetadata";
 import {
-  addAccountTags,
   dismissAccountHealthIssue,
   removeAccountFromIndex,
-  removeAccountTags,
   setAccountEnabled,
   setAccountQueuePriority,
   setStatusBarVisibility,
@@ -21,7 +25,6 @@ import {
 } from "../src/storage/accountProfileMaintenance";
 import {
   fromSharedQuota,
-  normalizeAccountTags,
   previewSharedEntry,
   restoreSharedTokens,
   toSharedAccountJson
@@ -95,17 +98,32 @@ describe("accountsIndex helpers", () => {
     expect(parsed.currentAccountId).toBe("a");
     expect(parsed.accounts).toHaveLength(1);
   });
+
+  it("migrates and isolates active accounts by CODEX_HOME", () => {
+    const index = cloneIndex({
+      currentAccountId: "a",
+      accounts: [
+        { id: "a", email: "a@example.com", isActive: true, createdAt: 1, updatedAt: 1 },
+        { id: "b", email: "b@example.com", isActive: false, createdAt: 1, updatedAt: 1 }
+      ]
+    });
+
+    expect(scopeActiveAccountState(index, "home-a")).toBe(true);
+    expect(index.activeAccountIdsByCodexHome).toEqual({ "home-a": "a" });
+    markActive(index, "b", 50, "home-b");
+    expect(index.activeAccountIdsByCodexHome).toEqual({ "home-a": "a", "home-b": "b" });
+
+    expect(scopeActiveAccountState(index, "home-a")).toBe(true);
+    expect(index.currentAccountId).toBe("a");
+    expect(index.accounts.map((account) => account.isActive)).toEqual([true, false]);
+
+    expect(scopeActiveAccountState(index, "home-b")).toBe(true);
+    expect(index.currentAccountId).toBe("b");
+    expect(index.accounts.map((account) => account.isActive)).toEqual([false, true]);
+  });
 });
 
 describe("sharedAccounts helpers", () => {
-  it("normalizes and deduplicates tags", () => {
-    expect(normalizeAccountTags([" Foo ", "foo", "Bar", "", "baz".repeat(10)])).toEqual([
-      "foo",
-      "Bar",
-      "bazbazbazbazbazbazbazbaz"
-    ]);
-  });
-
   it("restores tokens and previews shared entries", () => {
     const idToken = createJwt({
       email: "dev@example.com",
@@ -467,24 +485,6 @@ describe("accountMutations helpers", () => {
 
     expect(updated?.dismissedHealthIssueKey).toBe("quota-low");
     expect(index.accounts[0]?.updatedAt).toBe(99);
-  });
-
-  it("adds and removes normalized tags for selected accounts", () => {
-    const index = cloneIndex({
-      currentAccountId: "a",
-      accounts: [
-        { id: "a", email: "a@example.com", isActive: true, tags: ["team"], createdAt: 1, updatedAt: 1 },
-        { id: "b", email: "b@example.com", isActive: false, tags: ["ops"], createdAt: 1, updatedAt: 1 }
-      ]
-    });
-
-    const added = addAccountTags(index, ["a", "b"], [" Team ", "prod", "PROD"], 20);
-    const removed = removeAccountTags(index, ["a"], ["TEAM"], 30);
-
-    expect(added).toHaveLength(2);
-    expect(index.accounts[0]?.tags).toEqual(["PROD"]);
-    expect(index.accounts[1]?.tags).toEqual(["ops", "Team", "PROD"]);
-    expect(removed[0]?.updatedAt).toBe(30);
   });
 
   it("limits extra status bar accounts and reconciles previous active account on switch", () => {

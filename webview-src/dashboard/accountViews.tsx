@@ -69,7 +69,6 @@ export function RecoveryPanel(props: {
 export function BatchSelectionBar(props: {
   copy: DashboardCopy;
   selectedCount: number;
-  tagsPending: boolean;
   refreshPending: boolean;
   resyncPending: boolean;
   removePending: boolean;
@@ -78,15 +77,12 @@ export function BatchSelectionBar(props: {
   onResync: () => void;
   onRemove: () => void;
   onShare: () => void;
-  onAddTags: () => void;
-  onRemoveTags: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [popoverPosition, setPopoverPosition] = useState({ top: 0, right: 0 });
-  const anyPending =
-    props.tagsPending || props.refreshPending || props.resyncPending || props.removePending || props.sharePending;
+  const anyPending = props.refreshPending || props.resyncPending || props.removePending || props.sharePending;
 
   useEffect(() => {
     if (!open) return;
@@ -149,17 +145,6 @@ export function BatchSelectionBar(props: {
                 role="menu"
                 style={{ top: `${popoverPosition.top}px`, right: `${popoverPosition.right}px` }}
               >
-                <button type="button" role="menuitem" disabled={props.tagsPending} onClick={() => run(props.onAddTags)}>
-                  {props.copy.addTagsBtn}
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={props.tagsPending}
-                  onClick={() => run(props.onRemoveTags)}
-                >
-                  {props.copy.removeTagsBtn}
-                </button>
                 <button
                   type="button"
                   role="menuitem"

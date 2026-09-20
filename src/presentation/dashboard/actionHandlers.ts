@@ -40,7 +40,6 @@ import {
   saveWorkspaceFile,
   WorkspaceTerminalCommandError
 } from "../../services/workspaceTools";
-import { getDashboardCopy } from "../../application/dashboard/copy";
 import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindings";
 import type {
   DashboardActionName,
@@ -51,9 +50,9 @@ import type {
   DashboardHostMessage
 } from "../../domain/dashboard/types";
 import type { CodexManagerAccountRecord, CodexManagerBackup } from "../../core/types";
+import type { DashboardLanguage } from "../../localization/languages";
 import { getErrorMessage } from "../../core";
 import type { SwitchAccountCommandResult } from "../../application/accounts/commandService";
-import type { DashboardLanguage } from "../../localization/languages";
 import { AccountsRepository } from "../../storage";
 import { AnnouncementService, type AnnouncementOptions } from "../../services/announcements";
 import { runWithConcurrencyLimit } from "../../utils/concurrency";
@@ -63,10 +62,9 @@ import { clearAutoSwitchLock, setAutoSwitchLock } from "../workbench/autoSwitchS
 import { getTokenAutomationSnapshot } from "../workbench/tokenAutomationState";
 import {
   clearQueuedAccountSwitch,
-  CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY,
+  getCurrentWindowRuntimeAccountKey,
   setCurrentWindowRuntimeAccountId
 } from "../workbench/windowRuntimeAccount";
-import { promptForTags } from "../tagEditor";
 import { parseSharedJsonInput, toFailureMessage, toImportActionPayload } from "./actionUtils";
 import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
 
@@ -236,8 +234,7 @@ async function executeDashboardActionMessageCore(
       (message.action === "switch" ||
         message.action === "remove" ||
         message.action === "batchRemove" ||
-        message.action === "consumeResetCredit" ||
-        message.action === "updateTags");
+        message.action === "consumeResetCredit");
     payload =
       COMMAND_ROUTED_ACTIONS.has(message.action) && !browserDirectMutation ? await execute() : await executeAndFlush();
   } catch (error) {
@@ -534,16 +531,6 @@ async function runDashboardAction(
     case "refreshView":
       await ctx.publishState(true);
       return undefined;
-    case "updateTags":
-      return handleUpdateTags(
-        ctx.repo,
-        ctx.resolveLanguage,
-        ctx.schedulePublishState,
-        payload,
-        account,
-        translate,
-        ctx.hostKind === "browser"
-      );
     case "setAutoSwitchLock":
       return handleAutoSwitchLock(payload, account, ctx.schedulePublishState);
     case "batchRefresh":
@@ -571,7 +558,7 @@ async function runDashboardAction(
         }
       }
       await ctx.repo.syncActiveAccountFromAuthFile();
-      await ctx.context.workspaceState.update(CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY, undefined);
+      await ctx.context.workspaceState.update(getCurrentWindowRuntimeAccountKey(), undefined);
       setCurrentWindowRuntimeAccountId(undefined);
       clearQueuedAccountSwitch();
       ctx.schedulePublishState();
@@ -1268,65 +1255,6 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function handleUpdateTags(
-  repo: AccountsRepository,
-  resolveLanguage: () => DashboardLanguage,
-  schedulePublishState: () => void,
-  payload: DashboardActionPayload | undefined,
-  account: CodexManagerAccountRecord | undefined,
-  translate: ReturnType<typeof t>,
-  browserHost = false
-) {
-  const targetIds = payload?.accountIds?.length ? payload.accountIds : account ? [account.id] : [];
-  if (!targetIds.length) {
-    return undefined;
-  }
-  const dashboardCopy = getDashboardCopy(resolveLanguage());
-  const targetAccount = targetIds.length === 1 ? (account ?? (await repo.getAccount(targetIds[0]!))) : undefined;
-  const mode = payload?.mode === "add" || payload?.mode === "remove" ? payload.mode : "set";
-  const tags =
-    payload?.submittedTags ??
-    (browserHost
-      ? undefined
-      : await promptForTags({
-          copy: dashboardCopy,
-          mode,
-          initialTags: targetAccount?.tags ?? [],
-          label: targetIds.length === 1 ? targetAccount?.email : undefined
-        }));
-  if (tags === undefined) {
-    if (browserHost) {
-      throw new Error("Enter tags in the browser dashboard, then try again.");
-    }
-    return undefined;
-  }
-
-  if (mode === "add") {
-    await repo.addAccountTags(targetIds, tags);
-  } else if (mode === "remove") {
-    await repo.removeAccountTags(targetIds, tags);
-  } else if (targetIds.length === 1) {
-    await repo.setAccountTags(targetIds[0]!, tags);
-  } else {
-    await repo.addAccountTags(targetIds, tags);
-  }
-  schedulePublishState();
-  const message = translate("message.batchTagsSummary", {
-    count: targetIds.length,
-    action:
-      mode === "add"
-        ? dashboardCopy.addTagsBtn
-        : mode === "remove"
-          ? dashboardCopy.removeTagsBtn
-          : dashboardCopy.editTagsBtn
-  });
-  if (browserHost) {
-    return { notice: { level: "info" as const, message } };
-  }
-  void vscode.window.showInformationMessage(message);
-  return undefined;
 }
 
 function handleAutoSwitchLock(

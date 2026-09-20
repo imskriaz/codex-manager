@@ -211,6 +211,10 @@ export interface CodexManagerAccountRecord {
 export interface CodexManagerIndex {
   /** 当前激活账号 ID */
   currentAccountId?: string;
+  /** Active-account state schema. Version 1 scopes selections by a hashed CODEX_HOME identity. */
+  activeAccountStateVersion?: 1;
+  /** Active account selected independently for each resolved CODEX_HOME. */
+  activeAccountIdsByCodexHome?: Record<string, string>;
   /** 账号列表 */
   accounts: CodexManagerAccountRecord[];
 }

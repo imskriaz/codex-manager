@@ -7,9 +7,8 @@ import type {
   DashboardSettings,
   DashboardState
 } from "../../src/domain/dashboard/types";
-import { getSensitiveDisplayValue, isAccountAttention, renderTagList } from "./helpers";
+import { getSensitiveDisplayValue, isAccountAttention } from "./helpers";
 import {
-  EditTagsIcon,
   renderDetailsIcon,
   DownloadIcon,
   renderRefreshIcon,
@@ -23,7 +22,7 @@ import {
 import { ActionButton } from "./primitives";
 import { MetricRow, renderHealthPill } from "./accountMetricPrimitives";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
-import { isDashboardAccountOutOfQuota } from "./accountSorting";
+import { hasDashboardAutoQueueCapability } from "./accountSorting";
 
 export function resolvePrimaryAccountControl(
   account: Pick<DashboardAccountViewModel, "healthKind" | "dismissedHealth">
@@ -52,6 +51,20 @@ export function resolveCardPlanBadge(planTypeLabel?: string): "Free" | "Plus" | 
   if (normalized.includes("plus")) return "Plus";
   if (normalized.includes("free")) return "Free";
   return undefined;
+}
+
+export function isAccountOverConfiguredQuota(
+  account: DashboardAccountViewModel,
+  settings: Pick<
+    DashboardSettings,
+    "hourlyQuotaControlEnabled" | "autoSwitchHourlyThreshold" | "autoSwitchWeeklyThreshold"
+  >
+): boolean {
+  return !hasDashboardAutoQueueCapability(account, {
+    hourlyEnabled: settings.hourlyQuotaControlEnabled,
+    hourlyThreshold: settings.autoSwitchHourlyThreshold,
+    weeklyThreshold: settings.autoSwitchWeeklyThreshold
+  });
 }
 
 /** A foreign claim needs the rescue explanation only while rescue is locked. */
@@ -121,7 +134,6 @@ export function SavedAccountCard(props: {
   queuePriorityPending: boolean;
   tokenRefreshPending: boolean;
   manualTokenRefreshPending: boolean;
-  updateTagsPending: boolean;
   consumeResetCreditPending: boolean;
   exportPending: boolean;
   selected: boolean;
@@ -129,7 +141,6 @@ export function SavedAccountCard(props: {
   compactRow?: boolean;
   onToggleSelected: () => void;
   onExportAuth: () => void;
-  onEditTags: () => void;
   onAction: (
     action:
       | "details"
@@ -326,7 +337,9 @@ export function SavedAccountCard(props: {
       ? copy.resyncProfileBtn
       : copy.syncProfileBtn;
   const hasErrorHealth = isAccountAttention(account);
-  const outOfQuota = isDashboardAccountOutOfQuota(account);
+  // Match the Saved Accounts “Over quota” count/filter exactly. Dashboard
+  // auto-switch thresholds, not only literal 0%, determine the red treatment.
+  const outOfQuota = isAccountOverConfiguredQuota(account, settings);
   const healthReason = resolveCardHealthReason(account);
   const accessAction = resolveAccountAccessAction(account);
   const accessActionLabel =
@@ -663,16 +676,6 @@ export function SavedAccountCard(props: {
                       >
                         <DownloadIcon /> <span>{exportLabel}</span>
                       </button>
-                      <button
-                        type="button"
-                        disabled={props.busy}
-                        onClick={() => {
-                          setActionsOpen(false);
-                          props.onEditTags();
-                        }}
-                      >
-                        <EditTagsIcon /> <span>{copy.editTagsBtn}</span>
-                      </button>
                       {showResyncButton ? (
                         <button
                           type="button"
@@ -817,7 +820,6 @@ export function SavedAccountCard(props: {
                       </span>
                     ) : null}
                     {renderHealthPill(account)}
-                    {renderTagList(account.tags)}
                   </h3>
                 </div>
                 {hasErrorHealth ? (
@@ -845,20 +847,6 @@ export function SavedAccountCard(props: {
                   )}
                 </button>
                 {renderPrimaryAccountControl()}
-                <button
-                  class="saved-control saved-edit-tags-btn"
-                  type="button"
-                  aria-label={copy.editTagsBtn}
-                  title={copy.editTagsBtn}
-                  disabled={props.busy}
-                  onClick={props.onEditTags}
-                >
-                  {props.updateTagsPending ? (
-                    <span class="saved-toggle-spinner" aria-hidden="true"></span>
-                  ) : (
-                    <EditTagsIcon />
-                  )}
-                </button>
               </div>
             </div>
 
@@ -1092,11 +1080,6 @@ export function SavedAccountCard(props: {
                 />
                 <CardDetailRow label={copy.userId} value={userIdDisplay} />
               </div>
-              <div class="saved-back-tags">
-                <div class="account-tag-row">
-                  {renderTagList(account.tags) ?? <span class="tag-pill muted">{resolveNoTags(props.lang)}</span>}
-                </div>
-              </div>
               <div class="saved-back-hint">{resolveBackHint(props.lang)}</div>
             </div>
           </div>
@@ -1158,10 +1141,6 @@ function resolveBackStatus(account: DashboardAccountViewModel, lang: DashboardSt
     return lang === "zh" ? "当前激活" : lang === "zh-hant" ? "目前啟用" : "Current active";
   }
   return account.healthLabel;
-}
-
-function resolveNoTags(lang: DashboardState["lang"]): string {
-  return lang === "zh" ? "暂无标签" : lang === "zh-hant" ? "暫無標籤" : "No tags";
 }
 
 function resolveBackHint(lang: DashboardState["lang"]): string {

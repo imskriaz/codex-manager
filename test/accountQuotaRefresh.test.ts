@@ -1258,12 +1258,19 @@ describe("quota warning window validation", () => {
     const executeCommand = vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
     const account = createAccount("auto-select-action", true, 80, 5);
     const target = createAccount("recommended-action", false, 95, 85);
+    target.accountName = "Personal";
     const repo = {
       getAccount: vi.fn(async () => account),
       listAccounts: vi.fn(async () => [account, target])
     };
 
     await maybeWarnForAccount(repo as unknown as AccountsRepository, account.id);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.any(String),
+      "Switch recommended-action@example.com",
+      "Select Account",
+      "Later"
+    );
     await vi.waitFor(() => expect(executeCommand).toHaveBeenCalledWith("codexManager.switchAccount", target));
   });
 

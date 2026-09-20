@@ -1865,15 +1865,13 @@ function credentialFingerprint(entry: SyncAccountEntry): string {
   });
 }
 
-function toSemanticEntry(entry: SyncAccountEntry): Omit<SyncAccountEntry, "last_used"> {
-  const { last_used: _lastUsed, ...semantic } = entry;
+function toSemanticEntry(entry: SyncAccountEntry): Omit<SyncAccountEntry, "last_used" | "tags"> {
+  const { last_used: _lastUsed, tags: _legacyTags, ...semantic } = entry;
   return semantic;
 }
 
 function canonicalizeAccounts(accounts: SyncAccountEntry[]): SyncAccountEntry[] {
-  return [...accounts]
-    .map((entry) => ({ ...entry, tags: entry.tags ? [...entry.tags].sort((a, b) => a.localeCompare(b)) : entry.tags }))
-    .sort((left, right) => getSyncAccountId(left).localeCompare(getSyncAccountId(right)));
+  return [...accounts].sort((left, right) => getSyncAccountId(left).localeCompare(getSyncAccountId(right)));
 }
 
 function canonicalizeSyncAccountDeletions(deletions: readonly SyncAccountDeletion[]): SyncAccountDeletion[] {

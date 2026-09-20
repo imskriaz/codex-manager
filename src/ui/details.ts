@@ -11,7 +11,6 @@ import { getCodexManagerConfiguration, normalizeDashboardTheme } from "../infras
 import type { DashboardLanguage } from "../localization/languages";
 import { getIntlLocale } from "../localization/languages";
 import { detailCopyResources } from "../localization/resources/details";
-import { promptForTags } from "../presentation/tagEditor";
 import { getAutoSwitchRuntimeSnapshot } from "../presentation/workbench/autoSwitchState";
 import { getTokenAutomationSnapshot } from "../presentation/workbench/tokenAutomationState";
 import { fetchDailyUsageBreakdown } from "../services";
@@ -114,41 +113,6 @@ export function openDetailsPanel(
 
       const current = await detailsPanelState.repo.getAccount(detailsPanelState.accountId);
       if (!current) {
-        return;
-      }
-
-      if (message.type === "details:edit-tags") {
-        const copy = getCopy();
-        const dashboardCopy = getDashboardCopy(copy.lang);
-        const tags = await promptForTags({
-          copy: {
-            editTagsBtn: copy.editTagsBtn,
-            addTagsBtn: dashboardCopy.addTagsBtn,
-            removeTagsBtn: dashboardCopy.removeTagsBtn,
-            tagsHelp: copy.tagsHelp,
-            tagsPlaceholder: dashboardCopy.tagsPlaceholder,
-            tagsRequiredError: dashboardCopy.tagsRequiredError,
-            tagsTooManyError: dashboardCopy.tagsTooManyError,
-            tagsTooLongError: dashboardCopy.tagsTooLongError
-          },
-          mode: "set",
-          initialTags: current.tags ?? [],
-          label: current.email
-        });
-        if (tags === undefined) {
-          void vscode.window.showInformationMessage("Account tag update cancelled.");
-          return;
-        }
-        try {
-          await detailsPanelState.repo!.setAccountTags(current.id, tags);
-          await refreshDetailsPanel();
-          void vscode.window.showInformationMessage(`Updated tags for ${current.email}.`);
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          void (error instanceof CrossWindowOperationBusyError
-            ? vscode.window.showWarningMessage(detail)
-            : vscode.window.showErrorMessage(`Could not update account tags: ${detail}`));
-        }
         return;
       }
     });
@@ -361,6 +325,15 @@ function renderHtml(
       </div>`
         ]
       : []),
+    ...(quota?.codeReviewWindowPresent
+      ? [
+          `<div class="quota-card">
+        <h2>${escapeHtml(copy.reviewQuota)}</h2>
+        <div class="quota-value" style="--metric-color:${colorForPercentage(quota?.codeReviewPercentage)};">${renderQuotaValue(quota?.codeReviewPercentage)}</div>
+        <div class="meta">${escapeHtml(copy.reset)} ${renderLiveReset(quota?.codeReviewResetTime, copy)}</div>
+      </div>`
+        ]
+      : []),
     ...(quota?.additionalRateLimits ?? []).filter(isUserFacingAdditionalQuotaLimit).flatMap((limit) => {
       const cards: string[] = [];
       if (limit.hourlyWindowPresent) {
@@ -429,11 +402,6 @@ function renderHtml(
           <div class="meta"><strong>${escapeHtml(copy.status)}:</strong> ${escapeHtml(accountStatus)}</div>
         </div>
         <div class="detail-actions">
-          <div class="detail-actions-head">${escapeHtml(copy.tagsLabel)}</div>
-          <div class="detail-tags-row">
-            <div class="detail-tags">${renderTagListHtml(account.tags, copy.noTags)}</div>
-            <button class="detail-inline-btn" type="button" data-role="details-edit-tags">${escapeHtml(copy.editTagsBtn)}</button>
-          </div>
           ${
             autoSwitchLockedUntil
               ? `<div class="detail-note"><strong>${escapeHtml(copy.autoSwitchLockedUntil)}:</strong> ${renderLiveTimestamp(autoSwitchLockedUntil, copy)}</div>`
@@ -761,10 +729,6 @@ type DetailCopy = {
   lastQuotaRefresh: string;
   resetUnknown: string;
   never: string;
-  tagsLabel: string;
-  noTags: string;
-  tagsHelp: string;
-  editTagsBtn: string;
   lockAutoSwitchBtn: string;
   unlockAutoSwitchBtn: string;
   autoSwitchLockedUntil: string;
@@ -809,19 +773,4 @@ function renderHealthBadge(
     default:
       return "";
   }
-}
-
-function renderTagListHtml(tags: string[] | undefined, emptyLabel: string): string {
-  if (!tags?.length) {
-    return `<span class="tag-pill muted">${escapeHtml(emptyLabel)}</span>`;
-  }
-
-  const visible = tags.slice(0, 4);
-  const remaining = tags.length - visible.length;
-  return [
-    ...visible.map((tag) => `<span class="tag-pill">${escapeHtml(tag)}</span>`),
-    remaining > 0 ? `<span class="tag-pill muted">+${remaining}</span>` : ""
-  ]
-    .filter(Boolean)
-    .join("");
 }

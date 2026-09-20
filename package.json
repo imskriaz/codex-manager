@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -111,7 +111,7 @@
         "codexManager.autoSwitchEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Automatically switch away from the active account when its quota falls below the configured hourly or weekly threshold. Candidates are ranked by highest remaining 5-hour quota, then highest weekly quota."
+          "markdownDescription": "Automatically switch away from the active account when its quota falls below the configured 5-hour or long-window threshold. The long window is shown as weekly or monthly according to each account."
         },
         "codexManager.hourlyQuotaControlEnabled": {
           "type": "boolean",
@@ -135,7 +135,7 @@
           "minimum": 0,
           "maximum": 20,
           "default": 0,
-          "markdownDescription": "Automatic account switching threshold for the weekly quota. Switching is triggered when the active account drops to or below this percentage."
+          "markdownDescription": "Automatic account switching threshold for the account's long-window quota (weekly or monthly). Switching is triggered when the account drops to or below this percentage."
         },
         "codexManager.autoSwitchRefreshAllBeforeSwitchEnabled": {
           "type": "boolean",
@@ -152,7 +152,7 @@
           "minimum": 1,
           "maximum": 100,
           "default": 1,
-          "markdownDescription": "Weekly quota percentage at or below which the reset plan may consume a reset credit."
+          "markdownDescription": "Long-window quota percentage (weekly or monthly) at or below which the reset plan may consume a reset credit."
         },
         "codexManager.autoSwitchLockMinutes": {
           "type": "number",
@@ -176,7 +176,7 @@
         "codexManager.quotaWarningEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show a warning notification when the active account's 5-hour or weekly remaining quota drops below the configured threshold."
+          "markdownDescription": "Show a warning notification when the active account's 5-hour or long-window remaining quota drops below the configured threshold."
         },
         "codexManager.quotaWarningThreshold": {
           "type": "number",
@@ -190,7 +190,7 @@
           "minimum": 0,
           "maximum": 90,
           "default": 1,
-          "markdownDescription": "Warning threshold percentage for the active account's weekly remaining quota."
+          "markdownDescription": "Warning threshold percentage for the active account's long-window remaining quota (weekly or monthly)."
         },
         "codexManager.quotaGreenThreshold": {
           "type": "number",

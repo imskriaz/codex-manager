@@ -1,7 +1,12 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { cloneIndex } from "./accountsIndex";
-import { backupCurrentIndex, countAvailableBackups, writeIndexAtomically } from "./accountsPersistence";
+import {
+  backupCurrentIndex,
+  countAvailableBackups,
+  readIndexSnapshot,
+  writeIndexAtomically
+} from "./accountsPersistence";
 import type { CodexManagerIndex } from "../core/types";
 import { createError } from "../core/errors";
 import type { AccountsRepositoryState } from "./accountsRepositoryState";
@@ -118,10 +123,24 @@ export async function persistIndexWithBackups(params: {
   index: CodexManagerIndex;
   tempSuffix: string;
   backupCount: number;
+  activeCodexHomeKey?: string;
 }): Promise<void> {
   try {
     await runCrossWindowExclusive(INDEX_PERSIST_OPERATION_KEY, "Account index save", async () => {
       await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
+      if (params.activeCodexHomeKey) {
+        const current = await readIndexSnapshot(params.indexPath).catch(() => undefined);
+        if (current?.activeAccountIdsByCodexHome) {
+          const localAccountId = params.index.activeAccountIdsByCodexHome?.[params.activeCodexHomeKey];
+          params.index.activeAccountStateVersion = 1;
+          params.index.activeAccountIdsByCodexHome = { ...current.activeAccountIdsByCodexHome };
+          if (localAccountId) {
+            params.index.activeAccountIdsByCodexHome[params.activeCodexHomeKey] = localAccountId;
+          } else {
+            delete params.index.activeAccountIdsByCodexHome[params.activeCodexHomeKey];
+          }
+        }
+      }
       await backupCurrentIndex(params.indexPath, params.backupCount);
       await writeIndexAtomically(params.indexPath, params.index, params.tempSuffix);
       const availableBackups = await countAvailableBackups(params.indexPath, params.backupCount);

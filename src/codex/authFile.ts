@@ -31,9 +31,19 @@ let authFileOperationChain: Promise<void> = Promise.resolve();
 export function getCodexHome(): string {
   const envHome = process.env["CODEX_HOME"]?.trim();
   if (envHome) {
-    return envHome.replace(/^['"]|['"]$/g, "");
+    return path.resolve(envHome.replace(/^['"]|['"]$/g, ""));
   }
-  return path.join(os.homedir(), ".codex");
+  return path.resolve(os.homedir(), ".codex");
+}
+
+/**
+ * Stable, non-identifying bucket key for state that must follow one Codex
+ * runtime home without storing the user's filesystem path in the account index.
+ */
+export function getCodexHomeStateKey(codexHome = getCodexHome()): string {
+  const resolved = path.resolve(codexHome);
+  const canonical = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
 /**

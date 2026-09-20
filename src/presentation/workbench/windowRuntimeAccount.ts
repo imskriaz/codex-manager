@@ -1,7 +1,7 @@
+import { getCodexHomeStateKey } from "../../codex";
+
 let currentWindowRuntimeAccountId: string | undefined;
-let queuedAccountSwitch:
-  | { fromAccountId?: string; toAccountId: string; queuedAt: number }
-  | undefined;
+let queuedAccountSwitch: { fromAccountId?: string; toAccountId: string; queuedAt: number } | undefined;
 
 export function getCurrentWindowRuntimeAccountId(): string | undefined {
   return currentWindowRuntimeAccountId;
@@ -23,8 +23,7 @@ export function queueAccountSwitch(toAccountId: string, fromAccountId?: string):
 }
 
 export function getQueuedAccountSwitch():
-  | { fromAccountId?: string; toAccountId: string; queuedAt: number }
-  | undefined {
+  { fromAccountId?: string; toAccountId: string; queuedAt: number } | undefined {
   return queuedAccountSwitch;
 }
 
@@ -34,3 +33,8 @@ export function clearQueuedAccountSwitch(): void {
 
 /** Workspace-state key used to remember the account loaded by this extension host. */
 export const CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY = "codexManager.currentWindowRuntimeAccountId";
+
+/** CODEX_HOME-scoped workspace-state key; the unscoped constant remains a read-only migration source. */
+export function getCurrentWindowRuntimeAccountKey(): string {
+  return `${CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY}.${getCodexHomeStateKey()}`;
+}

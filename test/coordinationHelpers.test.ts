@@ -134,7 +134,7 @@ describe("workbench refresh signature helpers", () => {
     expect(shouldRunAccountScheduler(2)).toBe(true);
   });
 
-  it("changes signatures when tags change", () => {
+  it("ignores legacy tag fields in refresh signatures", () => {
     const workbenchBase = buildWorkbenchRefreshSignature({
       observedAuthIdentity: "acct-1",
       indexHealth: {
@@ -152,7 +152,7 @@ describe("workbench refresh signature helpers", () => {
       accounts: [{ id: "a", email: "a@example.com", tags: ["ops"], isActive: true, createdAt: 1, updatedAt: 2 }]
     });
 
-    expect(workbenchBase).not.toBe(workbenchNext);
+    expect(workbenchBase).toBe(workbenchNext);
 
     const dashboardBase = buildDashboardStateSignature({
       lang: "en",
@@ -285,7 +285,7 @@ describe("workbench refresh signature helpers", () => {
       ]
     });
 
-    expect(dashboardBase).not.toBe(dashboardNext);
+    expect(dashboardBase).toBe(dashboardNext);
   });
 
   it("changes workbench signatures when token automation state changes", () => {

@@ -51,8 +51,7 @@ describe("dashboard preferences", () => {
         filter: "attention",
         view: "list",
         metricPriority: "weekly",
-        accountSearch: "alice",
-        tagFilter: ["team"]
+        accountSearch: "alice"
       })
     });
     Object.defineProperty(globalThis, "window", {
@@ -65,20 +64,17 @@ describe("dashboard preferences", () => {
       filter: "attention",
       view: "list",
       metricPriority: "weekly",
-      accountSearch: "alice",
-      tagFilter: ["team"]
+      accountSearch: "alice"
     });
     saveUiPreferences({
       filter: "healthy",
       view: "cards",
       metricPriority: "hourly",
-      accountSearch: "bob",
-      tagFilter: ["personal"]
+      accountSearch: "bob"
     });
     expect(JSON.parse(storage.getItem("codexManager.dashboardUiPreferences.v2")!)).toMatchObject({
       filter: "healthy",
-      accountSearch: "bob",
-      tagFilter: ["personal"]
+      accountSearch: "bob"
     });
   });
 
@@ -93,8 +89,7 @@ describe("dashboard preferences", () => {
       filter: "all",
       view: "cards",
       metricPriority: "hourly",
-      accountSearch: "",
-      tagFilter: []
+      accountSearch: ""
     });
   });
 });

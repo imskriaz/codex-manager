@@ -78,3 +78,8 @@ export function resolveLongQuotaLabel(
   const labels = variant === "quota" ? MONTHLY_QUOTA_LABELS : MONTHLY_LABELS;
   return labels[language] ?? labels.en;
 }
+
+/** Settings apply the same long-window threshold to weekly and monthly plans. */
+export function resolveLongQuotaSettingsLabel(language: DashboardLanguage, weeklyFallback: string): string {
+  return `${weeklyFallback} / ${MONTHLY_LABELS[language] ?? MONTHLY_LABELS.en}`;
+}

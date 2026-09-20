@@ -1,4 +1,3 @@
-import type { ComponentChildren } from "preact";
 import type { DashboardAccountViewModel, DashboardSettings, DashboardState } from "../../src/domain/dashboard/types";
 import { formatResetRelativeTime } from "../../src/utils/resetTime";
 
@@ -197,25 +196,6 @@ export function normalizeThresholds(green: number, yellow: number): { green: num
     green: safeGreen,
     yellow: safeYellow
   };
-}
-
-export function renderTagList(tags: string[]): ComponentChildren {
-  if (!tags.length) {
-    return null;
-  }
-
-  const visible = tags.slice(0, 2);
-  const remaining = tags.length - visible.length;
-  return (
-    <>
-      {visible.map((tag) => (
-        <span key={tag} class="tag-pill">
-          {tag}
-        </span>
-      ))}
-      {remaining > 0 ? <span class="tag-pill muted">+{remaining}</span> : null}
-    </>
-  );
 }
 
 export function resolveLockMinutes(value: number): number {

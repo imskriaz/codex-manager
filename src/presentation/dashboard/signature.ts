@@ -15,7 +15,6 @@ export function buildDashboardStateSignature(state: DashboardState): string {
         account.accountId ?? "",
         account.organizationId ?? "",
         account.userId ?? "",
-        account.tags.join(","),
         account.isActive ? "1" : "0",
         account.switchQueued ? "1" : "0",
         account.sessionStartedAt ?? "",

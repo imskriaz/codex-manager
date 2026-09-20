@@ -17,7 +17,6 @@ export function buildWorkbenchRefreshSignature(params: {
         account.accountId ?? "",
         account.organizationId ?? "",
         account.userId ?? "",
-        (account.tags ?? []).join(","),
         account.isActive ? "1" : "0",
         account.sessionStartedAt ?? "",
         account.totalUsageMs ?? 0,

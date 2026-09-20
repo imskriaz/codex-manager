@@ -6,7 +6,6 @@ export type UiPreferences = {
   view: DashboardView;
   metricPriority: string;
   accountSearch: string;
-  tagFilter: string[];
 };
 
 export const UI_PREFERENCES_STORAGE_KEY = "codexManager.dashboardUiPreferences.v2";
@@ -16,8 +15,7 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   filter: "all",
   view: "cards",
   metricPriority: "hourly",
-  accountSearch: "",
-  tagFilter: []
+  accountSearch: ""
 };
 
 export function loadUiPreferences(): UiPreferences {
@@ -30,10 +28,7 @@ export function loadUiPreferences(): UiPreferences {
       filter: (parsed.filter as string) === "pinned" ? "all" : (parsed.filter ?? DEFAULT_UI_PREFERENCES.filter),
       view: currentRaw ? (parsed.view ?? "cards") : "cards",
       metricPriority: parsed.metricPriority ?? DEFAULT_UI_PREFERENCES.metricPriority,
-      accountSearch: typeof parsed.accountSearch === "string" ? parsed.accountSearch : "",
-      tagFilter: Array.isArray(parsed.tagFilter)
-        ? parsed.tagFilter.filter((tag): tag is string => typeof tag === "string")
-        : []
+      accountSearch: typeof parsed.accountSearch === "string" ? parsed.accountSearch : ""
     };
   } catch {
     return DEFAULT_UI_PREFERENCES;

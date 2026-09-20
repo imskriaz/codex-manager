@@ -2,12 +2,12 @@ import * as fsSync from "fs";
 import { createError } from "../core/errors";
 import type { CodexManagerAccountRecord, CodexManagerIndex } from "../core/types";
 import { normalizeQuotaSummary } from "../utils/quotaWindows";
-import { normalizeAccountTags } from "./sharedAccounts";
 
-export function markActive(index: CodexManagerIndex, accountId: string, now = Date.now()): void {
+export function markActive(index: CodexManagerIndex, accountId: string, now = Date.now(), codexHomeKey?: string): void {
   const startsNewSession = index.currentAccountId !== accountId;
   const previousAccountId = index.currentAccountId;
   index.currentAccountId = accountId;
+  setScopedActiveAccount(index, codexHomeKey, accountId);
   for (const account of index.accounts) {
     const nextActive = account.id === accountId;
     if (startsNewSession && account.id === previousAccountId) {
@@ -20,12 +20,64 @@ export function markActive(index: CodexManagerIndex, accountId: string, now = Da
   }
 }
 
-export function syncActiveAccountState(index: CodexManagerIndex, accountId: string | undefined, now = Date.now()): boolean {
-  const normalizedAccountId = accountId && index.accounts.some((account) => account.id === accountId) ? accountId : undefined;
+export function scopeActiveAccountState(index: CodexManagerIndex, codexHomeKey: string): boolean {
+  const knownAccountIds = new Set(index.accounts.map((account) => account.id));
+  let changed = false;
+
+  if (index.activeAccountStateVersion !== 1) {
+    index.activeAccountStateVersion = 1;
+    index.activeAccountIdsByCodexHome = { ...(index.activeAccountIdsByCodexHome ?? {}) };
+    if (index.currentAccountId && knownAccountIds.has(index.currentAccountId)) {
+      index.activeAccountIdsByCodexHome[codexHomeKey] ??= index.currentAccountId;
+    }
+    changed = true;
+  }
+
+  const scoped = index.activeAccountIdsByCodexHome ?? {};
+  const storedAccountId = scoped[codexHomeKey];
+  const activeAccountId = storedAccountId && knownAccountIds.has(storedAccountId) ? storedAccountId : undefined;
+  if (storedAccountId && !activeAccountId) {
+    delete scoped[codexHomeKey];
+    changed = true;
+  }
+  index.activeAccountIdsByCodexHome = scoped;
+  if (index.currentAccountId !== activeAccountId) {
+    index.currentAccountId = activeAccountId;
+    changed = true;
+  }
+  for (const account of index.accounts) {
+    const nextActive = account.id === activeAccountId;
+    if (account.isActive !== nextActive) {
+      account.isActive = nextActive;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function setScopedActiveAccount(index: CodexManagerIndex, codexHomeKey: string | undefined, accountId?: string): void {
+  if (!codexHomeKey) return;
+  index.activeAccountStateVersion = 1;
+  index.activeAccountIdsByCodexHome ??= {};
+  if (accountId) index.activeAccountIdsByCodexHome[codexHomeKey] = accountId;
+  else delete index.activeAccountIdsByCodexHome[codexHomeKey];
+}
+
+export function syncActiveAccountState(
+  index: CodexManagerIndex,
+  accountId: string | undefined,
+  now = Date.now(),
+  codexHomeKey?: string
+): boolean {
+  const normalizedAccountId =
+    accountId && index.accounts.some((account) => account.id === accountId) ? accountId : undefined;
   const startsNewSession = index.currentAccountId !== normalizedAccountId;
   const previousAccountId = index.currentAccountId;
   let changed = startsNewSession;
   index.currentAccountId = normalizedAccountId;
+  const previousScopedAccountId = codexHomeKey ? index.activeAccountIdsByCodexHome?.[codexHomeKey] : undefined;
+  setScopedActiveAccount(index, codexHomeKey, normalizedAccountId);
+  if (codexHomeKey && previousScopedAccountId !== normalizedAccountId) changed = true;
 
   for (const account of index.accounts) {
     const nextActive = account.id === normalizedAccountId;
@@ -65,10 +117,13 @@ export function createEmptyIndex(): CodexManagerIndex {
 export function cloneIndex(index: CodexManagerIndex): CodexManagerIndex {
   const normalized: CodexManagerIndex = {
     currentAccountId: index?.currentAccountId,
+    activeAccountStateVersion: index?.activeAccountStateVersion,
+    activeAccountIdsByCodexHome: index?.activeAccountIdsByCodexHome
+      ? { ...index.activeAccountIdsByCodexHome }
+      : undefined,
     accounts: Array.isArray(index?.accounts)
       ? index.accounts.map((account) => ({
           ...account,
-          tags: normalizeAccountTags(account.tags),
           quotaSummary: normalizeQuotaSummary(account.quotaSummary)
         }))
       : []
@@ -125,6 +180,21 @@ function isValidAccountsIndex(value: unknown): value is CodexManagerIndex {
     return false;
   }
 
+  if (candidate.activeAccountStateVersion !== undefined && candidate.activeAccountStateVersion !== 1) {
+    return false;
+  }
+  if (
+    candidate.activeAccountIdsByCodexHome !== undefined &&
+    (!candidate.activeAccountIdsByCodexHome ||
+      typeof candidate.activeAccountIdsByCodexHome !== "object" ||
+      Array.isArray(candidate.activeAccountIdsByCodexHome) ||
+      Object.entries(candidate.activeAccountIdsByCodexHome).some(
+        ([key, accountId]) => !key || typeof accountId !== "string" || !accountId
+      ))
+  ) {
+    return false;
+  }
+
   return candidate.accounts.every((account) => {
     if (!account || typeof account !== "object") {
       return false;
@@ -139,7 +209,9 @@ function isValidAccountsIndex(value: unknown): value is CodexManagerIndex {
       (record.sessionStartedAt === undefined ||
         (typeof record.sessionStartedAt === "number" && Number.isFinite(record.sessionStartedAt))) &&
       (record.totalUsageMs === undefined ||
-        (typeof record.totalUsageMs === "number" && Number.isFinite(record.totalUsageMs) && record.totalUsageMs >= 0)) &&
+        (typeof record.totalUsageMs === "number" &&
+          Number.isFinite(record.totalUsageMs) &&
+          record.totalUsageMs >= 0)) &&
       (record.tags === undefined || (Array.isArray(record.tags) && record.tags.every((tag) => typeof tag === "string")))
     );
   });

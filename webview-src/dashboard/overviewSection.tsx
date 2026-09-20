@@ -9,13 +9,7 @@ import type {
 } from "../../src/domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../../src/core/types";
 import type { DashboardUsageSample } from "../../src/domain/dashboard/types";
-import {
-  formatRelativeTimestamp,
-  formatTimestamp,
-  getSensitiveDisplayValue,
-  renderTagList,
-  resolveLockMinutes
-} from "./helpers";
+import { formatRelativeTimestamp, formatTimestamp, getSensitiveDisplayValue, resolveLockMinutes } from "./helpers";
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
 import { ActionButton } from "./primitives";
 import { MetricGauge } from "./accountMetricPrimitives";
@@ -28,7 +22,6 @@ function createBlankOverviewAccount(copy: DashboardCopy): DashboardAccountViewMo
     id: "overview-placeholder",
     displayName: "",
     email: "",
-    tags: [],
     authProviderLabel: "",
     accountStructureLabel: "",
     workspaceLabel: "",
@@ -235,7 +228,6 @@ export function OverviewSection(props: {
                   </div>
                 </div>
                 {teamNameDisplay ? <div class="overview-account-workspace">{teamNameDisplay}</div> : null}
-                {account.tags.length ? <div class="account-tag-row">{renderTagList(account.tags)}</div> : null}
               </div>
               <div class="overview-meta">
                 <div class="overview-meta-item overview-meta-item-subscription">

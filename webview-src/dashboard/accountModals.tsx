@@ -31,8 +31,6 @@ function resolveAccountInfoCopy(lang: DashboardState["lang"]): {
   userId: string;
   accountId: string;
   organizationId: string;
-  tags: string;
-  noTags: string;
 } {
   if (lang === "zh") {
     return {
@@ -44,9 +42,7 @@ function resolveAccountInfoCopy(lang: DashboardState["lang"]): {
       status: "状态",
       userId: "用户 ID",
       accountId: "账号 ID",
-      organizationId: "组织 ID",
-      tags: "标签",
-      noTags: "无标签"
+      organizationId: "组织 ID"
     };
   }
   if (lang === "zh-hant") {
@@ -59,9 +55,7 @@ function resolveAccountInfoCopy(lang: DashboardState["lang"]): {
       status: "狀態",
       userId: "使用者 ID",
       accountId: "帳號 ID",
-      organizationId: "組織 ID",
-      tags: "標籤",
-      noTags: "無標籤"
+      organizationId: "組織 ID"
     };
   }
   return {
@@ -73,9 +67,7 @@ function resolveAccountInfoCopy(lang: DashboardState["lang"]): {
     status: "Status",
     userId: "User ID",
     accountId: "Account ID",
-    organizationId: "Organization ID",
-    tags: "Tags",
-    noTags: "No tags"
+    organizationId: "Organization ID"
   };
 }
 
@@ -120,7 +112,6 @@ export function AccountInfoModal(props: {
             value={getSensitiveDisplayValue(account.organizationId, props.privacyMode, "id", "—")}
             mono
           />
-          <InfoRow label={copy.tags} value={account.tags.length ? account.tags.join(", ") : copy.noTags} />
         </div>
       ) : null}
     </ModalShell>

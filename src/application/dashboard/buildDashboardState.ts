@@ -9,7 +9,12 @@ import { parseCreditsOrderValue } from "../../domain/autoQueueOrder";
 import { AccountsRepository } from "../../storage";
 import { ExtensionSettingsStore } from "../../infrastructure/config/extensionSettings";
 import { formatAccountStructure, formatAuthProvider, formatPlanType, getDashboardCopy } from "./copy";
-import { CodexManagerAccountRecord, CodexCreditsSummary, CodexTokens, type CodexAnnouncementState } from "../../core/types";
+import {
+  CodexManagerAccountRecord,
+  CodexCreditsSummary,
+  CodexTokens,
+  type CodexAnnouncementState
+} from "../../core/types";
 import { resolveCodexAppLaunchPath } from "../../utils/codexApp";
 import {
   getCurrentWindowRuntimeAccountId,
@@ -208,7 +213,9 @@ export function resolveDashboardQueuedSwitch(
     : undefined;
 }
 
-export function sortDashboardAccounts<T extends Pick<CodexManagerAccountRecord, "id" | "isActive" | "createdAt" | "email">>(
+export function sortDashboardAccounts<
+  T extends Pick<CodexManagerAccountRecord, "id" | "isActive" | "createdAt" | "email">
+>(
   accounts: readonly T[],
   currentWindowAccountId?: string,
   accountViewStateById?: Map<string, { healthPriority: number }>
@@ -247,11 +254,7 @@ function mapAccount(
   const dismissedHealth = viewState?.dismissedHealth ?? isHealthDismissed(account, health);
   const automationState = viewState?.automationState;
   const switchQueued = queuedSwitch?.toAccountId === account.id;
-  const displayedIsActive = switchQueued
-    ? false
-    : queuedSwitch?.fromAccountId === account.id
-      ? true
-      : account.isActive;
+  const displayedIsActive = switchQueued ? false : queuedSwitch?.fromAccountId === account.id ? true : account.isActive;
   const subscription = resolveSubscriptionDisplay(account, viewState?.tokens, copy, lang);
   const subscriptionExpiresAt = readSubscriptionTimestampMs(account, viewState?.tokens);
   const creditsOrderValue = parseCreditsOrderValue(account.quotaSummary?.credits);
@@ -275,7 +278,6 @@ function mapAccount(
     email: account.email,
     authMode: account.authMode ?? "chatgpt",
     accountName: account.accountName,
-    tags: [...(account.tags ?? [])],
     authProviderLabel: formatAuthProvider(account.authProvider, lang),
     accountStructureLabel: formatAccountStructure(account.accountStructure, lang),
     workspaceLabel: resolveWorkspaceDisplay(account),
@@ -371,7 +373,7 @@ export function buildMetrics(
     metrics.push({
       key: "review",
       label: copy.reviewLabel,
-      period: "weekly",
+      period: isMonthlyQuotaWindow(undefined, quota.codeReviewWindowMinutes) ? "monthly" : "weekly",
       percentage: quota.codeReviewPercentage,
       resetAt: quota.codeReviewResetTime,
       requestsLeft: quota.codeReviewRequestsLeft,
@@ -477,7 +479,10 @@ export function resolveSubscriptionDisplay(
   };
 }
 
-function readSubscriptionTimestampMs(account: CodexManagerAccountRecord, tokens: CodexTokens | undefined): number | undefined {
+function readSubscriptionTimestampMs(
+  account: CodexManagerAccountRecord,
+  tokens: CodexTokens | undefined
+): number | undefined {
   const idAuth = getOpenAiAuthClaims(tokens?.idToken);
   const accessAuth = getOpenAiAuthClaims(tokens?.accessToken);
   const raw = normalizeSubscriptionValue(

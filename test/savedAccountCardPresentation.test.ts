@@ -7,7 +7,8 @@ import {
   resolveCompactIdentityBadge,
   resolvePrimaryAccountControl,
   resolveViewportPopoverPosition,
-  shouldOpenClaimPopover
+  shouldOpenClaimPopover,
+  isAccountOverConfiguredQuota
 } from "../webview-src/dashboard/savedAccountCard";
 
 describe("saved account card presentation", () => {
@@ -43,7 +44,7 @@ describe("saved account card presentation", () => {
     const header = cardView.slice(0, cardView.indexOf('<div class="saved-top-actions"'));
 
     expect(header).not.toContain('<div class="saved-meta">');
-    expect(header.indexOf('{copy.current}')).toBeLessThan(header.indexOf("{cardPlanBadge}"));
+    expect(header.indexOf("{copy.current}")).toBeLessThan(header.indexOf("{cardPlanBadge}"));
     expect(styles).toMatch(/\.saved-identity-line h3\s*{[^}]*flex-wrap:\s*nowrap/s);
     expect(styles).toMatch(/\.saved-identity-line h3\s*{[^}]*overflow:\s*hidden/s);
   });
@@ -55,7 +56,9 @@ describe("saved account card presentation", () => {
     expect(source).toContain('class="saved-credits-line saved-running-device"');
     expect(source).toContain("saved-running-device");
     expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*border: 1px solid var\(--danger\)/s);
-    expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*background: color-mix\(in srgb, var\(--danger\) 8%, transparent\)/s);
+    expect(styles).toMatch(
+      /\.pill\.saved-running-device\s*{[^}]*background: color-mix\(in srgb, var\(--danger\) 8%, transparent\)/s
+    );
     expect(styles).toMatch(/\.pill\.saved-running-device\s*{[^}]*color: var\(--danger\)/s);
     expect(resolveCompactIdentityBadge("DESKTOP-4ISJOQ6")).toEqual({
       kind: "running-device",
@@ -107,6 +110,33 @@ describe("saved account card presentation", () => {
     expect(source).toContain('outOfQuota ? "out-of-quota" : ""');
     expect(styles).toMatch(/\.saved-card\.out-of-quota,[\s\S]*\.saved-table-row\.out-of-quota\s*{[^}]*background:/);
     expect(styles).toMatch(/background:\s*color-mix\(in srgb, var\(--danger\) 9%, var\(--bg-surface\)\)/);
+  });
+
+  it("uses the dashboard quota settings for the red over-quota treatment", () => {
+    const account = {
+      healthKind: "healthy",
+      creditsBalance: 0,
+      creditsUnlimited: false,
+      metrics: [
+        { key: "hourly", period: "hourly", visible: true, percentage: 3 },
+        { key: "weekly", period: "weekly", visible: true, percentage: 70 }
+      ]
+    } as never;
+
+    expect(
+      isAccountOverConfiguredQuota(account, {
+        hourlyQuotaControlEnabled: true,
+        autoSwitchHourlyThreshold: 5,
+        autoSwitchWeeklyThreshold: 0
+      })
+    ).toBe(true);
+    expect(
+      isAccountOverConfiguredQuota(account, {
+        hourlyQuotaControlEnabled: false,
+        autoSwitchHourlyThreshold: 5,
+        autoSwitchWeeklyThreshold: 0
+      })
+    ).toBe(false);
   });
 
   it("keeps raw provider errors out of the card health reason", () => {

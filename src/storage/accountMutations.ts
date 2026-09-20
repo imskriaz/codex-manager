@@ -2,7 +2,6 @@ import { AccountError, ErrorCode } from "../core/errors";
 import type { CodexManagerAccountRecord, CodexManagerIndex } from "../core/types";
 import { markActive } from "./accountsIndex";
 import { reconcileStatusBarSelections } from "./accountMetadata";
-import { normalizeAccountTags } from "./sharedAccounts";
 
 export function dismissAccountHealthIssue(
   index: CodexManagerIndex,
@@ -20,82 +19,11 @@ export function dismissAccountHealthIssue(
   return account;
 }
 
-export function setAccountTags(
-  index: CodexManagerIndex,
-  accountId: string,
-  tags: string[],
-  now: number
-): CodexManagerAccountRecord | undefined {
-  const account = index.accounts.find((item) => item.id === accountId);
-  if (!account) {
-    return undefined;
-  }
-
-  account.tags = normalizeAccountTags(tags);
-  account.updatedAt = now;
-  return { ...account, tags: [...(account.tags ?? [])] };
-}
-
-export function addAccountTags(
-  index: CodexManagerIndex,
-  accountIds: string[],
-  tags: string[],
-  now: number
-): CodexManagerAccountRecord[] {
-  const normalizedTags = normalizeAccountTags(tags) ?? [];
-  if (!normalizedTags.length) {
-    return [];
-  }
-
-  const idSet = new Set(accountIds);
-  const updated: CodexManagerAccountRecord[] = [];
-
-  for (const account of index.accounts) {
-    if (!idSet.has(account.id)) {
-      continue;
-    }
-
-    account.tags = normalizeAccountTags([...(account.tags ?? []), ...normalizedTags]);
-    account.updatedAt = now;
-    updated.push({ ...account, tags: [...(account.tags ?? [])] });
-  }
-
-  return updated;
-}
-
-export function removeAccountTags(
-  index: CodexManagerIndex,
-  accountIds: string[],
-  tags: string[],
-  now: number
-): CodexManagerAccountRecord[] {
-  const normalizedTags = normalizeAccountTags(tags) ?? [];
-  if (!normalizedTags.length) {
-    return [];
-  }
-
-  const removeSet = new Set(normalizedTags.map((tag) => tag.toLowerCase()));
-  const idSet = new Set(accountIds);
-  const updated: CodexManagerAccountRecord[] = [];
-
-  for (const account of index.accounts) {
-    if (!idSet.has(account.id)) {
-      continue;
-    }
-
-    const nextTags = (account.tags ?? []).filter((tag) => !removeSet.has(tag.toLowerCase()));
-    account.tags = normalizeAccountTags(nextTags);
-    account.updatedAt = now;
-    updated.push({ ...account, tags: [...(account.tags ?? [])] });
-  }
-
-  return updated;
-}
-
 export function switchActiveAccount(
   index: CodexManagerIndex,
   accountId: string,
-  now = Date.now()
+  now = Date.now(),
+  codexHomeKey?: string
 ): CodexManagerAccountRecord | undefined {
   const account = index.accounts.find((item) => item.id === accountId);
   if (!account) {
@@ -103,7 +31,7 @@ export function switchActiveAccount(
   }
 
   const previousActiveId = index.currentAccountId;
-  markActive(index, accountId, now);
+  markActive(index, accountId, now, codexHomeKey);
   reconcileStatusBarSelections(index, accountId, previousActiveId);
   return index.accounts.find((item) => item.id === accountId);
 }
@@ -160,6 +88,11 @@ export function removeAccountFromIndex(index: CodexManagerIndex, accountId: stri
 
   if (index.currentAccountId === accountId) {
     index.currentAccountId = undefined;
+  }
+  if (index.activeAccountIdsByCodexHome) {
+    for (const [codexHomeKey, activeAccountId] of Object.entries(index.activeAccountIdsByCodexHome)) {
+      if (activeAccountId === accountId) delete index.activeAccountIdsByCodexHome[codexHomeKey];
+    }
   }
 
   return index.accounts.length !== before;

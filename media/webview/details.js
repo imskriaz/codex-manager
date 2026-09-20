@@ -4,7 +4,6 @@
   const html = document.documentElement;
   const media = window.matchMedia("(prefers-color-scheme: light)");
   const privacyButton = document.querySelector("[data-role='privacy-toggle']");
-  const editTagsButton = document.querySelector("[data-role='details-edit-tags']");
   const toggleAutoSwitchLockButton = document.querySelector("[data-role='details-toggle-auto-switch-lock']");
 
   function resolveDashboardTheme() {
@@ -12,10 +11,7 @@
     if (themePreference === "dark" || themePreference === "light") {
       return themePreference;
     }
-    if (
-      document.body.classList.contains("vscode-light") ||
-      html.classList.contains("vscode-light")
-    ) {
+    if (document.body.classList.contains("vscode-light") || html.classList.contains("vscode-light")) {
       return "light";
     }
     if (
@@ -126,12 +122,6 @@
       if (vscode) {
         vscode.postMessage({ type: "details:set-privacy-mode", privacyMode: hidden });
       }
-    });
-  }
-
-  if (editTagsButton && vscode) {
-    editTagsButton.addEventListener("click", () => {
-      vscode.postMessage({ type: "details:edit-tags" });
     });
   }
 

@@ -1162,7 +1162,9 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
     quotaWarningCounts.set(warnKey, warningCount + 1);
     const accountLabel = account.email;
     const switchTarget = selectQuotaWarningSwitchTarget(accounts, account, check.dimension, check.threshold);
-    const switchAccount = switchTarget ? copy.switchAccount(formatAccountToastLabel(switchTarget)) : undefined;
+    // Native notification actions have very limited horizontal space. The
+    // destination email is unambiguous here; omit workspace/plan prefixes.
+    const switchAccount = switchTarget ? copy.switchAccount(switchTarget.email) : undefined;
     const resetAccount = copy.resetAccount(accountLabel);
     const resetAvailable = (account.quotaSummary.resetCreditsAvailable ?? 0) > 0;
     const actions = [

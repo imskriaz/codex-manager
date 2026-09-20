@@ -1,7 +1,12 @@
 # Changelog
 
-## 1.2.1
+## 1.2.2
 
+- Keep each resolved `CODEX_HOME` on its own active saved account while preserving the shared account vault, migrating the former global selection, and preventing one home from overwriting another home's selection.
+- Use the configured automatic-switch quota thresholds consistently for both the Over quota filter/count and red account-card treatment.
+- Keep quota-warning switch actions compact by showing only the destination email address.
+- Present 5-hour, weekly, monthly, code-review, and named additional quotas with the correct window identity across dashboard and account-details surfaces.
+- Remove account tags from dashboard controls, details, filtering, mutations, exports, and synchronization while continuing to accept older stored files that contain legacy tag fields.
 - Try one automatic refresh of an expired access token while building account cards, so valid refresh credentials recover before the reauthorization control is shown in both the VS Code and browser dashboards.
 - Prevent repeated dashboard renders from retrying the same failed refresh token indefinitely, while preserving the reauthorization state when recovery fails.
 

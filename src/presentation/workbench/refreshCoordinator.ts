@@ -8,7 +8,7 @@ import { readCurrentAuthAccountStorageId } from "../../utils/accountIdentity";
 import { refreshQuotaSummaryPanel } from "../dashboard";
 import { AccountsStatusBarProvider, refreshDetailsPanel } from "../../ui";
 import {
-  CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY,
+  getCurrentWindowRuntimeAccountKey,
   needsWindowReloadForAccount,
   setCurrentWindowRuntimeAccountId
 } from "./windowRuntimeAccount";
@@ -36,7 +36,8 @@ export class WorkbenchRefreshCoordinator {
 
   async initializeObservedAuthIdentity(): Promise<void> {
     const detectedAccountId = await this.readObservedAuthIdentity();
-    const persistedAccountId = this.context.workspaceState.get<string>(CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY);
+    const runtimeAccountKey = getCurrentWindowRuntimeAccountKey();
+    const persistedAccountId = this.context.workspaceState.get<string>(runtimeAccountKey);
     const accounts = await this.repo.listAccounts();
     const knownAccountIds = new Set(accounts.map((account) => account.id));
     const accountId =
@@ -49,7 +50,7 @@ export class WorkbenchRefreshCoordinator {
     this.lastObservedAuthIdentity = accountId;
     setCurrentWindowRuntimeAccountId(accountId);
     if (accountId && accountId !== persistedAccountId) {
-      await this.context.workspaceState.update(CURRENT_WINDOW_RUNTIME_ACCOUNT_KEY, accountId);
+      await this.context.workspaceState.update(runtimeAccountKey, accountId);
     }
   }
 
