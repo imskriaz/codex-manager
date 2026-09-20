@@ -23,6 +23,10 @@ function mainQuotaMetric(account: DashboardAccountViewModel): DashboardMetric | 
   );
 }
 
+export function isDashboardMainQuotaExhausted(account: DashboardAccountViewModel): boolean {
+  return (mainQuotaMetric(account)?.percentage ?? 1) <= 0;
+}
+
 export function isDashboardMainQuotaMissing(account: DashboardAccountViewModel): boolean {
   return mainQuotaMetric(account) === undefined;
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.3
+
+- Show a red account-card background only when the primary weekly or monthly quota is exhausted. An empty 5-hour quota alone no longer colors the entire card.
+
 ## 1.2.2
 
 - Keep each resolved `CODEX_HOME` on its own active saved account while preserving the shared account vault, migrating the former global selection, and preventing one home from overwriting another home's selection.

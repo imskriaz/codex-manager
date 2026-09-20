@@ -7,9 +7,9 @@ import {
   resolveCompactIdentityBadge,
   resolvePrimaryAccountControl,
   resolveViewportPopoverPosition,
-  shouldOpenClaimPopover,
-  isAccountOverConfiguredQuota
+  shouldOpenClaimPopover
 } from "../webview-src/dashboard/savedAccountCard";
+import { isDashboardMainQuotaExhausted } from "../webview-src/dashboard/accountSorting";
 
 describe("saved account card presentation", () => {
   it("replaces the enablement toggle with reauthorization in both account layouts", () => {
@@ -107,35 +107,32 @@ describe("saved account card presentation", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
 
-    expect(source).toContain('outOfQuota ? "out-of-quota" : ""');
+    expect(source).toContain('primaryQuotaExhausted ? "out-of-quota" : ""');
     expect(styles).toMatch(/\.saved-card\.out-of-quota,[\s\S]*\.saved-table-row\.out-of-quota\s*{[^}]*background:/);
     expect(styles).toMatch(/background:\s*color-mix\(in srgb, var\(--danger\) 9%, var\(--bg-surface\)\)/);
   });
 
-  it("uses the dashboard quota settings for the red over-quota treatment", () => {
-    const account = {
+  it("colors the card only when its primary weekly or monthly quota is exhausted", () => {
+    const account = (hourly: number, weekly: number, period = "weekly") => ({
       healthKind: "healthy",
       creditsBalance: 0,
       creditsUnlimited: false,
       metrics: [
-        { key: "hourly", period: "hourly", visible: true, percentage: 3 },
-        { key: "weekly", period: "weekly", visible: true, percentage: 70 }
+        { key: "hourly", period: "hourly", visible: true, percentage: hourly },
+        { key: "weekly", period, visible: true, percentage: weekly }
       ]
-    } as never;
+    }) as never;
 
+    expect(isDashboardMainQuotaExhausted(account(0, 70))).toBe(false);
+    expect(isDashboardMainQuotaExhausted(account(70, 1))).toBe(false);
+    expect(isDashboardMainQuotaExhausted(account(70, 0))).toBe(true);
+    expect(isDashboardMainQuotaExhausted(account(0, 0))).toBe(true);
+    expect(isDashboardMainQuotaExhausted(account(70, 0, "monthly"))).toBe(true);
+    expect(isDashboardMainQuotaExhausted({ metrics: [{ key: "hourly", visible: true, percentage: 0 }] } as never)).toBe(
+      false
+    );
     expect(
-      isAccountOverConfiguredQuota(account, {
-        hourlyQuotaControlEnabled: true,
-        autoSwitchHourlyThreshold: 5,
-        autoSwitchWeeklyThreshold: 0
-      })
-    ).toBe(true);
-    expect(
-      isAccountOverConfiguredQuota(account, {
-        hourlyQuotaControlEnabled: false,
-        autoSwitchHourlyThreshold: 5,
-        autoSwitchWeeklyThreshold: 0
-      })
+      isDashboardMainQuotaExhausted({ metrics: [{ key: "weekly", visible: false, percentage: 0 }] } as never)
     ).toBe(false);
   });
 

@@ -22,7 +22,7 @@ import {
 import { ActionButton } from "./primitives";
 import { MetricRow, renderHealthPill } from "./accountMetricPrimitives";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
-import { hasDashboardAutoQueueCapability } from "./accountSorting";
+import { isDashboardMainQuotaExhausted } from "./accountSorting";
 
 export function resolvePrimaryAccountControl(
   account: Pick<DashboardAccountViewModel, "healthKind" | "dismissedHealth">
@@ -51,20 +51,6 @@ export function resolveCardPlanBadge(planTypeLabel?: string): "Free" | "Plus" | 
   if (normalized.includes("plus")) return "Plus";
   if (normalized.includes("free")) return "Free";
   return undefined;
-}
-
-export function isAccountOverConfiguredQuota(
-  account: DashboardAccountViewModel,
-  settings: Pick<
-    DashboardSettings,
-    "hourlyQuotaControlEnabled" | "autoSwitchHourlyThreshold" | "autoSwitchWeeklyThreshold"
-  >
-): boolean {
-  return !hasDashboardAutoQueueCapability(account, {
-    hourlyEnabled: settings.hourlyQuotaControlEnabled,
-    hourlyThreshold: settings.autoSwitchHourlyThreshold,
-    weeklyThreshold: settings.autoSwitchWeeklyThreshold
-  });
 }
 
 /** A foreign claim needs the rescue explanation only while rescue is locked. */
@@ -337,9 +323,9 @@ export function SavedAccountCard(props: {
       ? copy.resyncProfileBtn
       : copy.syncProfileBtn;
   const hasErrorHealth = isAccountAttention(account);
-  // Match the Saved Accounts “Over quota” count/filter exactly. Dashboard
-  // auto-switch thresholds, not only literal 0%, determine the red treatment.
-  const outOfQuota = isAccountOverConfiguredQuota(account, settings);
+  // The card background reflects only an exhausted primary quota window.
+  // The 5-hour window and auto-switch thresholds keep their own indicators.
+  const primaryQuotaExhausted = isDashboardMainQuotaExhausted(account);
   const healthReason = resolveCardHealthReason(account);
   const accessAction = resolveAccountAccessAction(account);
   const accessActionLabel =
@@ -362,7 +348,7 @@ export function SavedAccountCard(props: {
     props.busy ? "is-busy" : "",
     props.selected ? "selected" : "",
     hasErrorHealth ? "health-error" : "",
-    outOfQuota ? "out-of-quota" : "",
+    primaryQuotaExhausted ? "out-of-quota" : "",
     runningOnOtherDevice ? "remote-device" : ""
   ]
     .filter(Boolean)
