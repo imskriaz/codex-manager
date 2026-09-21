@@ -357,7 +357,7 @@ export function OverviewSection(props: {
                   label={resolveSyncNowLabel(props.lang)}
                   pending={props.syncPending}
                   disabled={props.disabled}
-                  onClick={settings.encryptedSyncEnabled ? props.onSyncNow : props.onConfigureSync}
+                  onClick={props.onSyncNow}
                 >
                   {resolveOverviewToolbarLabel("sync", props.lang)}
                 </ActionButton>

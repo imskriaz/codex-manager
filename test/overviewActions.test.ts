@@ -92,7 +92,7 @@ describe("overview actions", () => {
     expect(resolveOverviewRefreshMode(true)).toBe("sync");
   });
 
-  it("routes every Sync click to sync instead of opening password setup", () => {
+  it("opens password setup only when the shared password is missing", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const start = main.indexOf("const handleSyncNow = (): void => {");
     const end = main.indexOf("\n  };", start);
@@ -100,8 +100,13 @@ describe("overview actions", () => {
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const handler = main.slice(start, end);
+    expect(handler).toContain("snapshot.encryptedSyncNeedsConfiguration === true");
+    expect(handler).toContain("handleConfigureEncryptedSync();");
     expect(handler).toContain('sendAction("syncNow");');
-    expect(handler).not.toContain("handleConfigureEncryptedSync");
+
+    const overview = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
+    expect(overview).toContain("onClick={props.onSyncNow}");
+    expect(overview).not.toContain("onClick={settings.encryptedSyncEnabled ? props.onSyncNow : props.onConfigureSync}");
   });
 
   it("keeps toolbar labels compact", () => {

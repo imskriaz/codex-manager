@@ -1524,6 +1524,10 @@ function App() {
   };
 
   const handleSyncNow = (): void => {
+    if (snapshot.encryptedSyncNeedsConfiguration === true) {
+      handleConfigureEncryptedSync();
+      return;
+    }
     sendAction("syncNow");
   };
 

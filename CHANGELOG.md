@@ -2,7 +2,7 @@
 
 ## 1.2.4
 
-- Route Sync button clicks directly to encrypted cross-PC synchronization. Password setup and password changes remain available through their dedicated controls instead of being opened by a normal Sync action.
+- Route the overview Sync action through password configuration only when the shared password is missing; otherwise run encrypted cross-PC synchronization directly. Password setup and password changes remain available through their dedicated controls.
 
 ## 1.2.3
 
