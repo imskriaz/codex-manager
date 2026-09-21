@@ -107,6 +107,12 @@ describe("overview actions", () => {
     const overview = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
     expect(overview).toContain("onClick={props.onSyncNow}");
     expect(overview).not.toContain("onClick={settings.encryptedSyncEnabled ? props.onSyncNow : props.onConfigureSync}");
+    expect(overview).toContain('{providedAccount ? (');
+    expect(overview).not.toContain('{providedAccount && contextAction !== "reload" ? (');
+
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    expect(settings).toContain("props.syncPending");
+    expect(settings).toContain("aria-busy={props.syncPending}");
   });
 
   it("keeps toolbar labels compact", () => {

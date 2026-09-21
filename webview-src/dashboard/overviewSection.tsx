@@ -417,7 +417,7 @@ export function OverviewSection(props: {
                               ⇄ {resolveOverviewMenuLabel("switch", props.lang)}
                             </button>
                           ) : null}
-                          {providedAccount && contextAction !== "reload" ? (
+                          {providedAccount ? (
                             <button
                               type="button"
                               role="menuitem"

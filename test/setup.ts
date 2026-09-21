@@ -11,6 +11,9 @@ vi.mock("vscode", () => ({
   env: {
     language: "en"
   },
+  authentication: {
+    getAccounts: vi.fn(async () => [])
+  },
   commands: {
     executeCommand: vi.fn()
   },

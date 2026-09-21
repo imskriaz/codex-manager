@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.5
+
+- Allow manual cross-PC sync to use VS Code Settings Sync when it is active even if VS Code does not expose its signed-in account through the extension authentication API.
+- Prevent duplicate Settings Sync requests from the Data settings panel while a sync is running, and show the pending state in the initiating dashboard.
+- Keep Reload available in the account More menu at all times so the active account can always be reapplied to the current VS Code window.
+
 ## 1.2.4
 
 - Route the overview Sync action through password configuration only when the shared password is missing; otherwise run encrypted cross-PC synchronization directly. Password setup and password changes remain available through their dedicated controls.

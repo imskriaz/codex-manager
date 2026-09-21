@@ -1196,9 +1196,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private async ensureSettingsSyncReady(showFailure = true): Promise<boolean> {
     try {
-      if (!(await this.hasSettingsSyncAccount())) {
-        throw new Error("No Microsoft or GitHub account is signed in to VS Code.");
-      }
+      // The Authentication API is not an authoritative view of the account
+      // used by Settings Sync. In particular, getAccounts() can be empty while
+      // Settings Sync is active. Let the Settings Sync command report whether
+      // the service can run instead of rejecting a healthy signed-in session.
       await vscode.commands.executeCommand("workbench.userDataSync.actions.syncNow");
       encryptedSyncNeedsSettingsSync = false;
       return true;
@@ -1212,39 +1213,6 @@ export class EncryptedSyncManager implements vscode.Disposable {
       }
       return false;
     }
-  }
-
-  private async hasSettingsSyncAccount(): Promise<boolean> {
-    let authentication:
-      | {
-          getAccounts?: (providerId: string) => Thenable<readonly unknown[]>;
-        }
-      | undefined;
-    try {
-      authentication = (
-        vscode as unknown as {
-          authentication?: {
-            getAccounts?: (providerId: string) => Thenable<readonly unknown[]>;
-          };
-        }
-      ).authentication;
-    } catch {
-      // Older test/runtime shims may not expose the authentication namespace.
-      return true;
-    }
-    if (!authentication?.getAccounts) {
-      return true;
-    }
-    const accounts = await Promise.all(
-      ["microsoft", "github"].map(async (providerId) => {
-        try {
-          return await authentication.getAccounts!(providerId);
-        } catch {
-          return [];
-        }
-      })
-    );
-    return accounts.some((providerAccounts) => providerAccounts.length > 0);
   }
 
   private isEnabled(): boolean {

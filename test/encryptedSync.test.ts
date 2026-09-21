@@ -202,6 +202,24 @@ describe("encrypted account sync", () => {
     vi.mocked(vscode.commands.executeCommand).mockReset().mockResolvedValue(undefined);
   });
 
+  it("runs Settings Sync when its authentication account is not exposed to extensions", async () => {
+    vi.mocked(vscode.authentication.getAccounts).mockResolvedValue([]);
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+    const manager = new EncryptedSyncManager({} as vscode.ExtensionContext, {} as never);
+
+    const ready = await (
+      manager as unknown as {
+        ensureSettingsSyncReady(showFailure?: boolean): Promise<boolean>;
+      }
+    ).ensureSettingsSyncReady();
+
+    expect(ready).toBe(true);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.userDataSync.actions.syncNow");
+    expect(vscode.authentication.getAccounts).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
   it("restores credentials from the encrypted user-owned vault after reinstall", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-durable-vault-"));
     const legacyVaultPath = path.join(directory, "encrypted-accounts-vault.json");

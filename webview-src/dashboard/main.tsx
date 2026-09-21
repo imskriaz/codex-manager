@@ -2173,6 +2173,7 @@ function App() {
         onImportBackup={modals.openImportModal}
         onConfigureSync={handleConfigureEncryptedSync}
         onSyncNow={handleSyncNow}
+        syncPending={syncPending}
         onSetRegistryOverride={handleRegistryOverride}
         registryOverridePending={isActionPending("setEncryptedSyncRegistryOverride")}
       />

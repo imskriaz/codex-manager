@@ -69,6 +69,7 @@ export function SettingsOverlay(props: {
   onImportBackup: () => void;
   onConfigureSync: () => void;
   onSyncNow: () => void;
+  syncPending: boolean;
   onSetCrossPcSyncEnabled: (enabled: boolean) => void;
   crossPcSyncPending: boolean;
   onSetRegistryOverride: (enabled: boolean) => void;
@@ -753,9 +754,10 @@ export function SettingsOverlay(props: {
                     class="settings-action-btn"
                     type="button"
                     onClick={props.onSyncNow}
-                    disabled={!props.settings.encryptedSyncEnabled || props.crossPcSyncPending}
+                    disabled={!props.settings.encryptedSyncEnabled || props.crossPcSyncPending || props.syncPending}
+                    aria-busy={props.syncPending}
                   >
-                    {transferCopy.syncNow}
+                    {props.syncPending ? `${transferCopy.syncNow}…` : transferCopy.syncNow}
                   </button>
                 </div>
               </SettingsToggleBlock>
