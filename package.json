@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.5",
+  "version": "1.2.6-pre1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -122,6 +122,12 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Automatically reload the current VS Code window after an automatic account switch when the active runtime account changes."
+        },
+        "codexManager.autoResumeEnabled": {
+          "type": "boolean",
+          "scope": "machine",
+          "default": false,
+          "markdownDescription": "Preserve running Codex sessions in persistent workspace storage before an automatic reload and reopen them in VS Code after the reload completes."
         },
         "codexManager.autoSwitchHourlyThreshold": {
           "type": "number",

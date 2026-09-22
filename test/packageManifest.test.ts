@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.2.5");
+    expect(manifest.version).toBe("1.2.6-pre1");
   });
 
   it("ships a Marketplace changelog", () => {
@@ -129,6 +129,21 @@ describe("extension manifest configuration", () => {
       default: false
     });
     expect(property?.markdownDescription).toContain("Automatically reload");
+  });
+
+  it("declares auto resume as an opt-in setting", () => {
+    const manifestPath = path.resolve(__dirname, "../package.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
+      contributes?: {
+        configuration?: {
+          properties?: Record<string, { type?: string; scope?: string; default?: unknown; markdownDescription?: string }>;
+        };
+      };
+    };
+
+    const property = manifest.contributes?.configuration?.properties?.["codexManager.autoResumeEnabled"];
+    expect(property).toMatchObject({ type: "boolean", scope: "machine", default: false });
+    expect(property?.markdownDescription).toContain("reopen them in VS Code");
   });
 
   it("declares quota graph history retention with a 7-day default", () => {

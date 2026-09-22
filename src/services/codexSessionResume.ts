@@ -149,6 +149,38 @@ export async function readCodexCliSessionSummary(
   return toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id));
 }
 
+/** Read every currently running, unarchived local session without the dashboard's display limit. */
+export async function readRunningCodexSessionIds(codexHome = resolveCodexHome()): Promise<string[]> {
+  const lockDirectory = path.join(codexHome, SESSION_LOCK_DIRECTORY);
+  const lockEntries = await fs.readdir(lockDirectory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  const sessionIds = lockEntries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".lock"))
+    .map((entry) => entry.name.slice(0, -".lock".length))
+    .filter((sessionId) => SESSION_ID_PATTERN.test(sessionId))
+    .slice(0, MAX_SESSION_SCAN_ENTRIES);
+  if (!sessionIds.length) {
+    return [];
+  }
+
+  const [archivedIds, transcriptPaths] = await Promise.all([
+    readArchivedSessionIds(codexHome),
+    findCliSessionTranscripts(codexHome, new Set(sessionIds))
+  ]);
+  const running: string[] = [];
+  for (const sessionId of sessionIds) {
+    if (archivedIds.has(sessionId)) {
+      continue;
+    }
+    if (await isCliSessionRunning(codexHome, sessionId, transcriptPaths.get(sessionId))) {
+      running.push(sessionId);
+    }
+  }
+  return running;
+}
+
 async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIndexEntry[]> {
   const indexPath = path.join(codexHome, SESSION_INDEX_FILE);
   let snapshot;

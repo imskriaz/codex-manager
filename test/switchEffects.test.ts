@@ -19,7 +19,11 @@ describe("account switch reload effects", () => {
 
     await expect(autoReloadWindowForAccount("next-account")).resolves.toBe(true);
 
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(
+      1,
+      "codexManager.prepareDashboardForExtensionHostRestart",
+      { autoResume: true }
+    );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
@@ -39,7 +43,11 @@ describe("account switch reload effects", () => {
       promptWindowReloadForAccount({ id: "next-account", email: "next@example.com" })
     ).resolves.toBe(true);
 
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(
+      1,
+      "codexManager.prepareDashboardForExtensionHostRestart",
+      { autoResume: false }
+    );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(4, "workbench.action.reloadWindow");

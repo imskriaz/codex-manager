@@ -1212,6 +1212,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "autoSwitchEnabled",
     "hourlyQuotaControlEnabled",
     "autoSwitchReloadWindowEnabled",
+    "autoResumeEnabled",
     "autoSwitchRefreshAllBeforeSwitchEnabled",
     "autoSwitchHourlyThreshold",
     "autoSwitchWeeklyThreshold",

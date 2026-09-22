@@ -20,7 +20,7 @@ export function scheduleExtensionHostReload(
   changeDescription = "Codex credentials changed"
 ): NodeJS.Timeout {
   return setTimeout(() => {
-    void reloadExtensionHostWithWindowFallback().catch((error: unknown) => {
+    void reloadExtensionHostWithWindowFallback(false).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       const message = `${changeDescription}, but VS Code could not reload: ${detail}. Run Developer: Reload Window and try again.`;
       console.error("[codexManager] unable to reload after Codex credentials changed", error);
@@ -94,7 +94,7 @@ export async function promptWindowReloadForAccount(
     );
     if (choice === copy.reloadNow) {
       clearQueuedAccountSwitch();
-      await reloadExtensionHostWithWindowFallback();
+      await reloadExtensionHostWithWindowFallback(false);
       return true;
     }
     const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
@@ -118,14 +118,14 @@ export async function autoReloadWindowForAccount(accountId?: string): Promise<bo
   }
 
   clearQueuedAccountSwitch();
-  await reloadExtensionHostWithWindowFallback();
+  await reloadExtensionHostWithWindowFallback(true);
   return true;
 }
 
 /** Reload the current VS Code window regardless of the queued-account marker. */
 export async function reloadWindowNow(): Promise<boolean> {
   clearQueuedAccountSwitch();
-  await reloadExtensionHostWithWindowFallback();
+  await reloadExtensionHostWithWindowFallback(false);
   return true;
 }
 
@@ -144,8 +144,8 @@ export function deferWindowReloadForAccount(accountId: string): boolean {
   return false;
 }
 
-async function reloadExtensionHostWithWindowFallback(): Promise<void> {
-  await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart");
+async function reloadExtensionHostWithWindowFallback(autoResume: boolean): Promise<void> {
+  await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart", { autoResume });
   // This is the user's explicit reload boundary: discard accumulated native
   // choices and notices before the extension host (or window) restarts.
   try {

@@ -20,6 +20,7 @@ export type DashboardSettingKey =
   | "autoSwitchEnabled"
   | "hourlyQuotaControlEnabled"
   | "autoSwitchReloadWindowEnabled"
+  | "autoResumeEnabled"
   | "autoSwitchHourlyThreshold"
   | "autoSwitchWeeklyThreshold"
   | "autoSwitchRefreshAllBeforeSwitchEnabled"
@@ -54,6 +55,8 @@ export interface DashboardSettings {
   autoSwitchEnabled: boolean;
   hourlyQuotaControlEnabled: boolean;
   autoSwitchReloadWindowEnabled: boolean;
+  /** Preserve running Codex sessions across automatic VS Code reloads. */
+  autoResumeEnabled?: boolean;
   autoSwitchHourlyThreshold: number;
   autoSwitchWeeklyThreshold: number;
   /** Refresh every enabled account before evaluating an automatic switch. */
@@ -274,6 +277,9 @@ export interface DashboardCopy {
   autoSwitchAnyNote: string;
   autoSwitchReloadTitle: string;
   autoSwitchReloadSub: string;
+  autoResumeTitle: string;
+  autoResumeSub: string;
+  autoResumeRequiresSessionsSub: string;
   autoSwitchLockMinutesTitle: string;
   autoSwitchLockMinutesSub: string;
   autoSwitchLockOff: string;

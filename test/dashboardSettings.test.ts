@@ -92,6 +92,23 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).toHaveBeenCalledWith("autoSwitchReloadWindowEnabled", true, vscode.ConfigurationTarget.Global);
   });
 
+  it("accepts the auto resume toggle", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn(),
+      update,
+      inspect: vi.fn(() => ({
+        key: "codexManager.autoResumeEnabled",
+        defaultValue: false,
+        workspaceValue: false
+      }))
+    } as never);
+
+    await expect(handleDashboardSettingUpdate("autoResumeEnabled", true)).resolves.toBe(true);
+
+    expect(update).toHaveBeenCalledWith("autoResumeEnabled", true, vscode.ConfigurationTarget.Global);
+  });
+
   it("always stores the workspace master gate on this PC", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

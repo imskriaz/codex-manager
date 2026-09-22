@@ -39,6 +39,7 @@ export async function handleDashboardSettingUpdate(
     case "autoSwitchEnabled":
     case "hourlyQuotaControlEnabled":
     case "autoSwitchReloadWindowEnabled":
+    case "autoResumeEnabled":
     case "autoSwitchRefreshAllBeforeSwitchEnabled":
     case "autoResetEnabled":
     case "backgroundTokenRefreshEnabled":
@@ -233,6 +234,7 @@ function resolveConfigurationTarget(
   // left a workspace-level override behind in a shared repository.
   if (
     key === "cliIntegrationEnabled" ||
+    key === "autoResumeEnabled" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||
     key === "fullCrossPcAccountSyncEnabled"

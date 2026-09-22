@@ -10,6 +10,7 @@ import {
   readCodexCliSessionMessages,
   readCodexCliSessionSummary,
   readCodexCliSessions,
+  readRunningCodexSessionIds,
   readTrackedCliTurns,
   startCodexCliSession,
   sendCodexCliSessionMessage,
@@ -737,5 +738,18 @@ describe("Codex session integration", () => {
       }],
       defaultModel: "cx/gpt-5.2-codex"
     });
+  });
+
+  it("finds all running session locks without applying the dashboard display limit", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-running-sessions-"));
+    roots.push(root);
+    const secondId = "01a04882-d037-7a42-ad24-9afb61901189";
+    const lockDirectory = path.join(root, "thread-writer-locks");
+    await mkdir(lockDirectory, { recursive: true });
+    await writeFile(path.join(lockDirectory, `${sessionId}.lock`), "");
+    await writeFile(path.join(lockDirectory, `${secondId}.lock`), "");
+    await writeFile(path.join(lockDirectory, "not-a-session.lock"), "");
+
+    await expect(readRunningCodexSessionIds(root)).resolves.toEqual([sessionId, secondId]);
   });
 });

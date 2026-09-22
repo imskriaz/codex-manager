@@ -27,6 +27,7 @@ export class ExtensionSettingsStore {
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
       hourlyQuotaControlEnabled: config.get<boolean>("hourlyQuotaControlEnabled", true),
       autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", false),
+      autoResumeEnabled: config.get<boolean>("autoResumeEnabled", false),
       autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
       autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0)),
       autoSwitchRefreshAllBeforeSwitchEnabled: config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false),

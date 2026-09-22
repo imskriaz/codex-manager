@@ -15,6 +15,11 @@ import {
   restoreQuotaSummaryPanelAfterExtensionHostRestart
 } from "../dashboard";
 import { unloadDisabledActiveAccountOnStartup } from "./startupAccountSafety";
+import {
+  formatAutoResumeResult,
+  persistRunningCodexSessions,
+  resumePersistedCodexSessions
+} from "../../services/codexSessionAutoResume";
 
 const TOKEN_REFRESH_CHECK_INTERVAL_MS = 15 * 60 * 1000;
 const TOKEN_REFRESH_SKEW_SECONDS = 5 * 60;
@@ -140,8 +145,14 @@ export class AccountsWorkbench {
           "dashboard:open-web"
         )
       ),
-      vscode.commands.registerCommand("codexManager.prepareDashboardForExtensionHostRestart", () =>
-        prepareQuotaSummaryPanelForExtensionHostRestart()
+      vscode.commands.registerCommand(
+        "codexManager.prepareDashboardForExtensionHostRestart",
+        async (options?: { autoResume?: boolean }) => {
+          if (options?.autoResume) {
+            await persistRunningCodexSessions(this.context);
+          }
+          return prepareQuotaSummaryPanelForExtensionHostRestart();
+        }
       )
     );
     await measureStep("notifyIndexHealth", async () => {
@@ -197,6 +208,26 @@ export class AccountsWorkbench {
     });
     await measureStep("restoreDashboardAfterExtensionHostRestart", async () => {
       await restoreQuotaSummaryPanelAfterExtensionHostRestart(this.context, this.repo);
+    });
+    await measureStep("autoResumeCodexSessions", async () => {
+      try {
+        const result = await resumePersistedCodexSessions(this.context);
+        const message = formatAutoResumeResult(result);
+        if (!message) {
+          return;
+        }
+        if (result.failed.length) {
+          void vscode.window.showWarningMessage(`${message} Open Sessions and retry the failed conversations.`);
+        } else {
+          void vscode.window.showInformationMessage(message);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn("[codexManager] auto resume failed", error);
+        void vscode.window.showWarningMessage(
+          `Auto resume could not restore running Codex sessions: ${detail}. Open Sessions and retry.`
+        );
+      }
     });
     console.info(
       `[codexManager] activation completed in ${Date.now() - activationStartedAt}ms`,
