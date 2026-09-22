@@ -720,7 +720,7 @@ export function cancelCodexCliSessionTurn(sessionId: string): boolean {
   return child.kill() || child.killed || child.exitCode !== null || child.signalCode !== null;
 }
 
-/** Open an interactive Codex session in a visible terminal. */
+/** Open a local Codex session in the official VS Code conversation editor. */
 export async function openCodexCliSessionInVsCode(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
   if (!vscode.extensions.getExtension(CODEX_EXTENSION_ID)) {
@@ -730,7 +730,11 @@ export async function openCodexCliSessionInVsCode(sessionId: string): Promise<vo
     "vscode.openWith",
     createLocalCodexConversationUri(sessionId),
     CODEX_CONVERSATION_VIEW_TYPE,
-    vscode.ViewColumn.Active
+    {
+      viewColumn: vscode.ViewColumn.Active,
+      preserveFocus: false,
+      preview: false
+    }
   );
 }
 

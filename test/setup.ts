@@ -11,6 +11,29 @@ vi.mock("vscode", () => ({
   env: {
     language: "en"
   },
+  extensions: {
+    getExtension: vi.fn(() => undefined)
+  },
+  Uri: {
+    file: vi.fn((fsPath: string) => ({
+      fsPath,
+      scheme: "file",
+      authority: "",
+      path: fsPath,
+      query: "",
+      with: vi.fn((changes: Record<string, unknown>) => ({
+        fsPath,
+        scheme: changes.scheme ?? "file",
+        authority: changes.authority ?? "",
+        path: fsPath,
+        query: "",
+        ...changes
+      }))
+    }))
+  },
+  ViewColumn: {
+    Active: 1
+  },
   authentication: {
     getAccounts: vi.fn(async () => [])
   },
