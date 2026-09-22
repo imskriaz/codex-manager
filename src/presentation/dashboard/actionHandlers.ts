@@ -11,7 +11,7 @@ import {
   CodexCliTurnCancelledError,
   deleteCodexCliSession,
   forkCodexCliSession,
-  openCodexCliSessionInVsCode,
+  openCodexSessionInVsCode,
   readCodexCliComposerConfig,
   readCodexCliSessionSummary,
   readCodexCliSessions,
@@ -1767,7 +1767,7 @@ async function handleOpenCodexCliSession(sessionId: string | undefined) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
   await ensureCliSessionIsActive(sessionId);
-  await openCodexCliSessionInVsCode(sessionId);
+  await openCodexSessionInVsCode(sessionId);
   return { notice: { level: "info" as const, message: "Opened the session in the Codex extension." } };
 }
 

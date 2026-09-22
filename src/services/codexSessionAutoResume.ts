@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
-import { openCodexCliSessionInVsCode, readRunningCodexSessionIds } from "./codexSessionResume";
+import { openCodexSessionInVsCode, readRunningCodexSessionIds } from "./codexSessionResume";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
 
@@ -45,7 +45,7 @@ export type AutoResumeResult = {
 /** Reopen each persisted session and keep failures visible to the caller. */
 export async function resumePersistedCodexSessions(
   context: AutoResumeContext,
-  openSession: (sessionId: string) => Promise<void> = openCodexCliSessionInVsCode
+  openSession: (sessionId: string) => Promise<void> = openCodexSessionInVsCode
 ): Promise<AutoResumeResult> {
   const sessionIds = await consumePersistedCodexSessionIds(context);
   if (!isAutoResumeAvailable()) {
@@ -75,8 +75,8 @@ export function formatAutoResumeResult(result: AutoResumeResult): string | undef
     return undefined;
   }
   if (!result.failed.length) {
-    return `Auto resume reopened ${result.opened} running Codex session${result.opened === 1 ? "" : "s"}.`;
+    return `Auto resume reopened ${result.opened} running VS Code Codex session${result.opened === 1 ? "" : "s"}.`;
   }
   const failedIds = result.failed.map((failure) => failure.sessionId).join(", ");
-  return `Auto resume reopened ${result.opened} of ${result.attempted} running Codex sessions. Failed to open: ${failedIds}.`;
+  return `Auto resume reopened ${result.opened} of ${result.attempted} running VS Code Codex sessions. Failed to open: ${failedIds}.`;
 }

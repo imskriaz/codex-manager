@@ -198,7 +198,7 @@ const en: DashboardCopy = {
     "Automatically reload VS Code after quota-triggered switching, and restart Codex App too when your restart policy allows it.",
   autoResumeTitle: "Auto resume sessions (Experimental)",
   autoResumeSub:
-    "Keep running Codex sessions in persistent storage before an automatic reload, then reopen them in VS Code.",
+    "Keep running Codex sessions in persistent storage before an automatic reload, then reopen them in the VS Code Codex editor.",
   autoSwitchLockMinutesTitle: "Temporary Lock Duration",
   autoSwitchLockMinutesSub:
     "Default duration when temporarily locking the current account against automatic switching.",

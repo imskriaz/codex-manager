@@ -721,11 +721,15 @@ export function cancelCodexCliSessionTurn(sessionId: string): boolean {
 }
 
 /** Open a local Codex session in the official VS Code conversation editor. */
-export async function openCodexCliSessionInVsCode(sessionId: string): Promise<void> {
+export async function openCodexSessionInVsCode(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
-  if (!vscode.extensions.getExtension(CODEX_EXTENSION_ID)) {
+  const codexExtension = vscode.extensions.getExtension(CODEX_EXTENSION_ID);
+  if (!codexExtension) {
     throw new Error("Install or enable the official Codex extension before opening this session.");
   }
+  // Auto Resume runs during extension-host activation. Await the official
+  // extension so its custom-editor provider is registered before openWith.
+  await codexExtension.activate();
   await vscode.commands.executeCommand(
     "vscode.openWith",
     createLocalCodexConversationUri(sessionId),
@@ -737,6 +741,9 @@ export async function openCodexCliSessionInVsCode(sessionId: string): Promise<vo
     }
   );
 }
+
+/** @deprecated Use openCodexSessionInVsCode; this alias preserves dashboard integrations. */
+export const openCodexCliSessionInVsCode = openCodexSessionInVsCode;
 
 export async function renameCodexCliSession(sessionId: string, name: string): Promise<void> {
   validateSessionId(sessionId);

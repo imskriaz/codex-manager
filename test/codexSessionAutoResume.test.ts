@@ -99,7 +99,7 @@ describe("Codex session auto resume", () => {
     const state = createContext(["session-1", 42, "", null]);
     await expect(consumePersistedCodexSessionIds(state.context)).resolves.toEqual(["session-1"]);
     expect(formatAutoResumeResult({ attempted: 1, opened: 1, failed: [] })).toBe(
-      "Auto resume reopened 1 running Codex session."
+      "Auto resume reopened 1 running VS Code Codex session."
     );
     expect(formatAutoResumeResult({ attempted: 0, opened: 0, failed: [] })).toBeUndefined();
   });
