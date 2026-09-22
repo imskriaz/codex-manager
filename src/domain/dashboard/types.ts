@@ -279,7 +279,6 @@ export interface DashboardCopy {
   autoSwitchReloadSub: string;
   autoResumeTitle: string;
   autoResumeSub: string;
-  autoResumeRequiresSessionsSub: string;
   autoSwitchLockMinutesTitle: string;
   autoSwitchLockMinutesSub: string;
   autoSwitchLockOff: string;

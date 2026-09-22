@@ -644,13 +644,8 @@ export function SettingsOverlay(props: {
                     <div class="settings-stack">
                       <SettingsToggleBlock
                         title={props.copy.autoResumeTitle}
-                        sub={
-                          props.settings.cliIntegrationEnabled
-                            ? props.copy.autoResumeSub
-                            : props.copy.autoResumeRequiresSessionsSub
-                        }
+                        sub={props.copy.autoResumeSub}
                         enabled={props.settings.autoResumeEnabled === true}
-                        disabled={!props.settings.cliIntegrationEnabled}
                         onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
                       />
                     </div>

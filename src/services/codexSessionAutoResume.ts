@@ -67,11 +67,7 @@ export async function resumePersistedCodexSessions(
 }
 
 function isAutoResumeAvailable(): boolean {
-  const configuration = getCodexManagerConfiguration();
-  return (
-    configuration.get<boolean>("autoResumeEnabled", false) &&
-    configuration.get<boolean>("cliIntegrationEnabled", false)
-  );
+  return getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false);
 }
 
 export function formatAutoResumeResult(result: AutoResumeResult): string | undefined {

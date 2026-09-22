@@ -26,13 +26,11 @@ function createContext(initial?: unknown) {
 describe("Codex session auto resume", () => {
   beforeEach(() => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: vi.fn((key: string, fallback?: unknown) =>
-        key === "autoResumeEnabled" || key === "cliIntegrationEnabled" ? true : fallback
-      )
+      get: vi.fn((key: string, fallback?: unknown) => (key === "autoResumeEnabled" ? true : fallback))
     } as never);
   });
 
-  it("persists every unarchived running session before automatic reload", async () => {
+  it("persists running sessions with Session Integration disabled", async () => {
     const state = createContext();
     const ids = await persistRunningCodexSessions(state.context, async () => ["session-1", "session-4", "session-1"]);
 
@@ -53,9 +51,22 @@ describe("Codex session auto resume", () => {
     expect(state.read()).toBeUndefined();
   });
 
-  it("does not restore stored sessions after Session Integration is disabled", async () => {
+  it("restores stored sessions with Session Integration disabled", async () => {
+    const state = createContext(["session-1"]);
+    const openSession = vi.fn();
+
+    await expect(resumePersistedCodexSessions(state.context, openSession)).resolves.toEqual({
+      attempted: 1,
+      opened: 1,
+      failed: []
+    });
+    expect(openSession).toHaveBeenCalledWith("session-1");
+    expect(state.read()).toBeUndefined();
+  });
+
+  it("does not restore stored sessions after Auto Resume is turned off", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: vi.fn((key: string, fallback?: unknown) => (key === "autoResumeEnabled" ? true : fallback))
+      get: vi.fn((_key: string, fallback?: unknown) => fallback)
     } as never);
     const state = createContext(["session-1"]);
     const openSession = vi.fn();

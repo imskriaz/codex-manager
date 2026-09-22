@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.2.6-pre1");
+    expect(manifest.version).toBe("1.2.6-pre2");
   });
 
   it("ships a Marketplace changelog", () => {
@@ -143,6 +143,8 @@ describe("extension manifest configuration", () => {
 
     const property = manifest.contributes?.configuration?.properties?.["codexManager.autoResumeEnabled"];
     expect(property).toMatchObject({ type: "boolean", scope: "machine", default: false });
+    expect(property?.markdownDescription).toContain("Experimental");
+    expect(property?.markdownDescription).toContain("Works without enabling Session Integration");
     expect(property?.markdownDescription).toContain("reopen them in VS Code");
   });
 

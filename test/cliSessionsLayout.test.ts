@@ -7,6 +7,7 @@ import {
   filterCliSessionsBySection
 } from "../webview-src/dashboard/cliSessionsModal";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
+import { getDashboardCopy } from "../src/application/dashboard/copy";
 
 describe("sessions sidebar layout", () => {
   it("keeps Active and Archive session tabs mutually exclusive", () => {
@@ -58,6 +59,18 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain("mergeCachedCliSessions");
     expect(settings).toContain('"Enable workspace (Experimental)"');
     expect(settings).toContain("stored only on this PC");
+  });
+
+  it("labels Auto Resume experimental and leaves its switch available without Session Integration", () => {
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const toggleStart = settings.indexOf("title={props.copy.autoResumeTitle}");
+    const toggle = settings.slice(toggleStart, settings.indexOf("</SettingsToggleBlock>", toggleStart));
+
+    expect(getDashboardCopy("en").autoResumeTitle).toContain("Experimental");
+    expect(toggleStart).toBeGreaterThan(-1);
+    expect(toggle).toContain('onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}');
+    expect(toggle).not.toContain("cliIntegrationEnabled");
+    expect(toggle).not.toContain("disabled=");
   });
 
   it("returns to the workspace list after archive or delete", () => {
