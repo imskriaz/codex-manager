@@ -29,6 +29,19 @@ describe("automatic extension host recovery", () => {
     vi.useRealTimers();
   });
 
+  it("can force recovery after activation fails at the current version", async () => {
+    vi.useFakeTimers();
+    const execute = vi.mocked(vscode.commands.executeCommand);
+    execute.mockClear();
+    const context = { globalState: { get: vi.fn(() => "1.2.8"), update: vi.fn() } } as never;
+
+    scheduleAutomaticExtensionHostRefresh(context, "1.2.8", 50, true);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(execute).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+    vi.useRealTimers();
+  });
+
   it("falls back to a full window reload when host restart is unavailable", async () => {
     vi.useFakeTimers();
     const execute = vi.mocked(vscode.commands.executeCommand);

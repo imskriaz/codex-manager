@@ -69,7 +69,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.window.showErrorMessage(
       `Codex Manager could not finish loading: ${detail}. It will retry automatically.`
     );
-    scheduleAutomaticExtensionHostRefresh(context, extensionVersion);
+    scheduleAutomaticExtensionHostRefresh(context, extensionVersion, 500, true);
   }
 }
 

@@ -10,10 +10,11 @@ const HOST_VERSION_STATE_KEY = "codexManager.lastActivatedHostVersion";
 export function scheduleAutomaticExtensionHostRefresh(
   context: vscode.ExtensionContext,
   version: string,
-  delayMs = 500
+  delayMs = 500,
+  force = false
 ): void {
   const previousVersion = context.globalState.get<string>(HOST_VERSION_STATE_KEY);
-  if (previousVersion === version) {
+  if (!force && previousVersion === version) {
     return;
   }
 
