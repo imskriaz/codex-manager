@@ -2687,6 +2687,8 @@ function normalizePersistedActivity(value: unknown): Record<string, unknown> | u
     {
       Reasoning: "reasoning",
       reasoning: "reasoning",
+      Plan: "plan",
+      plan: "plan",
       CommandExecution: "commandExecution",
       commandExecution: "commandExecution",
       command_execution: "commandExecution",
@@ -2696,6 +2698,18 @@ function normalizePersistedActivity(value: unknown): Record<string, unknown> | u
       McpToolCall: "mcpToolCall",
       mcpToolCall: "mcpToolCall",
       mcp_tool_call: "mcpToolCall",
+      CustomToolCall: "customToolCall",
+      customToolCall: "customToolCall",
+      custom_tool_call: "customToolCall",
+      ToolCall: "dynamicToolCall",
+      toolCall: "dynamicToolCall",
+      tool_call: "dynamicToolCall",
+      FunctionCall: "dynamicToolCall",
+      functionCall: "dynamicToolCall",
+      function_call: "dynamicToolCall",
+      ToolSearchCall: "dynamicToolCall",
+      toolSearchCall: "dynamicToolCall",
+      tool_search_call: "dynamicToolCall",
       CollabAgentToolCall: "collabAgentToolCall",
       collabAgentToolCall: "collabAgentToolCall",
       SubAgentActivity: "subAgentActivity",
@@ -2717,10 +2731,30 @@ function normalizePersistedActivity(value: unknown): Record<string, unknown> | u
       generatedImage: "imageGeneration",
       dynamicToolCall: "dynamicToolCall",
       DynamicToolCall: "dynamicToolCall",
+      WebSearch: "webSearch",
+      webSearch: "webSearch",
+      web_search: "webSearch",
+      web_search_call: "webSearch",
+      EnteredReviewMode: "enteredReviewMode",
+      enteredReviewMode: "enteredReviewMode",
+      ExitedReviewMode: "exitedReviewMode",
+      exitedReviewMode: "exitedReviewMode",
+      Sleep: "sleep",
+      sleep: "sleep",
       Extension: item["kind"] === "web.search" ? "webSearch" : ""
     } as Record<string, string>
   )[persistedType];
-  if (!type) return undefined;
+  // New Codex providers occasionally introduce a tool event name before the
+  // dashboard knows its exact spelling. Preserve it as a dynamic tool call so
+  // the transcript still shows the invocation, arguments, and result instead
+  // of silently dropping the activity.
+  const inferredType = type || (
+    /(?:tool|function|search|mcp|call)/i.test(persistedType) &&
+    ("name" in item || "tool" in item || "arguments" in item || "input" in item || "result" in item || "output" in item)
+      ? "dynamicToolCall"
+      : ""
+  );
+  if (!inferredType) return undefined;
   const changes =
     item["changes"] && typeof item["changes"] === "object" && !Array.isArray(item["changes"])
       ? Object.entries(item["changes"] as Record<string, unknown>).map(([filePath, change]) => {
@@ -2730,7 +2764,7 @@ function normalizePersistedActivity(value: unknown): Record<string, unknown> | u
       : item["changes"];
   return {
     ...item,
-    type,
+    type: inferredType,
     summary: item["summary"] ?? item["summary_text"],
     content: item["content"] ?? item["raw_content"],
     aggregatedOutput: item["aggregatedOutput"] ?? item["aggregated_output"] ?? item["formatted_output"],

@@ -8216,6 +8216,43 @@ html[data-theme="dark"] .cli-terminal-panel {
   border-left-color: var(--danger);
   background: color-mix(in srgb, var(--danger) 6%, transparent);
 }
+.cli-activity-detail {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.cli-activity-detail > strong {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.cli-activity-detail > span { white-space: pre-wrap; }
+.cli-activity-search {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+.cli-activity-search > strong {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.cli-activity-search > code {
+  color: var(--text-primary);
+  font-family: inherit;
+  white-space: pre-wrap;
+}
+.cli-activity-error { color: var(--danger); }
+.cli-activity-error pre { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cli-debug-details {
   margin-top: 9px;
   border-top: 1px solid color-mix(in srgb, var(--border-default) 70%, transparent);
@@ -13200,7 +13237,7 @@ body.is-dashboard-workspace-route #dashboard-main {
 .cli-workspace .cli-session-message.is-assistant .cli-session-message-text { white-space: normal; }
 .cli-workspace .cli-session-message.is-user .cli-session-message-text { white-space: pre-wrap; }
 .cli-workspace .cli-message-paragraph { display: block; white-space: pre-wrap; }
-.cli-workspace .cli-message-paragraph + .cli-message-paragraph { margin-top: .35em; }
+.cli-workspace .cli-message-paragraph + .cli-message-paragraph { margin-top: .18em; }
 .cli-workspace .cli-message-code { margin-block: 6px; }
 .cli-workspace .cli-activity,
 .cli-workspace .cli-activity-group { margin-block: 0; }

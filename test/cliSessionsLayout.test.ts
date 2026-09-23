@@ -442,7 +442,31 @@ describe("sessions sidebar layout", () => {
       "Second paragraph.\ncontinued line"
     ]);
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(styles).toContain(".cli-message-paragraph + .cli-message-paragraph { margin-top: .35em; }");
+    expect(styles).toContain(".cli-message-paragraph + .cli-message-paragraph { margin-top: .18em; }");
+  });
+
+  it("keeps the Environment inspector closed until the user opens it", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain("const [environmentOpen, setEnvironmentOpen] = useState(false);");
+    expect(source).toContain('label={props.environmentOpen ? "Hide Environment" : "Show Environment"}');
+  });
+
+  it("renders every persisted Codex activity family with an explicit detail path", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    for (const kind of ["reasoning", "plan", "collaboration", "web-search", "review", "compaction", "error"]) {
+      expect(source).toContain(`case "${kind}":`);
+    }
+    expect(source).toContain("function ActivityDetail");
+    expect(source).toContain('message.kind === "tool-call"');
+  });
+
+  it("keeps newly named tool events visible instead of dropping them", () => {
+    const source = readFileSync("src/services/codexSessionResume.ts", "utf8");
+    expect(source).toContain('customToolCall: "customToolCall"');
+    expect(source).toContain('webSearch: "webSearch"');
+    expect(source).toContain('tool_search_call: "dynamicToolCall"');
+    expect(source).toContain('const inferredType = type || (');
+    expect(source).toContain('"arguments" in item');
   });
 
   it("moves a completed live command into the existing turn group", () => {

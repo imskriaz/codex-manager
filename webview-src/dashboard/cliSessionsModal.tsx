@@ -158,7 +158,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [contextTabs, setContextTabs] = useState<WorkspaceTab[]>([]);
   const [activeContextTab, setActiveContextTab] = useState<WorkspaceTab>("terminal");
   const [contextAddOpen, setContextAddOpen] = useState(false);
-  const [environmentOpen, setEnvironmentOpen] = useState(() => window.innerWidth >= 760);
+  // Match Codex's quiet workspace default: the Environment inspector is
+  // available from the header, but it should not cover the conversation on
+  // first render.  Keep the mobile effect below as a safety net when the
+  // viewport changes after mount.
+  const [environmentOpen, setEnvironmentOpen] = useState(false);
   const [layout, setLayout] = useState(loadWorkspaceLayout);
   const [terminalDraft, setTerminalDraft] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
@@ -860,9 +864,35 @@ function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: Dash
         {message.arguments ? <div class="cli-activity-result"><strong>Arguments</strong><pre><code>{message.arguments}</code></pre></div> : null}
         {message.result && message.result !== message.text ? <div class={`cli-activity-result ${failed ? "is-error" : ""}`}><strong>{failed ? "Error" : "Result"}</strong><span>{message.result}</span></div> : null}
         {message.debug ? <details class="cli-debug-details"><summary>Debug details</summary><pre><code>{message.debug}</code></pre></details> : null}
-      </> : message.kind === "image" ? <><div class="cli-activity-copy">{message.text}</div>{message.images?.length ? <div class="cli-session-images cli-activity-images">{message.images.map((image, index) => <a href={image.src} target="_blank" rel="noreferrer" aria-label={`Open ${image.alt ?? "image"}`}><img src={image.src} alt={image.alt ?? `Image ${index + 1}`} loading="lazy" /></a>)}</div> : null}</> : <div class="cli-activity-copy">{message.text}</div>}
+      </> : message.kind === "image" ? <><div class="cli-activity-copy">{message.text}</div>{message.images?.length ? <div class="cli-session-images cli-activity-images">{message.images.map((image, index) => <a href={image.src} target="_blank" rel="noreferrer" aria-label={`Open ${image.alt ?? "image"}`}><img src={image.src} alt={image.alt ?? `Image ${index + 1}`} loading="lazy" /></a>)}</div> : null}</> : <ActivityDetail message={message} />}
     </div>
   </details>;
+}
+
+/**
+ * Every persisted Codex activity kind gets a concrete detail surface.  The
+ * summary row remains compact, while the expanded body preserves the useful
+ * context that otherwise used to fall through to an unlabelled text blob.
+ */
+function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
+  switch (message.kind) {
+    case "reasoning":
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-reasoning"><strong>Thinking</strong><span>{message.text || "Codex is reasoning about the next step."}</span></div>;
+    case "plan":
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-plan"><strong>Plan</strong><span>{message.text || "Codex prepared a plan."}</span></div>;
+    case "collaboration":
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-collaboration"><strong>{message.subtitle || "Agent activity"}</strong><span>{message.text || "An agent contributed to this turn."}</span></div>;
+    case "web-search":
+      return <div class="cli-activity-detail cli-activity-search"><strong>Search query</strong><code>{message.text || "Web search"}</code>{message.result ? <span>{message.result}</span> : null}</div>;
+    case "review":
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-review"><strong>Code review</strong><span>{message.text || "Codex reviewed the current changes."}</span></div>;
+    case "compaction":
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-compaction"><strong>Context compacted</strong><span>{message.text || "Codex condensed earlier context to continue working."}</span></div>;
+    case "error":
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-error"><strong>Error</strong><span>{message.text || "Codex reported an error."}</span>{message.debug ? <pre><code>{message.debug}</code></pre> : null}</div>;
+    default:
+      return <div class="cli-activity-copy cli-activity-detail"><span>{message.text}</span></div>;
+  }
 }
 
 function FileChangeDetails({ changes, onOpenFile, onOpenReviews }: { changes: NonNullable<DashboardCliSessionMessage["changes"]>; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
