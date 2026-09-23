@@ -53,6 +53,30 @@ describe("accounts index persistence", () => {
     expect(await readLatestValidTempIndex(indexPath, ".tmp")).toEqual(newIndex);
   });
 
+  it("keeps retrying a transient Windows lock long enough for the old host to release it", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-index-retry-"));
+    tempDirs.push(dir);
+    const indexPath = path.join(dir, "accounts-index.json");
+    const next = {
+      accounts: [{ id: "next", email: "next@example.com", createdAt: 1, updatedAt: 1 }]
+    } as CodexManagerIndex;
+    await fs.writeFile(indexPath, JSON.stringify({ accounts: [] }), "utf8");
+    let attempts = 0;
+    const busy = Object.assign(new Error("busy"), { code: "EBUSY" });
+
+    await writeIndexAtomically(indexPath, next, ".tmp", {
+      rename: async (from, to) => {
+        attempts += 1;
+        if (attempts < 7) throw busy;
+        await fs.rename(from, to);
+      },
+      wait: async () => undefined
+    });
+
+    expect(attempts).toBe(7);
+    expect(JSON.parse(await fs.readFile(indexPath, "utf8"))).toEqual(next);
+  });
+
   it("counts only parseable backups", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-index-backups-"));
     tempDirs.push(dir);

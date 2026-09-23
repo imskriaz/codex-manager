@@ -9,6 +9,7 @@ import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOpe
 import { disposePersistentLogging, registerPersistentLogging } from "./utils/persistentLog";
 import { enableTransientVscodeNotices } from "./utils/notificationMirror";
 import { getCodexManagerStorageRoot } from "./utils/storageRoot";
+import { scheduleAutomaticExtensionHostRefresh } from "./utils/extensionHostRecovery";
 import {
   initializeCrossWindowAccountMode,
   disposeCrossWindowAccountMode
@@ -23,6 +24,7 @@ let transientNotices: vscode.Disposable | undefined;
  * @param context - 扩展上下文
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const extensionVersion = resolveExtensionVersion(context);
   transientNotices = enableTransientVscodeNotices();
   try {
     await registerPersistentLogging(context);
@@ -59,14 +61,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
   try {
     await workbench.activate();
+    scheduleAutomaticExtensionHostRefresh(context, extensionVersion);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     workbench.showActivationFailure(error);
     console.error("[codexManager] activation did not complete", error);
     void vscode.window.showErrorMessage(
-      `Codex Manager could not finish loading: ${detail}. Run “Developer: Restart Extension Host” to retry.`
+      `Codex Manager could not finish loading: ${detail}. It will retry automatically.`
     );
+    scheduleAutomaticExtensionHostRefresh(context, extensionVersion);
   }
+}
+
+function resolveExtensionVersion(context: vscode.ExtensionContext): string {
+  const packageJSON = context.extension.packageJSON as { version?: unknown };
+  return typeof packageJSON.version === "string" && packageJSON.version.trim() ? packageJSON.version : "0.0.0";
 }
 
 /**

@@ -4,7 +4,10 @@ import * as path from "path";
 import { CodexManagerIndex } from "../core/types";
 import { getBackupPath, parseAccountsIndex, readCurrentIndexForBackupSync } from "./accountsIndex";
 
-const REPLACE_RETRY_DELAYS_MS = [20, 50, 100, 200, 400];
+// Windows can briefly keep the previous index handle open during extension
+// host replacement/update. Give the owner enough time to release it before
+// surfacing a startup-fatal storage error.
+const REPLACE_RETRY_DELAYS_MS = [20, 50, 100, 200, 400, 800, 1_200, 1_800, 2_500, 3_500];
 const TRANSIENT_REPLACE_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
 export async function readIndexSnapshot(filePath: string): Promise<CodexManagerIndex> {

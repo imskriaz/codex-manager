@@ -5,6 +5,7 @@
 - Keep new Codex sessions and activity visible while session indexes catch up.
 - Recover startup when another VS Code window owns account auth synchronization.
 - Register contributed commands before fallible startup work so quota summary remains callable.
+- Automatically refresh the extension host once after installation or update so command registrations become active without manual Developer commands.
 
 ## 1.2.7
 
