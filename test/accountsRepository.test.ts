@@ -311,6 +311,33 @@ describe("AccountsRepository token persistence", () => {
     repo.dispose();
   });
 
+  it("keeps startup usable when another window owns the nested index save", async () => {
+    const secrets = new Map<string, string>();
+    const context = {
+      globalStorageUri: { fsPath: tempDir },
+      secrets: {
+        get: vi.fn(async (key: string) => secrets.get(key)),
+        store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+        delete: vi.fn(async (key: string) => secrets.delete(key))
+      }
+    } as unknown as vscode.ExtensionContext;
+    const runExclusive = vi
+      .spyOn(crossWindowOperations, "runCrossWindowExclusive")
+      .mockImplementation(async (operationKey, _operationLabel, task) => {
+        if (operationKey === "accounts:index-persist") {
+          throw new CrossWindowOperationBusyError("Account index save");
+        }
+        return task();
+      });
+
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
+    await expect(repo.init()).resolves.toEqual({ authSyncCompleted: false });
+
+    expect(runExclusive).toHaveBeenCalledWith("accounts:index-persist", "Account index save", expect.any(Function));
+    runExclusive.mockRestore();
+    repo.dispose();
+  });
+
   it("repairs status visibility when force-activating an OAuth account", async () => {
     const secrets = new Map<string, string>();
     const context = {

@@ -76,6 +76,30 @@ export class AccountsWorkbench {
     await measureStep("registerCommands", () => {
       registerCommands(this.context, this.repo, refreshers, this.encryptedSync);
     });
+    // Dashboard actions can run while the remaining activation work is still
+    // waiting on storage or encrypted sync. Register their internal commands
+    // before any of that fallible work so every user action reaches a visible
+    // terminal result instead of VS Code reporting "command not found".
+    this.context.subscriptions.push(
+      this.webDashboard,
+      this.alwaysOnlineServer,
+      vscode.commands.registerCommand("codexManager.openWebDashboard", (options?: { pathname?: string }) =>
+        runRegisteredCommand(
+          "Open web dashboard",
+          () => this.webDashboard.openInBrowser(options?.pathname),
+          "dashboard:open-web"
+        )
+      ),
+      vscode.commands.registerCommand(
+        "codexManager.prepareDashboardForExtensionHostRestart",
+        async (options?: { autoResume?: boolean }) => {
+          if (options?.autoResume) {
+            await persistRunningCodexSessions(this.context);
+          }
+          return prepareQuotaSummaryPanelForExtensionHostRestart();
+        }
+      )
+    );
 
     registerDebugOutput(this.context);
     initAutoSwitchRuntimeState(this.context);
@@ -153,25 +177,7 @@ export class AccountsWorkbench {
               });
           }
         }
-      }),
-      this.webDashboard,
-      this.alwaysOnlineServer,
-      vscode.commands.registerCommand("codexManager.openWebDashboard", (options?: { pathname?: string }) =>
-        runRegisteredCommand(
-          "Open web dashboard",
-          () => this.webDashboard.openInBrowser(options?.pathname),
-          "dashboard:open-web"
-        )
-      ),
-      vscode.commands.registerCommand(
-        "codexManager.prepareDashboardForExtensionHostRestart",
-        async (options?: { autoResume?: boolean }) => {
-          if (options?.autoResume) {
-            await persistRunningCodexSessions(this.context);
-          }
-          return prepareQuotaSummaryPanelForExtensionHostRestart();
-        }
-      )
+      })
     );
     await measureStep("notifyIndexHealth", async () => {
       await this.notifyIndexHealth();

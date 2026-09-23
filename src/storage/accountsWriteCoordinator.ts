@@ -10,7 +10,7 @@ import {
 import type { CodexManagerIndex } from "../core/types";
 import { createError } from "../core/errors";
 import type { AccountsRepositoryState } from "./accountsRepositoryState";
-import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
 
 const INDEX_PERSIST_OPERATION_KEY = "accounts:index-persist";
 
@@ -150,6 +150,12 @@ export async function persistIndexWithBackups(params: {
           : { ...params.state.indexHealth, availableBackups };
     });
   } catch (cause) {
+    // Preserve the process-safe busy signal so startup can defer its auth
+    // reconciliation instead of presenting a normal overlapping write from
+    // another VS Code window as a fatal storage failure.
+    if (cause instanceof CrossWindowOperationBusyError) {
+      throw cause;
+    }
     throw createError.storageWriteFailed(params.indexPath, cause);
   }
 }

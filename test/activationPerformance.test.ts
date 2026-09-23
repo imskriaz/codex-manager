@@ -25,6 +25,12 @@ describe("activation performance safeguards", () => {
     expect(workbench.indexOf('measureStep("registerCommands"')).toBeLessThan(
       workbench.indexOf('measureStep("repo.init"')
     );
+    expect(workbench.indexOf('vscode.commands.registerCommand("codexManager.openWebDashboard"')).toBeLessThan(
+      workbench.indexOf('measureStep("repo.init"')
+    );
+    expect(
+      workbench.indexOf('"codexManager.prepareDashboardForExtensionHostRestart"')
+    ).toBeLessThan(workbench.indexOf('measureStep("repo.init"'));
     expect(manifest.activationEvents).toContain("onCommand:codexManager.showQuotaSummary");
   });
 });

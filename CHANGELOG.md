@@ -4,7 +4,9 @@
 
 - Keep new Codex sessions and activity visible while session indexes catch up.
 - Recover startup when another VS Code window owns account auth synchronization.
+- Defer startup account reconciliation when another VS Code window owns the nested index save instead of leaving the extension status in an error state.
 - Register contributed commands before fallible startup work so quota summary remains callable.
+- Keep dashboard and extension-host restart commands available throughout activation, including while encrypted sync is still starting.
 - Automatically refresh the extension host once after installation or update so command registrations become active without manual Developer commands.
 
 ## 1.2.7
