@@ -22,6 +22,8 @@ vi.mock("../src/codex", async (importOriginal) => {
 import { AccountsRepository } from "../src/storage";
 import { getCodexHomeStateKey } from "../src/codex";
 import { buildAccountStorageId } from "../src/utils/accountIdentity";
+import * as crossWindowOperations from "../src/utils/crossWindowOperations";
+import { CrossWindowOperationBusyError } from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
 
 function createJwt(payload: Record<string, unknown>): string {
@@ -284,6 +286,28 @@ describe("AccountsRepository token persistence", () => {
 
     expect((await repo.listAccounts()).find((account) => account.isActive)?.id).toBe(liveId);
     expect(writeAuthFileMock).not.toHaveBeenCalled();
+    repo.dispose();
+  });
+
+  it("keeps startup usable when another window owns the initial auth sync", async () => {
+    const secrets = new Map<string, string>();
+    const context = {
+      globalStorageUri: { fsPath: tempDir },
+      secrets: {
+        get: vi.fn(async (key: string) => secrets.get(key)),
+        store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+        delete: vi.fn(async (key: string) => secrets.delete(key))
+      }
+    } as unknown as vscode.ExtensionContext;
+    const runExclusive = vi.spyOn(crossWindowOperations, "runCrossWindowExclusive").mockImplementation(async () => {
+      throw new CrossWindowOperationBusyError("Account auth sync");
+    });
+
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
+    await expect(repo.init()).resolves.toEqual({ authSyncCompleted: false });
+
+    expect(runExclusive).toHaveBeenCalledWith("background:account-auth-sync", "Account auth sync", expect.any(Function));
+    runExclusive.mockRestore();
     repo.dispose();
   });
 

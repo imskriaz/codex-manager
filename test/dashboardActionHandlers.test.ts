@@ -47,7 +47,7 @@ vi.mock("../src/services/codexSessionResume", async () => {
   };
 });
 
-import { executeDashboardActionMessage, isSafeExternalUrl } from "../src/presentation/dashboard/actionHandlers";
+import { executeDashboardActionMessage, isSafeExternalUrl, upsertCliSessionInList } from "../src/presentation/dashboard/actionHandlers";
 import {
   CrossWindowOperationBusyError,
   CrossWindowOperationCoordinator,
@@ -80,6 +80,20 @@ describe("isSafeExternalUrl", () => {
     expect(isSafeExternalUrl("javascript:alert(1)")).toBe(false);
     expect(isSafeExternalUrl("file:///tmp/auth.json")).toBe(false);
     expect(isSafeExternalUrl("https://user:password@example.com/private")).toBe(false);
+  });
+});
+
+describe("CLI session list freshness", () => {
+  it("inserts a newly created session when the Codex index is one read behind", () => {
+    const existing = { id: "old", title: "Older", status: "idle" as const, updatedAt: "2026-09-23T10:00:00Z" };
+    const created = { id: "new", title: "New chat", status: "idle" as const, updatedAt: "2026-09-23T11:00:00Z" };
+    expect(upsertCliSessionInList([existing], created)).toEqual([created, existing]);
+  });
+
+  it("replaces a stale session entry without duplicating it", () => {
+    const stale = { id: "same", title: "Old title", status: "idle" as const };
+    const fresh = { id: "same", title: "Fresh title", status: "running" as const };
+    expect(upsertCliSessionInList([stale], fresh)).toEqual([fresh]);
   });
 });
 

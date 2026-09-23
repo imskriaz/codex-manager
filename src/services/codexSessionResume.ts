@@ -949,11 +949,12 @@ function parseAppServerThreadItem(
     };
   }
   if (type === "plan") {
+    const planText = readHumanText(item["text"] ?? item["plan"] ?? item["steps"]);
     return {
       id,
       kind: "plan",
       title: "Plan",
-      text: readDisplayText(item["text"], "Codex prepared a plan."),
+      text: (planText ?? "Codex prepared a plan.").slice(0, MAX_SESSION_MESSAGE_CHARS),
       status,
       timestamp
     };
@@ -1023,17 +1024,20 @@ function parseAppServerThreadItem(
       timestamp
     };
   }
-  if (type === "mcpToolCall" || type === "dynamicToolCall") {
+  if (type === "mcpToolCall" || type === "dynamicToolCall" || type === "toolCall" || type === "ToolCall" || type === "functionCall" || type === "FunctionCall" || type === "toolSearchCall" || type === "ToolSearchCall") {
     const server =
       typeof item["server"] === "string"
         ? item["server"]
         : typeof item["namespace"] === "string"
           ? item["namespace"]
-          : "Tool";
-    const tool = typeof item["tool"] === "string" ? item["tool"] : "call";
+          : typeof item["source"] === "string"
+            ? item["source"]
+            : "Tool";
+    const tool = typeof item["tool"] === "string" ? item["tool"] : typeof item["name"] === "string" ? item["name"] : "call";
+    const rawArguments = item["arguments"] ?? item["input"];
     const error = readHumanError(item["error"]);
     const debug = safeDisplayJson({
-      arguments: item["arguments"],
+      arguments: rawArguments,
       error: item["error"],
       result: item["result"] ?? item["contentItems"] ?? item["success"]
     });
@@ -1044,7 +1048,7 @@ function parseAppServerThreadItem(
       title: status === "inProgress" ? `Using ${tool}` : failed ? `${tool} failed` : `Used ${tool}`,
       subtitle: server,
       text: error ?? `${server} used ${tool}.`,
-      arguments: safeDisplayJson(item["arguments"]),
+      arguments: safeDisplayJson(rawArguments),
       result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]),
       debug,
       durationMs,
@@ -1069,13 +1073,15 @@ function parseAppServerThreadItem(
       timestamp
     };
   }
-  if (type === "webSearch") {
+  if (type === "webSearch" || type === "web_search" || type === "webSearchCall") {
     const query = typeof item["query"] === "string" ? item["query"] : safeDisplayJson(item["action"]);
     return {
       id,
       kind: "web-search",
       title: "Searched the web",
       text: query || "Web search",
+      result: readHumanText(item["result"] ?? item["output"] ?? item["sources"]),
+      arguments: safeDisplayJson(item["action"] ?? item["query"]),
       status: status === "unknown" ? "completed" : status,
       timestamp
     };
@@ -1112,6 +1118,17 @@ function parseAppServerThreadItem(
       title: "Compacted conversation",
       text: "Codex condensed earlier context to continue working.",
       status: "completed",
+      timestamp
+    };
+  }
+  if (type === "error" || type === "Error") {
+    return {
+      id,
+      kind: "error",
+      title: "Tool error",
+      text: readHumanError(item["error"] ?? item["message"] ?? item["text"]) ?? "Codex reported an error.",
+      debug: safeDisplayJson(item),
+      status: "failed",
       timestamp
     };
   }
@@ -2467,6 +2484,20 @@ function mergeCliTranscriptMessage(
       existing.status === "failed" || existing.status === "declined" || existing.status === "interrupted"
         ? existing.status
         : message.status;
+    // Legacy response_item streams emit a named `function_call` first and a
+    // generic `function_call_output` later. Keep the tool identity from the
+    // start event so the browser shows “Used exec” / “exec failed” instead of
+    // flattening every completed call to “Tool completed”.
+    const genericToolCompletion =
+      existing.kind === "tool-call" &&
+      message.kind === "tool-call" &&
+      (message.title === "Tool completed" || message.title === "Tool failed");
+    const existingToolName = existing.title?.match(/^Using (.+)$/)?.[1];
+    const mergedToolTitle = genericToolCompletion && existingToolName
+      ? terminalStatus === "failed"
+        ? `${existingToolName} failed`
+        : `Used ${existingToolName}`
+      : undefined;
     messages[existingIndex] = keepConcreteActivity
       ? {
           ...message,
@@ -2475,9 +2506,16 @@ function mergeCliTranscriptMessage(
           status: terminalStatus,
           result: message.result ?? existing.result,
           debug: existing.debug ?? message.debug,
+          ...(mergedToolTitle ? { title: mergedToolTitle } : {}),
           ...(images.length ? { images: images.slice(0, 20) } : {})
         }
-      : { ...existing, ...message, id: existing.id, ...(images.length ? { images: images.slice(0, 20) } : {}) };
+      : {
+          ...existing,
+          ...message,
+          id: existing.id,
+          ...(mergedToolTitle ? { title: mergedToolTitle } : {}),
+          ...(images.length ? { images: images.slice(0, 20) } : {})
+        };
     return false;
   }
   messages.push(message);
@@ -2739,6 +2777,10 @@ function normalizePersistedActivity(value: unknown): Record<string, unknown> | u
       enteredReviewMode: "enteredReviewMode",
       ExitedReviewMode: "exitedReviewMode",
       exitedReviewMode: "exitedReviewMode",
+      Review: "enteredReviewMode",
+      review: "enteredReviewMode",
+      Error: "error",
+      error: "error",
       Sleep: "sleep",
       sleep: "sleep",
       Extension: item["kind"] === "web.search" ? "webSearch" : ""

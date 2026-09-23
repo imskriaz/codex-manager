@@ -1651,6 +1651,18 @@ function ensureCliIntegrationEnabled(): void {
   }
 }
 
+/** Keep a just-created/just-updated session visible even when Codex has not
+ * flushed its session index to disk by the time the action response is read. */
+export function upsertCliSessionInList(
+  sessions: DashboardCliSessionSummary[],
+  session: DashboardCliSessionSummary
+): DashboardCliSessionSummary[] {
+  const withoutSession = sessions.filter((candidate) => candidate.id !== session.id);
+  return [session, ...withoutSession].sort((left, right) =>
+    String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
+  );
+}
+
 async function handleListCodexCliSessions(
   context: vscode.ExtensionContext,
   getRemoteCliSessions?: () => DashboardCliSessionSummary[]
@@ -1688,18 +1700,21 @@ async function handleStartCodexCliSession(
   });
   const [localSessions, cliComposerConfig] = await Promise.all([readCodexCliSessions(), readCodexCliComposerConfig()]);
   const remoteSessions = getRemoteCliSessions?.() ?? [];
-  const cliSessions = [...localSessions, ...remoteSessions].sort((left, right) =>
+  let cliSessions = [...localSessions, ...remoteSessions].sort((left, right) =>
     String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
   );
+  const existingSession = cliSessions.find((session) => session.id === sessionId);
+  const visibleSession = existingSession ?? {
+    id: sessionId,
+    title: "New Codex chat",
+    status: "idle" as const,
+    archived: false,
+    ...(payload?.projectPath?.trim() ? { projectPath: payload.projectPath.trim() } : {})
+  };
+  cliSessions = upsertCliSessionInList(cliSessions, visibleSession);
   return {
     cliSessions,
-    cliSession: cliSessions.find((session) => session.id === sessionId) ?? {
-      id: sessionId,
-      title: "New Codex chat",
-      status: "idle" as const,
-      archived: false,
-      ...(payload?.projectPath?.trim() ? { projectPath: payload.projectPath.trim() } : {})
-    },
+    cliSession: visibleSession,
     cliSessionMessages: payload?.text?.trim() ? await readCodexCliSessionMessages(sessionId) : [],
     cliComposerConfig,
     notice: { level: "info" as const, message: "New Codex chat is ready." }
@@ -1741,13 +1756,22 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
     sandboxMode: payload.sandboxMode,
     projectPath: payload.projectPath
   });
-  const [cliSessions, cliSessionMessages] = await Promise.all([
+  const [loadedCliSessions, cliSessionMessages] = await Promise.all([
     readCodexCliSessions(),
     readCodexCliSessionMessages(payload.sessionId)
   ]);
+  let cliSessions = loadedCliSessions;
+  const visibleSession = cliSessions.find((session) => session.id === payload.sessionId) ?? {
+    id: payload.sessionId,
+    title: "Codex session",
+    status: "idle" as const,
+    archived: false,
+    ...(payload.projectPath?.trim() ? { projectPath: payload.projectPath.trim() } : {})
+  };
+  cliSessions = upsertCliSessionInList(cliSessions, visibleSession);
   return {
     cliSessions,
-    cliSession: cliSessions.find((session) => session.id === payload.sessionId),
+    cliSession: visibleSession,
     cliSessionMessages,
     notice: { level: "info" as const, message: "Codex completed the turn." }
   };

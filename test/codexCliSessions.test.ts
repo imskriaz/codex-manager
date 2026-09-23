@@ -180,6 +180,35 @@ describe("Codex session integration", () => {
     ]);
   });
 
+  it("keeps every Codex activity family visible with its user-facing payload", () => {
+    const items = parseCodexAppServerThreadItems({
+      thread: {
+        turns: [{
+          status: "completed",
+          items: [
+            { type: "plan", id: "plan-1", plan: [{ text: "Inspect" }, { text: "Fix" }] },
+            { type: "collabToolCall", id: "agent-1", tool: "delegate", prompt: "Ask a helper" },
+            { type: "webSearch", id: "search-1", query: "Codex docs", result: "Docs result" },
+            { type: "enteredReviewMode", id: "review-1", review: "Review the diff" },
+            { type: "contextCompaction", id: "compact-1" },
+            { type: "Error", id: "error-1", message: "Tool unavailable" },
+            { type: "ToolCall", id: "dynamic-1", name: "lookup", input: { q: "Codex" }, result: "Found it" }
+          ]
+        }]
+      }
+    });
+
+    expect(items).toMatchObject([
+      { id: "plan-1", kind: "plan", text: "Inspect\n\nFix" },
+      { id: "agent-1", kind: "collaboration", subtitle: "delegate", text: "Ask a helper" },
+      { id: "search-1", kind: "web-search", text: "Codex docs", result: "Docs result" },
+      { id: "review-1", kind: "review", title: "Started review" },
+      { id: "compact-1", kind: "compaction" },
+      { id: "error-1", kind: "error", status: "failed", text: "Tool unavailable" },
+      { id: "dynamic-1", kind: "tool-call", subtitle: "Tool", arguments: "{\n  \"q\": \"Codex\"\n}" }
+    ]);
+  });
+
   it("reads a former Codex-home journal only until the canonical journal exists", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-journal-migration-"));
     roots.push(root);
@@ -319,7 +348,7 @@ describe("Codex session integration", () => {
     await writeFile(transcript, JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:00Z", payload: { type: "function_call", id: "fc-1", call_id: "call-1", name: "shell_command", arguments: "command=npm test" } }));
     await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "call-1", kind: "tool-call", status: "inProgress", title: "Using shell_command" }]);
     await writeFile(transcript, "\n" + JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:01Z", payload: { type: "function_call_output", call_id: "call-1", output: "42 passed" } }), { flag: "a" });
-    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "call-1", kind: "tool-call", status: "completed", result: "42 passed" }]);
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "call-1", kind: "tool-call", status: "completed", title: "Used shell_command", subtitle: "shell_command", result: "42 passed" }]);
   });
 
   it("renders legacy tool output errors as failed", async () => {
@@ -332,7 +361,7 @@ describe("Codex session integration", () => {
       JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:00Z", payload: { type: "function_call", call_id: "failed-1", name: "exec", arguments: "npm test" } }),
       JSON.stringify({ type: "response_item", timestamp: "2026-08-30T10:00:01Z", payload: { type: "function_call_output", call_id: "failed-1", output: "execution error: permission denied" } })
     ].join("\n"));
-    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "failed-1", kind: "tool-call", status: "failed", title: "Tool failed" }]);
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toMatchObject([{ id: "failed-1", kind: "tool-call", status: "failed", title: "exec failed", subtitle: "exec" }]);
   });
 
   it("does not double-count a custom call that also emits a concrete command activity", async () => {

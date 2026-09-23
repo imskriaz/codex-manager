@@ -68,9 +68,7 @@ export class AccountsWorkbench {
     if (completedAutoSwitchNotice) {
       void vscode.window.showInformationMessage(completedAutoSwitchNotice);
     }
-    await measureStep("repo.init", async () => {
-      await this.repo.init();
-    });
+    const repoInit = await measureStep("repo.init", async () => this.repo.init());
     await measureStep("disabledActiveAccountFence", async () => {
       await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
     });
@@ -175,6 +173,9 @@ export class AccountsWorkbench {
       refreshWorkbench();
       this.webDashboard.publishLocalStateChange();
     };
+    if (!repoInit.authSyncCompleted) {
+      this.repo.scheduleStartupSync(() => refreshers.refresh());
+    }
     this.encryptedSync.setOnStateChanged(refreshers.refresh);
     await measureStep("registerCommands", () => {
       registerCommands(this.context, this.repo, refreshers, this.encryptedSync);

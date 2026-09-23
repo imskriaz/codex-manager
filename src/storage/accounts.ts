@@ -223,10 +223,21 @@ export class AccountsRepository {
       if (options.deferSync) {
         return { authSyncCompleted: true };
       }
-      await runCrossWindowExclusive("background:account-auth-sync", "Account auth sync", () =>
-        this.runAndFlush(() => this.syncActiveAccountFromAuthFileInternal())
-      );
-      return { authSyncCompleted: true };
+      try {
+        await runCrossWindowExclusive("background:account-auth-sync", "Account auth sync", () =>
+          this.runAndFlush(() => this.syncActiveAccountFromAuthFileInternal())
+        );
+        return { authSyncCompleted: true };
+      } catch (cause) {
+        // Another VS Code window may legitimately own the startup auth sync.
+        // Do not fail activation in that case: the shared index remains usable,
+        // and the workbench will schedule the existing deferred retry path.
+        if (cause instanceof CrossWindowOperationBusyError) {
+          console.info("[codexManager] startup account auth sync is owned by another window; deferring retry");
+          return { authSyncCompleted: false };
+        }
+        throw cause;
+      }
     } catch (cause) {
       if (isIndexHealthError(cause)) {
         console.error("[codexManager] accounts index init failed:", cause);
