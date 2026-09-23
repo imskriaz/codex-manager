@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.8
+
+- Keep new Codex sessions and activity visible while session indexes catch up.
+- Recover startup when another VS Code window owns account auth synchronization.
+- Register contributed commands before fallible startup work so quota summary remains callable.
+
 ## 1.2.7
 
 - Keep the current account first in Saved Accounts regardless of quota state or the selected sort order.

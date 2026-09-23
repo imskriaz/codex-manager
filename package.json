@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.8-pre3",
+  "version": "1.2.8",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -18,7 +18,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCommand:codexManager.showQuotaSummary"
   ],
   "main": "./out/extension.js",
   "contributes": {

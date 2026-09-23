@@ -16,4 +16,15 @@ describe("activation performance safeguards", () => {
     expect(workbench).not.toContain('measureStep("alwaysOnlineServer.start"');
     expect(scheduler).not.toContain("allTimer = setInterval(runAllRefresh, allMinutes * 60 * 1000);\n      runAllRefresh();");
   });
+
+  it("registers contributed commands before fallible account startup work", () => {
+    const workbench = readFileSync("src/presentation/workbench/accountsWorkbench.ts", "utf8");
+    const manifest = JSON.parse(readFileSync("package.json", "utf8")) as { activationEvents?: string[] };
+
+    expect(workbench.indexOf('measureStep("registerCommands"')).toBeGreaterThan(-1);
+    expect(workbench.indexOf('measureStep("registerCommands"')).toBeLessThan(
+      workbench.indexOf('measureStep("repo.init"')
+    );
+    expect(manifest.activationEvents).toContain("onCommand:codexManager.showQuotaSummary");
+  });
 });

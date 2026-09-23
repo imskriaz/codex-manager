@@ -62,6 +62,21 @@ export class AccountsWorkbench {
       }
     };
 
+    // Register user-facing commands before any fallible startup work. VS Code
+    // may invoke a contributed command to activate the extension, and leaving
+    // registration until after repository/sync initialization makes that
+    // invocation end as "command not found" when later startup work fails.
+    const refreshers = this.refreshCoordinator.createRefreshView();
+    const refreshWorkbench = refreshers.refresh;
+    refreshers.refresh = () => {
+      refreshWorkbench();
+      this.webDashboard.publishLocalStateChange();
+    };
+    this.encryptedSync.setOnStateChanged(refreshers.refresh);
+    await measureStep("registerCommands", () => {
+      registerCommands(this.context, this.repo, refreshers, this.encryptedSync);
+    });
+
     registerDebugOutput(this.context);
     initAutoSwitchRuntimeState(this.context);
     const completedAutoSwitchNotice = consumeAutoSwitchNotice();
@@ -167,19 +182,9 @@ export class AccountsWorkbench {
     this.context.subscriptions.push({ dispose: () => this.repo.dispose() });
     this.context.subscriptions.push({ dispose: () => this.refreshCoordinator.dispose() });
 
-    const refreshers = this.refreshCoordinator.createRefreshView();
-    const refreshWorkbench = refreshers.refresh;
-    refreshers.refresh = () => {
-      refreshWorkbench();
-      this.webDashboard.publishLocalStateChange();
-    };
     if (!repoInit.authSyncCompleted) {
       this.repo.scheduleStartupSync(() => refreshers.refresh());
     }
-    this.encryptedSync.setOnStateChanged(refreshers.refresh);
-    await measureStep("registerCommands", () => {
-      registerCommands(this.context, this.repo, refreshers, this.encryptedSync);
-    });
     await measureStep("registerAuthFileWatcher", () => {
       this.context.subscriptions.push(this.refreshCoordinator.registerAuthFileWatcher(refreshers));
     });
