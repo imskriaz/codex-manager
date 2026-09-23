@@ -114,6 +114,11 @@ import {
   runCentralAccountOperationWithCooldown
 } from "../utils/crossWindowOperations";
 import { AccountError, StorageError, createError, ErrorCode } from "../core/errors";
+import {
+  claimCrossWindowAccount,
+  isCrossWindowAccountModeEnabled,
+  releaseCrossWindowAccount
+} from "../services/windowAccountMode";
 
 /** 缓存失效时间 (毫秒) */
 const CACHE_TTL_MS = 5000;
@@ -943,15 +948,26 @@ export class AccountsRepository {
   ): Promise<CodexManagerAccountRecord> {
     // 按账号串行化，避免切号与后台续期并发刷新同一账号 token
     return this.accountMutex.runExclusive(accountId, async () => {
-      await this.switchCoordinator?.prepareAccountSwitch(accountId);
+      const parallelMode = isCrossWindowAccountModeEnabled();
+      let previousAccountId: string | undefined;
+      if (parallelMode) {
+        const current = (await this.listAccounts()).find((candidate) => candidate.isActive);
+        previousAccountId = current?.id;
+        await claimCrossWindowAccount(accountId);
+      }
       let account: CodexManagerAccountRecord;
       try {
+        await this.switchCoordinator?.prepareAccountSwitch(accountId);
         account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true);
       } catch (error) {
         await this.switchCoordinator?.cancelAccountSwitch(accountId);
+        if (parallelMode && previousAccountId !== accountId) await releaseCrossWindowAccount(accountId);
         throw error;
       }
       await this.switchCoordinator?.completeAccountSwitch(accountId);
+      if (parallelMode && previousAccountId && previousAccountId !== accountId) {
+        await releaseCrossWindowAccount(previousAccountId);
+      }
       return account;
     });
   }

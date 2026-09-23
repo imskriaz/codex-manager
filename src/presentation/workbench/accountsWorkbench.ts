@@ -16,6 +16,11 @@ import {
 } from "../dashboard";
 import { unloadDisabledActiveAccountOnStartup } from "./startupAccountSafety";
 import {
+  ensureCrossWindowAccountAssignment,
+  isCrossWindowAccountModeEnabled,
+  canWindowUseAccount
+} from "../../services/windowAccountMode";
+import {
   formatAutoResumeResult,
   persistRunningCodexSessions,
   resumePersistedCodexSessions
@@ -38,7 +43,7 @@ export class AccountsWorkbench {
     this.statusBar = new AccountsStatusBarProvider(context, this.repo);
     this.encryptedSync = new EncryptedSyncManager(context, this.repo);
     this.refreshCoordinator = new WorkbenchRefreshCoordinator(context, this.repo, this.statusBar, (accountId) =>
-      this.encryptedSync.canAutomateAccountAfterVaultRefresh(accountId)
+      canWindowUseAccount(accountId) && this.encryptedSync.canAutomateAccountAfterVaultRefresh(accountId)
     );
     this.webDashboard = new WebDashboardServer(context, this.repo, this.encryptedSync);
     this.alwaysOnlineServer = new AlwaysOnlineServer(context, this.encryptedSync);
@@ -65,6 +70,22 @@ export class AccountsWorkbench {
     }
     await measureStep("repo.init", async () => {
       await this.repo.init({ deferSync: true });
+    });
+    await measureStep("parallelWindowAccountAssignment", async () => {
+      if (!isCrossWindowAccountModeEnabled()) return;
+      try {
+        const result = await ensureCrossWindowAccountAssignment(await this.repo.listAccounts(), (accountId) =>
+          this.repo.switchAccount(accountId)
+        );
+        if (!result.assigned) {
+          void vscode.window.showWarningMessage(
+            "Parallel window accounts is enabled, but no unclaimed usable account is available. Add or release an account, then reload this window."
+          );
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`This window could not claim a parallel account: ${detail}`);
+      }
     });
     await measureStep("disabledActiveAccountFence", async () => {
       await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
@@ -184,7 +205,7 @@ export class AccountsWorkbench {
           context: this.context,
           repo: this.repo,
           onRefresh: refreshers.refresh,
-          canRefreshAccount: (accountId) => this.encryptedSync.canAutomateAccount(accountId)
+          canRefreshAccount: (accountId) => canWindowUseAccount(accountId) && this.encryptedSync.canAutomateAccount(accountId)
         })
       );
     });
@@ -196,7 +217,7 @@ export class AccountsWorkbench {
           view: refreshers,
           checkIntervalMs: TOKEN_REFRESH_CHECK_INTERVAL_MS,
           skewSeconds: TOKEN_REFRESH_SKEW_SECONDS,
-          canRefreshAccount: (accountId) => this.encryptedSync.canAutomateAccount(accountId)
+          canRefreshAccount: (accountId) => canWindowUseAccount(accountId) && this.encryptedSync.canAutomateAccount(accountId)
         })
       );
     });

@@ -25,7 +25,7 @@ const CURRENT_AUTO_REFRESH_VALUES = Array.from({ length: 60 }, (_, index) => ind
 const CURRENT_AUTO_REFRESH_SCALE_VALUES = [1, 15, 30, 45, 60];
 const USAGE_HISTORY_RETENTION_VALUES = [1, 3, 7, 14, 30, 60, 90];
 const AUTO_SWITCH_VALUES = Array.from({ length: 21 }, (_, index) => index);
-const AUTO_RESET_VALUES = Array.from({ length: 100 }, (_, index) => index + 1);
+const AUTO_RESET_VALUES = Array.from({ length: 101 }, (_, index) => index);
 // Warning thresholds are intentionally available at every percentage point.
 // The native range input already moves in single-point steps; keeping the
 // backing values equally granular prevents the nearest-value mapper from
@@ -213,6 +213,45 @@ export function SettingsOverlay(props: {
                   </div>
                 </div>
                 <div class="settings-integration-grid">
+                  <SettingsSegmentBlock
+                    title={
+                      props.lang === "zh"
+                        ? "Codex 默认界面"
+                        : props.lang === "zh-hant"
+                          ? "Codex 預設介面"
+                          : "Codex default"
+                    }
+                    sub={
+                      props.lang === "zh"
+                        ? "选择会话列表打开会话和新聊天时使用的 Codex 界面。"
+                        : props.lang === "zh-hant"
+                          ? "選擇工作階段清單開啟工作階段與新聊天時使用的 Codex 介面。"
+                          : "Choose the Codex surface used when opening a session or starting a new chat from the session list."
+                    }
+                    className="settings-block-wide"
+                    options={[
+                      {
+                        key: "webview",
+                        title: "Webview",
+                        description: "Official Codex editor",
+                        active: (props.settings.codexSessionDefault ?? "webview") === "webview",
+                        onClick: () => patchAndSend("codexSessionDefault", "webview")
+                      },
+                      {
+                        key: "cli",
+                        title: "CLI",
+                        description: "Embedded dashboard workspace",
+                        active: props.settings.codexSessionDefault === "cli",
+                        onClick: () => patchAndSend("codexSessionDefault", "cli")
+                      }
+                    ]}
+                  >
+                    <div class="settings-note">
+                      {(props.settings.codexSessionDefault ?? "webview") === "webview"
+                        ? "Webview is the default. Session links open in the official Codex editor."
+                        : "CLI keeps the existing embedded session workspace behavior."}
+                    </div>
+                  </SettingsSegmentBlock>
                   <SettingsToggleBlock
                     title={
                       props.lang === "zh" ? "浏览器面板" : props.lang === "zh-hant" ? "瀏覽器面板" : "Web Dashboard"
@@ -618,7 +657,7 @@ export function SettingsOverlay(props: {
                   >
                     <div class={`settings-stack ${props.settings.autoResetEnabled ? "" : "is-hidden"}`}>
                       <SettingsDiscreteSlider
-                        value={props.settings.autoResetWeeklyThreshold ?? 1}
+                        value={props.settings.autoResetWeeklyThreshold ?? 0}
                         values={AUTO_RESET_VALUES}
                         accent="amber"
                         sparseScale
@@ -640,16 +679,35 @@ export function SettingsOverlay(props: {
                     sub={props.copy.autoSwitchReloadSub}
                     enabled={props.settings.autoSwitchReloadWindowEnabled}
                     onToggle={(enabled) => patchAndSend("autoSwitchReloadWindowEnabled", enabled)}
-                  />
+                  >
+                    <div class="settings-stack settings-nested-stack">
+                      <SettingsToggleBlock
+                        title={props.copy.autoResumeTitle}
+                        sub={props.copy.autoResumeSub}
+                        enabled={props.settings.autoResumeEnabled === true}
+                        onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
+                      />
+                    </div>
+                  </SettingsToggleBlock>
                   <div class="settings-note">{props.copy.autoSwitchAnyNote}</div>
                 </div>
               </SettingsToggleBlock>
               <SettingsToggleBlock
-                title={props.copy.autoResumeTitle}
-                sub={props.copy.autoResumeSub}
-                enabled={props.settings.autoResumeEnabled === true}
-                onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
-              />
+                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts"}
+                sub={
+                  props.copy.crossWindowAccountModeSub ??
+                  "When enabled, each VS Code window receives a different account and isolated Codex home. Disabled by default; turning it off returns to the normal shared-window behavior."
+                }
+                enabled={props.settings.crossWindowAccountModeEnabled === true}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
+              >
+                <div class="settings-note">
+                  {props.settings.crossWindowAccountModeEnabled
+                    ? "Enabled. New and reloaded windows claim accounts independently."
+                    : "Disabled. Account switching continues to use the existing behavior."}
+                </div>
+              </SettingsToggleBlock>
               <SettingsToggleBlock
                 title={props.copy.warningTitle}
                 sub={props.settings.hourlyQuotaControlEnabled ? props.copy.warningSub : props.copy.warningWeeklyOnlySub}

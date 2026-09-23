@@ -39,9 +39,13 @@ export function normalizeQuotaSummary(summary?: CodexQuotaSummary): CodexQuotaSu
   const classified = classifyQuotaWindows([hourlyWindow, weeklyWindow].filter(Boolean) as QuotaWindowSnapshot[]);
   const resolvedHourly = classified.hourly ?? (isHourlyWindow(hourlyWindow) ? hourlyWindow : undefined);
   const resolvedWeekly = classified.weekly ?? (isWeeklyWindow(weeklyWindow) ? weeklyWindow : undefined);
+  const weeklyExhausted = resolvedWeekly?.percentage === 0;
 
   return {
-    hourlyPercentage: resolvedHourly?.percentage ?? 100,
+    // A fully exhausted weekly/monthly window is the account-level limit. Keep
+    // the shorter 5-hour gauge at 0 too, even if the provider reports a stale
+    // nonzero hourly value.
+    hourlyPercentage: weeklyExhausted ? 0 : resolvedHourly?.percentage ?? 100,
     hourlyResetTime: resolvedHourly?.resetTime,
     hourlyRequestsLeft: resolvedHourly?.requestsLeft,
     hourlyRequestsLimit: resolvedHourly?.requestsLimit,

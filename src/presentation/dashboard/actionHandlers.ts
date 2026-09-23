@@ -12,6 +12,7 @@ import {
   deleteCodexCliSession,
   forkCodexCliSession,
   openCodexSessionInVsCode,
+  openNewCodexWebview,
   readCodexCliComposerConfig,
   readCodexCliSessionSummary,
   readCodexCliSessions,
@@ -104,6 +105,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "reloadPrompt",
   "getResetCredits",
   "getDailyUsage",
+  "openNewCodexWebview",
   "startCodexCliSession",
   "listCodexCliSessions",
   "getCodexCliSessionMessages",
@@ -750,6 +752,8 @@ async function runDashboardAction(
       return handleGetResetCredits(ctx.repo, account);
     case "getDailyUsage":
       return handleGetDailyUsage(ctx.context, ctx.repo, account, payload?.days);
+    case "openNewCodexWebview":
+      return handleOpenNewCodexWebview();
     case "startCodexCliSession":
       return handleStartCodexCliSession(payload, ctx.getRemoteCliSessions);
     case "listCodexCliSessions":
@@ -931,6 +935,7 @@ async function handleExportBackup(repo: AccountsRepository) {
         key !== "resolvedCodexAppPath" &&
         key !== "encryptedSyncEnabled" &&
         key !== "fullCrossPcAccountSyncEnabled" &&
+        key !== "crossWindowAccountModeEnabled" &&
         key !== "encryptedSyncRegistryOverrideEnabled" &&
         ["string", "number", "boolean"].includes(typeof value)
     )
@@ -1206,6 +1211,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "codexAppRestartEnabled",
     "codexAppRestartMode",
     "backgroundTokenRefreshEnabled",
+    "codexSessionDefault",
     "autoRefreshMinutes",
     "autoRefreshCurrentMinutes",
     "usageHistoryRetentionDays",
@@ -1213,6 +1219,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "hourlyQuotaControlEnabled",
     "autoSwitchReloadWindowEnabled",
     "autoResumeEnabled",
+    "crossWindowAccountModeEnabled",
     "autoSwitchRefreshAllBeforeSwitchEnabled",
     "autoSwitchHourlyThreshold",
     "autoSwitchWeeklyThreshold",
@@ -1649,9 +1656,6 @@ async function handleListCodexCliSessions(
   getRemoteCliSessions?: () => DashboardCliSessionSummary[]
 ) {
   ensureCliIntegrationEnabled();
-  if (!(await isCodexCliAvailable())) {
-    throw new Error("Codex CLI is not available on this PC. Install it or set CODEX_CLI_PATH, then try again.");
-  }
   const [localSessions, cliComposerConfig] = await Promise.all([readCodexCliSessions(), readCodexCliComposerConfig()]);
   const remoteSessions = getRemoteCliSessions?.() ?? [];
   const stabilizedLocalSessions = await stabilizeSessionProjectPaths(
@@ -1769,6 +1773,12 @@ async function handleOpenCodexCliSession(sessionId: string | undefined) {
   await ensureCliSessionIsActive(sessionId);
   await openCodexSessionInVsCode(sessionId);
   return { notice: { level: "info" as const, message: "Opened the session in the Codex extension." } };
+}
+
+async function handleOpenNewCodexWebview() {
+  ensureCliIntegrationEnabled();
+  await openNewCodexWebview();
+  return { notice: { level: "info" as const, message: "Opened a new chat in the Codex Webview." } };
 }
 
 async function handleRenameCodexCliSession(sessionId: string | undefined, name: string | undefined) {

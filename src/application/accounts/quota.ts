@@ -490,7 +490,7 @@ async function evaluateAutoSwitchForActiveQuota(
   const next = candidates[0];
   if (!next) {
     if (config.get<boolean>(AUTO_RESET_ENABLED, false)) {
-      const resetThreshold = normalizeAutoResetWeeklyThreshold(config.get<number>(AUTO_RESET_WEEKLY_THRESHOLD, 1));
+      const resetThreshold = normalizeAutoResetWeeklyThreshold(config.get<number>(AUTO_RESET_WEEKLY_THRESHOLD, 0));
       if (
         (active.quotaSummary?.resetCreditsAvailable ?? 0) > 0 &&
         hasComparableWeeklyWindow(active) &&

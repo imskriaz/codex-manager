@@ -136,6 +136,35 @@ describe("auto refresh scheduler", () => {
     disposable.dispose();
   });
 
+  it("refreshes only the account whose cached reset is already due at startup", async () => {
+    const due = {
+      id: "due-at-start",
+      email: "due-at-start@example.com",
+      isActive: false,
+      enabled: true,
+      quotaSummary: { hourlyResetTime: Date.now() / 1_000 - 1 }
+    };
+    const fresh = {
+      id: "still-fresh",
+      email: "still-fresh@example.com",
+      isActive: false,
+      enabled: true,
+      quotaSummary: { hourlyResetTime: Date.now() / 1_000 + 3_600 }
+    };
+    const repo = { listAccounts: vi.fn(async () => [due, fresh]) } as unknown as AccountsRepository;
+    const disposable = registerAutoRefreshScheduler({
+      context: { subscriptions: [] } as never,
+      repo,
+      onRefresh: vi.fn(),
+      canRefreshAccount: () => true
+    });
+
+    await vi.waitFor(() => expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1));
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), due.id, expect.any(Object));
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalledWith(repo, expect.anything(), fresh.id, expect.anything());
+    disposable.dispose();
+  });
+
   it("does not recreate quota-reset timers after disposal", async () => {
     const resetAt = Date.now() / 1_000 + 5;
     const account = {

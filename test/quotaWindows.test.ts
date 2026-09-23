@@ -35,6 +35,19 @@ describe("normalizeQuotaSummary", () => {
     expect(normalized?.weeklyWindowMinutes).toBe(10080);
   });
 
+  it("treats an exhausted weekly window as zero for the 5-hour display too", () => {
+    const normalized = normalizeQuotaSummary({
+      hourlyPercentage: 77,
+      hourlyWindowPresent: true,
+      weeklyPercentage: 0,
+      weeklyWindowMinutes: 10080,
+      weeklyWindowPresent: true
+    });
+
+    expect(normalized?.weeklyPercentage).toBe(0);
+    expect(normalized?.hourlyPercentage).toBe(0);
+  });
+
   it("derives additional model quota and credits from raw usage data without inventing missing values", () => {
     const normalized = normalizeQuotaSummary({
       hourlyPercentage: 90,

@@ -723,13 +723,9 @@ export function cancelCodexCliSessionTurn(sessionId: string): boolean {
 /** Open a local Codex session in the official VS Code conversation editor. */
 export async function openCodexSessionInVsCode(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
-  const codexExtension = vscode.extensions.getExtension(CODEX_EXTENSION_ID);
-  if (!codexExtension) {
-    throw new Error("Install or enable the official Codex extension before opening this session.");
-  }
+  await activateOfficialCodexExtension();
   // Auto Resume runs during extension-host activation. Await the official
   // extension so its custom-editor provider is registered before openWith.
-  await codexExtension.activate();
   await vscode.commands.executeCommand(
     "vscode.openWith",
     createLocalCodexConversationUri(sessionId),
@@ -740,6 +736,21 @@ export async function openCodexSessionInVsCode(sessionId: string): Promise<void>
       preview: false
     }
   );
+}
+
+/** Open a new chat in the official Codex webview panel. */
+export async function openNewCodexWebview(): Promise<void> {
+  await activateOfficialCodexExtension();
+  await vscode.commands.executeCommand("chatgpt.newCodexPanel");
+}
+
+async function activateOfficialCodexExtension(): Promise<vscode.Extension<unknown>> {
+  const codexExtension = vscode.extensions.getExtension(CODEX_EXTENSION_ID);
+  if (!codexExtension) {
+    throw new Error("Install or enable the official Codex extension before opening a Webview session.");
+  }
+  await codexExtension.activate();
+  return codexExtension;
 }
 
 /** @deprecated Use openCodexSessionInVsCode; this alias preserves dashboard integrations. */

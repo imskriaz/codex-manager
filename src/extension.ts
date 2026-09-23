@@ -9,6 +9,10 @@ import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOpe
 import { disposePersistentLogging, registerPersistentLogging } from "./utils/persistentLog";
 import { enableTransientVscodeNotices } from "./utils/notificationMirror";
 import { getCodexManagerStorageRoot } from "./utils/storageRoot";
+import {
+  initializeCrossWindowAccountMode,
+  disposeCrossWindowAccountMode
+} from "./services/windowAccountMode";
 
 let workbench: AccountsWorkbench | undefined;
 let transientNotices: vscode.Disposable | undefined;
@@ -29,8 +33,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       `Codex Manager could not initialize persistent diagnostics. Operations will continue without file logs: ${detail}`
     );
   }
-  // Build the status entry before any asynchronous setup so every window has
-  // immediate visual feedback, even while another window holds a startup lock.
+  // Configure the process-safe coordinator before any managed-window registry
+  // work. The existing path remains untouched when the setting is disabled.
+  try {
+    await configureCrossWindowOperationCoordinator(getCodexManagerStorageRoot());
+    await initializeCrossWindowAccountMode(context);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error("[codexManager] parallel window initialization failed", error);
+    void vscode.window.showWarningMessage(`Parallel window accounts could not initialize: ${detail}`);
+  }
+  // Build the status entry before the remaining asynchronous setup so every
+  // window has immediate visual feedback.
   workbench = new AccountsWorkbench(context);
   try {
     await initializeCodexProxyEnvironment();
@@ -38,15 +52,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const detail = error instanceof Error ? error.message : String(error);
     console.error("[codexManager] proxy initialization failed; continuing without proxy integration", error);
     void vscode.window.showWarningMessage(`Codex Manager proxy setup failed. The extension will continue: ${detail}`);
-  }
-  try {
-    await configureCrossWindowOperationCoordinator(getCodexManagerStorageRoot());
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error("[codexManager] cross-window coordination initialization failed", error);
-    void vscode.window.showWarningMessage(
-      `Codex Manager could not initialize multi-window coordination. Avoid account changes in two windows at once: ${detail}`
-    );
   }
   const proxyError = getCodexProxyConfigurationError();
   if (proxyError) {
@@ -73,5 +78,6 @@ export async function deactivate(): Promise<void> {
   transientNotices?.dispose();
   transientNotices = undefined;
   disposeCodexProxyEnvironment();
+  await disposeCrossWindowAccountMode();
   await disposePersistentLogging();
 }

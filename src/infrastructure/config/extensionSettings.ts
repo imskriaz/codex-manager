@@ -1,5 +1,9 @@
 import * as vscode from "vscode";
-import type { DashboardSettings, DashboardThemeOption } from "../../domain/dashboard/types";
+import type {
+  DashboardCodexSessionDefault,
+  DashboardSettings,
+  DashboardThemeOption
+} from "../../domain/dashboard/types";
 import { DashboardLanguage, DashboardLanguageOption, resolveDashboardLanguage } from "../../localization/languages";
 import { normalizeQuotaColorThresholds } from "../../utils";
 
@@ -21,6 +25,7 @@ export class ExtensionSettingsStore {
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "manual",
       backgroundTokenRefreshEnabled: config.get<boolean>("backgroundTokenRefreshEnabled", false),
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
+      codexSessionDefault: normalizeCodexSessionDefault(config.get<string>("codexSessionDefault", "webview")),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15)),
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
@@ -28,11 +33,12 @@ export class ExtensionSettingsStore {
       hourlyQuotaControlEnabled: config.get<boolean>("hourlyQuotaControlEnabled", true),
       autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", false),
       autoResumeEnabled: config.get<boolean>("autoResumeEnabled", false),
+      crossWindowAccountModeEnabled: config.get<boolean>("crossWindowAccountModeEnabled", false),
       autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
       autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0)),
       autoSwitchRefreshAllBeforeSwitchEnabled: config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false),
       autoResetEnabled: config.get<boolean>("autoResetEnabled", false),
-      autoResetWeeklyThreshold: normalizeAutoResetWeeklyThreshold(config.get<number>("autoResetWeeklyThreshold", 1)),
+      autoResetWeeklyThreshold: normalizeAutoResetWeeklyThreshold(config.get<number>("autoResetWeeklyThreshold", 0)),
       autoSwitchLockMinutes: normalizeAutoSwitchLockMinutes(config.get<number>("autoSwitchLockMinutes", 0)),
       codexAppPath: config.get<string>("codexAppPath", ""),
       resolvedCodexAppPath: "",
@@ -70,6 +76,10 @@ export class ExtensionSettingsStore {
 
 export function normalizeDashboardTheme(value: string | undefined): DashboardThemeOption {
   return value === "dark" || value === "light" || value === "auto" ? value : "auto";
+}
+
+export function normalizeCodexSessionDefault(value: string | undefined): DashboardCodexSessionDefault {
+  return value === "cli" ? "cli" : "webview";
 }
 
 export function normalizeAutoRefreshMinutes(value: number): number {
@@ -128,8 +138,8 @@ export function normalizeAutoSwitchThreshold(value: number): number {
 }
 
 export function normalizeAutoResetWeeklyThreshold(value: number): number {
-  if (!Number.isFinite(value)) return 1;
-  return Math.max(1, Math.min(100, Math.round(value)));
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 export function normalizeQuotaWarningThreshold(value: number): number {

@@ -9,6 +9,7 @@ import {
   normalizeAutoSwitchLockMinutes,
   normalizeAutoSwitchThreshold,
   normalizeAutoResetWeeklyThreshold,
+  normalizeCodexSessionDefault,
   normalizeDashboardTheme,
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
@@ -40,6 +41,7 @@ export async function handleDashboardSettingUpdate(
     case "hourlyQuotaControlEnabled":
     case "autoSwitchReloadWindowEnabled":
     case "autoResumeEnabled":
+    case "crossWindowAccountModeEnabled":
     case "autoSwitchRefreshAllBeforeSwitchEnabled":
     case "autoResetEnabled":
     case "backgroundTokenRefreshEnabled":
@@ -67,6 +69,12 @@ export async function handleDashboardSettingUpdate(
     case "codexAppRestartMode":
       if (value === "auto" || value === "manual") {
         await updateDashboardConfiguration(config, key, value, target);
+        updated = true;
+      }
+      break;
+    case "codexSessionDefault":
+      if (typeof value === "string" && (value === "webview" || value === "cli")) {
+        await updateDashboardConfiguration(config, key, normalizeCodexSessionDefault(value), target);
         updated = true;
       }
       break;
@@ -234,10 +242,12 @@ function resolveConfigurationTarget(
   // left a workspace-level override behind in a shared repository.
   if (
     key === "cliIntegrationEnabled" ||
+    key === "codexSessionDefault" ||
     key === "autoResumeEnabled" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||
     key === "fullCrossPcAccountSyncEnabled"
+    || key === "crossWindowAccountModeEnabled"
   ) {
     return vscode.ConfigurationTarget.Global;
   }

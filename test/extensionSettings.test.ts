@@ -6,7 +6,9 @@ import {
   getQuotaWarningThresholds,
   isHourlyQuotaControlEnabled,
   normalizeQuotaWarningThreshold,
-  normalizeQuotaWarningWeeklyThreshold
+  normalizeQuotaWarningWeeklyThreshold,
+  normalizeAutoResetWeeklyThreshold,
+  normalizeCodexSessionDefault
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
@@ -87,5 +89,24 @@ describe("5-hour quota control defaults", () => {
         inspect: vi.fn((key: string) => (key === "quotaWarningWeeklyThreshold" ? { defaultValue: 1 } : undefined))
       } as never)
     ).toEqual({ hourly: 10, weekly: 1 });
+  });
+
+  it("defaults the reset plan threshold and Codex session surface correctly", () => {
+    const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+    expect(manifest.contributes.configuration.properties["codexManager.autoResetWeeklyThreshold"]).toMatchObject({
+      minimum: 0,
+      default: 0
+    });
+    expect(manifest.contributes.configuration.properties["codexManager.codexSessionDefault"]).toMatchObject({
+      enum: ["webview", "cli"],
+      default: "webview"
+    });
+    expect(normalizeAutoResetWeeklyThreshold(-1)).toBe(0);
+    expect(normalizeAutoResetWeeklyThreshold(0)).toBe(0);
+    expect(normalizeAutoResetWeeklyThreshold(101)).toBe(100);
+    expect(normalizeAutoResetWeeklyThreshold(Number.NaN)).toBe(0);
+    expect(normalizeCodexSessionDefault(undefined)).toBe("webview");
+    expect(normalizeCodexSessionDefault("cli")).toBe("cli");
+    expect(normalizeCodexSessionDefault("unknown")).toBe("webview");
   });
 });

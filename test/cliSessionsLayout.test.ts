@@ -333,6 +333,27 @@ describe("sessions sidebar layout", () => {
     expect(styles).toMatch(/body\.is-dashboard-workspace-route #dashboard-main\s*{[^}]*inset:\s*0 0 0 calc/s);
   });
 
+  it("supports the Webview default while preserving the embedded CLI surface", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    expect(settings).toContain('title: "Webview"');
+    expect(settings).toContain('title: "CLI"');
+    expect(main).toContain('snapshot.settings.codexSessionDefault ?? "webview"');
+    expect(main).toContain('sendAction("openCodexCliSession"');
+    expect(source).toContain("onOpenNewInCodex");
+    expect(source).toContain("props.onOpenNewInCodex();");
+  });
+
+  it("nests auto resume under reload after auto switch", () => {
+    const source = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const reloadStart = source.indexOf("props.copy.autoSwitchReloadTitle");
+    const resumeStart = source.indexOf("props.copy.autoResumeTitle");
+    expect(reloadStart).toBeGreaterThan(-1);
+    expect(resumeStart).toBeGreaterThan(reloadStart);
+    expect(source.slice(reloadStart, resumeStart)).toContain("settings-nested-stack");
+  });
+
   it("keys automatic workspace environment loads so realtime renders cannot create a request loop", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(main).toContain("lastAutomaticWorkspaceLoadRef.current === loadKey");

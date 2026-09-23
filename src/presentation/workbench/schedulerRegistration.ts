@@ -95,6 +95,18 @@ export function registerAutoRefreshScheduler(params: {
     }
     const accounts = (await params.repo.listAccounts()).filter((account) => account.enabled !== false);
     const now = Date.now();
+    const hasUnhandledDueReset = accounts.some((account) =>
+      quotaResetTimes(account).some(
+        (resetAt) => resetAt <= now && !handledQuotaResets.has(`${account.id}:${resetAt}`)
+      )
+    );
+    if (hasUnhandledDueReset) {
+      // Cached snapshots can already be at or past their reset time when the
+      // extension starts. Run the same single-flight refresh path immediately
+      // instead of waiting for a future timer that will never be scheduled.
+      void runDueQuotaResetRefreshes();
+      return;
+    }
     const futureResets = accounts.flatMap(quotaResetTimes).filter((resetAt) => resetAt > now);
     if (!futureResets.length) {
       return;

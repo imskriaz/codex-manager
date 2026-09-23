@@ -14,6 +14,7 @@ export type DashboardSettingKey =
   | "codexAppRestartMode"
   | "backgroundTokenRefreshEnabled"
   | "cliIntegrationEnabled"
+  | "codexSessionDefault"
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
@@ -21,6 +22,7 @@ export type DashboardSettingKey =
   | "hourlyQuotaControlEnabled"
   | "autoSwitchReloadWindowEnabled"
   | "autoResumeEnabled"
+  | "crossWindowAccountModeEnabled"
   | "autoSwitchHourlyThreshold"
   | "autoSwitchWeeklyThreshold"
   | "autoSwitchRefreshAllBeforeSwitchEnabled"
@@ -49,6 +51,8 @@ export interface DashboardSettings {
   backgroundTokenRefreshEnabled: boolean;
   /** Master gate for local Codex session access. */
   cliIntegrationEnabled?: boolean;
+  /** Default dashboard session surface. */
+  codexSessionDefault?: DashboardCodexSessionDefault;
   autoRefreshMinutes: number;
   autoRefreshCurrentMinutes: number;
   usageHistoryRetentionDays: number;
@@ -57,6 +61,8 @@ export interface DashboardSettings {
   autoSwitchReloadWindowEnabled: boolean;
   /** Preserve running Codex sessions across automatic VS Code reloads. */
   autoResumeEnabled?: boolean;
+  /** Assign independent accounts and CODEX_HOME values to VS Code windows. */
+  crossWindowAccountModeEnabled?: boolean;
   autoSwitchHourlyThreshold: number;
   autoSwitchWeeklyThreshold: number;
   /** Refresh every enabled account before evaluating an automatic switch. */
@@ -88,6 +94,7 @@ export interface DashboardSettings {
 }
 
 export type DashboardThemeOption = "auto" | "dark" | "light";
+export type DashboardCodexSessionDefault = "webview" | "cli";
 
 export interface DashboardCopy {
   panelTitle: string;
@@ -279,6 +286,8 @@ export interface DashboardCopy {
   autoSwitchReloadSub: string;
   autoResumeTitle: string;
   autoResumeSub: string;
+  crossWindowAccountModeTitle?: string;
+  crossWindowAccountModeSub?: string;
   autoSwitchLockMinutesTitle: string;
   autoSwitchLockMinutesSub: string;
   autoSwitchLockOff: string;
@@ -544,6 +553,7 @@ export type DashboardActionName =
   | "setAccountTokenRefreshEnabled"
   | "refreshToken"
   | "getDailyUsage"
+  | "openNewCodexWebview"
   | "startCodexCliSession"
   | "listCodexCliSessions"
   | "getCodexCliSessionMessages"

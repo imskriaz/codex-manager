@@ -71,6 +71,7 @@ const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
 
 export type CliSessionsPageProps = {
   dashboardMode?: boolean;
+  sessionDefault?: "webview" | "cli";
   privacyMode: boolean;
   sessions: DashboardCliSessionSummary[];
   selectedSession?: DashboardCliSessionSummary;
@@ -108,6 +109,7 @@ export type CliSessionsPageProps = {
   onRefresh: () => void;
   onStart: (input: { text: string; model?: string; reasoningEffort?: string; sandboxMode: DashboardCliSandboxMode; projectPath?: string }) => void;
   onSelect: (session: DashboardCliSessionSummary) => void;
+  onOpenNewInCodex: () => void;
   onBackToList: () => void;
   onRefreshMessages: () => void;
   onRefreshEnvironment: (projectPath?: string) => void;
@@ -259,6 +261,15 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const railFiles = useMemo(() => props.messages.flatMap((message) => message.changes ?? []).filter((change, index, all) => all.findIndex((item) => item.path === change.path) === index), [props.messages]);
   const railAgents = useMemo(() => props.messages.filter((message) => message.kind === "collaboration"), [props.messages]);
   const selectedProjectPath = props.selectedSession?.projectPath ?? newChatProject ?? projectPath;
+  const startNewChat = (nextProject?: string): void => {
+    if ((props.sessionDefault ?? "webview") === "webview") {
+      props.onOpenNewInCodex();
+      return;
+    }
+    props.onBackToList();
+    setNewChatProject(nextProject ?? projectPath ?? projects[0]?.path ?? "");
+    setProjectPath(nextProject ?? projectPath ?? projects[0]?.path);
+  };
   const localPeerId = props.peers?.find((peer) => peer.local)?.id;
   const pcGroups = useMemo(() => {
     const localPeer = props.peers?.find((peer) => peer.local);
@@ -451,7 +462,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             <div />
           </div>
           <nav class="cli-primary-nav" aria-label="Workspace navigation">
-            <button type="button" onClick={() => { const nextProject = projectPath ?? projects[0]?.path ?? ""; setNewChatProject(nextProject); setProjectPath(nextProject); props.onBackToList(); }}><PlusIcon /><span>New chat</span></button>
+            <button type="button" onClick={() => startNewChat()}><PlusIcon /><span>New chat</span></button>
             <button type="button" onClick={props.onDashboard}><DashboardIcon /><span>Dashboard</span></button>
           </nav>
           <div class="cli-session-filters">
@@ -501,7 +512,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                          </button>
                          <span class="cli-project-actions">
                            <button type="button" class="cli-project-collapse" aria-label={`${projectCollapsed ? "Expand" : "Collapse"} ${project.label}`} aria-expanded={!projectCollapsed} onClick={() => toggleGroup(groupId)}><ChevronIcon /></button>
-                           {pc.local ? <button type="button" class="cli-project-new" aria-label={`New chat in ${project.label}`} title={`New chat in ${project.label}`} onClick={() => { props.onBackToList(); setNewChatProject(project.path); setProjectPath(project.path); }}><PlusIcon /></button> : null}
+                           {pc.local ? <button type="button" class="cli-project-new" aria-label={`New chat in ${project.label}`} title={`New chat in ${project.label}`} onClick={() => startNewChat(project.path)}><PlusIcon /></button> : null}
                          </span>
                       </div>
                       {!projectCollapsed ? <div class="cli-project-sessions" role="list">{sessions.map(renderSession)}{sessions.length === 0 ? <small class="cli-project-empty">No sessions yet</small> : null}</div> : null}

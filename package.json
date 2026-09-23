@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.6-pre5",
+  "version": "1.2.6-pre6",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -103,6 +103,16 @@
           "scope": "machine",
           "markdownDescription": "Experimental Workspace: enable the dashboard workspace, local Codex CLI sessions, and terminal tools. Disabled by default. Auto Resume can read running session metadata independently when enabled."
         },
+        "codexManager.codexSessionDefault": {
+          "type": "string",
+          "scope": "machine",
+          "enum": [
+            "webview",
+            "cli"
+          ],
+          "default": "webview",
+          "markdownDescription": "Default surface used when opening sessions or starting a chat from the dashboard. `webview` uses the official Codex editor; `cli` keeps the embedded dashboard workspace."
+        },
         "codexManager.backgroundTokenRefreshEnabled": {
           "type": "boolean",
           "default": false,
@@ -128,6 +138,13 @@
           "scope": "machine",
           "default": false,
           "markdownDescription": "Experimental: preserve running Codex sessions in persistent workspace storage before an automatic reload and reopen them in VS Code after the reload completes. Works without enabling Session Integration."
+        },
+        "codexManager.crossWindowAccountModeEnabled": {
+          "type": "boolean",
+          "scope": "machine",
+          "default": false,
+          "ignoreSync": true,
+          "markdownDescription": "When enabled, assign a different saved account and isolated CODEX_HOME to each VS Code window on this PC. Disabled by default; when off, account behavior stays unchanged."
         },
         "codexManager.autoSwitchHourlyThreshold": {
           "type": "number",
@@ -155,9 +172,9 @@
         },
         "codexManager.autoResetWeeklyThreshold": {
           "type": "number",
-          "minimum": 1,
+          "minimum": 0,
           "maximum": 100,
-          "default": 1,
+          "default": 0,
           "markdownDescription": "Long-window quota percentage (weekly or monthly) at or below which the reset plan may consume a reset credit."
         },
         "codexManager.autoSwitchLockMinutes": {

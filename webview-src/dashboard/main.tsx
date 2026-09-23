@@ -796,6 +796,7 @@ function App() {
       if (
         message.type === "dashboard:action-result" &&
         [
+          "openNewCodexWebview",
           "openCodexCliSession",
           "renameCodexCliSession",
           "forkCodexCliSession",
@@ -1143,6 +1144,13 @@ function App() {
         key: Date.now(),
         level: "warning",
         message: "Archived sessions cannot be opened. Restore this session first."
+      });
+      return;
+    }
+    if ((snapshot.settings.codexSessionDefault ?? "webview") === "webview") {
+      sendAction("openCodexCliSession", undefined, {
+        sessionId: session.id,
+        targetDeviceId: session.deviceId
       });
       return;
     }
@@ -2248,6 +2256,7 @@ function App() {
         ? createPortal(
             <CliSessionsPage
               dashboardMode={browserPath === "/dash"}
+              sessionDefault={snapshot.settings.codexSessionDefault ?? "webview"}
               privacyMode={state.privacyMode}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
@@ -2259,6 +2268,7 @@ function App() {
               sending={isActionPending("sendCodexCliSessionMessage")}
               stopping={isActionPending("cancelCodexCliSessionTurn")}
               mutating={[
+                "openNewCodexWebview",
                 "openCodexCliSession",
                 "renameCodexCliSession",
                 "forkCodexCliSession",
@@ -2293,6 +2303,7 @@ function App() {
                 explicitCliRefreshRef.current = requestCliSessions(true);
               }}
               onSelect={selectCliSession}
+              onOpenNewInCodex={() => sendAction("openNewCodexWebview")}
               onBackToList={() => {
                 navigateDashboardPath("/", setBrowserPath);
                 setSelectedCliSession(undefined);
