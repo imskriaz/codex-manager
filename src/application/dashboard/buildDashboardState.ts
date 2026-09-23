@@ -222,8 +222,8 @@ export function sortDashboardAccounts<
 ): T[] {
   return [...accounts].sort(
     (a, b) =>
-      Number(b.id === currentWindowAccountId) - Number(a.id === currentWindowAccountId) ||
       Number(b.isActive) - Number(a.isActive) ||
+      Number(b.id === currentWindowAccountId) - Number(a.id === currentWindowAccountId) ||
       (accountViewStateById?.get(b.id)?.healthPriority ?? 0) - (accountViewStateById?.get(a.id)?.healthPriority ?? 0) ||
       b.createdAt - a.createdAt ||
       a.email.localeCompare(b.email)

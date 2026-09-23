@@ -26,7 +26,6 @@ type Registry = { slots: WindowSlot[] };
 let slot: WindowSlot | undefined;
 let heartbeat: NodeJS.Timeout | undefined;
 let originalHome: string | undefined;
-let liveSlots: WindowSlot[] = [];
 
 export function isCrossWindowAccountModeEnabled(): boolean {
   return getCodexManagerConfiguration().get<boolean>(SETTING, false) === true;
@@ -36,9 +35,14 @@ export async function initializeCrossWindowAccountMode(): Promise<void> {
   if (!isCrossWindowAccountModeEnabled()) return;
   originalHome ??= process.env["CODEX_HOME"];
   const session = vscode.env.sessionId || "unknown-session";
-  // A fresh nonce is intentional: two windows can share VS Code's session ID,
-  // while a reload must be able to replace its old lease after deactivation.
-  const slotId = hash(`${session}:${process.pid}:${crypto.randomUUID()}`).slice(0, 24);
+  const workspaceIdentity =
+    vscode.workspace.workspaceFile?.toString() ??
+    vscode.workspace.workspaceFolders?.map((folder) => folder.uri.toString()).sort().join("|") ??
+    "empty-window";
+  // Keep a window on the same isolated home when its extension host reloads.
+  // The session id is stable across that reload boundary, so the selected
+  // auth.json and its scoped active-account state cannot silently revert.
+  const slotId = hash(`${session}:${workspaceIdentity}`).slice(0, 24);
   const home = path.join(getCodexManagerStorageRoot(), HOME_DIRECTORY, slotId);
   await fs.mkdir(home, { recursive: true, mode: 0o700 });
   await fs.chmod(home, 0o700).catch(() => undefined);
@@ -47,7 +51,6 @@ export async function initializeCrossWindowAccountMode(): Promise<void> {
   await writeRegistry((registry) => {
     registry.slots = registry.slots.filter((candidate) => candidate.slotId !== slotId);
     registry.slots.push(slot!);
-    liveSlots = registry.slots;
   });
   heartbeat = setInterval(() => {
     if (!slot) return;
@@ -56,7 +59,6 @@ export async function initializeCrossWindowAccountMode(): Promise<void> {
       const current = registry.slots.find((candidate) => candidate.slotId === slot!.slotId);
       if (current) Object.assign(current, slot);
       else registry.slots.push(slot!);
-      liveSlots = registry.slots;
     }).catch((error) => console.warn("[codexManager] parallel window heartbeat failed:", error));
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
@@ -70,13 +72,11 @@ export async function disposeCrossWindowAccountMode(): Promise<void> {
     slot = undefined;
     await writeRegistry((registry) => {
       registry.slots = registry.slots.filter((candidate) => candidate.slotId !== released);
-      liveSlots = registry.slots;
     }).catch(() => undefined);
   }
   if (originalHome === undefined) delete process.env["CODEX_HOME"];
   else process.env["CODEX_HOME"] = originalHome;
   originalHome = undefined;
-  liveSlots = [];
 }
 
 export function getCrossWindowHome(): string | undefined {
@@ -92,24 +92,20 @@ export function getCrossWindowAccountId(): string | undefined {
 }
 
 export function canWindowUseAccount(accountId: string): boolean {
-  if (!isCrossWindowAccountModeEnabled() || !slot) return true;
-  return !liveSlots.some(
-    (candidate) => candidate.accountId === accountId && candidate.slotId !== slot!.slotId && isLive(candidate)
-  );
+  void accountId;
+  // Parallel windows isolate CODEX_HOME; they do not reserve accounts. Two
+  // windows may deliberately run the same account, and both manual and
+  // automatic switching must remain available in that configuration.
+  return true;
 }
 
 export async function claimCrossWindowAccount(accountId: string): Promise<void> {
   if (!isCrossWindowAccountModeEnabled() || !slot) return;
   await writeRegistry((registry) => {
-    const conflict = registry.slots.find(
-      (candidate) => candidate.accountId === accountId && candidate.slotId !== slot!.slotId && isLive(candidate)
-    );
-    if (conflict) throw new Error(`Account is already assigned to another VS Code window (${conflict.slotId}).`);
     const current = registry.slots.find((candidate) => candidate.slotId === slot!.slotId);
     if (!current) throw new Error("This VS Code window is no longer registered for parallel accounts.");
     current.accountId = accountId;
     slot!.accountId = accountId;
-    liveSlots = registry.slots;
   });
 }
 
@@ -119,7 +115,6 @@ export async function releaseCrossWindowAccount(accountId?: string): Promise<voi
     const current = registry.slots.find((candidate) => candidate.slotId === slot!.slotId);
     if (current && (!accountId || current.accountId === accountId)) current.accountId = undefined;
     if (!accountId || slot!.accountId === accountId) slot!.accountId = undefined;
-    liveSlots = registry.slots;
   });
 }
 
@@ -129,13 +124,24 @@ export async function ensureCrossWindowAccountAssignment(
 ): Promise<{ accountId?: string; assigned: boolean }> {
   if (!isCrossWindowAccountModeEnabled() || !slot) return { assigned: false };
   const existing = slot.accountId;
-  if (existing && canWindowUseAccount(existing)) {
+  const active = accounts.find((account) => account.isActive && account.enabled !== false);
+  // auth.json is authoritative on load. If Codex changed accounts outside the
+  // manager, bind the window slot to what Codex actually loaded.
+  if (active) {
+    await claimCrossWindowAccount(active.id);
+    return { accountId: active.id, assigned: true };
+  }
+  if (existing && accounts.some((account) => account.id === existing && account.enabled !== false)) {
     await claimCrossWindowAccount(existing);
+    try {
+      await switchAccount(existing);
+    } catch (error) {
+      await releaseCrossWindowAccount(existing);
+      throw error;
+    }
     return { accountId: existing, assigned: true };
   }
-  const candidate = accounts.find(
-    (account) => account.enabled !== false && canWindowUseAccount(account.id) && Boolean(account.id)
-  );
+  const candidate = accounts.find((account) => account.enabled !== false && Boolean(account.id));
   if (!candidate) return { assigned: false };
   await claimCrossWindowAccount(candidate.id);
   // `isActive` is scoped to the managed CODEX_HOME. A newly-created window
@@ -156,7 +162,6 @@ async function writeRegistry(mutator: (registry: Registry) => void): Promise<voi
     const registry = await readRegistry(file);
     registry.slots = registry.slots.filter(isLive);
     mutator(registry);
-    liveSlots = registry.slots;
     const temp = `${file}.tmp-${process.pid}-${crypto.randomUUID()}`;
     await fs.writeFile(temp, JSON.stringify(registry, null, 2), { encoding: "utf8", mode: 0o600 });
     await fs.rename(temp, file);

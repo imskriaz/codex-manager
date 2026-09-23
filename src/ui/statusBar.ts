@@ -3,7 +3,6 @@ import { AccountsRepository } from "../storage";
 import { CodexManagerAccountRecord } from "../core/types";
 import { formatPlanType } from "../application/dashboard/copy";
 import { isHourlyQuotaControlEnabled } from "../infrastructure/config/extensionSettings";
-import { getCurrentWindowRuntimeAccountId } from "../presentation/workbench/windowRuntimeAccount";
 import { formatRelativeReset } from "../utils/time";
 import {
   escapeMarkdown,
@@ -54,8 +53,7 @@ export class AccountsStatusBarProvider {
   async refresh(): Promise<void> {
     const accounts = await this.repo.listAccounts();
     this.item.command = STATUS_BAR_COMMAND;
-    const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
-    const primary = resolveStatusBarAccount(accounts, currentWindowAccountId);
+    const primary = resolveStatusBarAccount(accounts);
     const showHourlyQuota = isHourlyQuotaControlEnabled();
     const _t = t();
 
@@ -100,12 +98,12 @@ export class AccountsStatusBarProvider {
 }
 
 export function resolveStatusBarAccount(
-  accounts: CodexManagerAccountRecord[],
-  currentWindowAccountId?: string
+  accounts: CodexManagerAccountRecord[]
 ): CodexManagerAccountRecord | undefined {
-  return (
-    accounts.find((account) => account.isActive) ?? accounts.find((account) => account.id === currentWindowAccountId)
-  );
+  // Only the auth.json-reconciled account is actually running. A cached
+  // extension-host identity is useful for deciding whether Codex must reload,
+  // but must never be presented as the live account when auth.json has none.
+  return accounts.find((account) => account.isActive);
 }
 
 export function buildStatusText(account: CodexManagerAccountRecord, showHourlyQuota: boolean): string {

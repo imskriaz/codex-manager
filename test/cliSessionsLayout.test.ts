@@ -345,6 +345,14 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("props.onOpenNewInCodex();");
   });
 
+  it("keeps browser session clicks inside the browser dashboard", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(main).toContain('!isBrowserDashboard && (snapshot.settings.codexSessionDefault ?? "webview") === "webview"');
+    expect(main).toContain('message.action === "openCodexCliSession"');
+    expect(main).toContain("navigateDashboardPath(buildCliSessionPath(opened), setBrowserPath)");
+    expect(main).toContain("onOpenInCodex={(session) => selectCliSession(session)}");
+  });
+
   it("nests auto resume under reload after auto switch", () => {
     const source = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const reloadStart = source.indexOf("props.copy.autoSwitchReloadTitle");

@@ -86,4 +86,20 @@ describe("account switch reload effects", () => {
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));
     vi.useRealTimers();
   });
+
+  it("coalesces duplicate delayed reload requests into one host restart", async () => {
+    vi.useFakeTimers();
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+
+    const first = scheduleExtensionHostReload(undefined, 10);
+    const second = scheduleExtensionHostReload(undefined, 10);
+    expect(second).toBe(first);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+    expect(
+      vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "workbench.action.restartExtensionHost")
+    ).toHaveLength(1);
+    vi.useRealTimers();
+  });
 });

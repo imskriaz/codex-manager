@@ -23,6 +23,7 @@ vi.mock("../src/commands", () => ({
 
 vi.mock("../src/codex", () => ({
   getAuthJsonPath: vi.fn(() => "C:/Users/test/.codex/auth.json"),
+  getCodexHomeStateKey: vi.fn(() => "test-home"),
   readAuthFile: vi.fn()
 }));
 
@@ -186,6 +187,38 @@ describe("workbench external account synchronization", () => {
       pattern: path.basename(accountsIndexPath)
     });
     disposable.dispose();
+  });
+
+  it("does not reload again when startup already matches the account in auth.json", async () => {
+    vi.mocked(readCurrentAuthAccountStorageId).mockResolvedValue("current-account");
+    const accounts = [
+      { id: "current-account", email: "current@example.com", isActive: true, createdAt: 1, updatedAt: 1 }
+    ];
+    const repo = {
+      syncActiveAccountFromAuthFile: vi.fn(async () => undefined),
+      listAccounts: vi.fn(async () => accounts)
+    };
+    const stored = new Map<string, unknown>();
+    const context = {
+      workspaceState: {
+        get: (key: string) => stored.get(key),
+        update: vi.fn(async (key: string, value: unknown) => {
+          stored.set(key, value);
+        })
+      }
+    } as unknown as vscode.ExtensionContext;
+    const coordinator = new WorkbenchRefreshCoordinator(context, repo as never, {} as never) as unknown as
+      ExternalChangeSync & WorkbenchRefreshCoordinator;
+    await coordinator.initializeObservedAuthIdentity();
+
+    await coordinator.syncActiveAccountFromExternalChange(
+      { refresh: vi.fn(), markObservedAuthIdentity: vi.fn() },
+      vi.fn(),
+      vi.fn(),
+      () => false
+    );
+
+    expect(autoReloadWindowForAccount).not.toHaveBeenCalled();
   });
 
   it("reloads a window changed by another window without showing a notification", async () => {

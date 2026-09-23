@@ -98,13 +98,13 @@ describe("resolveStatusBarAccount", () => {
     const previousAccount = { ...account, id: "previous", email: "previous@example.com", isActive: false };
     const nextAccount = { ...account, id: "next", email: "next@example.com", isActive: true };
 
-    expect(resolveStatusBarAccount([previousAccount, nextAccount], previousAccount.id)).toBe(nextAccount);
+    expect(resolveStatusBarAccount([previousAccount, nextAccount])).toBe(nextAccount);
   });
 
-  it("falls back to the window account when no account is marked active", () => {
+  it("does not show a cached window account when Codex is not running it", () => {
     const windowAccount = { ...account, id: "window", isActive: false };
 
-    expect(resolveStatusBarAccount([windowAccount], windowAccount.id)).toBe(windowAccount);
+    expect(resolveStatusBarAccount([windowAccount])).toBeUndefined();
   });
 
   it("returns no account when nothing is running instead of selecting an arbitrary saved account", () => {

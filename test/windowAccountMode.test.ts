@@ -70,7 +70,7 @@ describe("parallel window account mode", () => {
     expect(registry).not.toMatch(/access.?token|refresh.?token|id.?token/i);
   });
 
-  it("rejects an account claimed by another live window", async () => {
+  it("allows the same account to run in more than one live window", async () => {
     testState.enabled = true;
     await initializeCrossWindowAccountMode();
     const registryPath = path.join(testState.root, "window-account-slots-v1.json");
@@ -83,7 +83,36 @@ describe("parallel window account mode", () => {
       heartbeatAt: Date.now()
     });
     await fs.writeFile(registryPath, JSON.stringify(registry), "utf8");
-    await expect(claimCrossWindowAccount("account-b")).rejects.toThrow("already assigned to another VS Code window");
+    expect(canWindowUseAccount("account-b")).toBe(true);
+    await expect(claimCrossWindowAccount("account-b")).resolves.toBeUndefined();
+    expect(getCrossWindowAccountId()).toBe("account-b");
+  });
+
+  it("reuses the isolated home across an extension-host reload", async () => {
+    testState.enabled = true;
+    await initializeCrossWindowAccountMode();
+    const firstHome = getCrossWindowHome();
+
+    await disposeCrossWindowAccountMode();
+    await initializeCrossWindowAccountMode();
+
+    expect(getCrossWindowHome()).toBe(firstHome);
+  });
+
+  it("uses the auth.json account as the authoritative assignment on load", async () => {
+    testState.enabled = true;
+    await initializeCrossWindowAccountMode();
+    await claimCrossWindowAccount("stale-slot-account");
+    const switchAccount = vi.fn();
+    const active = { id: "codex-account", email: "codex@example.com", enabled: true, isActive: true } as never;
+
+    await expect(ensureCrossWindowAccountAssignment([active], switchAccount)).resolves.toEqual({
+      accountId: "codex-account",
+      assigned: true
+    });
+
+    expect(getCrossWindowAccountId()).toBe("codex-account");
+    expect(switchAccount).not.toHaveBeenCalled();
   });
 
   it("loads the selected account and releases its claim if loading fails", async () => {

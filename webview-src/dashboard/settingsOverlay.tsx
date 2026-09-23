@@ -693,10 +693,10 @@ export function SettingsOverlay(props: {
                 </div>
               </SettingsToggleBlock>
               <SettingsToggleBlock
-                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts"}
+                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
                 sub={
                   props.copy.crossWindowAccountModeSub ??
-                  "When enabled, each VS Code window receives a different account and isolated Codex home. Disabled by default; turning it off returns to the normal shared-window behavior."
+                  "Give each VS Code window an isolated Codex home so windows can run the same or different accounts independently. Disabled by default."
                 }
                 enabled={props.settings.crossWindowAccountModeEnabled === true}
                 className="settings-block-wide"
@@ -704,7 +704,7 @@ export function SettingsOverlay(props: {
               >
                 <div class="settings-note">
                   {props.settings.crossWindowAccountModeEnabled
-                    ? "Enabled. New and reloaded windows claim accounts independently."
+                    ? "Enabled. New and reloaded windows load accounts independently."
                     : "Disabled. Account switching continues to use the existing behavior."}
                 </div>
               </SettingsToggleBlock>

@@ -241,6 +241,52 @@ describe("AccountsRepository token persistence", () => {
     repo.dispose();
   });
 
+  it("cross-checks auth.json during init and repairs a stale current account before the first load", async () => {
+    const secrets = new Map<string, string>();
+    const context = {
+      globalStorageUri: { fsPath: tempDir },
+      secrets: {
+        get: vi.fn(async (key: string) => secrets.get(key)),
+        store: vi.fn(async (key: string, value: string) => secrets.set(key, value)),
+        delete: vi.fn(async (key: string) => secrets.delete(key))
+      }
+    } as unknown as vscode.ExtensionContext;
+    const staleTokens = createTokens("acct_stale", "stale@example.com");
+    const liveTokens = createTokens("acct_live", "live@example.com");
+    const staleId = buildAccountStorageId("stale@example.com", "acct_stale", undefined);
+    const liveId = buildAccountStorageId("live@example.com", "acct_live", undefined);
+    await fs.writeFile(
+      path.join(tempDir, "accounts-index.json"),
+      JSON.stringify({
+        currentAccountId: staleId,
+        accounts: [
+          { id: staleId, email: "stale@example.com", accountId: "acct_stale", isActive: true, createdAt: 1, updatedAt: 1 },
+          { id: liveId, email: "live@example.com", accountId: "acct_live", isActive: false, createdAt: 2, updatedAt: 2 }
+        ]
+      }),
+      "utf8"
+    );
+    await context.secrets.store(`codex.account.${staleId}`, JSON.stringify(staleTokens));
+    await context.secrets.store(`codex.account.${liveId}`, JSON.stringify(liveTokens));
+    readAuthFileMock.mockResolvedValue({
+      OPENAI_API_KEY: null,
+      tokens: {
+        id_token: liveTokens.idToken,
+        access_token: liveTokens.accessToken,
+        refresh_token: liveTokens.refreshToken,
+        account_id: liveTokens.accountId
+      },
+      last_refresh: new Date().toISOString()
+    });
+
+    const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
+    await repo.init();
+
+    expect((await repo.listAccounts()).find((account) => account.isActive)?.id).toBe(liveId);
+    expect(writeAuthFileMock).not.toHaveBeenCalled();
+    repo.dispose();
+  });
+
   it("repairs status visibility when force-activating an OAuth account", async () => {
     const secrets = new Map<string, string>();
     const context = {

@@ -48,6 +48,7 @@ import {
   refreshSingleQuotaSafely
 } from "../src/application/accounts/quota";
 import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
+import { canWindowUseAccount } from "../src/services/windowAccountMode";
 import { consumeAutoSwitchNotice, getAutoSwitchRuntimeSnapshot } from "../src/presentation/workbench/autoSwitchState";
 
 type QuotaRefreshRepo = Pick<
@@ -557,6 +558,41 @@ describe("refreshSingleQuota token automation state", () => {
 
     expect(canUseAccount).toHaveBeenCalledWith(foreignCandidate.id);
     expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not exclude a capable account just because another local window uses it", async () => {
+    vi.mocked(vscode.window.showWarningMessage).mockClear();
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: vi.fn((key: string, defaultValue?: unknown) => {
+        const values: Record<string, unknown> = {
+          autoSwitchEnabled: true,
+          autoSwitchHourlyThreshold: 20,
+          autoSwitchWeeklyThreshold: 20
+        };
+        return values[key] ?? defaultValue;
+      }),
+      update: vi.fn()
+    } as never);
+    const active = createAccount("parallel-active", true, 5, 5);
+    const sharedCandidate = createAccount("parallel-shared", false, 90, 90);
+    const repo = {
+      listAccounts: vi.fn(async () => [active, sharedCandidate]),
+      switchAccount: vi.fn(async () => undefined)
+    };
+    setCurrentWindowRuntimeAccountId(sharedCandidate.id);
+
+    await expect(
+      maybeAutoSwitchForActiveQuota(
+        repo as unknown as AccountsRepository,
+        { refresh: vi.fn() },
+        { canUseAccount: canWindowUseAccount }
+      )
+    ).resolves.toBe(true);
+
+    expect(repo.switchAccount).toHaveBeenCalledWith(sharedCandidate.id);
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(
+      "No account to switch — no capable account has enough quota remaining."
+    );
   });
 
   it("uses weekly quota to break a tie in 5-hour quota", async () => {

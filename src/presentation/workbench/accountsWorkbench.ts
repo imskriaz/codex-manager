@@ -69,23 +69,7 @@ export class AccountsWorkbench {
       void vscode.window.showInformationMessage(completedAutoSwitchNotice);
     }
     await measureStep("repo.init", async () => {
-      await this.repo.init({ deferSync: true });
-    });
-    await measureStep("parallelWindowAccountAssignment", async () => {
-      if (!isCrossWindowAccountModeEnabled()) return;
-      try {
-        const result = await ensureCrossWindowAccountAssignment(await this.repo.listAccounts(), (accountId) =>
-          this.repo.switchAccount(accountId)
-        );
-        if (!result.assigned) {
-          void vscode.window.showWarningMessage(
-            "Parallel window accounts is enabled, but no unclaimed usable account is available. Add or release an account, then reload this window."
-          );
-        }
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        void vscode.window.showErrorMessage(`This window could not claim a parallel account: ${detail}`);
-      }
+      await this.repo.init();
     });
     await measureStep("disabledActiveAccountFence", async () => {
       await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
@@ -191,7 +175,6 @@ export class AccountsWorkbench {
       refreshWorkbench();
       this.webDashboard.publishLocalStateChange();
     };
-    this.repo.scheduleStartupSync(refreshers.refresh);
     this.encryptedSync.setOnStateChanged(refreshers.refresh);
     await measureStep("registerCommands", () => {
       registerCommands(this.context, this.repo, refreshers, this.encryptedSync);
@@ -223,6 +206,22 @@ export class AccountsWorkbench {
     });
     await measureStep("autoImportCurrentAccountIfNeeded", async () => {
       await this.refreshCoordinator.autoImportCurrentAccountIfNeeded(refreshers);
+    });
+    await measureStep("parallelWindowAccountAssignment", async () => {
+      if (!isCrossWindowAccountModeEnabled()) return;
+      try {
+        const result = await ensureCrossWindowAccountAssignment(await this.repo.listAccounts(), (accountId) =>
+          this.repo.switchAccount(accountId)
+        );
+        if (!result.assigned) {
+          void vscode.window.showWarningMessage(
+            "Parallel window accounts is enabled, but no usable saved account is available. Add or enable an account, then reload this window."
+          );
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        void vscode.window.showErrorMessage(`This window could not load its parallel account: ${detail}`);
+      }
     });
     await measureStep("statusBar.refresh", async () => {
       await this.statusBar.refresh();

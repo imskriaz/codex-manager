@@ -820,6 +820,18 @@ function App() {
         }
         if (message.status === "completed" && message.action === "renameCodexCliSession" && message.payload?.cliSession)
           setSelectedCliSession(mergeCachedCliSession(message.payload.cliSession, selectedCliSession));
+        if (
+          isBrowserDashboard &&
+          message.status === "completed" &&
+          message.action === "openCodexCliSession" &&
+          message.payload?.cliSession
+        ) {
+          const opened = mergeCachedCliSession(message.payload.cliSession, selectedCliSession);
+          navigateDashboardPath(buildCliSessionPath(opened), setBrowserPath);
+          setSelectedCliSession(opened);
+          setCliSessionMessages(message.payload.cliSessionMessages ?? []);
+          setCliSessionMessagesError(undefined);
+        }
         if (message.status === "completed" && message.action === "forkCodexCliSession" && message.payload?.cliSession) {
           setSelectedCliSession(mergeCachedCliSession(message.payload.cliSession, selectedCliSession));
           setCliSessionMessages([]);
@@ -1147,7 +1159,7 @@ function App() {
       });
       return;
     }
-    if ((snapshot.settings.codexSessionDefault ?? "webview") === "webview") {
+    if (!isBrowserDashboard && (snapshot.settings.codexSessionDefault ?? "webview") === "webview") {
       sendAction("openCodexCliSession", undefined, {
         sessionId: session.id,
         targetDeviceId: session.deviceId
@@ -2445,12 +2457,7 @@ function App() {
                   targetDeviceId: session.deviceId
                 })
               }
-              onOpenInCodex={(session) =>
-                sendAction("openCodexCliSession", undefined, {
-                  sessionId: session.id,
-                  targetDeviceId: session.deviceId
-                })
-              }
+              onOpenInCodex={(session) => selectCliSession(session)}
               onUnarchive={(session) =>
                 sendAction("unarchiveCodexCliSession", undefined, {
                   sessionId: session.id,

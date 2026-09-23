@@ -961,7 +961,10 @@ export class AccountsRepository {
         account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true);
       } catch (error) {
         await this.switchCoordinator?.cancelAccountSwitch(accountId);
-        if (parallelMode && previousAccountId !== accountId) await releaseCrossWindowAccount(accountId);
+        if (parallelMode && previousAccountId !== accountId) {
+          if (previousAccountId) await claimCrossWindowAccount(previousAccountId);
+          else await releaseCrossWindowAccount(accountId);
+        }
         throw error;
       }
       await this.switchCoordinator?.completeAccountSwitch(accountId);

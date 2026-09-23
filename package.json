@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.6-pre7",
+  "version": "1.2.6",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -144,7 +144,7 @@
           "scope": "machine",
           "default": false,
           "ignoreSync": true,
-          "markdownDescription": "When enabled, assign a different saved account and isolated CODEX_HOME to each VS Code window on this PC. Disabled by default; when off, account behavior stays unchanged."
+          "markdownDescription": "Experimental: give each VS Code window an isolated CODEX_HOME so windows can run the same or different saved accounts independently. Disabled by default; when off, account behavior stays unchanged."
         },
         "codexManager.autoSwitchHourlyThreshold": {
           "type": "number",

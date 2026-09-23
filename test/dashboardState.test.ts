@@ -20,7 +20,7 @@ import {
 import { formatPlanType, getDashboardCopy } from "../src/application/dashboard/copy";
 
 describe("sortDashboardAccounts", () => {
-  it("puts the current window account before active accounts", () => {
+  it("always puts the active Codex account first even when window state is stale", () => {
     const accounts = [
       { id: "active", isActive: true, createdAt: 3, email: "active@example.com" },
       { id: "current", isActive: false, createdAt: 2, email: "current@example.com" },
@@ -29,7 +29,7 @@ describe("sortDashboardAccounts", () => {
 
     const sorted = sortDashboardAccounts(accounts, "current");
 
-    expect(sorted.map((account) => account.id)).toEqual(["current", "active", "other"]);
+    expect(sorted.map((account) => account.id)).toEqual(["active", "current", "other"]);
   });
 });
 

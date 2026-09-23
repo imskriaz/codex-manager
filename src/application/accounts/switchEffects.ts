@@ -13,13 +13,18 @@ import { shouldSuppressDashboardNotifications } from "../../utils/notificationPo
 const CODEX_APP_RESTART_MODE = "codexAppRestartMode";
 const CODEX_APP_RESTART_ENABLED = "codexAppRestartEnabled";
 let reloadPromptInFlight: Promise<boolean> | undefined;
+let scheduledExtensionHostReload: NodeJS.Timeout | undefined;
 
 export function scheduleExtensionHostReload(
   onError?: (message: string) => void,
   delayMs = 150,
   changeDescription = "Codex credentials changed"
 ): NodeJS.Timeout {
-  return setTimeout(() => {
+  if (scheduledExtensionHostReload) {
+    return scheduledExtensionHostReload;
+  }
+  scheduledExtensionHostReload = setTimeout(() => {
+    scheduledExtensionHostReload = undefined;
     void reloadExtensionHostWithWindowFallback(false).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       const message = `${changeDescription}, but VS Code could not reload: ${detail}. Run Developer: Reload Window and try again.`;
@@ -28,6 +33,7 @@ export function scheduleExtensionHostReload(
       onError?.(message);
     });
   }, delayMs);
+  return scheduledExtensionHostReload;
 }
 
 export async function handleCodexAppRestartPreference(options?: { allowManualPrompt?: boolean }): Promise<void> {
