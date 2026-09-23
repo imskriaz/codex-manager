@@ -37,7 +37,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // work. The existing path remains untouched when the setting is disabled.
   try {
     await configureCrossWindowOperationCoordinator(getCodexManagerStorageRoot());
-    await initializeCrossWindowAccountMode(context);
+    await initializeCrossWindowAccountMode();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error("[codexManager] parallel window initialization failed", error);

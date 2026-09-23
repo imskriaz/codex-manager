@@ -12,7 +12,6 @@ const REGISTRY_FILE = "window-account-slots-v1.json";
 const HEARTBEAT_MS = 5_000;
 const STALE_AFTER_MS = 30_000;
 const HOME_DIRECTORY = "window-codex-homes-v1";
-const SLOT_STATE_KEY = "codexManager.parallelWindowSlotId";
 
 type WindowSlot = {
   slotId: string;
@@ -33,12 +32,13 @@ export function isCrossWindowAccountModeEnabled(): boolean {
   return getCodexManagerConfiguration().get<boolean>(SETTING, false) === true;
 }
 
-export async function initializeCrossWindowAccountMode(context: vscode.ExtensionContext): Promise<void> {
+export async function initializeCrossWindowAccountMode(): Promise<void> {
   if (!isCrossWindowAccountModeEnabled()) return;
   originalHome ??= process.env["CODEX_HOME"];
-  const session = vscode.env.sessionId || `${process.pid}-${Date.now()}`;
-  const slotId = hash(session).slice(0, 24);
-  await context.workspaceState.update(SLOT_STATE_KEY, slotId);
+  const session = vscode.env.sessionId || "unknown-session";
+  // A fresh nonce is intentional: two windows can share VS Code's session ID,
+  // while a reload must be able to replace its old lease after deactivation.
+  const slotId = hash(`${session}:${process.pid}:${crypto.randomUUID()}`).slice(0, 24);
   const home = path.join(getCodexManagerStorageRoot(), HOME_DIRECTORY, slotId);
   await fs.mkdir(home, { recursive: true, mode: 0o700 });
   await fs.chmod(home, 0o700).catch(() => undefined);
@@ -128,15 +128,24 @@ export async function ensureCrossWindowAccountAssignment(
   switchAccount: (accountId: string) => Promise<unknown>
 ): Promise<{ accountId?: string; assigned: boolean }> {
   if (!isCrossWindowAccountModeEnabled() || !slot) return { assigned: false };
-  const existing = slot.accountId ?? accounts.find((account) => account.isActive)?.id;
+  const existing = slot.accountId;
   if (existing && canWindowUseAccount(existing)) {
     await claimCrossWindowAccount(existing);
     return { accountId: existing, assigned: true };
   }
-  const candidate = accounts.find((account) => account.enabled !== false && canWindowUseAccount(account.id));
+  const candidate = accounts.find(
+    (account) => account.enabled !== false && canWindowUseAccount(account.id) && Boolean(account.id)
+  );
   if (!candidate) return { assigned: false };
   await claimCrossWindowAccount(candidate.id);
-  if (!candidate.isActive) await switchAccount(candidate.id);
+  // `isActive` is scoped to the managed CODEX_HOME. A newly-created window
+  // must load its claimed account even when that account is active elsewhere.
+  try {
+    await switchAccount(candidate.id);
+  } catch (error) {
+    await releaseCrossWindowAccount(candidate.id);
+    throw error;
+  }
   return { accountId: candidate.id, assigned: true };
 }
 

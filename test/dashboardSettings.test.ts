@@ -109,6 +109,28 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).toHaveBeenCalledWith("autoResumeEnabled", true, vscode.ConfigurationTarget.Global);
   });
 
+  it("stores parallel window mode globally and only after an explicit toggle", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    const get = vi.fn((_key: string, fallback?: unknown) => fallback);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get,
+      update,
+      inspect: vi.fn(() => ({
+        key: "codexManager.crossWindowAccountModeEnabled",
+        defaultValue: false,
+        workspaceValue: true
+      }))
+    } as never);
+
+    await expect(handleDashboardSettingUpdate("crossWindowAccountModeEnabled", true)).resolves.toBe(true);
+
+    expect(update).toHaveBeenCalledWith(
+      "crossWindowAccountModeEnabled",
+      true,
+      vscode.ConfigurationTarget.Global
+    );
+  });
+
   it("always stores the workspace master gate on this PC", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

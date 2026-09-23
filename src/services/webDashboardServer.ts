@@ -968,6 +968,14 @@ export class WebDashboardServer implements vscode.Disposable {
       if (!(await handleDashboardSettingUpdate(message.key, message.value))) {
         throw new Error(`The ${message.key} setting could not be updated.`);
       }
+      if (message.key === "crossWindowAccountModeEnabled" && typeof message.value === "boolean") {
+        messages.push({
+          type: "dashboard:notice",
+          level: "info",
+          message: `${message.value ? "Parallel window accounts enabled" : "Parallel window accounts disabled"}. Reloading this VS Code window to apply the change.`
+        });
+        reloadAfterResponse = true;
+      }
     } else if (message.type === "dashboard:pickCodexAppPath") {
       await pickDashboardCodexAppPath(this.settingsStore);
     } else if (message.type === "dashboard:clearCodexAppPath") {

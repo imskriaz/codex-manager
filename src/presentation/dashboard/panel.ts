@@ -391,6 +391,13 @@ class DashboardPanelController {
       throw new Error(`The ${key} setting could not be updated.`);
     }
     this.schedulePublishState();
+    if (key === "crossWindowAccountModeEnabled" && typeof value === "boolean") {
+      await this.postNotice(
+        "info",
+        `${value ? "Parallel window accounts enabled" : "Parallel window accounts disabled"}. Reloading this VS Code window to apply the credential isolation mode.`
+      );
+      scheduleExtensionHostReload(undefined, 150, "Parallel window account mode changed");
+    }
   }
 
   private async pickCodexAppPath(): Promise<void> {

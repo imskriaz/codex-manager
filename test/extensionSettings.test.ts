@@ -47,6 +47,21 @@ describe("5-hour quota control defaults", () => {
     expect(new ExtensionSettingsStore().getDashboardSettings().privacyMode).toBe(false);
   });
 
+  it("keeps parallel window accounts machine-local and disabled by default", () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as never);
+    const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+    expect(manifest.contributes.configuration.properties["codexManager.crossWindowAccountModeEnabled"]).toMatchObject({
+      default: false,
+      scope: "machine",
+      ignoreSync: true
+    });
+    expect(new ExtensionSettingsStore().getDashboardSettings().crossWindowAccountModeEnabled).toBe(false);
+  });
+
   it("defaults to enabled in both the extension manifest and runtime fallbacks", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
