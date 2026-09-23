@@ -217,7 +217,7 @@ export class AccountsWorkbench {
           return;
         }
         if (result.failed.length) {
-          void vscode.window.showWarningMessage(`${message} Open Sessions and retry the failed conversations.`);
+          void vscode.window.showWarningMessage(`${message} Open Codex conversation history to retry.`);
         } else {
           void vscode.window.showInformationMessage(message);
         }
@@ -225,7 +225,7 @@ export class AccountsWorkbench {
         const detail = error instanceof Error ? error.message : String(error);
         console.warn("[codexManager] auto resume failed", error);
         void vscode.window.showWarningMessage(
-          `Auto resume could not restore running Codex sessions: ${detail}. Open Sessions and retry.`
+          `Auto resume could not restore running Codex sessions: ${detail}. Open Codex conversation history to retry.`
         );
       }
     });

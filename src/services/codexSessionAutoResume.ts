@@ -33,7 +33,11 @@ export async function consumePersistedCodexSessionIds(context: AutoResumeContext
   if (!Array.isArray(value)) {
     return [];
   }
-  return value.filter((id): id is string => typeof id === "string" && id.length > 0);
+  const sessionIds = value
+    .filter((id): id is string => typeof id === "string")
+    .map((id) => id.trim())
+    .filter(Boolean);
+  return [...new Set(sessionIds)];
 }
 
 export type AutoResumeResult = {
@@ -77,6 +81,8 @@ export function formatAutoResumeResult(result: AutoResumeResult): string | undef
   if (!result.failed.length) {
     return `Auto resume reopened ${result.opened} running VS Code Codex session${result.opened === 1 ? "" : "s"}.`;
   }
-  const failedIds = result.failed.map((failure) => failure.sessionId).join(", ");
-  return `Auto resume reopened ${result.opened} of ${result.attempted} running VS Code Codex sessions. Failed to open: ${failedIds}.`;
+  const failedSessions = result.failed
+    .map((failure) => `${failure.sessionId} (${failure.message})`)
+    .join(", ");
+  return `Auto resume reopened ${result.opened} of ${result.attempted} running VS Code Codex sessions. Failed to open: ${failedSessions}.`;
 }

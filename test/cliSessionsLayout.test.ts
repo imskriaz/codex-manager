@@ -63,14 +63,22 @@ describe("sessions sidebar layout", () => {
 
   it("labels Auto Resume experimental and leaves its switch available without Session Integration", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const workbench = readFileSync("src/presentation/workbench/accountsWorkbench.ts", "utf8");
+    const autoSwitchStart = settings.indexOf("title={props.copy.autoSwitchTitle}");
     const toggleStart = settings.indexOf("title={props.copy.autoResumeTitle}");
     const toggle = settings.slice(toggleStart, settings.indexOf("</SettingsToggleBlock>", toggleStart));
+    const autoSwitchEnd = settings.lastIndexOf("</SettingsToggleBlock>", toggleStart);
 
     expect(getDashboardCopy("en").autoResumeTitle).toContain("Experimental");
+    expect(autoSwitchStart).toBeGreaterThan(-1);
     expect(toggleStart).toBeGreaterThan(-1);
+    expect(autoSwitchEnd).toBeGreaterThan(autoSwitchStart);
+    expect(toggleStart).toBeGreaterThan(autoSwitchEnd);
     expect(toggle).toContain('onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}');
     expect(toggle).not.toContain("cliIntegrationEnabled");
     expect(toggle).not.toContain("disabled=");
+    expect(workbench).toContain("Open Codex conversation history to retry.");
+    expect(workbench).not.toContain("Open Sessions and retry");
   });
 
   it("returns to the workspace list after archive or delete", () => {

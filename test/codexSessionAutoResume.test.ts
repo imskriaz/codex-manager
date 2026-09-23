@@ -95,12 +95,19 @@ describe("Codex session auto resume", () => {
     expect(state.read()).toBeUndefined();
   });
 
-  it("sanitizes persisted state and produces visible completion copy", async () => {
-    const state = createContext(["session-1", 42, "", null]);
+  it("trims and deduplicates persisted state and produces visible completion copy", async () => {
+    const state = createContext(["session-1", " session-1 ", 42, "", null]);
     await expect(consumePersistedCodexSessionIds(state.context)).resolves.toEqual(["session-1"]);
     expect(formatAutoResumeResult({ attempted: 1, opened: 1, failed: [] })).toBe(
       "Auto resume reopened 1 running VS Code Codex session."
     );
+    expect(
+      formatAutoResumeResult({
+        attempted: 2,
+        opened: 1,
+        failed: [{ sessionId: "session-2", message: "editor unavailable" }]
+      })
+    ).toContain("session-2 (editor unavailable)");
     expect(formatAutoResumeResult({ attempted: 0, opened: 0, failed: [] })).toBeUndefined();
   });
 });

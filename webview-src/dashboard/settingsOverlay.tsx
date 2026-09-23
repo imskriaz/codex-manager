@@ -640,19 +640,16 @@ export function SettingsOverlay(props: {
                     sub={props.copy.autoSwitchReloadSub}
                     enabled={props.settings.autoSwitchReloadWindowEnabled}
                     onToggle={(enabled) => patchAndSend("autoSwitchReloadWindowEnabled", enabled)}
-                  >
-                    <div class="settings-stack">
-                      <SettingsToggleBlock
-                        title={props.copy.autoResumeTitle}
-                        sub={props.copy.autoResumeSub}
-                        enabled={props.settings.autoResumeEnabled === true}
-                        onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
-                      />
-                    </div>
-                  </SettingsToggleBlock>
+                  />
                   <div class="settings-note">{props.copy.autoSwitchAnyNote}</div>
                 </div>
               </SettingsToggleBlock>
+              <SettingsToggleBlock
+                title={props.copy.autoResumeTitle}
+                sub={props.copy.autoResumeSub}
+                enabled={props.settings.autoResumeEnabled === true}
+                onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
+              />
               <SettingsToggleBlock
                 title={props.copy.warningTitle}
                 sub={props.settings.hourlyQuotaControlEnabled ? props.copy.warningSub : props.copy.warningWeeklyOnlySub}
