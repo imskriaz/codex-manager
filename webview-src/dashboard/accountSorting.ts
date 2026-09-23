@@ -191,12 +191,15 @@ export function sortWithQueuedAccount(
   compare: (left: DashboardAccountViewModel, right: DashboardAccountViewModel) => number
 ): DashboardAccountViewModel[] {
   return [...accounts].sort((left, right) => {
+    const activeDifference = Number(right.isActive) - Number(left.isActive);
+    if (activeDifference !== 0) return activeDifference;
+
     const missingMainQuotaDifference = Number(isDashboardMainQuotaMissing(left)) - Number(isDashboardMainQuotaMissing(right));
     if (missingMainQuotaDifference !== 0) return missingMainQuotaDifference;
     const quotaGroupDifference = Number(isDashboardAccountOutOfQuota(left)) - Number(isDashboardAccountOutOfQuota(right));
     if (quotaGroupDifference !== 0) return quotaGroupDifference;
 
-    const rank = (account: DashboardAccountViewModel): number => (account.isActive ? 0 : account.switchQueued ? 1 : 2);
+    const rank = (account: DashboardAccountViewModel): number => (account.switchQueued ? 0 : 1);
     return rank(left) - rank(right) || compare(left, right);
   });
 }

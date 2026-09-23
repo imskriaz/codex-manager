@@ -8,6 +8,24 @@ import {
 } from "../webview-src/dashboard/accountSorting";
 
 describe("sortWithQueuedAccount", () => {
+  it("always keeps the current account first when its quota is exhausted", () => {
+    const account = (id: string, percentage: number, isActive = false) =>
+      ({
+        id,
+        email: `${id}@example.com`,
+        healthKind: "healthy",
+        isActive,
+        switchQueued: false,
+        metrics: [{ key: "weekly", visible: true, percentage }]
+      }) as any;
+    const accounts = [account("available", 80), account("current", 0, true), account("other", 40)];
+
+    const sorted = sortWithQueuedAccount(accounts, (left, right) => left.id.localeCompare(right.id));
+
+    expect(sorted.map((item) => item.id)).toEqual(["current", "available", "other"]);
+    expect(accounts.map((item) => item.id)).toEqual(["available", "current", "other"]);
+  });
+
   it("keeps a queued switch immediately after the active account", () => {
     const accounts = [
       { id: "healthy", isActive: false, switchQueued: false },
@@ -41,8 +59,8 @@ describe("sortWithQueuedAccount", () => {
     const sorted = sortWithQueuedAccount(accounts, (left, right) => left.id.localeCompare(right.id));
     const descending = sortWithQueuedAccount(accounts, (left, right) => right.id.localeCompare(left.id));
 
-    expect(sorted.map((item) => item.id)).toEqual(["in-a", "in-z", "out-a", "out-z"]);
-    expect(descending.map((item) => item.id)).toEqual(["in-z", "in-a", "out-a", "out-z"]);
+    expect(sorted.map((item) => item.id)).toEqual(["out-a", "in-a", "in-z", "out-z"]);
+    expect(descending.map((item) => item.id)).toEqual(["out-a", "in-z", "in-a", "out-z"]);
     expect(accounts.map((item) => item.id)).toEqual(["out-z", "in-z", "out-a", "in-a"]);
   });
 

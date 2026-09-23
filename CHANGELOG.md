@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.7
+
+- Keep the current account first in Saved Accounts regardless of quota state or the selected sort order.
+
 ## 1.2.5
 
 - Allow manual cross-PC sync to use VS Code Settings Sync when it is active even if VS Code does not expose its signed-in account through the extension authentication API.
