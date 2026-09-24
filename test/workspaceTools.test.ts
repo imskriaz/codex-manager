@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { execFileSync } from "child_process";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import {
   cancelWorkspaceTerminalCommand,
@@ -12,11 +12,13 @@ import {
   listWorkspaceFiles,
   readWorkspaceFile,
   readWorkspaceEnvironment,
+  registerWorkspaceTerminalMonitoring,
   resolveWorkspaceProjectPath,
   runWorkspaceTerminalCommand,
   saveWorkspaceFile,
   WorkspaceTerminalCommandError
 } from "../src/services/workspaceTools";
+import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
 describe("workspace tools", () => {
   it("reads the selected project Git environment", async () => {
@@ -44,6 +46,105 @@ describe("workspace tools", () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain("codex-workspace-terminal");
     expect(result.cwd).toBe(process.cwd());
+  });
+
+  it("publishes live terminal output before the command completes", async () => {
+    const events: string[] = [];
+    const unsubscribe = subscribeDashboardRealtime((message) => {
+      if (message.type === "dashboard:terminal-output") events.push(message.output.chunk);
+    });
+    try {
+      const command = process.platform === "win32"
+        ? "Write-Output live-terminal-line"
+        : "printf live-terminal-line";
+      await runWorkspaceTerminalCommand({ projectPath: process.cwd(), command, terminalId: "workspace-test-live" });
+      expect(events.join("")).toContain("live-terminal-line");
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("runs a command in the selected real VS Code terminal and streams its shell execution", async () => {
+    const originalTerminals = vscode.window.terminals;
+    const originalCreate = vscode.window.createTerminal;
+    const originalEnd = vscode.window.onDidEndTerminalShellExecution;
+    const callbacks: Array<(event: { execution: unknown; exitCode: number }) => void> = [];
+    const execution = {
+      commandLine: { value: "git status" },
+      read: async function* () { yield "\u001b[32mreal-terminal-output\u001b[0m"; }
+    };
+    const terminal = {
+      name: "Codex · test project",
+      show: vi.fn(),
+      sendText: vi.fn(),
+      shellIntegration: { executeCommand: vi.fn(() => execution) }
+    };
+    Object.defineProperty(vscode.window, "terminals", { configurable: true, value: [terminal] });
+    Object.defineProperty(vscode.window, "createTerminal", { configurable: true, value: vi.fn() });
+    Object.defineProperty(vscode.window, "onDidEndTerminalShellExecution", {
+      configurable: true,
+      value: (callback: (event: { execution: unknown; exitCode: number }) => void) => {
+        callbacks.push(callback);
+        return { dispose: vi.fn() };
+      }
+    });
+    const events: Array<{ type: string; output?: { chunk: string }; result?: { status: string; output: string } }> = [];
+    const unsubscribe = subscribeDashboardRealtime((message) => events.push(message));
+    try {
+      const started = await runWorkspaceTerminalCommand({
+        projectPath: process.cwd(), command: "git status", terminalId: terminal.name
+      });
+      expect(started).toMatchObject({ status: "running", terminalId: terminal.name });
+      expect(terminal.shellIntegration.executeCommand).toHaveBeenCalledWith("git status");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(events.some((event) => event.type === "dashboard:terminal-output" && event.output?.chunk.includes("real-terminal-output"))).toBe(true);
+      callbacks[0]?.({ execution, exitCode: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "dashboard:terminal-complete",
+        result: expect.objectContaining({ id: started.id, status: "completed", output: "real-terminal-output" })
+      }));
+    } finally {
+      unsubscribe();
+      Object.defineProperty(vscode.window, "terminals", { configurable: true, value: originalTerminals });
+      Object.defineProperty(vscode.window, "createTerminal", { configurable: true, value: originalCreate });
+      Object.defineProperty(vscode.window, "onDidEndTerminalShellExecution", { configurable: true, value: originalEnd });
+    }
+  });
+
+  it("mirrors commands typed directly in VS Code into the dashboard terminal feed", async () => {
+    const originalStart = vscode.window.onDidStartTerminalShellExecution;
+    const originalEnd = vscode.window.onDidEndTerminalShellExecution;
+    let start: ((event: unknown) => void) | undefined;
+    let end: ((event: unknown) => void) | undefined;
+    Object.defineProperty(vscode.window, "onDidStartTerminalShellExecution", {
+      configurable: true,
+      value: (callback: (event: unknown) => void) => { start = callback; return { dispose: vi.fn() }; }
+    });
+    Object.defineProperty(vscode.window, "onDidEndTerminalShellExecution", {
+      configurable: true,
+      value: (callback: (event: unknown) => void) => { end = callback; return { dispose: vi.fn() }; }
+    });
+    const context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    const events: Array<{ type: string; result?: { command: string; status: string } }> = [];
+    const unsubscribe = subscribeDashboardRealtime((message) => events.push(message));
+    try {
+      registerWorkspaceTerminalMonitoring(context);
+      const execution = { commandLine: { value: "echo typed-directly" }, read: async function* () { yield "typed-directly\n"; }, cwd: vscode.Uri.file(process.cwd()) };
+      const terminal = { name: "User terminal" };
+      start?.({ terminal, execution });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      end?.({ terminal, execution, exitCode: 0 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "dashboard:terminal-complete",
+        result: expect.objectContaining({ command: "echo typed-directly", status: "completed" })
+      }));
+    } finally {
+      unsubscribe();
+      Object.defineProperty(vscode.window, "onDidStartTerminalShellExecution", { configurable: true, value: originalStart });
+      Object.defineProperty(vscode.window, "onDidEndTerminalShellExecution", { configurable: true, value: originalEnd });
+    }
   });
 
   it("preserves output and exit code when a terminal command fails", async () => {

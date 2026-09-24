@@ -14,6 +14,7 @@ import {
   initializeCrossWindowAccountMode,
   disposeCrossWindowAccountMode
 } from "./services/windowAccountMode";
+import { registerWorkspaceTerminalMonitoring } from "./services/workspaceTools";
 
 let workbench: AccountsWorkbench | undefined;
 let transientNotices: vscode.Disposable | undefined;
@@ -24,6 +25,7 @@ let transientNotices: vscode.Disposable | undefined;
  * @param context - 扩展上下文
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  registerWorkspaceTerminalMonitoring(context);
   const extensionVersion = resolveExtensionVersion(context);
   transientNotices = enableTransientVscodeNotices();
   try {

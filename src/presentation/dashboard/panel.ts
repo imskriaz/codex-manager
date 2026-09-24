@@ -28,8 +28,9 @@ import { scheduleExtensionHostReload } from "../../application/accounts/switchEf
 import { resolveOnboardingCompleted } from "../../services/onboarding";
 import { readCodexCliSessions, resolveCodexHome } from "../../services/codexSessionResume";
 import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindings";
-import { publishDashboardRealtime } from "../../services/dashboardRealtime";
+import { publishDashboardRealtime, subscribeDashboardRealtime } from "../../services/dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
+import { listPendingCodexAppServerPrompts } from "../../services/codexAppServerPrompts";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
 const REOPEN_AFTER_HOST_RESTART_KEY = "codexManager.reopenDashboardAfterHostRestart";
@@ -128,6 +129,11 @@ class DashboardPanelController {
         } satisfies DashboardHostMessage);
       }
     );
+    subscribeDashboardRealtime((message) => {
+      if (message.type === "dashboard:terminal-output" || message.type === "dashboard:terminal-complete" || message.type === "dashboard:codex-request" || message.type === "dashboard:codex-request-resolved") {
+        void this.panel?.webview.postMessage(message);
+      }
+    });
   }
 
   open(): void {
@@ -164,6 +170,9 @@ class DashboardPanelController {
             this.webviewReady = true;
             this.schedulePublishState();
             this.startCliSessionRealtime();
+            for (const request of listPendingCodexAppServerPrompts()) {
+              void this.panel?.webview.postMessage({ type: "dashboard:codex-request", request } satisfies DashboardHostMessage);
+            }
           },
           onAction: async (actionMessage) => {
             await this.handleActionMessage(actionMessage);

@@ -29,6 +29,7 @@ import type {
   DashboardWorkspaceFile,
   DashboardWorkspaceFileEntry,
   DashboardWorkspaceTerminalInfo,
+  DashboardWorkspaceTerminalOutput,
   DashboardWorkspaceTerminalResult
 } from "../../src/domain/dashboard/types";
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
@@ -71,7 +72,6 @@ const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
 
 export type CliSessionsPageProps = {
   dashboardMode?: boolean;
-  sessionDefault?: "webview" | "cli";
   privacyMode: boolean;
   sessions: DashboardCliSessionSummary[];
   selectedSession?: DashboardCliSessionSummary;
@@ -88,6 +88,7 @@ export type CliSessionsPageProps = {
   feedback?: CliSessionFeedback;
   environment?: DashboardWorkspaceEnvironment;
   terminalResults: DashboardWorkspaceTerminalResult[];
+  terminalLiveOutputs: DashboardWorkspaceTerminalOutput[];
   workspaceTerminals: DashboardWorkspaceTerminalInfo[];
   environmentLoading: boolean;
   terminalRunning: boolean;
@@ -109,7 +110,6 @@ export type CliSessionsPageProps = {
   onRefresh: () => void;
   onStart: (input: { text: string; model?: string; reasoningEffort?: string; sandboxMode: DashboardCliSandboxMode; projectPath?: string }) => void;
   onSelect: (session: DashboardCliSessionSummary) => void;
-  onOpenNewInCodex: () => void;
   onBackToList: () => void;
   onRefreshMessages: () => void;
   onRefreshEnvironment: (projectPath?: string) => void;
@@ -169,9 +169,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [deleteTarget, setDeleteTarget] = useState<DashboardCliSessionSummary>();
   const [localFeedback, setLocalFeedback] = useState<DashboardNotice>();
   const [shareOpen, setShareOpen] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageViewportRef = useRef<HTMLElement>(null);
+  const messagesContentRef = useRef<HTMLDivElement>(null);
+  const followLatestRef = useRef(true);
+  const previousScrollTopRef = useRef(0);
   const [isNearMessageBottom, setIsNearMessageBottom] = useState(true);
+  const initializedSandboxRef = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const previousFeedbackKey = useRef<number>();
 
@@ -181,7 +184,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const modelOption = props.composerConfig.models.find((option) => option.id === defaultModel);
     setModel((current) => current ?? defaultModel);
     setReasoningEffort((current) => current ?? props.composerConfig?.defaultReasoningEffort ?? modelOption?.defaultReasoningEffort ?? modelOption?.reasoningEfforts[0] ?? "medium");
-    setSandboxMode(props.composerConfig.defaultSandboxMode);
+    if (!initializedSandboxRef.current) {
+      setSandboxMode(props.composerConfig.defaultSandboxMode);
+      initializedSandboxRef.current = true;
+    }
     setProjectPath((current) => current ?? props.composerConfig?.projects?.[0]?.path);
   }, [props.composerConfig]);
 
@@ -202,20 +208,55 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setDeleteTarget(undefined);
   }, [props.selectedSession?.id, props.selectedSession?.archived]);
 
-   useEffect(() => {
-     if (isNearMessageBottom) messagesEndRef.current?.scrollIntoView({ block: "end" });
-   }, [props.messages.length, props.sending, isNearMessageBottom]);
-   const updateMessageScrollState = (): void => {
-     const viewport = messageViewportRef.current;
-     if (!viewport) return;
-     setIsNearMessageBottom(viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 56);
-   };
-   const scrollToLatest = (): void => {
-     const viewport = messageViewportRef.current;
-     if (!viewport) return;
-     viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-     setIsNearMessageBottom(true);
-   };
+  useEffect(() => {
+    followLatestRef.current = true;
+    previousScrollTopRef.current = 0;
+    setIsNearMessageBottom(true);
+    const viewport = messageViewportRef.current;
+    const content = messagesContentRef.current;
+    if (!viewport || !content || !props.selectedSession) return;
+    let frame = 0;
+    const follow = (): void => {
+      if (!followLatestRef.current) return;
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        if (!followLatestRef.current) return;
+        viewport.scrollTop = viewport.scrollHeight;
+        previousScrollTopRef.current = viewport.scrollTop;
+      });
+    };
+    const observer = new ResizeObserver(follow);
+    observer.observe(content);
+    follow();
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
+  }, [props.selectedSession?.id]);
+  useEffect(() => {
+    if (!followLatestRef.current) return;
+    const viewport = messageViewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTop = viewport.scrollHeight;
+    previousScrollTopRef.current = viewport.scrollTop;
+  }, [props.messages, props.sending, props.messagesLoading]);
+  const updateMessageScrollState = (): void => {
+    const viewport = messageViewportRef.current;
+    if (!viewport) return;
+    const currentTop = viewport.scrollTop;
+    const nearBottom = viewport.scrollHeight - currentTop - viewport.clientHeight <= 56;
+    if (currentTop < previousScrollTopRef.current - 2) followLatestRef.current = false;
+    else if (nearBottom) followLatestRef.current = true;
+    previousScrollTopRef.current = currentTop;
+    setIsNearMessageBottom(followLatestRef.current);
+  };
+  const scrollToLatest = (): void => {
+    const viewport = messageViewportRef.current;
+    if (!viewport) return;
+    followLatestRef.current = true;
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+    setIsNearMessageBottom(true);
+  };
 
   useEffect(() => {
     const compact = window.matchMedia("(max-width: 1179px)");
@@ -240,7 +281,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const source = section === "active" ? activeSessions : archivedSessions;
     const query = search.trim().toLocaleLowerCase();
     return query
-      ? source.filter((session) => `${session.title} ${session.id}`.toLocaleLowerCase().includes(query))
+      ? source.filter((session) => `${session.title} ${session.id} ${session.projectPath ?? ""}`.toLocaleLowerCase().includes(query))
       : source;
   }, [activeSessions, archivedSessions, search, section]);
   const selectedModel = props.composerConfig?.models.find((option) => option.id === model);
@@ -248,7 +289,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     ? selectedModel.reasoningEfforts
     : ["low", "medium", "high", "xhigh"];
   const selectedArchived = props.selectedSession?.archived === true;
-  const composerBlockedByOwner = props.selectedSession?.status === "running" && !props.sending;
+  const composerBlockedByOwner = Boolean((props.selectedSession?.locked || props.selectedSession?.status === "running") && !props.sending);
   const hasInProgressActivity = props.messages.some((message) => message.status === "inProgress");
   const projects = props.composerConfig?.projects ?? [];
   const composerProjects = useMemo(() => {
@@ -264,12 +305,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [newChatProject, projects, props.selectedSession?.projectPath, props.sessions]);
   const railFiles = useMemo(() => props.messages.flatMap((message) => message.changes ?? []).filter((change, index, all) => all.findIndex((item) => item.path === change.path) === index), [props.messages]);
   const railAgents = useMemo(() => props.messages.filter((message) => message.kind === "collaboration"), [props.messages]);
+  const turnCopyText = useMemo(() => getCompletedTurnCopyText(props.messages, props.sending || props.selectedSession?.status === "running"), [props.messages, props.sending, props.selectedSession?.status]);
   const selectedProjectPath = props.selectedSession?.projectPath ?? newChatProject ?? projectPath;
   const startNewChat = (nextProject?: string): void => {
-    if ((props.sessionDefault ?? "webview") === "webview") {
-      props.onOpenNewInCodex();
-      return;
-    }
     props.onBackToList();
     setNewChatProject(nextProject ?? projectPath ?? projects[0]?.path ?? "");
     setProjectPath(nextProject ?? projectPath ?? projects[0]?.path);
@@ -340,8 +378,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   ) : (
     <div role="listitem" class={`cli-session-row ${props.selectedSession?.id === session.id ? "is-selected" : ""}`} key={session.id}>
       <button type="button" class="cli-session-row-select" onClick={() => { setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
-        <span class="cli-session-row-status" title={session.status === "running" ? "Running" : "Complete"} aria-label={session.status === "running" ? "Running" : "Complete"}>
-          {session.status === "running" ? <span class="cli-session-spinner" aria-hidden="true" /> : <CheckIcon />}
+        <span class="cli-session-row-status" title={session.status === "running" ? "Running" : session.locked ? "Locked" : "Complete"} aria-label={session.status === "running" ? "Running" : session.locked ? "Locked" : "Complete"}>
+          {session.status === "running" ? <span class="cli-session-spinner" aria-hidden="true" /> : session.locked ? <ShieldIcon /> : <CheckIcon />}
         </span>
         <span class={`cli-session-row-main ${session.projectPath ? "has-project" : ""}`}><strong>{session.title}</strong><small class="cli-session-row-meta">{session.projectPath ? <span class="cli-session-project" title={session.projectPath}><EmptyFolderIcon />{projectDisplayName(session.projectPath)}</span> : null}<span>{session.remote ? `${getSensitiveDisplayValue(session.deviceName, props.privacyMode, "name", "Remote")} · ` : ""}{relativeTime(session.updatedAt)}</span></small></span>
       </button>
@@ -368,7 +406,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       setLocalFeedback({ level: "info", message: "Starting a new Codex chat…" });
       props.onStart({ text, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath });
     } else {
-      props.onSend({ text, model, reasoningEffort, sandboxMode, projectPath });
+      props.onSend({ text, model, reasoningEffort, sandboxMode, projectPath: props.selectedSession.projectPath ?? projectPath });
     }
   };
   const beginPanelResize = (
@@ -480,8 +518,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               const knownProjectPaths = new Set((pc.local ? projects : []).map((project) => canonicalWebPath(project.path)));
               const sessionProjects = [...new Map(pc.allSessions
                 .filter((session) => session.projectPath && !knownProjectPaths.has(canonicalWebPath(session.projectPath)))
-                .map((session) => [session.projectPath!, {
-                  id: `${pc.id}:${session.projectPath}`,
+                .map((session) => [canonicalWebPath(session.projectPath!), {
+                  id: `${pc.id}:${canonicalWebPath(session.projectPath!)}`,
                   label: projectDisplayName(session.projectPath!),
                   path: session.projectPath!
                 }])).values()];
@@ -595,26 +633,27 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 {props.messagesLoading && props.messages.length === 0 ? <MessageSkeleton /> : null}
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
-                <div class="cli-session-messages">
+                <div ref={messagesContentRef} class="cli-session-messages">
                   {consolidateSessionMessages(props.messages).map((item) => "messages" in item
                     ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />
-                    : <SessionMessage key={item.id} message={item} logoUri={props.logoUri} onActionFeedback={(notice) => setLocalFeedback(notice)} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />)}
+                    : <SessionMessage key={item.id} message={item} logoUri={props.logoUri} turnCopyText={turnCopyText.get(item.id)} onActionFeedback={(notice) => setLocalFeedback(notice)} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />)}
                   {props.sending || (props.selectedSession?.status === "running" && !hasInProgressActivity) ? <WorkingMessage /> : null}
-                  <div ref={messagesEndRef} />
+                  <div />
                 </div>
                 {!isNearMessageBottom ? <button type="button" class="cli-scroll-latest" aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}><ChevronIcon /> Latest</button> : null}
               </section>
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : composerBlockedByOwner ? (
-                <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" /><span><strong>Running in {props.selectedSession.runningBy ?? "another Codex process"}.</strong> Composer disabled here until that run finishes.</span></div>
+                <div class="cli-composer-unavailable is-running" role="status"><ShieldIcon /><span><strong>{props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}.` : "This session is locked."}</strong> {props.selectedSession.status === "running" ? "Composer disabled here until that run finishes." : "Composer disabled until Codex releases the session lock."}</span></div>
               ) : (
                 <Composer
                   draft={draft}
                   model={model}
                   reasoningEffort={reasoningEffort}
                   sandboxMode={sandboxMode}
-                  projectPath={projectPath}
+                  projectPath={props.selectedSession.projectPath ?? projectPath}
+                  projectLocked
                   projects={composerProjects}
                   models={props.composerConfig?.models ?? []}
                   reasoningOptions={reasoningOptions}
@@ -641,9 +680,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             <>
               <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>What should we build in {projects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</h2><p>Describe the task and Codex will work directly in this project.</p></div></section>
               <UsageBanner account={props.account} onAction={(message) => setLocalFeedback({ level: "info", message })} />
-              <Composer draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={props.starting} stopping={false} onDraft={setDraft} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={submit} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />
+              {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} onDraft={setDraft} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={submit} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
             </>
-          ) : <><WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} />{composerProjects.length ? <Composer draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={projectPath} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={props.starting} stopping={false} onDraft={setDraft} onModel={setModel} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={setProjectPath} onSubmit={submit} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} /> : <div class="cli-composer-unavailable" role="status">Composer unavailable until a project is open.</div>}</>}
+          ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} />}
         </main>
         <PanelResizeHandle
           label="Resize terminal panel"
@@ -658,6 +697,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           terminalWidth={layout.terminalWidth}
           draft={terminalDraft}
           results={props.terminalResults}
+          liveOutputs={props.terminalLiveOutputs}
           terminals={props.workspaceTerminals}
           running={props.terminalRunning}
           stopping={props.terminalStopping}
@@ -673,12 +713,12 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           fileLoading={props.workspaceFileLoading}
           fileSaving={props.workspaceFileSaving}
           onDraft={setTerminalDraft}
-          onRun={(command) => { props.onRunTerminal(command, props.selectedSession?.projectPath ?? newChatProject ?? projectPath, WORKSPACE_TERMINAL_ID); setTerminalDraft(""); }}
+          onRun={(command, terminalId) => { props.onRunTerminal(command, props.selectedSession?.projectPath ?? newChatProject ?? projectPath, terminalId); setTerminalDraft(""); }}
           onListTerminals={props.onListTerminals}
           onCreateTerminal={(profile) => props.onCreateTerminal(profile, selectedProjectPath)}
           onFocusTerminal={props.onFocusTerminal}
           onFeedback={setLocalFeedback}
-          onStop={() => props.onCancelTerminal(WORKSPACE_TERMINAL_ID)}
+          onStop={() => props.onCancelTerminal(props.workspaceTerminals.find((terminal) => terminal.isActive)?.id ?? WORKSPACE_TERMINAL_ID)}
           onClear={props.onClearTerminal}
           onCollapse={() => setContextCollapsed(true)}
           onTab={selectContextTab}
@@ -743,7 +783,7 @@ function ConversationHeader(props: {
 
 function Composer(props: {
   draft: string; model?: string; reasoningEffort?: string; sandboxMode: DashboardCliSandboxMode;
-  projectPath?: string; projects: Array<{ id: string; label: string; path: string }>;
+  projectPath?: string; projectLocked?: boolean; projects: Array<{ id: string; label: string; path: string }>;
   models: DashboardCliComposerConfig["models"]; reasoningOptions: string[]; sending: boolean; stopping: boolean;
   composerHeight: number;
   onDraft: (value: string) => void; onModel: (value: string) => void; onReasoning: (value: string) => void;
@@ -751,40 +791,53 @@ function Composer(props: {
   onResize: (event: JSX.TargetedPointerEvent<HTMLDivElement>) => void;
   onResizeKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => void;
 }) {
-  const modelChoices = props.models.length > 0
-    ? props.models
-    : [{ id: "", label: "Default model", reasoningEfforts: props.reasoningOptions }];
-  const modelReasoningOptions = modelChoices.flatMap((option) => {
-    const efforts = option.reasoningEfforts.length > 0 ? option.reasoningEfforts : props.reasoningOptions;
-    return (efforts.length > 0 ? efforts : ["medium"]).map((effort) => ({
-      key: `${option.id}\u0000${effort}`,
-      model: option.id,
-      reasoning: effort,
-      label: `${option.label} · ${effort === "xhigh" ? "Extra high" : capitalize(effort)}`
-    }));
-  });
-  const selectedModelReasoning = modelReasoningOptions.find((option) => option.model === (props.model ?? "") && option.reasoning === (props.reasoningEffort ?? ""))
-    ?? modelReasoningOptions.find((option) => option.model === (props.model ?? ""))
-    ?? modelReasoningOptions[0];
+  const modelChoices = props.models.length > 0 ? props.models : [{ id: "", label: "Default model", reasoningEfforts: props.reasoningOptions }];
+  const selectedModel = modelChoices.find((option) => option.id === props.model) ?? modelChoices[0];
+  const reasoningChoices = selectedModel?.reasoningEfforts.length ? selectedModel.reasoningEfforts : props.reasoningOptions.length ? props.reasoningOptions : ["medium"];
+  const selectedReasoning = reasoningChoices.includes(props.reasoningEffort ?? "")
+    ? props.reasoningEffort
+    : reasoningChoices[0];
 
   return <form class="cli-composer" style={`height:${props.composerHeight}px`} onSubmit={(event) => { event.preventDefault(); props.onSubmit(); }}>
     <div class="cli-composer-resizer" role="separator" aria-label="Resize message composer" aria-orientation="horizontal" aria-valuemin={120} aria-valuenow={Math.round(props.composerHeight)} tabIndex={0} onPointerDown={props.onResize} onKeyDown={props.onResizeKeyDown}><span /></div>
     <textarea name="codex-message" value={props.draft} rows={3} maxLength={64_000} placeholder="Message Codex…" aria-label="Message Codex" disabled={props.sending} onInput={(event) => props.onDraft(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); props.onSubmit(); } }} />
     <div class="cli-composer-toolbar"><div class="cli-composer-selectors">
-      <label class="cli-composer-control" title="Project"><EmptyFolderIcon /><select name="project-path" value={props.projectPath ?? ""} aria-label="Project" onChange={(event) => props.onProject(event.currentTarget.value)}>{props.projects.map((project) => <option value={project.path} key={project.id}>{project.label}</option>)}</select></label>
-      <label class="cli-composer-control" title="Filesystem access"><ShieldIcon /><select name="sandbox-mode" value={props.sandboxMode} aria-label="Access mode" onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}><option value="read-only">Read only</option><option value="workspace-write">Workspace</option><option value="danger-full-access">Full access</option></select></label>
+      <label class="cli-composer-control" title="Project"><EmptyFolderIcon /><select name="project-path" value={props.projectPath ?? ""} aria-label="Project" disabled={props.projectLocked} onChange={(event) => props.onProject(event.currentTarget.value)}>{props.projects.map((project) => <option value={project.path} key={project.id}>{project.label}</option>)}</select></label>
+      <label class="cli-composer-control" title="Filesystem access"><ShieldIcon /><select name="sandbox-mode" value={props.sandboxMode} aria-label="Access mode" onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}><option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
     </div><div class="cli-composer-submit">
-      <label class="cli-composer-control cli-composer-model-picker" title="Model and reasoning"><select name="model-reasoning" value={selectedModelReasoning?.key ?? ""} aria-label="Model and reasoning" onChange={(event) => { const selection = modelReasoningOptions.find((option) => option.key === event.currentTarget.value); if (selection) { props.onModel(selection.model); props.onReasoning(selection.reasoning); } }}>{modelReasoningOptions.map((option) => <option value={option.key} key={option.key}>{option.label}</option>)}</select></label>
+      <label class="cli-composer-control cli-composer-model-picker" title="Model"><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
+      <label class="cli-composer-control cli-composer-reasoning-picker" title="Reasoning"><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
       <span>{props.draft.length > 60_000 ? `${64_000 - props.draft.length} left` : null}</span>{props.sending ? <button type="button" class="cli-stop-button" disabled={props.stopping} aria-busy={props.stopping} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping" : "Stop"}</button> : <button type="submit" class="cli-send-button" disabled={!props.draft.trim()} aria-label="Send message" title="Send message"><SendIcon /></button>}</div></div>
   </form>;
 }
 
-function SessionMessage({ message, logoUri, onActionFeedback, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; logoUri?: string; onActionFeedback?: (notice: DashboardNotice) => void; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
+function SessionMessage({ message, logoUri, turnCopyText, onActionFeedback, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; logoUri?: string; turnCopyText?: string; onActionFeedback?: (notice: DashboardNotice) => void; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   if (!message.kind || message.kind === "message") {
     const isUser = message.role === "user";
-    return <article class={`cli-session-message is-${message.role ?? "assistant"}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{message.text ? <div class="cli-session-message-text">{isUser ? message.text : renderMessageText(message.text)}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <a href={image.src} target="_blank" rel="noreferrer" aria-label={`Open ${image.alt ?? "attached image"}`}><img src={image.src} alt={image.alt ?? `Attached image ${index + 1}`} loading="lazy" /></a>)}</div> : null}{!isUser && message.text.trim() ? <MessageActions text={message.text} onActionFeedback={onActionFeedback} /> : null}</div></article>;
+    const questionReplies = isUser ? parseQuestionReply(message.text) : undefined;
+    return <article class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{isUser ? message.text : renderMessageText(message.text)}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <a href={image.src} target="_blank" rel="noreferrer" aria-label={`Open ${image.alt ?? "attached image"}`}><img src={image.src} alt={image.alt ?? `Attached image ${index + 1}`} loading="lazy" /></a>)}</div> : null}{turnCopyText ? <TurnCopyButton text={turnCopyText} onActionFeedback={onActionFeedback} /> : null}</div></article>;
   }
   return <ActivityMessage message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />;
+}
+
+export function parseQuestionReply(text: string): Array<{ question: string; answer: string }> | undefined {
+  const match = text.match(/^\s*<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>\s*$/);
+  if (!match) return undefined;
+  try {
+    const value: unknown = JSON.parse(match[1]!);
+    if (!Array.isArray(value) || value.length === 0) return undefined;
+    const replies = value.map((item: unknown) => {
+      if (!item || typeof item !== "object") return undefined;
+      const reply = item as Record<string, unknown>;
+      if (typeof reply["question"] !== "string" || typeof reply["answer"] !== "string") return undefined;
+      const question = reply["question"].trim();
+      const answer = reply["answer"].trim();
+      return question && answer ? { question, answer } : undefined;
+    });
+    return replies.every((reply) => reply !== undefined) ? replies as Array<{ question: string; answer: string }> : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function renderMessageText(text: string): preact.ComponentChildren {
@@ -828,20 +881,16 @@ function renderInlineText(text: string, keyPrefix: string): preact.ComponentChil
   });
 }
 
-function MessageActions({ text, onActionFeedback }: { text: string; onActionFeedback?: (notice: DashboardNotice) => void }) {
-  const run = async (action: "copy" | "like" | "dislike"): Promise<void> => {
-    if (action === "copy") {
-      try {
-        await navigator.clipboard.writeText(text);
-        onActionFeedback?.({ level: "info", message: "Response copied." });
-      } catch {
-        onActionFeedback?.({ level: "error", message: "Response could not be copied." });
-      }
-      return;
+function TurnCopyButton({ text, onActionFeedback }: { text: string; onActionFeedback?: (notice: DashboardNotice) => void }) {
+  const copy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      onActionFeedback?.({ level: "info", message: "Response copied." });
+    } catch {
+      onActionFeedback?.({ level: "error", message: "Response could not be copied." });
     }
-    onActionFeedback?.({ level: "info", message: action === "like" ? "Thanks for the feedback." : "Feedback noted." });
   };
-  return <div class="cli-message-actions" aria-label="Response actions"><button type="button" aria-label="Copy response" title="Copy response" onClick={() => void run("copy")}><CopyIcon /></button><button type="button" aria-label="Good response" title="Good response" onClick={() => void run("like")}><ThumbsUpIcon /></button><button type="button" aria-label="Needs improvement" title="Needs improvement" onClick={() => void run("dislike")}><ThumbsDownIcon /></button></div>;
+  return <button type="button" class="cli-turn-copy" aria-label="Copy assistant turn" title="Copy assistant turn" onClick={() => void copy()}><CopyIcon /></button>;
 }
 
 function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
@@ -964,6 +1013,26 @@ export type ConsolidatedSessionItem = DashboardCliSessionMessage | {
   messages: DashboardCliSessionMessage[];
 };
 
+export function getCompletedTurnCopyText(messages: DashboardCliSessionMessage[], currentTurnRunning = false): Map<string, string> {
+  const completed = new Map<string, string>();
+  let assistantTexts: string[] = [];
+  let lastAssistantMessageId: string | undefined;
+  const completeTurn = (): void => {
+    if (lastAssistantMessageId && assistantTexts.length > 0) completed.set(lastAssistantMessageId, assistantTexts.join("\n\n"));
+    assistantTexts = [];
+    lastAssistantMessageId = undefined;
+  };
+  for (const message of messages) {
+    if (message.role === "user" && (!message.kind || message.kind === "message")) completeTurn();
+    else if (message.role === "assistant" && (!message.kind || message.kind === "message") && message.text.trim()) {
+      assistantTexts.push(message.text.trim());
+      lastAssistantMessageId = message.id;
+    }
+  }
+  if (!currentTurnRunning) completeTurn();
+  return completed;
+}
+
 export function consolidateSessionMessages(messages: DashboardCliSessionMessage[]): ConsolidatedSessionItem[] {
   const result: ConsolidatedSessionItem[] = [];
   let turn: DashboardCliSessionMessage[] = [];
@@ -1043,7 +1112,10 @@ function isGroupableTurnActivity(message: DashboardCliSessionMessage): boolean {
 function ActivityGroup({ messages, onOpenFile, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const running = messages.some((message) => message.status === "inProgress");
   const failed = messages.some((message) => message.status === "failed" || message.kind === "error");
-  return <details class={`cli-activity-group ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={running}>
+  const summary = activitySummary(messages);
+  return <div class={`cli-activity-group ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`}>
+    {summary ? <div class="cli-activity-summary"><span>{summary.files > 0 ? <><strong>{summary.files} file{summary.files === 1 ? "" : "s"} changed</strong> <b class="is-added">+{summary.additions}</b> <b class="is-removed">−{summary.deletions}</b></> : <><strong>{summary.label}</strong>{summary.detail ? <small>{summary.detail}</small> : null}</>}</span>{summary.files > 0 ? <button type="button" onClick={() => onOpenReviews?.()}><ReviewIcon /> Review</button> : null}</div> : null}
+    <details class="cli-activity-group-details" open={running}>
     <summary>
       <span class="cli-activity-icon"><ToolIcon /></span>
       <span class="cli-activity-heading"><strong>{consolidatedActivityLabel(messages)}</strong></span>
@@ -1051,7 +1123,27 @@ function ActivityGroup({ messages, onOpenFile, onOpenReviews }: { messages: Dash
       <ChevronIcon />
     </summary>
     <div class="cli-activity-group-body">{messages.map((message) => <ActivityMessage key={message.id} message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div>
-  </details>;
+    </details>
+  </div>;
+}
+
+function activitySummary(messages: DashboardCliSessionMessage[]): { files: number; additions: number; deletions: number; label: string; detail?: string } | undefined {
+  const changes = messages.flatMap((message) => message.changes ?? []);
+  if (changes.length > 0) {
+    let additions = 0;
+    let deletions = 0;
+    for (const change of changes) {
+      for (const line of change.diff?.split(/\r?\n/) ?? []) {
+        if (line.startsWith("+++") || line.startsWith("---")) continue;
+        if (line.startsWith("+")) additions++;
+        else if (line.startsWith("-")) deletions++;
+      }
+    }
+    return { files: changes.length, additions, deletions, label: "Files changed" };
+  }
+  const plan = messages.find((message) => message.kind === "plan" || message.kind === "reasoning");
+  if (plan) return { files: 0, additions: 0, deletions: 0, label: "Pursuing goal", detail: plan.text || "Working through the current plan" };
+  return undefined;
 }
 
 export function consolidatedActivityLabel(messages: DashboardCliSessionMessage[]): string {
@@ -1080,6 +1172,7 @@ function WorkspaceContextPanel(props: {
   terminalWidth: number;
   draft: string;
   results: DashboardWorkspaceTerminalResult[];
+  liveOutputs: DashboardWorkspaceTerminalOutput[];
   terminals: DashboardWorkspaceTerminalInfo[];
   running: boolean;
   stopping: boolean;
@@ -1095,7 +1188,7 @@ function WorkspaceContextPanel(props: {
   fileLoading: boolean;
   fileSaving: boolean;
   onDraft: (value: string) => void;
-  onRun: (command: string) => void;
+  onRun: (command: string, terminalId?: string) => void;
   onListTerminals: () => void;
   onCreateTerminal: (profile: "default" | "powershell" | "cmd" | "bash") => void;
   onFocusTerminal: (terminalId: string) => void;
@@ -1116,9 +1209,12 @@ function WorkspaceContextPanel(props: {
   onResizeKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => void;
   onResizeReset: () => void;
 }) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const outputRef = useRef<HTMLDivElement>(null);
+  const [followOutput, setFollowOutput] = useState(true);
   const tabsRef = useRef<HTMLDivElement>(null);
-  useEffect(() => endRef.current?.scrollIntoView({ block: "end" }), [props.results.length, props.running]);
+  useEffect(() => {
+    if (followOutput && outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
+  }, [followOutput, props.results.length, props.liveOutputs, props.running]);
   useEffect(() => {
     const activeTab = tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
     activeTab?.closest("span")?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
@@ -1131,13 +1227,20 @@ function WorkspaceContextPanel(props: {
     <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={(event) => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{props.tabs.map((tab) => { const kind = workspaceTabKind(tab); const path = workspaceTabPath(tab); const label = path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind); return <span class={props.activeTab === tab ? "is-active" : ""} key={tab}><button type="button" role="tab" aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={path ?? kind}>{kind === "terminal" ? <TerminalIcon /> : kind === "files" ? <FileIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button><button type="button" aria-label={`Close ${label}`} onClick={() => props.onCloseTab(tab)}>×</button></span>; })}</div><span class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tab" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div class="cli-context-add-menu" role="menu">{(["terminal", "files", "reviews"] as const).filter((tab) => !props.tabs.includes(tab)).map((tab) => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === "terminal" ? <TerminalIcon /> : tab === "files" ? <FileIcon /> : <ReviewIcon />}{capitalize(tab)}</button>)}{(["terminal", "files", "reviews"] as const).every((tab) => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><span class="cli-terminal-header-actions">{activeKind === "terminal" ? <TerminalProfileMenu onCreate={props.onCreateTerminal} /> : null}<IconButton label="Hide workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></span></header>
     {props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <>
     <div class="cli-terminal-toolbar"><label>VS Code terminal<select aria-label="Select VS Code terminal" value={props.terminals.find((terminal) => terminal.isActive)?.id ?? ""} onChange={(event) => { const id = event.currentTarget.value; if (id) props.onFocusTerminal(id); }}><option value="">Select terminal…</option>{props.terminals.map((terminal) => <option value={terminal.id}>{terminal.name} · {terminal.state}</option>)}</select></label><button type="button" class="cli-terminal-refresh" onClick={props.onListTerminals} title="Refresh running terminals"><RefreshIcon /></button></div>
-    <div class="cli-terminal-output" role="log" aria-live="polite">
-      {props.results.length === 0 ? <div class="cli-terminal-welcome"><strong>Project terminal</strong><span>Commands run in the selected workspace and report their final status here.</span></div> : null}
+    <div ref={outputRef} class="cli-terminal-output" role="log" aria-live="polite" onScroll={(event) => {
+      const target = event.currentTarget;
+      setFollowOutput(target.scrollHeight - target.scrollTop - target.clientHeight < 48);
+    }}>
+      {props.results.length === 0 && props.liveOutputs.length === 0 ? <div class="cli-terminal-welcome"><strong>{props.terminals.find((terminal) => terminal.isActive)?.name ?? "Project terminal"}</strong><span>Run a command below or type in the VS Code terminal to stream new output here. Existing scrollback and commands started before monitoring remain in VS Code.</span></div> : null}
+      {props.liveOutputs.map((output) => <article class="is-running" key={output.id}><div><span aria-hidden="true">›</span><code>{output.command}</code></div><pre>{output.chunk || "Waiting for terminal output…"}</pre><small>running · live output</small></article>)}
       {props.results.map((result) => <article class={`is-${result.status}`} key={result.id}><div><span aria-hidden="true">›</span><code>{result.command}</code></div><pre>{result.output}</pre><small>{result.status} · {formatTerminalDuration(result.durationMs)}{result.exitCode !== undefined ? ` · exit ${result.exitCode}` : ""}</small></article>)}
       {props.running ? <div class="cli-terminal-running" role="status"><span class="cli-live-spinner" aria-hidden="true" /> Running command…</div> : null}
-      <div ref={endRef} />
+      {!followOutput ? <button type="button" class="cli-terminal-latest" onClick={() => {
+        if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
+        setFollowOutput(true);
+      }}>Latest output ↓</button> : null}
     </div>
-    <form class="cli-terminal-command" onSubmit={(event) => { event.preventDefault(); const command = props.draft.trim(); if (command && !props.running) props.onRun(command); }}>
+    <form class="cli-terminal-command" onSubmit={(event) => { event.preventDefault(); const command = props.draft.trim(); if (command && !props.running) props.onRun(command, props.terminals.find((terminal) => terminal.isActive)?.id); }}>
       <span aria-hidden="true">$</span><input name="terminal-command" value={props.draft} autoComplete="off" spellcheck={false} aria-label="Terminal command" placeholder="Run a command…" disabled={props.running} onInput={(event) => props.onDraft(event.currentTarget.value)} />
       {props.running ? <button type="button" class="is-stop" disabled={props.stopping} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping…" : "Stop"}</button> : <button type="submit" disabled={!props.draft.trim()} aria-label="Run terminal command"><SendIcon /></button>}
     </form>
@@ -1685,8 +1788,6 @@ function CloseIcon() { return <Icon><path d="m6 6 12 12M18 6 6 18" fill="none" s
 function SearchIcon() { return <Icon><circle cx="10.8" cy="10.8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></Icon>; }
 function RefreshIcon() { return <Icon><path d="M19 7v5h-5M5 17v-5h5M7.1 8.2A6.5 6.5 0 0 1 18.6 12M5.4 12a6.5 6.5 0 0 0 11.5 3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function CopyIcon() { return <Icon><rect x="8" y="8" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="1.6"/></Icon>; }
-function ThumbsUpIcon() { return <Icon><path d="M7 10v10H4V10h3Zm0 10h9.1a2 2 0 0 0 1.9-1.4l2-6A2 2 0 0 0 18.1 10H14l.7-3.2A2.4 2.4 0 0 0 12.4 4L7 10v10Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></Icon>; }
-function ThumbsDownIcon() { return <Icon><path d="M7 14V4H4v10h3Zm0-10h9.1a2 2 0 0 1 1.9 1.4l2 6A2 2 0 0 1 18.1 14H14l.7 3.2a2.4 2.4 0 0 1-2.3 2.8L7 14V4Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></Icon>; }
 function ArchiveIcon() { return <Icon><path d="M4 7h16v12H4zM3 4h18v3H3zM9 11h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/></Icon>; }
 function RestoreIcon() { return <Icon><path d="M4 9a8 8 0 1 1 .8 7M4 4v5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function TrashIcon() { return <Icon><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }

@@ -11,11 +11,12 @@ const { consumeResetCreditMock } = vi.hoisted(() => ({
 const { unloadAuthFileMock } = vi.hoisted(() => ({
   unloadAuthFileMock: vi.fn()
 }));
-const { readCodexCliSessionsMock, readCodexCliSessionSummaryMock, readCodexCliSessionMessagesMock } = vi.hoisted(
+const { readCodexCliSessionsMock, readCodexCliSessionSummaryMock, readCodexCliSessionMessagesMock, sendCodexCliSessionMessageMock } = vi.hoisted(
   () => ({
     readCodexCliSessionsMock: vi.fn(),
     readCodexCliSessionSummaryMock: vi.fn(),
-    readCodexCliSessionMessagesMock: vi.fn()
+    readCodexCliSessionMessagesMock: vi.fn(),
+    sendCodexCliSessionMessageMock: vi.fn()
   })
 );
 
@@ -43,7 +44,8 @@ vi.mock("../src/services/codexSessionResume", async () => {
     ...actual,
     readCodexCliSessions: readCodexCliSessionsMock,
     readCodexCliSessionSummary: readCodexCliSessionSummaryMock,
-    readCodexCliSessionMessages: readCodexCliSessionMessagesMock
+    readCodexCliSessionMessages: readCodexCliSessionMessagesMock,
+    sendCodexCliSessionMessage: sendCodexCliSessionMessageMock
   };
 });
 
@@ -66,6 +68,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   unloadAuthFileMock.mockReset().mockResolvedValue(undefined);
+  sendCodexCliSessionMessageMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterAll(async () => {
@@ -321,6 +324,67 @@ describe("executeDashboardActionMessage", () => {
       expect(readCodexCliSessionMessagesMock).not.toHaveBeenCalled();
     } finally {
       await Promise.all([removeTestDirectory(sessionProject), removeTestDirectory(requestedProject)]);
+    }
+  });
+
+  it("sends a reply from the session's actual project even if the composer has no project selected", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)
+    } as unknown as vscode.WorkspaceConfiguration);
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "codex-send-project-"));
+    const session = {
+      id: "01a04882-d037-7a42-ad24-9afb61901188",
+      title: "Project session",
+      status: "idle",
+      archived: false,
+      projectPath
+    };
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
+    readCodexCliSessionsMock.mockResolvedValueOnce([{ ...session, projectPath: undefined }]);
+    readCodexCliSessionMessagesMock.mockResolvedValueOnce([]);
+    try {
+      const result = await executeDashboardActionMessage(createContext(), {
+        type: "dashboard:action",
+        action: "sendCodexCliSessionMessage",
+        requestId: "req-send-project",
+        payload: { sessionId: session.id, text: "Continue" }
+      });
+      expect(result.status).toBe("completed");
+      expect(sendCodexCliSessionMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: session.id,
+        projectPath
+      }));
+      expect(result.payload?.cliSession?.projectPath).toBe(projectPath);
+    } finally {
+      await removeTestDirectory(projectPath);
+    }
+  });
+
+  it("rejects a reply routed to a different project and leaves the session untouched", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)
+    } as unknown as vscode.WorkspaceConfiguration);
+    const sessionProject = await fs.mkdtemp(path.join(os.tmpdir(), "codex-send-session-"));
+    const otherProject = await fs.mkdtemp(path.join(os.tmpdir(), "codex-send-other-"));
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce({
+      id: "01a04882-d037-7a42-ad24-9afb61901188",
+      title: "Project session",
+      status: "idle",
+      archived: false,
+      projectPath: sessionProject
+    });
+    try {
+      const result = await executeDashboardActionMessage(createContext(), {
+        type: "dashboard:action",
+        action: "sendCodexCliSessionMessage",
+        requestId: "req-send-wrong-project",
+        payload: { sessionId: "01a04882-d037-7a42-ad24-9afb61901188", text: "Continue", projectPath: otherProject }
+      });
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toMatch(/different project/i);
+      expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
+    } finally {
+      await Promise.all([removeTestDirectory(sessionProject), removeTestDirectory(otherProject)]);
     }
   });
 

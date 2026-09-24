@@ -2,6 +2,8 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import {
   consolidateSessionMessages,
+  getCompletedTurnCopyText,
+  parseQuestionReply,
   consolidatedActivityLabel,
   splitMessageParagraphs,
   filterCliSessionsBySection
@@ -10,6 +12,31 @@ import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashbo
 import { getDashboardCopy } from "../src/application/dashboard/copy";
 
 describe("sessions sidebar layout", () => {
+  it("offers one copy target with the complete text only after an assistant turn ends", () => {
+    const messages = [
+      { id: "user-1", kind: "message" as const, role: "user" as const, text: "Build it" },
+      { id: "comment-1", kind: "message" as const, role: "assistant" as const, text: "Checking files." },
+      { id: "comment-2", kind: "message" as const, role: "assistant" as const, text: "Still working." },
+      { id: "user-2", kind: "message" as const, role: "user" as const, text: "And tests?" },
+      { id: "answer-2", kind: "message" as const, role: "assistant" as const, text: "Tests passed." }
+    ];
+    expect([...getCompletedTurnCopyText(messages, true)]).toEqual([["comment-2", "Checking files.\n\nStill working."]]);
+    expect([...getCompletedTurnCopyText(messages)]).toEqual([
+      ["comment-2", "Checking files.\n\nStill working."],
+      ["answer-2", "Tests passed."]
+    ]);
+  });
+
+  it("renders structured user question replies without showing their raw transport envelope", () => {
+    const reply = '<send_user_message_question_reply>\n[{"questionItemId":"hidden","question":"Which layout?","answer":"Compact"},{"question":"Keep copy?","answer":"Once per turn"}]\n</send_user_message_question_reply>';
+    expect(parseQuestionReply(reply)).toEqual([
+      { question: "Which layout?", answer: "Compact" },
+      { question: "Keep copy?", answer: "Once per turn" }
+    ]);
+    expect(parseQuestionReply("<send_user_message_question_reply>broken</send_user_message_question_reply>")).toBeUndefined();
+    expect(parseQuestionReply("An ordinary message")).toBeUndefined();
+  });
+
   it("keeps Active and Archive session tabs mutually exclusive", () => {
     const sessions = [
       { id: "active", title: "Active", status: "idle" as const },
@@ -33,9 +60,20 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('class="cli-account-footer"');
     expect(source).toContain('name="project-path"');
     expect(source).toContain('name="sandbox-mode"');
-    expect(source).toContain('name="model-reasoning"');
-    expect(source).toContain('aria-label="Model and reasoning"');
-    expect(source).toContain("modelReasoningOptions");
+    expect(source).toContain('name="model"');
+    expect(source).toContain('aria-label="Model"');
+    expect(source).toContain('name="reasoning-effort"');
+    expect(source).toContain('aria-label="Reasoning"');
+    expect(source).toContain("activitySummary(messages)");
+    expect(source).toContain('class="cli-activity-summary"');
+    expect(css).toContain(".cli-activity-summary");
+    expect(source).toContain('name="sandbox-mode"');
+    expect(source).toContain('aria-label="Access mode"');
+    expect(source).toContain('aria-label="Copy assistant turn"');
+    expect(source).not.toContain('aria-label="Good response"');
+    expect(source).not.toContain('aria-label="Needs improvement"');
+    expect(source).not.toContain('class="cli-message-actions"');
+    expect(css).toContain(".cli-turn-copy");
     const composerStart = source.indexOf("function Composer(");
     const composer = source.slice(composerStart, source.indexOf("function SessionMessage", composerStart));
     expect(composer).not.toContain("<SparkIcon />");
@@ -333,7 +371,7 @@ describe("sessions sidebar layout", () => {
     expect(styles).toMatch(/body\.is-dashboard-workspace-route #dashboard-main\s*{[^}]*inset:\s*0 0 0 calc/s);
   });
 
-  it("supports the Webview default while preserving the embedded CLI surface", () => {
+  it("keeps browser new-chat in the browser composer regardless of the VS Code default", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
@@ -341,8 +379,8 @@ describe("sessions sidebar layout", () => {
     expect(settings).toContain('title: "CLI"');
     expect(main).toContain('snapshot.settings.codexSessionDefault ?? "webview"');
     expect(main).toContain('sendAction("openCodexCliSession"');
-    expect(source).toContain("onOpenNewInCodex");
-    expect(source).toContain("props.onOpenNewInCodex();");
+    expect(source).toContain("setNewChatProject(nextProject ?? projectPath ?? projects[0]?.path ?? \"\")");
+    expect(source).not.toContain("props.onOpenNewInCodex();");
   });
 
   it("keeps browser session clicks inside the browser dashboard", () => {

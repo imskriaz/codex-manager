@@ -5,6 +5,8 @@ import * as vscode from "vscode";
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { createHash } from "crypto";
 import * as readline from "readline";
+import { CodexAppServerRpc, CodexAppServerTurnInterruptedError } from "./codexAppServerRpc";
+import { attachCodexAppServerPrompts } from "./codexAppServerPrompts";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -26,7 +28,7 @@ const SESSION_DIRECTORY = "sessions";
 const SESSION_LOCK_DIRECTORY = "thread-writer-locks";
 const MAX_SESSION_INDEX_BYTES = 5 * 1024 * 1024;
 const MAX_SESSION_TRANSCRIPT_READ_BYTES = 25 * 1024 * 1024;
-const MAX_VISIBLE_CLI_SESSIONS = 30;
+const MAX_VISIBLE_CLI_SESSIONS = 200;
 const MAX_VISIBLE_SESSION_MESSAGES = 250;
 const MAX_SESSION_MESSAGE_CHARS = 12_000;
 const MAX_SESSION_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -56,6 +58,7 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,127}$/i;
 const REASONING_EFFORT_PATTERN = /^(minimal|low|medium|high|xhigh|max|ultra)$/;
 const activeCliTurns = new Map<string, ChildProcessWithoutNullStreams>();
+const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string }>();
 let runningTurnWrite: Promise<void> = Promise.resolve();
 let cliAvailabilityCache: { key: string; available: boolean; checkedAt: number } | undefined;
 let cliAvailabilityProbe: Promise<boolean> | undefined;
@@ -117,6 +120,13 @@ export async function readCodexCliSessions(
   codexHome = resolveCodexHome(),
   limit = MAX_VISIBLE_CLI_SESSIONS
 ): Promise<DashboardCliSessionSummary[]> {
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
+    try {
+      return await readAppServerSessions(configuredSessionTransport() === "app-server-websocket", limit);
+    } catch (error) {
+      recordPersistentEvent("warning", "session-list", "App-server session list unavailable; using transcript fallback", { reason: error instanceof Error ? error.message : String(error) });
+    }
+  }
   const entries = await readCodexCliSessionIndex(codexHome);
   if (!entries.length) return [];
   const archivedIds = await readArchivedSessionIds(codexHome);
@@ -125,8 +135,8 @@ export async function readCodexCliSessions(
   const archivedEntries = entries.filter((entry) => archivedIds.has(entry.id)).slice(0, cappedLimit);
   const visibleEntries = [...activeEntries, ...archivedEntries];
   // Only scan transcripts that can actually be rendered. Large histories may
-  // contain thousands of index entries while the dashboard shows at most 30
-  // active and 30 archived sessions.
+  // contain thousands of index entries while the dashboard shows a bounded
+  // number of active and archived sessions.
   const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(visibleEntries.map((entry) => entry.id)));
   return Promise.all(
     visibleEntries.map((entry) =>
@@ -140,6 +150,14 @@ export async function readCodexCliSessionSummary(
   codexHome = resolveCodexHome()
 ): Promise<DashboardCliSessionSummary | undefined> {
   validateSessionId(sessionId);
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
+    try {
+      const sessions = await readAppServerSessions(configuredSessionTransport() === "app-server-websocket", MAX_VISIBLE_CLI_SESSIONS);
+      return sessions.find((session) => session.id === sessionId);
+    } catch (error) {
+      recordPersistentEvent("warning", "session-read", "App-server session summary unavailable; using transcript fallback", { reason: error instanceof Error ? error.message : String(error), sessionRef: toSessionLogRef(sessionId) });
+    }
+  }
   const entry = (await readCodexCliSessionIndex(codexHome)).find((candidate) => candidate.id === sessionId);
   if (!entry) return undefined;
   const [archivedIds, transcriptPaths] = await Promise.all([
@@ -210,6 +228,88 @@ async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIn
   return [...unique.values()];
 }
 
+function configuredSessionTransport(): "app-server-stdio" | "app-server-websocket" | "cli" {
+  const value = vscode.workspace.getConfiguration("codexManager").get<string>("codexSessionTransport");
+  // VS Code supplies the manifest's stdio default in a real extension host.
+  // Keep the standalone/test-host fallback process-free when that manifest is absent.
+  return value === "app-server-websocket" || value === "app-server-stdio" || value === "cli" ? value : "cli";
+}
+
+async function readAppServerSessions(websocket: boolean, limit: number): Promise<DashboardCliSessionSummary[]> {
+  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), websocket ? "websocket" : "stdio", resolveCliProjectPath(undefined));
+  try {
+    const capped = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit)));
+    const sessions: DashboardCliSessionSummary[] = [];
+    for (const archived of [false, true]) {
+      const result = await rpc.request<{ data?: unknown[]; nextCursor?: string | null }>("thread/list", {
+        archived,
+        limit: capped,
+        sortKey: "updated_at",
+        sortDirection: "desc"
+      });
+      for (const thread of result.data ?? []) {
+        const mapped = mapAppServerThread(thread, archived);
+        if (mapped) sessions.push(mapped);
+      }
+    }
+    const codexHome = resolveCodexHome();
+    const locks = new Set(await fs.readdir(path.join(codexHome, SESSION_LOCK_DIRECTORY))
+      .catch(() => [] as string[]));
+    const lockedIds = new Set(sessions.filter((session) => !session.archived && locks.has(`${session.id}.lock`)).map((session) => session.id));
+    const metadataIds = new Set(sessions.filter((session) => !session.projectPath || !session.sessionSurface).map((session) => session.id));
+    const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set([...lockedIds, ...metadataIds]));
+    const enriched = await Promise.all(sessions.map(async (session) => {
+      const metadata = metadataIds.has(session.id)
+        ? await readCliSessionMetadata(codexHome, session.id, transcriptPaths.get(session.id))
+        : undefined;
+      const withMetadata = {
+        ...session,
+        ...(!session.projectPath && metadata?.projectPath ? { projectPath: metadata.projectPath } : {}),
+        ...(!session.sessionSurface && metadata?.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {})
+      };
+      if (session.archived) return withMetadata;
+      const locked = lockedIds.has(session.id);
+      const canStop = activeAppServerTurns.has(session.id);
+      const running = canStop || (locked && await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id)));
+      return {
+        ...withMetadata,
+        status: running ? "running" as const : "idle" as const,
+        ...(locked ? { locked: true } : {}),
+        ...(running ? { runningBy: canStop ? "Codex Manager" : "another Codex process", canStop } : {})
+      };
+    }));
+    return enriched.sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+  } finally {
+    rpc.close();
+  }
+}
+
+function mapAppServerThread(value: unknown, archived: boolean): DashboardCliSessionSummary | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const thread = value as Record<string, unknown>;
+  const id = typeof thread["id"] === "string" ? thread["id"] : undefined;
+  if (!id || !SESSION_ID_PATTERN.test(id)) return undefined;
+  const status = thread["status"] as { type?: unknown } | undefined;
+  const running = !archived && status?.type === "active";
+  const updatedAt = typeof thread["updatedAt"] === "number" ? new Date(thread["updatedAt"] * 1000).toISOString() : undefined;
+  const title = typeof thread["name"] === "string" && thread["name"].trim()
+    ? thread["name"]
+    : typeof thread["preview"] === "string" ? thread["preview"] : undefined;
+  const cwd = typeof thread["cwd"] === "string" && thread["cwd"].trim() ? thread["cwd"] : undefined;
+  const source = typeof thread["source"] === "string" ? thread["source"].toLowerCase() : "";
+  const surface: DashboardCliSessionSummary["sessionSurface"] = source.includes("vscode") ? "vscode" : source.includes("cli") || source.includes("exec") ? "cli" : source ? "other" : undefined;
+  return {
+    id,
+    title: normalizeSessionTitle(title, id),
+    ...(updatedAt ? { updatedAt } : {}),
+    status: running ? "running" : "idle",
+    ...(cwd ? { projectPath: cwd } : {}),
+    ...(surface ? { sessionSurface: surface } : {}),
+    ...(running ? { runningBy: "another Codex process", canStop: false } : {}),
+    archived
+  };
+}
+
 async function toCliSessionSummary(
   codexHome: string,
   entry: CliSessionIndexEntry,
@@ -218,6 +318,9 @@ async function toCliSessionSummary(
 ): Promise<DashboardCliSessionSummary> {
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
   const running = !archived && (await isCliSessionRunning(codexHome, entry.id, transcriptPath));
+  const locked = !archived && await fs.stat(path.join(codexHome, SESSION_LOCK_DIRECTORY, `${entry.id}.lock`))
+    .then((stat) => stat.isFile())
+    .catch(() => false);
   const canStop = running && activeCliTurns.has(entry.id);
   return {
     id: entry.id,
@@ -226,6 +329,7 @@ async function toCliSessionSummary(
     status: running ? "running" : "idle",
     ...(metadata.projectPath ? { projectPath: metadata.projectPath } : {}),
     ...(metadata.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {}),
+    ...(locked ? { locked: true } : {}),
     ...(running ? { runningBy: canStop ? "Codex Manager" : "another Codex process", canStop } : {}),
     archived
   };
@@ -243,7 +347,7 @@ async function readCliSessionMetadata(
   if (cached && cached.expiresAt > Date.now()) {
     return cached;
   }
-  const raw = await readSafeFileSnapshot(transcriptPath, { maxBytes: 16 * 1024 })
+  const raw = await readSafeFileSnapshot(transcriptPath, { maxBytes: 64 * 1024 })
     .then((snapshot) => snapshot.buffer.toString("utf8"))
     .catch(() => "");
   // The first record is normally `session_meta`, but Codex versions and
@@ -276,6 +380,15 @@ async function readCliSessionMetadata(
       }
     } catch {
       // Ignore non-JSON diagnostic lines.
+    }
+  }
+  // Session metadata can be one very large JSONL line when it embeds agent
+  // instructions. Recover the early cwd field even if our bounded read ends
+  // midway through that line.
+  if (!projectPath) {
+    const match = raw.match(/"(?:cwd|projectPath|project_path|workdir|workspacePath)"\s*:\s*("(?:\\.|[^"\\])*")/);
+    if (match) {
+      try { projectPath = (JSON.parse(match[1]!) as string).trim().slice(0, 1024); } catch { /* malformed prefix */ }
     }
   }
   const metadata = { projectPath, sessionSurface, expiresAt: Date.now() + CLI_TRANSCRIPT_METADATA_CACHE_TTL_MS };
@@ -357,6 +470,10 @@ export async function sendCodexCliSessionMessage(options: {
   }
   if (options.sandboxMode && !isCliSandboxMode(options.sandboxMode)) {
     throw new Error("The selected access mode is invalid.");
+  }
+  if (configuredSessionTransport() !== "cli") {
+    await sendAppServerSessionMessage(options, configuredSessionTransport() === "app-server-websocket");
+    return;
   }
   await runCliSessionMutation(options.sessionId, "Codex turn", async () => {
     if (activeCliTurns.has(options.sessionId)) {
@@ -625,6 +742,9 @@ export async function startCodexCliSession(options: {
   if (options.sandboxMode && !isCliSandboxMode(options.sandboxMode)) {
     throw new Error("The selected access mode is invalid.");
   }
+  if (configuredSessionTransport() !== "cli") {
+    return startAppServerSession(options, configuredSessionTransport() === "app-server-websocket");
+  }
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
   const executable = await resolveCodexCliExecutable();
@@ -710,8 +830,102 @@ export async function startCodexCliSession(options: {
   });
 }
 
-export function cancelCodexCliSessionTurn(sessionId: string): boolean {
+async function startAppServerSession(options: {
+  text: string;
+  model?: string;
+  reasoningEffort?: string;
+  sandboxMode?: DashboardCliSandboxMode;
+  projectPath?: string;
+}, websocket: boolean): Promise<string> {
+  const cwd = resolveCliProjectPath(options.projectPath);
+  await assertUsableCliProjectPath(cwd);
+  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), websocket ? "websocket" : "stdio", cwd);
+  const detachPrompts = attachCodexAppServerPrompts(rpc, "");
+  let threadId: string | undefined;
+  try {
+    const result = await rpc.request<{ thread?: { id?: unknown } }>("thread/start", {
+      cwd,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.sandboxMode ? { sandbox: options.sandboxMode } : {}),
+      approvalPolicy: "on-request"
+    });
+    const candidateThreadId = typeof result.thread?.id === "string" ? result.thread.id : undefined;
+    if (!candidateThreadId || !SESSION_ID_PATTERN.test(candidateThreadId)) throw new Error("Codex app-server did not return a valid session ID.");
+    threadId = candidateThreadId;
+    activeAppServerTurns.set(threadId, { rpc });
+    await rpc.startAndWaitForTurn(threadId, {
+      threadId: candidateThreadId,
+      input: [{ type: "text", text: options.text.trim(), text_elements: [] }],
+      cwd,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
+      ...(options.sandboxMode ? { sandboxPolicy: toAppServerSandbox(options.sandboxMode, cwd) } : {})
+    }, CLI_TURN_TIMEOUT_MS, (turnId) => {
+      const active = activeAppServerTurns.get(candidateThreadId);
+      if (active) active.turnId = turnId;
+    });
+    return threadId;
+  } catch (error) {
+    if (error instanceof CodexAppServerTurnInterruptedError) throw new CodexCliTurnCancelledError();
+    throw error;
+  } finally {
+    detachPrompts();
+    if (threadId) activeAppServerTurns.delete(threadId);
+    rpc.close();
+  }
+}
+
+async function sendAppServerSessionMessage(options: {
+  sessionId: string;
+  text: string;
+  model?: string;
+  reasoningEffort?: string;
+  sandboxMode?: DashboardCliSandboxMode;
+  projectPath?: string;
+}, websocket: boolean): Promise<void> {
+  const cwd = resolveCliProjectPath(options.projectPath);
+  await assertUsableCliProjectPath(cwd);
+  if (activeAppServerTurns.has(options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
+  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), websocket ? "websocket" : "stdio", cwd);
+  const detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
+  activeAppServerTurns.set(options.sessionId, { rpc });
+  try {
+    await rpc.request("thread/resume", { threadId: options.sessionId, cwd });
+    await rpc.startAndWaitForTurn(options.sessionId, {
+      threadId: options.sessionId,
+      input: [{ type: "text", text: options.text.trim(), text_elements: [] }],
+      cwd,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
+      ...(options.sandboxMode ? { sandboxPolicy: toAppServerSandbox(options.sandboxMode, cwd) } : {})
+    }, CLI_TURN_TIMEOUT_MS, (turnId) => {
+      const active = activeAppServerTurns.get(options.sessionId);
+      if (active) active.turnId = turnId;
+    });
+  } catch (error) {
+    if (error instanceof CodexAppServerTurnInterruptedError) throw new CodexCliTurnCancelledError();
+    throw error;
+  } finally {
+    detachPrompts();
+    activeAppServerTurns.delete(options.sessionId);
+    rpc.close();
+  }
+}
+
+function toAppServerSandbox(mode: DashboardCliSandboxMode, cwd: string): Record<string, unknown> {
+  if (mode === "danger-full-access") return { type: "dangerFullAccess" };
+  if (mode === "read-only") return { type: "readOnly", networkAccess: true };
+  return { type: "workspaceWrite", writableRoots: [cwd], networkAccess: true, excludeTmpdirEnvVar: false, excludeSlashTmp: false };
+}
+
+export async function cancelCodexCliSessionTurn(sessionId: string): Promise<boolean> {
   validateSessionId(sessionId);
+  const activeAppServer = activeAppServerTurns.get(sessionId);
+  if (activeAppServer) {
+    if (!activeAppServer.turnId) return false;
+    await activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000);
+    return true;
+  }
   const child = activeCliTurns.get(sessionId);
   if (!child) return false;
   // Treat an already-exiting process as successfully stopped. Node can emit
@@ -810,6 +1024,20 @@ export async function readCodexCliSessionMessages(
 ): Promise<DashboardCliSessionMessage[]> {
   if (!SESSION_ID_PATTERN.test(sessionId)) {
     throw new Error("The session identifier is invalid.");
+  }
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
+    try {
+      const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), configuredSessionTransport() === "app-server-websocket" ? "websocket" : "stdio", resolveCliProjectPath(undefined));
+      try {
+        const result = await rpc.request("thread/read", { threadId: sessionId, includeTurns: true }, APP_SERVER_REQUEST_TIMEOUT_MS);
+        const messages = parseCodexAppServerThreadItems(result);
+        if (messages.length > 0) return await hydrateSessionImages(messages);
+      } finally {
+        rpc.close();
+      }
+    } catch (error) {
+      recordPersistentEvent("warning", "session-viewer", "App-server thread read unavailable; using transcript fallback", { sessionRef: toSessionLogRef(sessionId), reason: error instanceof Error ? error.message : String(error) });
+    }
   }
   const sessionRef = toSessionLogRef(sessionId);
   const startedAt = Date.now();

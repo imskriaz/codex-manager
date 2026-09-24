@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type {
   DashboardCodexSessionDefault,
+  DashboardCodexSessionTransport,
   DashboardSettings,
   DashboardThemeOption
 } from "../../domain/dashboard/types";
@@ -26,6 +27,7 @@ export class ExtensionSettingsStore {
       backgroundTokenRefreshEnabled: config.get<boolean>("backgroundTokenRefreshEnabled", false),
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
       codexSessionDefault: normalizeCodexSessionDefault(config.get<string>("codexSessionDefault", "webview")),
+      codexSessionTransport: normalizeCodexSessionTransport(config.get<string>("codexSessionTransport", "app-server-stdio")),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15)),
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
@@ -80,6 +82,10 @@ export function normalizeDashboardTheme(value: string | undefined): DashboardThe
 
 export function normalizeCodexSessionDefault(value: string | undefined): DashboardCodexSessionDefault {
   return value === "cli" ? "cli" : "webview";
+}
+
+export function normalizeCodexSessionTransport(value: string | undefined): DashboardCodexSessionTransport {
+  return value === "app-server-websocket" || value === "cli" ? value : "app-server-stdio";
 }
 
 export function normalizeAutoRefreshMinutes(value: number): number {

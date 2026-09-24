@@ -75,7 +75,7 @@ describe("Codex session integration", () => {
       const first = sendCodexCliSessionMessage({ sessionId, text: "first turn" });
       await new Promise((resolve) => setTimeout(resolve, 100));
       await expect(sendCodexCliSessionMessage({ sessionId, text: "duplicate turn" })).rejects.toThrow(/already working|another VS Code window/i);
-      expect(cancelCodexCliSessionTurn(sessionId)).toBe(true);
+      expect(await cancelCodexCliSessionTurn(sessionId)).toBe(true);
       await expect(first).rejects.toMatchObject({ name: "CodexCliTurnCancelledError" });
     } finally {
       if (previousPath === undefined) delete process.env["CODEX_CLI_PATH"];
@@ -440,7 +440,7 @@ describe("Codex session integration", () => {
     const stale = new Date(Date.now() - 10 * 60 * 1000);
     await utimes(lock, stale, stale);
     await utimes(transcript, stale, stale);
-    await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({ id: sessionId, status: "idle" });
+    await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({ id: sessionId, status: "idle", locked: true });
   });
 
   it("reads only appended transcript data after the first message load", async () => {
@@ -629,6 +629,27 @@ describe("Codex session integration", () => {
 
     await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({
       id: sessionId,
+      projectPath: "D:/persisted-project"
+    });
+  });
+
+  it("keeps an archived project's session out of Recent when its first metadata line is oversized", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-large-metadata-"));
+    roots.push(root);
+    await mkdir(path.join(root, "archived_sessions"), { recursive: true });
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({
+      id: sessionId,
+      thread_name: "Large project metadata",
+      updated_at: "2026-08-28T20:50:00Z"
+    }));
+    await writeFile(
+      path.join(root, "archived_sessions", `rollout-${sessionId}.jsonl`),
+      JSON.stringify({ type: "session_meta", payload: { cwd: "D:/persisted-project", instructions: "x".repeat(70_000) } })
+    );
+
+    await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({
+      id: sessionId,
+      archived: true,
       projectPath: "D:/persisted-project"
     });
   });

@@ -403,6 +403,36 @@ export function SettingsOverlay(props: {
                             : "Disabled. The workspace entry and session access are off."}
                     </div>
                   </SettingsToggleBlock>
+                  <SettingsSegmentBlock
+                    title="Workspace session transport"
+                    sub="Choose how the embedded workspace reads and runs local Codex sessions."
+                    className="settings-block-wide"
+                    options={[
+                      {
+                        key: "app-server-stdio",
+                        title: "App server",
+                        description: "Supported thread and turn protocol (recommended)",
+                        active: (props.settings.codexSessionTransport ?? "app-server-stdio") === "app-server-stdio",
+                        onClick: () => patchAndSend("codexSessionTransport", "app-server-stdio")
+                      },
+                      {
+                        key: "app-server-websocket",
+                        title: "WebSocket",
+                        description: "Chrome-style loopback transport (experimental)",
+                        active: props.settings.codexSessionTransport === "app-server-websocket",
+                        onClick: () => patchAndSend("codexSessionTransport", "app-server-websocket")
+                      },
+                      {
+                        key: "cli",
+                        title: "CLI compatibility",
+                        description: "Existing exec and transcript path",
+                        active: props.settings.codexSessionTransport === "cli",
+                        onClick: () => patchAndSend("codexSessionTransport", "cli")
+                      }
+                    ]}
+                  >
+                    <div class="settings-note">If app-server cannot connect, the workspace uses CLI. A turn already accepted by Codex is never retried automatically.</div>
+                  </SettingsSegmentBlock>
                   <SettingsPathBlock
                     copy={props.copy}
                     pathValue={props.settings.codexCliPath ?? ""}

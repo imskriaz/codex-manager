@@ -40,6 +40,7 @@ export function getActionTimeoutMs(action: DashboardActionName): number {
     case "refreshView":
       return 8_000;
     case "sendCodexCliSessionMessage":
+    case "startCodexCliSession":
       return 15 * 60_000 + 15_000;
     case "runWorkspaceTerminalCommand":
     case "saveWorkspaceFile":
@@ -58,8 +59,6 @@ export function getActionTimeoutMs(action: DashboardActionName): number {
     case "refresh":
     case "refreshToken":
     case "getDailyUsage":
-      return 120_000;
-    case "startCodexCliSession":
       return 120_000;
     case "remove":
     case "toggleAccountEnabled":

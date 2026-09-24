@@ -7,6 +7,7 @@ import type {
   DashboardActionName,
   DashboardActionPayload,
   DashboardCliComposerConfig,
+  DashboardCodexServerRequest,
   DashboardCliSessionMessage,
   DashboardCliSessionSummary,
   DashboardNotice,
@@ -16,6 +17,7 @@ import type {
   DashboardWorkspaceFile,
   DashboardWorkspaceFileEntry,
   DashboardWorkspaceTerminalInfo,
+  DashboardWorkspaceTerminalOutput,
   DashboardWorkspaceTerminalResult
 } from "../../src/domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../../src/core/types";
@@ -185,8 +187,11 @@ function App() {
   const [cliSessionMessagesError, setCliSessionMessagesError] = useState<string>();
   const [cliComposerConfig, setCliComposerConfig] = useState<DashboardCliComposerConfig>();
   const [cliSessionFeedback, setCliSessionFeedback] = useState<CliSessionFeedback>();
+  const [codexRequests, setCodexRequests] = useState<DashboardCodexServerRequest[]>([]);
+  const [codexRequestError, setCodexRequestError] = useState<string>();
   const [workspaceEnvironment, setWorkspaceEnvironment] = useState<DashboardWorkspaceEnvironment>();
   const [terminalResults, setTerminalResults] = useState<DashboardWorkspaceTerminalResult[]>([]);
+  const [terminalLiveOutputs, setTerminalLiveOutputs] = useState<Record<string, DashboardWorkspaceTerminalOutput>>({});
   const [workspaceTerminals, setWorkspaceTerminals] = useState<DashboardWorkspaceTerminalInfo[]>([]);
   const [workspaceFiles, setWorkspaceFiles] = useState<DashboardWorkspaceFileEntry[]>([]);
   const [workspaceFilesByPath, setWorkspaceFilesByPath] = useState<Record<string, DashboardWorkspaceFile>>({});
@@ -282,6 +287,15 @@ function App() {
           message: "Refreshing sessions did not finish in time. Try again."
         });
       }
+      if (action === "startCodexCliSession" || action === "sendCodexCliSessionMessage") {
+        setCliSessionFeedback({
+          key: Date.now(),
+          level: "warning",
+          message: action === "startCodexCliSession"
+            ? "Starting the Codex session timed out. Refresh sessions before trying again."
+            : "The Codex turn timed out. Refresh this session before trying again."
+        });
+      }
       if (!onboardingOpen) return;
       const isPendingStep = onboardingPendingRef.current.has(action);
       const isImportStep = onboardingStep === "import" && onboardingBusy && action === "importCurrent";
@@ -368,8 +382,8 @@ function App() {
     [sendAction]
   );
   const requestWorkspaceTerminals = useCallback((): void => {
-    sendAction("listWorkspaceTerminals", undefined, {});
-  }, [sendAction]);
+    sendAction("listWorkspaceTerminals", undefined, { targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
+  }, [sendAction, selectedPeerId]);
   const lastAutomaticWorkspaceLoadRef = useRef<string>();
   const modals = useDashboardModals({
     dispatch,
@@ -429,6 +443,20 @@ function App() {
       if (message.type === "dashboard:connection") {
         setRealtimeConnected(message.connected);
         return;
+      }
+      if (message.type === "dashboard:codex-request") {
+        setCodexRequests((current) => current.some((request) => request.id === message.request.id)
+          ? current : [...current, message.request]);
+        setCodexRequestError(undefined);
+        return;
+      }
+      if (message.type === "dashboard:codex-request-resolved") {
+        setCodexRequests((current) => current.filter((request) => request.id !== message.requestId));
+        setCodexRequestError(undefined);
+        return;
+      }
+      if (message.type === "dashboard:action-result" && message.action === "respondCodexServerRequest") {
+        setCodexRequestError(message.status === "completed" ? undefined : (message.error ?? "Codex could not receive this response. Try again or refresh the session."));
       }
       if (message.type === "dashboard:notification-dismissed") {
         setBrowserActionRequest((current) =>
@@ -691,19 +719,44 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "runWorkspaceTerminalCommand") {
-        if (message.payload?.terminalResult) {
-          setTerminalResults((current) => [...current, message.payload!.terminalResult!].slice(-100));
+        if (message.payload?.terminalResult && message.payload.terminalResult.status !== "running") {
+          const completed = message.payload.terminalResult;
+          setTerminalResults((current) => [...current.filter((result) => result.id !== completed.id), completed].slice(-100));
+          setTerminalLiveOutputs((current) => {
+            if (!current[completed.id]) return current;
+            const next = { ...current };
+            delete next[completed.id];
+            return next;
+          });
         }
         setCliSessionFeedback({
           key: Date.now(),
-          level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error",
+          level: message.status === "completed" ? (message.payload?.terminalResult?.status === "untracked" ? "warning" : "info") : message.status === "cancelled" ? "warning" : "error",
           message:
-            message.status === "completed"
-              ? "Terminal command completed."
+          message.status === "completed"
+              ? (message.payload?.notice?.message ?? "Terminal command completed.")
               : (message.error ?? "Terminal command failed.")
         });
         requestWorkspaceEnvironment(selectedCliSession?.projectPath);
         requestWorkspaceTerminals();
+      }
+      if (message.type === "dashboard:terminal-output") {
+        setTerminalLiveOutputs((current) => {
+          const previous = current[message.output.id];
+          const output = previous
+            ? { ...previous, chunk: previous.chunk + message.output.chunk, sequence: message.output.sequence }
+            : message.output;
+          return { ...current, [message.output.id]: output };
+        });
+      }
+      if (message.type === "dashboard:terminal-complete") {
+        setTerminalResults((current) => [...current.filter((result) => result.id !== message.result.id), message.result].slice(-100));
+        setTerminalLiveOutputs((current) => {
+          if (!current[message.result.id]) return current;
+          const next = { ...current };
+          delete next[message.result.id];
+          return next;
+        });
       }
       if (
         message.type === "dashboard:action-result" &&
@@ -1688,6 +1741,27 @@ function App() {
             document.body
           )
         : null}
+      {codexRequests[0]
+        ? createPortal(
+            <CodexRequestDialog
+              key={codexRequests[0].id}
+              request={codexRequests[0]}
+              queuedCount={codexRequests.length - 1}
+              busy={isActionPending("respondCodexServerRequest")}
+              error={codexRequestError}
+              onRespond={(decision, answers) => {
+                setCodexRequestError(undefined);
+                sendAction("respondCodexServerRequest", undefined, {
+                  codexRequestId: codexRequests[0]!.id,
+                  codexDecision: decision,
+                  codexAnswers: answers,
+                  targetDeviceId: codexRequests[0]!.deviceId
+                });
+              }}
+            />,
+            document.body
+          )
+        : null}
       <main
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
@@ -2268,7 +2342,6 @@ function App() {
         ? createPortal(
             <CliSessionsPage
               dashboardMode={browserPath === "/dash"}
-              sessionDefault={snapshot.settings.codexSessionDefault ?? "webview"}
               privacyMode={state.privacyMode}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
@@ -2293,6 +2366,7 @@ function App() {
               feedback={cliSessionFeedback}
               environment={workspaceEnvironment}
               terminalResults={terminalResults}
+              terminalLiveOutputs={Object.values(terminalLiveOutputs)}
               workspaceTerminals={workspaceTerminals}
               environmentLoading={isActionPending("getWorkspaceEnvironment")}
               terminalRunning={isActionPending("runWorkspaceTerminalCommand")}
@@ -2315,7 +2389,6 @@ function App() {
                 explicitCliRefreshRef.current = requestCliSessions(true);
               }}
               onSelect={selectCliSession}
-              onOpenNewInCodex={() => sendAction("openNewCodexWebview")}
               onBackToList={() => {
                 navigateDashboardPath("/", setBrowserPath);
                 setSelectedCliSession(undefined);
@@ -2331,21 +2404,21 @@ function App() {
                 requestWorkspaceEnvironment(projectPath);
               }}
               onRunTerminal={(command, projectPath, terminalId) =>
-                sendAction("runWorkspaceTerminalCommand", undefined, { command, projectPath, terminalId })
+                sendAction("runWorkspaceTerminalCommand", undefined, { command, projectPath, terminalId, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })
               }
               onListTerminals={requestWorkspaceTerminals}
               onCreateTerminal={(profile, projectPath) =>
-                sendAction("createWorkspaceTerminal", undefined, { terminalProfile: profile, projectPath })
+                sendAction("createWorkspaceTerminal", undefined, { terminalProfile: profile, projectPath, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })
               }
-              onFocusTerminal={(terminalId) => sendAction("focusWorkspaceTerminal", undefined, { terminalId })}
-              onCancelTerminal={(terminalId) => sendAction("cancelWorkspaceTerminalCommand", undefined, { terminalId })}
+              onFocusTerminal={(terminalId) => sendAction("focusWorkspaceTerminal", undefined, { terminalId, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
+              onCancelTerminal={(terminalId) => sendAction("cancelWorkspaceTerminalCommand", undefined, { terminalId, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
               onCommitWorkspace={(commitMessage, projectPath) =>
                 sendAction("commitWorkspaceChanges", undefined, { commitMessage, projectPath, confirmed: true })
               }
               onPushWorkspace={(projectPath) =>
                 sendAction("pushWorkspaceBranch", undefined, { projectPath, confirmed: true })
               }
-              onClearTerminal={() => setTerminalResults([])}
+              onClearTerminal={() => { setTerminalResults([]); setTerminalLiveOutputs({}); }}
               onListFiles={(projectPath) =>
                 sendAction("listWorkspaceFiles", undefined, {
                   projectPath,
@@ -2505,6 +2578,39 @@ function App() {
       />
     </>
   );
+}
+
+function CodexRequestDialog(props: {
+  request: DashboardCodexServerRequest;
+  queuedCount: number;
+  busy: boolean;
+  error?: string;
+  onRespond: (decision: "approve" | "decline", answers?: Record<string, string>) => void;
+}) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const isQuestion = props.request.kind === "question";
+  const complete = !isQuestion || (props.request.questions ?? []).every((question) => Boolean(answers[question.id]?.trim()));
+  return <div class="codex-request-backdrop" role="presentation">
+    <section class="codex-request-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-request-title" aria-describedby="codex-request-description">
+      <div class="codex-request-eyebrow"><span class="codex-request-pulse" /> Codex needs your input{props.queuedCount > 0 ? ` · ${props.queuedCount} more waiting` : ""}</div>
+      <h2 id="codex-request-title">{props.request.title}</h2>
+      <p id="codex-request-description">{isQuestion ? "Answer to let Codex continue this turn." : "Review this request before Codex continues. Approval applies to this request only."}</p>
+      {props.request.cwd ? <div class="codex-request-cwd" title={props.request.cwd}>Project · {props.request.cwd}</div> : null}
+      {props.request.detail ? <pre class="codex-request-detail">{props.request.detail}</pre> : null}
+      {props.request.questions?.map((question) => <div class="codex-request-question" key={question.id}>
+        <label for={`codex-answer-${question.id}`}><span>{question.header || "Question"}</span><strong>{question.question}</strong></label>
+        {question.options?.length ? <select id={`codex-answer-${question.id}`} value={answers[question.id] ?? ""} disabled={props.busy} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))}>
+          <option value="">Choose an answer…</option>
+          {question.options.map((option) => <option key={option.label} value={option.label}>{option.label}{option.description ? ` — ${option.description}` : ""}</option>)}
+        </select> : <input id={`codex-answer-${question.id}`} type={question.isSecret ? "password" : "text"} value={answers[question.id] ?? ""} disabled={props.busy} maxLength={8_000} onInput={(event) => setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))} />}
+      </div>)}
+      {props.error ? <p class="codex-request-error" role="alert">{props.error}</p> : null}
+      <div class="codex-request-actions">
+        <button type="button" class="is-secondary" disabled={props.busy} onClick={() => props.onRespond("decline")}>{isQuestion ? "Dismiss question" : "Decline"}</button>
+        <button type="button" class="is-primary" disabled={props.busy || !complete} onClick={() => props.onRespond("approve", answers)}>{props.busy ? "Sending…" : isQuestion ? "Send answer" : "Approve once"}</button>
+      </div>
+    </section>
+  </div>;
 }
 
 function sortAccounts(

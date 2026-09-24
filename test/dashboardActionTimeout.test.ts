@@ -13,4 +13,9 @@ describe("dashboard action timeouts", () => {
     expect(getActionTimeoutMs("configureEncryptedSync")).toBe(135_000);
     expect(getActionTimeoutMs("syncNow")).toBe(135_000);
   });
+
+  it("allows a CLI start or send to finish its full 15-minute run and report a result", () => {
+    expect(getActionTimeoutMs("startCodexCliSession")).toBe(915_000);
+    expect(getActionTimeoutMs("sendCodexCliSessionMessage")).toBe(915_000);
+  });
 });

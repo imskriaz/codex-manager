@@ -10,6 +10,7 @@ import {
   normalizeAutoSwitchThreshold,
   normalizeAutoResetWeeklyThreshold,
   normalizeCodexSessionDefault,
+  normalizeCodexSessionTransport,
   normalizeDashboardTheme,
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
@@ -75,6 +76,12 @@ export async function handleDashboardSettingUpdate(
     case "codexSessionDefault":
       if (typeof value === "string" && (value === "webview" || value === "cli")) {
         await updateDashboardConfiguration(config, key, normalizeCodexSessionDefault(value), target);
+        updated = true;
+      }
+      break;
+    case "codexSessionTransport":
+      if (typeof value === "string" && (value === "app-server-stdio" || value === "app-server-websocket" || value === "cli")) {
+        await updateDashboardConfiguration(config, key, normalizeCodexSessionTransport(value), target);
         updated = true;
       }
       break;
@@ -243,6 +250,7 @@ function resolveConfigurationTarget(
   if (
     key === "cliIntegrationEnabled" ||
     key === "codexSessionDefault" ||
+    key === "codexSessionTransport" ||
     key === "autoResumeEnabled" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||

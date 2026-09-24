@@ -15,6 +15,7 @@ export type DashboardSettingKey =
   | "backgroundTokenRefreshEnabled"
   | "cliIntegrationEnabled"
   | "codexSessionDefault"
+  | "codexSessionTransport"
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
@@ -53,6 +54,8 @@ export interface DashboardSettings {
   cliIntegrationEnabled?: boolean;
   /** Default dashboard session surface. */
   codexSessionDefault?: DashboardCodexSessionDefault;
+  /** Backend transport for embedded local Codex sessions. */
+  codexSessionTransport?: DashboardCodexSessionTransport;
   autoRefreshMinutes: number;
   autoRefreshCurrentMinutes: number;
   usageHistoryRetentionDays: number;
@@ -95,6 +98,7 @@ export interface DashboardSettings {
 
 export type DashboardThemeOption = "auto" | "dark" | "light";
 export type DashboardCodexSessionDefault = "webview" | "cli";
+export type DashboardCodexSessionTransport = "app-server-stdio" | "app-server-websocket" | "cli";
 
 export interface DashboardCopy {
   panelTitle: string;
@@ -559,6 +563,7 @@ export type DashboardActionName =
   | "getCodexCliSessionMessages"
   | "sendCodexCliSessionMessage"
   | "cancelCodexCliSessionTurn"
+  | "respondCodexServerRequest"
   | "openCodexCliSession"
   | "renameCodexCliSession"
   | "forkCodexCliSession"
@@ -615,6 +620,9 @@ export interface DashboardActionPayload {
   command?: string;
   terminalId?: string;
   terminalName?: string;
+  codexRequestId?: string;
+  codexDecision?: "approve" | "decline";
+  codexAnswers?: Record<string, string>;
   terminalProfile?: "default" | "powershell" | "cmd" | "bash";
   commitMessage?: string;
   /** Browser-dashboard confirmation supplied by an in-page modal. */
@@ -647,6 +655,8 @@ export interface DashboardCliSessionSummary {
   sessionSurface?: "cli" | "vscode" | "other";
   /** Human-readable owner shown while another surface holds the session lock. */
   runningBy?: string;
+  /** A Codex writer lock exists, even when no active turn can be confirmed. */
+  locked?: boolean;
   /** Whether this Codex Manager process owns the running turn and can stop it. */
   canStop?: boolean;
   remote?: boolean;
@@ -752,14 +762,38 @@ export interface DashboardWorkspaceFile {
 
 export interface DashboardWorkspaceTerminalResult {
   id: string;
+  deviceId?: string;
   terminalId: string;
   command: string;
   cwd: string;
   output: string;
   exitCode?: number;
   durationMs: number;
-  status: "completed" | "failed" | "cancelled" | "timedOut";
+  status: "running" | "completed" | "failed" | "cancelled" | "timedOut" | "untracked";
   finishedAt: string;
+}
+
+/** Incremental output emitted while a workspace terminal command is running. */
+export interface DashboardWorkspaceTerminalOutput {
+  id: string;
+  deviceId?: string;
+  terminalId: string;
+  command: string;
+  cwd: string;
+  chunk: string;
+  stream: "stdout" | "stderr" | "terminal";
+  sequence: number;
+}
+
+export interface DashboardCodexServerRequest {
+  id: string;
+  threadId: string;
+  kind: "command" | "file-change" | "permissions" | "question";
+  title: string;
+  detail?: string;
+  cwd?: string;
+  questions?: Array<{ id: string; header: string; question: string; isSecret: boolean; options?: Array<{ label: string; description: string }> }>;
+  deviceId?: string;
 }
 
 export interface DashboardWorkspaceTerminalInfo {
@@ -856,6 +890,16 @@ export type DashboardHostMessage =
       payload?: DashboardActionResultPayload;
       error?: string;
     }
+  | {
+      type: "dashboard:terminal-output";
+      output: DashboardWorkspaceTerminalOutput;
+    }
+  | {
+      type: "dashboard:terminal-complete";
+      result: DashboardWorkspaceTerminalResult;
+    }
+  | { type: "dashboard:codex-request"; request: DashboardCodexServerRequest }
+  | { type: "dashboard:codex-request-resolved"; requestId: string; deviceId?: string }
   | {
       type: "dashboard:oauth-authorized";
       oauthSessionId: string;

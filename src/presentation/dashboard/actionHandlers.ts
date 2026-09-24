@@ -24,6 +24,7 @@ import {
   unarchiveCodexCliSession
 } from "../../services/codexSessionResume";
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
+import { respondCodexAppServerPrompt } from "../../services/codexAppServerPrompts";
 import { unloadAuthFile } from "../../codex";
 import { upsertDashboardDailyUsageCache } from "../../services/dashboardUsageHistory";
 import {
@@ -111,6 +112,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "getCodexCliSessionMessages",
   "sendCodexCliSessionMessage",
   "cancelCodexCliSessionTurn",
+  "respondCodexServerRequest",
   "openCodexCliSession",
   "renameCodexCliSession",
   "forkCodexCliSession",
@@ -764,6 +766,10 @@ async function runDashboardAction(
       return handleSendCodexCliSessionMessage(payload);
     case "cancelCodexCliSessionTurn":
       return handleCancelCodexCliSessionTurn(payload?.sessionId);
+    case "respondCodexServerRequest":
+      if (!payload?.codexRequestId || !payload.codexDecision) throw new Error("Choose a Codex prompt response before continuing.");
+      respondCodexAppServerPrompt(payload.codexRequestId, payload.codexDecision, payload.codexAnswers);
+      return { notice: { level: "info" as const, message: payload.codexDecision === "approve" ? "Response sent to Codex." : "Codex request declined." } };
     case "openCodexCliSession":
       return handleOpenCodexCliSession(payload?.sessionId, ctx.hostKind === "browser");
     case "renameCodexCliSession":
@@ -822,7 +828,9 @@ async function runDashboardAction(
       const terminalResult = await runWorkspaceTerminalCommand(payload ?? {});
       return {
         terminalResult,
-        notice: { level: "info" as const, message: "Terminal command completed." }
+        notice: terminalResult.status === "untracked"
+          ? { level: "warning" as const, message: "Command sent to VS Code, but this shell does not expose live output. View the terminal tab for status." }
+          : { level: "info" as const, message: terminalResult.status === "running" ? "Terminal command started; output is streaming live." : "Terminal command completed." }
       };
     }
     case "cancelWorkspaceTerminalCommand":
@@ -1212,6 +1220,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "codexAppRestartMode",
     "backgroundTokenRefreshEnabled",
     "codexSessionDefault",
+    "codexSessionTransport",
     "autoRefreshMinutes",
     "autoRefreshCurrentMinutes",
     "usageHistoryRetentionDays",
@@ -1704,7 +1713,10 @@ async function handleStartCodexCliSession(
     String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
   );
   const existingSession = cliSessions.find((session) => session.id === sessionId);
-  const visibleSession = existingSession ?? {
+  const visibleSession = existingSession ? {
+    ...existingSession,
+    projectPath: existingSession.projectPath ?? payload?.projectPath?.trim()
+  } : {
     id: sessionId,
     title: "New Codex chat",
     status: "idle" as const,
@@ -1747,26 +1759,35 @@ async function canonicalProjectPath(projectPath: string): Promise<string> {
 async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload | undefined) {
   ensureCliIntegrationEnabled();
   if (!payload?.sessionId) throw new Error("Choose a session first.");
-  await ensureCliSessionIsActive(payload.sessionId);
+  const currentSession = await ensureCliSessionIsActive(payload.sessionId);
+  if (
+    payload.projectPath?.trim() && currentSession.projectPath?.trim() &&
+    await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(currentSession.projectPath)
+  ) throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
+  const sessionProjectPath = currentSession.projectPath ?? payload.projectPath;
   await sendCodexCliSessionMessage({
     sessionId: payload.sessionId,
     text: payload.text ?? "",
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
     sandboxMode: payload.sandboxMode,
-    projectPath: payload.projectPath
+    projectPath: sessionProjectPath
   });
   const [loadedCliSessions, cliSessionMessages] = await Promise.all([
     readCodexCliSessions(),
     readCodexCliSessionMessages(payload.sessionId)
   ]);
   let cliSessions = loadedCliSessions;
-  const visibleSession = cliSessions.find((session) => session.id === payload.sessionId) ?? {
+  const loadedSession = cliSessions.find((session) => session.id === payload.sessionId);
+  const visibleSession = loadedSession ? {
+    ...loadedSession,
+    projectPath: loadedSession.projectPath ?? sessionProjectPath
+  } : {
     id: payload.sessionId,
     title: "Codex session",
     status: "idle" as const,
     archived: false,
-    ...(payload.projectPath?.trim() ? { projectPath: payload.projectPath.trim() } : {})
+    ...(sessionProjectPath?.trim() ? { projectPath: sessionProjectPath.trim() } : {})
   };
   cliSessions = upsertCliSessionInList(cliSessions, visibleSession);
   return {
@@ -1777,10 +1798,10 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
   };
 }
 
-function handleCancelCodexCliSessionTurn(sessionId: string | undefined) {
+async function handleCancelCodexCliSessionTurn(sessionId: string | undefined) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
-  if (!cancelCodexCliSessionTurn(sessionId)) {
+  if (!(await cancelCodexCliSessionTurn(sessionId))) {
     throw new Error("There is no dashboard-started Codex turn to stop in this session.");
   }
   return {
