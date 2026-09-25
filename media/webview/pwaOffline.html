@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0d1117">
+  <title>Dashboard unavailable · Codex Manager</title>
+  <link rel="icon" href="/assets/codex.svg" type="image/svg+xml">
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: #f5f8fc; color: #152238; }
+    main { width: min(100%, 430px); padding: 32px; border: 1px solid #dbe4ef; border-radius: 18px; background: #fff; box-shadow: 0 22px 70px #1b35541c; }
+    .mark { display: grid; width: 52px; height: 52px; place-items: center; border-radius: 14px; background: #eaf2ff; }
+    .mark img { width: 31px; height: 31px; }
+    .eyebrow { margin: 26px 0 6px; color: #4567a4; font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(23px, 6vw, 29px); line-height: 1.15; letter-spacing: -.035em; }
+    p { margin: 14px 0 0; color: #526176; font-size: 14px; line-height: 1.65; }
+    .status { margin-top: 24px; padding: 12px 14px; border: 1px solid #e1e8f1; border-radius: 10px; background: #f8fafc; color: #42536b; font-size: 12px; line-height: 1.5; }
+    a { display: inline-flex; justify-content: center; min-height: 40px; margin-top: 24px; padding: 10px 16px; border-radius: 9px; background: #2563eb; color: #fff; font-size: 13px; font-weight: 700; text-decoration: none; }
+    a:focus-visible { outline: 3px solid #9fc1ff; outline-offset: 3px; }
+    @media (prefers-color-scheme: dark) { body { background: #0e1523; color: #f2f6fc; } main { border-color: #2b3850; background: #172235; box-shadow: 0 22px 70px #0005; } .mark { background: #233c66; } p { color: #a9b8cc; } .status { border-color: #33425a; background: #1c2a3e; color: #b8c6d9; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark"><img src="/assets/codex.svg" alt=""></div>
+    <p class="eyebrow">Connection paused</p>
+    <h1>The dashboard host is unavailable.</h1>
+    <p>Your browser can still open this installed app, but live sessions and account data require the Codex Manager extension running in VS Code.</p>
+    <div class="status">No account or session data is stored in the offline cache.</div>
+    <a href="">Try connecting again</a>
+  </main>
+</body>
+</html>

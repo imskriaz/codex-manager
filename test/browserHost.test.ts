@@ -144,4 +144,78 @@ describe("browser dashboard bridge", () => {
       message: "Dashboard action failed (502)"
     });
   });
+
+  it("reports an unconfirmed action when the live socket closes and checks host reachability", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    class TestMessageEvent {
+      constructor(_type: string, public readonly init: { data: Record<string, unknown> }) {}
+      get data(): Record<string, unknown> { return this.init.data; }
+    }
+    class TestWebSocket {
+      static readonly OPEN = 1;
+      readyState = 0;
+      private readonly listeners = new Map<string, Array<(event: { code?: number; data?: string }) => void>>();
+      readonly send = vi.fn();
+      addEventListener(type: string, listener: (event: { code?: number; data?: string }) => void): void {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+      }
+      emit(type: string, event: { code?: number; data?: string } = {}): void {
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+    const sockets: TestWebSocket[] = [];
+    const WebSocketFactory = class extends TestWebSocket {
+      constructor(_url: string) { super(); sockets.push(this); }
+    };
+    const windowMock = {
+      dispatchEvent: vi.fn((event: { data: Record<string, unknown> }) => events.push(event.data)),
+      setTimeout: vi.fn(() => 1),
+      clearTimeout: vi.fn(),
+      location: { protocol: "http:", host: "127.0.0.1:39875", reload: vi.fn() },
+      WebSocket: WebSocketFactory,
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock,
+      MessageEvent: TestMessageEvent,
+      fetch: vi.fn(async () => { throw new Error("host down"); }),
+      console: { error: vi.fn(), warn: vi.fn() },
+      Error, Array, JSON, Date, Map
+    });
+    sockets[0]!.readyState = TestWebSocket.OPEN;
+    sockets[0]!.emit("open");
+    await windowMock.acquireVsCodeApi?.().postMessage({ type: "dashboard:action", requestId: "save-1", action: "saveWorkspaceFile" });
+    sockets[0]!.emit("close", { code: 1006 });
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:host-status", stage: "unreachable" })));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "dashboard:action-result", requestId: "save-1", status: "failed",
+      error: expect.stringContaining("outcome is unknown")
+    }));
+    expect(events).toContainEqual({ type: "dashboard:connection", transport: "websocket", connected: false });
+  });
+
+  it("gives an explicit terminal result for a manual connection retry", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    class TestMessageEvent {
+      constructor(_type: string, public readonly init: { data: Record<string, unknown> }) {}
+      get data(): Record<string, unknown> { return this.init.data; }
+    }
+    const windowMock = {
+      dispatchEvent: vi.fn((event: { data: Record<string, unknown> }) => events.push(event.data)),
+      location: { reload: vi.fn() },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock,
+      MessageEvent: TestMessageEvent,
+      fetch: vi.fn(async () => { throw new Error("host down"); }),
+      console: { error: vi.fn(), warn: vi.fn() },
+      Error, Array, JSON, Date, Map
+    });
+    await windowMock.acquireVsCodeApi?.().postMessage({ type: "dashboard:retry-connection" });
+    expect(events).toContainEqual({
+      type: "dashboard:notice", level: "error",
+      message: "Dashboard is still unavailable. Check VS Code and try again."
+    });
+  });
 });

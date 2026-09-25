@@ -882,6 +882,12 @@ export type DashboardHostMessage =
       connected: boolean;
     }
   | {
+      type: "dashboard:host-status";
+      stage: "connecting" | "live" | "degraded" | "reconnecting" | "unreachable" | "offline";
+      lastSyncAt?: number;
+      retryInMs?: number;
+    }
+  | {
       type: "dashboard:action-result";
       requestId: string;
       action: DashboardActionName;
@@ -910,6 +916,7 @@ export type DashboardHostMessage =
 
 export type DashboardClientMessage =
   | { type: "dashboard:ready" }
+  | { type: "dashboard:retry-connection" }
   /** Browser workspace-viewer lease; used to gate CLI session monitoring. */
   | { type: "dashboard:workspace-presence"; viewing: boolean }
   | { type: "dashboard:usage-history"; samples: DashboardUsageSample[] }

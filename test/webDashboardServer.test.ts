@@ -9,7 +9,8 @@ import {
   isWebDashboardPagePath,
   mergeFreshPeerAccountStates,
   normalizeWebDashboardReturnPath,
-  readDashboardRequestBody
+  readDashboardRequestBody,
+  WebDashboardServer
 } from "../src/services/webDashboardServer";
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 import { normalizeCloudflaredDomain } from "../src/presentation/dashboard/settings";
@@ -159,6 +160,55 @@ describe("isWebDashboardPagePath", () => {
       "/01a04882-d037-7a42-ad24-9afb61901188"
     );
     expect(normalizeWebDashboardReturnPath("//example.com/steal")).toBe("/");
+  });
+});
+
+describe("browser PWA routes", () => {
+  it("serves the public install shell without exposing private state and versions dashboard assets", async () => {
+    const server = new WebDashboardServer(
+      {
+        extensionUri: { fsPath: process.cwd() },
+        extension: { packageJSON: { version: "1.2.10-pre1" } },
+        globalStorageUri: { fsPath: "storage" },
+        secrets: { get: vi.fn(async () => undefined) }
+      } as never,
+      {} as never,
+      { hasDashboardPassphrase: vi.fn(async () => true), setOnlineDeviceIds: vi.fn() } as never
+    );
+    const handle = (server as unknown as { handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> }).handle.bind(server);
+    const get = async (url: string, forwarded = false): Promise<{ status: number; body: string; headers: Map<string, unknown> }> => {
+      const headers = new Map<string, unknown>();
+      let body = "";
+      const response = {
+        statusCode: 200,
+        setHeader: (name: string, value: unknown) => headers.set(name.toLowerCase(), value),
+        end: (value?: Buffer | string) => { body = value?.toString() ?? ""; }
+      } as unknown as http.ServerResponse;
+      await handle({
+        method: "GET", url,
+        headers: { host: "127.0.0.1:39875", ...(forwarded ? { "x-forwarded-proto": "https" } : {}) },
+        socket: { remoteAddress: "127.0.0.1" }
+      } as http.IncomingMessage, response);
+      return { status: response.statusCode, body, headers };
+    };
+    try {
+      const manifest = await get("/manifest.webmanifest", true);
+      expect(manifest.status).toBe(200);
+      expect(manifest.headers.get("content-type")).toContain("application/manifest+json");
+      expect(JSON.parse(manifest.body)).toMatchObject({ name: "Codex Manager", display: "standalone", start_url: "/" });
+      const worker = await get("/service-worker.js", true);
+      expect(worker.status).toBe(200);
+      expect(worker.headers.get("cache-control")).toBe("no-store");
+      expect(worker.body).toContain("codex-manager-static-");
+      const privateState = await get("/api/state", true);
+      expect(privateState.status).toBe(401);
+      const dashboard = await get("/");
+      expect(dashboard.body).toContain('rel="manifest" href="/manifest.webmanifest?v=1.2.10-pre1"');
+      expect(dashboard.body).toContain('src="/assets/browserHost.js?v=1.2.10-pre1"');
+      expect(dashboard.headers.get("cache-control")).toBe("no-store");
+    } finally {
+      server.dispose();
+    }
   });
 });
 

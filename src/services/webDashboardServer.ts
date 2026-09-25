@@ -289,6 +289,11 @@ export function isCliSessionWatchPath(filename: string | Buffer | null): boolean
 }
 
 const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: string }> = {
+  "/manifest.webmanifest": { parts: ["media", "webview", "pwaManifest.webmanifest"], contentType: "application/manifest+json; charset=utf-8" },
+  "/service-worker.js": { parts: ["media", "webview", "pwaServiceWorker.js"], contentType: "text/javascript; charset=utf-8" },
+  "/offline.html": { parts: ["media", "webview", "pwaOffline.html"], contentType: "text/html; charset=utf-8" },
+  "/assets/icon-192.png": { parts: ["media", "webview", "icon-192.png"], contentType: "image/png" },
+  "/assets/icon-512.png": { parts: ["media", "webview", "icon-512.png"], contentType: "image/png" },
   "/assets/shared.css": { parts: ["media", "webview", "shared.css"], contentType: "text/css; charset=utf-8" },
   "/assets/dashboard.css": { parts: ["media", "webview", "quotaSummary.css"], contentType: "text/css; charset=utf-8" },
   "/assets/browserHost.js": {
@@ -304,6 +309,10 @@ const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: strin
     contentType: "image/svg+xml"
   }
 };
+const WEB_DASHBOARD_PUBLIC_ASSETS = new Set([
+  "/manifest.webmanifest", "/service-worker.js", "/offline.html",
+  "/assets/icon-192.png", "/assets/icon-512.png", "/assets/codex.svg"
+]);
 
 export class WebDashboardServer implements vscode.Disposable {
   private server: http.Server | undefined;
@@ -674,6 +683,13 @@ export class WebDashboardServer implements vscode.Disposable {
       await this.handleLogin(request, response, normalizeWebDashboardReturnPath(requestedReturnPath));
       return;
     }
+    // These files contain no account or session data. Keep the install shell
+    // available before login so an expired browser session can still show the
+    // generic offline page; authenticated HTML and APIs remain uncached.
+    if (method === "GET" && WEB_DASHBOARD_PUBLIC_ASSETS.has(path)) {
+      await this.sendAsset(path, request, response);
+      return;
+    }
     const configuredCloudflaredOrigin = normalizeCloudflaredDomain(
       this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""
     );
@@ -714,7 +730,8 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "GET" && isWebDashboardPagePath(path)) {
-      this.sendHtml(response, dashboardPage(!isLocalWebDashboardRequest(request)));
+      const version = String((this.context.extension.packageJSON as { version?: string }).version ?? "dev");
+      this.sendHtml(response, dashboardPage(!isLocalWebDashboardRequest(request), version));
       return;
     }
     response.statusCode = 404;
@@ -2258,7 +2275,10 @@ export class WebDashboardServer implements vscode.Disposable {
         this.assetCache.set(requestPath, cached);
       }
       response.setHeader("Content-Type", asset.contentType);
-      response.setHeader("Cache-Control", "private, max-age=300");
+      const requestedVersion = new URL(request.url ?? requestPath, this.getUrl()).searchParams.get("v");
+      const currentVersion = String((this.context.extension.packageJSON as { version?: string }).version ?? "dev");
+      response.setHeader("Cache-Control", requestPath === "/service-worker.js" ? "no-store"
+        : requestedVersion === currentVersion ? "private, max-age=31536000, immutable" : "private, max-age=300");
       response.setHeader("ETag", cached.etag);
       if (request.headers["if-none-match"] === cached.etag) {
         response.statusCode = 304;
@@ -2367,14 +2387,15 @@ export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes
 
 function loginPage(configured: boolean, error = "", returnPath = "/"): string {
   const action = `/login?returnTo=${encodeURIComponent(normalizeWebDashboardReturnPath(returnPath))}`;
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Codex Manager password.</p><form method="post" action="${action}"><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" autofocus required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Codex Manager password.</p><form method="post" action="${action}"><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" autofocus required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
 }
 
-function dashboardPage(showLogout: boolean): string {
+function dashboardPage(showLogout: boolean, version: string): string {
+  const assetVersion = encodeURIComponent(version);
   const logout = showLogout
     ? `<form method="post" action="/logout" style="position:fixed;right:12px;bottom:12px;z-index:40000"><button type="submit" title="Sign out of the remote dashboard" style="padding:7px 10px;border:1px solid currentColor;border-radius:7px;background:var(--bg-elevated,#172033);color:var(--text-primary,#fff)">Sign out</button></form>`
     : "";
-  return `<!DOCTYPE html><html lang="en" data-theme="auto" data-dashboard-host="browser"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0d1117"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><div id="app"></div>${logout}<script src="/assets/browserHost.js"></script><script src="/assets/dashboard.js"></script></body></html>`;
+  return `<!DOCTYPE html><html lang="en" data-theme="auto" data-dashboard-host="browser"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0d1117"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/icon-192.png"><link rel="manifest" href="/manifest.webmanifest?v=${assetVersion}"><link rel="stylesheet" href="/assets/shared.css?v=${assetVersion}"><link rel="stylesheet" href="/assets/dashboard.css?v=${assetVersion}"></head><body><div id="app"></div>${logout}<script src="/assets/browserHost.js?v=${assetVersion}"></script><script src="/assets/dashboard.js?v=${assetVersion}"></script></body></html>`;
 }
 
 const BASE_CSS = `:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111827;color:#edf2ff}body{margin:0;background:#111827}main{max-width:1100px;margin:0 auto;padding:28px 20px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}h1{font-size:22px;margin:0;text-wrap:balance}label{display:block;margin-top:18px;font-size:14px;font-weight:700}button{border:0;border-radius:8px;padding:10px 14px;background:#4f8cff;color:#fff;font-weight:700;cursor:pointer;touch-action:manipulation}button:hover{background:#6aa0ff}button:focus-visible,input:focus-visible{outline:2px solid #8bb8ff;outline-offset:3px}input{display:block;width:100%;box-sizing:border-box;padding:11px;border-radius:8px;border:1px solid #43516d;background:#1b2537;color:#fff;margin:8px 0 12px}.login{max-width:380px;margin:12vh auto}.login p{color:#a8b3c9;line-height:1.5}.error{color:#ff8c9b;margin-top:12px}`;
@@ -2391,6 +2412,7 @@ function isDashboardClientMessage(value: unknown): value is DashboardClientMessa
   const candidate = value as Record<string, unknown>;
   switch (candidate["type"]) {
     case "dashboard:ready":
+    case "dashboard:retry-connection":
     case "dashboard:pickCodexAppPath":
     case "dashboard:clearCodexAppPath":
     case "dashboard:pickCodexCliPath":

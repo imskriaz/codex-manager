@@ -10,6 +10,7 @@ import type {
   DashboardCodexServerRequest,
   DashboardCliSessionMessage,
   DashboardCliSessionSummary,
+  DashboardHostMessage,
   DashboardNotice,
   DashboardPeerView,
   DashboardUsageSample,
@@ -268,6 +269,8 @@ function App() {
     [closeBrowserPush, isBrowserDashboard]
   );
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [browserHostStage, setBrowserHostStage] = useState<Extract<DashboardHostMessage, { type: "dashboard:host-status" }>["stage"]>("connecting");
+  const [browserLastSyncAt, setBrowserLastSyncAt] = useState<number>();
   const showNotice = useCallback(
     (next: DashboardNotice) => {
       noticeControllerRef.current?.show(next);
@@ -394,7 +397,10 @@ function App() {
   });
   useDashboardHostSync({
     handleHostMessage: (message) => {
-      if (message.type === "dashboard:snapshot") dashboardCacheHydratedRef.current = true;
+      if (message.type === "dashboard:snapshot") {
+        dashboardCacheHydratedRef.current = true;
+        if (isBrowserDashboard) setBrowserLastSyncAt(Date.now());
+      }
       modals.handleHostMessage(message);
       if (onboardingOpen && message.type === "dashboard:action-result") {
         const onboardingAction = message.action;
@@ -442,6 +448,11 @@ function App() {
       }
       if (message.type === "dashboard:connection") {
         setRealtimeConnected(message.connected);
+        return;
+      }
+      if (message.type === "dashboard:host-status") {
+        setBrowserHostStage(message.stage);
+        if (message.lastSyncAt) setBrowserLastSyncAt(message.lastSyncAt);
         return;
       }
       if (message.type === "dashboard:codex-request") {
@@ -1149,13 +1160,14 @@ function App() {
   }, [snapshot, hasGlobalPendingAction, sendAction, modals]);
 
   if (!snapshot) {
+    const connectionFailed = isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline");
     return (
       <main
         class={`panel ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
         id="dashboard-main"
       >
         <section class="section loading-section">
-          <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
+          {connectionFailed ? <BrowserConnectionRecovery stage={browserHostStage} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
             <div class="loading-logo-wrap" aria-hidden="true">
               {isBrowserDashboard ? (
                 <img class="loading-logo" src="/assets/codex.svg" alt="" width="72" height="72" />
@@ -1169,7 +1181,7 @@ function App() {
               <span />
             </div>
             <span class="loading-label">Loading</span>
-          </div>
+          </div>}
         </section>
       </main>
     );
@@ -1717,6 +1729,9 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
+      {isBrowserDashboard && browserHostStage !== "live" && browserHostStage !== "connecting"
+        ? createPortal(<BrowserConnectionBanner stage={browserHostStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
+        : null}
       {notice
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
@@ -2578,6 +2593,32 @@ function App() {
       />
     </>
   );
+}
+
+type BrowserConnectionIssue = "degraded" | "reconnecting" | "unreachable" | "offline";
+
+function BrowserConnectionBanner(props: { stage: BrowserConnectionIssue; lastSyncAt?: number; onRetry: () => void }) {
+  const copy = {
+    degraded: ["Live updates paused", "The host responds, but the live channel is reconnecting."],
+    reconnecting: ["Reconnecting to dashboard", "Checking the live channel; current data may be delayed."],
+    unreachable: ["Dashboard host unavailable", "Displayed data may be stale. Check that VS Code is running."],
+    offline: ["Browser reports offline", "The local dashboard may still work; check VS Code and retry."]
+  }[props.stage];
+  return <aside class={`dashboard-connection-banner is-${props.stage}`} role={props.stage === "unreachable" || props.stage === "offline" ? "alert" : "status"} aria-live="polite">
+    <span class="dashboard-connection-indicator" aria-hidden="true" />
+    <span class="dashboard-connection-copy"><strong>{copy[0]}</strong><small>{copy[1]}{props.lastSyncAt ? ` Last update ${new Date(props.lastSyncAt).toLocaleTimeString()}.` : ""}</small></span>
+    <button type="button" onClick={props.onRetry}>Retry now</button>
+  </aside>;
+}
+
+function BrowserConnectionRecovery(props: { stage: "unreachable" | "offline"; onRetry: () => void }) {
+  return <div class="dashboard-connection-recovery" role="alert">
+    <span class="dashboard-connection-recovery-mark" aria-hidden="true"><img src="/assets/codex.svg" alt="" width="38" height="38" /></span>
+    <small>Connection paused</small>
+    <h1>{props.stage === "offline" ? "Your browser is offline." : "The dashboard host is unavailable."}</h1>
+    <p>Keep VS Code and the Codex Manager extension running to see live sessions and account data. This app never stores that data in its offline cache.</p>
+    <button type="button" onClick={props.onRetry}>Try connecting again</button>
+  </div>;
 }
 
 function CodexRequestDialog(props: {
