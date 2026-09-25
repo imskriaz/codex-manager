@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.10
+
+- Fixed Auto Select so dashboard-capable accounts with stale quota snapshots are refreshed before reporting that no account is available.
+- Improved the mobile browser workspace layout and moved remote sign-out into the account avatar menu.
+- Simplified workspace session transports to App Server and CLI, removed the experimental WebSocket option, and made the selected transport authoritative.
+- Updated App Server session operations to use supported thread and turn methods without silently falling back to CLI.
+
 ## 1.2.8
 
 - Keep new Codex sessions and activity visible while session indexes catch up.
