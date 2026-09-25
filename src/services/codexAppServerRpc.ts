@@ -45,7 +45,7 @@ export class CodexAppServerRpc {
       client.lines = readline.createInterface({ input: child.stdout });
       client.lines.on("line", (line) => client.receive(line));
       await client.request("initialize", {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.11-pre2" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.10" },
         capabilities: null
       }, 10_000);
       client.send({ method: "initialized", params: {} });
