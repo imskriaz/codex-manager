@@ -1,6 +1,6 @@
 import { createPortal } from "preact/compat";
 import type { JSX } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { basicSetup } from "codemirror";
 import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
@@ -144,6 +144,13 @@ export type CliSessionsPageProps = {
   onDelete: (session: DashboardCliSessionSummary) => void;
 };
 
+export function shouldShowLatestButton(scrollHeight: number, clientHeight: number, scrollTop: number, wasVisible = false): boolean {
+  const overflow = scrollHeight - clientHeight;
+  if (overflow <= 2) return false;
+  const remaining = Math.max(0, overflow - Math.max(0, scrollTop));
+  return remaining > (wasVisible ? 16 : 48);
+}
+
 export function CliSessionsPage(props: CliSessionsPageProps) {
   const [section, setSection] = useState<CliSessionSection>("active");
   const [search, setSearch] = useState("");
@@ -173,7 +180,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
   const previousScrollTopRef = useRef(0);
-  const [isNearMessageBottom, setIsNearMessageBottom] = useState(true);
+  const [showLatestButton, setShowLatestButton] = useState(false);
   const initializedSandboxRef = useRef(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const previousFeedbackKey = useRef<number>();
@@ -208,54 +215,63 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setDeleteTarget(undefined);
   }, [props.selectedSession?.id, props.selectedSession?.archived]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     followLatestRef.current = true;
     previousScrollTopRef.current = 0;
-    setIsNearMessageBottom(true);
+    setShowLatestButton(false);
     const viewport = messageViewportRef.current;
     const content = messagesContentRef.current;
     if (!viewport || !content || !props.selectedSession) return;
     let frame = 0;
-    const follow = (): void => {
-      if (!followLatestRef.current) return;
+    const reconcile = (): void => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
-        if (!followLatestRef.current) return;
-        viewport.scrollTop = viewport.scrollHeight;
-        previousScrollTopRef.current = viewport.scrollTop;
+        if (followLatestRef.current) {
+          viewport.scrollTop = viewport.scrollHeight;
+          previousScrollTopRef.current = viewport.scrollTop;
+          setShowLatestButton(false);
+        } else {
+          setShowLatestButton((visible) => shouldShowLatestButton(viewport.scrollHeight, viewport.clientHeight, viewport.scrollTop, visible));
+        }
       });
     };
-    const observer = new ResizeObserver(follow);
+    const observer = new ResizeObserver(reconcile);
     observer.observe(content);
-    follow();
+    observer.observe(viewport);
+    reconcile();
     return () => {
       observer.disconnect();
       window.cancelAnimationFrame(frame);
     };
   }, [props.selectedSession?.id]);
-  useEffect(() => {
-    if (!followLatestRef.current) return;
+  useLayoutEffect(() => {
     const viewport = messageViewportRef.current;
     if (!viewport) return;
-    viewport.scrollTop = viewport.scrollHeight;
-    previousScrollTopRef.current = viewport.scrollTop;
+    if (followLatestRef.current) {
+      viewport.scrollTop = viewport.scrollHeight;
+      previousScrollTopRef.current = viewport.scrollTop;
+      setShowLatestButton(false);
+    } else {
+      setShowLatestButton((visible) => shouldShowLatestButton(viewport.scrollHeight, viewport.clientHeight, viewport.scrollTop, visible));
+    }
   }, [props.messages, props.sending, props.messagesLoading]);
   const updateMessageScrollState = (): void => {
     const viewport = messageViewportRef.current;
     if (!viewport) return;
     const currentTop = viewport.scrollTop;
-    const nearBottom = viewport.scrollHeight - currentTop - viewport.clientHeight <= 56;
-    if (currentTop < previousScrollTopRef.current - 2) followLatestRef.current = false;
-    else if (nearBottom) followLatestRef.current = true;
+    const remaining = Math.max(0, viewport.scrollHeight - currentTop - viewport.clientHeight);
+    if (currentTop < previousScrollTopRef.current - 2 && remaining > 16) followLatestRef.current = false;
+    else if (remaining <= 16) followLatestRef.current = true;
     previousScrollTopRef.current = currentTop;
-    setIsNearMessageBottom(followLatestRef.current);
+    setShowLatestButton((visible) => !followLatestRef.current && shouldShowLatestButton(viewport.scrollHeight, viewport.clientHeight, currentTop, visible));
   };
   const scrollToLatest = (): void => {
     const viewport = messageViewportRef.current;
     if (!viewport) return;
     followLatestRef.current = true;
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-    setIsNearMessageBottom(true);
+    viewport.scrollTop = viewport.scrollHeight;
+    previousScrollTopRef.current = viewport.scrollTop;
+    setShowLatestButton(false);
   };
 
   useEffect(() => {
@@ -369,7 +385,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const renderSession = (session: DashboardCliSessionSummary): preact.ComponentChildren => session.archived ? (
     <div role="listitem" class="cli-session-row is-archived" key={session.id}>
-        <span class="cli-session-row-main"><strong>{session.title}</strong><small>{session.remote ? getSensitiveDisplayValue(session.deviceName, props.privacyMode, "name", "Remote") : "Archived"} · {relativeTime(session.updatedAt)}</small></span>
+        <span class="cli-session-row-main"><strong title={session.title}>{session.title}</strong><small>{relativeTime(session.updatedAt)}</small></span>
       <span class="cli-session-row-actions">
         <IconButton label={`Restore ${session.title}`} disabled={props.mutating} onClick={() => props.onUnarchive(session)}><RestoreIcon /></IconButton>
         <IconButton label={`Delete ${session.title}`} disabled={props.mutating} danger onClick={() => setDeleteTarget(session)}><TrashIcon /></IconButton>
@@ -381,7 +397,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         <span class="cli-session-row-status" title={session.status === "running" ? "Running" : session.locked ? "Locked" : "Complete"} aria-label={session.status === "running" ? "Running" : session.locked ? "Locked" : "Complete"}>
           {session.status === "running" ? <span class="cli-session-spinner" aria-hidden="true" /> : session.locked ? <ShieldIcon /> : <CheckIcon />}
         </span>
-        <span class={`cli-session-row-main ${session.projectPath ? "has-project" : ""}`}><strong>{session.title}</strong><small class="cli-session-row-meta">{session.projectPath ? <span class="cli-session-project" title={session.projectPath}><EmptyFolderIcon />{projectDisplayName(session.projectPath)}</span> : null}<span>{session.remote ? `${getSensitiveDisplayValue(session.deviceName, props.privacyMode, "name", "Remote")} · ` : ""}{relativeTime(session.updatedAt)}</span></small></span>
+        <span class="cli-session-row-main"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta">{relativeTime(session.updatedAt)}</small></span>
       </button>
       <span class="cli-session-row-actions">
         {session.status === "running" ? (session.canStop ? <IconButton label={`Stop ${session.title}`} disabled={props.mutating} onClick={() => props.onStop(session)}><StopIcon /></IconButton> : null) : <>
@@ -629,7 +645,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 onCompare={() => openContextTab("reviews")}
               /> : null}
               {deleteTarget && !deleteTarget.archived ? <DeleteConfirmation title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); setLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
-              <section ref={messageViewportRef} class="cli-message-viewport" aria-live="polite" aria-busy={props.messagesLoading} onScroll={updateMessageScrollState}>
+              <div class="cli-message-region"><section ref={messageViewportRef} class="cli-message-viewport" aria-live="polite" aria-busy={props.messagesLoading} onScroll={updateMessageScrollState}>
                 {props.messagesLoading && props.messages.length === 0 ? <MessageSkeleton /> : null}
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
@@ -640,8 +656,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   {props.sending || (props.selectedSession?.status === "running" && !hasInProgressActivity) ? <WorkingMessage /> : null}
                   <div />
                 </div>
-                {!isNearMessageBottom ? <button type="button" class="cli-scroll-latest" aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}><ChevronIcon /> Latest</button> : null}
               </section>
+              {showLatestButton ? <button type="button" class="cli-scroll-latest" aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}><ChevronIcon /> Latest</button> : null}</div>
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : composerBlockedByOwner ? (

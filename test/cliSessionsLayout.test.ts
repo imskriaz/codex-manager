@@ -6,12 +6,40 @@ import {
   parseQuestionReply,
   consolidatedActivityLabel,
   splitMessageParagraphs,
-  filterCliSessionsBySection
+  filterCliSessionsBySection,
+  shouldShowLatestButton
 } from "../webview-src/dashboard/cliSessionsModal";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
 
 describe("sessions sidebar layout", () => {
+  it("shows Latest only for hidden content below the viewport and avoids threshold flicker", () => {
+    expect(shouldShowLatestButton(500, 600, 0)).toBe(false);
+    expect(shouldShowLatestButton(601, 600, 0)).toBe(false);
+    expect(shouldShowLatestButton(1200, 600, 600)).toBe(false);
+    expect(shouldShowLatestButton(1200, 600, 555)).toBe(false);
+    expect(shouldShowLatestButton(1200, 600, 550)).toBe(true);
+    expect(shouldShowLatestButton(1200, 600, 580, true)).toBe(true);
+    expect(shouldShowLatestButton(1200, 600, 584, true)).toBe(false);
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(source).toContain('<div class="cli-message-region"><section ref={messageViewportRef}');
+    expect(source).toMatch(/<\/section>\s*\{showLatestButton \? <button/);
+    expect(css).toContain('.cli-scroll-latest { position: absolute;');
+    expect(css).toMatch(/\.cli-scroll-latest \{[^}]*right: 16px; bottom: 12px;/);
+  });
+
+  it("keeps each session title and time on one line without repeating its project", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    const renderSession = source.slice(source.indexOf("const renderSession ="), source.indexOf("const returnToSessionList"));
+    expect(renderSession).toContain('<span class="cli-session-row-main"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta">{relativeTime(session.updatedAt)}</small></span>');
+    expect(renderSession).not.toContain('class="cli-session-project"');
+    expect(renderSession).not.toContain('has-project');
+    expect(css).toMatch(/\.cli-session-row-main \{\s*display: grid;\s*grid-template-columns: minmax\(0, 1fr\) auto;/);
+    expect(css).toContain(".cli-workspace .cli-project-sessions .cli-session-row { min-height: 27px;");
+  });
+
   it("offers one copy target with the complete text only after an assistant turn ends", () => {
     const messages = [
       { id: "user-1", kind: "message" as const, role: "user" as const, text: "Build it" },
@@ -173,14 +201,14 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('<strong>Thinking</strong><span>for {formatElapsed(elapsed)}</span>');
     expect(source).not.toContain('<strong>Working</strong><span>for {formatElapsed(elapsed)}</span>');
     expect(source).toContain('label: "Recent"');
-    expect(source).toContain('class="cli-session-project"');
+    expect(source).not.toContain('class="cli-session-project"');
     expect(source).toContain('class="cli-conversation-project"');
     expect(source).not.toContain('"Current workspace"');
     expect(source).not.toContain('"Open workspace"');
     expect(css).toContain(".cli-session-spinner");
     expect(css).toContain(".cli-project-row:hover .cli-project-new");
     expect(css).toContain(".cli-project-collapse");
-    expect(css).toContain(".cli-session-row-main.has-project");
+    expect(css).toMatch(/\.cli-session-row-main \{\s*display: grid;/);
     expect(css).toContain(".cli-conversation-project");
     expect(css).toContain("--cli-rail-width");
     expect(css).toContain("--cli-terminal-width");
