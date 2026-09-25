@@ -322,6 +322,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const railFiles = useMemo(() => props.messages.flatMap((message) => message.changes ?? []).filter((change, index, all) => all.findIndex((item) => item.path === change.path) === index), [props.messages]);
   const railAgents = useMemo(() => props.messages.filter((message) => message.kind === "collaboration"), [props.messages]);
   const turnCopyText = useMemo(() => getCompletedTurnCopyText(props.messages, props.sending || props.selectedSession?.status === "running"), [props.messages, props.sending, props.selectedSession?.status]);
+  const currentTurnRunning = Boolean(props.sending || props.selectedSession?.status === "running");
+  const { transcriptItems, liveActivityItems } = useMemo(() => partitionLiveTurnActivity(consolidateSessionMessages(props.messages), currentTurnRunning), [props.messages, currentTurnRunning]);
+  const showWorking = props.sending || (props.selectedSession?.status === "running" && !hasInProgressActivity);
+  const showLiveTurnActivity = currentTurnRunning && (liveActivityItems.length > 0 || showWorking);
   const selectedProjectPath = props.selectedSession?.projectPath ?? newChatProject ?? projectPath;
   const startNewChat = (nextProject?: string): void => {
     props.onBackToList();
@@ -605,7 +609,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         />
 
         <main
-          class={`cli-conversation ${props.selectedSession ? "has-session" : newChatProject !== undefined ? "has-new-chat" : ""}`}
+          class={`cli-conversation ${props.selectedSession ? `has-session ${showLiveTurnActivity ? "has-live-activity" : ""}` : newChatProject !== undefined ? "has-new-chat" : ""}`}
           aria-hidden={props.dashboardMode || undefined}
           inert={props.dashboardMode || undefined}
         >
@@ -650,14 +654,19 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
                 <div ref={messagesContentRef} class="cli-session-messages">
-                  {consolidateSessionMessages(props.messages).map((item) => "messages" in item
+                  {transcriptItems.map((item) => "messages" in item
                     ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />
                     : <SessionMessage key={item.id} message={item} logoUri={props.logoUri} turnCopyText={turnCopyText.get(item.id)} onActionFeedback={(notice) => setLocalFeedback(notice)} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />)}
-                  {props.sending || (props.selectedSession?.status === "running" && !hasInProgressActivity) ? <WorkingMessage /> : null}
                   <div />
                 </div>
               </section>
               {showLatestButton ? <button type="button" class="cli-scroll-latest" aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}><ChevronIcon /> Latest</button> : null}</div>
+              {showLiveTurnActivity ? <section class="cli-live-turn-activity" aria-label="Current Codex turn activity">
+                {liveActivityItems.map((item) => "messages" in item
+                  ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />
+                  : <SessionMessage key={item.id} message={item} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />)}
+                {showWorking ? <WorkingMessage /> : null}
+              </section> : null}
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : composerBlockedByOwner ? (
@@ -1104,6 +1113,30 @@ export function consolidateSessionMessages(messages: DashboardCliSessionMessage[
   }
   flushTurn();
   return result;
+}
+
+export function partitionLiveTurnActivity(items: ConsolidatedSessionItem[], running: boolean): { transcriptItems: ConsolidatedSessionItem[]; liveActivityItems: ConsolidatedSessionItem[] } {
+  if (!running) {
+    return { transcriptItems: items, liveActivityItems: [] };
+  }
+  let lastUserIndex = -1;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!;
+    if (!("messages" in item) && item.kind === "message" && item.role === "user") {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  const transcriptItems: ConsolidatedSessionItem[] = [];
+  const liveActivityItems: ConsolidatedSessionItem[] = [];
+  items.forEach((item, index) => {
+    if (index > lastUserIndex && ("messages" in item || isTurnActivity(item) || item.kind === "error")) {
+      liveActivityItems.push(item);
+    } else {
+      transcriptItems.push(item);
+    }
+  });
+  return { transcriptItems, liveActivityItems };
 }
 
 function isTurnActivity(message: DashboardCliSessionMessage): boolean {

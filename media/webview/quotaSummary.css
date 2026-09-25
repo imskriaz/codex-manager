@@ -13404,6 +13404,22 @@ body.is-dashboard-workspace-route #dashboard-main {
 .cli-workspace .cli-activity-summary button:hover, .cli-workspace .cli-activity-summary button:focus-visible { color: var(--text-primary); outline: none; }
 .cli-workspace .cli-activity-summary svg { width: 13px; height: 13px; }
 .cli-workspace .cli-activity-group-details { border-radius: 0 0 10px 10px; }
+.cli-workspace .cli-live-turn-activity {
+  box-sizing: border-box;
+  justify-self: center;
+  width: min(800px, calc(100% - 36px));
+  min-width: 0;
+  max-height: min(260px, 32vh);
+  overflow-y: auto;
+  margin-bottom: 6px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--border-default) 74%, transparent);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--bg-surface) 94%, var(--bg-base));
+}
+.cli-workspace .cli-live-turn-activity .cli-activity-group { content-visibility: visible; contain: none; }
+.cli-workspace .cli-live-turn-activity .cli-activity-summary { min-height: 26px; padding-inline: 2px; border: 0; }
+.cli-workspace .cli-live-turn-activity .cli-live-activity:last-child { border-bottom: 0; }
 
 /* Sidebar polish: preserve the compact rail while making the hierarchy read
  * like a real workspace tree instead of a stack of unlabelled rows. */
@@ -14191,6 +14207,9 @@ body.is-dashboard-workspace-route #dashboard-main {
 .cli-workspace .cli-conversation.has-session {
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
+.cli-workspace .cli-conversation.has-session.has-live-activity {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
 
 @media (max-width: 760px) {
   .cli-workspace .cli-workspace-grid,
@@ -14210,6 +14229,7 @@ body.is-dashboard-workspace-route #dashboard-main {
     width: calc(100% - 16px);
     max-width: none;
   }
+  .cli-workspace .cli-live-turn-activity { width: calc(100% - 12px); }
 }
 
 /* Session actions are secondary. Keep them out of the idle title measure and

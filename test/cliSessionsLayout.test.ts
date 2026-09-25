@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import {
   consolidateSessionMessages,
+  partitionLiveTurnActivity,
   getCompletedTurnCopyText,
   parseQuestionReply,
   consolidatedActivityLabel,
@@ -509,6 +510,31 @@ describe("sessions sidebar layout", () => {
     ]);
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(styles).toContain(".cli-message-paragraph + .cli-message-paragraph { margin-top: .18em; }");
+  });
+
+  it("shows only the running turn's activity above the composer and returns it to history when complete", () => {
+    const items = consolidateSessionMessages([
+      { id: "user-1", kind: "message", role: "user", text: "Earlier task" },
+      { id: "old-change", kind: "file-change", text: "Changed old.ts" },
+      { id: "old-answer", kind: "message", role: "assistant", text: "Done." },
+      { id: "user-2", kind: "message", role: "user", text: "Current task" },
+      { id: "new-change", kind: "file-change", text: "Changed new.ts" },
+      { id: "new-comment", kind: "message", role: "assistant", text: "Checking tests." },
+      { id: "new-command", kind: "command", status: "inProgress", text: "npm test" }
+    ]);
+    const running = partitionLiveTurnActivity(items, true);
+    expect(running.transcriptItems.map((item) => item.id)).toEqual(["user-1", "activity-group-old-change", "old-answer", "user-2", "new-comment"]);
+    expect(running.liveActivityItems.map((item) => item.id)).toEqual(["activity-group-new-change", "new-command"]);
+    expect(partitionLiveTurnActivity(items, false).transcriptItems).toEqual(items);
+    expect(partitionLiveTurnActivity(items, false).liveActivityItems).toEqual([]);
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    const liveTray = source.indexOf('class="cli-live-turn-activity"');
+    const composer = source.indexOf('{selectedArchived ? (', liveTray);
+    expect(liveTray).toBeGreaterThan(source.indexOf('class="cli-message-region"'));
+    expect(composer).toBeGreaterThan(liveTray);
+    expect(css).toContain('.cli-workspace .cli-conversation.has-session.has-live-activity {');
+    expect(css).toContain('.cli-workspace .cli-live-turn-activity {');
   });
 
   it("keeps the Environment inspector closed until the user opens it", () => {
