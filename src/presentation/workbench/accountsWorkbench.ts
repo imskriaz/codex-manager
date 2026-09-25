@@ -72,7 +72,12 @@ export class AccountsWorkbench {
       refreshWorkbench();
       this.webDashboard.publishLocalStateChange();
     };
-    this.encryptedSync.setOnStateChanged(refreshers.refresh);
+    this.encryptedSync.setOnStateChanged(() => {
+      refreshers.refresh();
+      if (this.alwaysOnlineServer.isWaitingForConfiguration()) {
+        this.scheduleAlwaysOnlinePreparation();
+      }
+    });
     await measureStep("registerCommands", () => {
       registerCommands(this.context, this.repo, refreshers, this.encryptedSync);
     });
@@ -146,6 +151,9 @@ export class AccountsWorkbench {
         if (event.affectsConfiguration("codexManager.privacyMode")) {
           this.webDashboard.publishRealtimeState();
         }
+        if (event.affectsConfiguration("codexManager.encryptedSyncEnabled") && getAlwaysOnlineEnabled()) {
+          this.scheduleAlwaysOnlinePreparation();
+        }
         if (
           event.affectsConfiguration("codexManager.webDashboardEnabled") ||
           event.affectsConfiguration("codexManager.cloudflaredDomain") ||
@@ -169,6 +177,11 @@ export class AccountsWorkbench {
                   void vscode.window.showInformationMessage(
                     "Always-online WebSocket host is armed and will take over when VS Code closes."
                   );
+                if (result === "waiting-for-configuration") {
+                  void vscode.window.showWarningMessage(
+                    "Always-online WebSocket host is waiting. Enable Encrypted Sync and save the shared password to arm it."
+                  );
+                }
               })
               .catch((error) => {
                 void vscode.window.showErrorMessage(

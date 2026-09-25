@@ -128,6 +128,22 @@ describe("sessions sidebar layout", () => {
     expect(settings).toContain("stored only on this PC");
   });
 
+  it("keeps parallel window accounts with workspace settings instead of automation", () => {
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const generalStart = settings.indexOf('id="settings-panel-general"');
+    const automationStart = settings.indexOf('id="settings-panel-automation"');
+    const workspaceStart = settings.indexOf('title="Workspace session transport"');
+    const parallelStart = settings.indexOf("crossWindowAccountModeTitle");
+
+    expect(generalStart).toBeGreaterThan(-1);
+    expect(automationStart).toBeGreaterThan(generalStart);
+    expect(workspaceStart).toBeGreaterThan(generalStart);
+    expect(parallelStart).toBeGreaterThan(workspaceStart);
+    expect(parallelStart).toBeLessThan(automationStart);
+    expect(settings.slice(generalStart, automationStart)).toContain("crossWindowAccountModeTitle");
+    expect(settings.slice(automationStart)).not.toContain("crossWindowAccountModeTitle");
+  });
+
   it("labels Auto Resume experimental and leaves its switch available without Session Integration", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const workbench = readFileSync("src/presentation/workbench/accountsWorkbench.ts", "utf8");
@@ -420,6 +436,18 @@ describe("sessions sidebar layout", () => {
     expect(packageJson).toContain('"cli"');
     expect(packageJson).not.toContain('"app-server-websocket"');
     expect(settings).not.toContain("app-server-websocket");
+    expect(settings).toContain('className="settings-block-wide settings-session-transport"');
+    expect(settings).toContain('description: "Threads and turns (recommended)"');
+    expect(settings).toContain('description: "Exec and transcripts"');
+    expect(settings).toContain("Uses your selection directly—no automatic fallback.");
+    const transportSettings = settings.slice(
+      settings.indexOf('title="Workspace session transport"'),
+      settings.indexOf("<SettingsPathBlock", settings.indexOf('title="Workspace session transport"'))
+    );
+    expect(transportSettings.match(/key: \"(?:app-server-stdio|cli)\"/g)).toHaveLength(2);
+    expect(transportSettings).not.toContain("WebSocket");
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(styles).toMatch(/\.settings-session-transport \.settings-segment\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
     expect(resume).toContain('"thread/list"');
     expect(resume).not.toContain("paginated_threads");
     expect(resume).not.toContain("using transcript fallback");

@@ -27,28 +27,48 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private child: ChildProcess | undefined;
   private sessionActive = false;
   private preparedRelay: PreparedRelay | undefined;
+  private waitingForConfiguration = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly encryptedSync?: EncryptedSyncManager
   ) {}
 
-  async applyConfiguration(): Promise<"started" | "already-running" | "stopped" | "paused"> {
+  async applyConfiguration(): Promise<
+    "started" | "already-running" | "stopped" | "paused" | "waiting-for-configuration"
+  > {
     const enabled = vscode.workspace
       .getConfiguration("codexManager")
       .get<boolean>("webDashboardAlwaysOnlineEnabled", false);
     if (!enabled) {
+      this.waitingForConfiguration = false;
       await this.stop();
       return "stopped";
     }
+    const hostKey = await this.encryptedSync?.getRealtimeRelayKey();
+    if (!hostKey) {
+      // This is a prerequisite state, not a relay failure. In particular, an
+      // old prepared relay must not be launched from dispose() after the user
+      // disables encrypted sync. Keep the preference armed so configuring the
+      // shared password can make it ready without asking the user to opt in a
+      // second time.
+      await this.stop();
+      this.waitingForConfiguration = true;
+      return "waiting-for-configuration";
+    }
+    this.waitingForConfiguration = false;
     if (this.sessionActive) {
       // Prepare everything needed for a synchronous detached handoff. VS Code
       // does not await Disposable.dispose(), so beginning this work from
       // dispose() is too late and can leave the shared dashboard port empty.
-      await this.prepareRelay();
+      await this.prepareRelay(hostKey);
       return "paused";
     }
-    return this.start();
+    return this.start(hostKey);
+  }
+
+  isWaitingForConfiguration(): boolean {
+    return this.waitingForConfiguration;
   }
 
   /** Release the shared port while the VS Code dashboard is active. */
@@ -70,8 +90,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     }
   }
 
-  async start(): Promise<"started" | "already-running"> {
-    const prepared = await this.prepareRelay();
+  async start(hostKey?: string): Promise<"started" | "already-running"> {
+    const prepared = await this.prepareRelay(hostKey);
     const existingPid = await readLivePid(prepared.pidPath);
     if (existingPid) {
       // A changed encrypted-sync passphrase changes the relay key; restart so
@@ -134,8 +154,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     }
   }
 
-  private async prepareRelay(): Promise<PreparedRelay> {
-    const hostKey = await this.encryptedSync?.getRealtimeRelayKey();
+  private async prepareRelay(preparedHostKey?: string): Promise<PreparedRelay> {
+    const hostKey = preparedHostKey ?? (await this.encryptedSync?.getRealtimeRelayKey());
     if (!hostKey) {
       throw new Error("Enable and configure Encrypted Sync first; it supplies the relay's peer authentication key.");
     }

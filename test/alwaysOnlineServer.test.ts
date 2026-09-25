@@ -1,12 +1,39 @@
 import { readFileSync } from "fs";
-import { describe, expect, it } from "vitest";
+import * as vscode from "vscode";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AlwaysOnlineServer,
   createRelayAdminToken,
   isAlwaysOnlineRelayHealthResponse,
   isLegacyRelayAdminToken
 } from "../src/services/alwaysOnlineServer";
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("always-online WebSocket relay handoff", () => {
+  it("waits without throwing or retaining a stale relay when encrypted sync is unavailable", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((key: string, fallback?: unknown) =>
+        key === "webDashboardAlwaysOnlineEnabled" ? true : fallback
+      )
+    } as unknown as vscode.WorkspaceConfiguration);
+    const server = new AlwaysOnlineServer({} as vscode.ExtensionContext);
+    const stop = vi.spyOn(server, "stop").mockResolvedValue();
+
+    await expect(server.applyConfiguration()).resolves.toBe("waiting-for-configuration");
+    expect(stop).toHaveBeenCalledOnce();
+    expect(server.isWaitingForConfiguration()).toBe(true);
+  });
+
+  it("renders the missing sync prerequisite as waiting instead of enabled", () => {
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+
+    expect(settings).toContain("!props.settings.encryptedSyncEnabled || props.encryptedSyncNeedsConfiguration");
+    expect(settings).toContain("Waiting. Enable Encrypted Sync and save the shared password to arm this host.");
+  });
+
   it("generates an unpredictable admin token without host details", () => {
     const first = createRelayAdminToken();
     const second = createRelayAdminToken();
@@ -30,7 +57,7 @@ describe("always-online WebSocket relay handoff", () => {
     const service = readFileSync("src/services/alwaysOnlineServer.ts", "utf8");
     const relay = readFileSync("tools/always-online-server.js", "utf8");
 
-    expect(service).toContain("await this.prepareRelay();");
+    expect(service).toContain("await this.prepareRelay(hostKey);");
     expect(service.indexOf("previousConfig.adminToken, pidPath")).toBeLessThan(
       service.indexOf("await fs.writeFile(configPath, JSON.stringify(config)")
     );

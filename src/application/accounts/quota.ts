@@ -430,8 +430,11 @@ async function evaluateAutoSwitchForActiveQuota(
     return false;
   }
 
-  const hourlyThreshold = normalizeAutoSwitchThreshold(config.get<number>(AUTO_SWITCH_HOURLY_THRESHOLD, 20));
-  const weeklyThreshold = normalizeAutoSwitchThreshold(config.get<number>(AUTO_SWITCH_WEEKLY_THRESHOLD, 20));
+  // Keep the runtime fallback aligned with the manifest and settings store.
+  // Missing configuration must not silently use the old 20% emergency value,
+  // otherwise auto-switch can fire well before the configured 5% default.
+  const hourlyThreshold = normalizeAutoSwitchThreshold(config.get<number>(AUTO_SWITCH_HOURLY_THRESHOLD, 5));
+  const weeklyThreshold = normalizeAutoSwitchThreshold(config.get<number>(AUTO_SWITCH_WEEKLY_THRESHOLD, 0));
   const hourlyQuotaControlEnabled = config.get<boolean>(HOURLY_QUOTA_CONTROL_ENABLED, true);
   const accounts = (await repo.listAccounts()).map(applyCoordinatedQuotaSnapshot);
   const active = accounts.find((account) => account.isActive);

@@ -63,15 +63,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
   try {
     await workbench.activate();
-    scheduleAutomaticExtensionHostRefresh(context, extensionVersion);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     workbench.showActivationFailure(error);
     console.error("[codexManager] activation did not complete", error);
+    const retryScheduled = scheduleAutomaticExtensionHostRefresh(context, extensionVersion);
     void vscode.window.showErrorMessage(
-      `Codex Manager could not finish loading: ${detail}. It will retry automatically.`
+      retryScheduled
+        ? `Codex Manager could not finish loading: ${detail}. It will retry automatically.`
+        : `Codex Manager could not finish loading: ${detail}. Run Developer: Reload Window to retry.`
     );
-    scheduleAutomaticExtensionHostRefresh(context, extensionVersion, 500, true);
   }
 }
 

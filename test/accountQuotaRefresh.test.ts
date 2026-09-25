@@ -497,6 +497,29 @@ describe("refreshSingleQuota token automation state", () => {
     expect(repo.switchAccount).not.toHaveBeenCalledWith(bestQuota.id);
   });
 
+  it("uses the 5% hourly and 0% weekly defaults when thresholds are unset", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: vi.fn((key: string, defaultValue?: unknown) =>
+        key === "autoSwitchEnabled" ? true : defaultValue
+      ),
+      update: vi.fn()
+    } as never);
+
+    // Both values are above the real defaults, but below the legacy 20%
+    // fallback. This must not trigger an early switch.
+    const active = createAccount("default-threshold-active", true, 10, 10);
+    const candidate = createAccount("default-threshold-candidate", false, 90, 90);
+    const repo = {
+      listAccounts: vi.fn(async () => [active, candidate]),
+      switchAccount: vi.fn(async () => undefined)
+    };
+
+    await expect(
+      maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
+    ).resolves.toBe(false);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
   it("allows a user-triggered Auto Select to use automation-disabled accounts", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {

@@ -302,7 +302,13 @@ export function SettingsOverlay(props: {
                   >
                     <div class="settings-note">
                       {props.settings.webDashboardAlwaysOnlineEnabled
-                        ? props.lang === "zh"
+                        ? !props.settings.encryptedSyncEnabled || props.encryptedSyncNeedsConfiguration
+                          ? props.lang === "zh"
+                            ? "正在等待。请启用加密同步并保存共享密码以启动此主机。"
+                            : props.lang === "zh-hant"
+                              ? "正在等待。請啟用加密同步並儲存共用密碼以啟動此主機。"
+                              : "Waiting. Enable Encrypted Sync and save the shared password to arm this host."
+                          : props.lang === "zh"
                           ? "已启用。VS Code 关闭后中继会接管 127.0.0.1:39875；Cloudflared 端口无需改变。"
                           : props.lang === "zh-hant"
                             ? "已啟用。VS Code 關閉後中繼會接管 127.0.0.1:39875；Cloudflared 連接埠無需改變。"
@@ -405,26 +411,26 @@ export function SettingsOverlay(props: {
                   </SettingsToggleBlock>
                   <SettingsSegmentBlock
                     title="Workspace session transport"
-                    sub="Choose how the embedded workspace reads and runs local Codex sessions."
-                    className="settings-block-wide"
+                    sub="Choose how the workspace runs Codex sessions."
+                    className="settings-block-wide settings-session-transport"
                     options={[
                       {
                         key: "app-server-stdio",
                         title: "App server",
-                        description: "Supported thread and turn protocol (recommended)",
+                        description: "Threads and turns (recommended)",
                         active: (props.settings.codexSessionTransport ?? "app-server-stdio") === "app-server-stdio",
                         onClick: () => patchAndSend("codexSessionTransport", "app-server-stdio")
                       },
                       {
                         key: "cli",
                         title: "CLI compatibility",
-                        description: "Existing exec and transcript path",
+                        description: "Exec and transcripts",
                         active: props.settings.codexSessionTransport === "cli",
                         onClick: () => patchAndSend("codexSessionTransport", "cli")
                       }
                     ]}
                   >
-                    <div class="settings-note">The selected transport is used directly. App Server errors stay visible; the workspace never silently switches to CLI.</div>
+                    <div class="settings-note">Uses your selection directly—no automatic fallback.</div>
                   </SettingsSegmentBlock>
                   <SettingsPathBlock
                     copy={props.copy}
@@ -469,6 +475,22 @@ export function SettingsOverlay(props: {
                     onPick={props.onPickCodexCliPath}
                     onClear={props.onClearCodexCliPath}
                   />
+                  <SettingsToggleBlock
+                    title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
+                    sub={
+                      props.copy.crossWindowAccountModeSub ??
+                      "Give each VS Code window an isolated Codex home so windows can run the same or different accounts independently. Disabled by default."
+                    }
+                    enabled={props.settings.crossWindowAccountModeEnabled === true}
+                    className="settings-block-wide"
+                    onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
+                  >
+                    <div class="settings-note">
+                      {props.settings.crossWindowAccountModeEnabled
+                        ? "Enabled. New and reloaded windows load accounts independently."
+                        : "Disabled. Account switching continues to use the existing behavior."}
+                    </div>
+                  </SettingsToggleBlock>
                 </div>
               </div>
               <SettingsToggleBlock
@@ -713,22 +735,6 @@ export function SettingsOverlay(props: {
                     </div>
                   </SettingsToggleBlock>
                   <div class="settings-note">{props.copy.autoSwitchAnyNote}</div>
-                </div>
-              </SettingsToggleBlock>
-              <SettingsToggleBlock
-                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
-                sub={
-                  props.copy.crossWindowAccountModeSub ??
-                  "Give each VS Code window an isolated Codex home so windows can run the same or different accounts independently. Disabled by default."
-                }
-                enabled={props.settings.crossWindowAccountModeEnabled === true}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
-              >
-                <div class="settings-note">
-                  {props.settings.crossWindowAccountModeEnabled
-                    ? "Enabled. New and reloaded windows load accounts independently."
-                    : "Disabled. Account switching continues to use the existing behavior."}
                 </div>
               </SettingsToggleBlock>
               <SettingsToggleBlock

@@ -1,36 +1,48 @@
 import * as vscode from "vscode";
 
-const HOST_VERSION_STATE_KEY = "codexManager.lastActivatedHostVersion";
+const HOST_RECOVERY_VERSION_STATE_KEY = "codexManager.lastAutomaticRecoveryVersion";
+const scheduledRecoveryVersions = new WeakMap<vscode.ExtensionContext, Set<string>>();
 
 /**
- * A VSIX update can leave the existing extension host alive long enough for a
- * contributed command to target stale registrations. Restart that host once
- * for the newly activated package so users do not need Developer commands.
+ * Retry an activation failure once per extension version. The durable marker
+ * must be committed before restarting; otherwise the replacement host can
+ * read the old value and enter a reload loop.
  */
 export function scheduleAutomaticExtensionHostRefresh(
   context: vscode.ExtensionContext,
   version: string,
-  delayMs = 500,
-  force = false
-): void {
-  const previousVersion = context.globalState.get<string>(HOST_VERSION_STATE_KEY);
-  if (!force && previousVersion === version) {
-    return;
+  delayMs = 500
+): boolean {
+  const previousVersion = context.globalState.get<string>(HOST_RECOVERY_VERSION_STATE_KEY);
+  const scheduledVersions = scheduledRecoveryVersions.get(context) ?? new Set<string>();
+  scheduledRecoveryVersions.set(context, scheduledVersions);
+  if (previousVersion === version || scheduledVersions.has(version)) {
+    return false;
   }
+  scheduledVersions.add(version);
 
-  void persistHostVersion(context, version);
-
-  const timer = setTimeout(() => {
-    void restartExtensionHostAutomatically();
-  }, delayMs);
-  timer.unref?.();
+  void persistRecoveryVersion(context, version).then((persisted) => {
+    if (!persisted) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      void restartExtensionHostAutomatically();
+    }, delayMs);
+    timer.unref?.();
+  });
+  return true;
 }
 
-async function persistHostVersion(context: vscode.ExtensionContext, version: string): Promise<void> {
+async function persistRecoveryVersion(context: vscode.ExtensionContext, version: string): Promise<boolean> {
   try {
-    await context.globalState.update(HOST_VERSION_STATE_KEY, version);
+    await context.globalState.update(HOST_RECOVERY_VERSION_STATE_KEY, version);
+    return true;
   } catch (error) {
-    console.warn("[codexManager] could not persist extension host version:", error);
+    console.error("[codexManager] could not persist automatic recovery marker", error);
+    void vscode.window.showErrorMessage(
+      "Codex Manager could not safely retry activation automatically. Run Developer: Reload Window to retry."
+    );
+    return false;
   }
 }
 
