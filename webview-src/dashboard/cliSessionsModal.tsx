@@ -72,6 +72,8 @@ const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
 
 export type CliSessionsPageProps = {
   dashboardMode?: boolean;
+  /** Show the remote dashboard sign-out action in the avatar menu. */
+  showLogout?: boolean;
   privacyMode: boolean;
   sessions: DashboardCliSessionSummary[];
   selectedSession?: DashboardCliSessionSummary;
@@ -591,6 +593,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           <SessionAccountFooter
             account={props.account}
             privacyMode={props.privacyMode}
+            showLogout={props.showLogout}
             accounts={props.selectedPeerId && props.selectedPeerId !== localPeerId ? (props.peerAccounts?.[props.selectedPeerId] ?? []) : undefined}
             localAccounts={props.localAccounts}
             peers={props.peers}
@@ -1544,6 +1547,7 @@ function PanelResizeHandle(props: {
 function SessionAccountFooter(props: {
   account?: DashboardAccountViewModel;
   privacyMode: boolean;
+  showLogout?: boolean;
   accounts?: DashboardAccountViewModel[];
   localAccounts?: DashboardAccountViewModel[];
   peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
@@ -1673,6 +1677,11 @@ function SessionAccountFooter(props: {
     </div> : null}
           </div>;
         })}
+        {props.showLogout ? (
+          <form method="post" action="/logout" class="cli-account-logout-form" role="none">
+            <button type="submit" role="menuitem" class="cli-account-logout">Sign out</button>
+          </form>
+        ) : null}
       </nav>,
       document.body
     ) : null}

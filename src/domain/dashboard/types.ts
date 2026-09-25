@@ -98,7 +98,7 @@ export interface DashboardSettings {
 
 export type DashboardThemeOption = "auto" | "dark" | "light";
 export type DashboardCodexSessionDefault = "webview" | "cli";
-export type DashboardCodexSessionTransport = "app-server-stdio" | "app-server-websocket" | "cli";
+export type DashboardCodexSessionTransport = "app-server-stdio" | "cli";
 
 export interface DashboardCopy {
   panelTitle: string;

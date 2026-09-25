@@ -122,9 +122,10 @@ export async function readCodexCliSessions(
 ): Promise<DashboardCliSessionSummary[]> {
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
     try {
-      return await readAppServerSessions(configuredSessionTransport() === "app-server-websocket", limit);
+      return await readAppServerSessions(limit);
     } catch (error) {
-      recordPersistentEvent("warning", "session-list", "App-server session list unavailable; using transcript fallback", { reason: error instanceof Error ? error.message : String(error) });
+      recordPersistentEvent("error", "session-list", "App-server session list unavailable", { reason: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
   }
   const entries = await readCodexCliSessionIndex(codexHome);
@@ -152,10 +153,11 @@ export async function readCodexCliSessionSummary(
   validateSessionId(sessionId);
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
     try {
-      const sessions = await readAppServerSessions(configuredSessionTransport() === "app-server-websocket", MAX_VISIBLE_CLI_SESSIONS);
+      const sessions = await readAppServerSessions(MAX_VISIBLE_CLI_SESSIONS);
       return sessions.find((session) => session.id === sessionId);
     } catch (error) {
-      recordPersistentEvent("warning", "session-read", "App-server session summary unavailable; using transcript fallback", { reason: error instanceof Error ? error.message : String(error), sessionRef: toSessionLogRef(sessionId) });
+      recordPersistentEvent("error", "session-read", "App-server session summary unavailable", { reason: error instanceof Error ? error.message : String(error), sessionRef: toSessionLogRef(sessionId) });
+      throw error;
     }
   }
   const entry = (await readCodexCliSessionIndex(codexHome)).find((candidate) => candidate.id === sessionId);
@@ -228,15 +230,15 @@ async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIn
   return [...unique.values()];
 }
 
-function configuredSessionTransport(): "app-server-stdio" | "app-server-websocket" | "cli" {
+function configuredSessionTransport(): "app-server-stdio" | "cli" {
   const value = vscode.workspace.getConfiguration("codexManager").get<string>("codexSessionTransport");
   // VS Code supplies the manifest's stdio default in a real extension host.
   // Keep the standalone/test-host fallback process-free when that manifest is absent.
-  return value === "app-server-websocket" || value === "app-server-stdio" || value === "cli" ? value : "cli";
+  return value === "app-server-stdio" ? "app-server-stdio" : "cli";
 }
 
-async function readAppServerSessions(websocket: boolean, limit: number): Promise<DashboardCliSessionSummary[]> {
-  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), websocket ? "websocket" : "stdio", resolveCliProjectPath(undefined));
+async function readAppServerSessions(limit: number): Promise<DashboardCliSessionSummary[]> {
+  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), resolveCliProjectPath(undefined));
   try {
     const capped = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit)));
     const sessions: DashboardCliSessionSummary[] = [];
@@ -472,7 +474,7 @@ export async function sendCodexCliSessionMessage(options: {
     throw new Error("The selected access mode is invalid.");
   }
   if (configuredSessionTransport() !== "cli") {
-    await sendAppServerSessionMessage(options, configuredSessionTransport() === "app-server-websocket");
+    await sendAppServerSessionMessage(options);
     return;
   }
   await runCliSessionMutation(options.sessionId, "Codex turn", async () => {
@@ -743,7 +745,7 @@ export async function startCodexCliSession(options: {
     throw new Error("The selected access mode is invalid.");
   }
   if (configuredSessionTransport() !== "cli") {
-    return startAppServerSession(options, configuredSessionTransport() === "app-server-websocket");
+    return startAppServerSession(options);
   }
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
@@ -836,10 +838,10 @@ async function startAppServerSession(options: {
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
-}, websocket: boolean): Promise<string> {
+}): Promise<string> {
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
-  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), websocket ? "websocket" : "stdio", cwd);
+  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
   const detachPrompts = attachCodexAppServerPrompts(rpc, "");
   let threadId: string | undefined;
   try {
@@ -882,11 +884,11 @@ async function sendAppServerSessionMessage(options: {
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
-}, websocket: boolean): Promise<void> {
+}): Promise<void> {
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
   if (activeAppServerTurns.has(options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
-  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), websocket ? "websocket" : "stdio", cwd);
+  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
   const detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
   activeAppServerTurns.set(options.sessionId, { rpc });
   try {
@@ -998,14 +1000,18 @@ export async function forkCodexCliSession(sessionId: string): Promise<string> {
 export async function archiveCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
   await runCliSessionMutation(sessionId, "Codex session archive", () =>
-    runCodexCliUtility(["archive", sessionId], "archive the session")
+    configuredSessionTransport() === "cli"
+      ? runCodexCliUtility(["archive", sessionId], "archive the session")
+      : runCodexAppServerRequest("thread/archive", { threadId: sessionId }).then(() => undefined)
   );
 }
 
 export async function unarchiveCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
   await runCliSessionMutation(sessionId, "Codex session restore", () =>
-    runCodexCliUtility(["unarchive", sessionId], "restore the session")
+    configuredSessionTransport() === "cli"
+      ? runCodexCliUtility(["unarchive", sessionId], "restore the session")
+      : runCodexAppServerRequest("thread/unarchive", { threadId: sessionId }).then(() => undefined)
   );
 }
 
@@ -1014,7 +1020,11 @@ export async function deleteCodexCliSession(sessionId: string): Promise<void> {
   if (activeCliTurns.has(sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
     if (activeCliTurns.has(sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
-    await runCodexCliUtility(["delete", "--force", sessionId], "delete the session");
+    if (configuredSessionTransport() === "cli") {
+      await runCodexCliUtility(["delete", "--force", sessionId], "delete the session");
+    } else {
+      await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
+    }
   });
 }
 
@@ -1027,7 +1037,7 @@ export async function readCodexCliSessionMessages(
   }
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
     try {
-      const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), configuredSessionTransport() === "app-server-websocket" ? "websocket" : "stdio", resolveCliProjectPath(undefined));
+      const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), resolveCliProjectPath(undefined));
       try {
         const result = await rpc.request("thread/read", { threadId: sessionId, includeTurns: true }, APP_SERVER_REQUEST_TIMEOUT_MS);
         const messages = parseCodexAppServerThreadItems(result);
@@ -1036,7 +1046,8 @@ export async function readCodexCliSessionMessages(
         rpc.close();
       }
     } catch (error) {
-      recordPersistentEvent("warning", "session-viewer", "App-server thread read unavailable; using transcript fallback", { sessionRef: toSessionLogRef(sessionId), reason: error instanceof Error ? error.message : String(error) });
+      recordPersistentEvent("error", "session-viewer", "App-server thread read unavailable", { sessionRef: toSessionLogRef(sessionId), reason: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
   }
   const sessionRef = toSessionLogRef(sessionId);

@@ -420,7 +420,9 @@ async function evaluateAutoSwitchForActiveQuota(
     ignoreEnabled?: boolean;
     userInitiated?: boolean;
     canUseAccount?: (accountId: string) => boolean;
-  }
+  },
+  refreshedStaleCandidates = false,
+  failedCandidateVerification = false
 ): Promise<boolean> {
   const config = getCodexManagerConfiguration();
   if (!options.ignoreEnabled && !config.get<boolean>(AUTO_SWITCH_ENABLED, false)) {
@@ -489,6 +491,41 @@ async function evaluateAutoSwitchForActiveQuota(
 
   const next = candidates[0];
   if (!next) {
+    // The dashboard can show usable quota from the last snapshot while Auto
+    // Select correctly refuses to switch on a stale or pre-session snapshot.
+    // Refresh those otherwise eligible accounts once before reporting that no
+    // capable account exists. A failed refresh remains inconclusive.
+    const unverifiedCandidates = accounts.filter(
+      (account) =>
+        !account.isActive &&
+        (options.canUseAccount?.(account.id) ?? true) &&
+        (options.ignoreEnabled || account.enabled !== false) &&
+        !!account.quotaSummary &&
+        (account.quotaError || !hasFreshQuotaSnapshot(account)) &&
+        hasCodexManagerAccountAutoQueueCapability(account, {
+          hourlyEnabled: hourlyQuotaControlEnabled,
+          hourlyThreshold,
+          weeklyThreshold
+        }) &&
+        (!activeHourlyTriggered ||
+          (hasComparableHourlyWindow(account) && account.quotaSummary.hourlyPercentage > hourlyThreshold)) &&
+        (!activeWeeklyTriggered ||
+          (hasComparableWeeklyWindow(account) && account.quotaSummary.weeklyPercentage > weeklyThreshold))
+    );
+    if (unverifiedCandidates.length && !refreshedStaleCandidates) {
+      let verificationFailed = false;
+      for (const candidate of unverifiedCandidates) {
+        const refreshed = await refreshSingleQuotaSafely(repo, view, candidate.id, {
+          forceRefresh: true,
+          skipDisabled: !options.ignoreEnabled,
+          canUseAccount: options.canUseAccount
+        });
+        if (!refreshed) verificationFailed = true;
+      }
+      view.refresh();
+      return evaluateAutoSwitchForActiveQuota(repo, view, options, true, verificationFailed);
+    }
+
     if (config.get<boolean>(AUTO_RESET_ENABLED, false)) {
       const resetThreshold = normalizeAutoResetWeeklyThreshold(config.get<number>(AUTO_RESET_WEEKLY_THRESHOLD, 0));
       if (
@@ -616,11 +653,14 @@ async function evaluateAutoSwitchForActiveQuota(
       active.id,
       activeHourlyTriggered ? `hourly:${active.quotaSummary.hourlyPercentage}` : "",
       activeWeeklyTriggered ? `weekly:${active.quotaSummary.weeklyPercentage}` : "",
-      `candidates:${accounts.length - 1}`
+      `candidates:${accounts.length - 1}`,
+      unverifiedCandidates.length || failedCandidateVerification ? "unverified" : "unavailable"
     ].join("|");
     if (options.userInitiated || blockedKey !== lastBlockedAutoSwitchKey) {
       lastBlockedAutoSwitchKey = blockedKey;
-      const message = "No account to switch — no capable account has enough quota remaining.";
+      const message = unverifiedCandidates.length || failedCandidateVerification
+        ? "Auto Select could not verify quota for an available account. Refresh its quota and retry."
+        : "No account to switch — no capable account has enough quota remaining.";
       // Persist the terminal outcome so a browser dashboard that reconnects
       // after the native toast still receives the same warning (and can emit
       // its OS push notification).

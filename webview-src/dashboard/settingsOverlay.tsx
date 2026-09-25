@@ -416,13 +416,6 @@ export function SettingsOverlay(props: {
                         onClick: () => patchAndSend("codexSessionTransport", "app-server-stdio")
                       },
                       {
-                        key: "app-server-websocket",
-                        title: "WebSocket",
-                        description: "Chrome-style loopback transport (experimental)",
-                        active: props.settings.codexSessionTransport === "app-server-websocket",
-                        onClick: () => patchAndSend("codexSessionTransport", "app-server-websocket")
-                      },
-                      {
                         key: "cli",
                         title: "CLI compatibility",
                         description: "Existing exec and transcript path",
@@ -431,7 +424,7 @@ export function SettingsOverlay(props: {
                       }
                     ]}
                   >
-                    <div class="settings-note">If app-server cannot connect, the workspace uses CLI. A turn already accepted by Codex is never retried automatically.</div>
+                    <div class="settings-note">The selected transport is used directly. App Server errors stay visible; the workspace never silently switches to CLI.</div>
                   </SettingsSegmentBlock>
                   <SettingsPathBlock
                     copy={props.copy}

@@ -2357,6 +2357,7 @@ function App() {
         ? createPortal(
             <CliSessionsPage
               dashboardMode={browserPath === "/dash"}
+              showLogout={document.documentElement.dataset["dashboardRemote"] === "true"}
               privacyMode={state.privacyMode}
               sessions={cliSessions}
               selectedSession={selectedCliSession}

@@ -916,6 +916,83 @@ describe("refreshSingleQuota token automation state", () => {
     });
   });
 
+  it("refreshes a dashboard-capable candidate whose snapshot predates its session before switching", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: vi.fn((key: string, defaultValue?: unknown) => {
+        const values: Record<string, unknown> = {
+          autoSwitchEnabled: true,
+          hourlyQuotaControlEnabled: false,
+          autoSwitchWeeklyThreshold: 20
+        };
+        return values[key] ?? defaultValue;
+      })
+    } as never);
+    const active = createAccount("stale-candidate-active", true, 80, 5);
+    const candidate = createAccount("stale-candidate", false, 90, 90);
+    candidate.lastQuotaAt = Date.now() - 60_000;
+    candidate.sessionStartedAt = Date.now();
+    const accounts = [active, candidate];
+    const tokens: CodexTokens = { idToken: "id", accessToken: "access" };
+    const repo = {
+      listAccounts: vi.fn(async () => accounts),
+      getAccount: vi.fn(async (id: string) => accounts.find((account) => account.id === id)),
+      getTokens: vi.fn(async () => tokens),
+      updateQuota: vi.fn(async () => {
+        candidate.lastQuotaAt = Date.now();
+        return candidate;
+      }),
+      refreshSubscriptionState: vi.fn(async () => undefined),
+      updateResetCreditsSnapshot: vi.fn(async () => undefined),
+      switchAccount: vi.fn(async () => undefined)
+    };
+    refreshQuotaMock.mockResolvedValue({ quota: candidate.quotaSummary, error: undefined });
+    fetchResetCreditsMock.mockResolvedValue({ availableCount: 0, credits: [] });
+    setCurrentWindowRuntimeAccountId(candidate.id);
+
+    await expect(maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).resolves.toBe(true);
+
+    expect(repo.getTokens).toHaveBeenCalledWith(candidate.id, { bypassCache: true });
+    expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id);
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice).toMatchObject({ level: "info" });
+  });
+
+  it("reports an unverified candidate when its stale quota refresh fails", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: vi.fn((key: string, defaultValue?: unknown) => {
+        const values: Record<string, unknown> = {
+          autoSwitchEnabled: true,
+          hourlyQuotaControlEnabled: false,
+          autoSwitchWeeklyThreshold: 20
+        };
+        return values[key] ?? defaultValue;
+      })
+    } as never);
+    const active = createAccount("unverified-active", true, 80, 5);
+    const candidate = createAccount("unverified-candidate", false, 90, 90);
+    candidate.lastQuotaAt = Date.now() - 60_000;
+    candidate.sessionStartedAt = Date.now();
+    const accounts = [active, candidate];
+    const repo = {
+      listAccounts: vi.fn(async () => accounts),
+      getAccount: vi.fn(async (id: string) => accounts.find((account) => account.id === id)),
+      getTokens: vi.fn(async () => ({ idToken: "id", accessToken: "access" })),
+      switchAccount: vi.fn()
+    };
+    refreshQuotaMock.mockRejectedValue(new Error("network unavailable"));
+    vi.mocked(vscode.window.showWarningMessage).mockClear();
+
+    await expect(maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).resolves.toBe(false);
+
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+      "Auto Select could not verify quota for an available account. Refresh its quota and retry."
+    );
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice).toMatchObject({
+      level: "warning",
+      message: "Auto Select could not verify quota for an available account. Refresh its quota and retry."
+    });
+  });
+
   it("refreshes non-current quotas before a warning selects a switch target", async () => {
     vi.spyOn(vscode.window, "showWarningMessage").mockResolvedValue(undefined);
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({

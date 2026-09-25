@@ -80,7 +80,7 @@ export async function handleDashboardSettingUpdate(
       }
       break;
     case "codexSessionTransport":
-      if (typeof value === "string" && (value === "app-server-stdio" || value === "app-server-websocket" || value === "cli")) {
+      if (typeof value === "string" && (value === "app-server-stdio" || value === "cli")) {
         await updateDashboardConfiguration(config, key, normalizeCodexSessionTransport(value), target);
         updated = true;
       }

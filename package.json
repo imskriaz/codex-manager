@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.9",
+  "version": "1.2.10-pre2",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -119,11 +119,10 @@
           "scope": "machine",
           "enum": [
             "app-server-stdio",
-            "app-server-websocket",
             "cli"
           ],
           "default": "app-server-stdio",
-          "markdownDescription": "Transport for embedded local Codex sessions. App-server stdio uses the supported thread/turn protocol; WebSocket offers the experimental Chrome-style loopback transport; CLI keeps the compatibility path. Session reads fall back to saved transcripts if app-server is unavailable."
+          "markdownDescription": "Transport for embedded local Codex sessions. App-server stdio uses the supported thread/turn protocol; CLI uses the compatibility path. The selected transport is used directly and is never silently changed."
         },
         "codexManager.backgroundTokenRefreshEnabled": {
           "type": "boolean",

@@ -1,9 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
-import { createServer } from "net";
 import * as readline from "readline";
-import WebSocket from "ws";
 
-export type AppServerTransport = "stdio" | "websocket";
 export type AppServerExecutable = { command: string; prefixArgs: string[]; shell?: boolean };
 export class CodexAppServerTurnInterruptedError extends Error {
   constructor() {
@@ -19,7 +16,6 @@ type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error
  * app-server URL or process handle; all requests stay inside the VS Code host. */
 export class CodexAppServerRpc {
   private readonly child: ChildProcessWithoutNullStreams;
-  private socket?: WebSocket;
   private lines?: readline.Interface;
   private nextId = 1;
   private readonly pending = new Map<number, PendingRequest>();
@@ -34,11 +30,8 @@ export class CodexAppServerRpc {
     child.on("close", (code) => this.fail(new Error(`Codex app-server exited with code ${code ?? "unknown"}.`)));
   }
 
-  static async open(executable: AppServerExecutable, transport: AppServerTransport, cwd: string): Promise<CodexAppServerRpc> {
-    const port = transport === "websocket" ? await reserveLoopbackPort() : undefined;
-    const args = transport === "websocket"
-      ? ["app-server", "--listen", `ws://127.0.0.1:${port}`]
-      : ["app-server", "--stdio"];
+  static async open(executable: AppServerExecutable, cwd: string): Promise<CodexAppServerRpc> {
+    const args = ["app-server", "--stdio"];
     const child = spawn(executable.command, [...executable.prefixArgs, ...args], {
       cwd,
       env: process.env,
@@ -49,14 +42,10 @@ export class CodexAppServerRpc {
     const client = new CodexAppServerRpc(child);
     child.stderr.on("data", () => undefined);
     try {
-      if (transport === "websocket") {
-        await client.connectWebSocket(`ws://127.0.0.1:${port}`);
-      } else {
-        client.lines = readline.createInterface({ input: child.stdout });
-        client.lines.on("line", (line) => client.receive(line));
-      }
+      client.lines = readline.createInterface({ input: child.stdout });
+      client.lines.on("line", (line) => client.receive(line));
       await client.request("initialize", {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.9" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.10-pre2" },
         capabilities: null
       }, 10_000);
       client.send({ method: "initialized", params: {} });
@@ -156,43 +145,13 @@ export class CodexAppServerRpc {
     if (this.closed) return;
     this.fail(new Error("Codex app-server connection closed."));
     this.lines?.close();
-    this.socket?.close();
     this.child.kill();
-  }
-
-  private async connectWebSocket(url: string): Promise<void> {
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline && !this.closed) {
-      try {
-        const socket = await new Promise<WebSocket>((resolve, reject) => {
-          const candidate = new WebSocket(url, { maxPayload: 32 * 1024 * 1024 });
-          candidate.once("open", () => resolve(candidate));
-          candidate.once("error", reject);
-        });
-        this.socket = socket;
-        socket.on("message", (value) => {
-          const text = Buffer.isBuffer(value)
-            ? value.toString("utf8")
-            : value instanceof ArrayBuffer
-              ? Buffer.from(value).toString("utf8")
-              : Buffer.concat(value).toString("utf8");
-          this.receive(text);
-        });
-        socket.on("close", () => this.fail(new Error("Codex app-server WebSocket disconnected.")));
-        socket.on("error", (error) => this.fail(error));
-        return;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
-    throw this.transportError ?? new Error("Codex app-server WebSocket did not become available.");
   }
 
   private send(message: unknown): void {
     if (this.closed) throw this.transportError ?? new Error("Codex app-server connection is closed.");
     const encoded = JSON.stringify(message);
-    if (this.socket) this.socket.send(encoded);
-    else this.child.stdin.write(`${encoded}\n`, "utf8");
+    this.child.stdin.write(`${encoded}\n`, "utf8");
   }
 
   private receive(raw: string): void {
@@ -227,16 +186,4 @@ export class CodexAppServerRpc {
     }
     this.pending.clear();
   }
-}
-
-async function reserveLoopbackPort(): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = address && typeof address !== "string" ? address.port : undefined;
-      server.close(() => port ? resolve(port) : reject(new Error("No loopback port was available for Codex app-server.")));
-    });
-  });
 }

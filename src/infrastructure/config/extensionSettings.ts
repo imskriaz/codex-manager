@@ -85,7 +85,7 @@ export function normalizeCodexSessionDefault(value: string | undefined): Dashboa
 }
 
 export function normalizeCodexSessionTransport(value: string | undefined): DashboardCodexSessionTransport {
-  return value === "app-server-websocket" || value === "cli" ? value : "app-server-stdio";
+  return value === "cli" ? value : "app-server-stdio";
 }
 
 export function normalizeAutoRefreshMinutes(value: number): number {

@@ -387,6 +387,49 @@ describe("sessions sidebar layout", () => {
     expect(css).toMatch(/\.cli-project-list\s*{[^}]*grid-auto-rows:\s*max-content/s);
   });
 
+  it("keeps sign out in the browser avatar menu and out of the VS Code webview", () => {
+    const server = readFileSync("src/services/webDashboardServer.ts", "utf8");
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+
+    expect(server).not.toContain("position:fixed;right:12px;bottom:12px");
+    expect(server).toContain('data-dashboard-remote="${showLogout ? "true" : "false"}"');
+    expect(main).toContain('showLogout={document.documentElement.dataset["dashboardRemote"] === "true"}');
+    expect(source).toContain('class="cli-account-logout-form"');
+    expect(source).toContain('action="/logout"');
+    expect(source).toContain('role="menuitem" class="cli-account-logout"');
+  });
+
+  it("guards the workspace against narrow viewport overflow", () => {
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(css).toMatch(/@media \(max-width: 760px\) \{[\s\S]*?\.cli-workspace \.cli-workspace-grid,[\s\S]*?max-width: 100vw;/);
+    expect(css).toContain(".cli-workspace .cli-composer-controls {");
+    expect(css).toContain("flex-wrap: wrap;");
+    expect(css).toContain(".cli-account-logout-form {");
+    expect(css).toContain(".cli-account-menu .cli-account-submenu {");
+    expect(css).toMatch(/\.cli-account-menu \.cli-account-submenu\s*\{[\s\S]*?width: 100%;/);
+  });
+
+  it("keeps transport selection authoritative and uses supported app-server methods", () => {
+    const packageJson = readFileSync("package.json", "utf8");
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const resume = readFileSync("src/services/codexSessionResume.ts", "utf8");
+    const rpc = readFileSync("src/services/codexAppServerRpc.ts", "utf8");
+
+    expect(packageJson).toContain('"app-server-stdio"');
+    expect(packageJson).toContain('"cli"');
+    expect(packageJson).not.toContain('"app-server-websocket"');
+    expect(settings).not.toContain("app-server-websocket");
+    expect(resume).toContain('"thread/list"');
+    expect(resume).not.toContain("paginated_threads");
+    expect(resume).not.toContain("using transcript fallback");
+    expect(resume).toContain('"thread/archive"');
+    expect(resume).toContain('"thread/unarchive"');
+    expect(resume).toContain('"thread/delete"');
+    expect(rpc).toContain('["app-server", "--stdio"]');
+    expect(rpc).not.toContain("WebSocket");
+  });
+
   it("keeps the tools panel closed for dashboard and new-chat surfaces", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
