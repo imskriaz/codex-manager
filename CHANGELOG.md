@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.10-pre1
+
+- Remove the duplicate standalone token-refresh failure line from saved account cards.
+- Clear stale token-refresh failures after a valid access token is restored and retry transient dashboard refresh failures after a bounded cooldown.
+
 ## 1.2.10
 
 - Fixed Auto Select so dashboard-capable accounts with stale quota snapshots are refreshed before reporting that no account is available.

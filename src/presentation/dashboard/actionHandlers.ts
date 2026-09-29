@@ -877,7 +877,10 @@ async function handleRefreshToken(
   }
 
   try {
-    const tokens = await repo.getTokens(account.id);
+    // Token refresh is an explicit recovery action; bypass the short-lived
+    // repository cache so a rotation performed by another window cannot
+    // replay an already-invalid refresh token.
+    const tokens = await repo.getTokens(account.id, { bypassCache: true });
     if (!tokens?.refreshToken?.trim()) {
       throw new Error("No refresh token is available. Reauthorize this account.");
     }

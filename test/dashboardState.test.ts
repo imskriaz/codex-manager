@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { needsTokenRefreshMock, refreshTokensMock } = vi.hoisted(() => ({
   needsTokenRefreshMock: vi.fn(),
@@ -19,6 +19,11 @@ import {
 } from "../src/application/dashboard/buildDashboardState";
 import { formatPlanType, getDashboardCopy } from "../src/application/dashboard/copy";
 
+beforeEach(() => {
+  needsTokenRefreshMock.mockReset();
+  refreshTokensMock.mockReset();
+});
+
 describe("sortDashboardAccounts", () => {
   it("always puts the active Codex account first even when window state is stale", () => {
     const accounts = [
@@ -34,6 +39,92 @@ describe("sortDashboardAccounts", () => {
 });
 
 describe("buildDashboardState token recovery", () => {
+  it("clears a stale refresh failure after another path restores a valid access token", async () => {
+    needsTokenRefreshMock.mockImplementation((tokens: { accessToken: string }) => tokens.accessToken === "expired");
+    refreshTokensMock.mockRejectedValue(new Error("temporary provider outage"));
+
+    const account = {
+      id: "recovered-after-failure",
+      email: "recovered@example.com",
+      isActive: false,
+      createdAt: 1,
+      updatedAt: 1
+    };
+    const repo = {
+      getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }),
+      listAccounts: vi.fn().mockResolvedValue([account]),
+      getTokens: vi
+        .fn()
+        .mockResolvedValueOnce({ idToken: "id", accessToken: "expired", refreshToken: "refresh" })
+        .mockResolvedValueOnce({ idToken: "id", accessToken: "valid", refreshToken: "refresh" }),
+      updateTokens: vi.fn()
+    };
+    const settingsStore = {
+      resolveLanguage: () => "en",
+      getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" })
+    };
+
+    const failed = await buildDashboardState(repo as never, settingsStore as never, "logo", {
+      announcements: [],
+      unreadIds: []
+    });
+    const recovered = await buildDashboardState(repo as never, settingsStore as never, "logo", {
+      announcements: [],
+      unreadIds: []
+    });
+
+    expect(failed.accounts[0]?.healthKind).toBe("refresh_failed");
+    expect(recovered.accounts[0]?.healthKind).toBe("healthy");
+    expect(refreshTokensMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a failed dashboard refresh after the cooldown instead of leaving the account expired", async () => {
+    vi.useFakeTimers();
+    try {
+      needsTokenRefreshMock.mockImplementation((tokens: { accessToken: string }) => tokens.accessToken === "access-1");
+      refreshTokensMock.mockRejectedValueOnce(new Error("temporary provider outage")).mockResolvedValueOnce({
+        idToken: "id-2",
+        accessToken: "access-2",
+        refreshToken: "refresh"
+      });
+
+      const account = {
+        id: "retry-expired-account",
+        email: "retry@example.com",
+        isActive: false,
+        createdAt: 1,
+        updatedAt: 1
+      };
+      const repo = {
+        getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }),
+        listAccounts: vi.fn().mockResolvedValue([account]),
+        getTokens: vi.fn().mockResolvedValue({ idToken: "id", accessToken: "access-1", refreshToken: "refresh" }),
+        updateTokens: vi.fn().mockResolvedValue(account)
+      };
+      const settingsStore = {
+        resolveLanguage: () => "en",
+        getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" })
+      };
+
+      const failed = await buildDashboardState(repo as never, settingsStore as never, "logo", {
+        announcements: [],
+        unreadIds: []
+      });
+      expect(failed.accounts[0]?.healthKind).toBe("refresh_failed");
+
+      await vi.advanceTimersByTimeAsync(60_001);
+      const recovered = await buildDashboardState(repo as never, settingsStore as never, "logo", {
+        announcements: [],
+        unreadIds: []
+      });
+
+      expect(refreshTokensMock).toHaveBeenCalledTimes(2);
+      expect(recovered.accounts[0]?.healthKind).toBe("healthy");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("tries one refresh for an expired access token before rendering reauthorization", async () => {
     needsTokenRefreshMock.mockImplementation((tokens: { accessToken: string }) => tokens.accessToken === "access-1");
     refreshTokensMock.mockResolvedValue({

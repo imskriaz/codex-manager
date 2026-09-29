@@ -49,6 +49,13 @@ describe("saved account card presentation", () => {
     expect(styles).toMatch(/\.saved-identity-line h3\s*{[^}]*overflow:\s*hidden/s);
   });
 
+  it("does not render a duplicate standalone health-error line", () => {
+    const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+
+    expect(source).not.toContain("saved-table-health-reason");
+    expect(source).not.toContain("saved-health-reason");
+  });
+
   it("shows the remote-PC label in both card layouts", () => {
     const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");

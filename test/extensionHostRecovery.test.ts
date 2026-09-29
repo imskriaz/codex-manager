@@ -5,7 +5,7 @@ import { scheduleAutomaticExtensionHostRefresh } from "../src/utils/extensionHos
 
 describe("automatic extension host recovery", () => {
   it("does not restart after a successful activation", () => {
-    const extension = readFileSync("src/extension.ts", "utf8");
+    const extension = readFileSync("src/extension.ts", "utf8").replace(/\r\n/g, "\n");
     const activationBoundary = extension.slice(
       extension.indexOf("try {\n    await workbench.activate();"),
       extension.indexOf("function resolveExtensionVersion")

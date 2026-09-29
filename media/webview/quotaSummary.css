@@ -11959,29 +11959,6 @@ html[data-theme="dark"] .cli-terminal-panel {
   }
 }
 
-.saved-health-reason,
-.saved-table-health-reason {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--danger);
-  font-size: 10px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  text-shadow: 0 0 6px color-mix(in srgb, var(--danger) 55%, transparent);
-  white-space: nowrap;
-}
-
-.saved-health-reason {
-  margin-top: 2px;
-  padding-left: 20px;
-}
-
-.saved-table-health-reason {
-  width: 100%;
-  padding-left: 20px;
-}
-
 .saved-card.remote-device,
 .saved-table-row.remote-device {
   border-color: color-mix(in srgb, var(--danger) 78%, var(--border-default));
@@ -11999,11 +11976,6 @@ html[data-theme="dark"] .cli-terminal-panel {
     0 0 11px color-mix(in srgb, var(--danger) 22%, transparent);
 }
 
-.saved-health-reason.is-quota,
-.saved-table-health-reason.is-quota {
-  color: var(--accent-orange);
-  text-shadow: 0 0 6px color-mix(in srgb, var(--accent-orange) 55%, transparent);
-}
 .browser-account-picker {
   display: grid;
   gap: 8px;

@@ -326,7 +326,6 @@ export function SavedAccountCard(props: {
   // The card background reflects only an exhausted primary quota window.
   // The 5-hour window and auto-switch thresholds keep their own indicators.
   const primaryQuotaExhausted = isDashboardMainQuotaExhausted(account);
-  const healthReason = resolveCardHealthReason(account);
   const accessAction = resolveAccountAccessAction(account);
   const accessActionLabel =
     accessAction === "switch" ? copy.switchBtn : accessAction === "reloadPrompt" ? copy.reloadBtn : unloadLabel;
@@ -516,11 +515,6 @@ export function SavedAccountCard(props: {
               <div class="saved-table-name-line">
                 <strong title={emailDisplay}>{emailDisplay}</strong>
               </div>
-              {hasErrorHealth ? (
-                <span class={`saved-table-health-reason is-${account.healthKind}`} title={healthReason}>
-                  {healthReason}
-                </span>
-              ) : null}
               <div class="saved-table-meta">
                 <>
                   {compactIdentityBadge ? (
@@ -808,11 +802,6 @@ export function SavedAccountCard(props: {
                     {renderHealthPill(account)}
                   </h3>
                 </div>
-                {hasErrorHealth ? (
-                  <div class={`saved-health-reason is-${account.healthKind}`} role="status" title={healthReason}>
-                    {healthReason}
-                  </div>
-                ) : null}
               </div>
               <div class="saved-top-actions" onClick={stopFlip}>
                 <button
