@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.10-pre1
+## 1.2.11
 
 - Remove the duplicate standalone token-refresh failure line from saved account cards.
 - Clear stale token-refresh failures after a valid access token is restored and retry transient dashboard refresh failures after a bounded cooldown.
