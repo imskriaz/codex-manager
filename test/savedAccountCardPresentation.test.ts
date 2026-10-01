@@ -12,11 +12,17 @@ import {
 import { isDashboardMainQuotaExhausted } from "../webview-src/dashboard/accountSorting";
 
 describe("saved account card presentation", () => {
-  it("replaces the enablement toggle with reauthorization in both account layouts", () => {
-    expect(resolvePrimaryAccountControl({ healthKind: "reauthorize", dismissedHealth: false })).toBe("reauthorize");
-    expect(resolvePrimaryAccountControl({ healthKind: "reauthorize", dismissedHealth: true })).toBe("reauthorize");
-    expect(resolvePrimaryAccountControl({ healthKind: "healthy", dismissedHealth: false })).toBe("enablement");
-  });
+  it.each([false, true])(
+    "offers existing reauthorization for auth and refresh failures (dismissed: %s)",
+    (dismissedHealth) => {
+      for (const healthKind of ["reauthorize", "refresh_failed"] as const) {
+        expect(resolvePrimaryAccountControl({ healthKind, dismissedHealth })).toBe("reauthorize");
+      }
+      for (const healthKind of ["healthy", "expiring", "quota", "disabled"] as const) {
+        expect(resolvePrimaryAccountControl({ healthKind, dismissedHealth })).toBe("enablement");
+      }
+    }
+  );
 
   it("shows only the PC name for a claim and no badge when unclaimed", () => {
     expect(resolveCompactIdentityBadge("Office PC")).toEqual({

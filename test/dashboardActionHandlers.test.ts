@@ -4,6 +4,7 @@ import * as path from "path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import type { DashboardActionContext } from "../src/presentation/dashboard/actionHandlers";
+import * as encryptedSync from "../src/services/encryptedSync";
 
 const { consumeResetCreditMock } = vi.hoisted(() => ({
   consumeResetCreditMock: vi.fn().mockResolvedValue(undefined)
@@ -1123,6 +1124,21 @@ describe("executeDashboardActionMessage", () => {
     expect(result.status).toBe("failed");
     expect(result.errorMessage).toMatch(/did not complete/i);
     expect(context.schedulePublishState).toHaveBeenCalled();
+  });
+
+  it.each(["browser", "webview"] as const)("returns Settings Sync suspension guidance to the %s dashboard", async (hostKind) => {
+    const message = "VS Code Settings Sync is suspended. Restart Visual Studio Code to resume.";
+    vi.spyOn(encryptedSync, "getEncryptedSyncSettingsFailure").mockReturnValue(message);
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(false);
+    const context = createContext();
+    context.hostKind = hostKind;
+    context.syncEncryptedAccounts = vi.fn(async () => false);
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action", action: "syncNow", requestId: "req-sync-suspended"
+    });
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toBe(message);
+    vi.mocked(encryptedSync.getEncryptedSyncSettingsFailure).mockRestore();
   });
 
   it("requires the dashboard password modal instead of opening a native prompt", async () => {

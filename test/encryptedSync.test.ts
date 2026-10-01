@@ -148,7 +148,7 @@ describe("encrypted account sync", () => {
     manager.dispose();
   });
 
-  it("consolidates background sync within seconds after an enablement mutation", async () => {
+  it("batches background writes without forcing a Settings Sync request", async () => {
     vi.useFakeTimers();
     const context = {
       subscriptions: [] as vscode.Disposable[],
@@ -162,11 +162,11 @@ describe("encrypted account sync", () => {
     const manager = new EncryptedSyncManager(context, {} as never);
     const sync = vi.spyOn(manager, "syncNow").mockResolvedValue(true);
 
-    manager.queueBackgroundSync(5 * 1000);
-    await vi.advanceTimersByTimeAsync(5 * 1000 - 1);
+    manager.queueBackgroundSync(5 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
     expect(sync).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(sync).toHaveBeenCalledWith(false, false, true);
+    expect(sync).toHaveBeenCalledWith(false, false, false);
     manager.dispose();
   });
 
@@ -652,7 +652,7 @@ describe("encrypted account sync", () => {
     manager.onAccountsMutated({ addedAccountIds: [], removedAccountIds: ["removed-account"] });
 
     expect(manager.isAccountDeletionPending("removed-account")).toBe(true);
-    await vi.waitFor(() => expect(queue).toHaveBeenCalledWith(5 * 1000));
+    await vi.waitFor(() => expect(queue).toHaveBeenCalledWith(5 * 60 * 1000));
     expect(state.get("codexManager.encryptedSync.localDeletions.v1")).toEqual([
       expect.objectContaining({ accountId: "removed-account", deviceId: "device-one" })
     ]);
@@ -719,7 +719,7 @@ describe("encrypted account sync", () => {
       expect(state.get("codexManager.encryptedSync.vaultDirty.v1")).toEqual(["enablement-changed"]);
     });
     expect(queue).toHaveBeenCalledTimes(1);
-    expect(queue).toHaveBeenNthCalledWith(1, 5 * 1000);
+    expect(queue).toHaveBeenNthCalledWith(1, 5 * 60 * 1000);
     manager.dispose();
   });
 
@@ -739,9 +739,9 @@ describe("encrypted account sync", () => {
     const sync = vi.spyOn(manager, "syncNow").mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
     manager.onVaultMutation("enablement-changed");
-    await vi.advanceTimersByTimeAsync(5 * 1000);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
     expect(sync).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(10 * 1000);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
     expect(sync).toHaveBeenCalledTimes(2);
     manager.dispose();
   });
@@ -1135,7 +1135,7 @@ describe("encrypted account sync", () => {
     await vi.waitFor(() => {
       expect(state.get("codexManager.encryptedSync.vaultDirty.v1")).toEqual(["sync-configured"]);
     });
-    expect(queue).toHaveBeenCalledWith(5 * 1000);
+    expect(queue).toHaveBeenCalledWith(5 * 60 * 1000);
     manager.dispose();
   });
 
@@ -1236,7 +1236,7 @@ describe("encrypted account sync", () => {
     state.set("codexManager.encryptedSync.v1", downloaded);
     await vi.advanceTimersByTimeAsync(5 * 1000);
 
-    expect(sync).toHaveBeenCalledWith(false, false, true);
+    expect(sync).toHaveBeenCalledWith(false, false, false);
     manager.dispose();
   }, 15_000);
 

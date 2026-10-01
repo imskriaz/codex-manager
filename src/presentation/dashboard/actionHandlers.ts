@@ -43,6 +43,7 @@ import {
   WorkspaceTerminalCommandError
 } from "../../services/workspaceTools";
 import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindings";
+import { getEncryptedSyncSettingsFailure } from "../../services/encryptedSync";
 import type {
   DashboardActionName,
   DashboardActionPayload,
@@ -420,7 +421,8 @@ async function runDashboardAction(
       if (ctx.hostKind === "browser" && ctx.syncEncryptedAccounts) {
         if (!(await ctx.syncEncryptedAccounts())) {
           throw new Error(
-            "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
+            getEncryptedSyncSettingsFailure() ??
+              "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
           );
         }
         ctx.schedulePublishState();
@@ -429,7 +431,8 @@ async function runDashboardAction(
       if ((await vscode.commands.executeCommand<boolean>("codexManager.syncNow")) !== true) {
         ctx.schedulePublishState();
         throw new Error(
-          "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
+          getEncryptedSyncSettingsFailure() ??
+            "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
         );
       }
       ctx.schedulePublishState();

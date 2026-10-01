@@ -27,7 +27,7 @@ import { isDashboardMainQuotaExhausted } from "./accountSorting";
 export function resolvePrimaryAccountControl(
   account: Pick<DashboardAccountViewModel, "healthKind" | "dismissedHealth">
 ): "enablement" | "reauthorize" {
-  return account.healthKind === "reauthorize" ? "reauthorize" : "enablement";
+  return account.healthKind === "reauthorize" || account.healthKind === "refresh_failed" ? "reauthorize" : "enablement";
 }
 
 export function resolveAccountAccessAction(

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.12
+
+- Show the existing reauthentication icon for saved accounts with Refresh Failed in both card and table layouts.
+- Prevent Settings Sync request storms by merging downloaded vaults locally, ignoring equivalent peer snapshots, and batching background writes. Report sync suspension with restart guidance.
+
 ## 1.2.11
 
 - Remove the duplicate standalone token-refresh failure line from saved account cards.

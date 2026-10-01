@@ -30,10 +30,11 @@ const LOCAL_ENABLEMENT_KEY = "codexManager.encryptedSync.localEnablement.v1";
 const LEGACY_LOCAL_ASSIGNMENTS_KEY = "codexManager.encryptedSync.localAssignments.v1";
 const LOCAL_ENABLEMENT_PENDING_KEY = "codexManager.encryptedSync.localEnablementPending.v1";
 const LOCAL_VAULT_DIRTY_KEY = "codexManager.encryptedSync.vaultDirty.v1";
-// Keep a short debounce so bursts of edits coalesce, while every change is
-// propagated to the shared Settings Sync vault within seconds.
-const ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS = 5 * 1000;
-const VAULT_SYNC_DEBOUNCE_DELAY_MS = 5 * 1000;
+// Realtime peers carry immediate changes. Batch durable Settings Sync writes
+// so account activity cannot exhaust VS Code's device-wide request budget.
+const ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS = 5 * 60 * 1000;
+const VAULT_SYNC_DEBOUNCE_DELAY_MS = 5 * 60 * 1000;
+const SYNC_ACTIVITY_RENEWAL_INTERVAL_MS = 30 * 60 * 1000;
 const VAULT_SYNC_MAX_RETRY_DELAY_MS = 30 * 60 * 1000;
 const STARTUP_VAULT_MERGE_DELAY_MS = 30 * 1000;
 // Settings Sync updates extension globalState asynchronously and does not
@@ -53,11 +54,14 @@ const MAX_ENVELOPE_BYTES = 2 * 1024 * 1024;
 const MAX_METADATA_LENGTH = 4096;
 const MAX_TOKEN_LENGTH = 512 * 1024;
 const VAULT_AUTHENTICATION_ERROR = "The password is incorrect or the synchronized data was modified.";
+const SETTINGS_SYNC_SUSPENDED_MESSAGE =
+  "VS Code Settings Sync is suspended because this device made too many requests. Restart Visual Studio Code to resume. Your local account changes are saved.";
 const LEGACY_DURABLE_VAULT_FILE = "encrypted-accounts-vault.json";
 const DURABLE_ACCOUNTS_DIRECTORY = "accounts";
 const DURABLE_ACCOUNT_FILE_SUFFIX = ".json";
 let encryptedSyncNeedsConfiguration = false;
 let encryptedSyncNeedsSettingsSync = false;
+let encryptedSyncSettingsFailure: string | undefined;
 let visibleAccountEnablement: SyncAccountEnablement[] = [];
 let visibleEnablementDeviceId: string | undefined;
 let visibleOnlineDeviceIds: Set<string> | undefined;
@@ -162,6 +166,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private localEnablementDefaults = new Map<string, boolean>();
   private readonly pendingDeletionAccountIds = new Set<string>();
   private deviceIdPromise: Promise<string> | undefined;
+  private settingsSyncSuspended = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -300,7 +305,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (this.disposed || this.backgroundSyncTimer) return;
     this.backgroundSyncTimer = setTimeout(() => {
       this.backgroundSyncTimer = undefined;
-      void this.syncNow(false, false, true)
+      void this.syncNow(false, false, false)
         .then((synced) => {
           if (synced || this.pendingVaultMutationReasons.size === 0) {
             this.backgroundSyncRetryDelayMs = VAULT_SYNC_DEBOUNCE_DELAY_MS;
@@ -418,19 +423,12 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private startDownloadedVaultPolling(): void {
     if (this.disposed || this.downloadedVaultPollTimer) return;
     this.downloadedVaultPollTimer = setInterval(() => {
-      if (
-        this.disposed ||
-        !this.isEnabled() ||
-        encryptedSyncNeedsConfiguration ||
-        encryptedSyncNeedsSettingsSync ||
-        this.currentSyncTask
-      )
-        return;
+      if (this.disposed || !this.isEnabled() || encryptedSyncNeedsConfiguration || this.currentSyncTask) return;
       const downloaded = this.context.globalState.get<string>(SYNC_KEY);
       if (!downloaded || downloaded === this.lastHandledDownloadedVaultRaw) return;
-      // Run a Settings Sync pass before merging so the polled marker resolves
-      // to the latest server value, and upload any multi-PC merge result.
-      void this.syncNow(false, false, true).catch((error: unknown) => {
+      // VS Code already downloaded this value. Merge it locally without
+      // triggering another network pass and bouncing writes between PCs.
+      void this.syncNow(false, false, false).catch((error: unknown) => {
         if (!(error instanceof CrossWindowOperationBusyError)) {
           console.warn("[codexManager] downloaded encrypted vault merge failed:", error);
         }
@@ -560,7 +558,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   /** Accept a peer's encrypted snapshot and merge it through the normal path. */
-  async applyRealtimeEncryptedVault(raw: string): Promise<boolean> {
+  async applyRealtimeEncryptedVault(raw: string, conflictAttempt = 0): Promise<boolean> {
     if (!this.isEnabled() || !raw || raw.length > MAX_ENVELOPE_BYTES) return false;
     const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
     if (!passphrase) return false;
@@ -569,14 +567,17 @@ export class EncryptedSyncManager implements vscode.Disposable {
       const current = this.context.globalState.get<string>(SYNC_KEY);
       const fullAccountSync = this.isFullAccountSyncEnabled();
       const peerEnablement = peer.enablementRegistry ?? peer.assignments ?? [];
-      let candidateRaw = fullAccountSync
-        ? raw
-        : await encryptSyncPayload(await this.createPayload([], [], peerEnablement), passphrase);
+      let candidate = await this.createPayload(
+        fullAccountSync ? peer.accounts : [],
+        fullAccountSync ? (peer.deletions ?? []) : [],
+        peerEnablement
+      );
+      let downloaded: SyncPayload | undefined;
       if (current && current !== raw) {
         // Never choose an entire vault by wall-clock timestamp. PC clocks can
         // differ, and replacing a not-yet-applied Settings Sync vault would
         // lose accounts. Merge both authenticated snapshots first.
-        const downloaded = await decryptSyncPayload(current, passphrase);
+        downloaded = await this.readRemotePayload(current, passphrase);
         const deletions = fullAccountSync
           ? mergeSyncAccountDeletions(downloaded.deletions ?? [], peer.deletions ?? [])
           : [];
@@ -585,13 +586,25 @@ export class EncryptedSyncManager implements vscode.Disposable {
           downloaded.enablementRegistry ?? downloaded.assignments ?? [],
           peerEnablement
         );
-        candidateRaw = await encryptSyncPayload(await this.createPayload(accounts, deletions, enablement), passphrase);
+        candidate = await this.createPayload(accounts, deletions, enablement);
       }
-      await this.context.globalState.update(SYNC_KEY, candidateRaw);
-      this.lastRemoteRaw = undefined;
-      this.lastRemotePayload = undefined;
-      this.lastRemotePassphraseHash = undefined;
-      this.realtimeVaultCache = undefined;
+      downloaded ??= current === raw ? peer : undefined;
+      const changed = !downloaded || syncPayloadFingerprint(downloaded) !== syncPayloadFingerprint(candidate);
+      const candidateRaw = changed ? await encryptSyncPayload(candidate, passphrase) : current;
+      if (this.context.globalState.get<string>(SYNC_KEY) !== current) {
+        return conflictAttempt < MAX_VAULT_CONFLICT_RETRIES
+          ? this.applyRealtimeEncryptedVault(raw, conflictAttempt + 1)
+          : false;
+      }
+      // Random encryption salts are not changes. Repeated or echoed snapshots
+      // must not write the synchronized key or invalidate the outbound cache.
+      if (changed) {
+        await this.context.globalState.update(SYNC_KEY, candidateRaw);
+        this.lastRemoteRaw = undefined;
+        this.lastRemotePayload = undefined;
+        this.lastRemotePassphraseHash = undefined;
+        this.realtimeVaultCache = undefined;
+      }
       const merged = await this.syncNow(false, false, false);
       return merged;
     } catch (error) {
@@ -952,13 +965,17 @@ export class EncryptedSyncManager implements vscode.Disposable {
         // The product has an authenticated cross-PC transport, so sync is
         // available even though the optional Settings Sync transport is not.
         encryptedSyncNeedsSettingsSync = false;
+        encryptedSyncSettingsFailure = undefined;
         encryptedSyncLastCompletedAt = Date.now();
         this.onStateChanged?.();
+        if (announceSuccess)
+          void vscode.window.showInformationMessage("Cross-PC claim sync completed through an authenticated peer.");
         return true;
       }
       if (interactive) {
         void vscode.window.showErrorMessage(
-          "Cross-PC sync is unavailable. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
+          encryptedSyncSettingsFailure ??
+            "Cross-PC sync is unavailable. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
         );
       }
       return false;
@@ -1047,9 +1064,15 @@ export class EncryptedSyncManager implements vscode.Disposable {
         }
       }
       const activityAt = Date.now();
+      const renewLocalActivity = syncSettings || this.pendingVaultMutationReasons.size > 0;
       mergedEnablement = canonicalizeSyncAccountEnablement(
         [...byAccount.values()].map((entry) =>
-          entry.deviceId === localDeviceId && entry.enabled ? { ...entry, lastSyncedAt: activityAt } : entry
+          renewLocalActivity &&
+          entry.deviceId === localDeviceId &&
+          entry.enabled &&
+          (entry.lastSyncedAt === undefined || activityAt - entry.lastSyncedAt >= SYNC_ACTIVITY_RENEWAL_INTERVAL_MS)
+            ? { ...entry, lastSyncedAt: activityAt }
+            : entry
         )
       );
       const mergedAccountIdsAfterDeletion = new Set(mergedAccounts.map(getSyncAccountId));
@@ -1074,7 +1097,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         return false;
       }
 
-      await this.context.globalState.update(LOCAL_DELETIONS_KEY, mergedDeletions);
+      await this.updateLocalStateIfChanged(LOCAL_DELETIONS_KEY, mergedDeletions);
       await this.storeLocalEnablement(mergedEnablement, await this.getDeviceId());
 
       this.applyingRemote = true;
@@ -1123,11 +1146,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
         }
         return false;
       }
-      await this.context.globalState.update(LOCAL_ENABLEMENT_PENDING_KEY, []);
+      await this.updateLocalStateIfChanged(LOCAL_ENABLEMENT_PENDING_KEY, []);
       pendingEnablementAccountIds = new Set();
-      await this.context.globalState.update(LOCAL_VAULT_DIRTY_KEY, []);
+      await this.updateLocalStateIfChanged(LOCAL_VAULT_DIRTY_KEY, []);
       this.pendingVaultMutationReasons.clear();
-      this.realtimeVaultCache = undefined;
+      if (syncPayloadFingerprint(local) !== syncPayloadFingerprint(merged)) this.realtimeVaultCache = undefined;
       if (this.backgroundSyncTimer) {
         clearTimeout(this.backgroundSyncTimer);
         this.backgroundSyncTimer = undefined;
@@ -1195,6 +1218,12 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   private async ensureSettingsSyncReady(showFailure = true): Promise<boolean> {
+    if (this.settingsSyncSuspended) {
+      encryptedSyncNeedsSettingsSync = true;
+      encryptedSyncSettingsFailure = SETTINGS_SYNC_SUSPENDED_MESSAGE;
+      if (showFailure) void vscode.window.showErrorMessage(SETTINGS_SYNC_SUSPENDED_MESSAGE);
+      return false;
+    }
     try {
       // The Authentication API is not an authoritative view of the account
       // used by Settings Sync. In particular, getAccounts() can be empty while
@@ -1202,14 +1231,20 @@ export class EncryptedSyncManager implements vscode.Disposable {
       // the service can run instead of rejecting a healthy signed-in session.
       await vscode.commands.executeCommand("workbench.userDataSync.actions.syncNow");
       encryptedSyncNeedsSettingsSync = false;
+      encryptedSyncSettingsFailure = undefined;
       return true;
     } catch (error) {
       encryptedSyncNeedsSettingsSync = true;
       const detail = error instanceof Error ? error.message : String(error);
+      const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+      this.settingsSyncSuspended = /LocalTooManyRequests|suspended|only 100 requests allowed in 5 minutes/i.test(
+        `${code} ${detail}`
+      );
+      encryptedSyncSettingsFailure = this.settingsSyncSuspended
+        ? SETTINGS_SYNC_SUSPENDED_MESSAGE
+        : `VS Code Settings Sync could not complete. Check your connection and Settings Sync sign-in, then try again. (${detail})`;
       if (showFailure) {
-        void vscode.window.showErrorMessage(
-          `VS Code Settings Sync is not active on this PC. Sign in to VS Code and turn on Settings Sync, then try again. (${detail})`
-        );
+        void vscode.window.showErrorMessage(encryptedSyncSettingsFailure);
       }
       return false;
     }
@@ -1286,8 +1321,14 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private async storeLocalEnablement(entries: SyncAccountEnablement[], deviceId: string): Promise<void> {
     const canonical = canonicalizeSyncAccountEnablement(entries).slice(-MAX_ENABLEMENT_RECORDS);
-    await this.context.globalState.update(LOCAL_ENABLEMENT_KEY, canonical);
+    await this.updateLocalStateIfChanged(LOCAL_ENABLEMENT_KEY, canonical);
     this.updateVisibleEnablement(canonical, deviceId);
+  }
+
+  private async updateLocalStateIfChanged(key: string, value: unknown): Promise<void> {
+    if (JSON.stringify(this.context.globalState.get(key)) !== JSON.stringify(value)) {
+      await this.context.globalState.update(key, value);
+    }
   }
 
   private queueDurableVaultSave(mutation?: DurableVaultMutation): void {
@@ -1638,6 +1679,10 @@ export function doesEncryptedSyncNeedSettingsSync(): boolean {
   return encryptedSyncNeedsSettingsSync;
 }
 
+export function getEncryptedSyncSettingsFailure(): string | undefined {
+  return encryptedSyncSettingsFailure;
+}
+
 export function isEncryptedSyncRegistryOverrideEnabled(): boolean {
   return encryptedSyncRegistryOverrideEnabled;
 }
@@ -1818,6 +1863,15 @@ export function syncDeletionsFingerprint(deletions: readonly SyncAccountDeletion
 
 export function syncEnablementFingerprint(entries: readonly SyncAccountEnablement[]): string {
   return JSON.stringify(canonicalizeSyncAccountEnablement(entries));
+}
+
+function syncPayloadFingerprint(payload: SyncPayload): string {
+  return JSON.stringify([
+    syncAccountsFingerprint(payload.accounts),
+    syncDeletionsFingerprint(payload.deletions ?? []),
+    syncEnablementFingerprint(payload.enablementRegistry ?? payload.assignments ?? []),
+    payload.leases ?? []
+  ]);
 }
 
 function syncEntryFingerprint(entry: SyncAccountEntry): string {
