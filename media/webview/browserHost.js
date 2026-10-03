@@ -1,6 +1,7 @@
 (() => {
   let realtimeSocket;
   let connectingSocket;
+  let handshakeTimer;
   let reconnectTimer;
   let reconnectDelayMs = 500;
   const maxReconnectDelayMs = 5000;
@@ -23,6 +24,28 @@
     });
   };
 
+  const isRealtimeOpen = () => Boolean(realtimeSocket && realtimeSocket.readyState === window.WebSocket?.OPEN);
+  const publishConnection = () => dispatch({ type: "dashboard:connection", transport: "websocket", connected: Boolean(isRealtimeOpen()) });
+  const clearHandshake = () => {
+    if (handshakeTimer !== undefined) window.clearTimeout?.(handshakeTimer);
+    handshakeTimer = undefined;
+  };
+  const resetConnectingSocket = () => {
+    const pending = connectingSocket;
+    connectingSocket = undefined;
+    clearHandshake();
+    try { pending?.close(); } catch { /* Already disconnected. */ }
+  };
+  const fetchSnapshot = async () => {
+    const controller = typeof AbortController === "undefined" ? undefined : new AbortController();
+    const timer = controller ? window.setTimeout(() => controller.abort(), 10_000) : undefined;
+    try {
+      const response = await fetch("/api/state", { cache: "no-store", ...(controller ? { signal: controller.signal } : {}) });
+      const state = response.ok ? await parseJsonResponse(response, "Dashboard refresh") : undefined;
+      return { response, state };
+    } finally { if (timer !== undefined) window.clearTimeout(timer); }
+  };
+
   const parseJsonResponse = async (response, label) => {
     const contentType = response.headers?.get?.("content-type") ?? "";
     if (!contentType.toLowerCase().includes("application/json")) {
@@ -34,16 +57,16 @@
   const loadSnapshot = () => {
     if (snapshotInFlight) return snapshotInFlight;
     snapshotInFlight = (async () => {
-      const response = await fetch("/api/state", { cache: "no-store" });
+      const { response, state } = await fetchSnapshot();
       if (response.status === 401) {
         window.location.reload();
         return false;
       }
       if (!response.ok) throw new Error(`Dashboard refresh failed (${response.status})`);
-      const state = await parseJsonResponse(response, "Dashboard refresh");
       lastSyncAt = Date.now();
       dispatch({ type: "dashboard:snapshot", state });
-      publishStatus(realtimeSocket ? "live" : "degraded");
+      publishConnection();
+      publishStatus(isRealtimeOpen() ? "live" : "degraded");
       return true;
     })().catch((error) => {
       publishStatus("unreachable");
@@ -94,9 +117,17 @@
       return;
     }
     connectingSocket = socket;
+    handshakeTimer = window.setTimeout?.(() => {
+      if (connectingSocket !== socket) return;
+      resetConnectingSocket();
+      publishConnection();
+      scheduleReconnect();
+      void loadSnapshot().catch(() => undefined);
+    }, 10_000);
     socket.addEventListener("open", () => {
       if (connectingSocket !== socket) return;
       connectingSocket = undefined;
+      clearHandshake();
       realtimeSocket = socket;
       reconnectDelayMs = 500;
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
@@ -121,7 +152,7 @@
     socket.addEventListener("close", (event) => {
       if (realtimeSocket !== socket && connectingSocket !== socket) return;
       if (realtimeSocket === socket) realtimeSocket = undefined;
-      if (connectingSocket === socket) connectingSocket = undefined;
+      if (connectingSocket === socket) { connectingSocket = undefined; clearHandshake(); }
       dispatch({ type: "dashboard:connection", transport: "websocket", connected: false });
       failUnconfirmedSocketActions();
       if (event.code === 4001) {
@@ -142,7 +173,9 @@
   const postMessage = async (message) => {
     if (message?.type === "dashboard:ready" || message?.type === "dashboard:retry-connection") {
       const manual = message.type === "dashboard:retry-connection";
-      if (manual && !realtimeSocket) {
+      publishConnection();
+      if (manual && !isRealtimeOpen()) {
+        resetConnectingSocket();
         if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
         reconnectTimer = undefined;
         publishStatus("connecting");
@@ -185,7 +218,8 @@
       if (!response.ok) throw new Error(`Dashboard action failed (${response.status})`);
       const payload = await parseJsonResponse(response, "Dashboard action");
       if (!Array.isArray(payload.messages)) throw new Error("Dashboard action returned no result. Reload the dashboard and try again.");
-      publishStatus("degraded");
+      publishConnection();
+      publishStatus(isRealtimeOpen() ? "live" : "degraded");
       payload.messages.forEach(dispatch);
     } catch (error) {
       if (!reachedHost) publishStatus("unreachable");
@@ -214,7 +248,8 @@
 
   if (typeof window.addEventListener === "function") {
     window.addEventListener("online", () => {
-      if (realtimeSocket) return;
+      if (isRealtimeOpen()) { publishConnection(); publishStatus("live"); return; }
+      resetConnectingSocket();
       publishStatus("connecting");
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
@@ -222,7 +257,13 @@
       void loadSnapshot().catch(() => undefined);
     });
     window.addEventListener("offline", () => {
-      if (!realtimeSocket) publishStatus("unreachable");
+      resetConnectingSocket();
+      const active = realtimeSocket;
+      realtimeSocket = undefined;
+      try { active?.close(); } catch { /* Network already unavailable. */ }
+      failUnconfirmedSocketActions();
+      publishConnection();
+      publishStatus("unreachable");
     });
   }
 
@@ -238,6 +279,12 @@
     else window.addEventListener("load", register, { once: true });
   }
 
+  if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    publishConnection();
+    if (!isRealtimeOpen()) connectRealtime();
+    void loadSnapshot().catch(() => undefined);
+  });
   publishStatus("connecting");
   connectRealtime();
 })();

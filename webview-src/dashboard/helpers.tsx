@@ -315,3 +315,12 @@ function maskSensitiveValue(value: string, kind: SensitiveKind): string {
       return maskSensitiveString(value);
   }
 }
+
+export function isOpenWorkspaceProject(projectPath: string, roots: readonly { path: string }[]): boolean {
+  const normalize = (value: string): string => {
+    const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+    return /^(?:[a-z]:\/|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized;
+  };
+  const project = normalize(projectPath);
+  return roots.some(({ path }) => { const root = normalize(path); return project === root || project.startsWith(`${root}/`); });
+}

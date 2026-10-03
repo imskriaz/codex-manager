@@ -13,7 +13,6 @@ import { getCommandCopy, getLanguage, logNetworkEvent, resolveLongQuotaLabel, t 
 import {
   getAutoRefreshMinutes,
   getCodexManagerConfiguration,
-  isBackgroundTokenRefreshEnabled
 } from "../../infrastructure/config/extensionSettings";
 import { wasAccountQuotaCheckedWithin } from "../../services/quotaCheckCoordination";
 import { openDetailsPanel } from "../../ui";
@@ -255,7 +254,7 @@ export class AccountsCommandService {
 
     await this.withProgress(copy.progressSwitch(account.email), async () => {
       await this.repo.switchAccount(account.id, {
-        forceTokenRefresh: isBackgroundTokenRefreshEnabled() && account.tokenRefreshEnabled === true
+        forceTokenRefresh: account.tokenRefreshEnabled === true
       });
     });
     this.view.markObservedAuthIdentity?.(account.id);
@@ -382,7 +381,7 @@ export class AccountsCommandService {
             try {
               await runCrossWindowExclusive(`quota:refresh:${account.id}`, "Quota refresh", () =>
                 refreshSingleQuotaSafely(this.repo, this.view, account.id, {
-                  allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
+                  allowTokenRefresh: true,
                   forceRefresh: options.forceRefresh,
                   skipDisabled: true,
                   canUseAccount: this.canAutomateAccount

@@ -115,6 +115,19 @@ describe("parallel window account mode", () => {
     expect(switchAccount).not.toHaveBeenCalled();
   });
 
+  it("preserves a disabled loaded account instead of replacing its authentication on restart", async () => {
+    testState.enabled = true;
+    await initializeCrossWindowAccountMode();
+    const switchAccount = vi.fn();
+    const accounts = [
+      { id: "disabled-loaded", email: "loaded@example.com", enabled: false, isActive: true },
+      { id: "enabled-other", email: "other@example.com", enabled: true, isActive: false }
+    ] as never;
+    await expect(ensureCrossWindowAccountAssignment(accounts, switchAccount)).resolves.toEqual({ accountId: "disabled-loaded", assigned: true });
+    expect(getCrossWindowAccountId()).toBe("disabled-loaded");
+    expect(switchAccount).not.toHaveBeenCalled();
+  });
+
   it("loads the selected account and releases its claim if loading fails", async () => {
     testState.enabled = true;
     await initializeCrossWindowAccountMode();

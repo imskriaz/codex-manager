@@ -483,6 +483,7 @@ describe("executeDashboardActionMessage", () => {
   });
 
   it("returns a visible reload outcome when the VS Code reload prompt is postponed", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({ get: (key: string, fallback?: unknown) => key === "crossWindowAccountModeEnabled" ? true : fallback } as vscode.WorkspaceConfiguration);
     setCurrentWindowRuntimeAccountId("account-before-reload");
     vi.mocked(vscode.window.showInformationMessage)
       .mockReset()
@@ -1273,7 +1274,7 @@ describe("executeDashboardActionMessage", () => {
     expect(result.payload?.notice?.message).toContain("disabled on this PC");
   });
 
-  it("asks whether to unload after disabling the current account", async () => {
+  it.each(["browser", "vscode"] as const)("keeps disabled current authentication loaded in the %s dashboard", async (hostKind) => {
     const account = {
       id: "current-account",
       email: "current@example.com",
@@ -1286,7 +1287,7 @@ describe("executeDashboardActionMessage", () => {
     } as unknown as DashboardActionContext["repo"];
 
     const result = await executeDashboardActionMessage(
-      { ...createContext(), repo },
+      { ...createContext(), repo, hostKind },
       {
         type: "dashboard:action",
         action: "toggleAccountEnabled",
@@ -1297,15 +1298,10 @@ describe("executeDashboardActionMessage", () => {
     );
 
     expect(result.status).toBe("completed");
-    expect(result.payload?.notice).toBeUndefined();
-    expect(result.payload?.actionPrompts).toEqual([
-      expect.objectContaining({
-        kind: "disabledActiveAccount",
-        accountId: account.id,
-        unloadLabel: "Unload",
-        keepUsingLabel: "Later"
-      })
-    ]);
+    expect(result.payload?.notice?.message).toContain("stays loaded until you manually choose Unload");
+    expect(result.payload?.actionPrompts).toBeUndefined();
+    expect(unloadAuthFileMock).not.toHaveBeenCalled();
+
   });
 
   it("does not block an account toggle while a background account task is running", async () => {

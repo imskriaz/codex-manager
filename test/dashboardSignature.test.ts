@@ -22,7 +22,6 @@ function createState(overrides?: {
       displayLanguage: "zh",
       autoRefreshMinutes: 0,
       autoRefreshCurrentMinutes: 0,
-      backgroundTokenRefreshEnabled: true,
       autoSwitchEnabled: false,
       hourlyQuotaControlEnabled: false,
       autoSwitchReloadWindowEnabled: false,

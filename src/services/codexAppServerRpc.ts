@@ -21,12 +21,14 @@ export class CodexAppServerRpc {
   private readonly pending = new Map<number, PendingRequest>();
   private readonly notifications = new Set<(method: string, params: unknown) => void>();
   private readonly serverRequests = new Set<(request: AppServerRequest) => void>();
+  private readonly disconnects = new Set<(error: Error) => void>();
   private closed = false;
   private transportError?: Error;
 
   private constructor(child: ChildProcessWithoutNullStreams) {
     this.child = child;
     child.on("error", (error) => this.fail(error));
+    child.stdin.on("error", (error) => this.fail(error));
     child.on("close", (code) => this.fail(new Error(`Codex app-server exited with code ${code ?? "unknown"}.`)));
   }
 
@@ -34,7 +36,7 @@ export class CodexAppServerRpc {
     const args = ["app-server", "--stdio"];
     const child = spawn(executable.command, [...executable.prefixArgs, ...args], {
       cwd,
-      env: process.env,
+      env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
       windowsHide: true,
       shell: executable.shell,
       stdio: ["pipe", "pipe", "pipe"]
@@ -45,9 +47,9 @@ export class CodexAppServerRpc {
       client.lines = readline.createInterface({ input: child.stdout });
       client.lines.on("line", (line) => client.receive(line));
       await client.request("initialize", {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.10" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.14" },
         capabilities: null
-      }, 10_000);
+      }, 30_000);
       client.send({ method: "initialized", params: {} });
       return client;
     } catch (error) {
@@ -102,7 +104,9 @@ export class CodexAppServerRpc {
     let turnId: string | undefined;
     let earlyCompletion: Record<string, unknown> | undefined;
     let settle!: (params: Record<string, unknown>) => void;
+    let failTurn!: (error: Error) => void;
     const completed = new Promise<void>((resolve, reject) => {
+      failTurn = reject;
       settle = (payload) => {
         const turn = payload["turn"] as Record<string, unknown> | undefined;
         const status = turn?.["status"];
@@ -114,6 +118,8 @@ export class CodexAppServerRpc {
         }
       };
     });
+    void completed.catch(() => undefined);
+    this.disconnects.add(failTurn);
     const off = this.onNotification((method, raw) => {
       if (method !== "turn/completed" || !raw || typeof raw !== "object") return;
       const payload = raw as Record<string, unknown>;
@@ -138,14 +144,13 @@ export class CodexAppServerRpc {
     } finally {
       if (timeout) clearTimeout(timeout);
       off();
+      this.disconnects.delete(failTurn);
     }
   }
 
   close(): void {
     if (this.closed) return;
     this.fail(new Error("Codex app-server connection closed."));
-    this.lines?.close();
-    this.child.kill();
   }
 
   private send(message: unknown): void {
@@ -180,10 +185,14 @@ export class CodexAppServerRpc {
     if (this.closed) return;
     this.closed = true;
     this.transportError = error;
+    for (const listener of this.disconnects) listener(error);
+    this.disconnects.clear();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.pending.clear();
+    this.lines?.close();
+    this.child.kill();
   }
 }

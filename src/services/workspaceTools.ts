@@ -66,8 +66,8 @@ export function resolveWorkspaceProjectPath(projectPath: string | undefined): st
   const requested = path.resolve(projectPath?.trim() || fallback);
   const allowed = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(folder.uri.fsPath));
   if (
-    (allowed.length === 0 && requested === path.resolve(fallback)) ||
-    allowed.some((root) => requested === root || requested.startsWith(`${root}${path.sep}`))
+    (allowed.length === 0 && path.relative(path.resolve(fallback), requested) === "") ||
+    allowed.some((root) => path.relative(root, requested) === "" || isPathInside(root, requested))
   ) {
     return requested;
   }
@@ -639,9 +639,8 @@ async function resolveReadableWorkspaceFile(
 }
 
 function isPathInside(root: string, candidate: string): boolean {
-  const normalizedRoot = process.platform === "win32" ? path.resolve(root).toLowerCase() : path.resolve(root);
-  const normalizedCandidate = process.platform === "win32" ? path.resolve(candidate).toLowerCase() : path.resolve(candidate);
-  return normalizedCandidate !== normalizedRoot && normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 async function workspaceReadBeforeDeadline<T>(operation: Promise<T>, deadline: number, message: string): Promise<T> {

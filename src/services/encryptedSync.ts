@@ -6,7 +6,7 @@ import * as zlib from "zlib";
 import * as vscode from "vscode";
 import type { SharedCodexManagerAccountJson } from "../core/types";
 import { AccountsRepository } from "../storage";
-import { CrossWindowOperationBusyError, runEncryptedSyncOperation } from "../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runEncryptedSyncOperation, runSharedMaintenance } from "../utils/crossWindowOperations";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { clearTokenAutomationError } from "../presentation/workbench/tokenAutomationState";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
@@ -926,9 +926,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
         await this.repo.flush?.();
       }
     };
-    // User-triggered sync runs immediately. Only background maintenance takes
-    // the cross-window lease, so a maintenance sync cannot block a click.
-    const task = interactive ? execute() : runEncryptedSyncOperation("Cross-PC claim sync", execute);
+    // Both explicit and background sync use the same shared lease. Explicit
+    // contention is surfaced by the initiating UI; maintenance reuses recent work.
+    const task = interactive
+      ? runEncryptedSyncOperation("Cross-PC claim sync", execute)
+      : runSharedMaintenance("accounts:encrypted-sync", "Cross-PC claim sync", 5000, execute).then((result) => result.ran ? result.value ?? false : this.pendingVaultMutationReasons.size === 0 && pendingEnablementAccountIds.size === 0);
     this.currentSyncTask = task;
     this.currentSyncAnnouncesSuccess = announceSuccess;
     this.currentSyncUsesSettingsSync = syncSettings;

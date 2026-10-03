@@ -14,7 +14,6 @@ import {
   prepareQuotaSummaryPanelForExtensionHostRestart,
   restoreQuotaSummaryPanelAfterExtensionHostRestart
 } from "../dashboard";
-import { unloadDisabledActiveAccountOnStartup } from "./startupAccountSafety";
 import {
   ensureCrossWindowAccountAssignment,
   isCrossWindowAccountModeEnabled,
@@ -113,9 +112,6 @@ export class AccountsWorkbench {
       void vscode.window.showInformationMessage(completedAutoSwitchNotice);
     }
     const repoInit = await measureStep("repo.init", async () => this.repo.init());
-    await measureStep("disabledActiveAccountFence", async () => {
-      await unloadDisabledActiveAccountOnStartup(this.context, this.repo);
-    });
     const encryptedSyncStartup = measureStep("encryptedSync.start", async () => {
       // Settings Sync is an optional transport. A broken provider, stale
       // secret, or unavailable sync service must never prevent the local

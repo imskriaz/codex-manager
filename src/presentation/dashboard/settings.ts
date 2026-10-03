@@ -9,7 +9,6 @@ import {
   normalizeAutoSwitchLockMinutes,
   normalizeAutoSwitchThreshold,
   normalizeAutoResetWeeklyThreshold,
-  normalizeCodexSessionDefault,
   normalizeCodexSessionTransport,
   normalizeDashboardTheme,
   normalizeQuotaWarningThreshold,
@@ -45,7 +44,6 @@ export async function handleDashboardSettingUpdate(
     case "crossWindowAccountModeEnabled":
     case "autoSwitchRefreshAllBeforeSwitchEnabled":
     case "autoResetEnabled":
-    case "backgroundTokenRefreshEnabled":
     case "cliIntegrationEnabled":
     case "quotaWarningEnabled":
     case "debugNetwork":
@@ -70,12 +68,6 @@ export async function handleDashboardSettingUpdate(
     case "codexAppRestartMode":
       if (value === "auto" || value === "manual") {
         await updateDashboardConfiguration(config, key, value, target);
-        updated = true;
-      }
-      break;
-    case "codexSessionDefault":
-      if (typeof value === "string" && (value === "webview" || value === "cli")) {
-        await updateDashboardConfiguration(config, key, normalizeCodexSessionDefault(value), target);
         updated = true;
       }
       break;
@@ -249,7 +241,6 @@ function resolveConfigurationTarget(
   // left a workspace-level override behind in a shared repository.
   if (
     key === "cliIntegrationEnabled" ||
-    key === "codexSessionDefault" ||
     key === "codexSessionTransport" ||
     key === "autoResumeEnabled" ||
     key === "privacyMode" ||

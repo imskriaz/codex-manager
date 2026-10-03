@@ -15,6 +15,7 @@ import {
 import { buildWorkbenchRefreshSignature } from "./refreshSignature";
 import { getTokenAutomationSnapshot } from "./tokenAutomationState";
 import { autoReloadWindowForAccount } from "../../application/accounts/switchEffects";
+import { isCrossWindowAccountModeEnabled } from "../../services/windowAccountMode";
 import { runCrossWindowExclusive } from "../../utils/crossWindowOperations";
 
 type RefreshView = {
@@ -156,12 +157,16 @@ export class WorkbenchRefreshCoordinator {
       }, 300);
     };
 
+    const reconcileTimer = setInterval(scheduleSync, 5000);
+    reconcileTimer.unref?.();
+
     watcher.onDidChange(scheduleSync, null, this.context.subscriptions);
     watcher.onDidCreate(scheduleSync, null, this.context.subscriptions);
     watcher.onDidDelete(scheduleSync, null, this.context.subscriptions);
 
     return {
       dispose: (): void => {
+        clearInterval(reconcileTimer);
         watcher.dispose();
         accountsIndexWatcher.dispose();
         if (syncTimer) {
@@ -250,7 +255,7 @@ export class WorkbenchRefreshCoordinator {
         return;
       }
 
-      if (!nextActive || previousObservedIdentity === nextObservedIdentity) {
+      if (!nextActive || (previousObservedIdentity === nextObservedIdentity && (isCrossWindowAccountModeEnabled() || !needsWindowReloadForAccount(nextActive.id)))) {
         return;
       }
 

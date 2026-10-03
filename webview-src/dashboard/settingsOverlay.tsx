@@ -14,7 +14,7 @@ import {
   SettingsThresholdBlock,
   SettingsToggleBlock
 } from "./components";
-import { formatTemplate, formatTimestamp } from "./helpers";
+import { formatTemplate } from "./helpers";
 import { renderRemoveIcon } from "./icons";
 import { useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
@@ -213,45 +213,6 @@ export function SettingsOverlay(props: {
                   </div>
                 </div>
                 <div class="settings-integration-grid">
-                  <SettingsSegmentBlock
-                    title={
-                      props.lang === "zh"
-                        ? "Codex 默认界面"
-                        : props.lang === "zh-hant"
-                          ? "Codex 預設介面"
-                          : "Codex default"
-                    }
-                    sub={
-                      props.lang === "zh"
-                        ? "选择会话列表打开会话和新聊天时使用的 Codex 界面。"
-                        : props.lang === "zh-hant"
-                          ? "選擇工作階段清單開啟工作階段與新聊天時使用的 Codex 介面。"
-                          : "Choose the Codex surface used when opening a session or starting a new chat from the session list."
-                    }
-                    className="settings-block-wide"
-                    options={[
-                      {
-                        key: "webview",
-                        title: "Webview",
-                        description: "Official Codex editor",
-                        active: (props.settings.codexSessionDefault ?? "webview") === "webview",
-                        onClick: () => patchAndSend("codexSessionDefault", "webview")
-                      },
-                      {
-                        key: "cli",
-                        title: "CLI",
-                        description: "Embedded dashboard workspace",
-                        active: props.settings.codexSessionDefault === "cli",
-                        onClick: () => patchAndSend("codexSessionDefault", "cli")
-                      }
-                    ]}
-                  >
-                    <div class="settings-note">
-                      {(props.settings.codexSessionDefault ?? "webview") === "webview"
-                        ? "Webview is the default. Session links open in the official Codex editor."
-                        : "CLI keeps the existing embedded session workspace behavior."}
-                    </div>
-                  </SettingsSegmentBlock>
                   <SettingsToggleBlock
                     title={
                       props.lang === "zh" ? "浏览器面板" : props.lang === "zh-hant" ? "瀏覽器面板" : "Web Dashboard"
@@ -479,7 +440,7 @@ export function SettingsOverlay(props: {
                     title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
                     sub={
                       props.copy.crossWindowAccountModeSub ??
-                      "Give each VS Code window an isolated Codex home so windows can run the same or different accounts independently. Disabled by default."
+                      "Give each VS Code window an isolated Codex home. When off, windows share one account and reload together after switching. Sync and quota refresh are coordinated in both modes."
                     }
                     enabled={props.settings.crossWindowAccountModeEnabled === true}
                     className="settings-block-wide"
@@ -488,7 +449,7 @@ export function SettingsOverlay(props: {
                     <div class="settings-note">
                       {props.settings.crossWindowAccountModeEnabled
                         ? "Enabled. New and reloaded windows load accounts independently."
-                        : "Disabled. Account switching continues to use the existing behavior."}
+                        : "Disabled. Windows share the active account and reload together when it changes."}
                     </div>
                   </SettingsToggleBlock>
                 </div>
@@ -622,33 +583,6 @@ export function SettingsOverlay(props: {
                   {props.settings.hourlyQuotaControlEnabled
                     ? props.copy.hourlyQuotaControlOnDesc
                     : props.copy.hourlyQuotaControlOffDesc}
-                </div>
-              </SettingsToggleBlock>
-              <SettingsToggleBlock
-                title={props.copy.tokenAutomationTitle}
-                sub={props.copy.tokenAutomationSub}
-                enabled={props.settings.backgroundTokenRefreshEnabled}
-                onToggle={(enabled) => patchAndSend("backgroundTokenRefreshEnabled", enabled)}
-              >
-                <div class={`settings-stack ${props.settings.backgroundTokenRefreshEnabled ? "" : "is-hidden"}`}>
-                  <div class="settings-note-list">
-                    <div class="settings-note-item">
-                      <span>{props.copy.tokenAutomationLastCheck}</span>
-                      <strong>{formatTimestamp(props.tokenAutomation.lastCheckAt, props.copy.never)}</strong>
-                    </div>
-                    <div class="settings-note-item">
-                      <span>{props.copy.tokenAutomationLastRefresh}</span>
-                      <strong>{formatTimestamp(props.tokenAutomation.lastRefreshAt, props.copy.never)}</strong>
-                    </div>
-                    <div class="settings-note-item">
-                      <span>{props.copy.tokenAutomationNextCheck}</span>
-                      <strong>{formatTimestamp(props.tokenAutomation.nextCheckAt, props.copy.never)}</strong>
-                    </div>
-                    <div class="settings-note-item">
-                      <span>{props.copy.tokenAutomationLastFailure}</span>
-                      <strong>{props.tokenAutomation.lastFailureMessage ?? props.copy.never}</strong>
-                    </div>
-                  </div>
                 </div>
               </SettingsToggleBlock>
               <SettingsToggleBlock

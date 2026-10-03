@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 describe("dashboard accessibility and interaction flow", () => {
   it("keeps modal focus contained and supports Escape dismissal", () => {
     const primitives = readFileSync("webview-src/dashboard/primitives.tsx", "utf8");
+    expect(primitives).toContain("useLayoutEffect(() => {");
+    expect(primitives).not.toContain("const focusFrame");
     expect(primitives).toContain('event.key === "Escape"');
     expect(primitives).toContain('event.key !== "Tab"');
     expect(primitives).toContain('role="dialog"');

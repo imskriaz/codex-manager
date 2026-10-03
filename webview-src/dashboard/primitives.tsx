@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
-import { useEffect, useRef } from "preact/hooks";
+import { useLayoutEffect, useRef } from "preact/hooks";
 
 const MODAL_FOCUSABLE = [
   "a[href]",
@@ -16,20 +16,17 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) {
       return;
     }
 
     previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusFrame = window.requestAnimationFrame(() => {
-      const modal = modalRef.current;
-      const firstFocusable = modal?.querySelector<HTMLElement>(MODAL_FOCUSABLE);
-      (firstFocusable ?? modal)?.focus();
-    });
+    const modal = modalRef.current;
+    const firstFocusable = modal?.querySelector<HTMLElement>(MODAL_FOCUSABLE);
+    (firstFocusable ?? modal)?.focus();
 
     return () => {
-      window.cancelAnimationFrame(focusFrame);
       const previouslyFocused = previouslyFocusedRef.current;
       if (previouslyFocused?.isConnected) {
         window.requestAnimationFrame(() => previouslyFocused.focus());

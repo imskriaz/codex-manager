@@ -323,6 +323,39 @@ export function runEncryptedSyncOperation<T>(operationLabel: string, task: () =>
   return runCrossWindowExclusive(ENCRYPTED_SYNC_OPERATION_KEY, operationLabel, task);
 }
 
+/** A completed maintenance request is shared even when window timers differ.
+ * Only successful work writes the marker; failures remain retryable. */
+export async function runSharedMaintenance<T>(
+  operationKey: string,
+  operationLabel: string,
+  cooldownMs: number,
+  task: () => Promise<T>
+): Promise<{ ran: boolean; value?: T }> {
+  return runCrossWindowExclusive(operationKey, operationLabel, async () => {
+    const marker = sharedStorageRootPath
+      ? path.join(sharedStorageRootPath, `maintenance-${crypto.createHash("sha256").update(operationKey).digest("hex")}.json`)
+      : undefined;
+    if (marker) {
+      try {
+        const { completedAt } = JSON.parse(await fs.readFile(marker, "utf8")) as { completedAt?: unknown };
+        const age = typeof completedAt === "number" ? Date.now() - completedAt : Infinity;
+        if (age >= 0 && age < cooldownMs) return { ran: false };
+      } catch { /* Missing or interrupted marker: retry under the shared lease. */ }
+    }
+    const value = await task();
+    if (marker) {
+      const temporary = `${marker}.tmp-${process.pid}-${crypto.randomUUID()}`;
+      try {
+        await fs.writeFile(temporary, JSON.stringify({ completedAt: Date.now() }), { mode: 0o600 });
+        await fs.rename(temporary, marker);
+      } catch (error) {
+        console.warn("[codexManager] maintenance cooldown could not be persisted", error);
+      } finally { await fs.rm(temporary, { force: true }).catch(() => undefined); }
+    }
+    return { ran: true, value };
+  });
+}
+
 function isAlreadyExistsError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === "EEXIST";
 }

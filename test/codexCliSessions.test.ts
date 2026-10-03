@@ -1,7 +1,8 @@
 import { mkdtemp, mkdir, open, readFile, readdir, rm, truncate, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import * as vscode from "vscode";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   parseCodexAppServerThreadItems,
   getCodexCliPathCandidates,
@@ -19,6 +20,10 @@ import {
 
 const sessionId = "01a04882-d037-7a42-ad24-9afb61901188";
 const roots: string[] = [];
+
+beforeEach(() => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "codexSessionTransport" ? "cli" : fallback } as vscode.WorkspaceConfiguration);
+});
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -102,11 +107,31 @@ describe("Codex session integration", () => {
     try {
       await expect(startCodexCliSession({ text: "Create the session", projectPath: process.cwd() })).resolves.toBe(sessionId);
       await expect(readFile(marker, "utf8")).resolves.toContain("exec --json --color never --skip-git-repo-check -");
+      await expect.poll(async () => (await readCodexCliSessionSummary(sessionId, root))?.status).toBe("idle");
     } finally {
       if (previousPath === undefined) delete process.env["CODEX_CLI_PATH"];
       else process.env["CODEX_CLI_PATH"] = previousPath;
       if (previousMarker === undefined) delete process.env["CODEX_MARKER"];
       else process.env["CODEX_MARKER"] = previousMarker;
+    }
+  });
+
+  it("opens a new chat before its first turn finishes and makes that turn stoppable", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-start-live-"));
+    roots.push(root);
+    const script = path.join(root, "codex.js");
+    const previousPath = process.env["CODEX_CLI_PATH"];
+    const previousHome = process.env["CODEX_HOME"];
+    process.env["CODEX_CLI_PATH"] = script;
+    process.env["CODEX_HOME"] = root;
+    await writeFile(script, `process.stdout.write(JSON.stringify({type:"thread.started",thread_id:${JSON.stringify(sessionId)}})+"\\n"); process.stdin.resume(); setTimeout(() => process.exit(0), 60000);`, "utf8");
+    try {
+      await expect(startCodexCliSession({ text: "Create the session", projectPath: process.cwd() })).resolves.toBe(sessionId);
+      expect(await cancelCodexCliSessionTurn(sessionId)).toBe(true);
+      await expect.poll(async () => (await readCodexCliSessionSummary(sessionId, root))?.status).toBe("idle");
+    } finally {
+      if (previousPath === undefined) delete process.env["CODEX_CLI_PATH"]; else process.env["CODEX_CLI_PATH"] = previousPath;
+      if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
     }
   });
 

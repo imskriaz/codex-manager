@@ -39,6 +39,46 @@ describe("Codex session auto resume", () => {
     expect(state.context.workspaceState.update).toHaveBeenCalledWith(AUTO_RESUME_SESSION_IDS_KEY, ids);
   });
 
+  it("reports an editor timeout and continues opening the remaining sessions", async () => {
+    vi.useFakeTimers();
+    try {
+      const state = createContext(["session-1", "session-2"]);
+      const open = vi.fn((id: string) => id === "session-1" ? new Promise<void>(() => {}) : Promise.resolve());
+      const pending = resumePersistedCodexSessions(state.context, open);
+      await vi.advanceTimersByTimeAsync(30_000);
+      const result = await pending;
+      expect(result.opened).toBe(1);
+      expect(result.failed[0]?.message).toContain("30 seconds");
+      expect(open).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("clears stale selections before a failed metadata read", async () => {
+    const state = createContext(["stale-session"]);
+    await expect(persistRunningCodexSessions(state.context, async () => { throw new Error("read failed"); })).rejects.toThrow("read failed");
+    expect(state.read()).toBeUndefined();
+  });
+
+  it("clears old selections when no active-goal parent remains", async () => {
+    const state = createContext(["old-session"]);
+    await expect(persistRunningCodexSessions(state.context, async () => [])).resolves.toEqual([]);
+    expect(state.read()).toBeUndefined();
+  });
+
+  it("reports storage failure before claiming sessions were preserved", async () => {
+    const state = createContext();
+    state.context.workspaceState.update.mockRejectedValue(new Error("storage full"));
+    await expect(persistRunningCodexSessions(state.context, async () => ["session-1"])).rejects.toThrow("storage full");
+  });
+
+  it("does not open sessions when consuming storage fails", async () => {
+    const state = createContext(["session-1"]);
+    state.context.workspaceState.update.mockRejectedValue(new Error("storage unavailable"));
+    const open = vi.fn();
+    await expect(resumePersistedCodexSessions(state.context, open)).rejects.toThrow("storage unavailable");
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("clears stale state without reading sessions when auto resume is disabled", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((_key: string, fallback?: unknown) => fallback)

@@ -10,6 +10,7 @@ import { disposePersistentLogging, registerPersistentLogging } from "./utils/per
 import { enableTransientVscodeNotices } from "./utils/notificationMirror";
 import { getCodexManagerStorageRoot } from "./utils/storageRoot";
 import { scheduleAutomaticExtensionHostRefresh } from "./utils/extensionHostRecovery";
+import { scheduleExtensionHostReload } from "./application/accounts/switchEffects";
 import {
   initializeCrossWindowAccountMode,
   disposeCrossWindowAccountMode
@@ -47,6 +48,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     console.error("[codexManager] parallel window initialization failed", error);
     void vscode.window.showWarningMessage(`Parallel window accounts could not initialize: ${detail}`);
   }
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration("codexManager.crossWindowAccountModeEnabled")) {
+      // Configuration changes reach every extension host, including windows
+      // without an open dashboard. Apply isolation consistently in all of them.
+      scheduleExtensionHostReload(undefined, 300, "Parallel window account mode changed");
+    }
+  }));
   // Build the status entry before the remaining asynchronous setup so every
   // window has immediate visual feedback.
   workbench = new AccountsWorkbench(context);

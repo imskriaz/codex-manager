@@ -2,9 +2,13 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
+import { normalizeCodexSessionTransport } from "../infrastructure/config/extensionSettings";
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { createHash } from "crypto";
 import * as readline from "readline";
+import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
+import { prepareChatInput, type ChatAttachment } from "../domain/chatAttachments";
+import { appServerChatInput, withCliImageAttachments } from "./codexChatAttachments";
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts } from "./codexAppServerPrompts";
 import type {
@@ -57,8 +61,10 @@ const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 // `cx/gpt-5.2-codex`). They are passed as argv values, never shell text.
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,127}$/i;
 const REASONING_EFFORT_PATTERN = /^(minimal|low|medium|high|xhigh|max|ultra)$/;
+const recentNewSessions = new Map<string, { summary: DashboardCliSessionSummary; text: string }>();
+const newSessionFailures = new Map<string, Error>();
 const activeCliTurns = new Map<string, ChildProcessWithoutNullStreams>();
-const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string }>();
+const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean }>();
 let runningTurnWrite: Promise<void> = Promise.resolve();
 let cliAvailabilityCache: { key: string; available: boolean; checkedAt: number } | undefined;
 let cliAvailabilityProbe: Promise<boolean> | undefined;
@@ -91,6 +97,9 @@ const cliTranscriptMetadataCache = new Map<
   {
     projectPath?: string;
     sessionSurface?: DashboardCliSessionSummary["sessionSurface"];
+    subAgent?: boolean;
+    parentSessionId?: string;
+    agentName?: string;
     expiresAt: number;
   }
 >();
@@ -122,28 +131,59 @@ export async function readCodexCliSessions(
 ): Promise<DashboardCliSessionSummary[]> {
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
     try {
-      return await readAppServerSessions(limit);
+      return await readResilientSessionList(codexHome, limit);
     } catch (error) {
       recordPersistentEvent("error", "session-list", "App-server session list unavailable", { reason: error instanceof Error ? error.message : String(error) });
-      throw error;
     }
   }
-  const entries = await readCodexCliSessionIndex(codexHome);
-  if (!entries.length) return [];
+  return readLocalSessionList(codexHome, limit);
+}
+
+async function readLocalSessionList(codexHome: string, limit: number): Promise<DashboardCliSessionSummary[]> {
+  const state = await readStateSessionRecords(codexHome);
+  const index = await readCodexCliSessionIndex(codexHome).catch((error: unknown) => {
+    if (!state.length) throw error;
+    recordPersistentEvent("warning", "session-list", "Session index unavailable; reading state metadata", { reason: error instanceof Error ? error.message : String(error) });
+    return [] as CliSessionIndexEntry[];
+  });
+  const records = new Map(state.map((record) => [record.id, record]));
+  const entries = new Map(index.map((entry) => [entry.id, entry]));
+  for (const record of state) if (!entries.has(record.id)) entries.set(record.id, { id: record.id, thread_name: record.title, updated_at: record.updatedAt });
+  if (!entries.size) return [];
   const archivedIds = await readArchivedSessionIds(codexHome);
-  const cappedLimit = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit)));
-  const activeEntries = entries.filter((entry) => !archivedIds.has(entry.id)).slice(0, cappedLimit);
-  const archivedEntries = entries.filter((entry) => archivedIds.has(entry.id)).slice(0, cappedLimit);
-  const visibleEntries = [...activeEntries, ...archivedEntries];
-  // Only scan transcripts that can actually be rendered. Large histories may
-  // contain thousands of index entries while the dashboard shows a bounded
-  // number of active and archived sessions.
+  for (const record of state) if (record.archived) archivedIds.add(record.id);
+  const cappedLimit = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit) || MAX_VISIBLE_CLI_SESSIONS));
+  const ordered = [...entries.values()].sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
+  const child = (entry: CliSessionIndexEntry): boolean => Boolean(readSubAgentMetadata(records.get(entry.id)?.source).subAgent);
+  const visibleEntries = [...ordered.filter((entry) => !child(entry) && !archivedIds.has(entry.id)).slice(0, cappedLimit), ...ordered.filter((entry) => !child(entry) && archivedIds.has(entry.id)).slice(0, cappedLimit), ...ordered.filter(child).slice(0, cappedLimit)];
   const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(visibleEntries.map((entry) => entry.id)));
-  return Promise.all(
-    visibleEntries.map((entry) =>
-      toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id))
-    )
-  );
+  return Promise.all(visibleEntries.map(async (entry) => {
+    const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id));
+    const record = records.get(entry.id);
+    return { ...summary, ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
+  }));
+}
+
+type StateSessionRecord = { id: string; title?: string; updatedAt?: string; archived: boolean; source?: unknown; cwd?: string };
+async function readStateSessionRecords(home: string, id?: string): Promise<StateSessionRecord[]> {
+  let db: { prepare(sql: string): { all(...args: string[]): Record<string, unknown>[] }; close(): void } | undefined;
+  try {
+    const names = (await fs.readdir(home)).filter((name) => /^state_[0-9]+\.sqlite$/.test(name));
+    names.sort((a, b) => Number(b.match(/[0-9]+/)?.[0]) - Number(a.match(/[0-9]+/)?.[0]));
+    if (!names[0]) return [];
+    const moduleName = "node:sqlite";
+    const sqlite = await import(moduleName) as { DatabaseSync: new (file: string, options: { readOnly: boolean }) => NonNullable<typeof db> };
+    db = new sqlite.DatabaseSync(path.join(home, names[0]), { readOnly: true });
+    const rows = id ? db.prepare("SELECT id, title, updated_at, archived, source, cwd FROM threads WHERE id = ?").all(id)
+      : db.prepare("SELECT id, title, updated_at, archived, source, cwd FROM threads ORDER BY updated_at DESC LIMIT 2000").all();
+    return rows.flatMap((row) => {
+      if (typeof row["id"] !== "string" || !SESSION_ID_PATTERN.test(row["id"])) return [];
+      return [{ id: row["id"], title: typeof row["title"] === "string" ? row["title"] : undefined,
+        updatedAt: typeof row["updated_at"] === "number" && Number.isFinite(row["updated_at"]) ? new Date(row["updated_at"] * 1000).toISOString() : undefined,
+        archived: row["archived"] === 1, source: row["source"], cwd: typeof row["cwd"] === "string" ? row["cwd"] : undefined }];
+    });
+  } catch { return []; } // Optional metadata; old hosts and unavailable databases use JSONL.
+  finally { db?.close(); }
 }
 
 export async function readCodexCliSessionSummary(
@@ -151,22 +191,30 @@ export async function readCodexCliSessionSummary(
   codexHome = resolveCodexHome()
 ): Promise<DashboardCliSessionSummary | undefined> {
   validateSessionId(sessionId);
-  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
+  const recent = recentNewSessions.get(sessionId)?.summary;
+  if (recent && (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId))) return recent;
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli" && !(await readCodexCliSessionIndex(codexHome)).some((entry) => entry.id === sessionId)) {
     try {
-      const sessions = await readAppServerSessions(MAX_VISIBLE_CLI_SESSIONS);
-      return sessions.find((session) => session.id === sessionId);
+      const sessions = await readResilientSessionList(codexHome, MAX_VISIBLE_CLI_SESSIONS);
+      const session = sessions.find((candidate) => candidate.id === sessionId);
+      if (session) return session;
     } catch (error) {
       recordPersistentEvent("error", "session-read", "App-server session summary unavailable", { reason: error instanceof Error ? error.message : String(error), sessionRef: toSessionLogRef(sessionId) });
-      throw error;
     }
   }
-  const entry = (await readCodexCliSessionIndex(codexHome)).find((candidate) => candidate.id === sessionId);
-  if (!entry) return undefined;
+  const state = (await readStateSessionRecords(codexHome, sessionId))[0];
+  const entry = (await readCodexCliSessionIndex(codexHome)).find((candidate) => candidate.id === sessionId)
+    ?? (state ? { id: state.id, thread_name: state.title, updated_at: state.updatedAt } : undefined);
+  if (!entry) {
+    const recent = recentNewSessions.get(sessionId)?.summary;
+    return recent ? { ...recent, status: activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId) ? "running" : "idle", canStop: activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId) } : undefined;
+  }
   const [archivedIds, transcriptPaths] = await Promise.all([
     readArchivedSessionIds(codexHome),
     findCliSessionTranscripts(codexHome, new Set([sessionId]))
   ]);
-  return toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id));
+  const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id) || Boolean(state?.archived), transcriptPaths.get(entry.id));
+  return { ...summary, ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
@@ -232,9 +280,62 @@ async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIn
 
 function configuredSessionTransport(): "app-server-stdio" | "cli" {
   const value = vscode.workspace.getConfiguration("codexManager").get<string>("codexSessionTransport");
-  // VS Code supplies the manifest's stdio default in a real extension host.
-  // Keep the standalone/test-host fallback process-free when that manifest is absent.
-  return value === "app-server-stdio" ? "app-server-stdio" : "cli";
+  return normalizeCodexSessionTransport(value);
+}
+
+// Coalesce refreshes; bounded local reads keep the list usable during startup.
+const sessionListReads = new Map<string, { pending?: Promise<DashboardCliSessionSummary[]>; sessions?: DashboardCliSessionSummary[]; expiresAt: number; retryAt: number; local?: boolean }>();
+async function readResilientSessionList(codexHome: string, limit: number): Promise<DashboardCliSessionSummary[]> {
+  const key = JSON.stringify([path.resolve(codexHome), process.env["CODEX_CLI_PATH"], vscode.workspace.getConfiguration("codexManager").get("codexCliPath")]);
+  let state = sessionListReads.get(key);
+  if (!state) {
+    state = { expiresAt: 0, retryAt: 0 };
+    sessionListReads.set(key, state);
+    if (sessionListReads.size > 8) sessionListReads.delete(sessionListReads.keys().next().value!);
+  }
+  if (state.sessions && state.expiresAt > Date.now()) return capSessionList(state.sessions, limit);
+  if (!state.pending && state.retryAt <= Date.now()) {
+    const current = state;
+    current.pending = readAppServerSessions(MAX_VISIBLE_CLI_SESSIONS).then((sessions) => {
+      current.local = false;
+      current.sessions = sessions;
+      current.expiresAt = Date.now() + 3000;
+      current.retryAt = 0;
+      return sessions;
+    }).catch((error: unknown) => {
+      current.retryAt = Date.now() + 30_000;
+      recordPersistentEvent("warning", "session-list", "Live discovery delayed; using local history", { reason: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }).finally(() => { current.pending = undefined; });
+    void current.pending.catch(() => undefined);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (state.pending) {
+      const sessions = await Promise.race([
+        state.pending.catch(() => undefined),
+        new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), 1500); })
+      ]);
+      if (sessions) return capSessionList(sessions, limit);
+    }
+    try {
+      state.local = true;
+      const local = await readLocalSessionList(codexHome, limit);
+      return local.length ? local : capSessionList(state.sessions ?? [], limit);
+    } catch (error) {
+      if (state.sessions) return capSessionList(state.sessions, limit);
+      throw error;
+    }
+  } finally { if (timer) clearTimeout(timer); }
+}
+export function getCodexSessionReadNotice(): { level: "warning"; message: string } | undefined {
+  const key = JSON.stringify([path.resolve(resolveCodexHome()), process.env["CODEX_CLI_PATH"], vscode.workspace.getConfiguration("codexManager").get("codexCliPath")]);
+  return sessionListReads.get(key)?.local ? { level: "warning", message: "Sessions refreshed from local history. Live discovery is reconnecting; local messages still update automatically." } : undefined;
+}
+
+function capSessionList(sessions: DashboardCliSessionSummary[], limit: number): DashboardCliSessionSummary[] {
+  const capped = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit) || MAX_VISIBLE_CLI_SESSIONS));
+  return [...sessions.filter((session) => !session.subAgent && !session.archived).slice(0, capped), ...sessions.filter((session) => !session.subAgent && session.archived).slice(0, capped), ...sessions.filter((session) => session.subAgent).slice(0, capped)];
 }
 
 async function readAppServerSessions(limit: number): Promise<DashboardCliSessionSummary[]> {
@@ -242,23 +343,36 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
   try {
     const capped = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit)));
     const sessions: DashboardCliSessionSummary[] = [];
+    // Codex defaults to interactive sources, excluding the agents needed by
+    // the inspector. Separate caps keep busy agents from crowding out chats.
+    const childSources = ["subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther"];
     for (const archived of [false, true]) {
-      const result = await rpc.request<{ data?: unknown[]; nextCursor?: string | null }>("thread/list", {
-        archived,
-        limit: capped,
-        sortKey: "updated_at",
-        sortDirection: "desc"
-      });
-      for (const thread of result.data ?? []) {
-        const mapped = mapAppServerThread(thread, archived);
-        if (mapped) sessions.push(mapped);
+      for (const sourceKinds of [undefined, childSources]) {
+        try {
+          const result = await rpc.request<{ data?: unknown[]; nextCursor?: string | null }>("thread/list", {
+            archived, limit: capped, sortKey: "updated_at", sortDirection: "desc", useStateDbOnly: true,
+            ...(sourceKinds ? { sourceKinds } : {})
+          });
+          for (const thread of result.data ?? []) {
+            const mapped = mapAppServerThread(thread, archived);
+            if (mapped && !sessions.some((session) => session.id === mapped.id)) sessions.push(mapped);
+          }
+        } catch (error) {
+          if (!sourceKinds) throw error;
+          // Older app-servers can still provide parent chats and local agents.
+          const local = await readLocalSessionList(resolveCodexHome(), capped).catch(() => []);
+          for (const child of local.filter((session) => session.subAgent && session.archived === archived)) {
+            if (!sessions.some((session) => session.id === child.id)) sessions.push(child);
+          }
+        }
       }
     }
     const codexHome = resolveCodexHome();
     const locks = new Set(await fs.readdir(path.join(codexHome, SESSION_LOCK_DIRECTORY))
       .catch(() => [] as string[]));
     const lockedIds = new Set(sessions.filter((session) => !session.archived && locks.has(`${session.id}.lock`)).map((session) => session.id));
-    const metadataIds = new Set(sessions.filter((session) => !session.projectPath || !session.sessionSurface).map((session) => session.id));
+    const stateRecords = new Map((await readStateSessionRecords(codexHome)).map((record) => [record.id, record]));
+    const metadataIds = new Set(sessions.filter((session) => !session.subAgent || !session.parentSessionId || !session.projectPath || !session.sessionSurface).map((session) => session.id));
     const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set([...lockedIds, ...metadataIds]));
     const enriched = await Promise.all(sessions.map(async (session) => {
       const metadata = metadataIds.has(session.id)
@@ -266,13 +380,16 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
         : undefined;
       const withMetadata = {
         ...session,
+        ...readSubAgentMetadata(session),
+        ...readSubAgentMetadata(stateRecords.get(session.id)?.source),
+        ...(metadata?.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
         ...(!session.projectPath && metadata?.projectPath ? { projectPath: metadata.projectPath } : {}),
         ...(!session.sessionSurface && metadata?.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {})
       };
       if (session.archived) return withMetadata;
       const locked = lockedIds.has(session.id);
       const canStop = activeAppServerTurns.has(session.id);
-      const running = canStop || (locked && await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id)));
+      const running = session.status === "running" || canStop || (locked && await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id)));
       return {
         ...withMetadata,
         status: running ? "running" as const : "idle" as const,
@@ -302,6 +419,7 @@ function mapAppServerThread(value: unknown, archived: boolean): DashboardCliSess
   const surface: DashboardCliSessionSummary["sessionSurface"] = source.includes("vscode") ? "vscode" : source.includes("cli") || source.includes("exec") ? "cli" : source ? "other" : undefined;
   return {
     id,
+    ...readSubAgentMetadata(thread),
     title: normalizeSessionTitle(title, id),
     ...(updatedAt ? { updatedAt } : {}),
     status: running ? "running" : "idle",
@@ -323,12 +441,13 @@ async function toCliSessionSummary(
   const locked = !archived && await fs.stat(path.join(codexHome, SESSION_LOCK_DIRECTORY, `${entry.id}.lock`))
     .then((stat) => stat.isFile())
     .catch(() => false);
-  const canStop = running && activeCliTurns.has(entry.id);
+  const canStop = running && (activeCliTurns.has(entry.id) || activeAppServerTurns.has(entry.id));
   return {
     id: entry.id,
     title: normalizeSessionTitle(entry.thread_name, entry.id),
     updatedAt: normalizeTimestamp(entry.updated_at),
     status: running ? "running" : "idle",
+    ...(metadata.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
     ...(metadata.projectPath ? { projectPath: metadata.projectPath } : {}),
     ...(metadata.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {}),
     ...(locked ? { locked: true } : {}),
@@ -341,7 +460,7 @@ async function readCliSessionMetadata(
   codexHome: string,
   sessionId: string,
   knownTranscriptPath?: string
-): Promise<{ projectPath?: string; sessionSurface?: DashboardCliSessionSummary["sessionSurface"] }> {
+): Promise<{ projectPath?: string; sessionSurface?: DashboardCliSessionSummary["sessionSurface"] } & SubAgentMetadata> {
   const transcriptPath = knownTranscriptPath ?? (await findCliSessionTranscript(codexHome, sessionId));
   if (!transcriptPath) return {};
   const metadataKey = path.resolve(transcriptPath);
@@ -358,6 +477,7 @@ async function readCliSessionMetadata(
   // after the dashboard is reopened without scanning the whole transcript.
   let projectPath: string | undefined;
   let sessionSurface: DashboardCliSessionSummary["sessionSurface"];
+  let agentMetadata: SubAgentMetadata = {};
   for (const line of raw.split(/\r?\n/).slice(0, 12)) {
     try {
       const value = JSON.parse(line) as {
@@ -372,6 +492,7 @@ async function readCliSessionMetadata(
       };
       const candidates: Array<Record<string, unknown>> = [value.payload ?? {}, value as Record<string, unknown>];
       for (const candidate of candidates) {
+        agentMetadata = { ...agentMetadata, ...readSubAgentMetadata(candidate) };
         if (!sessionSurface) sessionSurface = resolveCliSessionSurface(candidate["originator"], candidate["source"]);
         for (const key of ["cwd", "projectPath", "project_path", "workdir", "workspacePath"]) {
           const candidatePath = candidate[key];
@@ -393,7 +514,12 @@ async function readCliSessionMetadata(
       try { projectPath = (JSON.parse(match[1]!) as string).trim().slice(0, 1024); } catch { /* malformed prefix */ }
     }
   }
-  const metadata = { projectPath, sessionSurface, expiresAt: Date.now() + CLI_TRANSCRIPT_METADATA_CACHE_TTL_MS };
+  if (!agentMetadata.subAgent && /"source"\s*:\s*(?:\{\s*"sub[_-]?agent"|"sub[_-]?agent)/i.test(raw)) {
+    const parent = raw.match(/"parent_thread_id"\s*:\s*"([0-9a-f-]{36})"/i)?.[1];
+    const name = raw.match(/"agent_nickname"\s*:\s*"([^"\\]{1,160})"/)?.[1];
+    agentMetadata = { subAgent: true, ...(parent ? { parentSessionId: parent } : {}), ...(name ? { agentName: name } : {}) };
+  }
+  const metadata = { projectPath, sessionSurface, ...agentMetadata, expiresAt: Date.now() + CLI_TRANSCRIPT_METADATA_CACHE_TTL_MS };
   cliTranscriptMetadataCache.set(metadataKey, metadata);
   while (cliTranscriptMetadataCache.size > 64) {
     const oldest = cliTranscriptMetadataCache.keys().next().value as string | undefined;
@@ -455,13 +581,17 @@ export async function readCodexCliComposerConfig(codexHome = resolveCodexHome())
 export async function sendCodexCliSessionMessage(options: {
   sessionId: string;
   text: string;
+  attachments?: ChatAttachment[];
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
 }): Promise<void> {
   validateSessionId(options.sessionId);
-  const text = options.text.trim();
+  newSessionFailures.delete(options.sessionId);
+  const prepared = prepareChatInput(options.text, options.attachments);
+  const text = prepared.text;
+  options = { ...options, ...prepared };
   if (!text) throw new Error("Write a message before sending it to Codex.");
   if (text.length > MAX_CLI_PROMPT_CHARS) {
     throw new Error(`The message is too long. Keep it under ${MAX_CLI_PROMPT_CHARS.toLocaleString()} characters.`);
@@ -477,6 +607,7 @@ export async function sendCodexCliSessionMessage(options: {
     await sendAppServerSessionMessage(options);
     return;
   }
+  await withCliImageAttachments(options.attachments, async (imagePaths) => {
   await runCliSessionMutation(options.sessionId, "Codex turn", async () => {
     if (activeCliTurns.has(options.sessionId)) {
       throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
@@ -496,14 +627,16 @@ export async function sendCodexCliSessionMessage(options: {
     if (options.model) args.push("--model", options.model);
     if (options.reasoningEffort) args.push("--config", `model_reasoning_effort=\"${options.reasoningEffort}\"`);
     if (options.sandboxMode) args.push("--sandbox", options.sandboxMode);
-    args.push("resume", options.sessionId, "-");
+    args.push("resume", options.sessionId);
+    for (const imagePath of imagePaths) args.push("--image", imagePath);
+    args.push("-");
 
     await new Promise<void>((resolve, reject) => {
       let child: ChildProcessWithoutNullStreams;
       try {
         child = spawn(executable.command, [...executable.prefixArgs, ...args], {
           cwd,
-          env: process.env,
+          env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
           windowsHide: true,
           shell: executable.shell,
           stdio: ["pipe", "pipe", "pipe"]
@@ -687,6 +820,7 @@ export async function sendCodexCliSessionMessage(options: {
       }
     });
   });
+  });
 }
 
 async function readLiveCliModels(codexHome: string): Promise<DashboardCliComposerConfig["models"]> {
@@ -725,14 +859,36 @@ async function readLiveCliModels(codexHome: string): Promise<DashboardCliCompose
   return cliModelListProbe;
 }
 
-export async function startCodexCliSession(options: {
+export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSession>[0]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let createdId: string | undefined;
+    void runNewCodexCliSession(options, (id) => {
+      createdId = id;
+      newSessionFailures.delete(id);
+      recentNewSessions.set(id, { summary: { id, title: options.text.trim().slice(0, 80) || "New Codex chat", status: "running", canStop: true, runningBy: "Codex Manager", projectPath: resolveCliProjectPath(options.projectPath), updatedAt: new Date().toISOString(), archived: false }, text: options.text });
+      if (recentNewSessions.size > 30) recentNewSessions.delete(recentNewSessions.keys().next().value!);
+      resolve(id);
+    }).then(resolve, (error: unknown) => {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      if (!createdId) { reject(failure); return; }
+      if (!(failure instanceof CodexCliTurnCancelledError)) newSessionFailures.set(createdId, failure);
+      if (newSessionFailures.size > 30) newSessionFailures.delete(newSessionFailures.keys().next().value!);
+      recordPersistentEvent("error", "session-start", "New session first turn failed", { sessionRef: toSessionLogRef(createdId), reason: failure.message });
+    });
+  });
+}
+
+async function runNewCodexCliSession(options: {
   text: string;
+  attachments?: ChatAttachment[];
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
-}): Promise<string> {
-  const text = options.text.trim();
+}, onStarted: (sessionId: string) => void): Promise<string> {
+  const prepared = prepareChatInput(options.text, options.attachments);
+  const text = prepared.text;
+  options = { ...options, ...prepared };
   if (!text) throw new Error("Write a message before starting a Codex chat.");
   if (text.length > MAX_CLI_PROMPT_CHARS) {
     throw new Error(`The message is too long. Keep it under ${MAX_CLI_PROMPT_CHARS.toLocaleString()} characters.`);
@@ -745,8 +901,9 @@ export async function startCodexCliSession(options: {
     throw new Error("The selected access mode is invalid.");
   }
   if (configuredSessionTransport() !== "cli") {
-    return startAppServerSession(options);
+    return startAppServerSession(options, onStarted);
   }
+  return withCliImageAttachments(options.attachments, async (imagePaths) => {
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
   const executable = await resolveCodexCliExecutable();
@@ -754,13 +911,14 @@ export async function startCodexCliSession(options: {
   if (options.model) args.push("--model", options.model);
   if (options.reasoningEffort) args.push("--config", `model_reasoning_effort=\"${options.reasoningEffort}\"`);
   if (options.sandboxMode) args.push("--sandbox", options.sandboxMode);
+  for (const imagePath of imagePaths) args.push("--image", imagePath);
   args.push("-");
   return new Promise<string>((resolve, reject) => {
     let child: ChildProcessWithoutNullStreams;
     try {
       child = spawn(executable.command, [...executable.prefixArgs, ...args], {
         cwd,
-        env: process.env,
+        env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
         windowsHide: true,
         shell: executable.shell,
         stdio: ["pipe", "pipe", "pipe"]
@@ -772,18 +930,39 @@ export async function startCodexCliSession(options: {
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let createdId: string | undefined;
+    const startedAt = Date.now();
     const finish = (callback: () => void): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (createdId) {
+        if (activeCliTurns.get(createdId) === child) activeCliTurns.delete(createdId);
+        void forgetTrackedCliTurn(createdId, startedAt).catch(() => undefined);
+      }
       callback();
     };
-    const timeout = setTimeout(() => {
+    let timeout = setTimeout(() => {
       child.kill();
-      finish(() => reject(new Error("Codex did not start the new session within 15 minutes. Try again.")));
-    }, CLI_TURN_TIMEOUT_MS);
+      finish(() => reject(new Error("Codex did not start the new session within 30 seconds. Try again.")));
+    }, 30_000);
     child.stdout.on("data", (chunk: Buffer) => {
       if (Buffer.byteLength(stdout, "utf8") < MAX_CLI_OUTPUT_BYTES) stdout += chunk.toString("utf8");
+      if (createdId) return;
+      for (const line of stdout.split(/\r?\n/)) {
+        try {
+          const event = JSON.parse(line) as Record<string, unknown>;
+          const id = event["thread_id"] ?? event["threadId"] ?? (event["thread"] as Record<string, unknown> | undefined)?.["id"];
+          if (typeof id !== "string" || !SESSION_ID_PATTERN.test(id)) continue;
+          createdId = id;
+          activeCliTurns.set(id, child);
+          void rememberTrackedCliTurn({ id, projectPath: cwd, startedAt, ownerPid: process.pid, childPid: child.pid }).catch(() => undefined);
+          clearTimeout(timeout);
+          timeout = setTimeout(() => { child.kill(); finish(() => reject(new Error("Codex did not finish within 15 minutes. The turn was stopped; try a smaller request."))); }, CLI_TURN_TIMEOUT_MS);
+          onStarted(id);
+          break;
+        } catch { /* Wait for a complete JSON event. */ }
+      }
     });
     child.stderr.on("data", (chunk: Buffer) => {
       if (Buffer.byteLength(stderr, "utf8") < MAX_CLI_OUTPUT_BYTES) stderr += chunk.toString("utf8");
@@ -830,21 +1009,24 @@ export async function startCodexCliSession(options: {
       );
     }
   });
+  });
 }
 
 async function startAppServerSession(options: {
   text: string;
+  attachments?: ChatAttachment[];
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
-}): Promise<string> {
+}, onStarted: (sessionId: string) => void): Promise<string> {
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
   const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
   const detachPrompts = attachCodexAppServerPrompts(rpc, "");
   let threadId: string | undefined;
   try {
+    recordPersistentEvent("info", "session-start", "App-server thread/start requested", { transport: "app-server-stdio" });
     const result = await rpc.request<{ thread?: { id?: unknown } }>("thread/start", {
       cwd,
       ...(options.model ? { model: options.model } : {}),
@@ -857,7 +1039,7 @@ async function startAppServerSession(options: {
     activeAppServerTurns.set(threadId, { rpc });
     await rpc.startAndWaitForTurn(threadId, {
       threadId: candidateThreadId,
-      input: [{ type: "text", text: options.text.trim(), text_elements: [] }],
+      input: appServerChatInput(options.text.trim(), options.attachments),
       cwd,
       ...(options.model ? { model: options.model } : {}),
       ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
@@ -865,6 +1047,7 @@ async function startAppServerSession(options: {
     }, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(candidateThreadId);
       if (active) active.turnId = turnId;
+      onStarted(candidateThreadId);
     });
     return threadId;
   } catch (error) {
@@ -880,11 +1063,13 @@ async function startAppServerSession(options: {
 async function sendAppServerSessionMessage(options: {
   sessionId: string;
   text: string;
+  attachments?: ChatAttachment[];
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
 }): Promise<void> {
+  return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
   if (activeAppServerTurns.has(options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
@@ -895,7 +1080,7 @@ async function sendAppServerSessionMessage(options: {
     await rpc.request("thread/resume", { threadId: options.sessionId, cwd });
     await rpc.startAndWaitForTurn(options.sessionId, {
       threadId: options.sessionId,
-      input: [{ type: "text", text: options.text.trim(), text_elements: [] }],
+      input: appServerChatInput(options.text.trim(), options.attachments),
       cwd,
       ...(options.model ? { model: options.model } : {}),
       ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
@@ -905,13 +1090,14 @@ async function sendAppServerSessionMessage(options: {
       if (active) active.turnId = turnId;
     });
   } catch (error) {
-    if (error instanceof CodexAppServerTurnInterruptedError) throw new CodexCliTurnCancelledError();
+    if (error instanceof CodexAppServerTurnInterruptedError || activeAppServerTurns.get(options.sessionId)?.cancelRequested) throw new CodexCliTurnCancelledError();
     throw error;
   } finally {
     detachPrompts();
     activeAppServerTurns.delete(options.sessionId);
     rpc.close();
   }
+  });
 }
 
 function toAppServerSandbox(mode: DashboardCliSandboxMode, cwd: string): Record<string, unknown> {
@@ -924,7 +1110,9 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
   validateSessionId(sessionId);
   const activeAppServer = activeAppServerTurns.get(sessionId);
   if (activeAppServer) {
-    if (!activeAppServer.turnId) return false;
+    activeAppServer.cancelRequested = true;
+    if (!activeAppServer.turnId) { activeAppServer.rpc.close(); return true; }
+    recordPersistentEvent("info", "session-stop", "App-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: "app-server-stdio" });
     await activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000);
     return true;
   }
@@ -1017,7 +1205,7 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
 
 export async function deleteCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
-  if (activeCliTurns.has(sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+  if (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
     if (activeCliTurns.has(sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
     if (configuredSessionTransport() === "cli") {
@@ -1035,7 +1223,15 @@ export async function readCodexCliSessionMessages(
   if (!SESSION_ID_PATTERN.test(sessionId)) {
     throw new Error("The session identifier is invalid.");
   }
-  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
+  const firstTurnFailure = newSessionFailures.get(sessionId);
+  if (firstTurnFailure) return [
+    { id: `initial-${sessionId}`, kind: "message", role: "user", text: recentNewSessions.get(sessionId)?.text ?? "" },
+    { id: `initial-error-${sessionId}`, kind: "error", status: "failed", text: `The first response failed: ${firstTurnFailure.message}. Retry your message.` }
+  ];
+  if (recentNewSessions.has(sessionId) && !(await findCliSessionTranscript(codexHome, sessionId))) {
+    return [{ id: `initial-${sessionId}`, kind: "message", role: "user", text: recentNewSessions.get(sessionId)!.text }];
+  }
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli" && !(await findCliSessionTranscript(codexHome, sessionId))) {
     try {
       const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), resolveCliProjectPath(undefined));
       try {
@@ -1047,7 +1243,7 @@ export async function readCodexCliSessionMessages(
       }
     } catch (error) {
       recordPersistentEvent("error", "session-viewer", "App-server thread read unavailable", { sessionRef: toSessionLogRef(sessionId), reason: error instanceof Error ? error.message : String(error) });
-      throw error;
+      // Live transport failures must not prevent opening persisted messages.
     }
   }
   const sessionRef = toSessionLogRef(sessionId);
@@ -1058,7 +1254,11 @@ export async function readCodexCliSessionMessages(
   });
   try {
     const transcriptPath = await findCliSessionTranscript(codexHome, sessionId);
-    if (!transcriptPath) throw new Error("The session transcript was not found on this PC.");
+    if (!transcriptPath) {
+      const recent = recentNewSessions.get(sessionId);
+      if (recent) return [{ id: `initial-${sessionId}`, kind: "message", role: "user", text: recent.text }];
+      throw new Error("The session transcript was not found on this PC.");
+    }
     const result = await readCachedCliTranscriptMessages(transcriptPath);
     recordPersistentEvent("info", "session-viewer", "Workspace session read completed", {
       sessionRef,
@@ -1725,7 +1925,10 @@ function resolveCliProjectPath(projectPath: string | undefined): string {
   const allowed = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(folder.uri.fsPath));
   if (
     allowed.length === 0 ||
-    allowed.some((root) => requested === root || requested.startsWith(`${root}${path.sep}`))
+    allowed.some((root) => {
+      const relative = path.relative(root, requested);
+      return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+    })
   ) {
     return requested;
   }
@@ -2007,7 +2210,7 @@ function probeCodexCliAvailability(executable: CodexCliExecutable): Promise<bool
     try {
       child = spawn(executable.command, [...executable.prefixArgs, "--version"], {
         cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
-        env: process.env,
+        env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
         windowsHide: true,
         shell: executable.shell,
         stdio: "ignore"
@@ -2032,7 +2235,7 @@ async function runCodexCliUtility(args: string[], label: string): Promise<void> 
     try {
       child = spawn(executable.command, [...executable.prefixArgs, ...args], {
         cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
-        env: process.env,
+        env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
         windowsHide: true,
         shell: executable.shell
       });
@@ -2078,7 +2281,7 @@ async function runCodexAppServerRequest<T = unknown>(
     try {
       child = spawn(executable.command, [...executable.prefixArgs, "app-server", "--stdio"], {
         cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
-        env: process.env,
+        env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
         windowsHide: true,
         shell: executable.shell,
         stdio: ["pipe", "pipe", "pipe"]
@@ -2155,7 +2358,7 @@ async function runCodexAppServerRequest<T = unknown>(
       method: "initialize",
       id: 1,
       params: {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.0.0" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.14" },
         capabilities: null
       }
     });
@@ -2414,6 +2617,7 @@ async function isCliSessionRunning(
   sessionId: string,
   knownTranscriptPath?: string
 ): Promise<boolean> {
+  if (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId)) return true;
   const lockPath = path.join(codexHome, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
   const stat = await fs.stat(lockPath).catch(() => undefined);
   if (!stat) return false;
@@ -2435,7 +2639,7 @@ async function isCliSessionRunning(
  * implementation repeated the recursive walk once per session, which made a
  * large session history turn a dashboard refresh into O(sessions * files).
  */
-async function findCliSessionTranscripts(
+export async function findCliSessionTranscripts(
   codexHome: string,
   sessionIds: ReadonlySet<string>
 ): Promise<Map<string, string>> {
@@ -2526,7 +2730,7 @@ async function findCliSessionTranscript(codexHome: string, sessionId: string): P
       !entry.isSymbolicLink() && entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(sessionId)
   );
   const result = archivedEntry ? path.join(codexHome, "archived_sessions", archivedEntry.name) : undefined;
-  cliTranscriptPathCache.set(cacheKey, { path: result, expiresAt: Date.now() + CLI_TRANSCRIPT_PATH_CACHE_TTL_MS });
+  cliTranscriptPathCache.set(cacheKey, { path: result, expiresAt: Date.now() + (result ? CLI_TRANSCRIPT_PATH_CACHE_TTL_MS : 2000) });
   return result;
 }
 

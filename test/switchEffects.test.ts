@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   autoReloadWindowForAccount,
+  reloadWindowNow,
   promptWindowReloadForAccount,
   scheduleExtensionHostReload
 } from "../src/application/accounts/switchEffects";
@@ -11,7 +12,21 @@ describe("account switch reload effects", () => {
   beforeEach(() => {
     vi.mocked(vscode.commands.executeCommand).mockReset();
     vi.mocked(vscode.window.showInformationMessage).mockReset();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "crossWindowAccountModeEnabled" ? true : fallback } as vscode.WorkspaceConfiguration);
     setCurrentWindowRuntimeAccountId("current-account");
+  });
+
+  it("schedules automatic reload without a second prompt for shared-account windows", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as vscode.WorkspaceConfiguration);
+      vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+      await expect(promptWindowReloadForAccount({ id: "shared-next", email: "next@example.com" })).resolves.toBe(true);
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+    } finally { vi.useRealTimers(); }
   });
 
   it("restarts the extension host without reloading the full window when possible", async () => {
@@ -46,11 +61,17 @@ describe("account switch reload effects", () => {
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(
       1,
       "codexManager.prepareDashboardForExtensionHostRestart",
-      { autoResume: false }
+      { autoResume: true }
     );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(4, "workbench.action.reloadWindow");
+  });
+
+  it("captures goal-filtered sessions for the manual Reload button", async () => {
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+    await expect(reloadWindowNow()).resolves.toBe(true);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
   });
 
   it("continues a requested reload if clearing stale notifications fails", async () => {
@@ -69,6 +90,7 @@ describe("account switch reload effects", () => {
   it("reports a delayed unload reload failure to both its host callback and VS Code", async () => {
     vi.useFakeTimers();
     const onError = vi.fn();
+    const secondHostError = vi.fn();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command: string) => {
@@ -79,10 +101,13 @@ describe("account switch reload effects", () => {
     });
 
     scheduleExtensionHostReload(onError, 10);
+    scheduleExtensionHostReload(secondHostError, 10);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(10);
 
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: false });
     expect(onError).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));
+    expect(secondHostError).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));
     vi.useRealTimers();
   });

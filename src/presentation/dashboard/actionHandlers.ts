@@ -16,6 +16,7 @@ import {
   readCodexCliComposerConfig,
   readCodexCliSessionSummary,
   readCodexCliSessions,
+  getCodexSessionReadNotice,
   isCodexCliAvailable,
   readCodexCliSessionMessages,
   renameCodexCliSession,
@@ -111,6 +112,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "startCodexCliSession",
   "listCodexCliSessions",
   "getCodexCliSessionMessages",
+  "getCodexSubAgentMessages",
   "sendCodexCliSessionMessage",
   "cancelCodexCliSessionTurn",
   "respondCodexServerRequest",
@@ -638,7 +640,6 @@ async function runDashboardAction(
         }
         await ctx.repo.switchAccount(currentAccount.id, {
           forceTokenRefresh:
-            getCodexManagerConfiguration().get<boolean>("backgroundTokenRefreshEnabled", false) &&
             currentAccount.tokenRefreshEnabled === true
         });
         clearTokenAutomationError(currentAccount.id);
@@ -716,25 +717,14 @@ async function runDashboardAction(
         } finally {
           ctx.schedulePublishState();
         }
-        if (!enabled && account.isActive) {
-          return {
-            actionPrompts: [
-              {
-                kind: "disabledActiveAccount" as const,
-                accountId: account.id,
-                message: `${account.email} is disabled. Unload Codex auth now? Later keeps it loaded only until restart.`,
-                unloadLabel: "Unload",
-                keepUsingLabel: "Later"
-              }
-            ]
-          };
-        }
         return {
           notice: {
             level: "info" as const,
             message: enabled
               ? `${account.email} was enabled on this PC. Sync is queued.`
-              : `${account.email} was disabled on this PC. Sync is queued.`
+              : account.isActive
+                ? `${account.email} was disabled on this PC. It stays loaded until you manually choose Unload. Sync is queued.`
+                : `${account.email} was disabled on this PC. Sync is queued.`
           }
         };
       }
@@ -763,6 +753,13 @@ async function runDashboardAction(
       return handleStartCodexCliSession(payload, ctx.getRemoteCliSessions);
     case "listCodexCliSessions":
       return handleListCodexCliSessions(ctx.context, ctx.getRemoteCliSessions);
+    case "getCodexSubAgentMessages": {
+      ensureCliIntegrationEnabled();
+      if (!payload?.sessionId) throw new Error("Choose a sub-agent from the parent session first.");
+      const agent = await readCodexCliSessionSummary(payload.sessionId);
+      if (!agent?.subAgent) throw new Error("This sub-agent was not found. Refresh the parent session and try again.");
+      return { cliSubAgentSession: agent, cliSubAgentMessages: await readCodexCliSessionMessages(agent.id) };
+    }
     case "getCodexCliSessionMessages":
       return handleGetCodexCliSessionMessages(payload?.sessionId, payload?.projectPath);
     case "sendCodexCliSessionMessage":
@@ -1224,8 +1221,6 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "dashboardTheme",
     "codexAppRestartEnabled",
     "codexAppRestartMode",
-    "backgroundTokenRefreshEnabled",
-    "codexSessionDefault",
     "codexSessionTransport",
     "autoRefreshMinutes",
     "autoRefreshCurrentMinutes",
@@ -1694,7 +1689,8 @@ async function handleListCodexCliSessions(
     cliSessions: [...stabilizedLocalSessions, ...remoteSessions].sort((left, right) =>
       String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
     ),
-    cliComposerConfig
+    cliComposerConfig,
+    notice: getCodexSessionReadNotice()
   };
 }
 
@@ -1708,6 +1704,7 @@ async function handleStartCodexCliSession(
   }
   const sessionId = await startCodexCliSession({
     text: payload?.text ?? "",
+    attachments: payload?.attachments,
     model: payload?.model,
     reasoningEffort: payload?.reasoningEffort,
     sandboxMode: payload?.sandboxMode,
@@ -1718,7 +1715,7 @@ async function handleStartCodexCliSession(
   let cliSessions = [...localSessions, ...remoteSessions].sort((left, right) =>
     String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
   );
-  const existingSession = cliSessions.find((session) => session.id === sessionId);
+  const existingSession = cliSessions.find((session) => session.id === sessionId) ?? await readCodexCliSessionSummary(sessionId);
   const visibleSession = existingSession ? {
     ...existingSession,
     projectPath: existingSession.projectPath ?? payload?.projectPath?.trim()
@@ -1733,7 +1730,10 @@ async function handleStartCodexCliSession(
   return {
     cliSessions,
     cliSession: visibleSession,
-    cliSessionMessages: payload?.text?.trim() ? await readCodexCliSessionMessages(sessionId) : [],
+    cliSessionMessages: payload?.text?.trim() ? await readCodexCliSessionMessages(sessionId).catch((error: unknown) => [
+      { id: `initial-${sessionId}`, kind: "message" as const, role: "user" as const, text: payload.text! },
+      { id: `initial-error-${sessionId}`, kind: "error" as const, status: "failed" as const, text: error instanceof Error ? error.message : String(error) }
+    ]) : [],
     cliComposerConfig,
     notice: { level: "info" as const, message: "New Codex chat is ready." }
   };
@@ -1774,6 +1774,7 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
   await sendCodexCliSessionMessage({
     sessionId: payload.sessionId,
     text: payload.text ?? "",
+    attachments: payload.attachments,
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
     sandboxMode: payload.sandboxMode,
@@ -1813,7 +1814,7 @@ async function handleCancelCodexCliSessionTurn(sessionId: string | undefined) {
   return {
     notice: {
       level: "warning" as const,
-      message: "Stop signal sent. The active turn will report cancellation when the CLI exits."
+      message: "Stop requested. Waiting for Codex to end the turn."
     }
   };
 }

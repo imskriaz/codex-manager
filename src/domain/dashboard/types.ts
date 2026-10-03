@@ -12,9 +12,7 @@ export type DashboardSettingKey =
   | "privacyMode"
   | "codexAppRestartEnabled"
   | "codexAppRestartMode"
-  | "backgroundTokenRefreshEnabled"
   | "cliIntegrationEnabled"
-  | "codexSessionDefault"
   | "codexSessionTransport"
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
@@ -49,11 +47,9 @@ export interface DashboardSettings {
   privacyMode?: boolean;
   codexAppRestartEnabled: boolean;
   codexAppRestartMode: "auto" | "manual";
-  backgroundTokenRefreshEnabled: boolean;
   /** Master gate for local Codex session access. */
   cliIntegrationEnabled?: boolean;
   /** Default dashboard session surface. */
-  codexSessionDefault?: DashboardCodexSessionDefault;
   /** Backend transport for embedded local Codex sessions. */
   codexSessionTransport?: DashboardCodexSessionTransport;
   autoRefreshMinutes: number;
@@ -97,7 +93,6 @@ export interface DashboardSettings {
 }
 
 export type DashboardThemeOption = "auto" | "dark" | "light";
-export type DashboardCodexSessionDefault = "webview" | "cli";
 export type DashboardCodexSessionTransport = "app-server-stdio" | "cli";
 
 export interface DashboardCopy {
@@ -560,6 +555,7 @@ export type DashboardActionName =
   | "openNewCodexWebview"
   | "startCodexCliSession"
   | "listCodexCliSessions"
+  | "getCodexSubAgentMessages"
   | "getCodexCliSessionMessages"
   | "sendCodexCliSessionMessage"
   | "cancelCodexCliSessionTurn"
@@ -595,6 +591,7 @@ export interface DashboardActionPayload {
   accountIds?: string[];
   jsonText?: string;
   text?: string;
+  attachments?: import("../chatAttachments").ChatAttachment[];
   url?: string;
   path?: string;
   filename?: string;
@@ -660,6 +657,9 @@ export interface DashboardCliSessionSummary {
   /** Whether this Codex Manager process owns the running turn and can stop it. */
   canStop?: boolean;
   remote?: boolean;
+  subAgent?: boolean;
+  parentSessionId?: string;
+  agentName?: string;
 }
 
 export interface DashboardCliSessionMessage {
@@ -827,6 +827,8 @@ export interface DashboardActionResultPayload {
   cliSessions?: DashboardCliSessionSummary[];
   cliSession?: DashboardCliSessionSummary;
   cliSessionMessages?: DashboardCliSessionMessage[];
+  cliSubAgentSession?: DashboardCliSessionSummary;
+  cliSubAgentMessages?: DashboardCliSessionMessage[];
   cliComposerConfig?: DashboardCliComposerConfig;
   workspaceEnvironment?: DashboardWorkspaceEnvironment;
   workspaceFiles?: DashboardWorkspaceFileEntry[];

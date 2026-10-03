@@ -7,8 +7,7 @@ import {
   isHourlyQuotaControlEnabled,
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
-  normalizeAutoResetWeeklyThreshold,
-  normalizeCodexSessionDefault
+  normalizeAutoResetWeeklyThreshold
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
@@ -106,22 +105,17 @@ describe("5-hour quota control defaults", () => {
     ).toEqual({ hourly: 10, weekly: 1 });
   });
 
-  it("defaults the reset plan threshold and Codex session surface correctly", () => {
+  it("defaults the reset threshold and keeps workspace settings limited to enablement and transport", () => {
     const manifest = JSON.parse(readFileSync("package.json", "utf8"));
     expect(manifest.contributes.configuration.properties["codexManager.autoResetWeeklyThreshold"]).toMatchObject({
       minimum: 0,
       default: 0
     });
-    expect(manifest.contributes.configuration.properties["codexManager.codexSessionDefault"]).toMatchObject({
-      enum: ["webview", "cli"],
-      default: "webview"
-    });
+    expect(manifest.contributes.configuration.properties["codexManager.codexSessionDefault"]).toBeUndefined();
+    expect(manifest.contributes.configuration.properties["codexManager.codexSessionTransport"].default).toBe("app-server-stdio");
     expect(normalizeAutoResetWeeklyThreshold(-1)).toBe(0);
     expect(normalizeAutoResetWeeklyThreshold(0)).toBe(0);
     expect(normalizeAutoResetWeeklyThreshold(101)).toBe(100);
     expect(normalizeAutoResetWeeklyThreshold(Number.NaN)).toBe(0);
-    expect(normalizeCodexSessionDefault(undefined)).toBe("webview");
-    expect(normalizeCodexSessionDefault("cli")).toBe("cli");
-    expect(normalizeCodexSessionDefault("unknown")).toBe("webview");
   });
 });

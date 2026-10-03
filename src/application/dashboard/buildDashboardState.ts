@@ -150,7 +150,7 @@ export async function buildDashboardState(
     encryptedSyncEnabledSessionCount: encryptedSyncStatus.enabledSessionCount,
     copy,
     tokenAutomation: {
-      enabled: settings.backgroundTokenRefreshEnabled,
+      enabled: accounts.some((account) => account.tokenRefreshEnabled === true),
       lastCheckAt: tokenAutomation.lastSweepAt,
       nextCheckAt: tokenAutomation.nextSweepAt,
       lastRefreshAt: tokenAutomation.lastSuccessAt,

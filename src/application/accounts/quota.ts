@@ -1,11 +1,12 @@
 import * as vscode from "vscode";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive, runSharedMaintenance } from "../../utils/crossWindowOperations";
+import { getCodexHomeStateKey } from "../../codex";
 import { createError } from "../../core";
 import { CodexManagerAccountRecord, CodexTokens } from "../../core/types";
 import {
   getCodexManagerConfiguration,
   getAutoRefreshMinutes,
   getQuotaWarningThresholds,
-  isBackgroundTokenRefreshEnabled,
   normalizeAutoSwitchThreshold,
   normalizeAutoResetWeeklyThreshold
 } from "../../infrastructure/config/extensionSettings";
@@ -100,13 +101,28 @@ export async function refreshSingleQuota(
   if (options.announce === false) {
     const existing = silentQuotaRefreshes.get(accountId);
     if (existing) return existing;
-    const task = runAndFlush(repo, () => refreshSingleQuotaInternal(repo, view, accountId, options)).finally(() => {
+    const task = coordinatedQuotaRefresh(repo, view, accountId, options).finally(() => {
       if (silentQuotaRefreshes.get(accountId) === task) silentQuotaRefreshes.delete(accountId);
     });
     silentQuotaRefreshes.set(accountId, task);
     return task;
   }
-  return runAndFlush(repo, () => refreshSingleQuotaInternal(repo, view, accountId, options));
+  return coordinatedQuotaRefresh(repo, view, accountId, options);
+}
+
+async function coordinatedQuotaRefresh(repo: AccountsRepository, view: RefreshView, accountId: string, options: RefreshSingleQuotaOptions): Promise<QuotaRefreshResult> {
+  const run = (): Promise<QuotaRefreshResult> => runAndFlush(repo, () => refreshSingleQuotaInternal(repo, view, accountId, options));
+  const key = `network:account-quota:${accountId}`;
+  if (options.announce !== false) return runCrossWindowExclusive(key, "Quota refresh", run);
+  const result = await runSharedMaintenance(key, "Quota refresh", 15_000, run);
+  if (result.ran) return result.value!;
+  // Another window completed the maintenance request. Re-read its durable
+  // result instead of rotating OAuth tokens and querying quota again.
+  repo.invalidateCachedIndex?.();
+  const account = await repo.getAccount(accountId);
+  view.refresh();
+  if (!account) throw createError.accountNotFound(accountId);
+  return { quota: account.quotaSummary, error: account.quotaError };
 }
 
 async function refreshSingleQuotaInternal(
@@ -140,7 +156,7 @@ async function refreshSingleQuotaInternal(
   }
 
   const allowTokenRefresh =
-    (options.allowTokenRefresh ?? isBackgroundTokenRefreshEnabled()) && account.tokenRefreshEnabled === true;
+    (options.allowTokenRefresh ?? true) && account.tokenRefreshEnabled === true;
   let result = await refreshQuota(account, tokens, forceRefresh, {
     allowTokenRefresh
   });
@@ -231,7 +247,7 @@ async function refreshImportedAccountQuotaInternal(
   }
 
   const result = await refreshQuota(account, tokens, true, {
-    allowTokenRefresh: isBackgroundTokenRefreshEnabled() && account.tokenRefreshEnabled === true
+    allowTokenRefresh: account.tokenRefreshEnabled === true
   });
   const updatedAccount = await repo.updateQuota(
     accountId,
@@ -399,11 +415,15 @@ export async function maybeAutoSwitchForActiveQuota(
   // Rescue override is a local, passphrase-gated escape hatch for the shared
   // enablement registry. While it is active, automatic switching must be
   // allowed to consider accounts claimed by another PC as well.
-  const task = evaluateAutoSwitchForActiveQuota(repo, view, options);
+  const task = runCrossWindowExclusive(`automation:account-switch:${getCodexHomeStateKey()}`, "Automatic account selection", async () => {
+    repo.invalidateCachedIndex?.();
+    return evaluateAutoSwitchForActiveQuota(repo, view, options);
+  });
   autoSwitchInFlight = task;
   try {
     return await task;
   } catch (error) {
+    if (error instanceof CrossWindowOperationBusyError && !options.userInitiated) return false;
     showAutoSwitchFailure(error);
     return false;
   } finally {
@@ -840,7 +860,7 @@ async function refreshAllBeforeAutoSwitchIfDue(
         continue;
       }
       const refreshed = await refreshSingleQuotaSafely(repo, view, account.id, {
-        allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
+        allowTokenRefresh: true,
         forceRefresh: true,
         announceFailure: false,
         skipDisabled: true,

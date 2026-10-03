@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
 import type {
-  DashboardCodexSessionDefault,
   DashboardCodexSessionTransport,
   DashboardSettings,
   DashboardThemeOption
@@ -24,9 +23,7 @@ export class ExtensionSettingsStore {
       privacyMode: config.get<boolean>("privacyMode", false),
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "manual",
-      backgroundTokenRefreshEnabled: config.get<boolean>("backgroundTokenRefreshEnabled", false),
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
-      codexSessionDefault: normalizeCodexSessionDefault(config.get<string>("codexSessionDefault", "webview")),
       codexSessionTransport: normalizeCodexSessionTransport(config.get<string>("codexSessionTransport", "app-server-stdio")),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15)),
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
@@ -80,10 +77,6 @@ export function normalizeDashboardTheme(value: string | undefined): DashboardThe
   return value === "dark" || value === "light" || value === "auto" ? value : "auto";
 }
 
-export function normalizeCodexSessionDefault(value: string | undefined): DashboardCodexSessionDefault {
-  return value === "cli" ? "cli" : "webview";
-}
-
 export function normalizeCodexSessionTransport(value: string | undefined): DashboardCodexSessionTransport {
   return value === "cli" ? value : "app-server-stdio";
 }
@@ -125,10 +118,6 @@ export function getAutoRefreshCurrentMinutes(): number {
 
 export function isAutoSwitchRefreshAllBeforeSwitchEnabled(): boolean {
   return getCodexManagerConfiguration().get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false);
-}
-
-export function isBackgroundTokenRefreshEnabled(): boolean {
-  return getCodexManagerConfiguration().get<boolean>("backgroundTokenRefreshEnabled", false);
 }
 
 export function isHourlyQuotaControlEnabled(): boolean {

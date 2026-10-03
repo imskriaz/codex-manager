@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.12",
+  "version": "1.2.14",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -104,16 +104,6 @@
           "scope": "machine",
           "markdownDescription": "Experimental Workspace: enable the dashboard workspace, local Codex CLI sessions, and terminal tools. Disabled by default. Auto Resume can read running session metadata independently when enabled."
         },
-        "codexManager.codexSessionDefault": {
-          "type": "string",
-          "scope": "machine",
-          "enum": [
-            "webview",
-            "cli"
-          ],
-          "default": "webview",
-          "markdownDescription": "Default surface used when opening sessions or starting a chat from the dashboard. `webview` uses the official Codex editor; `cli` keeps the embedded dashboard workspace."
-        },
         "codexManager.codexSessionTransport": {
           "type": "string",
           "scope": "machine",
@@ -123,11 +113,6 @@
           ],
           "default": "app-server-stdio",
           "markdownDescription": "Transport for embedded local Codex sessions. App-server stdio uses the supported thread/turn protocol; CLI uses the compatibility path. The selected transport is used directly and is never silently changed."
-        },
-        "codexManager.backgroundTokenRefreshEnabled": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Allow the extension to refresh saved account tokens in the background. Disabled by default; Codex manages its own token refresh unless you enable this."
         },
         "codexManager.autoSwitchEnabled": {
           "type": "boolean",
@@ -148,7 +133,7 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Experimental: preserve running Codex sessions in persistent workspace storage before an automatic reload and reopen them in VS Code after the reload completes. Works without enabling Session Integration."
+          "markdownDescription": "Experimental: set a goal in each session for automatic continuation. Preserve running sessions with active goals in the current workspace before Reload or an automatic reload and reopen them in VS Code afterward. Skip sub-agents. If goal detection is unavailable, reopen running parent sessions. Works without enabling Session Integration."
         },
         "codexManager.crossWindowAccountModeEnabled": {
           "type": "boolean",
@@ -365,7 +350,9 @@
     "test": "vitest run",
     "verify": "npm run lint && npm run typecheck:webview && tsc -p ./",
     "format": "prettier --write \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\""
+    "format:check": "prettier --check \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
+    "test:ui": "npm run build:webview && node tools/check-responsive-ui.mjs",
+    "test:ui:live": "node tools/check-live-ui.mjs"
   },
   "dependencies": {
     "mammoth": "^1.12.2",
@@ -398,6 +385,7 @@
     "codemirror": "^6.0.2",
     "eslint": "^10.5.0",
     "markdown-it": "^15.0.1",
+    "playwright": "^1.63.0",
     "preact": "^10.29.0",
     "prettier": "^3.2.5",
     "typescript": "^5.7.2",

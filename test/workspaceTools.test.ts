@@ -21,6 +21,19 @@ import {
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
 describe("workspace tools", () => {
+  it.skipIf(process.platform !== "win32")("accepts Windows workspace casing without allowing sibling projects", () => {
+    const restoreWorkspace = exposeWorkspaceRoot("D:\\Projects\\Codex-Manager");
+    try {
+      expect(resolveWorkspaceProjectPath("d:\\projects\\codex-manager")).toBe("d:\\projects\\codex-manager");
+      expect(resolveWorkspaceProjectPath("d:\\projects\\codex-manager\\src")).toContain("src");
+      expect(() => resolveWorkspaceProjectPath("D:\\Projects\\codex-manager-other")).toThrow(/open workspace folder/i);
+    } finally { restoreWorkspace(); }
+  });
+  it.skipIf(process.platform !== "win32")("allows projects under an open drive root", () => {
+    const restoreWorkspace = exposeWorkspaceRoot("D:\\");
+    try { expect(resolveWorkspaceProjectPath("d:\\Projects\\app")).toContain("Projects"); }
+    finally { restoreWorkspace(); }
+  });
   it("reads the selected project Git environment", async () => {
     const environment = await readWorkspaceEnvironment(process.cwd());
 

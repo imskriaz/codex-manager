@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
 import { needsTokenRefresh, refreshTokens } from "../auth/oauth";
-import { isBackgroundTokenRefreshEnabled } from "../infrastructure/config/extensionSettings";
 import { CodexManagerAccountRecord, CodexDailyUsageBreakdown, CodexDailyUsagePoint } from "../core/types";
 import { resolveAccountHealth, isHealthDismissed } from "../application/accounts/health";
 import { resolveSubscriptionDisplay } from "../application/dashboard/buildDashboardState";
@@ -188,7 +187,7 @@ async function getFreshUsageTokens(
   }
 
   const account = await repo.getAccount(accountId);
-  if (!isBackgroundTokenRefreshEnabled() || account?.tokenRefreshEnabled !== true) {
+  if (account?.tokenRefreshEnabled !== true) {
     return tokens;
   }
 

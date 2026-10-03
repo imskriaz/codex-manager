@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.2.12");
+    expect(manifest.version).toBe("1.2.14");
   });
 
   it("ships a Marketplace changelog", () => {
@@ -232,5 +232,14 @@ describe("extension manifest configuration", () => {
     );
     expect(properties?.["codexManager.fullCrossPcAccountSyncEnabled"]?.markdownDescription).toContain("tokens");
     expect(properties?.["codexManager.encryptedSyncScheduleMinutes"]).toBeUndefined();
+  });
+});
+
+
+describe("account-level token refresh control", () => {
+  it("does not expose the removed global token-refresh setting", () => {
+    const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    expect(manifest.contributes.configuration.properties["codexManager.backgroundTokenRefreshEnabled"]).toBeUndefined();
+    expect(fs.readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8")).not.toContain("backgroundTokenRefreshEnabled");
   });
 });

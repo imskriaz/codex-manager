@@ -1,60 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
-import type * as vscode from "vscode";
-import { unloadDisabledActiveAccountOnStartup } from "../src/presentation/workbench/startupAccountSafety";
-import { getCurrentWindowRuntimeAccountKey } from "../src/presentation/workbench/windowRuntimeAccount";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-describe("disabled active account startup safety", () => {
-  it("automatically unloads an account that stayed disabled across restart", async () => {
-    const update = vi.fn().mockResolvedValue(undefined);
-    const unload = vi.fn().mockResolvedValue(undefined);
-    const repo = {
-      listAccounts: vi
-        .fn()
-        .mockResolvedValue([{ id: "active", email: "active@example.com", isActive: true, enabled: false }]),
-      syncActiveAccountFromAuthFile: vi.fn().mockResolvedValue(undefined)
-    };
-    const context = { workspaceState: { update } } as unknown as vscode.ExtensionContext;
-
-    await expect(
-      unloadDisabledActiveAccountOnStartup(context, repo as never, unload, async () => "active")
-    ).resolves.toBe(true);
-
-    expect(unload).toHaveBeenCalledOnce();
-    expect(repo.syncActiveAccountFromAuthFile).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledWith(getCurrentWindowRuntimeAccountKey(), undefined);
+describe("authentication stays loaded until explicit unload", () => {
+  it("does not schedule unloading disabled authentication during activation or reload", () => {
+    const source = readFileSync(path.resolve(__dirname, "../src/presentation/workbench/accountsWorkbench.ts"), "utf8");
+    expect(source).not.toContain("unloadDisabledActiveAccountOnStartup");
+    expect(source).not.toContain("unloadAuthFile");
   });
-
-  it("leaves an enabled current account loaded", async () => {
-    const unload = vi.fn().mockResolvedValue(undefined);
-    const repo = {
-      listAccounts: vi
-        .fn()
-        .mockResolvedValue([{ id: "active", email: "active@example.com", isActive: true, enabled: true }]),
-      syncActiveAccountFromAuthFile: vi.fn()
-    };
-    const context = { workspaceState: { update: vi.fn() } } as unknown as vscode.ExtensionContext;
-
-    await expect(
-      unloadDisabledActiveAccountOnStartup(context, repo as never, unload, async () => "active")
-    ).resolves.toBe(false);
-    expect(unload).not.toHaveBeenCalled();
-    expect(repo.syncActiveAccountFromAuthFile).not.toHaveBeenCalled();
-  });
-
-  it("does not unload a different account because of stale index state", async () => {
-    const unload = vi.fn().mockResolvedValue(undefined);
-    const repo = {
-      listAccounts: vi.fn().mockResolvedValue([
-        { id: "old-active", email: "old@example.com", isActive: true, enabled: false },
-        { id: "loaded", email: "loaded@example.com", isActive: false, enabled: true }
-      ]),
-      syncActiveAccountFromAuthFile: vi.fn()
-    };
-    const context = { workspaceState: { update: vi.fn() } } as unknown as vscode.ExtensionContext;
-
-    await expect(
-      unloadDisabledActiveAccountOnStartup(context, repo as never, unload, async () => "loaded")
-    ).resolves.toBe(false);
-    expect(unload).not.toHaveBeenCalled();
+  it("explains that postponing an unload also preserves authentication across restart", () => {
+    const source = readFileSync(path.resolve(__dirname, "../webview-src/dashboard/main.tsx"), "utf8");
+    expect(source).toContain("stays loaded until you manually choose Unload, including after restart");
+    expect(source).not.toContain("unloaded automatically after restart");
   });
 });

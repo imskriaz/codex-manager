@@ -8,29 +8,35 @@ import {
   queueAccountSwitch
 } from "../../presentation/workbench/windowRuntimeAccount";
 import { getCodexAppRestartCopy, getCodexAppState, getCommandCopy, restartCodexAppIfInstalled } from "../../utils";
+import { isCrossWindowAccountModeEnabled } from "../../services/windowAccountMode";
 import { shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 
 const CODEX_APP_RESTART_MODE = "codexAppRestartMode";
 const CODEX_APP_RESTART_ENABLED = "codexAppRestartEnabled";
 let reloadPromptInFlight: Promise<boolean> | undefined;
 let scheduledExtensionHostReload: NodeJS.Timeout | undefined;
+const reloadFailureListeners = new Set<(message: string) => void>();
 
 export function scheduleExtensionHostReload(
   onError?: (message: string) => void,
   delayMs = 150,
-  changeDescription = "Codex credentials changed"
+  changeDescription = "Codex credentials changed",
+  autoResume = false
 ): NodeJS.Timeout {
+  if (onError) reloadFailureListeners.add(onError);
   if (scheduledExtensionHostReload) {
     return scheduledExtensionHostReload;
   }
   scheduledExtensionHostReload = setTimeout(() => {
     scheduledExtensionHostReload = undefined;
-    void reloadExtensionHostWithWindowFallback(false).catch((error: unknown) => {
+    const failureListeners = [...reloadFailureListeners];
+    reloadFailureListeners.clear();
+    void reloadExtensionHostWithWindowFallback(autoResume).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       const message = `${changeDescription}, but VS Code could not reload: ${detail}. Run Developer: Reload Window and try again.`;
       console.error("[codexManager] unable to reload after Codex credentials changed", error);
       void vscode.window.showErrorMessage(message);
-      onError?.(message);
+      for (const listener of failureListeners) listener(message);
     });
   }, delayMs);
   return scheduledExtensionHostReload;
@@ -80,6 +86,14 @@ export async function promptWindowReloadForAccount(
     return false;
   }
 
+  if (!isCrossWindowAccountModeEnabled()) {
+    // Shared auth is a unit: the initiating window reloads automatically;
+    // every other window observes the same auth-file change and reloads too.
+    scheduleExtensionHostReload(undefined, 300, "Shared Codex account changed", true);
+    clearQueuedAccountSwitch();
+    return true;
+  }
+
   // The dashboard will render the Reload/Later choice in its action area.
   // Returning false preserves the queued reload state without opening a
   // second, detached native prompt.
@@ -100,7 +114,7 @@ export async function promptWindowReloadForAccount(
     );
     if (choice === copy.reloadNow) {
       clearQueuedAccountSwitch();
-      await reloadExtensionHostWithWindowFallback(false);
+      await reloadExtensionHostWithWindowFallback(true);
       return true;
     }
     const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
@@ -131,7 +145,7 @@ export async function autoReloadWindowForAccount(accountId?: string): Promise<bo
 /** Reload the current VS Code window regardless of the queued-account marker. */
 export async function reloadWindowNow(): Promise<boolean> {
   clearQueuedAccountSwitch();
-  await reloadExtensionHostWithWindowFallback(false);
+  await reloadExtensionHostWithWindowFallback(true);
   return true;
 }
 
@@ -140,6 +154,11 @@ export function deferWindowReloadForAccount(accountId: string): boolean {
   if (!needsWindowReloadForAccount(accountId)) {
     clearQueuedAccountSwitch();
     return false;
+  }
+  if (!isCrossWindowAccountModeEnabled()) {
+    scheduleExtensionHostReload(undefined, 300, "Shared Codex account changed", true);
+    clearQueuedAccountSwitch();
+    return true;
   }
   const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
   if (currentWindowAccountId && currentWindowAccountId !== accountId) {

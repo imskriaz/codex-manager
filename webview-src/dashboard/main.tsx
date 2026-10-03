@@ -35,6 +35,7 @@ import {
 import {
   countAccountEnablement,
   getSensitiveDisplayValue,
+  isOpenWorkspaceProject,
   isAccountAttention,
   isAccountClaimedByAnotherDevice,
   normalizeThresholds,
@@ -179,6 +180,9 @@ function App() {
   const onboardingVisibilityResolvedRef = useRef(false);
   const [browserActionRequest, setBrowserActionRequest] = useState<BrowserActionRequest>();
   const [cliSessions, setCliSessions] = useState<DashboardCliSessionSummary[]>([]);
+  const [agentMessages, setAgentMessages] = useState<Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>>({});
+  const messageRequests = useRef(new Map<string, string>());
+  const agentRequests = useRef(new Map<string, string>());
   const [cliSessionMessages, setCliSessionMessages] = useState<DashboardCliSessionMessage[]>([]);
   const [selectedCliSession, setSelectedCliSession] = useState<DashboardCliSessionSummary>();
   const [selectedPeerId, setSelectedPeerId] = useState<string>("local");
@@ -282,6 +286,15 @@ function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const handleActionTimeout = useCallback(
     (action: DashboardActionName, requestId: string) => {
+      if (action === "getCodexCliSessionMessages") {
+        messageRequests.current.delete(requestId);
+        setCliSessionMessagesError("Messages did not refresh in time. Try Refresh conversation.");
+      }
+      if (action === "getCodexSubAgentMessages") {
+        const id = agentRequests.current.get(requestId);
+        agentRequests.current.delete(requestId);
+        if (id) setAgentMessages((current) => ({ ...current, [id]: { ...current[id], loading: false, error: "Agent messages timed out. Try Refresh." } }));
+      }
       if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
         explicitCliRefreshRef.current = undefined;
         setCliSessionFeedback({
@@ -365,6 +378,7 @@ function App() {
   );
   const requestCliSessionMessages = useCallback(
     (sessionId: string, targetDeviceId?: string, force = false): void => {
+      if ([...messageRequests.current.values()].includes(sessionId)) return;
       const now = Date.now();
       const previous = lastCliMessageRequestRef.current;
       if (!force && previous?.sessionId === sessionId && now - previous.at < 2_000) return;
@@ -374,15 +388,16 @@ function App() {
           ? new URLSearchParams(window.location.search).get("project")?.trim()
           : undefined;
       const projectPath = cliSessions.find((session) => session.id === sessionId)?.projectPath ?? routeProject;
-      sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath });
+      const requestId = sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath });
+      if (requestId) messageRequests.current.set(requestId, sessionId);
     },
     [cliSessions, sendAction]
   );
   const requestWorkspaceEnvironment = useCallback(
     (projectPath?: string): void => {
-      sendAction("getWorkspaceEnvironment", undefined, { projectPath });
+      sendAction("getWorkspaceEnvironment", undefined, { projectPath, targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
     },
-    [sendAction]
+    [sendAction, selectedPeerId]
   );
   const requestWorkspaceTerminals = useCallback((): void => {
     sendAction("listWorkspaceTerminals", undefined, { targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
@@ -448,6 +463,11 @@ function App() {
       }
       if (message.type === "dashboard:connection") {
         setRealtimeConnected(message.connected);
+        if (!message.connected) {
+          messageRequests.current.clear();
+          agentRequests.current.clear();
+          setAgentMessages((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, { ...value, loading: false }])));
+        }
         return;
       }
       if (message.type === "dashboard:host-status") {
@@ -606,7 +626,7 @@ function App() {
             }
           }
           if (explicitRefresh)
-            setCliSessionFeedback({ key: Date.now(), level: "info", message: "Sessions refreshed." });
+            setCliSessionFeedback({ key: Date.now(), ...(message.payload?.notice ?? { level: "info" as const, message: "Sessions refreshed." }) });
         } else {
           setCliSessionsError(message.error ?? "Sessions could not be loaded.");
           if (explicitRefresh)
@@ -617,7 +637,21 @@ function App() {
             });
         }
       }
+      if (message.type === "dashboard:action-result" && message.action === "getCodexSubAgentMessages") {
+        const id = agentRequests.current.get(message.requestId);
+        if (id) {
+          agentRequests.current.delete(message.requestId);
+          setAgentMessages((current) => ({ ...current, [id]: message.status === "completed"
+            ? { messages: message.payload?.cliSubAgentMessages ?? [] }
+            : { ...current[id], loading: false, error: message.error ?? "Agent messages could not be loaded. Try Refresh." } }));
+        }
+      }
       if (message.type === "dashboard:action-result" && message.action === "getCodexCliSessionMessages") {
+        const requestedId = messageRequests.current.get(message.requestId);
+        messageRequests.current.delete(message.requestId);
+        if (!requestedId) return;
+        const activeId = getCliSessionIdFromPath(window.location.pathname) ?? selectedCliSessionRef.current?.id;
+        if (requestedId && activeId && requestedId !== activeId) return;
         if (message.status === "completed") {
           setCliSessionMessages(message.payload?.cliSessionMessages ?? []);
           if (message.payload?.cliSession?.id)
@@ -704,7 +738,7 @@ function App() {
           level: message.status === "completed" ? "warning" : "error",
           message:
             message.status === "completed"
-              ? (message.payload?.notice?.message ?? "Stop signal sent. Waiting for the CLI to exit.")
+              ? (message.payload?.notice?.message ?? "Stop requested. Waiting for Codex to end the turn.")
               : (message.error ?? "The turn could not be stopped.")
         });
       }
@@ -927,15 +961,22 @@ function App() {
     });
   }, [snapshot?.dailyUsageCache]);
 
+  const workspaceRootsKey = cliComposerConfig?.projects?.map((project) => project.path).join("\n") ?? "";
   useEffect(() => {
     if (!isBrowserDashboard || !hasBrowserWorkspaceShell(browserPath)) return;
     const projectPath = selectedCliSession?.projectPath ?? cliComposerConfig?.projects?.[0]?.path;
-    const loadKey = `${browserPath}\n${projectPath ?? ""}`;
+    const loadKey = `${selectedPeerId}:${browserPath}\n${projectPath ?? ""}:${workspaceRootsKey}`;
     // Object-valued composer/session state can be replaced by every realtime
     // response. Key the automatic load by the actual route and path so those
     // renders cannot create a request -> result -> render feedback loop.
     if (lastAutomaticWorkspaceLoadRef.current === loadKey) return;
     lastAutomaticWorkspaceLoadRef.current = loadKey;
+    // History can include projects outside this host's open workspace. Loading
+    // chat must not issue a failing inspector request for those projects.
+    if (selectedCliSession?.remote || (projectPath && !isOpenWorkspaceProject(projectPath, cliComposerConfig?.projects ?? []))) {
+      setWorkspaceEnvironment(undefined);
+      return;
+    }
     requestWorkspaceEnvironment(projectPath);
     requestWorkspaceTerminals();
   }, [
@@ -944,7 +985,10 @@ function App() {
     isBrowserDashboard,
     requestWorkspaceEnvironment,
     requestWorkspaceTerminals,
-    selectedCliSession?.projectPath
+    selectedCliSession?.projectPath,
+    selectedCliSession?.remote,
+    selectedPeerId,
+    workspaceRootsKey
   ]);
 
   useEffect(() => {
@@ -966,23 +1010,26 @@ function App() {
 
   useEffect(() => {
     const session = selectedCliSession;
-    if (!session || session.status !== "running") return;
+    if (!session) return;
     // Filesystem notifications are not guaranteed on every platform or for
     // every Codex writer. Keep the selected transcript fresh while a turn is
     // active; requestCliSessionMessages throttles duplicate requests.
     const refresh = (): void => {
-      if (document.visibilityState === "visible") requestCliSessionMessages(session.id, session.deviceId);
+      if (document.visibilityState === "visible" && navigator.onLine) requestCliSessionMessages(session.id, session.deviceId);
     };
-    const timer = window.setInterval(refresh, 2_000);
+    const timer = window.setInterval(refresh, session.status === "running" ? 2_000 : 5_000);
     const onVisibilityChange = (): void => {
       if (document.visibilityState === "visible") refresh();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("online", onVisibilityChange);
+    refresh();
     return () => {
+      window.removeEventListener("online", onVisibilityChange);
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [requestCliSessionMessages, selectedCliSession?.deviceId, selectedCliSession?.id, selectedCliSession?.status]);
+  }, [requestCliSessionMessages, realtimeConnected, selectedCliSession?.deviceId, selectedCliSession?.id, selectedCliSession?.status]);
 
   useEffect(() => {
     if (!isBrowserDashboard) return;
@@ -1221,13 +1268,6 @@ function App() {
         key: Date.now(),
         level: "warning",
         message: "Archived sessions cannot be opened. Restore this session first."
-      });
-      return;
-    }
-    if (!isBrowserDashboard && (snapshot.settings.codexSessionDefault ?? "webview") === "webview") {
-      sendAction("openCodexCliSession", undefined, {
-        sessionId: session.id,
-        targetDeviceId: session.deviceId
       });
       return;
     }
@@ -1529,7 +1569,7 @@ function App() {
         showNotice({
           level: "warning",
           message:
-            "The account stays loaded only for this VS Code session. It will be unloaded automatically after restart."
+            "The account stays loaded until you manually choose Unload, including after restart."
         });
       }
       return;
@@ -1587,7 +1627,7 @@ function App() {
           : request.kind === "notification"
             ? "Notification dismissed."
             : request.kind === "disabledActiveAccount"
-              ? "The disabled account remains loaded for this VS Code session and will unload automatically after restart."
+              ? "The disabled account stays loaded until you manually choose Unload, including after restart."
               : request.action === "reloadPrompt"
                 ? "Reload postponed. Use Reload when you are ready."
                 : `${request.title} cancelled.`;
@@ -1732,7 +1772,7 @@ function App() {
       {isBrowserDashboard && browserHostStage !== "live" && browserHostStage !== "connecting"
         ? createPortal(<BrowserConnectionBanner stage={browserHostStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
         : null}
-      {notice
+      {notice && !(isBrowserDashboard && isCliSessionsPath(browserPath) && cliSessionFeedback?.message === notice.message)
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
               <div
@@ -2378,6 +2418,15 @@ function App() {
                 "deleteCodexCliSession"
               ].some((action) => isActionPending(action as DashboardActionName))}
               error={cliSessionsError}
+              agentMessages={agentMessages}
+              onReadAgent={(agent) => {
+                if ([...agentRequests.current.values()].includes(agent.id)) return;
+                const requestId = sendAction("getCodexSubAgentMessages", undefined, { sessionId: agent.id, targetDeviceId: agent.deviceId, projectPath: agent.projectPath });
+                if (requestId) {
+                  agentRequests.current.set(requestId, agent.id);
+                  setAgentMessages((current) => ({ ...current, [agent.id]: { ...current[agent.id], error: undefined, loading: true } }));
+                }
+              }}
               messagesError={cliSessionMessagesError}
               feedback={cliSessionFeedback}
               environment={workspaceEnvironment}
@@ -2546,7 +2595,7 @@ function App() {
                   targetDeviceId: session.deviceId
                 })
               }
-              onOpenInCodex={(session) => selectCliSession(session)}
+              onOpenInCodex={(session) => sendAction("openCodexCliSession", undefined, { sessionId: session.id, targetDeviceId: session.deviceId })}
               onUnarchive={(session) =>
                 sendAction("unarchiveCodexCliSession", undefined, {
                   sessionId: session.id,

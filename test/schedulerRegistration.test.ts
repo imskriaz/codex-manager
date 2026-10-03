@@ -59,7 +59,7 @@ describe("auto refresh scheduler", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() =>
       expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), current.id, {
-        allowTokenRefresh: false,
+        allowTokenRefresh: true,
         forceRefresh: true,
         announceFailure: false,
         skipDisabled: false,
@@ -123,7 +123,7 @@ describe("auto refresh scheduler", () => {
     await vi.advanceTimersByTimeAsync(6_000);
     await vi.waitFor(() =>
       expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), account.id, {
-        allowTokenRefresh: false,
+        allowTokenRefresh: true,
         forceRefresh: true,
         announceFailure: false,
         skipDisabled: true,
@@ -275,7 +275,7 @@ describe("auto refresh scheduler", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await vi.waitFor(() => expect(refreshSingleQuotaSafelyMock).toHaveBeenCalled());
     expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), current.id, {
-      allowTokenRefresh: false,
+      allowTokenRefresh: true,
       forceRefresh: true,
       announceFailure: false,
       skipDisabled: false,

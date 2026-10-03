@@ -9,10 +9,24 @@ import {
   CENTRAL_ACCOUNT_OPERATION_KEY,
   ENCRYPTED_SYNC_OPERATION_KEY,
   configureCrossWindowOperationCoordinator,
-  runCentralAccountOperationWithCooldown
+  runCentralAccountOperationWithCooldown,
+  runSharedMaintenance
 } from "../src/utils/crossWindowOperations";
 
 describe("CrossWindowOperationCoordinator", () => {
+  it("shares completed maintenance across coordinator restarts and retries failures", async () => {
+    const directory = await createTestDirectory("shared-maintenance");
+    await configureCrossWindowOperationCoordinator(directory);
+    let calls = 0;
+    const task = async () => ++calls;
+    expect(await runSharedMaintenance("network:quota:one", "Quota", 60_000, task)).toEqual({ ran: true, value: 1 });
+    await configureCrossWindowOperationCoordinator(directory);
+    expect(await runSharedMaintenance("network:quota:one", "Quota", 60_000, task)).toEqual({ ran: false });
+    expect(await runSharedMaintenance("network:quota:two", "Quota", 60_000, task)).toEqual({ ran: true, value: 2 });
+    await expect(runSharedMaintenance("network:failed", "Sync", 60_000, async () => { throw new Error("offline"); })).rejects.toThrow("offline");
+    expect(await runSharedMaintenance("network:failed", "Sync", 60_000, task)).toEqual({ ran: true, value: 3 });
+    await removeTestDirectory(directory);
+  });
   it("runs deferred startup sync once per five-minute cooldown across windows", async () => {
     const directory = await createTestDirectory("cross-window-startup-cooldown");
     await configureCrossWindowOperationCoordinator(directory);

@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.2.14
+
+- Keep Search full-width, balance sidebar action icons, and replace Active/Archive tabs with one toggle. Add a remembered compact chat-list view alongside collapsed Projects; search shows matching chats immediately. Move connection notices to the bottom-right.
+
+- Open newly created chats as soon as Codex accepts them, stream the first response, allow Stop, and report interrupted transports immediately.
+
+- Reopen running parent sessions with active goals after Reload or automatic switching, scoped to the current workspace when project metadata is available. Skip sub-agents and fall back to running parent sessions when goal detection is unavailable.
+- Explain in Settings that automatic continuation requires a goal.
+- Keep disabled accounts loaded across reloads and restarts. Authentication is unloaded only when the user explicitly chooses Unload.
+
+- Keep session discovery available during slow app-server initialization using bounded local history reads, shared in-flight refreshes, and automatic retry. Launch JavaScript Codex shims correctly inside the VS Code extension host.
+- Recover stalled browser handshakes, replay early connection state to the mounted UI, and catch up after offline/online and visibility changes.
+- Refresh selected chat messages directly from local transcripts, including idle sessions that start running elsewhere, and resume polling after returning online or reopening the page.
+- Separate sub-agents from the parent chat list and open their messages in Agent tabs in the right sidebar.
+- Avoid repeated Markdown parsing and quadratic sidebar membership checks during message polling.
+- Handle Windows workspace path casing correctly and inspect only open projects automatically when viewing historical chats.
+- Improve sidebar readability with separate project names and paths, a wider default rail and duplicate-project protection. Hide empty projects, collapse populated projects by default, and show running counts without extra path rows.
+- Polish responsive browser workspace and dashboard layouts, mobile sidebar focus and scrolling, touch controls, safe areas, and reduced motion.
+- Consolidate right-panel tool and terminal creation into one plus menu and keep project expansion controls stable on hover.
+- Keep message actions compact and floating, revealed on hover or keyboard/touch focus without adding message height.
+- Add image and text/code attachments, message and code copying, quoting, edit-and-resend drafts, and retry prompts. Preserve drafts and attachments after failed sends.
+
+- Treat shared-account windows as one unit when parallel accounts are off: switching schedules reloads across affected windows, with auth reconciliation recovering missed file events.
+- Share quota refresh and encrypted sync leases in both window modes; reuse recent background maintenance instead of repeating network calls.
+- Remove the global Background Token Refresh setting. Token refresh follows each account’s own control.
+- Remove the Codex default surface setting. Workspace enablement and transport configure the embedded chat; explicit Open in Codex remains available.
+
 ## 1.2.12
 
 - Show the existing reauthentication icon for saved accounts with Refresh Failed in both card and table layouts.

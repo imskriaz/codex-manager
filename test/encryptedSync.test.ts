@@ -25,6 +25,7 @@ import {
   getTokenAutomationSnapshot,
   markTokenAutomationRefreshFailure
 } from "../src/presentation/workbench/tokenAutomationState";
+import * as coordination from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
 
 const PASSPHRASE = "correct horse battery staple";
@@ -36,6 +37,15 @@ describe("encrypted account sync", () => {
     vi.restoreAllMocks();
   });
 
+  it("retains pending mutations when another window recently synced", async () => {
+    vi.spyOn(coordination, "runSharedMaintenance").mockResolvedValue({ ran: false });
+    const manager = new EncryptedSyncManager({ subscriptions: [] } as never, {} as never);
+    const pending = (manager as unknown as { pendingVaultMutationReasons: Set<string> }).pendingVaultMutationReasons;
+    pending.add("account-added");
+    await expect(manager.syncNow(false, false, false)).resolves.toBe(false);
+    expect(pending.has("account-added")).toBe(true);
+    manager.dispose();
+  });
   it("shares first-time device identity creation and retries a failed secret read", async () => {
     const secrets = new Map<string, string>();
     let releaseRead: (() => void) | undefined;

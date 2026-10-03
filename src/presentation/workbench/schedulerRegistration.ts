@@ -6,7 +6,6 @@ import {
   getAutoRefreshMinutes,
   normalizeAutoSwitchThreshold,
   isAutoSwitchRefreshAllBeforeSwitchEnabled,
-  isBackgroundTokenRefreshEnabled
 } from "../../infrastructure/config/extensionSettings";
 import {
   maybeAutoSwitchForActiveQuota,
@@ -24,7 +23,7 @@ import {
   markTokenAutomationSweepFinished,
   markTokenAutomationSweepStarted
 } from "./tokenAutomationState";
-import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive, runSharedMaintenance } from "../../utils/crossWindowOperations";
 import { hasCodexManagerAccountAutoQueueCapability } from "../../application/accounts/autoQueueOrder";
 
 const CURRENT_REFRESH_FAILURE_BACKOFF_MULTIPLIER = 5;
@@ -143,7 +142,7 @@ export function registerAutoRefreshScheduler(params: {
               refreshedAny =
                 (await refreshSingleQuotaSafely(params.repo, { refresh: params.onRefresh }, account.id, {
                   forceRefresh: true,
-                  allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
+                  allowTokenRefresh: true,
                   skipDisabled: true,
                   announceFailure: false,
                   canUseAccount: params.canRefreshAccount
@@ -244,7 +243,7 @@ export function registerAutoRefreshScheduler(params: {
             }
             const refreshed = await refreshSingleQuotaSafely(params.repo, { refresh: params.onRefresh }, current.id, {
               forceRefresh: true,
-              allowTokenRefresh: isBackgroundTokenRefreshEnabled(),
+              allowTokenRefresh: true,
               // The active account is the account currently used by Codex. Its
               // local enablement flag is an auto-switch/sync ownership setting,
               // not permission to stop observing the account in use.
@@ -374,7 +373,7 @@ export function registerTokenRefreshScheduler(params: {
     let checked = 0;
     let refreshedCount = 0;
     try {
-      await runCrossWindowExclusive("background:token-refresh-sweep", "Background token refresh", async () => {
+      await runSharedMaintenance("background:token-refresh-sweep", "Background token refresh", params.checkIntervalMs, async () => {
         markTokenAutomationSweepStarted();
         const accounts = (await params.repo.listAccounts()).filter(
           (account) =>
@@ -437,7 +436,7 @@ export function registerTokenRefreshScheduler(params: {
   };
 
   const applySchedule = (): void => {
-    const enabled = isBackgroundTokenRefreshEnabled();
+    const enabled = true;
     configureTokenAutomation(enabled, params.checkIntervalMs, params.skewSeconds);
 
     if (timer) {
@@ -459,7 +458,7 @@ export function registerTokenRefreshScheduler(params: {
   applySchedule();
 
   const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
-    if (event.affectsConfiguration("codexManager.backgroundTokenRefreshEnabled")) {
+    if (event.affectsConfiguration("codexManager.crossWindowAccountModeEnabled")) {
       applySchedule();
     }
   });

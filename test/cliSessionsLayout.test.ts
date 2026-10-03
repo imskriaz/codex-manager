@@ -81,7 +81,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const filters = source.indexOf('class="cli-session-filters"');
-    const projects = source.indexOf('class="cli-project-heading"');
+    const projects = source.indexOf('class="cli-project-list cli-pc-project-list"');
 
     expect(filters).toBeGreaterThan(-1);
     expect(projects).toBeGreaterThan(filters);
@@ -98,10 +98,10 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-activity-summary");
     expect(source).toContain('name="sandbox-mode"');
     expect(source).toContain('aria-label="Access mode"');
-    expect(source).toContain('aria-label="Copy assistant turn"');
+    expect(source).toContain('label = "Copy assistant turn"');
     expect(source).not.toContain('aria-label="Good response"');
     expect(source).not.toContain('aria-label="Needs improvement"');
-    expect(source).not.toContain('class="cli-message-actions"');
+    expect(source).toContain('class="cli-message-actions"');
     expect(css).toContain(".cli-turn-copy");
     const composerStart = source.indexOf("function Composer(");
     const composer = source.slice(composerStart, source.indexOf("function SessionMessage", composerStart));
@@ -235,7 +235,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-account-footer");
     expect(css).toContain(".cli-workspace .cli-account-footer { margin: 0;");
     expect(css).toContain(".cli-composer-resizer");
-    expect(css).toContain("grid-template-rows: auto auto auto auto minmax(0, 1fr) auto");
+    expect(css).toContain("grid-template-rows: auto auto auto minmax(0, 1fr) auto");
     expect(css).toContain(".cli-pc-group-heading { position: relative; display: block; }");
     expect(css).toContain(".cli-pc-switch { position: absolute");
     expect(css).toContain(".cli-project-select span { display: flex; align-items: baseline; gap: 6px; }");
@@ -254,14 +254,14 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('onClearFile={() => setWorkspaceFilesByPath({})}');
     expect(main).toContain("setWorkspaceFilesByPath((current) => ({ ...current, [workspaceFile.path]: workspaceFile }))");
     expect(css).toContain('width: min(var(--cli-terminal-width), 92vw)');
-    expect(source).toContain('class="cli-session-tabs cli-session-state-toggle"');
+    expect(source).toContain("cli-session-section-toggle");
     expect(css).toContain('.cli-session-state-toggle');
     expect(css).toContain('grid-template-columns: minmax(0, 1fr) !important');
     expect(css).toContain('.cli-workspace .cli-conversation.has-session');
     expect(css).toContain('grid-template-rows: auto minmax(0, 1fr) auto');
     expect(css).toContain('.cli-workspace .cli-activity-status');
     expect(css).toContain('.cli-workspace .cli-message-link');
-    expect(source).toContain('cli-message-link');
+    expect(source).toContain('cli-message-markdown');
     expect(css).toMatch(/\.cli-workspace \.cli-session-row-actions \{\r?\n  position: absolute;/);
     expect(css).toContain('.cli-session-row.is-archived:hover .cli-session-row-main small');
     expect(css).toContain('.cli-session-row.is-archived:hover .cli-session-row-main,');
@@ -290,7 +290,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('Switch account on ${getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}');
     expect(source).toContain('class="cli-session-search-line"');
     expect(source).toContain('class="cli-session-search-wrap"><SearchIcon />');
-    expect(source).toContain('class="cli-session-tabs cli-session-state-toggle" role="tablist"');
+    expect(source).not.toContain('aria-label="Session state"');
+    expect(source).toContain('aria-pressed={section === "archived"}');
     expect(source).not.toContain("cli-session-tabs-search");
     expect(css).toContain("grid-template-columns: minmax(0, 1fr) 28px;");
     expect(css).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
@@ -312,7 +313,7 @@ describe("sessions sidebar layout", () => {
 
     expect(source).not.toContain('class="cli-tool-tabs"');
     expect(source).toContain("WorkspaceContextPanel");
-    expect(source).toContain('["terminal", "files", "reviews"]');
+    expect(source).toContain('["terminal", "files", "reviews", "agents"]');
     expect(source).toContain("WorkspaceFilesView");
     expect(source).toContain("WorkspaceReviewsView");
     expect(source).toContain('class="cli-context-tab-scroll"');
@@ -462,33 +463,32 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(source).toContain("if (props.dashboardMode)");
-    expect(source).toContain("setRailCollapsed(window.innerWidth <= 760);");
+    expect(source).toContain("setRailCollapsed(mobile.matches);");
     expect(source).toContain("if (newChatProject !== undefined)");
     expect(source).toContain("setContextCollapsed(true);");
     expect(source).toContain("if (props.selectedSession && window.innerWidth >= 1180) setContextCollapsed(false);");
-    expect(source).toContain("inert={props.dashboardMode || undefined}");
+    expect(source).toContain("inert={props.dashboardMode || (mobileLayout && !railCollapsed) || undefined}");
     expect(styles).toMatch(/\.cli-workspace\.is-dashboard-mode \.cli-context-toggle\s*{[^}]*display:\s*none/s);
     expect(styles).toMatch(/body\.is-dashboard-workspace-route #dashboard-main\s*{[^}]*inset:\s*0 0 0 calc/s);
   });
 
-  it("keeps browser new-chat in the browser composer regardless of the VS Code default", () => {
+  it("keeps new-chat in the workspace composer without a default-surface setting", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
-    expect(settings).toContain('title: "Webview"');
-    expect(settings).toContain('title: "CLI"');
-    expect(main).toContain('snapshot.settings.codexSessionDefault ?? "webview"');
+    expect(settings).not.toContain("Codex default");
+    expect(main).not.toContain("codexSessionDefault");
     expect(main).toContain('sendAction("openCodexCliSession"');
     expect(source).toContain("setNewChatProject(nextProject ?? projectPath ?? projects[0]?.path ?? \"\")");
     expect(source).not.toContain("props.onOpenNewInCodex();");
   });
 
-  it("keeps browser session clicks inside the browser dashboard", () => {
+  it("keeps session clicks inside the workspace and explicit Codex actions available", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
-    expect(main).toContain('!isBrowserDashboard && (snapshot.settings.codexSessionDefault ?? "webview") === "webview"');
+    expect(main).not.toContain("codexSessionDefault");
     expect(main).toContain('message.action === "openCodexCliSession"');
     expect(main).toContain("navigateDashboardPath(buildCliSessionPath(opened), setBrowserPath)");
-    expect(main).toContain("onOpenInCodex={(session) => selectCliSession(session)}");
+    expect(main).toContain('onOpenInCodex={(session) => sendAction("openCodexCliSession"');
   });
 
   it("nests auto resume under reload after auto switch", () => {
@@ -620,6 +620,10 @@ describe("sessions sidebar layout", () => {
       expect(source).toContain(`case "${kind}":`);
     }
     expect(source).toContain("function ActivityDetail");
+    expect(source).toContain("markdownRenderer.render(text)");
+    expect(source).toContain("message.kind === \"reasoning\"");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(css).toContain(".cli-message-markdown table");
     expect(source).toContain('message.kind === "tool-call"');
   });
 
@@ -704,4 +708,15 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('document.addEventListener("visibilitychange", onVisibilityChange)');
     expect(main).toContain('document.removeEventListener("visibilitychange", onVisibilityChange)');
   });
+  it("keeps project navigation compact, populated, and collapsed with running counts", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain("}).filter(({ sessions }) => sessions.length > 0)");
+    expect(source).toContain("const projectCollapsed = collapsedGroups[groupId] ?? true;");
+    expect(source).toContain('class="cli-project-running"');
+    expect(source).toContain('class="cli-compact-session-list"');
+    expect(source).toContain('sessionView: parsed.sessionView === "compact" ? "compact" : "projects"');
+    expect(source).not.toContain("PCs · Projects");
+    expect(source).not.toContain("No sessions yet");
+  });
+
 });

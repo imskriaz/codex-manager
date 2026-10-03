@@ -124,7 +124,9 @@ export async function ensureCrossWindowAccountAssignment(
 ): Promise<{ accountId?: string; assigned: boolean }> {
   if (!isCrossWindowAccountModeEnabled() || !slot) return { assigned: false };
   const existing = slot.accountId;
-  const active = accounts.find((account) => account.isActive && account.enabled !== false);
+  const active = accounts.find((account) => account.isActive);
+  // Disabling controls automation eligibility, not loaded authentication.
+  // Keep even a disabled active account across restart until explicit Unload.
   // auth.json is authoritative on load. If Codex changed accounts outside the
   // manager, bind the window slot to what Codex actually loaded.
   if (active) {

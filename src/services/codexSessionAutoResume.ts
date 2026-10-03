@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
-import { openCodexSessionInVsCode, readRunningCodexSessionIds } from "./codexSessionResume";
+import { openCodexSessionInVsCode } from "./codexSessionResume";
+import { readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
 
@@ -14,13 +15,14 @@ type AutoResumeContext = Pick<vscode.ExtensionContext, "workspaceState">;
  */
 export async function persistRunningCodexSessions(
   context: AutoResumeContext,
-  readRunningSessionIds: () => Promise<string[]> = () => readRunningCodexSessionIds()
+  readRunningSessionIds: () => Promise<string[]> = () => readAutoResumeCodexSessionIds()
 ): Promise<string[]> {
   if (!isAutoResumeAvailable()) {
     await context.workspaceState.update(AUTO_RESUME_SESSION_IDS_KEY, undefined);
     return [];
   }
 
+  await context.workspaceState.update(AUTO_RESUME_SESSION_IDS_KEY, undefined);
   const runningSessionIds = await readRunningSessionIds();
   const sessionIds = runningSessionIds.filter((id, index, values) => values.indexOf(id) === index);
   await context.workspaceState.update(AUTO_RESUME_SESSION_IDS_KEY, sessionIds.length ? sessionIds : undefined);
@@ -58,7 +60,17 @@ export async function resumePersistedCodexSessions(
   const result: AutoResumeResult = { attempted: sessionIds.length, opened: 0, failed: [] };
   for (const sessionId of sessionIds) {
     try {
-      await openSession(sessionId);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          openSession(sessionId),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("The Codex editor did not respond within 30 seconds. Open conversation history to retry.")), 30_000);
+          })
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
       result.opened += 1;
     } catch (error) {
       result.failed.push({

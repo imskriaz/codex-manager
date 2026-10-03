@@ -218,4 +218,40 @@ describe("browser dashboard bridge", () => {
       message: "Dashboard is still unavailable. Check VS Code and try again."
     });
   });
+  it("replays an early connection to the mounted UI and recovers a stalled handshake", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const timers: Array<{ callback: () => void; delay: number }> = [];
+    const sockets: Socket[] = [];
+    class Socket {
+      static readonly OPEN = 1;
+      readyState = 0;
+      listeners = new Map<string, (event?: unknown) => void>();
+      close = vi.fn();
+      constructor() { sockets.push(this); }
+      addEventListener(type: string, callback: (event?: unknown) => void): void { this.listeners.set(type, callback); }
+    }
+    const windowMock = {
+      dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      setTimeout: (callback: () => void, delay: number) => { timers.push({ callback, delay }); return timers.length; },
+      clearTimeout: vi.fn(),
+      location: { protocol: "http:", host: "127.0.0.1:39875", reload: vi.fn() },
+      WebSocket: Socket,
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock, MessageEvent: Event, fetch: vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => ({}) })), console, Error, Array, JSON, Date, Map
+    });
+    timers.find(timer => timer.delay === 10_000)!.callback();
+    expect(sockets[0]!.close).toHaveBeenCalledOnce();
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:host-status", stage: "reconnecting" }));
+    timers.find(timer => timer.delay === 500)!.callback();
+    sockets[1]!.readyState = Socket.OPEN;
+    sockets[1]!.listeners.get("open")!();
+    events.length = 0; // UI mounts after open; ready must replay transport state.
+    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:ready" });
+    expect(events).toContainEqual({ type: "dashboard:connection", transport: "websocket", connected: true });
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:host-status", stage: "live" }));
+  });
+
 });
