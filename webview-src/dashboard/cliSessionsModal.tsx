@@ -991,6 +991,38 @@ function Composer(props: {
   onResizeKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => void;
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const optionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!optionsOpen) return;
+    const close = (event: Event): void => { if (!optionsRef.current?.contains(event.target as Node)) setOptionsOpen(false); };
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      setOptionsOpen(false);
+      optionsRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
+  }, [optionsOpen]);
+  useLayoutEffect(() => {
+    const input = textarea.current;
+    if (!input) return;
+    const fit = (): void => {
+      input.style.height = "auto";
+      input.style.height = `${input.scrollHeight}px`;
+    };
+    fit();
+    let width = input.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === width) return;
+      width = input.clientWidth;
+      fit();
+    });
+    observer.observe(input);
+    return () => observer.disconnect();
+  }, [props.draft, props.composerHeight]);
   const modelChoices = props.models.length > 0 ? props.models : [{ id: "", label: "Default model", reasoningEfforts: props.reasoningOptions }];
   const selectedModel = modelChoices.find((option) => option.id === props.model) ?? modelChoices[0];
   const reasoningChoices = selectedModel?.reasoningEfforts.length ? selectedModel.reasoningEfforts : props.reasoningOptions.length ? props.reasoningOptions : ["medium"];
@@ -998,17 +1030,23 @@ function Composer(props: {
     ? props.reasoningEffort
     : reasoningChoices[0];
 
-  return <form class="cli-composer" style={`height:${props.composerHeight}px`} onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (!event.dataTransfer?.files.length) return; event.preventDefault(); props.onAttach(Array.from(event.dataTransfer.files)); }} onSubmit={(event) => { event.preventDefault(); props.onSubmit(); }}>
+  return <form class="cli-composer" style={`--cli-composer-text-limit:${props.composerHeight}px`} onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (!event.dataTransfer?.files.length) return; event.preventDefault(); props.onAttach(Array.from(event.dataTransfer.files)); }} onSubmit={(event) => { event.preventDefault(); props.onSubmit(); }}>
     <input ref={fileInput} type="file" hidden multiple aria-label="Choose attachments" accept="image/png,image/jpeg,image/webp,text/*,.md,.json,.csv,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.rs,.go,.sql" onChange={(event) => { props.onAttach(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
     {props.attachments.length ? <div class="cli-attachment-list">{props.attachments.map((file) => <span key={file.id}>{file.kind === "image" ? <img src={file.data} alt="" /> : <FileIcon />}<span title={file.name}>{file.name}</span><button type="button" disabled={props.sending || props.attachmentReading} aria-label={`Remove ${file.name}`} onClick={() => props.onRemoveAttachment(file.id)}>×</button></span>)}</div> : null}
     <div class="cli-composer-resizer" role="separator" aria-label="Resize message composer" aria-orientation="horizontal" aria-valuemin={120} aria-valuenow={Math.round(props.composerHeight)} tabIndex={0} onPointerDown={props.onResize} onKeyDown={props.onResizeKeyDown}><span /></div>
-    <textarea name="codex-message" value={props.draft} rows={3} maxLength={64_000} placeholder="Message Codex…" aria-label="Message Codex" disabled={props.sending} onInput={(event) => props.onDraft(event.currentTarget.value)} onPaste={(event) => { const files = Array.from(event.clipboardData?.files ?? []); if (files.length) { event.preventDefault(); props.onAttach(files); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing && (event.ctrlKey || event.metaKey || !window.matchMedia("(max-width: 760px)").matches)) { event.preventDefault(); props.onSubmit(); } }} />
+    <textarea ref={textarea} name="codex-message" value={props.draft} rows={1} maxLength={64_000} placeholder="Message Codex…" aria-label="Message Codex" disabled={props.sending} onInput={(event) => props.onDraft(event.currentTarget.value)} onPaste={(event) => { const files = Array.from(event.clipboardData?.files ?? []); if (files.length) { event.preventDefault(); props.onAttach(files); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing && (event.ctrlKey || event.metaKey || !window.matchMedia("(max-width: 760px)").matches)) { event.preventDefault(); props.onSubmit(); } }} />
     <div class="cli-composer-toolbar"><div class="cli-composer-selectors"><button type="button" class="cli-attach-button" aria-label="Attach files" title="Attach images or text/code files (up to 8 files, 1 MB total)" disabled={props.sending || props.attachmentReading} onClick={() => fileInput.current?.click()}>{props.attachmentReading ? <span class="cli-live-spinner" /> : <PlusIcon />}</button>
       <label class="cli-composer-control" title="Project"><EmptyFolderIcon /><select name="project-path" value={props.projectPath ?? ""} aria-label="Project" disabled={props.projectLocked} onChange={(event) => props.onProject(event.currentTarget.value)}>{props.projects.map((project) => <option value={project.path} key={project.id}>{project.label}</option>)}</select></label>
-      <label class="cli-composer-control" title="Filesystem access"><ShieldIcon /><select name="sandbox-mode" value={props.sandboxMode} aria-label="Access mode" onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}><option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
     </div><div class="cli-composer-submit">
-      <label class="cli-composer-control cli-composer-model-picker" title="Model"><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
-      <label class="cli-composer-control cli-composer-reasoning-picker" title="Reasoning"><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
+      <div class="cli-composer-options-wrap" ref={optionsRef}>
+        <button type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} title={`${selectedModel?.label ?? "Default model"} · ${selectedReasoning ?? "Default reasoning"} · ${props.sandboxMode}`} onClick={() => setOptionsOpen((open) => !open)}><span>{selectedModel?.label ?? "Default"}</span><ChevronIcon /></button>
+        {optionsOpen ? <div class="cli-composer-options" role="group" aria-label="Message settings">
+          <header><strong>Message settings</strong><button type="button" aria-label="Close message settings" onClick={() => setOptionsOpen(false)}>×</button></header>
+          <label><span>Model</span><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
+          <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
+          <label><span>Access</span><select name="sandbox-mode" value={props.sandboxMode} aria-label="Access mode" onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}><option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
+        </div> : null}
+      </div>
       <span>{props.draft.length > 60_000 ? `${64_000 - props.draft.length} left` : null}</span>{props.sending ? <button type="button" class="cli-stop-button" disabled={props.stopping} aria-busy={props.stopping} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping" : "Stop"}</button> : <button type="submit" class="cli-send-button" disabled={props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label="Send message" title="Send message"><SendIcon /></button>}</div></div>
   </form>;
 }

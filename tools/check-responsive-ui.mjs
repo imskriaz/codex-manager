@@ -58,6 +58,10 @@ const mockHost = `(() => {
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:[]};
         else error = 'Simulated action failure. Your draft is preserved.';
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action === 'archiveCodexCliSession') {
+          window.__heldArchiveResult = {...result,status:'completed',error:undefined,payload:{notice:{level:'info',message:'Original chat archived.'}}};
+          return;
+        }
         if(message.action === 'getCodexCliSessionMessages' && window.__holdNextMessageRead) {
           window.__holdNextMessageRead = false;
           window.__heldMessageResult = result;
@@ -195,11 +199,35 @@ try {
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     const composer = page.getByRole("textbox", { name: "Message Codex", exact: true });
     assert.equal(await composer.inputValue(), "", "New chats must not inherit another chat's draft");
-    assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 0);
-    await composer.fill("Separate new chat draft");
     await page.evaluate(() => window.__releaseAttachmentRead());
     await page.getByRole("button", { name: "Attach files", exact: true }).waitFor();
     await page.getByText("Attachments added to the original chat draft. Return to that chat to use them.", { exact: true }).first().waitFor();
+    const emptyComposerHeight = (await page.locator(".cli-composer").boundingBox()).height;
+    assert.ok(emptyComposerHeight <= 110, `Empty composer is compact at ${width}px (${emptyComposerHeight}px)`);
+    await composer.fill("First line\nSecond line\nThird line\nFourth line");
+    await page.waitForFunction(height => document.querySelector(".cli-composer").getBoundingClientRect().height > height + 20, emptyComposerHeight);
+    await composer.fill(Array.from({ length: 40 }, (_, index) => `Draft line ${index}`).join("\n"));
+    await page.waitForFunction(() => {
+      const input = document.querySelector('textarea[name="codex-message"]');
+      return input.clientHeight <= 240 && input.scrollHeight > input.clientHeight;
+    });
+    await composer.fill("");
+    await page.waitForFunction(height => Math.abs(document.querySelector(".cli-composer").getBoundingClientRect().height - height) <= 2, emptyComposerHeight);
+    await page.getByRole("button", { name: "Message settings", exact: true }).click();
+    const optionsBounds = await page.locator(".cli-composer-options").boundingBox();
+    assert.ok(optionsBounds && optionsBounds.x >= 0 && optionsBounds.y >= 0 && optionsBounds.x + optionsBounds.width <= width && optionsBounds.y + optionsBounds.height <= height, "Message settings fit the viewport");
+    await page.getByRole("combobox", { name: "Reasoning", exact: true }).selectOption("high");
+    await page.getByRole("combobox", { name: "Access mode", exact: true }).selectOption("read-only");
+    assert.equal(await page.getByRole("combobox", { name: "Model", exact: true }).inputValue(), "gpt-5");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".cli-composer-options").count(), 0);
+    await page.getByRole("button", { name: "Message settings", exact: true }).click();
+    assert.equal(await page.getByRole("combobox", { name: "Reasoning", exact: true }).inputValue(), "high");
+    assert.equal(await page.getByRole("combobox", { name: "Access mode", exact: true }).inputValue(), "read-only");
+    await composer.click();
+    assert.equal(await page.locator(".cli-composer-options").count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 0);
+    await composer.fill("Separate new chat draft");
     assert.equal(await page.getByRole("button", { name: "Remove late.txt", exact: true }).count(), 0, "Late file reads stay with the originating chat");
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
@@ -237,6 +265,19 @@ try {
     await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === "");
     assert.equal(new URL(page.url()).pathname, "/01a04882-d037-7a42-ad24-9afb61901198", "A new-session acknowledgement opens the accepted thread without requiring another list/catalog payload");
     assert.equal(await composer.inputValue(), "", "A newly accepted chat clears only its submitted project draft");
+    await page.getByRole("button", { name: "Session actions", exact: true }).click();
+    const menuBounds = await page.locator(".cli-session-menu").boundingBox();
+    assert.ok(menuBounds && menuBounds.x >= 0 && menuBounds.x + menuBounds.width <= width, "Session actions stay inside the viewport when toolbar buttons wrap");
+    await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
+    await page.waitForFunction(() => window.__heldArchiveResult);
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
+    const activeChatUrl = page.url();
+    await composer.fill("Keep the currently selected chat");
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldArchiveResult })));
+    await page.getByText("Original chat archived.", { exact: true }).first().waitFor();
+    assert.equal(page.url(), activeChatUrl, "A delayed archive must not navigate away from another selected chat");
+    assert.equal(await composer.inputValue(), "Keep the currently selected chat");
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     assert.ok(overflow <= 2, `Chat overflows by ${overflow}px at ${width}px`);
     await page.screenshot({ path: path.join(output, `chat-${width}x${height}.png`) });

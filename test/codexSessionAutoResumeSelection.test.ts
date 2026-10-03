@@ -35,28 +35,28 @@ describe("goal-aware auto resume selection", () => {
     const home = await fixture(); goals(home, [status, "active", null]);
     expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
   });
-  it("falls back to every running parent when the goal database is missing", async () => {
-    const home = await fixture(); expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);
+  it("does not resume when goal state is unavailable", async () => {
+    const home = await fixture(); expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
   });
-  it("falls back when the database is corrupt or its schema is unavailable", async () => {
+  it("does not resume when the database is corrupt or its schema is unavailable", async () => {
     const home = await fixture(); await writeFile(path.join(home, "goals_1.sqlite"), "corrupt");
-    expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);
+    expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
     await rm(path.join(home, "goals_1.sqlite"));
     const db = new DatabaseSync(path.join(home, "goals_1.sqlite")); db.exec("CREATE TABLE future_schema (id TEXT)"); db.close();
-    expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);
+    expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
   });
   it("does not select sessions belonging to another workspace", async () => {
     const home = await fixture(); goals(home, ["active", "active", "active"]);
     expect(await readAutoResumeCodexSessionIds(home, [path.join(home, "other-project")])).toEqual([]);
   });
   it("uses state metadata to exclude children even when transcripts are missing", async () => {
-    const home = await fixture(); await rm(path.join(home, "sessions"), { recursive: true });
+    const home = await fixture(); goals(home, ["active", "active", "active"]); await rm(path.join(home, "sessions"), { recursive: true });
     const db = new DatabaseSync(path.join(home, "state_5.sqlite")); db.exec("CREATE TABLE threads (id TEXT, source TEXT, cwd TEXT)");
     db.prepare("INSERT INTO threads VALUES (?, ?, ?)").run(ids[1]!, JSON.stringify({ subagent: "review" }), home); db.close();
     expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);
   });
   it("skips child metadata in a truncated record and retains unknown parent metadata", async () => {
-    const home = await fixture();
+    const home = await fixture(); goals(home, ["active", "active", "active"]);
     await writeFile(path.join(home, "sessions", `rollout-${ids[1]}.jsonl`), '{"type":"session_meta","payload":{"source":{"subagent":"review"},"instructions":"' + "x".repeat(1100000));
     await writeFile(path.join(home, "sessions", `rollout-${ids[2]}.jsonl`), "partial");
     expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);

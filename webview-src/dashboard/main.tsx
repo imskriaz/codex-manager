@@ -179,6 +179,7 @@ function App() {
   const [agentMessages, setAgentMessages] = useState<Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>>({});
   const messageRequests = useRef(new Map<string, CliSessionTarget>());
   const turnRequests = useRef(new Map<string, CliSessionTarget>());
+  const sessionActionRequests = useRef(new Map<string, CliSessionTarget>());
   const messageViewRevision = useRef(0);
   const liveSessionListReceived = useRef(false);
   const agentRequests = useRef(new Map<string, string>());
@@ -191,6 +192,12 @@ function App() {
   const [cliSessionMessagesError, setCliSessionMessagesError] = useState<string>();
   const [cliComposerConfig, setCliComposerConfig] = useState<DashboardCliComposerConfig>();
   const [cliSessionFeedback, setCliSessionFeedback] = useState<CliSessionFeedback>();
+  const showCliSessionFeedback = useCallback((feedback: CliSessionFeedback): void => {
+    // These updates are already visible in their panel and were causing a
+    // stream of stacked toasts while the workspace refreshed in the background.
+    if (feedback.level === "info" && /^(Sessions refreshed\.|Environment action completed\.|Terminal action completed\.|Terminal command completed\.|List workspace terminals completed\.|File saved\.|File refreshed\.|Project files refreshed\.)$/i.test(feedback.message)) return;
+    setCliSessionFeedback(feedback);
+  }, []);
   const [codexRequests, setCodexRequests] = useState<DashboardCodexServerRequest[]>([]);
   const [codexRequestError, setCodexRequestError] = useState<string>();
   const [workspaceEnvironment, setWorkspaceEnvironment] = useState<DashboardWorkspaceEnvironment>();
@@ -291,6 +298,7 @@ function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const handleActionTimeout = useCallback(
     (action: DashboardActionName, requestId: string) => {
+      sessionActionRequests.current.delete(requestId);
       if (action === "getCodexCliSessionMessages") {
         const target = messageRequests.current.get(requestId);
         messageRequests.current.delete(requestId);
@@ -303,7 +311,7 @@ function App() {
       }
       if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
         explicitCliRefreshRef.current = undefined;
-        setCliSessionFeedback({
+        showCliSessionFeedback({
           key: Date.now(),
           level: "warning",
           message: "Refreshing sessions did not finish in time. Try again."
@@ -311,7 +319,7 @@ function App() {
       }
       if (action === "startCodexCliSession" || action === "sendCodexCliSessionMessage") {
         turnRequests.current.delete(requestId);
-        setCliSessionFeedback({
+        showCliSessionFeedback({
           key: Date.now(),
           level: "warning",
           message: action === "startCodexCliSession"
@@ -374,6 +382,10 @@ function App() {
   const lastCliListRequestAtRef = useRef(0);
   const lastCliRealtimeRevisionRef = useRef(0);
   const lastCliMessageRequestRef = useRef<{ target: CliSessionTarget; at: number }>();
+  const requestSessionAction = (action: DashboardActionName, session: CliSessionTarget, payload?: DashboardActionPayload): void => {
+    const requestId = sendAction(action, undefined, { ...payload, sessionId: session.id, targetDeviceId: session.deviceId });
+    if (requestId) sessionActionRequests.current.set(requestId, session);
+  };
   const requestCliSessions = useCallback(
     (force = false): string | undefined => {
       const now = Date.now();
@@ -472,9 +484,12 @@ function App() {
       if (message.type === "dashboard:connection") {
         setRealtimeConnected(message.connected);
         if (!message.connected) {
+          if ([...messageRequests.current.values()].some((target) => sameCliSessionTarget(target, currentSessionTarget()))) {
+            setCliSessionMessagesError("Connection lost while loading messages. Reconnecting; use Refresh conversation if needed.");
+          }
           messageRequests.current.clear();
           agentRequests.current.clear();
-          setAgentMessages((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, { ...value, loading: false }])));
+          setAgentMessages((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, value.loading ? { ...value, loading: false, error: "Connection lost while loading agent messages. Reconnecting; use Refresh if needed." } : value])));
         }
         return;
       }
@@ -603,7 +618,7 @@ function App() {
               if (routeSession?.archived) {
                 setSelectedCliSession(routeSession);
                 setCliSessionMessages([]);
-                setCliSessionFeedback({
+                showCliSessionFeedback({
                   key: Date.now(),
                   level: "warning",
                   message: "This session is archived. Restore it below to continue the conversation."
@@ -636,11 +651,11 @@ function App() {
             }
           }
           if (explicitRefresh)
-            setCliSessionFeedback({ key: Date.now(), ...(message.payload?.notice ?? { level: "info" as const, message: "Sessions refreshed." }) });
+            showCliSessionFeedback({ key: Date.now(), ...(message.payload?.notice ?? { level: "info" as const, message: "Sessions refreshed." }) });
         } else {
           setCliSessionsError(message.error ?? "Sessions could not be loaded.");
           if (explicitRefresh)
-            setCliSessionFeedback({
+            showCliSessionFeedback({
               key: Date.now(),
               level: "error",
               message: message.error ?? "Sessions could not be refreshed."
@@ -679,7 +694,7 @@ function App() {
             if (routeSession) setSelectedCliSession(routeSession);
             setCliSessionMessages([]);
             setCliSessionMessagesError(undefined);
-            setCliSessionFeedback({
+            showCliSessionFeedback({
               key: Date.now(),
               level: "warning",
               message: "This session is archived. Restore it below to continue the conversation."
@@ -698,7 +713,7 @@ function App() {
             if (message.payload?.cliSessions) setCliSessions((current) => mergeCachedCliSessions(message.payload!.cliSessions!, current));
             void writeCliSessionMessagesCache(target.id, message.payload?.cliSessionMessages ?? [], target.deviceId);
           }
-          setCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.status === "completed" ? "Codex completed the turn in the original chat." : message.error ?? "The turn in the original chat did not complete. Return to that chat and retry." });
+          showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.status === "completed" ? "Codex completed the turn in the original chat." : message.error ?? "The turn in the original chat did not complete. Return to that chat and retry." });
           return;
         }
         messageViewRevision.current++;
@@ -719,10 +734,10 @@ function App() {
               : selectedCliSession
           );
           setCliSessionMessagesError(undefined);
-          setCliSessionFeedback({ key: Date.now(), level: "info", message: "Codex completed the turn." });
+          showCliSessionFeedback({ key: Date.now(), level: "info", message: "Codex completed the turn." });
         } else {
           const level = message.status === "cancelled" ? "warning" : "error";
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level,
             message: message.error ?? "Codex could not complete the turn."
@@ -737,7 +752,7 @@ function App() {
           setCliSessions(sessions);
           setCliComposerConfig(message.payload.cliComposerConfig ?? cliComposerConfig);
           if (currentSessionTarget() && !sameCliSessionTarget(currentSessionTarget(), session)) {
-            setCliSessionFeedback({ key: Date.now(), level: "info", message: "New Codex chat is ready. Open it from the session list." });
+            showCliSessionFeedback({ key: Date.now(), level: "info", message: "New Codex chat is ready. Open it from the session list." });
             return;
           }
           messageViewRevision.current++;
@@ -746,13 +761,13 @@ function App() {
           setCliSessionMessages(message.payload.cliSessionMessages ?? []);
           setCliSessionMessagesError(undefined);
           navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level: "info",
             message: message.payload.notice?.message ?? "New Codex chat is ready."
           });
         } else {
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level: "error",
             message: message.error ?? "New Codex chat could not be started."
@@ -760,7 +775,7 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "cancelCodexCliSessionTurn") {
-        setCliSessionFeedback({
+        showCliSessionFeedback({
           key: Date.now(),
           level: message.status === "completed" ? "warning" : "error",
           message:
@@ -776,14 +791,14 @@ function App() {
         if (message.status === "completed" && message.payload?.workspaceEnvironment) {
           setWorkspaceEnvironment(message.payload.workspaceEnvironment);
           if (message.action !== "getWorkspaceEnvironment") {
-            setCliSessionFeedback({
+            showCliSessionFeedback({
               key: Date.now(),
               level: "info",
               message: message.payload.notice?.message ?? "Environment action completed."
             });
           }
         } else if (message.status === "failed") {
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level: "error",
             message: message.error ?? "The workspace environment action failed."
@@ -801,7 +816,7 @@ function App() {
             return next;
           });
         }
-        setCliSessionFeedback({
+        showCliSessionFeedback({
           key: Date.now(),
           level: message.status === "completed" ? (message.payload?.terminalResult?.status === "untracked" ? "warning" : "info") : message.status === "cancelled" ? "warning" : "error",
           message:
@@ -840,14 +855,14 @@ function App() {
               (message.payload?.workspaceTerminal ? [message.payload.workspaceTerminal] : [])
           );
           if (message.action !== "listWorkspaceTerminals") {
-            setCliSessionFeedback({
+            showCliSessionFeedback({
               key: Date.now(),
               level: "info",
               message: message.payload?.notice?.message ?? "Terminal action completed."
             });
           }
         } else {
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level: "error",
             message: message.error ?? "Terminal action failed."
@@ -857,7 +872,7 @@ function App() {
       if (message.type === "dashboard:action-result" && message.action === "listWorkspaceFiles") {
         if (message.status === "completed") setWorkspaceFiles(message.payload?.workspaceFiles ?? []);
         else
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level: "error",
             message: message.error ?? "Project files could not be loaded."
@@ -872,14 +887,14 @@ function App() {
               delete next[message.payload!.deletedWorkspaceFilePath!];
               return next;
             });
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level: "info",
             message: message.payload?.notice?.message ?? "File deleted."
           });
           requestWorkspaceEnvironment(selectedCliSession?.projectPath);
         } else
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level: "error",
             message: message.error ?? "File could not be deleted."
@@ -893,7 +908,7 @@ function App() {
           const workspaceFile = message.payload.workspaceFile;
           setWorkspaceFilesByPath((current) => ({ ...current, [workspaceFile.path]: workspaceFile }));
           if (message.action === "saveWorkspaceFile") {
-            setCliSessionFeedback({
+            showCliSessionFeedback({
               key: Date.now(),
               level: "info",
               message: message.payload.notice?.message ?? "File saved."
@@ -901,7 +916,7 @@ function App() {
             requestWorkspaceEnvironment(selectedCliSession?.projectPath);
           }
         } else if (message.status === "failed") {
-          setCliSessionFeedback({
+          showCliSessionFeedback({
             key: Date.now(),
             level: "error",
             message: message.error ?? "The project file action failed."
@@ -909,7 +924,7 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "cancelWorkspaceTerminalCommand") {
-        setCliSessionFeedback({
+        showCliSessionFeedback({
           key: Date.now(),
           level: message.status === "completed" ? "warning" : "error",
           message:
@@ -930,9 +945,12 @@ function App() {
           "deleteCodexCliSession"
         ].includes(message.action)
       ) {
-        setCliSessionFeedback({
+        const target = sessionActionRequests.current.get(message.requestId);
+        sessionActionRequests.current.delete(message.requestId);
+        const applyToCurrentChat = sameCliSessionTarget(target, currentSessionTarget());
+        showCliSessionFeedback({
           key: Date.now(),
-          level: message.status === "completed" ? "info" : "error",
+          level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error",
           message:
             message.status === "completed"
               ? (message.payload?.notice?.message ?? "Session action completed.")
@@ -943,21 +961,26 @@ function App() {
           setCliSessions(sessions);
           void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig });
         }
-        if (message.status === "completed" && message.action === "renameCodexCliSession" && message.payload?.cliSession)
+        if (applyToCurrentChat && message.status === "completed" && message.action === "renameCodexCliSession" && message.payload?.cliSession)
           setSelectedCliSession(mergeCachedCliSession(message.payload.cliSession, selectedCliSession));
         if (
           isBrowserDashboard &&
+          applyToCurrentChat &&
           message.status === "completed" &&
           message.action === "openCodexCliSession" &&
           message.payload?.cliSession
         ) {
           const opened = mergeCachedCliSession(message.payload.cliSession, selectedCliSession);
+          messageViewRevision.current++;
+          selectedCliSessionRef.current = opened;
           navigateDashboardPath(buildCliSessionPath(opened), setBrowserPath);
           setSelectedCliSession(opened);
           setCliSessionMessages(message.payload.cliSessionMessages ?? []);
           setCliSessionMessagesError(undefined);
         }
-        if (message.status === "completed" && message.action === "forkCodexCliSession" && message.payload?.cliSession) {
+        if (applyToCurrentChat && message.status === "completed" && message.action === "forkCodexCliSession" && message.payload?.cliSession) {
+          messageViewRevision.current++;
+          selectedCliSessionRef.current = message.payload.cliSession;
           setSelectedCliSession(mergeCachedCliSession(message.payload.cliSession, selectedCliSession));
           setCliSessionMessages([]);
           navigateDashboardPath(buildCliSessionPath(message.payload.cliSession), setBrowserPath);
@@ -966,13 +989,16 @@ function App() {
           message.status === "completed" &&
           (message.action === "archiveCodexCliSession" || message.action === "deleteCodexCliSession")
         ) {
-          if (selectedCliSession) void invalidateCliSessionCache(selectedCliSession.id, selectedCliSession.deviceId);
+          if (target) void invalidateCliSessionCache(target.id, target.deviceId);
+          if (!applyToCurrentChat) return;
           navigateDashboardPath("/", setBrowserPath);
+          messageViewRevision.current++;
+          selectedCliSessionRef.current = undefined;
           setSelectedCliSession(undefined);
           setCliSessionMessages([]);
         }
-        if (message.status === "completed" && message.action === "unarchiveCodexCliSession" && selectedCliSession) {
-          const restored = message.payload?.cliSessions?.find((session) => session.id === selectedCliSession.id);
+        if (applyToCurrentChat && message.status === "completed" && message.action === "unarchiveCodexCliSession" && selectedCliSession) {
+          const restored = message.payload?.cliSessions?.find((session) => sameCliSessionTarget(session, target));
           if (restored) setSelectedCliSession(restored);
         }
       }
@@ -1294,7 +1320,7 @@ function App() {
   };
   const selectCliSession = (session: DashboardCliSessionSummary): void => {
     if (session.archived) {
-      setCliSessionFeedback({
+      showCliSessionFeedback({
         key: Date.now(),
         level: "warning",
         message: "Archived sessions cannot be opened. Restore this session first."
@@ -2571,24 +2597,17 @@ function App() {
               }
               onRename={(name) =>
                 selectedCliSession &&
-                sendAction("renameCodexCliSession", undefined, {
-                  sessionId: selectedCliSession.id,
-                  targetDeviceId: selectedCliSession.deviceId,
-                  text: name
-                })
+                requestSessionAction("renameCodexCliSession", selectedCliSession, { text: name })
               }
               onFork={() =>
                 selectedCliSession &&
-                sendAction("forkCodexCliSession", undefined, {
-                  sessionId: selectedCliSession.id,
-                  targetDeviceId: selectedCliSession.deviceId
-                })
+                requestSessionAction("forkCodexCliSession", selectedCliSession)
               }
               onCopyLink={() => {
                 void navigator.clipboard.writeText(window.location.href).then(
-                  () => setCliSessionFeedback({ key: Date.now(), level: "info", message: "Session link copied." }),
+                  () => showCliSessionFeedback({ key: Date.now(), level: "info", message: "Session link copied." }),
                   () =>
-                    setCliSessionFeedback({
+                    showCliSessionFeedback({
                       key: Date.now(),
                       level: "error",
                       message: "Session link could not be copied. Copy it from the address bar."
@@ -2600,9 +2619,9 @@ function App() {
                   void navigator
                     .share({ title: selectedCliSession?.title ?? "Codex session", url: window.location.href })
                     .then(
-                      () => setCliSessionFeedback({ key: Date.now(), level: "info", message: "Session link shared." }),
+                      () => showCliSessionFeedback({ key: Date.now(), level: "info", message: "Session link shared." }),
                       (error: unknown) =>
-                        setCliSessionFeedback({
+                        showCliSessionFeedback({
                           key: Date.now(),
                           level: "warning",
                           message:
@@ -2614,13 +2633,13 @@ function App() {
                 } else {
                   void navigator.clipboard.writeText(window.location.href).then(
                     () =>
-                      setCliSessionFeedback({
+                      showCliSessionFeedback({
                         key: Date.now(),
                         level: "info",
                         message: "Sharing is unavailable, so the session link was copied instead."
                       }),
                     () =>
-                      setCliSessionFeedback({
+                      showCliSessionFeedback({
                         key: Date.now(),
                         level: "error",
                         message: "Sharing is unavailable and the link could not be copied."
@@ -2629,24 +2648,14 @@ function App() {
                 }
               }}
               onArchive={(session) =>
-                sendAction("archiveCodexCliSession", undefined, {
-                  sessionId: session.id,
-                  targetDeviceId: session.deviceId
-                })
+                requestSessionAction("archiveCodexCliSession", session)
               }
-              onOpenInCodex={(session) => sendAction("openCodexCliSession", undefined, { sessionId: session.id, targetDeviceId: session.deviceId })}
+              onOpenInCodex={(session) => requestSessionAction("openCodexCliSession", session)}
               onUnarchive={(session) =>
-                sendAction("unarchiveCodexCliSession", undefined, {
-                  sessionId: session.id,
-                  targetDeviceId: session.deviceId
-                })
+                requestSessionAction("unarchiveCodexCliSession", session)
               }
               onDelete={(session) =>
-                sendAction("deleteCodexCliSession", undefined, {
-                  sessionId: session.id,
-                  targetDeviceId: session.deviceId,
-                  confirmed: true
-                })
+                requestSessionAction("deleteCodexCliSession", session, { confirmed: true })
               }
             />,
             document.body

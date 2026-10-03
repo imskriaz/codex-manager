@@ -478,7 +478,7 @@ describe("sessions sidebar layout", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     expect(settings).not.toContain("Codex default");
     expect(main).not.toContain("codexSessionDefault");
-    expect(main).toContain('sendAction("openCodexCliSession"');
+    expect(main).toContain('requestSessionAction("openCodexCliSession"');
     expect(source).toContain("setNewChatProject(nextProject ?? projectPath ?? projects[0]?.path ?? \"\")");
     expect(source).not.toContain("props.onOpenNewInCodex();");
   });
@@ -488,7 +488,7 @@ describe("sessions sidebar layout", () => {
     expect(main).not.toContain("codexSessionDefault");
     expect(main).toContain('message.action === "openCodexCliSession"');
     expect(main).toContain("navigateDashboardPath(buildCliSessionPath(opened), setBrowserPath)");
-    expect(main).toContain('onOpenInCodex={(session) => sendAction("openCodexCliSession"');
+    expect(main).toContain('onOpenInCodex={(session) => requestSessionAction("openCodexCliSession"');
   });
 
   it("nests auto resume under reload after auto switch", () => {

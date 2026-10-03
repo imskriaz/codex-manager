@@ -2,6 +2,12 @@
 
 ## 1.2.14
 
+- Redesign the composer with a compact single-line draft that grows while typing and shrinks after clearing, plus a settings popover for model, reasoning, and access.
+- Make auto-resume strictly goal-aware and normalize Windows extended workspace paths so active goal sessions are found after reload; unknown goal state is left unopened.
+- Keep delayed archive, delete, rename, restore, and fork results scoped to their original chat; invalidate the correct device cache without disrupting another conversation.
+- Show interrupted message/agent loading on connection loss instead of silently clearing its waiting state.
+- Keep the session menu within narrow mobile viewports when toolbar actions wrap, with full-width touch targets and scrollable overflow.
+
 - Honor the machine App Server transport despite legacy workspace overrides and acknowledge accepted new chats without extra list/catalog refreshes.
 - Preserve chat/device identity in routes, requests, agent data, and message caches; ignore late responses after navigation and cache reads superseded by live messages.
 - Recover from unavailable browser storage and aborted cache transactions without leaving background cache operations waiting.

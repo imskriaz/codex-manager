@@ -60,22 +60,29 @@ export async function readAutoResumeCodexSessionIds(
       const cwd = metadata?.["cwd"];
       if (workspacePaths.length && typeof cwd === "string" && cwd.trim() &&
           !workspacePaths.some((workspace) => {
-            const relative = path.relative(path.resolve(workspace), path.resolve(cwd));
+            const relative = path.relative(normalizeWorkspacePath(workspace), normalizeWorkspacePath(cwd));
             return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
           })) continue;
       parents.push(id);
     }
-    if (!goals) return parents;
+    // Auto-resume is intentionally goal-only. A missing goals database means
+    // the goal state is unknown, so never reopen an arbitrary running chat.
+    if (!goals) return [];
     try {
       const query = goals.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
       return parents.filter((id) => query.get(id)?.["status"] === "active");
     } catch {
       // A schema mismatch or busy read makes detection unavailable for the
       // entire selection; never mix confirmed goal results with guesses.
-      return parents;
+      return [];
     }
   } finally {
     state?.close();
     goals?.close();
   }
+}
+
+function normalizeWorkspacePath(value: string): string {
+  const trimmed = value.trim().replace(/^\\\\\?\\/, "");
+  return path.resolve(trimmed);
 }
