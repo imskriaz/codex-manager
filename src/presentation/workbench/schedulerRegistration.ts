@@ -46,7 +46,7 @@ async function allAccountsNeedCapabilityRefresh(repo: AccountsRepository): Promi
     hourly: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
     weekly: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0))
   };
-  const hourlyEnabled = config.get<boolean>("hourlyQuotaControlEnabled", true);
+  const hourlyEnabled = true;
 
   return accounts.every((account) => {
     if (

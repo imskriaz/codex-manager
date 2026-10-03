@@ -712,7 +712,7 @@ describe("refreshSingleQuota token automation state", () => {
     expect(repo.switchAccount).toHaveBeenCalledWith(higherMonthly.id);
   });
 
-  it("does not auto-switch for an hourly-only threshold when hourly quota control is disabled", async () => {
+  it("ignores the removed hourly quota toggle and auto-switches for a low hourly window", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {
         const values: Record<string, unknown> = {
@@ -735,8 +735,8 @@ describe("refreshSingleQuota token automation state", () => {
 
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
 
-    expect(switched).toBe(false);
-    expect(repo.switchAccount).not.toHaveBeenCalled();
+    expect(switched).toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledWith("candidate");
   });
 
   it("auto-switches for a valid hourly threshold when hourly quota control is enabled", async () => {
@@ -1301,7 +1301,7 @@ describe("quota warning window validation", () => {
     vi.restoreAllMocks();
   });
 
-  it("ignores the hourly quota while control is disabled and still warns for weekly quota", async () => {
+  it("warns for both low hourly and weekly quota because the removed toggle cannot disable hourly warnings", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {
         const values: Record<string, unknown> = {
@@ -1323,11 +1323,10 @@ describe("quota warning window validation", () => {
 
     await maybeWarnForAccount(repo as unknown as AccountsRepository, account.id);
 
-    expect(showWarning).toHaveBeenCalledTimes(1);
-    expect(showWarning.mock.calls[0]?.[0]).toContain(
-      "active@example.com Weekly quota is at 5%, below your configured threshold of 10%."
-    );
-    expect(showWarning.mock.calls[0]?.[0]).not.toContain("Balance");
+    expect(showWarning).toHaveBeenCalledTimes(2);
+    expect(showWarning.mock.calls[0]?.[0]).toContain("active@example.com 5h quota is at 0%");
+    expect(showWarning.mock.calls[0]?.[0]).toContain("Weekly 5% Balance");
+    expect(showWarning.mock.calls[0]?.[0]).not.toContain("Switch recommended@example.com");
     expect(showWarning.mock.calls[0]?.slice(1)).toEqual(["Switch recommended@example.com", "Select Account", "Later"]);
   });
 

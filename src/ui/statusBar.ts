@@ -35,8 +35,7 @@ export class AccountsStatusBarProvider {
           event.affectsConfiguration("codexManager.displayLanguage") ||
           event.affectsConfiguration("codexManager.dashboardTheme") ||
           event.affectsConfiguration("codexManager.quotaGreenThreshold") ||
-          event.affectsConfiguration("codexManager.quotaYellowThreshold") ||
-          event.affectsConfiguration("codexManager.hourlyQuotaControlEnabled")
+          event.affectsConfiguration("codexManager.quotaYellowThreshold")
         ) {
           void this.refresh().catch((error: unknown) => {
             const detail = error instanceof Error ? error.message : String(error);

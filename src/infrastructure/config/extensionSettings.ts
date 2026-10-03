@@ -29,7 +29,10 @@ export class ExtensionSettingsStore {
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
-      hourlyQuotaControlEnabled: config.get<boolean>("hourlyQuotaControlEnabled", true),
+      // The 5-hour quota is always part of automatic quota control. Keep the
+      // legacy field in the dashboard model for old snapshots, but do not read
+      // the removed user setting anymore.
+      hourlyQuotaControlEnabled: true,
       autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", false),
       autoResumeEnabled: config.get<boolean>("autoResumeEnabled", false),
       crossWindowAccountModeEnabled: config.get<boolean>("crossWindowAccountModeEnabled", false),
@@ -127,7 +130,7 @@ export function isAutoSwitchRefreshAllBeforeSwitchEnabled(): boolean {
 }
 
 export function isHourlyQuotaControlEnabled(): boolean {
-  return getCodexManagerConfiguration().get<boolean>("hourlyQuotaControlEnabled", true);
+  return true;
 }
 
 export function normalizeAutoSwitchThreshold(value: number): number {

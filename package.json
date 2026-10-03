@@ -119,11 +119,6 @@
           "default": false,
           "markdownDescription": "Automatically switch away from the active account when its quota falls below the configured 5-hour or long-window threshold. The long window is shown as weekly or monthly according to each account."
         },
-        "codexManager.hourlyQuotaControlEnabled": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show the 5-hour quota in the status bar and allow it to trigger automatic account switching and quota warning notifications. The quota remains visible in the dashboard."
-        },
         "codexManager.autoSwitchReloadWindowEnabled": {
           "type": "boolean",
           "default": false,
@@ -133,7 +128,7 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Experimental: set a goal in each session for automatic continuation. Preserve running sessions with active goals in the current workspace before Reload or an automatic reload and reopen them in VS Code afterward. Skip sub-agents. If goal detection is unavailable, reopen running parent sessions. Works without enabling Session Integration."
+          "markdownDescription": "Experimental: preserve all running parent sessions in the current workspace before Reload or an automatic reload and reopen them in VS Code afterward. Skip sub-agents. Works without enabling Session Integration."
         },
         "codexManager.crossWindowAccountModeEnabled": {
           "type": "boolean",

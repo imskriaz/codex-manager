@@ -26,24 +26,24 @@ function goals(home: string, statuses: Array<string | null>) {
   for (const [index, status] of statuses.entries()) if (status) db.prepare("INSERT INTO thread_goals VALUES (?, ?)").run(ids[index]!, status);
   db.close();
 }
-describe("goal-aware auto resume selection", () => {
+describe("auto resume selection", () => {
   it("selects all running active-goal parents and excludes a child with its own goal", async () => {
     const home = await fixture(); goals(home, ["active", "active", "active"]);
     expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0], ids[2]]);
   });
-  it.each(["paused", "blocked", "complete", "usage_limited", "budget_limited"])("does not resume %s or goal-less sessions", async (status) => {
+  it.each(["paused", "blocked", "complete", "usage_limited", "budget_limited"])("resumes %s parent sessions because goals are not required", async (status) => {
     const home = await fixture(); goals(home, [status, "active", null]);
-    expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
+    expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);
   });
-  it("does not resume when goal state is unavailable", async () => {
-    const home = await fixture(); expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
+  it("resumes parents when goal state is unavailable", async () => {
+    const home = await fixture(); expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);
   });
-  it("does not resume when the database is corrupt or its schema is unavailable", async () => {
+  it("resumes parents when the database is corrupt or its schema is unavailable", async () => {
     const home = await fixture(); await writeFile(path.join(home, "goals_1.sqlite"), "corrupt");
-    expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
+    expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);
     await rm(path.join(home, "goals_1.sqlite"));
     const db = new DatabaseSync(path.join(home, "goals_1.sqlite")); db.exec("CREATE TABLE future_schema (id TEXT)"); db.close();
-    expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
+    expect(await readAutoResumeCodexSessionIds(home)).toEqual([ids[0], ids[2]]);
   });
   it("does not select sessions belonging to another workspace", async () => {
     const home = await fixture(); goals(home, ["active", "active", "active"]);
@@ -69,8 +69,8 @@ describe("goal-aware auto resume selection", () => {
     }
     expect(await readAutoResumeCodexSessionIds(home)).toEqual([]);
   });
-  it("explains the goal requirement and fallback in Settings", () => {
+  it("explains that all running parents resume and sub-agents are skipped", () => {
     const copy = getDashboardCopy("en").autoResumeSub;
-    expect(copy).toContain("Set a goal"); expect(copy).toContain("Sub-agents are skipped"); expect(copy).toContain("goal detection is unavailable");
+    expect(copy).toContain("running parent sessions"); expect(copy).toContain("Sub-agents are skipped");
   });
 });

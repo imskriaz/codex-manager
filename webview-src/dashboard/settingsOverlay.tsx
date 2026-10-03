@@ -574,18 +574,6 @@ export function SettingsOverlay(props: {
                 />
               </div>
               <SettingsToggleBlock
-                title={props.copy.hourlyQuotaControlTitle}
-                sub={props.copy.hourlyQuotaControlSub}
-                enabled={props.settings.hourlyQuotaControlEnabled}
-                onToggle={(enabled) => patchAndSend("hourlyQuotaControlEnabled", enabled)}
-              >
-                <div class="settings-note">
-                  {props.settings.hourlyQuotaControlEnabled
-                    ? props.copy.hourlyQuotaControlOnDesc
-                    : props.copy.hourlyQuotaControlOffDesc}
-                </div>
-              </SettingsToggleBlock>
-              <SettingsToggleBlock
                 title={props.copy.autoSwitchTitle}
                 sub={props.copy.autoSwitchSub}
                 enabled={props.settings.autoSwitchEnabled}
@@ -593,8 +581,7 @@ export function SettingsOverlay(props: {
                 onToggle={(enabled) => patchAndSend("autoSwitchEnabled", enabled)}
               >
                 <div class={`settings-stack ${props.settings.autoSwitchEnabled ? "" : "is-hidden"}`}>
-                  {props.settings.hourlyQuotaControlEnabled ? (
-                    <SettingsDiscreteSlider
+                  <SettingsDiscreteSlider
                       value={props.settings.autoSwitchHourlyThreshold}
                       values={AUTO_SWITCH_VALUES}
                       accent="violet"
@@ -609,7 +596,6 @@ export function SettingsOverlay(props: {
                       onPreview={(value) => props.onPatchSettings({ autoSwitchHourlyThreshold: value })}
                       onCommit={(value) => patchAndSend("autoSwitchHourlyThreshold", value)}
                     />
-                  ) : null}
                   <SettingsDiscreteSlider
                     value={props.settings.autoSwitchWeeklyThreshold}
                     values={AUTO_SWITCH_VALUES}
@@ -673,7 +659,7 @@ export function SettingsOverlay(props: {
               </SettingsToggleBlock>
               <SettingsToggleBlock
                 title={props.copy.warningTitle}
-                sub={props.settings.hourlyQuotaControlEnabled ? props.copy.warningSub : props.copy.warningWeeklyOnlySub}
+                sub={props.copy.warningSub}
                 enabled={props.settings.quotaWarningEnabled}
                 className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("quotaWarningEnabled", enabled)}
@@ -688,8 +674,7 @@ export function SettingsOverlay(props: {
                     enabled={props.settings.autoSwitchRefreshAllBeforeSwitchEnabled === true}
                     onToggle={(enabled) => patchAndSend("autoSwitchRefreshAllBeforeSwitchEnabled", enabled)}
                   />
-                  {props.settings.hourlyQuotaControlEnabled ? (
-                    <SettingsDiscreteSlider
+                  <SettingsDiscreteSlider
                       value={props.settings.quotaWarningThreshold}
                       values={WARNING_VALUES}
                       accent="amber"
@@ -701,7 +686,6 @@ export function SettingsOverlay(props: {
                       onPreview={(value) => props.onPatchSettings({ quotaWarningThreshold: value })}
                       onCommit={(value) => patchAndSend("quotaWarningThreshold", value)}
                     />
-                  ) : null}
                   <SettingsDiscreteSlider
                     value={props.settings.quotaWarningWeeklyThreshold}
                     values={WEEKLY_WARNING_VALUES}

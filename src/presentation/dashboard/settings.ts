@@ -38,7 +38,6 @@ export async function handleDashboardSettingUpdate(
     case "privacyMode":
     case "codexAppRestartEnabled":
     case "autoSwitchEnabled":
-    case "hourlyQuotaControlEnabled":
     case "autoSwitchReloadWindowEnabled":
     case "autoResumeEnabled":
     case "crossWindowAccountModeEnabled":

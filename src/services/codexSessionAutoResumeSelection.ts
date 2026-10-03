@@ -28,7 +28,7 @@ async function openMetadataDatabase(home: string, prefix: string): Promise<Sqlit
   }
 }
 
-/** Select running parent sessions in this workspace, using active goals when available. */
+/** Select every running parent session in this workspace; sub-agents are excluded. */
 export async function readAutoResumeCodexSessionIds(
   home = resolveCodexHome(),
   workspacePaths = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? []
@@ -37,7 +37,6 @@ export async function readAutoResumeCodexSessionIds(
   if (!running.length) return [];
   const transcripts = await findCliSessionTranscripts(home, new Set(running));
   const state = await openMetadataDatabase(home, "state");
-  const goals = await openMetadataDatabase(home, "goals");
   try {
     const parents: string[] = [];
     for (const id of running) {
@@ -65,20 +64,9 @@ export async function readAutoResumeCodexSessionIds(
           })) continue;
       parents.push(id);
     }
-    // Auto-resume is intentionally goal-only. A missing goals database means
-    // the goal state is unknown, so never reopen an arbitrary running chat.
-    if (!goals) return [];
-    try {
-      const query = goals.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
-      return parents.filter((id) => query.get(id)?.["status"] === "active");
-    } catch {
-      // A schema mismatch or busy read makes detection unavailable for the
-      // entire selection; never mix confirmed goal results with guesses.
-      return [];
-    }
+    return parents;
   } finally {
     state?.close();
-    goals?.close();
   }
 }
 

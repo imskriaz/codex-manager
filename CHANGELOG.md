@@ -2,8 +2,10 @@
 
 ## 1.2.14
 
+- Remove the obsolete 5-hour Quota Control setting; 5-hour quota data is always included in automatic quota handling.
+- Auto-resume now reopens every running parent session after supported reloads without requiring goals, while continuing to exclude sub-agents.
 - Redesign the composer with a compact single-line draft that grows while typing and shrinks after clearing, plus a settings popover for model, reasoning, and access.
-- Make auto-resume strictly goal-aware and normalize Windows extended workspace paths so active goal sessions are found after reload; unknown goal state is left unopened.
+- Make auto-resume include every running parent session in the workspace, normalize Windows extended paths, and skip only sub-agents.
 - Keep delayed archive, delete, rename, restore, and fork results scoped to their original chat; invalidate the correct device cache without disrupting another conversation.
 - Show interrupted message/agent loading on connection loss instead of silently clearing its waiting state.
 - Keep the session menu within narrow mobile viewports when toolbar actions wrap, with full-width touch targets and scrollable overflow.
@@ -25,7 +27,7 @@
 
 - Open newly created chats as soon as Codex accepts them, stream the first response, allow Stop, and report interrupted transports immediately.
 
-- Reopen running parent sessions with active goals after Reload or automatic switching, scoped to the current workspace when project metadata is available. Skip sub-agents and fall back to running parent sessions when goal detection is unavailable.
+- Reopen every running parent session after Reload or automatic switching, scoped to the current workspace when project metadata is available. Skip sub-agents.
 - Explain in Settings that automatic continuation requires a goal.
 - Keep disabled accounts loaded across reloads and restarts. Authentication is unloaded only when the user explicitly chooses Unload.
 

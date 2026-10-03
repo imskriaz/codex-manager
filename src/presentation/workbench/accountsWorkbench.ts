@@ -97,7 +97,7 @@ export class AccountsWorkbench {
       vscode.commands.registerCommand(
         "codexManager.prepareDashboardForExtensionHostRestart",
         async (options?: { autoResume?: boolean }) => {
-          if (options?.autoResume) {
+          if (options?.autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false)) {
             await persistRunningCodexSessions(this.context);
           }
           return prepareQuotaSummaryPanelForExtensionHostRestart();

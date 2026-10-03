@@ -170,7 +170,8 @@ export function deferWindowReloadForAccount(accountId: string): boolean {
 }
 
 async function reloadExtensionHostWithWindowFallback(autoResume: boolean): Promise<void> {
-  await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart", { autoResume });
+  const preserveSessions = autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false);
+  await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: preserveSessions });
   // This is the user's explicit reload boundary: discard accumulated native
   // choices and notices before the extension host (or window) restarts.
   try {

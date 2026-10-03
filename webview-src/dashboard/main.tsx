@@ -1347,7 +1347,7 @@ function App() {
           uiPreferences.filter,
           snapshot.settings.quotaYellowThreshold,
           {
-            hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
+            hourlyEnabled: true,
             hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
             weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
           }
@@ -1355,7 +1355,7 @@ function App() {
         accountSort,
         uiPreferences.metricPriority,
         {
-          hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
+          hourlyEnabled: true,
           hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
           weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
         },
@@ -1364,7 +1364,6 @@ function App() {
     [
       displayedAccounts,
       snapshot.settings.quotaYellowThreshold,
-      snapshot.settings.hourlyQuotaControlEnabled,
       snapshot.settings.autoSwitchHourlyThreshold,
       snapshot.settings.autoSwitchWeeklyThreshold,
       snapshot.settings.encryptedSyncRegistryOverrideEnabled,
@@ -1457,7 +1456,7 @@ function App() {
   const accountEnablement = countAccountEnablement(displayedAccounts);
   const claimedAccountCount = displayedAccounts.filter(isAccountClaimedByAnotherDevice).length;
   const capabilityThresholds: DashboardAutoQueueCapabilityThresholds = {
-    hourlyEnabled: snapshot.settings.hourlyQuotaControlEnabled,
+    hourlyEnabled: true,
     hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
     weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
   };

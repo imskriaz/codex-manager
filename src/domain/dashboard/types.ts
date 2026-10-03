@@ -18,7 +18,6 @@ export type DashboardSettingKey =
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
   | "autoSwitchEnabled"
-  | "hourlyQuotaControlEnabled"
   | "autoSwitchReloadWindowEnabled"
   | "autoResumeEnabled"
   | "crossWindowAccountModeEnabled"
@@ -268,10 +267,6 @@ export interface DashboardCopy {
   autoRefreshOffDesc: string;
   autoRefreshValueTemplate: string;
   autoRefreshValueDescTemplate: string;
-  hourlyQuotaControlTitle: string;
-  hourlyQuotaControlSub: string;
-  hourlyQuotaControlOnDesc: string;
-  hourlyQuotaControlOffDesc: string;
   autoSwitchTitle: string;
   autoSwitchSub: string;
   autoSwitchOn: string;
@@ -314,7 +309,6 @@ export interface DashboardCopy {
   warningSub: string;
   warningOn: string;
   warningOnDesc: string;
-  warningWeeklyOnlySub: string;
   warningOff: string;
   warningOffDesc: string;
   warningValueDescTemplate: string;

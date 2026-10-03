@@ -72,8 +72,9 @@ describe("automatic extension host recovery", () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(50);
 
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+    expect(execute).toHaveBeenNthCalledWith(2, "workbench.action.restartExtensionHost");
     vi.useRealTimers();
   });
 
@@ -111,8 +112,9 @@ describe("automatic extension host recovery", () => {
     scheduleAutomaticExtensionHostRefresh(context, "1.2.8-pre1", 50);
     await vi.advanceTimersByTimeAsync(50);
 
-    expect(execute).toHaveBeenNthCalledWith(1, "workbench.action.restartExtensionHost");
-    expect(execute).toHaveBeenNthCalledWith(2, "workbench.action.reloadWindow");
+    expect(execute).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+    expect(execute).toHaveBeenNthCalledWith(2, "workbench.action.restartExtensionHost");
+    expect(execute).toHaveBeenNthCalledWith(3, "workbench.action.reloadWindow");
     vi.useRealTimers();
   });
 });

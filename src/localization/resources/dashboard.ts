@@ -122,11 +122,6 @@ const en: DashboardCopy = {
   autoRefreshOnDesc: "Refresh all saved account quotas on a fixed schedule.",
   autoRefreshOff: "Off",
   autoRefreshOffDesc: "Disable timed refresh and refresh manually when needed.",
-  hourlyQuotaControlTitle: "5-hour Quota Control",
-  hourlyQuotaControlSub: "Control the 5-hour quota in the status bar, automatic switching, and warning notifications.",
-  hourlyQuotaControlOnDesc: "Show the 5-hour status bar metric and use valid data for automation.",
-  hourlyQuotaControlOffDesc:
-    "Hide the 5-hour status bar metric and ignore it for automation; dashboard display remains available.",
   tokenAutomationTitle: "Background Token Refresh",
   tokenAutomationSub: "Keep saved account tokens refreshed before they expire while VS Code stays open.",
   tokenAutomationOn: "Enable background token refresh",
@@ -198,7 +193,7 @@ const en: DashboardCopy = {
     "Automatically reload VS Code after quota-triggered switching, and restart Codex App too when your restart policy allows it.",
   autoResumeTitle: "Auto resume sessions (Experimental)",
   autoResumeSub:
-    "Set a goal in each session to let Codex continue automatically. After Reload or an automatic reload, reopen running sessions with active goals in this workspace. Sub-agents are skipped. If goal detection is unavailable, reopen running parent sessions.",
+    "All running parent sessions continue after Reload. Sub-agents are skipped. Works without Session Integration.",
   autoSwitchLockMinutesTitle: "Temporary Lock Duration",
   autoSwitchLockMinutesSub:
     "Default duration when temporarily locking the current account against automatic switching.",
@@ -230,8 +225,6 @@ const en: DashboardCopy = {
   warningOn: "Enable warning",
   warningOnDesc:
     "Show notifications after refresh when either 5-hour or long-window remaining quota is below the threshold.",
-  warningWeeklyOnlySub:
-    "Only the weekly or monthly remaining quota triggers notifications while 5-hour quota control is off.",
   warningOff: "Disable warning",
   warningOffDesc: "Do not show quota threshold notifications.",
   warningValueDescTemplate: "Warn when available quota drops below {value}%.",
@@ -386,10 +379,6 @@ export const dashboardCopyResources = defineLocaleResources(en, {
     autoRefreshOnDesc: "按固定时间间隔自动刷新全部账号配额。",
     autoRefreshOff: "关闭",
     autoRefreshOffDesc: "不自动刷新，由你手动控制。",
-    hourlyQuotaControlTitle: "5 小时配额控制",
-    hourlyQuotaControlSub: "控制状态栏中的 5 小时配额，以及是否参与自动切号和配额预警。",
-    hourlyQuotaControlOnDesc: "在状态栏展示 5 小时配额，并使用有效数据参与自动化判断。",
-    hourlyQuotaControlOffDesc: "隐藏状态栏中的 5 小时配额并忽略自动化触发，Dashboard 仍保留展示。",
     tokenAutomationTitle: "后台 Token 续期",
     tokenAutomationSub: "在 VS Code 保持开启时，后台提前检查并续期已保存账号的 token。",
     tokenAutomationOn: "开启后台 Token 续期",
@@ -477,7 +466,6 @@ export const dashboardCopyResources = defineLocaleResources(en, {
     warningSub: "当前账号的 5 小时或每周剩余配额低于阈值时弹出提醒。",
     warningOn: "开启预警",
     warningOnDesc: "刷新后如果 5 小时或每周剩余配额任一低于阈值，会弹出通知提醒。",
-    warningWeeklyOnlySub: "5 小时配额控制关闭时，仅每周剩余配额会触发提醒。",
     warningOff: "关闭预警",
     warningOffDesc: "不做额度阈值提醒。",
     warningValueDescTemplate: "当可用配额低于 {value}% 时提醒。",

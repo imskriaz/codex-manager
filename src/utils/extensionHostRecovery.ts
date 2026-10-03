@@ -48,6 +48,7 @@ async function persistRecoveryVersion(context: vscode.ExtensionContext, version:
 
 async function restartExtensionHostAutomatically(): Promise<void> {
   try {
+    await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
     await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
   } catch (restartError) {
     console.warn("[codexManager] extension host restart failed; reloading the window", restartError);

@@ -61,7 +61,7 @@ describe("5-hour quota control defaults", () => {
     expect(new ExtensionSettingsStore().getDashboardSettings().crossWindowAccountModeEnabled).toBe(false);
   });
 
-  it("defaults to enabled in both the extension manifest and runtime fallbacks", () => {
+  it("keeps 5-hour quota control enabled without exposing a setting", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
       update: vi.fn(),
@@ -72,7 +72,7 @@ describe("5-hour quota control defaults", () => {
       contributes: { configuration: { properties: Record<string, { default?: unknown }> } };
     };
 
-    expect(manifest.contributes.configuration.properties["codexManager.hourlyQuotaControlEnabled"]?.default).toBe(true);
+    expect(manifest.contributes.configuration.properties["codexManager.hourlyQuotaControlEnabled"]).toBeUndefined();
     expect(new ExtensionSettingsStore().getDashboardSettings().hourlyQuotaControlEnabled).toBe(true);
     expect(isHourlyQuotaControlEnabled()).toBe(true);
   });

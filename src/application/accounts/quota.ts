@@ -53,7 +53,6 @@ import {
 } from "./switchEffects";
 
 const AUTO_SWITCH_ENABLED = "autoSwitchEnabled";
-const HOURLY_QUOTA_CONTROL_ENABLED = "hourlyQuotaControlEnabled";
 const AUTO_SWITCH_RELOAD_WINDOW_ENABLED = "autoSwitchReloadWindowEnabled";
 const AUTO_SWITCH_HOURLY_THRESHOLD = "autoSwitchHourlyThreshold";
 const AUTO_SWITCH_WEEKLY_THRESHOLD = "autoSwitchWeeklyThreshold";
@@ -455,7 +454,7 @@ async function evaluateAutoSwitchForActiveQuota(
   // otherwise auto-switch can fire well before the configured 5% default.
   const hourlyThreshold = normalizeAutoSwitchThreshold(config.get<number>(AUTO_SWITCH_HOURLY_THRESHOLD, 5));
   const weeklyThreshold = normalizeAutoSwitchThreshold(config.get<number>(AUTO_SWITCH_WEEKLY_THRESHOLD, 0));
-  const hourlyQuotaControlEnabled = config.get<boolean>(HOURLY_QUOTA_CONTROL_ENABLED, true);
+  const hourlyQuotaControlEnabled = true;
   const accounts = (await repo.listAccounts()).map(applyCoordinatedQuotaSnapshot);
   const active = accounts.find((account) => account.isActive);
   if (
@@ -807,7 +806,7 @@ async function refreshAllBeforeWarningIfNeeded(
     return;
   }
   const warningThresholds = getQuotaWarningThresholds(config);
-  const hourlyEnabled = config.get<boolean>(HOURLY_QUOTA_CONTROL_ENABLED, false);
+  const hourlyEnabled = true;
   const warningThresholdReached =
     (hourlyEnabled &&
       hasComparableHourlyWindow(account) &&
@@ -1120,7 +1119,7 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
   }
 
   const warningThresholds = getQuotaWarningThresholds(config);
-  const hourlyQuotaControlEnabled = config.get<boolean>(HOURLY_QUOTA_CONTROL_ENABLED, true);
+  const hourlyQuotaControlEnabled = true;
   let account = applyOptionalCoordinatedQuotaSnapshot(await repo.getAccount(accountId));
   if (!account) {
     clearQuotaWarningCountsForAccount(accountId);
@@ -1175,9 +1174,6 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
   ) {
     clearQuotaWarningCountsForAccount(accountId);
     return;
-  }
-  if (!hourlyQuotaControlEnabled) {
-    clearQuotaWarningCountsForDimension("hourly");
   }
 
   const checks: Array<{
@@ -1330,13 +1326,6 @@ export function selectQuotaWarningSwitchTarget(
     .sort(compareAutoSwitchCandidate)[0];
 }
 
-function clearQuotaWarningCountsForDimension(dimension: "hourly" | "weekly"): void {
-  for (const key of quotaWarningCounts.keys()) {
-    if (key.includes(`:${dimension}:`)) {
-      quotaWarningCounts.delete(key);
-    }
-  }
-}
 
 function clearQuotaWarningCount(accountId: string, dimension: "hourly" | "weekly"): void {
   const prefix = `${accountId}:${dimension}:`;
