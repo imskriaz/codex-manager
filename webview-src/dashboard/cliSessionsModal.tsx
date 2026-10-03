@@ -72,6 +72,20 @@ type WorkspaceLayout = {
 const WORKSPACE_LAYOUT_STORAGE_KEY = "codexManager.workspaceLayout.v2";
 const WORKSPACE_TERMINAL_ID = "workspace-terminal";
 const markdownRenderer = new MarkdownIt({ html: false, linkify: true, typographer: true });
+const renderMarkdownFence = markdownRenderer.renderer.rules["fence"]!;
+markdownRenderer.renderer.rules["fence"] = (tokens, index, options, env, renderer) =>
+  `<div class="cli-markdown-code-block"><button type="button" class="cli-code-copy" aria-label="Copy code">Copy code</button>${renderMarkdownFence(tokens, index, options, env, renderer)}</div>`;
+markdownRenderer.renderer.rules["link_open"] = (tokens, index, options, _env, renderer) => {
+  tokens[index]!.attrSet("target", "_blank");
+  tokens[index]!.attrSet("rel", "noopener noreferrer");
+  return renderer.renderToken(tokens, index, options);
+};
+const renderMarkdownImage = markdownRenderer.renderer.rules["image"]!;
+markdownRenderer.renderer.rules["image"] = (tokens, index, options, env, renderer) => {
+  tokens[index]!.attrSet("loading", "lazy");
+  tokens[index]!.attrSet("decoding", "async");
+  return renderMarkdownImage(tokens, index, options, env, renderer);
+};
 const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
   sessionView: "projects",
   railWidth: 260,
@@ -1007,7 +1021,28 @@ export function parseQuestionReply(text: string): Array<{ question: string; answ
 function renderMessageText(text: string): preact.ComponentChildren {
   // Use one Markdown renderer for the full assistant surface: paragraphs, headings,
   // lists, tables, blockquotes, links, images, inline code, and fenced code.
-  return <div class="cli-message-markdown" dangerouslySetInnerHTML={{ __html: markdownRenderer.render(text) }} />;
+  return <MarkdownMessage text={text} />;
+}
+
+function MarkdownMessage({ text }: { text: string }) {
+  const html = useMemo(() => markdownRenderer.render(text), [text]);
+  const [feedback, setFeedback] = useState<string>();
+  const copyCode = async (event: JSX.TargetedMouseEvent<HTMLDivElement>): Promise<void> => {
+    const button = (event.target as Element).closest<HTMLButtonElement>(".cli-code-copy");
+    if (!button || button.disabled) return;
+    const code = button.parentElement?.querySelector("pre code");
+    if (!code) return;
+    button.disabled = true;
+    try {
+      await navigator.clipboard.writeText(code.textContent ?? "");
+      setFeedback("Code copied.");
+    } catch {
+      setFeedback("Code could not be copied. Select the code and copy it manually.");
+    } finally {
+      button.disabled = false;
+    }
+  };
+  return <><div class="cli-message-markdown" onClick={(event) => void copyCode(event)} dangerouslySetInnerHTML={{ __html: html }} />{feedback ? <small role="status" class="cli-code-copy-feedback">{feedback}</small> : null}</>;
 }
 
 export function splitMessageParagraphs(text: string): string[] {
@@ -1564,7 +1599,7 @@ function editorLanguage(language: string): Extension {
 }
 
 function MarkdownPreview(props: { content: string }) {
-  return <article class="cli-markdown-preview" dangerouslySetInnerHTML={{ __html: markdownRenderer.render(props.content) }} />;
+  return <article class="cli-markdown-preview"><MarkdownMessage text={props.content} /></article>;
 }
 
 function formatFileSize(bytes: number): string {

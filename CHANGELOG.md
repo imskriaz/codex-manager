@@ -2,6 +2,10 @@
 
 ## 1.2.14
 
+- Avoid redundant agent-read success toasts covering the mobile composer; retain failure and cancellation feedback.
+
+- Restore code-block copying with visible success/failure feedback, open Markdown links separately, and defer offscreen message images.
+
 - Ignore malformed App Server protocol messages, preserve early turn completions, and report interrupted startup or rejected Stop requests accurately.
 - Show the selected next-turn model, reasoning effort, and access mode while the composer is locked by another process.
 

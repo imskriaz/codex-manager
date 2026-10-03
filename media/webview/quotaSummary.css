@@ -14672,3 +14672,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   color: var(--vscode-descriptionForeground);
   overflow-wrap: anywhere;
 }
+.cli-markdown-code-block { position: relative; }
+.cli-workspace .cli-message-markdown .cli-markdown-code-block pre { padding-top: 44px; }
+.cli-markdown-code-block .cli-code-copy {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  right: 8px;
+  padding: 4px 8px;
+  margin-top: 0;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+.cli-code-copy-feedback { display: block; overflow-wrap: anywhere; }

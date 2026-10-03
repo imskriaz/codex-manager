@@ -24,7 +24,7 @@ const sessions = [
 sessions.push(sessions[0]);
 const messages = [
   { id: "user", kind: "message", role: "user", text: "Review the workspace and explain the result." },
-  { id: "assistant", kind: "message", role: "assistant", text: "The workspace is ready.\n\n```ts\nconst answer = 42;\n```" }
+  { id: "assistant", kind: "message", role: "assistant", text: "The workspace is ready.\n\n```ts\nconst answer = 42;\n```\n\n[Documentation](https://example.com/docs)\n\n| Item | State |\n| --- | --- |\n| Chat | Ready |" }
 ];
 const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "workspace-write" };
 const mockHost = `(() => {
@@ -114,6 +114,14 @@ try {
     if (width <= 760) assert.equal(await page.locator(".cli-rail-toggle").getAttribute("aria-expanded"), "false", "Selecting a chat closes the mobile drawer");
     console.log(`Checking ${width}x${height}: realtime messages`);
     await page.getByText("Live transcript update", { exact: true }).waitFor({ timeout: 12_000 });
+    const copyCode = page.getByRole("button", { name: "Copy code", exact: true }).first();
+    await copyCode.click();
+    await page.getByText("Code copied.", { exact: true }).first().waitFor();
+    assert.equal((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n"), "const answer = 42;\n");
+    const documentation = page.getByRole("link", { name: "Documentation", exact: true }).first();
+    assert.equal(await documentation.getAttribute("target"), "_blank");
+    assert.match(await documentation.getAttribute("rel"), /noopener/);
+    assert.equal(await page.locator(".cli-message-markdown table").first().getByRole("cell", { name: "Ready", exact: true }).count(), 1);
     await page.getByRole("button", { name: "Share", exact: true }).click();
     await page.getByRole("dialog", { name: "Share session" }).waitFor();
     await page.keyboard.press("Escape");
@@ -129,6 +137,7 @@ try {
     await page.locator(".cli-agent-row").filter({ hasText: "Reviewer" }).click();
     await page.getByRole("tab", { name: "Agent: Reviewer" }).waitFor();
     await page.getByText("Agent reviewer message", { exact: true }).waitFor();
+    assert.equal(await page.getByText("Get codex sub agent messages completed.", { exact: true }).count(), 0, "Agent loading must not cover the composer with redundant success feedback");
     await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
     await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "New VS Code terminal", exact: true }).count(), 0, "Only one panel creation control");

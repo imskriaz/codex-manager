@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
+  it("uses inline agent messages as success feedback while preserving failed and cancelled outcomes", () => {
+    const result = { type: "dashboard:action-result" as const, requestId: "agent-read", action: "getCodexSubAgentMessages" as const };
+    expect(noticeFromActionResult({ ...result, status: "completed" })).toBeUndefined();
+    expect(noticeFromActionResult({ ...result, status: "failed", error: "Agent unavailable. Try Refresh." })).toEqual({ level: "error", message: "Agent unavailable. Try Refresh." });
+    expect(noticeFromActionResult({ ...result, status: "cancelled" })?.level).toBe("warning");
+  });
   it("shows a warning when the cross-PC sync toggle times out", () => {
     expect(noticeFromActionTimeout("setCrossPcSyncEnabled")).toMatchObject({
       level: "warning",
