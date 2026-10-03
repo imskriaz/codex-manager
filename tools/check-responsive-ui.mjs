@@ -44,6 +44,11 @@ const mockHost = `(() => {
       } else if(message.type === 'dashboard:action') {
         let payload = {}, error;
         if(message.action === 'listCodexCliSessions') payload = {cliSessions:sessions,cliComposerConfig:config};
+        else if(message.action === 'startCodexCliSession') {
+          const session = {id:'01a04882-d037-7a42-ad24-9afb61901198',title:'New smoke chat',status:'idle',projectPath:message.payload.projectPath};
+          if(!sessions.some(row=>row.id===session.id)) sessions.push(session);
+          payload = {cliSession:session,cliSessionMessages:[{id:'new-user',kind:'message',role:'user',text:message.payload.text},{id:'new-answer',kind:'message',role:'assistant',text:'New chat first response'}],notice:{level:'info',message:'New Codex chat is ready.'}};
+        }
         else if(message.action === 'getCodexCliSessionMessages') {
           messageReads++;
           payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages};
@@ -52,7 +57,18 @@ const mockHost = `(() => {
         else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:[]};
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:[]};
         else error = 'Simulated action failure. Your draft is preserved.';
-        dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error});
+        const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action === 'getCodexCliSessionMessages' && window.__holdNextMessageRead) {
+          window.__holdNextMessageRead = false;
+          window.__heldMessageResult = result;
+          return;
+        }
+        if(message.action === 'sendCodexCliSessionMessage' && window.__holdNextSend) {
+          window.__holdNextSend = false;
+          window.__heldSendResult = {...result,status:'completed',error:undefined,payload:{cliSession:sessions.find(s=>s.id===message.payload.sessionId),cliSessions:sessions,cliSessionMessages:[{id:'late-turn',kind:'message',role:'assistant',text:'Completed original conversation'}]}};
+          return;
+        }
+        dispatch(result);
       }
     }, 50);
   },getState(){},setState(){}});
@@ -64,6 +80,9 @@ const results = [];
 try {
   for (const [width, height] of (process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: width <= 760, serviceWorkers: "block", permissions: ["clipboard-read", "clipboard-write"] });
+    if (width === 320) await context.addInitScript(() => {
+      Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
+    });
     const page = await context.newPage();
     page.setDefaultTimeout(30_000);
     console.log(`Checking ${width}x${height}: session list`);
@@ -192,6 +211,32 @@ try {
     assert.equal(await composer.inputValue(), "Separate new chat draft", "Returning to a new-chat project restores its separate draft");
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
+    await page.evaluate(() => { window.__holdNextMessageRead = true; window.__heldMessageResult = undefined; });
+    await page.getByRole("button", { name: "Refresh conversation", exact: true }).click();
+    await page.waitForFunction(() => window.__heldMessageResult);
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldMessageResult })));
+    assert.equal(new URL(page.url()).pathname, "/", "A late transcript read cannot reopen an old conversation");
+    assert.equal(await composer.inputValue(), "Separate new chat draft");
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
+    await composer.fill("Original long-running turn");
+    await page.evaluate(() => { window.__holdNextSend = true; window.__heldSendResult = undefined; });
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await page.waitForFunction(() => window.__heldSendResult);
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
+    await composer.fill("Keep this new draft");
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldSendResult })));
+    await page.getByText("Codex completed the turn in the original chat.", { exact: true }).first().waitFor();
+    assert.equal(new URL(page.url()).pathname, "/", "A completed turn cannot pull the user back to its conversation");
+    assert.equal(await composer.inputValue(), "Keep this new draft");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await page.getByText("New Codex chat is ready.", { exact: true }).first().waitFor();
+    await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === "");
+    assert.equal(new URL(page.url()).pathname, "/01a04882-d037-7a42-ad24-9afb61901198", "A new-session acknowledgement opens the accepted thread without requiring another list/catalog payload");
+    assert.equal(await composer.inputValue(), "", "A newly accepted chat clears only its submitted project draft");
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     assert.ok(overflow <= 2, `Chat overflows by ${overflow}px at ${width}px`);
     await page.screenshot({ path: path.join(output, `chat-${width}x${height}.png`) });

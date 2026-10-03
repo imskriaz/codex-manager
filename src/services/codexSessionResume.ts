@@ -2,7 +2,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
-import { normalizeCodexSessionTransport } from "../infrastructure/config/extensionSettings";
+import { readCodexSessionTransport } from "../infrastructure/config/extensionSettings";
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { createHash } from "crypto";
 import * as readline from "readline";
@@ -279,8 +279,7 @@ async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIn
 }
 
 function configuredSessionTransport(): "app-server-stdio" | "cli" {
-  const value = vscode.workspace.getConfiguration("codexManager").get<string>("codexSessionTransport");
-  return normalizeCodexSessionTransport(value);
+  return readCodexSessionTransport();
 }
 
 // Coalesce refreshes; bounded local reads keep the list usable during startup.
@@ -876,6 +875,13 @@ export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSe
       recordPersistentEvent("error", "session-start", "New session first turn failed", { sessionRef: toSessionLogRef(createdId), reason: failure.message });
     });
   });
+}
+
+export function readNewCodexCliSessionSummary(sessionId: string): DashboardCliSessionSummary | undefined {
+  const summary = recentNewSessions.get(sessionId)?.summary;
+  if (!summary) return undefined;
+  const running = activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId);
+  return { ...summary, status: running ? "running" : "idle", canStop: running };
 }
 
 async function runNewCodexCliSession(options: {

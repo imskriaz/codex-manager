@@ -15,6 +15,7 @@ import {
   openNewCodexWebview,
   readCodexCliComposerConfig,
   readCodexCliSessionSummary,
+  readNewCodexCliSessionSummary,
   readCodexCliSessions,
   getCodexSessionReadNotice,
   isCodexCliAvailable,
@@ -750,7 +751,7 @@ async function runDashboardAction(
     case "openNewCodexWebview":
       return handleOpenNewCodexWebview();
     case "startCodexCliSession":
-      return handleStartCodexCliSession(payload, ctx.getRemoteCliSessions);
+      return handleStartCodexCliSession(payload);
     case "listCodexCliSessions":
       return handleListCodexCliSessions(ctx.context, ctx.getRemoteCliSessions);
     case "getCodexSubAgentMessages": {
@@ -1695,8 +1696,7 @@ async function handleListCodexCliSessions(
 }
 
 async function handleStartCodexCliSession(
-  payload: DashboardActionPayload | undefined,
-  getRemoteCliSessions?: () => DashboardCliSessionSummary[]
+  payload: DashboardActionPayload | undefined
 ) {
   ensureCliIntegrationEnabled();
   if (!(await isCodexCliAvailable())) {
@@ -1710,12 +1710,9 @@ async function handleStartCodexCliSession(
     sandboxMode: payload?.sandboxMode,
     projectPath: payload?.projectPath
   });
-  const [localSessions, cliComposerConfig] = await Promise.all([readCodexCliSessions(), readCodexCliComposerConfig()]);
-  const remoteSessions = getRemoteCliSessions?.() ?? [];
-  let cliSessions = [...localSessions, ...remoteSessions].sort((left, right) =>
-    String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
-  );
-  const existingSession = cliSessions.find((session) => session.id === sessionId) ?? await readCodexCliSessionSummary(sessionId);
+  // Creation already has the accepted thread identity. Do not hold its terminal
+  // feedback behind unrelated session-list and model-catalog round trips.
+  const existingSession = readNewCodexCliSessionSummary(sessionId) ?? await readCodexCliSessionSummary(sessionId);
   const visibleSession = existingSession ? {
     ...existingSession,
     projectPath: existingSession.projectPath ?? payload?.projectPath?.trim()
@@ -1726,15 +1723,12 @@ async function handleStartCodexCliSession(
     archived: false,
     ...(payload?.projectPath?.trim() ? { projectPath: payload.projectPath.trim() } : {})
   };
-  cliSessions = upsertCliSessionInList(cliSessions, visibleSession);
   return {
-    cliSessions,
     cliSession: visibleSession,
     cliSessionMessages: payload?.text?.trim() ? await readCodexCliSessionMessages(sessionId).catch((error: unknown) => [
       { id: `initial-${sessionId}`, kind: "message" as const, role: "user" as const, text: payload.text! },
       { id: `initial-error-${sessionId}`, kind: "error" as const, status: "failed" as const, text: error instanceof Error ? error.message : String(error) }
     ]) : [],
-    cliComposerConfig,
     notice: { level: "info" as const, message: "New Codex chat is ready." }
   };
 }

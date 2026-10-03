@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
+  it("does not duplicate embedded turn completion with an internal CLI action-name toast", () => {
+    expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "turn", action: "sendCodexCliSessionMessage", status: "completed" })).toBeUndefined();
+  });
   it("uses inline agent messages as success feedback while preserving failed and cancelled outcomes", () => {
     const result = { type: "dashboard:action-result" as const, requestId: "agent-read", action: "getCodexSubAgentMessages" as const };
     expect(noticeFromActionResult({ ...result, status: "completed" })).toBeUndefined();

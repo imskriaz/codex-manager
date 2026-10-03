@@ -4,6 +4,7 @@ import type {
   DashboardCliSessionSummary,
   DashboardState
 } from "../../src/domain/dashboard/types";
+import { sameCliSessionTarget } from "./cliSessionRoute";
 
 const DB_NAME = "codex-manager-cache";
 const DB_VERSION = 1;
@@ -44,7 +45,7 @@ export function mergeCachedCliSession(
   incoming: DashboardCliSessionSummary,
   previous?: DashboardCliSessionSummary
 ): DashboardCliSessionSummary {
-  return previous?.projectPath && !incoming.projectPath ? { ...incoming, projectPath: previous.projectPath } : incoming;
+  return sameCliSessionTarget(incoming, previous) && previous?.projectPath && !incoming.projectPath ? { ...incoming, projectPath: previous.projectPath } : incoming;
 }
 
 let cacheDatabase: Promise<IDBDatabase | undefined> | undefined;
@@ -54,12 +55,23 @@ let dashboardWrite: Promise<void> | undefined;
 function openCache(): Promise<IDBDatabase | undefined> {
   if (typeof indexedDB === "undefined") return Promise.resolve(undefined);
   cacheDatabase ??= new Promise((resolve) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      cacheDatabase = undefined;
+      resolve(undefined);
+    }, 2_000);
+    let request: IDBOpenDBRequest;
+    try { request = indexedDB.open(DB_NAME, DB_VERSION); }
+    catch { clearTimeout(timer); settled = true; resolve(undefined); return; }
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME))
         request.result.createObjectStore(STORE_NAME, { keyPath: "key" });
     };
     request.onsuccess = () => {
+      clearTimeout(timer);
+      if (settled) { request.result.close(); return; }
+      settled = true;
       request.result.onversionchange = () => {
         request.result.close();
         cacheDatabase = undefined;
@@ -67,15 +79,25 @@ function openCache(): Promise<IDBDatabase | undefined> {
       resolve(request.result);
     };
     request.onerror = () => {
+      if (settled) return;
+      clearTimeout(timer);
+      settled = true;
       cacheDatabase = undefined;
       resolve(undefined);
     };
     request.onblocked = () => {
+      if (settled) return;
+      clearTimeout(timer);
+      settled = true;
       cacheDatabase = undefined;
       resolve(undefined);
     };
   });
-  return cacheDatabase;
+  const opening = cacheDatabase;
+  return opening.then((db) => {
+    if (!db && cacheDatabase === opening) cacheDatabase = undefined;
+    return db;
+  }, () => { if (cacheDatabase === opening) cacheDatabase = undefined; return undefined; });
 }
 
 export async function readCliSessionListCache(): Promise<CliSessionListCache | undefined> {
@@ -85,9 +107,10 @@ export async function readCliSessionListCache(): Promise<CliSessionListCache | u
 }
 
 export async function readCliSessionMessagesCache(
-  sessionId: string
+  sessionId: string,
+  deviceId?: string
 ): Promise<DashboardCliSessionMessage[] | undefined> {
-  const cached = await readFreshRecord<unknown>(`messages:${sessionId}`, MAX_CACHE_AGE_MS);
+  const cached = await readFreshRecord<unknown>(`messages:${JSON.stringify([deviceId ?? "local", sessionId])}`, MAX_CACHE_AGE_MS);
   return cached && Array.isArray(cached.value) ? (cached.value as DashboardCliSessionMessage[]) : undefined;
 }
 
@@ -97,9 +120,10 @@ export async function writeCliSessionListCache(value: CliSessionListCache): Prom
 
 export async function writeCliSessionMessagesCache(
   sessionId: string,
-  messages: DashboardCliSessionMessage[]
+  messages: DashboardCliSessionMessage[],
+  deviceId?: string
 ): Promise<void> {
-  await writeRecord({ key: `messages:${sessionId}`, updatedAt: Date.now(), value: messages });
+  await writeRecord({ key: `messages:${JSON.stringify([deviceId ?? "local", sessionId])}`, updatedAt: Date.now(), value: messages });
 }
 
 export async function readDashboardStateCache(): Promise<DashboardState | undefined> {
@@ -118,16 +142,17 @@ export function writeDashboardStateCache(state: DashboardState): Promise<void> {
   return dashboardWrite;
 }
 
-export async function invalidateCliSessionCache(sessionId?: string): Promise<void> {
+export async function invalidateCliSessionCache(sessionId?: string, deviceId?: string): Promise<void> {
   const db = await openCache();
   if (!db) return;
   await new Promise<void>((resolve) => {
     const transaction = db.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).delete("list");
-    if (sessionId) transaction.objectStore(STORE_NAME).delete(`messages:${sessionId}`);
+    if (sessionId) transaction.objectStore(STORE_NAME).delete(`messages:${JSON.stringify([deviceId ?? "local", sessionId])}`);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
-  });
+    transaction.onabort = () => resolve();
+  }).catch(() => undefined);
 }
 
 async function flushDashboardStateWrites(): Promise<void> {
@@ -148,11 +173,13 @@ async function readFreshRecord<T>(key: string, maxAgeMs: number): Promise<{ valu
 async function readRecord(key: string): Promise<CacheRecord | undefined> {
   const db = await openCache();
   if (!db) return undefined;
-  return new Promise((resolve) => {
-    const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(key);
+  return new Promise<CacheRecord | undefined>((resolve) => {
+    const transaction = db.transaction(STORE_NAME, "readonly");
+    transaction.onabort = () => resolve(undefined);
+    const request = transaction.objectStore(STORE_NAME).get(key);
     request.onsuccess = () => resolve(request.result as CacheRecord | undefined);
     request.onerror = () => resolve(undefined);
-  });
+  }).catch(() => undefined);
 }
 
 async function writeRecord(record: CacheRecord): Promise<void> {
@@ -163,5 +190,6 @@ async function writeRecord(record: CacheRecord): Promise<void> {
     transaction.objectStore(STORE_NAME).put(record);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
-  });
+    transaction.onabort = () => resolve();
+  }).catch(() => undefined);
 }

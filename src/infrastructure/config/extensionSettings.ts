@@ -24,7 +24,7 @@ export class ExtensionSettingsStore {
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "manual",
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
-      codexSessionTransport: normalizeCodexSessionTransport(config.get<string>("codexSessionTransport", "app-server-stdio")),
+      codexSessionTransport: readCodexSessionTransport(config),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15)),
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
@@ -79,6 +79,12 @@ export function normalizeDashboardTheme(value: string | undefined): DashboardThe
 
 export function normalizeCodexSessionTransport(value: string | undefined): DashboardCodexSessionTransport {
   return value === "cli" ? value : "app-server-stdio";
+}
+
+/** Machine-scoped transport must not inherit a legacy repository override. */
+export function readCodexSessionTransport(config: vscode.WorkspaceConfiguration = getCodexManagerConfiguration()): DashboardCodexSessionTransport {
+  const inspected = config.inspect?.<string>("codexSessionTransport");
+  return normalizeCodexSessionTransport(inspected ? inspected.globalValue ?? inspected.defaultValue : config.get<string>("codexSessionTransport"));
 }
 
 export function normalizeAutoRefreshMinutes(value: number): number {

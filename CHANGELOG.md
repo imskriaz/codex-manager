@@ -2,6 +2,10 @@
 
 ## 1.2.14
 
+- Honor the machine App Server transport despite legacy workspace overrides and acknowledge accepted new chats without extra list/catalog refreshes.
+- Preserve chat/device identity in routes, requests, agent data, and message caches; ignore late responses after navigation and cache reads superseded by live messages.
+- Recover from unavailable browser storage and aborted cache transactions without leaving background cache operations waiting.
+
 - Keep composer drafts and attachments separate for each chat, device, and new-chat project. Late file reads and send completion update the originating draft.
 
 - Avoid redundant agent-read success toasts covering the mobile composer; retain failure and cancellation feedback.

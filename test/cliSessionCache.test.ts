@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { mergeCachedCliSession, mergeCachedCliSessions } from "../webview-src/dashboard/cliSessionCache";
 
 describe("CLI session cache merging", () => {
+  it("does not reuse a selected folder for a different session or device", () => {
+    const previous = { id: "session-1", title: "Old", status: "idle" as const, deviceId: "pc-a", projectPath: "D:/Secret" };
+    expect(mergeCachedCliSession({ ...previous, id: "session-2", projectPath: undefined }, previous).projectPath).toBeUndefined();
+    expect(mergeCachedCliSession({ ...previous, deviceId: "pc-b", projectPath: undefined }, previous).projectPath).toBeUndefined();
+  });
   it("keeps a known project folder when a partial refresh omits it", () => {
     const previous = [{
       id: "session-1",

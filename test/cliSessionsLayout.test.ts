@@ -551,7 +551,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
     expect(source).toContain('return pathname === "/dash" || isCliSessionsPath(pathname);');
     expect(source).toContain("if (!hasBrowserWorkspaceShell(browserPath)) return;");
-    expect(source).toContain("if (hasBrowserWorkspaceShell(path)) requestCliSessions();");
+    expect(source).toContain("if (sessionId || hasBrowserWorkspaceShell(path)) requestCliSessions(true);");
     expect(source).toContain("window.setInterval(announceCurrentVisibility, 15_000)");
   });
 

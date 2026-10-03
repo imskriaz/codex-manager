@@ -39,7 +39,7 @@ export function noticeFromActionResult(
     };
   }
 
-  if (["getDailyUsage", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "markAnnouncementRead"].includes(message.action)) {
+  if (["getDailyUsage", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "markAnnouncementRead", "startCodexCliSession", "sendCodexCliSessionMessage", "cancelCodexCliSessionTurn"].includes(message.action)) {
     return undefined;
   }
 

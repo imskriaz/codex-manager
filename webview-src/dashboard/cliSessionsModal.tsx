@@ -35,6 +35,7 @@ import type {
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
 import { validateChatAttachments, prepareChatInput, type ChatAttachment } from "../../src/domain/chatAttachments";
 import { readSubAgentMetadata } from "../../src/domain/sessionSource";
+import { cliSessionTargetKey } from "./cliSessionRoute";
 import { useModalAccessibility } from "./primitives";
 import { getSensitiveDisplayValue } from "./helpers";
 
@@ -1478,7 +1479,7 @@ function WorkspaceContextPanel(props: {
 
 function AgentWorkspace(props: { sessions: DashboardCliSessionSummary[]; data: Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>; activeId?: string; onOpen: (id: string) => void; onRefresh?: (agent: DashboardCliSessionSummary) => void; onFeedback: (notice: DashboardNotice) => void }) {
   const agent = props.sessions.find((item) => item.id === props.activeId);
-  const state = agent ? props.data[agent.id] : undefined;
+  const state = agent ? props.data[cliSessionTargetKey(agent)] : undefined;
   useEffect(() => {
     if (!agent) return;
     const timer = window.setInterval(() => { if (document.visibilityState === "visible" && navigator.onLine && !state?.loading) props.onRefresh?.(agent); }, 5000);
