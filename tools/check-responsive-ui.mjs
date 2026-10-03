@@ -163,6 +163,35 @@ try {
     await page.getByText("Simulated action failure. Your draft is preserved.", { exact: true }).first().waitFor();
     assert.match(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), /^> /, "Failed sends preserve the draft");
     assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 1, "Failed sends preserve attachments");
+    // Hold a real FileReader until after navigating to another composer.
+    await page.evaluate(() => {
+      const read = FileReader.prototype.readAsText;
+      FileReader.prototype.readAsText = function(file) {
+        FileReader.prototype.readAsText = read;
+        window.__releaseAttachmentRead = () => read.call(this, file);
+      };
+    });
+    await page.locator('input[type="file"][aria-label="Choose attachments"]').setInputFiles({ name: "late.txt", mimeType: "text/plain", buffer: Buffer.from("Original conversation only") });
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
+    const composer = page.getByRole("textbox", { name: "Message Codex", exact: true });
+    assert.equal(await composer.inputValue(), "", "New chats must not inherit another chat's draft");
+    assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 0);
+    await composer.fill("Separate new chat draft");
+    await page.evaluate(() => window.__releaseAttachmentRead());
+    await page.getByRole("button", { name: "Attach files", exact: true }).waitFor();
+    await page.getByText("Attachments added to the original chat draft. Return to that chat to use them.", { exact: true }).first().waitFor();
+    assert.equal(await page.getByRole("button", { name: "Remove late.txt", exact: true }).count(), 0, "Late file reads stay with the originating chat");
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
+    assert.match(await composer.inputValue(), /^> /, "Returning to a chat restores its draft");
+    await page.getByRole("button", { name: "Remove late.txt", exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 1);
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
+    assert.equal(await composer.inputValue(), "Separate new chat draft", "Returning to a new-chat project restores its separate draft");
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
     assert.ok(overflow <= 2, `Chat overflows by ${overflow}px at ${width}px`);
     await page.screenshot({ path: path.join(output, `chat-${width}x${height}.png`) });

@@ -94,6 +94,8 @@ const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
   environmentHeight: 320,
   composerHeight: 136
 };
+const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
+type ComposerDraft = { text: string; attachments: ChatAttachment[] };
 
 export type CliSessionsPageProps = {
   dashboardMode?: boolean;
@@ -184,16 +186,32 @@ export function shouldShowLatestButton(scrollHeight: number, clientHeight: numbe
 export function CliSessionsPage(props: CliSessionsPageProps) {
   const [section, setSection] = useState<CliSessionSection>("active");
   const [search, setSearch] = useState("");
-  const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentReading, setAttachmentReading] = useState(false);
-  const submittedDraft = useRef<{ text: string; attachments: ChatAttachment[] }>();
+  const submittedDraft = useRef<ComposerDraft & { key: string }>();
   const attachmentReadRef = useRef(false);
   const [model, setModel] = useState<string>();
   const [reasoningEffort, setReasoningEffort] = useState<string>();
   const [sandboxMode, setSandboxMode] = useState<DashboardCliSandboxMode>("workspace-write");
   const [projectPath, setProjectPath] = useState<string>();
   const [newChatProject, setNewChatProject] = useState<string>();
+  const draftKey = JSON.stringify(props.selectedSession ? [props.selectedSession.deviceId ?? "local", props.selectedSession.id] : ["new", newChatProject ?? ""]);
+  const currentDraftKey = useRef(draftKey);
+  currentDraftKey.current = draftKey;
+  const [composerDrafts, setComposerDrafts] = useState<Record<string, ComposerDraft>>({});
+  const draft = composerDrafts[draftKey]?.text ?? "";
+  const attachments = composerDrafts[draftKey]?.attachments ?? EMPTY_CHAT_ATTACHMENTS;
+  const setDraft = (value: string | ((current: string) => string)): void => {
+    setComposerDrafts((current) => {
+      const previous = current[draftKey] ?? { text: "", attachments: EMPTY_CHAT_ATTACHMENTS };
+      return { ...current, [draftKey]: { ...previous, text: typeof value === "function" ? value(previous.text) : value } };
+    });
+  };
+  const setAttachments = (value: ChatAttachment[] | ((current: ChatAttachment[]) => ChatAttachment[])): void => {
+    setComposerDrafts((current) => {
+      const previous = current[draftKey] ?? { text: "", attachments: EMPTY_CHAT_ATTACHMENTS };
+      return { ...current, [draftKey]: { ...previous, attachments: typeof value === "function" ? value(previous.attachments) : value } };
+    });
+  };
   const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia("(max-width: 760px)").matches);
   const [railCollapsed, setRailCollapsed] = useState(() => window.matchMedia("(max-width: 760px)").matches);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -241,8 +259,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setLocalFeedback(props.feedback);
     if (props.feedback.level === "info" && /Codex completed the turn|Codex session started|New Codex chat is ready/i.test(props.feedback.message) && submittedDraft.current) {
       const submitted = submittedDraft.current;
-      setDraft((current) => current === submitted.text ? "" : current);
-      setAttachments((current) => current === submitted.attachments ? [] : current);
+      setComposerDrafts((current) => {
+        const previous = current[submitted.key];
+        if (!previous) return current;
+        return { ...current, [submitted.key]: {
+          text: previous.text === submitted.text ? "" : previous.text,
+          attachments: previous.attachments === submitted.attachments ? EMPTY_CHAT_ATTACHMENTS : previous.attachments
+        } };
+      });
       submittedDraft.current = undefined;
     }
   }, [props.feedback]);
@@ -512,7 +536,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
     try { prepareChatInput(text, attachments); }
     catch (error) { setLocalFeedback({ level: "error", message: error instanceof Error ? error.message : String(error) }); return; }
-    submittedDraft.current = { text: draft, attachments };
+    submittedDraft.current = { key: draftKey, text: draft, attachments };
     setLocalFeedback({ level: "info", message: "Codex is working on your request…" });
     if (!props.selectedSession) {
       setLocalFeedback({ level: "info", message: "Starting a new Codex chat…" });
@@ -544,7 +568,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       }
       const combined = validateChatAttachments([...attachments, ...added.filter((file) => !attachments.some((item) => item.name === file.name && item.data === file.data))]);
       setAttachments(combined);
-      setLocalFeedback({ level: "info", message: `${added.length} attachment${added.length === 1 ? "" : "s"} ready.` });
+      setLocalFeedback({ level: "info", message: currentDraftKey.current === draftKey ? `${added.length} attachment${added.length === 1 ? "" : "s"} ready.` : "Attachments added to the original chat draft. Return to that chat to use them." });
     } catch (error) { setLocalFeedback({ level: "error", message: error instanceof Error ? error.message : String(error) }); }
     finally { attachmentReadRef.current = false; setAttachmentReading(false); }
   };

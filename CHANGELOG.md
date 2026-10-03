@@ -2,6 +2,8 @@
 
 ## 1.2.14
 
+- Keep composer drafts and attachments separate for each chat, device, and new-chat project. Late file reads and send completion update the originating draft.
+
 - Avoid redundant agent-read success toasts covering the mobile composer; retain failure and cancellation feedback.
 
 - Restore code-block copying with visible success/failure feedback, open Markdown links separately, and defer offscreen message images.
