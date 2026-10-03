@@ -14666,3 +14666,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-message-markdown th { background: color-mix(in srgb, var(--bg-muted) 72%, transparent); font-weight: 700; }
 .cli-workspace .cli-message-markdown img { max-width: min(100%, 720px); height: auto; border-radius: 6px; }
 .cli-workspace .cli-message-markdown a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.cli-locked-turn-settings {
+  display: block;
+  margin-top: 4px;
+  color: var(--vscode-descriptionForeground);
+  overflow-wrap: anywhere;
+}

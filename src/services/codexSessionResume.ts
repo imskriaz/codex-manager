@@ -1051,7 +1051,7 @@ async function startAppServerSession(options: {
     });
     return threadId;
   } catch (error) {
-    if (error instanceof CodexAppServerTurnInterruptedError) throw new CodexCliTurnCancelledError();
+    if (error instanceof CodexAppServerTurnInterruptedError || (threadId && activeAppServerTurns.get(threadId)?.cancelRequested)) throw new CodexCliTurnCancelledError();
     throw error;
   } finally {
     detachPrompts();
@@ -1113,7 +1113,12 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     activeAppServer.cancelRequested = true;
     if (!activeAppServer.turnId) { activeAppServer.rpc.close(); return true; }
     recordPersistentEvent("info", "session-stop", "App-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: "app-server-stdio" });
-    await activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000);
+    try {
+      await activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000);
+    } catch (error) {
+      activeAppServer.cancelRequested = false;
+      throw error;
+    }
     return true;
   }
   const child = activeCliTurns.get(sessionId);
@@ -2331,6 +2336,12 @@ async function runCodexAppServerRequest<T = unknown>(
           result?: unknown;
           error?: { message?: unknown };
         };
+        if (!message || typeof message !== "object" || Array.isArray(message)) return;
+        if (message.id === 1 && message.error) {
+          const detail = typeof message.error.message === "string" ? message.error.message : "Codex rejected initialization.";
+          finish(() => reject(new Error(detail)));
+          return;
+        }
         if (message.id === 1 && Object.prototype.hasOwnProperty.call(message, "result")) {
           write({ method: "initialized" });
           write({ method, id: 2, params });

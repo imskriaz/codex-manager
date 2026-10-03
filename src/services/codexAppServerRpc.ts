@@ -102,7 +102,7 @@ export class CodexAppServerRpc {
     onTurnStarted?: (turnId: string) => void
   ): Promise<void> {
     let turnId: string | undefined;
-    let earlyCompletion: Record<string, unknown> | undefined;
+    const earlyCompletions = new Map<string, Record<string, unknown>>();
     let settle!: (params: Record<string, unknown>) => void;
     let failTurn!: (error: Error) => void;
     const completed = new Promise<void>((resolve, reject) => {
@@ -125,7 +125,7 @@ export class CodexAppServerRpc {
       const payload = raw as Record<string, unknown>;
       if (payload["threadId"] !== threadId) return;
       const eventTurn = payload["turn"] as Record<string, unknown> | undefined;
-      if (!turnId) earlyCompletion = payload;
+      if (!turnId && typeof eventTurn?.["id"] === "string") earlyCompletions.set(eventTurn["id"], payload);
       else if (eventTurn?.["id"] === turnId) settle(payload);
     });
     let timeout: NodeJS.Timeout | undefined;
@@ -134,7 +134,9 @@ export class CodexAppServerRpc {
       turnId = typeof started.turn?.id === "string" ? started.turn.id : undefined;
       if (!turnId) throw new Error("Codex started a turn without returning its ID. Refresh the session before retrying.");
       onTurnStarted?.(turnId);
-      if ((earlyCompletion?.["turn"] as Record<string, unknown> | undefined)?.["id"] === turnId) settle(earlyCompletion!);
+      const earlyCompletion = earlyCompletions.get(turnId);
+      earlyCompletions.clear();
+      if (earlyCompletion) settle(earlyCompletion);
       await Promise.race([
         completed,
         new Promise<never>((_, reject) => {
@@ -162,6 +164,7 @@ export class CodexAppServerRpc {
   private receive(raw: string): void {
     let message: RpcResponse;
     try { message = JSON.parse(raw) as RpcResponse; } catch { return; }
+    if (!message || typeof message !== "object" || Array.isArray(message)) return;
     if (typeof message.id === "number" || typeof message.id === "string") {
       const pending = typeof message.id === "number" ? this.pending.get(message.id) : undefined;
       if (pending) {

@@ -2,6 +2,9 @@
 
 ## 1.2.14
 
+- Ignore malformed App Server protocol messages, preserve early turn completions, and report interrupted startup or rejected Stop requests accurately.
+- Show the selected next-turn model, reasoning effort, and access mode while the composer is locked by another process.
+
 - Keep Search full-width, balance sidebar action icons, and replace Active/Archive tabs with one toggle. Add a remembered compact chat-list view alongside collapsed Projects; search shows matching chats immediately. Move connection notices to the bottom-right.
 
 - Open newly created chats as soon as Codex accepts them, stream the first response, allow Stop, and report interrupted transports immediately.

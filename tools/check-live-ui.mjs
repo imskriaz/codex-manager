@@ -66,7 +66,9 @@ try {
     const childIds = sessions.filter(session => session.subAgent || session.parentSessionId).map(session => session.id);
 
     assert.equal(await page.locator(".cli-session-row-select").count(), 0, "Real projects start collapsed");
+    if (sessions.some(session => !session.archived && !session.subAgent && !session.parentSessionId)) await page.locator(".cli-project-collapse").first().waitFor();
     for (const expand of await page.locator(".cli-project-collapse").all()) await expand.click();
+    if (sessions.some(session => !session.archived && !session.subAgent && !session.parentSessionId)) await page.locator(".cli-session-row-select").first().waitFor();
     assert.equal(await page.locator(".cli-session-row-select").count(), new Set(sessions.filter(session => !session.archived && !session.subAgent && !session.parentSessionId).map(session => `${session.deviceId || "local"}:${session.id}`)).size, "Real list contains parents only");
     const row = page.locator(".cli-session-row-select").first();
     let messages = 0;

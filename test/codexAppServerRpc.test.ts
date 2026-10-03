@@ -13,6 +13,27 @@ function child() {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
 describe("app-server initialization recovery", () => {
+  it("ignores malformed protocol envelopes without breaking initialization", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write('null\n[]\n42\n"diagnostic"\nnot json\n');
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    rpc.close();
+  });
+  it("preserves the matching early completion when another turn completes before the start response", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    const turn = rpc.startAndWaitForTurn("thread-1", {}, 900000);
+    for (const id of ["turn-1", "other-turn"]) {
+      processChild.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id, status: "completed" } } }) + "\n");
+    }
+    processChild.stdout.write(JSON.stringify({ id: 2, result: { turn: { id: "turn-1" } } }) + "\n");
+    await expect(turn).resolves.toBeUndefined();
+    rpc.close();
+  });
   it("fails an accepted turn immediately when the server exits", async () => {
     const processChild = child();
     const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
