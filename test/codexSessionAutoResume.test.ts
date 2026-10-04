@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as autoResumeSelection from "../src/services/codexSessionAutoResumeSelection";
+import * as sessionEditor from "../src/services/codexSessionResume";
 import {
   AUTO_RESUME_SESSION_IDS_KEY,
   AUTO_RESUME_OPEN_SESSION_IDS_KEY,
@@ -32,6 +33,10 @@ function createContext(initial?: unknown) {
     }
   };
 }
+
+beforeEach(() => {
+  vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
+});
 
 describe("durable open conversation recovery", () => {
   const first = "01a04882-d037-7a42-ad24-9afb61901181";
@@ -159,6 +164,89 @@ describe("durable open conversation recovery", () => {
       selection.mockRestore();
       vi.useRealTimers();
     }
+  });
+
+  it("persists selected recovery before closing all Codex tabs, then opens only selected sessions", async () => {
+    const state = createContext([first]);
+    state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+    const order: string[] = [];
+    const close = vi.fn(async () => {
+      expect(state.read()).toEqual([first, second]);
+      order.push("close all");
+    });
+    const open = vi.fn(async (id: string) => { order.push(id); });
+    const result = await resumePersistedCodexSessions(state.context, open, close);
+    expect(result.opened).toBe(2);
+    expect(order).toEqual(["close all", first, second]);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps all selected IDs and opens none if the all-tab close fails", async () => {
+    const state = createContext([first, second]);
+    const open = vi.fn();
+    const close = vi.fn(async () => { throw new Error("close cancelled"); });
+    const result = await resumePersistedCodexSessions(state.context, open, close);
+    expect(result.opened).toBe(0);
+    expect(result.failed).toHaveLength(2);
+    expect(open).not.toHaveBeenCalled();
+    expect(state.read()).toEqual([first, second]);
+    expect((await resumePersistedCodexSessions(state.context, open, async () => undefined)).opened).toBe(2);
+  });
+
+  it("does not close any tabs when disabled, selection is empty, or recovery storage fails", async () => {
+    const close = vi.fn();
+    await resumePersistedCodexSessions(createContext().context, vi.fn(), close);
+    const state = createContext([first]);
+    state.context.workspaceState.update.mockRejectedValueOnce(new Error("disk full"));
+    await expect(resumePersistedCodexSessions(state.context, vi.fn(), close)).rejects.toThrow("disk full");
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => false } as never);
+    await resumePersistedCodexSessions(state.context, vi.fn(), close);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending close when Auto Switch turns off and never reopens selected tabs", async () => {
+    let enabled = true;
+    let changed: (() => void) | undefined;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string) => key === "autoSwitchEnabled" ? enabled : true
+    } as never);
+    vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation(listener => {
+      changed = () => listener({ affectsConfiguration: () => true });
+      return { dispose() {} };
+    });
+    const state = createContext([first]);
+    const open = vi.fn();
+    const close = async (signal?: AbortSignal) => {
+      enabled = false;
+      changed?.();
+      expect(signal?.aborted).toBe(true);
+      await new Promise<void>(() => {});
+    };
+    const result = await resumePersistedCodexSessions(state.context, open, close);
+    expect(result.failed).toHaveLength(1);
+    expect(open).not.toHaveBeenCalled();
+    expect(state.read()).toBeUndefined();
+  });
+
+  it("bounds a hanging close and rejects late results without dispatching any open", async () => {
+    vi.useFakeTimers();
+    const state = createContext([first]);
+    const open = vi.fn();
+    let finish: (() => void) | undefined;
+    let closeSignal: AbortSignal | undefined;
+    try {
+      const result = resumePersistedCodexSessions(state.context, open, async (signal) => {
+        closeSignal = signal;
+        await new Promise<void>(resolve => { finish = resolve; });
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect((await result).failed).toHaveLength(1);
+      expect(closeSignal?.aborted).toBe(true);
+      finish?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(open).not.toHaveBeenCalled();
+      expect(state.read()).toEqual([first]);
+    } finally { vi.useRealTimers(); }
   });
 
   it("removes closed tabs while preserving failed restoration in its independent queue", async () => {

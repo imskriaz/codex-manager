@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { openCodexSessionInVsCode, readOpenCodexSessionIds, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
@@ -339,7 +339,8 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
 /** Acknowledge each successful tab; leave failed/uncertain opens durable for retry. */
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
-  openSession: (sessionId: string, signal?: AbortSignal) => Promise<void> = openCodexSessionInVsCode
+  openSession: (sessionId: string, signal?: AbortSignal) => Promise<void> = openCodexSessionInVsCode,
+  closeSessions: (signal?: AbortSignal) => Promise<void> = closeOpenCodexSessionTabs
 ): Promise<AutoResumeResult> {
   return serialize(context, "restore", async () => {
     const deadline = Date.now() + OPERATION_TIMEOUT_MS;
@@ -363,6 +364,17 @@ export function resumePersistedCodexSessions(
         controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
     });
     try {
+      try {
+        await bounded(() => closeSessions(controller.signal), deadline - Date.now(),
+          "VS Code did not close the previous Codex tabs within 30 seconds. Saved sessions will retry on the next activation.",
+          controller.signal);
+        controller.signal.throwIfAborted();
+      } catch (error) {
+        controller.abort(error);
+        result.failed = ids.map((sessionId) => ({ sessionId, message: error instanceof Error ? error.message : String(error) }));
+        if (!isAutoResumeAvailable()) await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
+        return result;
+      }
       for (const id of ids) {
         if (!isAutoResumeAvailable())
           controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
