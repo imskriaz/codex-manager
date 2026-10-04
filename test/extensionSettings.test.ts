@@ -8,10 +8,35 @@ import {
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
   normalizeAutoResetWeeklyThreshold,
+  isAutoResumeEnabled,
   isAutoSwitchRefreshAllBeforeSwitchEnabled
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
+  it.each([[false, false], [false, true], [true, false], [true, true]])(
+    "shares effective Auto Resume between runtime and dashboard with switch=%s, resume=%s",
+    (autoSwitchEnabled, autoResumeEnabled) => {
+      const update = vi.fn();
+      const values = { autoSwitchEnabled, autoResumeEnabled };
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+        get: (key: string, fallback?: unknown) => values[key as keyof typeof values] ?? fallback,
+        update
+      } as never);
+      expect(isAutoResumeEnabled()).toBe(autoSwitchEnabled && autoResumeEnabled);
+      expect(new ExtensionSettingsStore().getDashboardSettings().autoResumeEnabled)
+        .toBe(autoSwitchEnabled && autoResumeEnabled);
+      expect(update).not.toHaveBeenCalled();
+      expect(values.autoResumeEnabled).toBe(autoResumeEnabled);
+    }
+  );
+
+  it("keeps resume inactive when its parent is missing or malformed", () => {
+    for (const parent of [undefined, "true", "false", 1]) {
+      const config = { get: (key: string) => key === "autoResumeEnabled" ? true : parent } as never;
+      expect(isAutoResumeEnabled(config)).toBe(false);
+    }
+  });
+
   it("uses the shared policy defaults for malformed switching and reset thresholds", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) => /Threshold$/.test(key) ? Number.NaN : fallback

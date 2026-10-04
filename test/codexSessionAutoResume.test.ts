@@ -99,6 +99,68 @@ describe("durable open conversation recovery", () => {
     }
   });
 
+  it.each(["managed capture", "open-tab capture", "restore"])(
+    "disables %s when Auto Switch is off even with Auto Resume saved on",
+    async (operation) => {
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+        get: (key: string, fallback?: unknown) => key === "autoResumeEnabled" ? true : fallback
+      } as never);
+      const state = createContext([first]);
+      state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+      const work = vi.fn(async (_id?: string) => [first]);
+      if (operation === "managed capture") await persistRunningCodexSessions(state.context, work);
+      else if (operation === "open-tab capture") await persistOpenCodexSessions(state.context, work);
+      else await resumePersistedCodexSessions(state.context, async (id) => { await work(id); });
+      expect(work).not.toHaveBeenCalled();
+      expect(state.read()).toBeUndefined();
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
+    }
+  );
+
+  it("reacts immediately to parent off/on changes without rewriting the child preference", async () => {
+    vi.useFakeTimers();
+    let parent = true;
+    const listeners = new Set<(event: vscode.ConfigurationChangeEvent) => unknown>();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) =>
+        key === "autoSwitchEnabled" ? parent : key === "autoResumeEnabled" ? true : fallback
+    } as never);
+    vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation(listener => {
+      listeners.add(listener);
+      return { dispose: () => { listeners.delete(listener); } };
+    });
+    const previousTabs = vscode.window.tabGroups;
+    Object.assign(vscode.window, { tabGroups: { all: [], onDidChangeTabs: () => ({ dispose() {} }) } });
+    const selection = vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds").mockResolvedValue([first]);
+    const state = createContext();
+    const tracker = registerCodexSessionAutoResumeTracking(state.context);
+    const changed = () => {
+      for (const listener of [...listeners]) listener({
+        affectsConfiguration: (key: string) => key === "codexManager.autoSwitchEnabled"
+      } as vscode.ConfigurationChangeEvent);
+    };
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+      parent = false;
+      changed();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(selection).toHaveBeenCalledOnce();
+      parent = true;
+      changed();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+      expect(selection).toHaveBeenCalledTimes(2);
+    } finally {
+      tracker.dispose();
+      Object.assign(vscode.window, { tabGroups: previousTabs });
+      selection.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("removes closed tabs while preserving failed restoration in its independent queue", async () => {
     const state = createContext([second]);
     await persistOpenCodexSessions(state.context, async () => [first]);
@@ -179,7 +241,8 @@ describe("Codex session auto resume", () => {
   beforeEach(() => {
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: vi.fn((key: string, fallback?: unknown) => (key === "autoResumeEnabled" ? true : fallback))
+      get: vi.fn((key: string, fallback?: unknown) =>
+        (key === "autoResumeEnabled" || key === "autoSwitchEnabled" ? true : fallback))
     } as never);
   });
 
@@ -276,18 +339,24 @@ describe("Codex session auto resume", () => {
     }
   });
 
-  it("cancels discovery and clears pending recovery when the setting is disabled", async () => {
+  it.each([
+    ["autoResumeEnabled", "managed"], ["autoSwitchEnabled", "managed"],
+    ["autoResumeEnabled", "open"], ["autoSwitchEnabled", "open"]
+  ])("cancels %s during %s discovery and rejects its late result", async (setting, operation) => {
     let enabled = true;
     let changed: (() => void) | undefined;
     const dispose = vi.fn();
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => enabled } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string) => key === setting ? enabled : true
+    } as never);
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((listener) => {
       changed = () => listener({ affectsConfiguration: () => true });
       return { dispose };
     });
     const state = createContext([id1]);
     let finish: ((ids: string[]) => void) | undefined;
-    const captured = persistRunningCodexSessions(
+    const capture = operation === "open" ? persistOpenCodexSessions : persistRunningCodexSessions;
+    const captured = capture(
       state.context,
       () =>
         new Promise((resolve) => {
@@ -304,11 +373,14 @@ describe("Codex session auto resume", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it("aborts restoration immediately on disable and never opens the next tab", async () => {
+  it.each(["autoResumeEnabled", "autoSwitchEnabled"])(
+    "aborts restoration immediately when %s turns off and never opens the next tab", async (setting) => {
     let enabled = true;
     let changed: (() => void) | undefined;
     const dispose = vi.fn();
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => enabled } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string) => key === setting ? enabled : true
+    } as never);
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((listener) => {
       changed = () => listener({ affectsConfiguration: () => true });
       return { dispose };

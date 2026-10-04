@@ -164,7 +164,7 @@ describe("sessions sidebar layout", () => {
     expect(workbench).not.toContain("Open Sessions and retry");
   });
 
-  it("keeps automatic reload and resume settings outside the switch dependency block", () => {
+  it("keeps reload independent and shows resume only while Auto Switch is on", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const switchStart = settings.indexOf("title={props.copy.autoSwitchTitle}");
     const reloadStart = settings.indexOf("title={props.copy.autoSwitchReloadTitle}");
@@ -173,6 +173,12 @@ describe("sessions sidebar layout", () => {
     expect(switchEnd).toBeGreaterThan(switchStart);
     expect(reloadStart).toBeGreaterThan(switchEnd);
     expect(resumeStart).toBeGreaterThan(reloadStart);
+    const dependencyStart = settings.lastIndexOf("{props.settings.autoSwitchEnabled && (", resumeStart);
+    expect(dependencyStart).toBeGreaterThan(reloadStart);
+    expect(dependencyStart).toBeLessThan(resumeStart);
+    expect(settings.indexOf(")}", resumeStart)).toBeLessThan(
+      settings.indexOf("props.settings.quotaWarningEnabled) &&", resumeStart)
+    );
     expect(settings.slice(reloadStart, settings.indexOf("/>", reloadStart))).toContain(
       'className="settings-block-wide"'
     );

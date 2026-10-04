@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
+import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { openCodexSessionInVsCode, readOpenCodexSessionIds, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 
@@ -323,7 +323,8 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   };
   const tabs = vscode.window.tabGroups?.onDidChangeTabs?.(capture);
   const configuration = vscode.workspace.onDidChangeConfiguration((event) => {
-    if (event.affectsConfiguration("codexManager.autoResumeEnabled")) capture();
+    if (event.affectsConfiguration("codexManager.autoResumeEnabled") ||
+        event.affectsConfiguration("codexManager.autoSwitchEnabled")) capture();
   });
   capture();
   return { dispose: () => {
@@ -398,7 +399,7 @@ export function resumePersistedCodexSessions(
 }
 
 function isAutoResumeAvailable(): boolean {
-  return getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false);
+  return isAutoResumeEnabled();
 }
 
 export function formatAutoResumeResult(result: AutoResumeResult): string | undefined {

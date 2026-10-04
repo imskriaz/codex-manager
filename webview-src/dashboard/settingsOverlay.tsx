@@ -649,13 +649,15 @@ export function SettingsOverlay(props: {
                 className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("autoSwitchReloadWindowEnabled", enabled)}
               />
-              <SettingsToggleBlock
-                title={props.copy.autoResumeTitle}
-                sub={props.copy.autoResumeSub}
-                enabled={props.settings.autoResumeEnabled === true}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
-              />
+              {props.settings.autoSwitchEnabled && (
+                <SettingsToggleBlock
+                  title={props.copy.autoResumeTitle}
+                  sub={props.copy.autoResumeSub}
+                  enabled={props.settings.autoResumeEnabled === true}
+                  className="settings-block-wide"
+                  onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
+                />
+              )}
               {(props.settings.autoSwitchEnabled || props.settings.quotaWarningEnabled) && (
                 <SettingsToggleBlock
                   title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh all quotas before warning switch"}

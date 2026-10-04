@@ -38,7 +38,7 @@ export class ExtensionSettingsStore {
       // the removed user setting anymore.
       hourlyQuotaControlEnabled: true,
       autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", false),
-      autoResumeEnabled: config.get<boolean>("autoResumeEnabled", false),
+      autoResumeEnabled: isAutoResumeEnabled(config),
       crossWindowAccountModeEnabled: config.get<boolean>("crossWindowAccountModeEnabled", false),
       autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
       autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0), 0),
@@ -123,6 +123,12 @@ export function normalizeUsageHistoryRetentionDays(value: number): number {
 
 export function getCodexManagerConfiguration(): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration(CODEX_ACCOUNTS_SECTION);
+}
+
+export function isAutoResumeEnabled(config = getCodexManagerConfiguration()): boolean {
+  return (
+    config.get<boolean>("autoSwitchEnabled", false) === true && config.get<boolean>("autoResumeEnabled", false) === true
+  );
 }
 
 export function getAutoRefreshMinutes(): number {
