@@ -870,9 +870,13 @@ export class WebDashboardServer implements vscode.Disposable {
     this.sendJson(response, { messages });
     this.publishProcessedSnapshot(messages);
     if (reloadAfterResponse) {
-      scheduleExtensionHostReload((errorMessage) => {
-        this.broadcastRealtimeNotice("error", errorMessage);
-      });
+      scheduleExtensionHostReload(
+        (errorMessage) => this.broadcastRealtimeNotice("error", errorMessage),
+        150,
+        "Codex credentials changed",
+        message.type === "dashboard:action" && message.action === "switch",
+        message.type === "dashboard:action" && message.action === "switch"
+      );
     }
   }
 
@@ -1415,7 +1419,13 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       this.publishProcessedSnapshot(result.messages);
       if (result.reloadAfterResponse) {
-        scheduleExtensionHostReload((errorMessage) => this.broadcastRealtimeNotice("error", errorMessage));
+        scheduleExtensionHostReload(
+          (errorMessage) => this.broadcastRealtimeNotice("error", errorMessage),
+          150,
+          "Codex credentials changed",
+          message.type === "dashboard:action" && message.action === "switch",
+          message.type === "dashboard:action" && message.action === "switch"
+        );
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "The dashboard request failed.";
@@ -1993,7 +2003,9 @@ export class WebDashboardServer implements vscode.Disposable {
             this.broadcastRealtimeNotice("error", errorMessage);
           },
           150,
-          message.action === "switch" ? "The account switched" : "Codex auth was unloaded"
+          message.action === "switch" ? "The account switched" : "Codex auth was unloaded",
+          message.action === "switch",
+          message.action === "switch"
         );
       }
     } catch (error) {

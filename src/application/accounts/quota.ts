@@ -1,22 +1,18 @@
 import * as vscode from "vscode";
-import { CrossWindowOperationBusyError, runCrossWindowExclusive, runSharedMaintenance } from "../../utils/crossWindowOperations";
+import {
+  CrossWindowOperationBusyError,
+  runCrossWindowExclusive,
+  runSharedMaintenance
+} from "../../utils/crossWindowOperations";
 import { getCodexHomeStateKey } from "../../codex";
 import { createError } from "../../core";
 import { CodexManagerAccountRecord, CodexTokens } from "../../core/types";
 import {
   getCodexManagerConfiguration,
   getAutoRefreshMinutes,
-  getQuotaWarningThresholds,
-  normalizeAutoSwitchThreshold,
-  normalizeAutoResetWeeklyThreshold
+  getQuotaWarningThresholds
 } from "../../infrastructure/config/extensionSettings";
-import {
-  QuotaRefreshResult,
-  refreshQuota,
-  fetchResetCredits,
-  consumeResetCredit,
-  isResetCreditIneligibleError
-} from "../../services";
+import { QuotaRefreshResult, refreshQuota, fetchResetCredits } from "../../services";
 import {
   recordAccountQuotaCheck,
   getCoordinatedQuotaSnapshot,
@@ -38,12 +34,19 @@ import { getCommandCopy, getLanguage, getQuotaWarningCopy, resolveLongQuotaLabel
 import { getQuotaIssueKind } from "../../utils/quotaIssue";
 import { recordDashboardActionPrompt, shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 import { getDashboardCopy } from "../dashboard/copy";
+import { redeemAccountResetCredit, verifyAccountResetCredit } from "./resetCreditRedemption";
+import {
+  isAutoQueueCandidateEligible,
+  isAutoQueueSnapshotFresh,
+  usableAutoQueueResetCount
+} from "../../domain/autoQueuePolicy";
 import {
   compareCodexManagerAccountAutoQueueOrder,
   getCodexManagerAccountAutoQueueEfficiency,
-  hasCodexManagerAccountAutoQueueCapability,
   hasComparableHourlyWindow,
-  hasComparableWeeklyWindow
+  hasComparableWeeklyWindow,
+  toAutoQueueOrderValue,
+  getAccountAutoQueuePolicy
 } from "./autoQueueOrder";
 import {
   autoReloadWindowForAccount,
@@ -54,10 +57,6 @@ import {
 
 const AUTO_SWITCH_ENABLED = "autoSwitchEnabled";
 const AUTO_SWITCH_RELOAD_WINDOW_ENABLED = "autoSwitchReloadWindowEnabled";
-const AUTO_SWITCH_HOURLY_THRESHOLD = "autoSwitchHourlyThreshold";
-const AUTO_SWITCH_WEEKLY_THRESHOLD = "autoSwitchWeeklyThreshold";
-const AUTO_RESET_ENABLED = "autoResetEnabled";
-const AUTO_RESET_WEEKLY_THRESHOLD = "autoResetWeeklyThreshold";
 const QUOTA_WARNING_ENABLED = "quotaWarningEnabled";
 // One native warning is enough while the same account/dimension remains below
 // the same threshold. The count resets after recovery or a threshold change.
@@ -84,6 +83,7 @@ type RefreshSingleQuotaOptions = {
   forceRefresh?: boolean;
   refreshView?: boolean;
   warnQuota?: boolean;
+  reconcileResetAttempt?: boolean;
   canUseAccount?: (accountId: string) => boolean;
 };
 
@@ -109,8 +109,14 @@ export async function refreshSingleQuota(
   return coordinatedQuotaRefresh(repo, view, accountId, options);
 }
 
-async function coordinatedQuotaRefresh(repo: AccountsRepository, view: RefreshView, accountId: string, options: RefreshSingleQuotaOptions): Promise<QuotaRefreshResult> {
-  const run = (): Promise<QuotaRefreshResult> => runAndFlush(repo, () => refreshSingleQuotaInternal(repo, view, accountId, options));
+async function coordinatedQuotaRefresh(
+  repo: AccountsRepository,
+  view: RefreshView,
+  accountId: string,
+  options: RefreshSingleQuotaOptions
+): Promise<QuotaRefreshResult> {
+  const run = (): Promise<QuotaRefreshResult> =>
+    runAndFlush(repo, () => refreshSingleQuotaInternal(repo, view, accountId, options));
   const key = `network:account-quota:${accountId}`;
   if (options.announce !== false) return runCrossWindowExclusive(key, "Quota refresh", run);
   const result = await runSharedMaintenance(key, "Quota refresh", 15_000, run);
@@ -121,6 +127,11 @@ async function coordinatedQuotaRefresh(repo: AccountsRepository, view: RefreshVi
   const account = await repo.getAccount(accountId);
   view.refresh();
   if (!account) throw createError.accountNotFound(accountId);
+  if (account.resetCreditAttempt) {
+    throw new Error(
+      "Another window owns the quota refresh. Retry refresh to verify the pending reset after it completes."
+    );
+  }
   return { quota: account.quotaSummary, error: account.quotaError };
 }
 
@@ -154,8 +165,8 @@ async function refreshSingleQuotaInternal(
     throw createError.accountNotFound(account.email);
   }
 
-  const allowTokenRefresh =
-    (options.allowTokenRefresh ?? true) && account.tokenRefreshEnabled === true;
+  const allowTokenRefresh = (options.allowTokenRefresh ?? true) && account.tokenRefreshEnabled === true;
+  const refreshStartedAt = Date.now();
   let result = await refreshQuota(account, tokens, forceRefresh, {
     allowTokenRefresh
   });
@@ -164,6 +175,14 @@ async function refreshSingleQuotaInternal(
     const retry = await retryQuotaFromTrackedAuthFile(repo, accountId, account, tokens, result);
     result = retry.result;
     effectiveTokens = retry.tokens;
+  }
+  if (
+    account.resetCreditAttempt &&
+    result.requestStartedAt !== undefined &&
+    result.requestStartedAt < account.resetCreditAttempt.attemptedAt
+  ) {
+    // Joining an older in-flight request cannot establish post-reset quota.
+    throw new Error("Quota refresh began before the reset. Refresh quota again to verify its outcome.");
   }
   const updatedAccount = await repo.updateQuota(
     accountId,
@@ -183,13 +202,35 @@ async function refreshSingleQuotaInternal(
     await subscriptionRefresh;
   }
   // 后台异步拉取重置次数明细（含最新可用次数与最近到期时间），不阻塞配额刷新
+  let resetSnapshotVerified = false;
   if (!result.error && updatedAccount.quotaSummary) {
     const credTokens = result.updatedTokens ?? effectiveTokens;
     const credAccountId = updatedAccount.accountId ?? account.accountId ?? undefined;
-    await syncResetCreditsSnapshot(repo, view, accountId, updatedAccount, credTokens.accessToken, credAccountId);
+    resetSnapshotVerified = await syncResetCreditsSnapshot(
+      repo,
+      view,
+      accountId,
+      updatedAccount,
+      credTokens.accessToken,
+      credAccountId
+    );
   }
   if (!result.error) {
     clearTokenAutomationError(accountId);
+    // A fresh successful refresh can reconcile a reset interrupted by a reboot
+    // or uncertain response. Failed refreshes leave the durable fence intact.
+    const reconciled = await repo.getAccount(accountId);
+    if (
+      options.reconcileResetAttempt !== false &&
+      resetSnapshotVerified &&
+      reconciled?.resetCreditAttempt &&
+      forceRefresh &&
+      (result.requestStartedAt ?? refreshStartedAt) >= reconciled.resetCreditAttempt.attemptedAt &&
+      (reconciled.quotaSummary?.resetCreditsAvailable ?? Number.POSITIVE_INFINITY) <
+        reconciled.resetCreditAttempt.availableBefore
+    ) {
+      await verifyAccountResetCredit(repo, accountId).catch(() => undefined);
+    }
   }
   if (shouldRefreshView) {
     view.refresh();
@@ -202,7 +243,7 @@ async function refreshSingleQuotaInternal(
     // Keep the warning check independent from auto-switch. If auto-switch
     // succeeds the new active account normally has enough quota, while a
     // locked/failed/disabled switch still surfaces the warning choices.
-    await maybeWarnForAccount(repo, accountId);
+    await maybeWarnForAccount(repo, accountId, options.canUseAccount);
   }
 
   if (announce) {
@@ -310,7 +351,7 @@ async function syncResetCreditsSnapshot(
   updatedAccount: CodexManagerAccountRecord,
   accessToken: string,
   remoteAccountId?: string
-): Promise<void> {
+): Promise<boolean> {
   try {
     const excludedIds = updatedAccount.quotaSummary?.resetCreditsExcludedIds ?? [];
     const snapshot = excludedIds.length
@@ -333,10 +374,21 @@ async function syncResetCreditsSnapshot(
       snapshot.nextExpiresAt,
       availableIds
     );
-    await update.catch(() => undefined);
+    await update;
     view?.refresh();
-  } catch {
-    return;
+    return true;
+  } catch (error) {
+    // A fresh quota response must not renew the age of a reset snapshot that
+    // could not be reconciled. Retain rejection IDs, invalidate usable reserves.
+    console.warn("[codexManager] reset reserves could not be verified", error);
+    if (updatedAccount.quotaSummary) {
+      updatedAccount.quotaSummary.resetCreditsAvailable = 0;
+      updatedAccount.quotaSummary.resetCreditsNextExpiresAt = undefined;
+      updatedAccount.quotaSummary.resetCreditsAvailableIds = [];
+    }
+    await repo.updateResetCreditsSnapshot(accountId, 0, undefined, []);
+    await repo.flush?.();
+    return false;
   }
 }
 
@@ -414,10 +466,14 @@ export async function maybeAutoSwitchForActiveQuota(
   // Rescue override is a local, passphrase-gated escape hatch for the shared
   // enablement registry. While it is active, automatic switching must be
   // allowed to consider accounts claimed by another PC as well.
-  const task = runCrossWindowExclusive(`automation:account-switch:${getCodexHomeStateKey()}`, "Automatic account selection", async () => {
-    repo.invalidateCachedIndex?.();
-    return evaluateAutoSwitchForActiveQuota(repo, view, options);
-  });
+  const task = runCrossWindowExclusive(
+    `automation:account-switch:${getCodexHomeStateKey()}`,
+    "Automatic account selection",
+    async () => {
+      repo.invalidateCachedIndex?.();
+      return evaluateAutoSwitchForActiveQuota(repo, view, options);
+    }
+  );
   autoSwitchInFlight = task;
   try {
     return await task;
@@ -441,7 +497,8 @@ async function evaluateAutoSwitchForActiveQuota(
     canUseAccount?: (accountId: string) => boolean;
   },
   refreshedStaleCandidates = false,
-  failedCandidateVerification = false
+  failedCandidateVerification = false,
+  refreshedActive = false
 ): Promise<boolean> {
   const config = getCodexManagerConfiguration();
   if (!options.ignoreEnabled && !config.get<boolean>(AUTO_SWITCH_ENABLED, false)) {
@@ -452,16 +509,38 @@ async function evaluateAutoSwitchForActiveQuota(
   // Keep the runtime fallback aligned with the manifest and settings store.
   // Missing configuration must not silently use the old 20% emergency value,
   // otherwise auto-switch can fire well before the configured 5% default.
-  const hourlyThreshold = normalizeAutoSwitchThreshold(config.get<number>(AUTO_SWITCH_HOURLY_THRESHOLD, 5));
-  const weeklyThreshold = normalizeAutoSwitchThreshold(config.get<number>(AUTO_SWITCH_WEEKLY_THRESHOLD, 0));
+  const policy = getAccountAutoQueuePolicy();
+  const hourlyThreshold = policy.hourlyThreshold;
+  const weeklyThreshold = policy.weeklyThreshold;
   const hourlyQuotaControlEnabled = true;
   const accounts = (await repo.listAccounts()).map(applyCoordinatedQuotaSnapshot);
   const active = accounts.find((account) => account.isActive);
   if (
+    active &&
+    !refreshedActive &&
+    (options.ignoreEnabled || active.enabled !== false) &&
+    (!hasFreshQuotaSnapshot(active) || active.quotaError || !active.quotaSummary)
+  ) {
+    const verified = await refreshSingleQuotaSafely(repo, view, active.id, {
+      forceRefresh: true,
+      skipDisabled: !options.ignoreEnabled,
+      canUseAccount: options.canUseAccount
+    });
+    if (verified)
+      return evaluateAutoSwitchForActiveQuota(
+        repo,
+        view,
+        options,
+        refreshedStaleCandidates,
+        failedCandidateVerification,
+        true
+      );
+  }
+  if (
     !active?.quotaSummary ||
     active.quotaError ||
     (!options.ignoreEnabled && active.enabled === false) ||
-    !hasCurrentSessionQuotaSnapshot(active)
+    !hasFreshQuotaSnapshot(active)
   ) {
     if (options.userInitiated) {
       void vscode.window.showWarningMessage("Auto Select unavailable — refresh the active account and retry.");
@@ -498,18 +577,12 @@ async function evaluateAutoSwitchForActiveQuota(
         (options.ignoreEnabled || account.enabled !== false) &&
         !!account.quotaSummary &&
         !account.quotaError &&
-        hasFreshQuotaSnapshot(account) &&
-        hasCodexManagerAccountAutoQueueCapability(account, {
-          hourlyEnabled: hourlyQuotaControlEnabled,
-          hourlyThreshold,
-          weeklyThreshold
-        }) &&
-        (!activeHourlyTriggered ||
-          (hasComparableHourlyWindow(account) && account.quotaSummary.hourlyPercentage > hourlyThreshold)) &&
-        (!activeWeeklyTriggered ||
-          (hasComparableWeeklyWindow(account) && account.quotaSummary.weeklyPercentage > weeklyThreshold))
+        isAutoQueueCandidateEligible(
+          { ...toAutoQueueOrderValue(account), disabled: options.ignoreEnabled ? false : account.enabled === false },
+          getAccountAutoQueuePolicy()
+        )
     )
-    .sort(compareAutoSwitchCandidate);
+    .sort(createAutoSwitchComparator());
 
   const next = candidates[0];
   if (!next) {
@@ -522,17 +595,7 @@ async function evaluateAutoSwitchForActiveQuota(
         !account.isActive &&
         (options.canUseAccount?.(account.id) ?? true) &&
         (options.ignoreEnabled || account.enabled !== false) &&
-        !!account.quotaSummary &&
-        (account.quotaError || !hasFreshQuotaSnapshot(account)) &&
-        hasCodexManagerAccountAutoQueueCapability(account, {
-          hourlyEnabled: hourlyQuotaControlEnabled,
-          hourlyThreshold,
-          weeklyThreshold
-        }) &&
-        (!activeHourlyTriggered ||
-          (hasComparableHourlyWindow(account) && account.quotaSummary.hourlyPercentage > hourlyThreshold)) &&
-        (!activeWeeklyTriggered ||
-          (hasComparableWeeklyWindow(account) && account.quotaSummary.weeklyPercentage > weeklyThreshold))
+        (!account.quotaSummary || account.quotaError || !hasFreshQuotaSnapshot(account))
     );
     if (unverifiedCandidates.length && !refreshedStaleCandidates) {
       let verificationFailed = false;
@@ -545,13 +608,13 @@ async function evaluateAutoSwitchForActiveQuota(
         if (!refreshed) verificationFailed = true;
       }
       view.refresh();
-      return evaluateAutoSwitchForActiveQuota(repo, view, options, true, verificationFailed);
+      return evaluateAutoSwitchForActiveQuota(repo, view, options, true, verificationFailed, true);
     }
 
-    if (config.get<boolean>(AUTO_RESET_ENABLED, false)) {
-      const resetThreshold = normalizeAutoResetWeeklyThreshold(config.get<number>(AUTO_RESET_WEEKLY_THRESHOLD, 0));
+    if (getAccountAutoQueuePolicy().autoResetEnabled) {
+      const resetThreshold = getAccountAutoQueuePolicy().resetWeeklyThreshold;
       if (
-        (active.quotaSummary?.resetCreditsAvailable ?? 0) > 0 &&
+        usableAutoQueueResetCount(toAutoQueueOrderValue(active), getAccountAutoQueuePolicy()) > 0 &&
         hasComparableWeeklyWindow(active) &&
         active.quotaSummary.weeklyPercentage <= resetThreshold
       ) {
@@ -562,7 +625,8 @@ async function evaluateAutoSwitchForActiveQuota(
             active,
             hourlyThreshold,
             weeklyThreshold,
-            resetThreshold
+            resetThreshold,
+            options.canUseAccount
           );
           if (!resetResult && options.userInitiated) {
             void vscode.window.showWarningMessage(
@@ -572,7 +636,7 @@ async function evaluateAutoSwitchForActiveQuota(
           return resetResult;
         } catch (error) {
           const fallback = findResetFailureFallback(
-            accounts,
+            (await repo.listAccounts()).filter((account) => options.canUseAccount?.(account.id) ?? true),
             active.id,
             options.ignoreEnabled === true,
             hourlyQuotaControlEnabled,
@@ -591,7 +655,8 @@ async function evaluateAutoSwitchForActiveQuota(
             active,
             error,
             hourlyThreshold,
-            weeklyThreshold
+            weeklyThreshold,
+            options.canUseAccount
           );
           if (!fallbackResult && options.userInitiated) {
             void vscode.window.showWarningMessage(
@@ -608,12 +673,12 @@ async function evaluateAutoSwitchForActiveQuota(
             (options.canUseAccount?.(account.id) ?? true) &&
             (options.ignoreEnabled || account.enabled !== false) &&
             !account.quotaError &&
-            hasCurrentSessionQuotaSnapshot(account) &&
-            (account.quotaSummary?.resetCreditsAvailable ?? 0) > 0 &&
+            hasFreshQuotaSnapshot(account) &&
+            usableAutoQueueResetCount(toAutoQueueOrderValue(account), getAccountAutoQueuePolicy()) > 0 &&
             hasComparableWeeklyWindow(account) &&
             account.quotaSummary!.weeklyPercentage <= resetThreshold
         )
-        .sort(compareAutoSwitchCandidate)[0];
+        .sort(createAutoSwitchComparator())[0];
       if (resetCandidate) {
         try {
           const resetResult = await executeResetPlan(
@@ -624,7 +689,8 @@ async function evaluateAutoSwitchForActiveQuota(
             resetCandidate,
             hourlyThreshold,
             weeklyThreshold,
-            resetThreshold
+            resetThreshold,
+            options.canUseAccount
           );
           if (!resetResult && options.userInitiated) {
             void vscode.window.showWarningMessage(
@@ -634,7 +700,7 @@ async function evaluateAutoSwitchForActiveQuota(
           return resetResult;
         } catch (error) {
           const fallback = findResetFailureFallback(
-            accounts,
+            (await repo.listAccounts()).filter((account) => options.canUseAccount?.(account.id) ?? true),
             active.id,
             options.ignoreEnabled === true,
             hourlyQuotaControlEnabled,
@@ -653,7 +719,8 @@ async function evaluateAutoSwitchForActiveQuota(
             resetCandidate,
             error,
             hourlyThreshold,
-            weeklyThreshold
+            weeklyThreshold,
+            options.canUseAccount
           );
           if (!fallbackResult && options.userInitiated) {
             void vscode.window.showWarningMessage(
@@ -680,9 +747,10 @@ async function evaluateAutoSwitchForActiveQuota(
     ].join("|");
     if (options.userInitiated || blockedKey !== lastBlockedAutoSwitchKey) {
       lastBlockedAutoSwitchKey = blockedKey;
-      const message = unverifiedCandidates.length || failedCandidateVerification
-        ? "Auto Select could not verify quota for an available account. Refresh its quota and retry."
-        : "No account to switch — no capable account has enough quota remaining.";
+      const message =
+        unverifiedCandidates.length || failedCandidateVerification
+          ? "Auto Select could not verify quota for an available account. Refresh its quota and retry."
+          : "No account to switch — no capable account has enough quota remaining.";
       // Persist the terminal outcome so a browser dashboard that reconnects
       // after the native toast still receives the same warning (and can emit
       // its OS push notification).
@@ -700,25 +768,23 @@ async function evaluateAutoSwitchForActiveQuota(
   const latestAccounts = (await repo.listAccounts()).map(applyCoordinatedQuotaSnapshot);
   const latestActive = latestAccounts.find((account) => account.isActive);
   const latestNext = latestAccounts.find((account) => account.id === next.id);
+  const latestPolicy = getAccountAutoQueuePolicy();
   if (
     !latestActive ||
     latestActive.id !== active.id ||
+    !isAutoSelectionStillNeeded(latestActive, options.ignoreEnabled === true) ||
     !latestNext ||
     latestNext.isActive ||
     !(options.canUseAccount?.(latestNext.id) ?? true) ||
     (!options.ignoreEnabled && latestNext.enabled === false) ||
     latestNext.quotaError ||
+    latestNext.resetCreditAttempt ||
     !latestNext.quotaSummary ||
     !hasFreshQuotaSnapshot(latestNext) ||
-    !hasCodexManagerAccountAutoQueueCapability(latestNext, {
-      hourlyEnabled: hourlyQuotaControlEnabled,
-      hourlyThreshold,
-      weeklyThreshold
-    }) ||
-    (activeHourlyTriggered &&
-      (!hasComparableHourlyWindow(latestNext) || latestNext.quotaSummary.hourlyPercentage <= hourlyThreshold)) ||
-    (activeWeeklyTriggered &&
-      (!hasComparableWeeklyWindow(latestNext) || latestNext.quotaSummary.weeklyPercentage <= weeklyThreshold))
+    !isAutoQueueCandidateEligible(
+      { ...toAutoQueueOrderValue(latestNext), disabled: options.ignoreEnabled ? false : latestNext.enabled === false },
+      latestPolicy
+    )
   ) {
     if (options.userInitiated) {
       void vscode.window.showWarningMessage("Auto Select cancelled — account state changed. Refresh and try again.");
@@ -885,33 +951,19 @@ async function executeActiveResetPlan(
   active: CodexManagerAccountRecord,
   hourlyThreshold: number,
   weeklyThreshold: number,
-  resetThreshold: number
+  resetThreshold: number,
+  canUseAccount?: (accountId: string) => boolean
 ): Promise<boolean> {
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
-  const tokens = await repo.getTokens(active.id, { bypassCache: true });
-  if (!tokens?.accessToken) {
-    throw new Error(`No access token available for reset-plan account ${active.email}`);
-  }
-  const attemptedResetId = active.quotaSummary?.resetCreditsAvailableIds?.[0];
-  try {
-    await consumeResetCredit(tokens.accessToken, active.accountId ?? undefined);
-  } catch (error) {
-    if (attemptedResetId && isResetCreditIneligibleError(error)) {
-      await repo.excludeResetCredit(active.id, attemptedResetId);
-    }
-    throw error;
-  }
-  const refreshed = await refreshSingleQuota(repo, view, active.id, {
-    announce: false,
-    warnQuota: false,
-    forceRefresh: true,
-    refreshView: false
-  });
-  if (refreshed.error || refreshed.skipped) {
-    throw new Error(refreshed.error?.message ?? `Quota reset did not refresh ${active.email}`);
-  }
+  const redeemed = await redeemAccountResetCredit(
+    repo,
+    active.id,
+    (account) => account.isActive && (canUseAccount?.(account.id) ?? true) && isAutomaticResetAllowed(account),
+    () => refreshResetQuota(repo, view, active.id)
+  );
+  if (!redeemed) return false;
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
@@ -933,8 +985,11 @@ async function executeActiveResetPlan(
   // Resetting the current account changes the quota consumed by the running
   // Codex session even though credentials did not change; reload to ensure the
   // host observes the new quota immediately.
-  await handleCodexAppRestartPreference({ allowManualPrompt: false });
-  await reloadWindowNow();
+  void vscode.window.showInformationMessage(message);
+  if (getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
+    await handleCodexAppRestartPreference({ allowManualPrompt: false });
+    await reloadWindowNow();
+  }
   return true;
 }
 
@@ -946,36 +1001,36 @@ async function executeResetPlan(
   next: CodexManagerAccountRecord,
   hourlyThreshold: number,
   weeklyThreshold: number,
-  resetThreshold: number
+  resetThreshold: number,
+  canUseAccount?: (accountId: string) => boolean
 ): Promise<boolean> {
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
-  const tokens = await repo.getTokens(next.id, { bypassCache: true });
-  if (!tokens?.accessToken) {
-    throw new Error(`No access token available for reset-plan account ${next.email}`);
-  }
-  const attemptedResetId = next.quotaSummary?.resetCreditsAvailableIds?.[0];
-  try {
-    await consumeResetCredit(tokens.accessToken, next.accountId ?? undefined);
-  } catch (error) {
-    if (attemptedResetId && isResetCreditIneligibleError(error)) {
-      await repo.excludeResetCredit(next.id, attemptedResetId);
-    }
-    throw error;
-  }
-  const refreshed = await refreshSingleQuota(repo, view, next.id, {
-    announce: false,
-    warnQuota: false,
-    forceRefresh: true,
-    refreshView: false
-  });
-  if (refreshed.error || refreshed.skipped) {
-    throw new Error(refreshed.error?.message ?? `Quota reset did not refresh ${next.email}`);
-  }
+  const redeemed = await redeemAccountResetCredit(
+    repo,
+    next.id,
+    async (account) =>
+      !account.isActive &&
+      (canUseAccount?.(account.id) ?? true) &&
+      isAutomaticResetAllowed(account) &&
+      isAutoSelectionStillNeeded((await repo.getAccount(active.id)) ?? active),
+    () => refreshResetQuota(repo, view, next.id)
+  );
+  if (!redeemed) return false;
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
+  const latestActive = await repo.getAccount(active.id);
+  const latestNext = await repo.getAccount(next.id);
+  if (
+    !latestActive ||
+    !isAutoSelectionStillNeeded(latestActive) ||
+    !latestNext ||
+    !(canUseAccount?.(next.id) ?? true) ||
+    !isAutoQueueCandidateEligible(toAutoQueueOrderValue(latestNext), getAccountAutoQueuePolicy())
+  )
+    return false;
   await repo.switchAccount(next.id);
   clearAutoSwitchLock(active.id);
   recordAutoSwitchReason({
@@ -1034,14 +1089,17 @@ function findResetFailureFallback(
         (ignoreEnabled || account.enabled !== false) &&
         !!account.quotaSummary &&
         !account.quotaError &&
-        hasCurrentSessionQuotaSnapshot(account) &&
-        hasCodexManagerAccountAutoQueueCapability(account, {
-          hourlyEnabled,
-          hourlyThreshold,
-          weeklyThreshold
-        })
+        isAutoQueueCandidateEligible(
+          { ...toAutoQueueOrderValue(account), disabled: ignoreEnabled ? false : account.enabled === false },
+          {
+            ...getAccountAutoQueuePolicy(),
+            hourlyEnabled,
+            hourlyThreshold,
+            weeklyThreshold
+          }
+        )
     )
-    .sort(compareAutoSwitchCandidate)[0];
+    .sort(createAutoSwitchComparator())[0];
 }
 
 async function executeResetFailureFallbackSwitch(
@@ -1053,11 +1111,22 @@ async function executeResetFailureFallbackSwitch(
   resetAccount: CodexManagerAccountRecord,
   resetError: unknown,
   hourlyThreshold: number,
-  weeklyThreshold: number
+  weeklyThreshold: number,
+  canUseAccount?: (accountId: string) => boolean
 ): Promise<boolean> {
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
+  const latestActive = await repo.getAccount(active.id);
+  const latestNext = await repo.getAccount(next.id);
+  if (
+    !latestActive ||
+    !isAutoSelectionStillNeeded(latestActive) ||
+    !latestNext ||
+    !(canUseAccount?.(next.id) ?? true) ||
+    !isAutoQueueCandidateEligible(toAutoQueueOrderValue(latestNext), getAccountAutoQueuePolicy())
+  )
+    return false;
   const detail = resetError instanceof Error ? resetError.message : String(resetError);
   await repo.switchAccount(next.id);
   lastBlockedAutoSwitchKey = undefined;
@@ -1111,7 +1180,11 @@ async function isExpectedActiveAccount(repo: AccountsRepository, accountId: stri
   return account?.isActive === true;
 }
 
-export async function maybeWarnForAccount(repo: AccountsRepository, accountId: string): Promise<void> {
+export async function maybeWarnForAccount(
+  repo: AccountsRepository,
+  accountId: string,
+  canUseAccount?: (accountId: string) => boolean
+): Promise<void> {
   const config = getCodexManagerConfiguration();
   if (!config.get<boolean>(QUOTA_WARNING_ENABLED, false)) {
     quotaWarningCounts.clear();
@@ -1128,8 +1201,9 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
   if (
     !account?.isActive ||
     !account.quotaSummary ||
+    account.quotaError ||
     account.enabled === false ||
-    !hasCurrentSessionQuotaSnapshot(account)
+    !hasFreshQuotaSnapshot(account)
   ) {
     clearQuotaWarningCountsForAccount(accountId);
     return;
@@ -1152,9 +1226,10 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
     account = applyOptionalCoordinatedQuotaSnapshot(await repo.getAccount(accountId));
     if (
       !account?.quotaSummary ||
+      account.quotaError ||
       account.enabled === false ||
       !account.isActive ||
-      !hasCurrentSessionQuotaSnapshot(account)
+      !hasFreshQuotaSnapshot(account)
     ) {
       clearQuotaWarningCountsForAccount(accountId);
       return;
@@ -1169,8 +1244,9 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
   if (
     !account?.isActive ||
     !account.quotaSummary ||
+    account.quotaError ||
     account.enabled === false ||
-    !hasCurrentSessionQuotaSnapshot(account)
+    !hasFreshQuotaSnapshot(account)
   ) {
     clearQuotaWarningCountsForAccount(accountId);
     return;
@@ -1220,7 +1296,12 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
 
     quotaWarningCounts.set(warnKey, warningCount + 1);
     const accountLabel = account.email;
-    const switchTarget = selectQuotaWarningSwitchTarget(accounts, account, check.dimension, check.threshold);
+    const switchTarget = selectQuotaWarningSwitchTarget(
+      accounts.filter((candidate) => canUseAccount?.(candidate.id) ?? true),
+      account,
+      check.dimension,
+      check.threshold
+    );
     // Native notification actions have very limited horizontal space. The
     // destination email is unambiguous here; omit workspace/plan prefixes.
     const switchAccount = switchTarget ? copy.switchAccount(switchTarget.email) : undefined;
@@ -1264,24 +1345,8 @@ export async function maybeWarnForAccount(repo: AccountsRepository, accountId: s
   }
 }
 
-function hasCurrentSessionQuotaSnapshot(account: CodexManagerAccountRecord): boolean {
-  return (
-    typeof account.sessionStartedAt !== "number" ||
-    (typeof account.lastQuotaAt === "number" && account.lastQuotaAt >= account.sessionStartedAt)
-  );
-}
-
-function quotaSnapshotSafetyAgeMs(): number {
-  const intervalMinutes = getAutoRefreshMinutes();
-  // Peer snapshots retain their checkedAt and are eligible without a local call.
-  return Math.max(30 * 60_000, (intervalMinutes > 0 ? intervalMinutes : 15) * 2 * 60_000 + 5 * 60_000);
-}
-
 function hasFreshQuotaSnapshot(account: CodexManagerAccountRecord, now = Date.now()): boolean {
-  return (
-    hasCurrentSessionQuotaSnapshot(account) &&
-    (typeof account.lastQuotaAt !== "number" || now - account.lastQuotaAt <= quotaSnapshotSafetyAgeMs())
-  );
+  return isAutoQueueSnapshotFresh(toAutoQueueOrderValue(account), getAccountAutoQueuePolicy(now));
 }
 
 function applyOptionalCoordinatedQuotaSnapshot(
@@ -1293,6 +1358,14 @@ function applyOptionalCoordinatedQuotaSnapshot(
 function applyCoordinatedQuotaSnapshot(account: CodexManagerAccountRecord): CodexManagerAccountRecord {
   const snapshot = getCoordinatedQuotaSnapshot(account);
   if (!snapshot || !account.quotaSummary) return account;
+  // Timestamp-only or partial peer messages may suppress duplicate fetches,
+  // but cannot refresh the age of a missing local quota dimension.
+  if (
+    account.quotaError ||
+    (hasComparableHourlyWindow(account) && snapshot.hourlyPercentage === undefined) ||
+    (hasComparableWeeklyWindow(account) && snapshot.weeklyPercentage === undefined)
+  )
+    return account;
   return {
     ...account,
     lastQuotaAt: snapshot.checkedAt,
@@ -1302,7 +1375,12 @@ function applyCoordinatedQuotaSnapshot(account: CodexManagerAccountRecord): Code
       hourlyResetTime: snapshot.hourlyResetTime ?? account.quotaSummary.hourlyResetTime,
       weeklyPercentage: snapshot.weeklyPercentage ?? account.quotaSummary.weeklyPercentage,
       weeklyResetTime: snapshot.weeklyResetTime ?? account.quotaSummary.weeklyResetTime,
-      resetCreditsAvailable: snapshot.resetCreditsAvailable ?? account.quotaSummary.resetCreditsAvailable
+      // Reset IDs/exclusions are local verified metadata. A peer count alone
+      // must not resurrect a rejected credit or carry another count's expiry.
+      resetCreditsAvailable: hasFreshQuotaSnapshot(account) ? account.quotaSummary.resetCreditsAvailable : undefined,
+      resetCreditsNextExpiresAt: hasFreshQuotaSnapshot(account)
+        ? account.quotaSummary.resetCreditsNextExpiresAt
+        : undefined
     }
   };
 }
@@ -1317,15 +1395,14 @@ export function selectQuotaWarningSwitchTarget(
     .filter((candidate) => {
       if (candidate.id === active.id || candidate.isActive || candidate.enabled === false) return false;
       if (!candidate.quotaSummary || candidate.quotaError) return false;
-      if (!hasFreshQuotaSnapshot(candidate)) return false;
+      if (!isAutoQueueCandidateEligible(toAutoQueueOrderValue(candidate), getAccountAutoQueuePolicy())) return false;
       if (dimension === "hourly") {
-        return hasComparableHourlyWindow(candidate) && candidate.quotaSummary.hourlyPercentage > threshold;
+        return !hasComparableHourlyWindow(candidate) || candidate.quotaSummary.hourlyPercentage > threshold;
       }
-      return hasComparableWeeklyWindow(candidate) && candidate.quotaSummary.weeklyPercentage > threshold;
+      return !hasComparableWeeklyWindow(candidate) || candidate.quotaSummary.weeklyPercentage > threshold;
     })
-    .sort(compareAutoSwitchCandidate)[0];
+    .sort(createAutoSwitchComparator())[0];
 }
-
 
 function clearQuotaWarningCount(accountId: string, dimension: "hourly" | "weekly"): void {
   const prefix = `${accountId}:${dimension}:`;
@@ -1353,12 +1430,76 @@ export function formatAccountToastLabel(account: CodexManagerAccountRecord): str
   return account.email;
 }
 
-function compareAutoSwitchCandidate(left: CodexManagerAccountRecord, right: CodexManagerAccountRecord): number {
-  return compareCodexManagerAccountAutoQueueOrder(left, right, autoQueueScoringOptions());
+function createAutoSwitchComparator() {
+  const policy = getAccountAutoQueuePolicy();
+  return (left: CodexManagerAccountRecord, right: CodexManagerAccountRecord) =>
+    compareCodexManagerAccountAutoQueueOrder(left, right, policy);
 }
 
-function autoQueueScoringOptions(): { nowMs: number; staleAfterMs: number } {
-  return { nowMs: Date.now(), staleAfterMs: quotaSnapshotSafetyAgeMs() };
+function autoQueueScoringOptions() {
+  return getAccountAutoQueuePolicy();
+}
+
+function isAutomaticResetAllowed(account: CodexManagerAccountRecord): boolean {
+  const policy = getAccountAutoQueuePolicy();
+  return (
+    policy.autoResetEnabled &&
+    account.enabled !== false &&
+    !account.quotaError &&
+    hasFreshQuotaSnapshot(account) &&
+    hasComparableWeeklyWindow(account) &&
+    account.quotaSummary!.weeklyPercentage <= policy.resetWeeklyThreshold
+  );
+}
+
+async function refreshResetQuota(
+  repo: AccountsRepository,
+  view: RefreshView,
+  accountId: string
+): Promise<QuotaRefreshResult> {
+  const result = await refreshSingleQuota(repo, view, accountId, {
+    announce: false,
+    warnQuota: false,
+    forceRefresh: true,
+    refreshView: false,
+    reconcileResetAttempt: false
+  });
+  if (result.error || result.skipped)
+    throw new Error(result.error?.message ?? "Reset quota could not be verified. Refresh before retrying.");
+  const account = await repo.getAccount(accountId);
+  if (
+    account?.resetCreditAttempt &&
+    result.requestStartedAt !== undefined &&
+    result.requestStartedAt < account.resetCreditAttempt.attemptedAt
+  ) {
+    throw new Error("Quota refresh began before the reset. Refresh quota again to verify its outcome.");
+  }
+  if (
+    !account ||
+    !isAutoQueueCandidateEligible(
+      { ...toAutoQueueOrderValue(account), resetCreditAttempt: false },
+      getAccountAutoQueuePolicy()
+    )
+  ) {
+    throw new Error("Reset did not restore enough usable quota. The account was not selected.");
+  }
+  return result;
+}
+
+export { getAccountAutoQueuePolicy } from "./autoQueueOrder";
+
+function isAutoSelectionStillNeeded(active: CodexManagerAccountRecord, ignoreEnabled = false): boolean {
+  const policy = getAccountAutoQueuePolicy();
+  if (
+    !ignoreEnabled &&
+    (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, false) || active.enabled === false)
+  )
+    return false;
+  if (!active.quotaSummary || active.quotaError || !hasFreshQuotaSnapshot(active)) return false;
+  return (
+    (hasComparableHourlyWindow(active) && active.quotaSummary.hourlyPercentage <= policy.hourlyThreshold) ||
+    (hasComparableWeeklyWindow(active) && active.quotaSummary.weeklyPercentage <= policy.weeklyThreshold)
+  );
 }
 
 function buildMatchedRules(): string[] {

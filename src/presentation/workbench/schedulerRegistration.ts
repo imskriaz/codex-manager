@@ -4,8 +4,7 @@ import {
   getCodexManagerConfiguration,
   getAutoRefreshCurrentMinutes,
   getAutoRefreshMinutes,
-  normalizeAutoSwitchThreshold,
-  isAutoSwitchRefreshAllBeforeSwitchEnabled,
+  isAutoSwitchRefreshAllBeforeSwitchEnabled
 } from "../../infrastructure/config/extensionSettings";
 import {
   maybeAutoSwitchForActiveQuota,
@@ -23,8 +22,13 @@ import {
   markTokenAutomationSweepFinished,
   markTokenAutomationSweepStarted
 } from "./tokenAutomationState";
-import { CrossWindowOperationBusyError, runCrossWindowExclusive, runSharedMaintenance } from "../../utils/crossWindowOperations";
-import { hasCodexManagerAccountAutoQueueCapability } from "../../application/accounts/autoQueueOrder";
+import {
+  CrossWindowOperationBusyError,
+  runCrossWindowExclusive,
+  runSharedMaintenance
+} from "../../utils/crossWindowOperations";
+import { toAutoQueueOrderValue } from "../../application/accounts/autoQueueOrder";
+import { createAutoQueuePolicy, isAutoQueueCandidateEligible } from "../../domain/autoQueuePolicy";
 
 const CURRENT_REFRESH_FAILURE_BACKOFF_MULTIPLIER = 5;
 
@@ -35,33 +39,30 @@ const CURRENT_REFRESH_FAILURE_BACKOFF_MULTIPLIER = 5;
  * Resume the configured all-account cadence until at least one account is
  * above the relevant automatic-switch limits.
  */
-async function allAccountsNeedCapabilityRefresh(repo: AccountsRepository): Promise<boolean> {
-  const accounts = (await repo.listAccounts()).filter((account) => account.enabled !== false);
-  if (accounts.length === 0) {
-    return false;
-  }
-
+async function allAccountsNeedCapabilityRefresh(
+  repo: AccountsRepository,
+  canUseAccount?: (id: string) => boolean
+): Promise<boolean> {
+  const accounts = (await repo.listAccounts()).filter(
+    (account) => (account.enabled !== false || account.isActive) && (canUseAccount?.(account.id) ?? true)
+  );
+  if (!accounts.length) return false;
   const config = getCodexManagerConfiguration();
-  const switchThresholds = {
-    hourly: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
-    weekly: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0))
-  };
-  const hourlyEnabled = true;
-
-  return accounts.every((account) => {
-    if (
-      !account.quotaSummary ||
-      account.quotaError ||
-      !hasCodexManagerAccountAutoQueueCapability(account, {
-        hourlyEnabled,
-        hourlyThreshold: switchThresholds.hourly,
-        weeklyThreshold: switchThresholds.weekly
-      })
-    ) {
-      return true;
-    }
-    return false;
+  const policy = createAutoQueuePolicy({
+    autoSwitchHourlyThreshold: config.get<number>("autoSwitchHourlyThreshold", 5),
+    autoSwitchWeeklyThreshold: config.get<number>("autoSwitchWeeklyThreshold", 0),
+    autoRefreshMinutes: getAutoRefreshMinutes()
   });
+  return accounts.every(
+    (account) =>
+      !isAutoQueueCandidateEligible(
+        {
+          ...toAutoQueueOrderValue(account),
+          disabled: account.isActive ? false : account.enabled === false
+        },
+        policy
+      )
+  );
 }
 
 export function registerAutoRefreshScheduler(params: {
@@ -79,83 +80,117 @@ export function registerAutoRefreshScheduler(params: {
   let disposed = false;
   const handledQuotaResets = new Set<string>();
 
-  const quotaResetTimes = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number]): number[] => {
-    const quota = account.quotaSummary;
-    return [quota?.hourlyResetTime, quota?.weeklyResetTime]
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  let quotaResetInFlight = false;
+  let quotaResetScheduleVersion = 0;
+  let quotaResetReadRetryAt = 0;
+  const quotaResetRetries = new Map<string, { attempts: number; retryAt: number }>();
+
+  const quotaResetTimes = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number]): number[] =>
+    [account.quotaSummary?.hourlyResetTime, account.quotaSummary?.weeklyResetTime]
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
       .map((value) => value * 1_000);
-  };
+
+  const canScheduleQuotaReset = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number]): boolean =>
+    (account.enabled !== false || account.isActive) &&
+    (getAutoRefreshMinutes() > 0 || (account.isActive && getAutoRefreshCurrentMinutes() > 0));
 
   const scheduleNextQuotaReset = async (): Promise<void> => {
-    if (disposed) return;
-    if (quotaResetTimer) {
-      clearTimeout(quotaResetTimer);
-      quotaResetTimer = undefined;
-    }
-    const accounts = (await params.repo.listAccounts()).filter((account) => account.enabled !== false);
-    const now = Date.now();
-    const hasUnhandledDueReset = accounts.some((account) =>
-      quotaResetTimes(account).some(
-        (resetAt) => resetAt <= now && !handledQuotaResets.has(`${account.id}:${resetAt}`)
-      )
+    if (disposed || quotaResetInFlight) return;
+    if (quotaResetTimer) clearTimeout(quotaResetTimer);
+    quotaResetTimer = undefined;
+    const scheduleVersion = currentScheduleVersion;
+    const resetScheduleVersion = ++quotaResetScheduleVersion;
+    const accounts = await params.repo.listAccounts();
+    if (disposed || scheduleVersion !== currentScheduleVersion || resetScheduleVersion !== quotaResetScheduleVersion)
+      return;
+    const currentKeys = new Set(
+      accounts.flatMap((account) => quotaResetTimes(account).map((at) => `${account.id}:${at}`))
     );
-    if (hasUnhandledDueReset) {
-      // Cached snapshots can already be at or past their reset time when the
-      // extension starts. Run the same single-flight refresh path immediately
-      // instead of waiting for a future timer that will never be scheduled.
-      void runDueQuotaResetRefreshes();
-      return;
-    }
-    const futureResets = accounts.flatMap(quotaResetTimes).filter((resetAt) => resetAt > now);
-    if (!futureResets.length) {
-      return;
-    }
-    const nextResetAt = Math.min(...futureResets);
+    for (const key of handledQuotaResets) if (!currentKeys.has(key)) handledQuotaResets.delete(key);
+    for (const key of quotaResetRetries.keys()) if (!currentKeys.has(key)) quotaResetRetries.delete(key);
+    const now = Date.now();
+    const nextAttempts = accounts.filter(canScheduleQuotaReset).flatMap((account) =>
+      quotaResetTimes(account).flatMap((resetAt) => {
+        const key = `${account.id}:${resetAt}`;
+        if (handledQuotaResets.has(key)) return [];
+        const retry = quotaResetRetries.get(key);
+        // After six failures, normal configured maintenance owns recovery.
+        if (retry && retry.attempts >= 6) return [];
+        return [Math.max(resetAt + 1_000, retry?.retryAt ?? now, quotaResetReadRetryAt)];
+      })
+    );
+    if (!nextAttempts.length) return;
     quotaResetTimer = setTimeout(
       runDueQuotaResetRefreshes,
-      Math.min(2_147_000_000, Math.max(0, nextResetAt - now + 1_000))
+      Math.min(2_147_000_000, Math.max(0, Math.min(...nextAttempts) - now))
     );
     quotaResetTimer.unref?.();
   };
 
   const runDueQuotaResetRefreshes = (): void => {
-    if (disposed) return;
+    if (disposed || quotaResetInFlight) return;
     quotaResetTimer = undefined;
+    quotaResetInFlight = true;
+    const scheduleVersion = currentScheduleVersion;
     void (async () => {
-      const now = Date.now();
-      const accounts = (await params.repo.listAccounts()).filter((account) => account.enabled !== false);
+      const accounts = await params.repo.listAccounts();
+      quotaResetReadRetryAt = 0;
       let refreshedAny = false;
       for (const account of accounts) {
-        const dueResets = quotaResetTimes(account).filter((resetAt) => resetAt <= now);
-        const unhandled = dueResets.filter((resetAt) => !handledQuotaResets.has(`${account.id}:${resetAt}`));
-        if (!unhandled.length || (params.canRefreshAccount && !params.canRefreshAccount(account.id))) {
-          continue;
-        }
-        for (const resetAt of unhandled) {
-          handledQuotaResets.add(`${account.id}:${resetAt}`);
-        }
+        if (disposed || scheduleVersion !== currentScheduleVersion) break;
+        if (!canScheduleQuotaReset(account)) continue;
+        const now = Date.now();
+        const due = quotaResetTimes(account).filter((at) => {
+          const key = `${account.id}:${at}`;
+          const retry = quotaResetRetries.get(key);
+          return at <= now && !handledQuotaResets.has(key) && (!retry || (retry.attempts < 6 && retry.retryAt <= now));
+        });
+        if (!due.length) continue;
+        let refreshed = false;
         try {
-          await runCrossWindowExclusive(
-            `background:quota-reset-refresh:${account.id}`,
-            "Quota reset refresh",
-            async () => {
-              refreshedAny =
-                (await refreshSingleQuotaSafely(params.repo, { refresh: params.onRefresh }, account.id, {
+          if (params.canRefreshAccount?.(account.id) ?? true) {
+            await runCrossWindowExclusive(
+              `background:quota-reset-refresh:${account.id}`,
+              "Quota reset refresh",
+              async () => {
+                if (
+                  disposed ||
+                  scheduleVersion !== currentScheduleVersion ||
+                  !canScheduleQuotaReset(account) ||
+                  !(params.canRefreshAccount?.(account.id) ?? true)
+                )
+                  return;
+                refreshed = await refreshSingleQuotaSafely(params.repo, { refresh: params.onRefresh }, account.id, {
                   forceRefresh: true,
                   allowTokenRefresh: true,
-                  skipDisabled: true,
+                  skipDisabled: !account.isActive,
                   announceFailure: false,
                   canUseAccount: params.canRefreshAccount
-                })) || refreshedAny;
-            }
-          );
+                });
+              }
+            );
+          }
         } catch (error) {
           if (!(error instanceof CrossWindowOperationBusyError)) {
             console.warn(`[codexManager] quota reset refresh failed for ${account.email}:`, error);
           }
         }
+        refreshedAny ||= refreshed;
+        for (const at of due) {
+          const key = `${account.id}:${at}`;
+          if (refreshed) {
+            handledQuotaResets.add(key);
+            quotaResetRetries.delete(key);
+          } else {
+            const attempts = (quotaResetRetries.get(key)?.attempts ?? 0) + 1;
+            quotaResetRetries.set(key, {
+              attempts,
+              retryAt: Date.now() + Math.min(300_000, 60_000 * 2 ** (attempts - 1))
+            });
+          }
+        }
       }
-      if (refreshedAny) {
+      if (refreshedAny && !disposed && scheduleVersion === currentScheduleVersion) {
         const switched = await maybeAutoSwitchForActiveQuota(
           params.repo,
           { refresh: params.onRefresh },
@@ -163,22 +198,20 @@ export function registerAutoRefreshScheduler(params: {
             canUseAccount: params.canRefreshAccount
           }
         );
-        if (!switched) {
-          await maybeWarnForActiveQuota(params.repo);
-        }
+        if (!switched) await maybeWarnForActiveQuota(params.repo);
         params.onRefresh();
       }
-      // Retain only keys still represented by the current snapshots.
-      const currentKeys = new Set(
-        accounts.flatMap((account) => quotaResetTimes(account).map((at) => `${account.id}:${at}`))
-      );
-      for (const key of handledQuotaResets) {
-        if (!currentKeys.has(key)) handledQuotaResets.delete(key);
-      }
-      await scheduleNextQuotaReset();
-    })().catch((error) => {
-      console.warn("[codexManager] unable to schedule quota reset refresh:", error);
-    });
+    })()
+      .catch((error) => {
+        quotaResetReadRetryAt = Date.now() + 60_000;
+        console.warn("[codexManager] quota reset maintenance failed:", error);
+      })
+      .finally(() => {
+        quotaResetInFlight = false;
+        void scheduleNextQuotaReset().catch((error) => {
+          console.warn("[codexManager] unable to schedule quota reset refresh:", error);
+        });
+      });
   };
 
   const applySchedule = (): void => {
@@ -193,14 +226,16 @@ export function registerAutoRefreshScheduler(params: {
     }
 
     const runAllRefresh = (): void => {
-      if (allInFlight) return;
+      if (disposed || scheduleVersion !== currentScheduleVersion || allInFlight) return;
       allInFlight = true;
       const excludeCurrent = getAutoRefreshCurrentMinutes() > 0;
       const safetyRefresh = isAutoSwitchRefreshAllBeforeSwitchEnabled();
-      const shouldRefresh = safetyRefresh ? allAccountsNeedCapabilityRefresh(params.repo) : Promise.resolve(true);
+      const shouldRefresh = safetyRefresh
+        ? allAccountsNeedCapabilityRefresh(params.repo, params.canRefreshAccount)
+        : Promise.resolve(true);
       void shouldRefresh
         .then((needed) => {
-          if (!needed) return;
+          if (!needed || disposed || scheduleVersion !== currentScheduleVersion || getAutoRefreshMinutes() <= 0) return;
           const refreshOptions = {
             silent: true,
             forceRefresh: true,
@@ -217,18 +252,24 @@ export function registerAutoRefreshScheduler(params: {
         .catch(() => undefined)
         .finally(() => {
           allInFlight = false;
+          void scheduleNextQuotaReset().catch((error) => {
+            console.warn("[codexManager] unable to schedule quota reset refresh:", error);
+          });
         });
     };
 
     const scheduleCurrentRefresh = (delayMs: number): void => {
-      if (scheduleVersion !== currentScheduleVersion) return;
+      if (disposed || scheduleVersion !== currentScheduleVersion || getAutoRefreshCurrentMinutes() <= 0 || delayMs <= 0)
+        return;
       currentTimer = setTimeout(() => {
         currentTimer = undefined;
         runCurrentRefresh();
       }, delayMs);
+      currentTimer.unref?.();
     };
 
     const runCurrentRefresh = (knownCurrent?: { id: string }): void => {
+      if (disposed || scheduleVersion !== currentScheduleVersion || getAutoRefreshCurrentMinutes() <= 0) return;
       if (currentInFlight) {
         scheduleCurrentRefresh(getAutoRefreshCurrentMinutes() * 60 * 1000);
         return;
@@ -238,7 +279,12 @@ export function registerAutoRefreshScheduler(params: {
         let failed = false;
         try {
           await runCrossWindowExclusive(`background:quota-refresh:${current.id}`, "Quota refresh", async () => {
-            if (params.canRefreshAccount && !params.canRefreshAccount(current.id)) {
+            if (
+              disposed ||
+              scheduleVersion !== currentScheduleVersion ||
+              getAutoRefreshCurrentMinutes() <= 0 ||
+              (params.canRefreshAccount && !params.canRefreshAccount(current.id))
+            ) {
               return;
             }
             const refreshed = await refreshSingleQuotaSafely(params.repo, { refresh: params.onRefresh }, current.id, {
@@ -258,6 +304,7 @@ export function registerAutoRefreshScheduler(params: {
               failed = true;
               return;
             }
+            if (disposed || scheduleVersion !== currentScheduleVersion || getAutoRefreshCurrentMinutes() <= 0) return;
             const switched = await maybeAutoSwitchForActiveQuota(
               params.repo,
               { refresh: params.onRefresh },
@@ -278,6 +325,9 @@ export function registerAutoRefreshScheduler(params: {
           console.warn("[codexManager] current-account auto refresh or auto switch failed:", error);
         } finally {
           currentInFlight = false;
+          void scheduleNextQuotaReset().catch((error) => {
+            console.warn("[codexManager] unable to schedule quota reset refresh:", error);
+          });
           if (scheduleVersion === currentScheduleVersion) {
             const baseDelayMs = getAutoRefreshCurrentMinutes() * 60 * 1000;
             const delayMs = failed ? baseDelayMs * CURRENT_REFRESH_FAILURE_BACKOFF_MULTIPLIER : baseDelayMs;
@@ -333,7 +383,11 @@ export function registerAutoRefreshScheduler(params: {
     if (
       event.affectsConfiguration("codexManager.autoRefreshMinutes") ||
       event.affectsConfiguration("codexManager.autoRefreshCurrentMinutes") ||
-      event.affectsConfiguration("codexManager.autoSwitchRefreshAllBeforeSwitchEnabled")
+      event.affectsConfiguration("codexManager.autoSwitchRefreshAllBeforeSwitchEnabled") ||
+      event.affectsConfiguration("codexManager.autoSwitchEnabled") ||
+      event.affectsConfiguration("codexManager.quotaWarningEnabled") ||
+      event.affectsConfiguration("codexManager.autoSwitchHourlyThreshold") ||
+      event.affectsConfiguration("codexManager.autoSwitchWeeklyThreshold")
     ) {
       applySchedule();
     }
@@ -362,18 +416,39 @@ export function registerTokenRefreshScheduler(params: {
 }): vscode.Disposable {
   let timer: NodeJS.Timeout | undefined;
   let inFlight = false;
+  let disposed = false;
+  let scheduleVersion = 0;
+  const intervalMs =
+    Number.isFinite(params.checkIntervalMs) && params.checkIntervalMs > 0
+      ? Math.max(1_000, Math.min(2_147_000_000, params.checkIntervalMs))
+      : 0;
+
+  const readEligibleAccount = async (accountId: string, version: number) => {
+    if (disposed || version !== scheduleVersion || !(params.canRefreshAccount?.(accountId) ?? true)) return undefined;
+    params.repo.invalidateCachedIndex?.();
+    const account = await params.repo.getAccount(accountId);
+    return !disposed &&
+      version === scheduleVersion &&
+      account?.enabled !== false &&
+      account?.tokenRefreshEnabled === true &&
+      (params.canRefreshAccount?.(accountId) ?? true)
+      ? account
+      : undefined;
+  };
 
   const runTokenRefreshSweep = async (): Promise<void> => {
-    if (inFlight) {
+    if (disposed || !intervalMs || inFlight) {
       return;
     }
 
     inFlight = true;
+    const version = scheduleVersion;
     let lastFailureMessage: string | undefined;
     let checked = 0;
     let refreshedCount = 0;
     try {
-      await runSharedMaintenance("background:token-refresh-sweep", "Background token refresh", params.checkIntervalMs, async () => {
+      await runSharedMaintenance("background:token-refresh-sweep", "Background token refresh", intervalMs, async () => {
+        if (disposed || version !== scheduleVersion) return;
         markTokenAutomationSweepStarted();
         const accounts = (await params.repo.listAccounts()).filter(
           (account) =>
@@ -381,14 +456,18 @@ export function registerTokenRefreshScheduler(params: {
             account.tokenRefreshEnabled === true &&
             (params.canRefreshAccount?.(account.id) ?? true)
         );
-        if (!shouldRunAccountScheduler(accounts.length)) {
+        if (disposed || version !== scheduleVersion || !shouldRunAccountScheduler(accounts.length)) {
           return;
         }
 
         for (const account of accounts) {
+          if (disposed || version !== scheduleVersion) break;
           try {
             await runCrossWindowExclusive(`background:token-refresh:${account.id}`, "Token refresh", async () => {
+              if (!(await readEligibleAccount(account.id, version))) return;
               const tokens = await params.repo.getTokens(account.id, { bypassCache: true });
+              const latestAccount = await readEligibleAccount(account.id, version);
+              if (!latestAccount) return;
               markTokenAutomationCheck(account.id);
               checked += 1;
               if (!tokens?.accessToken || !needsTokenRefresh(tokens, params.skewSeconds)) {
@@ -401,11 +480,13 @@ export function registerTokenRefreshScheduler(params: {
               }
 
               const refreshed = await refreshTokens(tokens.refreshToken, tokens.idToken);
+              // A provider may rotate the refresh token. Once requested, save
+              // the response even if automation is disabled while it is in flight.
               await params.repo.updateTokens(account.id, {
                 ...refreshed,
-                accountId: refreshed.accountId ?? account.accountId ?? tokens.accountId
+                accountId: refreshed.accountId ?? latestAccount.accountId ?? tokens.accountId
               });
-              markTokenAutomationRefreshSuccess(account.id);
+              if (!disposed && version === scheduleVersion) markTokenAutomationRefreshSuccess(account.id);
               refreshedCount += 1;
             });
           } catch (error) {
@@ -413,7 +494,8 @@ export function registerTokenRefreshScheduler(params: {
               continue;
             }
             lastFailureMessage = error instanceof Error ? error.message : String(error);
-            markTokenAutomationRefreshFailure(account.id, lastFailureMessage);
+            if (!disposed && version === scheduleVersion)
+              markTokenAutomationRefreshFailure(account.id, lastFailureMessage);
             console.warn(`[codexManager] background token refresh failed for ${account.email}:`, error);
           }
         }
@@ -425,19 +507,21 @@ export function registerTokenRefreshScheduler(params: {
       }
     } finally {
       inFlight = false;
-      markTokenAutomationSweepFinished(lastFailureMessage);
+      if (!disposed && version === scheduleVersion) markTokenAutomationSweepFinished(lastFailureMessage);
       console.info(
         `[codexManager] background token refresh sweep: checked=${checked}, refreshed=${refreshedCount}` +
           (lastFailureMessage ? `, lastError=${lastFailureMessage}` : ""),
         { checked, refreshed: refreshedCount }
       );
-      params.view.refresh();
+      if (!disposed && version === scheduleVersion) params.view.refresh();
     }
   };
 
   const applySchedule = (): void => {
-    const enabled = true;
-    configureTokenAutomation(enabled, params.checkIntervalMs, params.skewSeconds);
+    if (disposed) return;
+    scheduleVersion += 1;
+    const enabled = intervalMs > 0;
+    configureTokenAutomation(enabled, intervalMs, params.skewSeconds);
 
     if (timer) {
       clearInterval(timer);
@@ -451,7 +535,7 @@ export function registerTokenRefreshScheduler(params: {
 
     timer = setInterval(() => {
       void runTokenRefreshSweep();
-    }, params.checkIntervalMs);
+    }, intervalMs);
     timer.unref?.();
   };
 
@@ -466,6 +550,9 @@ export function registerTokenRefreshScheduler(params: {
   params.context.subscriptions.push(configDisposable);
   return {
     dispose(): void {
+      disposed = true;
+      scheduleVersion += 1;
+      configureTokenAutomation(false, intervalMs, params.skewSeconds);
       configDisposable.dispose();
       if (timer) {
         clearInterval(timer);

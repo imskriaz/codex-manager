@@ -33,15 +33,16 @@ async function openMetadataDatabase(home: string, prefix: string): Promise<Sqlit
   }
 }
 
-/** Select every running parent session in this workspace; sub-agents are excluded. */
+/** Select running workspace parents or open window parents; sub-agents are excluded. */
 export async function readAutoResumeCodexSessionIds(
   home = resolveCodexHome(),
   workspacePaths = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
   openSessionIds = readOpenCodexSessionIds(),
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  selection: "running" | "open" = "running"
 ): Promise<string[]> {
   signal?.throwIfAborted();
-  const running = await readRunningCodexSessionIds(home);
+  const running = selection === "open" ? openSessionIds : await readRunningCodexSessionIds(home);
   signal?.throwIfAborted();
   if (!running.length) return [];
   const transcripts = await findCliSessionTranscripts(home, new Set(running));

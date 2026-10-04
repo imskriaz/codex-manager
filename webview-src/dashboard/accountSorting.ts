@@ -1,15 +1,15 @@
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
 import {
-  calculateAutoQueueEfficiency,
-  compareAutoQueueOrderValues,
-  compareAutoQueueUrgency
-} from "../../src/domain/autoQueueOrder";
+  compareAutoQueueCandidates,
+  createAutoQueuePolicy,
+  hasAutoQueueCapability,
+  isAutoQueueCandidateEligible,
+  type AutoQueueCandidate,
+  type AutoQueuePolicy,
+  type AutoQueueCapabilityThresholds
+} from "../../src/domain/autoQueuePolicy";
 
-export type DashboardAutoQueueCapabilityThresholds = {
-  hourlyEnabled: boolean;
-  hourlyThreshold: number;
-  weeklyThreshold: number;
-};
+export type DashboardAutoQueueCapabilityThresholds = AutoQueueCapabilityThresholds;
 
 type DashboardMetric = DashboardAccountViewModel["metrics"][number];
 
@@ -68,116 +68,46 @@ export function isDashboardAccountOutOfQuota(account: DashboardAccountViewModel)
   return (account.metrics ?? []).some(
     (metric) =>
       metric.visible &&
+      (metric.key === "hourly" || metric.key === "weekly") &&
       typeof metric.percentage === "number" &&
       Number.isFinite(metric.percentage) &&
       metric.percentage <= 0
   );
 }
 
-export function compareDashboardAutoQueueAccounts(
-  left: DashboardAccountViewModel,
-  right: DashboardAccountViewModel,
-  thresholds?: DashboardAutoQueueCapabilityThresholds
-): number {
-  const orderValue = (account: DashboardAccountViewModel) => {
-    const mainQuota = mainQuotaMetric(account);
-    const mainExhausted = (mainQuota?.percentage ?? 1) <= 0;
-    const hourly = account.metrics.find(
-      (metric) =>
-        metric.visible &&
-        metric.key === "hourly" &&
-        typeof metric.percentage === "number" &&
-        Number.isFinite(metric.percentage)
-    );
-    return {
-      windows: (["hourly", "weekly", "monthly"] as const).map((period) => {
-        const metric = period === "hourly" ? hourly : mainQuota?.period === period ? mainQuota : undefined;
-        return {
-          percentage: metric ? sortingPercentage(account, metric) : undefined,
-          resetAt: mainExhausted && metric ? undefined : metric?.resetAt
-        };
-      }),
-      credits: account.creditsUnlimited ? Number.POSITIVE_INFINITY : account.creditsBalance,
-      subscriptionExpiresAt: account.subscriptionExpiresAt,
-      lastQuotaAt: account.lastQuotaAt
-    };
+export function toDashboardAutoQueueOrderValue(account: DashboardAccountViewModel): AutoQueueCandidate {
+  const mainQuota = mainQuotaMetric(account);
+  const mainExhausted = (mainQuota?.percentage ?? 1) <= 0;
+  const hourly = (account.metrics ?? []).find((metric) => metric.key === "hourly" && metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage));
+  return {
+    id: account.id,
+    queuePriority: account.queuePriority,
+    disabled: account.enabled === false,
+    quotaError: account.hasQuotaError,
+    resetCreditAttempt: account.hasPendingResetCreditAttempt,
+    invalidQuota: (account.metrics ?? []).some((metric) => metric.visible && (metric.key === "hourly" || metric.key === "weekly") && (typeof metric.percentage !== "number" || !Number.isFinite(metric.percentage) || metric.percentage < 0 || metric.percentage > 100)),
+    windows: (["hourly", "weekly", "monthly"] as const).map((period) => {
+      const metric = period === "hourly" ? hourly : mainQuota && (mainQuota.period ?? "weekly") === period ? mainQuota : undefined;
+      return { percentage: metric ? sortingPercentage(account, metric) : undefined, resetAt: mainExhausted && metric ? undefined : metric?.resetAt };
+    }),
+    credits: account.creditsUnlimited ? Number.POSITIVE_INFINITY : account.creditsBalance,
+    subscriptionExpiresAt: account.subscriptionExpiresAt,
+    lastQuotaAt: account.lastQuotaAt,
+    sessionStartedAt: account.sessionStartedAt,
+    lastSelectedAt: account.lastSelectedAt,
+    resetCreditsAvailable: account.resetCreditsAvailable,
+    resetCreditsNextExpiresAt: account.resetCreditsNextExpiresAt
   };
-  const leftOrder = orderValue(left);
-  const rightOrder = orderValue(right);
-  const leftCapable = hasDashboardAutoQueueCapability(left, thresholds);
-  const rightCapable = hasDashboardAutoQueueCapability(right, thresholds);
-  // A reset time is not quota. Exhausted accounts remain ignored until an
-  // existing refresh/peer event reports usable quota after the reset.
-  if (leftCapable !== rightCapable) {
-    return leftCapable ? -1 : 1;
-  }
-  const urgencyDifference = compareAutoQueueUrgency(leftOrder, rightOrder);
-  if (urgencyDifference !== 0) {
-    return urgencyDifference;
-  }
-
-  const leftPriority = left.queuePriority === true && leftCapable;
-  const rightPriority = right.queuePriority === true && rightCapable;
-  if (leftPriority !== rightPriority) {
-    return leftPriority ? -1 : 1;
-  }
-
-  const nowMs = Date.now();
-  const hasFutureReset = (order: ReturnType<typeof orderValue>) =>
-    order.windows.some(
-      (window) =>
-        typeof window.resetAt === "number" && Number.isFinite(window.resetAt) && window.resetAt >= nowMs / 1_000
-    );
-  if (leftCapable && (hasFutureReset(leftOrder) || hasFutureReset(rightOrder))) {
-    const leftScore = calculateAutoQueueEfficiency(leftOrder, {
-      nowMs,
-      staleAfterMs: 30 * 60_000,
-      starred: leftPriority
-    }).score;
-    const rightScore = calculateAutoQueueEfficiency(rightOrder, {
-      nowMs,
-      staleAfterMs: 30 * 60_000,
-      starred: rightPriority
-    }).score;
-    if (leftScore !== rightScore) {
-      return rightScore - leftScore;
-    }
-  }
-
-  return compareAutoQueueOrderValues(leftOrder, rightOrder);
 }
 
-export function hasDashboardAutoQueueCapability(
-  account: DashboardAccountViewModel,
-  thresholds: DashboardAutoQueueCapabilityThresholds = {
-    hourlyEnabled: true,
-    hourlyThreshold: 0,
-    weeklyThreshold: 0
-  }
-): boolean {
-  const quotaMetrics = account.metrics.filter(
-    (metric) =>
-      metric.visible &&
-      (metric.key === "hourly" || metric.key === "weekly") &&
-      typeof metric.percentage === "number" &&
-      Number.isFinite(metric.percentage)
-  );
-  const concernedMetrics = quotaMetrics.filter((metric) => metric.key !== "hourly" || thresholds.hourlyEnabled);
-  if (
-    concernedMetrics.some(
-      (metric) =>
-        metric.percentage! <= (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
-    )
-  ) {
-    return false;
-  }
-  const allMainQuotaAvailable =
-    concernedMetrics.length > 0 &&
-    concernedMetrics.every(
-      (metric) =>
-        metric.percentage! > (metric.key === "hourly" ? thresholds.hourlyThreshold : thresholds.weeklyThreshold)
-    );
-  return account.creditsUnlimited === true || allMainQuotaAvailable || (account.creditsBalance ?? 0) > 0;
+export function compareDashboardAutoQueueAccounts(left: DashboardAccountViewModel, right: DashboardAccountViewModel, thresholds?: DashboardAutoQueueCapabilityThresholds | AutoQueuePolicy): number {
+  const policy = thresholds && "nowMs" in thresholds ? thresholds : { ...createAutoQueuePolicy(), ...thresholds };
+  return compareAutoQueueCandidates(toDashboardAutoQueueOrderValue(left), toDashboardAutoQueueOrderValue(right), policy);
+}
+
+export function hasDashboardAutoQueueCapability(account: DashboardAccountViewModel, thresholds?: DashboardAutoQueueCapabilityThresholds | AutoQueuePolicy): boolean {
+  const value = toDashboardAutoQueueOrderValue(account);
+  return thresholds && "nowMs" in thresholds ? isAutoQueueCandidateEligible(value, thresholds) : hasAutoQueueCapability(value, thresholds);
 }
 
 /**
@@ -188,18 +118,21 @@ export function hasDashboardAutoQueueCapability(
  */
 export function sortWithQueuedAccount(
   accounts: readonly DashboardAccountViewModel[],
-  compare: (left: DashboardAccountViewModel, right: DashboardAccountViewModel) => number
+  compare: (left: DashboardAccountViewModel, right: DashboardAccountViewModel) => number,
+  groupQuota = true
 ): DashboardAccountViewModel[] {
   return [...accounts].sort((left, right) => {
     const activeDifference = Number(right.isActive) - Number(left.isActive);
     if (activeDifference !== 0) return activeDifference;
+    const pendingDifference = Number(right.switchQueued) - Number(left.switchQueued);
+    if (pendingDifference !== 0) return pendingDifference;
+    if (!groupQuota) return compare(left, right);
 
     const missingMainQuotaDifference = Number(isDashboardMainQuotaMissing(left)) - Number(isDashboardMainQuotaMissing(right));
     if (missingMainQuotaDifference !== 0) return missingMainQuotaDifference;
     const quotaGroupDifference = Number(isDashboardAccountOutOfQuota(left)) - Number(isDashboardAccountOutOfQuota(right));
     if (quotaGroupDifference !== 0) return quotaGroupDifference;
 
-    const rank = (account: DashboardAccountViewModel): number => (account.switchQueued ? 0 : 1);
-    return rank(left) - rank(right) || compare(left, right);
+    return compare(left, right);
   });
 }

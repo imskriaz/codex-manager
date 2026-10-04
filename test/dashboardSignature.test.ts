@@ -72,6 +72,15 @@ function createState(overrides?: {
 }
 
 describe("buildDashboardStateSignature", () => {
+  it("publishes queue fairness and pending reset changes", () => {
+    const state = createState();
+    const initial = buildDashboardStateSignature(state);
+    state.accounts[0].lastSelectedAt = 123;
+    const selected = buildDashboardStateSignature(state);
+    expect(selected).not.toBe(initial);
+    state.accounts[0].hasPendingResetCreditAttempt = true;
+    expect(buildDashboardStateSignature(state)).not.toBe(selected);
+  });
   it("changes when shared privacy mode changes", () => {
     const before = buildDashboardStateSignature(createState({ privacyMode: false }));
     const after = buildDashboardStateSignature(createState({ privacyMode: true }));

@@ -10,14 +10,11 @@ import { extractClaims } from "../../utils/jwt";
 import { runWithConcurrencyLimit } from "../../utils/concurrency";
 import { needsWindowReloadForAccount } from "../../presentation/workbench/windowRuntimeAccount";
 import { getCommandCopy, getLanguage, logNetworkEvent, resolveLongQuotaLabel, t } from "../../utils";
-import {
-  getAutoRefreshMinutes,
-  getCodexManagerConfiguration,
-} from "../../infrastructure/config/extensionSettings";
+import { getAutoRefreshMinutes, getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import { wasAccountQuotaCheckedWithin } from "../../services/quotaCheckCoordination";
 import { openDetailsPanel } from "../../ui";
 import { openQuotaSummaryPanel } from "../../ui/quotaSummary";
-import { consumeResetCredit, isResetCreditIneligibleError } from "../../services/quota";
+import { redeemAccountResetCredit } from "./resetCreditRedemption";
 import {
   RefreshView,
   formatAccountToastLabel,
@@ -27,7 +24,7 @@ import {
   refreshSingleQuota,
   refreshSingleQuotaSafely
 } from "./quota";
-import { compareCodexManagerAccountAutoQueueOrder } from "./autoQueueOrder";
+import { compareCodexManagerAccountAutoQueueOrder, getAccountAutoQueuePolicy } from "./autoQueueOrder";
 import {
   autoReloadWindowForAccount,
   handleCodexAppRestartPreference,
@@ -83,7 +80,7 @@ export class AccountsCommandService {
             accountStructure: account.accountStructure
           });
           const result = await refreshImportedAccountQuota(this.repo, account.id);
-          const queuedActivation = await activateQueuedAccountIfCurrentMissing(this.repo);
+          const queuedActivation = await activateQueuedAccountIfCurrentMissing(this.repo, this.canAutomateAccount);
           if (queuedActivation.status === "activated") {
             this.view.markObservedAuthIdentity?.(queuedActivation.account.id);
           }
@@ -171,7 +168,7 @@ export class AccountsCommandService {
         }
 
         const result = await refreshImportedAccountQuota(this.repo, updated.id);
-        const queuedActivation = await activateQueuedAccountIfCurrentMissing(this.repo);
+        const queuedActivation = await activateQueuedAccountIfCurrentMissing(this.repo, this.canAutomateAccount);
         if (queuedActivation.status === "activated") {
           this.view.markObservedAuthIdentity?.(queuedActivation.account.id);
         }
@@ -301,7 +298,10 @@ export class AccountsCommandService {
 
   async consumeResetCredit(item?: CodexManagerAccountRecord): Promise<void> {
     const picked = item ?? (await this.pickAccount("Select an account to reset"));
-    if (!picked) return;
+    if (!picked) {
+      void vscode.window.showInformationMessage("Quota reset cancelled.");
+      return;
+    }
     const account = await this.repo.getAccount(picked.id);
     if (!account) {
       throw new Error("That account no longer exists. Refresh the account list and try again.");
@@ -316,24 +316,27 @@ export class AccountsCommandService {
       { modal: true },
       "Reset Rate Limit"
     );
-    if (confirm !== "Reset Rate Limit") return;
-
-    const tokens = await this.repo.getTokens(account.id);
-    if (!tokens?.accessToken) throw new Error("No access token available");
-    const attemptedResetId = account.quotaSummary?.resetCreditsAvailableIds?.[0];
-    try {
-      await consumeResetCredit(tokens.accessToken, account.accountId ?? undefined);
-    } catch (error) {
-      if (attemptedResetId && isResetCreditIneligibleError(error)) {
-        await this.repo.excludeResetCredit(account.id, attemptedResetId);
-      }
-      throw error;
+    if (confirm !== "Reset Rate Limit") {
+      void vscode.window.showInformationMessage("Quota reset cancelled.");
+      return;
     }
-    await refreshSingleQuota(this.repo, this.view, account.id, {
-      announce: false,
-      warnQuota: false,
-      refreshView: true
+    const redeemed = await redeemAccountResetCredit(this.repo, account.id, undefined, async () => {
+      const refreshed = await refreshSingleQuota(this.repo, this.view, account.id, {
+        announce: false,
+        warnQuota: false,
+        refreshView: true,
+        forceRefresh: true,
+        reconcileResetAttempt: false
+      });
+      if (refreshed.error || refreshed.skipped)
+        throw new Error("Reset was submitted, but quota refresh failed. Refresh quota before retrying.");
+      return refreshed;
     });
+    if (!redeemed)
+      throw new Error(
+        "Quota reset cancelled because the account or reset credit changed. Refresh quota and try again."
+      );
+    void vscode.window.showInformationMessage(`Quota reset verified for ${account.email}.`);
   }
 
   async refreshQuota(item?: CodexManagerAccountRecord): Promise<void> {
@@ -593,7 +596,10 @@ export class AccountsCommandService {
   }
 
   private async pickAccount(placeHolder: string): Promise<CodexManagerAccountRecord | undefined> {
-    const accounts = (await this.repo.listAccounts()).slice().sort(compareCodexManagerAccountAutoQueueOrder);
+    const policy = getAccountAutoQueuePolicy();
+    const accounts = (await this.repo.listAccounts())
+      .slice()
+      .sort((left, right) => compareCodexManagerAccountAutoQueueOrder(left, right, policy));
     if (!accounts.length) {
       void vscode.window.showInformationMessage(getCommandCopy().noAccounts);
       return undefined;
@@ -612,7 +618,10 @@ export class AccountsCommandService {
   }
 
   private async pickSwitchAccount(placeHolder: string): Promise<CodexManagerAccountRecord | undefined> {
-    const accounts = (await this.repo.listAccounts()).slice().sort(compareSwitchPickerOrder);
+    const policy = getAccountAutoQueuePolicy();
+    const accounts = (await this.repo.listAccounts())
+      .slice()
+      .sort((left, right) => compareSwitchPickerOrder(left, right, policy));
     if (!accounts.length) {
       void vscode.window.showInformationMessage(getCommandCopy().noAccounts);
       return undefined;
@@ -711,8 +720,12 @@ function formatQuickPickQuota(value: number | undefined): string {
 }
 
 /** Keep the manual switch picker in the same queue order as Auto Select. */
-export function compareSwitchPickerOrder(left: CodexManagerAccountRecord, right: CodexManagerAccountRecord): number {
+export function compareSwitchPickerOrder(
+  left: CodexManagerAccountRecord,
+  right: CodexManagerAccountRecord,
+  policy = getAccountAutoQueuePolicy()
+): number {
   if (left.isActive !== right.isActive) return left.isActive ? -1 : 1;
   if ((left.enabled !== false) !== (right.enabled !== false)) return left.enabled !== false ? -1 : 1;
-  return compareCodexManagerAccountAutoQueueOrder(left, right) || left.email.localeCompare(right.email);
+  return compareCodexManagerAccountAutoQueueOrder(left, right, policy);
 }

@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.15-pre2",
+  "version": "1.2.15-pre3",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -128,7 +128,7 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Experimental: preserve all running parent sessions in the current workspace before Reload or an automatic reload and reopen them in VS Code afterward. Skip sub-agents. Works without enabling Session Integration."
+          "markdownDescription": "Experimental: save open parent conversation tabs as they change and reopen them after a VS Code restart. Managed Reload also captures running parent sessions in the current workspace. Skip sub-agents. Works without enabling Session Integration."
         },
         "codexManager.crossWindowAccountModeEnabled": {
           "type": "boolean",

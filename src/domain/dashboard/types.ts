@@ -53,11 +53,13 @@ export interface DashboardSettings {
   codexSessionTransport?: DashboardCodexSessionTransport;
   autoRefreshMinutes: number;
   autoRefreshCurrentMinutes: number;
+  /** Shared candidate freshness bound in milliseconds. */
+  quotaFreshnessMs?: number;
   usageHistoryRetentionDays: number;
   autoSwitchEnabled: boolean;
   hourlyQuotaControlEnabled: boolean;
   autoSwitchReloadWindowEnabled: boolean;
-  /** Preserve running Codex sessions across automatic VS Code reloads. */
+  /** Restore local parent Codex conversation tabs after VS Code restarts. */
   autoResumeEnabled?: boolean;
   /** Assign independent accounts and CODEX_HOME values to VS Code windows. */
   crossWindowAccountModeEnabled?: boolean;
@@ -393,6 +395,7 @@ export interface DashboardAccountViewModel {
   addedAtLabel: string;
   loginAt?: number;
   sessionStartedAt?: number;
+  lastSelectedAt?: number;
   totalUsageMs?: number;
   runningDeviceName?: string;
   runningOnThisDevice?: boolean;
@@ -417,6 +420,7 @@ export interface DashboardAccountViewModel {
   canToggleStatusBar: boolean;
   statusToggleTitle: string;
   hasQuota402: boolean;
+  hasQuotaError?: boolean;
   quotaIssueKind?: "disabled" | "auth" | "quota";
   healthKind: "healthy" | "expiring" | "refresh_failed" | "reauthorize" | "disabled" | "quota";
   healthLabel: string;
@@ -429,6 +433,7 @@ export interface DashboardAccountViewModel {
   lastQuotaAt?: number;
   resetCreditsAvailable?: number;
   resetCreditsNextExpiresAt?: number;
+  hasPendingResetCreditAttempt?: boolean;
   autoSwitchLockedUntil?: number;
   metrics: DashboardMetricViewModel[];
 }
@@ -786,7 +791,13 @@ export interface DashboardCodexServerRequest {
   title: string;
   detail?: string;
   cwd?: string;
-  questions?: Array<{ id: string; header: string; question: string; isSecret: boolean; options?: Array<{ label: string; description: string }> }>;
+  questions?: Array<{
+    id: string;
+    header: string;
+    question: string;
+    isSecret: boolean;
+    options?: Array<{ label: string; description: string }>;
+  }>;
   deviceId?: string;
 }
 

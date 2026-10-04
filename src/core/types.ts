@@ -147,6 +147,10 @@ export interface CodexManagerAccountRecord {
   loginAt?: number;
   /** 最近一次开始使用此账号的时间戳 (毫秒) */
   sessionStartedAt?: number;
+  /** Local successful selection time for queue fairness; independent of quota refresh. */
+  lastSelectedAt?: number;
+  /** Durable fence after an uncertain reset redemption; fresh quota must be reconciled before retry. */
+  resetCreditAttempt?: { requestId: string; attemptedAt: number; availableBefore: number };
   /** 已完成会话的累计使用时长（毫秒）；当前运行会话在展示时动态加入 */
   totalUsageMs?: number;
   /** 用户邮箱 */

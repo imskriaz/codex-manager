@@ -48,6 +48,38 @@ describe("queued account activation", () => {
     expect(result.status).toBe("activated");
     expect(repo.switchAccount).toHaveBeenCalledWith(usable.id);
   });
+
+  it("does not activate stale, missing, exhausted, failed or pending-reset snapshots", async () => {
+    const unusable = [
+      account("stale", { lastQuotaAt: 1 }),
+      account("missing", { quotaSummary: undefined }),
+      account("empty", { quotaSummary: quota(0, 0) }),
+      account("failed", { quotaError: { message: "offline", updatedAt: Date.now() } }),
+      account("pending", { resetCreditAttempt: { requestId: "request", attemptedAt: Date.now(), availableBefore: 1 } })
+    ].map((item) => ({ ...item, queuePriority: true }));
+    const repo = repository(unusable);
+    expect((await activateQueuedAccountIfCurrentMissing(repo)).status).toBe("not-needed");
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("rechecks ownership and current-account identity after token discovery", async () => {
+    const queued = account("race", { queuePriority: true });
+    const repo = repository([queued]);
+    let allowed = true;
+    vi.mocked(repo.getTokens).mockImplementation(async () => {
+      allowed = false;
+      return tokens;
+    });
+    await activateQueuedAccountIfCurrentMissing(repo, () => allowed);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    vi.mocked(repo.getTokens).mockImplementation(async () => {
+      queued.isActive = true;
+      return tokens;
+    });
+    allowed = true;
+    expect((await activateQueuedAccountIfCurrentMissing(repo)).status).toBe("not-needed");
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
 });
 
 function repository(
@@ -72,6 +104,8 @@ function account(id: string, overrides: Partial<CodexManagerAccountRecord> = {})
     isActive: false,
     createdAt: 1,
     updatedAt: 1,
+    lastQuotaAt: Date.now() - 1_000,
+    quotaSummary: quota(80, 80),
     ...overrides
   };
 }

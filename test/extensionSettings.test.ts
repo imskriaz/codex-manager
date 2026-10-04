@@ -7,10 +7,40 @@ import {
   isHourlyQuotaControlEnabled,
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
-  normalizeAutoResetWeeklyThreshold
+  normalizeAutoResetWeeklyThreshold,
+  isAutoSwitchRefreshAllBeforeSwitchEnabled
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
+  it("uses the shared policy defaults for malformed switching and reset thresholds", () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => /Threshold$/.test(key) ? Number.NaN : fallback
+    } as never);
+    const settings = new ExtensionSettingsStore().getDashboardSettings();
+    expect(settings.autoSwitchHourlyThreshold).toBe(5);
+    expect(settings.autoSwitchWeeklyThreshold).toBe(0);
+    expect(settings.autoResetWeeklyThreshold).toBe(0);
+  });
+  it("does not activate safety refresh without either switching or warnings", () => {
+    const enabled = new Set(["autoSwitchRefreshAllBeforeSwitchEnabled"]);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => (enabled.has(key) ? true : fallback)
+    } as never);
+    expect(isAutoSwitchRefreshAllBeforeSwitchEnabled()).toBe(false);
+    enabled.add("quotaWarningEnabled");
+    expect(isAutoSwitchRefreshAllBeforeSwitchEnabled()).toBe(true);
+    enabled.delete("quotaWarningEnabled");
+    enabled.add("autoSwitchEnabled");
+    expect(isAutoSwitchRefreshAllBeforeSwitchEnabled()).toBe(true);
+    enabled.delete("autoSwitchRefreshAllBeforeSwitchEnabled");
+    expect(isAutoSwitchRefreshAllBeforeSwitchEnabled()).toBe(false);
+  });
+  it("publishes the shared freshness limit for normalized refresh settings", () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => (key === "autoRefreshMinutes" ? 60 : fallback)
+    } as never);
+    expect(new ExtensionSettingsStore().getDashboardSettings().quotaFreshnessMs).toBe(125 * 60_000);
+  });
   it("keeps claim checks on while full cross-PC account sync defaults off", () => {
     const manifest = JSON.parse(readFileSync("package.json", "utf8"));
     expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncEnabled"].default).toBe(true);
@@ -112,7 +142,9 @@ describe("5-hour quota control defaults", () => {
       default: 0
     });
     expect(manifest.contributes.configuration.properties["codexManager.codexSessionDefault"]).toBeUndefined();
-    expect(manifest.contributes.configuration.properties["codexManager.codexSessionTransport"].default).toBe("app-server-stdio");
+    expect(manifest.contributes.configuration.properties["codexManager.codexSessionTransport"].default).toBe(
+      "app-server-stdio"
+    );
     expect(normalizeAutoResetWeeklyThreshold(-1)).toBe(0);
     expect(normalizeAutoResetWeeklyThreshold(0)).toBe(0);
     expect(normalizeAutoResetWeeklyThreshold(101)).toBe(100);

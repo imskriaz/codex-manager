@@ -655,7 +655,7 @@ describe("accountProfileMaintenance helpers", () => {
     expect(account.subscriptionActiveUntil).toBeUndefined();
   });
 
-  it("preserves reset credits expiry when quota refresh only returns available count", () => {
+  it("clears unrelated reset credits expiry when quota refresh replaces the aggregate count", () => {
     const account: CodexManagerAccountRecord = {
       id: "a",
       email: "team@example.com",
@@ -688,6 +688,38 @@ describe("accountProfileMaintenance helpers", () => {
     });
 
     expect(account.quotaSummary?.resetCreditsAvailable).toBe(1);
-    expect(account.quotaSummary?.resetCreditsNextExpiresAt).toBe(1_785_109_796);
+    expect(account.quotaSummary?.resetCreditsNextExpiresAt).toBeUndefined();
+  });
+
+  it("preserves reset evidence and rejected IDs when the quota response omits reset information", () => {
+    const account: CodexManagerAccountRecord = {
+      id: "a", email: "team@example.com", isActive: false, createdAt: 1, updatedAt: 1,
+      quotaSummary: {
+        hourlyPercentage: 30, hourlyWindowPresent: true,
+        weeklyPercentage: 70, weeklyWindowPresent: true,
+        resetCreditsAvailable: 1, resetCreditsAvailableIds: ["usable"],
+        resetCreditsNextExpiresAt: 1_900_000_000, resetCreditsExcludedIds: ["rejected"]
+      }
+    };
+    applyQuotaUpdate({ account, quotaSummary: {
+      hourlyPercentage: 40, hourlyWindowPresent: true,
+      weeklyPercentage: 60, weeklyWindowPresent: true
+    }, now: 99 });
+    expect(account.quotaSummary).toMatchObject({
+      resetCreditsAvailable: 1, resetCreditsAvailableIds: ["usable"],
+      resetCreditsNextExpiresAt: 1_900_000_000, resetCreditsExcludedIds: ["rejected"]
+    });
+    applyQuotaUpdate({ account, quotaError: { message: "offline", timestamp: 100 }, now: 100 });
+    expect(account.quotaSummary?.resetCreditsExcludedIds).toEqual(["rejected"]);
+    expect(account.quotaError?.message).toBe("offline");
+
+    applyQuotaUpdate({ account, quotaSummary: {
+      hourlyPercentage: 40, hourlyWindowPresent: true,
+      weeklyPercentage: 60, weeklyWindowPresent: true,
+      resetCreditsAvailable: 2
+    }, now: 101 });
+    expect(account.quotaSummary?.resetCreditsAvailable).toBe(1);
+    expect(account.quotaSummary?.resetCreditsAvailableIds).toBeUndefined();
+    expect(account.quotaSummary?.resetCreditsNextExpiresAt).toBeUndefined();
   });
 });

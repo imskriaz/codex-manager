@@ -22,6 +22,7 @@ import {
 import {
   formatAutoResumeResult,
   persistRunningCodexSessions,
+  registerCodexSessionAutoResumeTracking,
   resumePersistedCodexSessions
 } from "../../services/codexSessionAutoResume";
 
@@ -36,6 +37,7 @@ export class AccountsWorkbench {
   private readonly webDashboard: WebDashboardServer;
   private readonly alwaysOnlineServer: AlwaysOnlineServer;
   private alwaysOnlinePreparationTimer: NodeJS.Timeout | undefined;
+  private autoResumeTracking: vscode.Disposable | undefined;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.repo = new AccountsRepository(context);
@@ -131,6 +133,8 @@ export class AccountsWorkbench {
         );
       }
     });
+    this.autoResumeTracking = registerCodexSessionAutoResumeTracking(this.context);
+    this.context.subscriptions.push(this.autoResumeTracking);
     const repoInit = await measureStep("repo.init", async () => this.repo.init());
     const encryptedSyncStartup = measureStep("encryptedSync.start", async () => {
       // Settings Sync is an optional transport. A broken provider, stale
@@ -292,6 +296,8 @@ export class AccountsWorkbench {
   }
 
   shutdown(): void {
+    this.autoResumeTracking?.dispose();
+    this.autoResumeTracking = undefined;
     this.encryptedSync.shutdown();
     this.dispose();
   }

@@ -6,6 +6,8 @@ import {
 } from "../src/application/accounts/autoQueueOrder";
 import type { CodexManagerAccountRecord } from "../src/core/types";
 
+const NOW_MS = 2_000_000_000_000;
+
 describe("auto queue order", () => {
   it("scores quota near reset while protecting scarce weekly capacity", () => {
     const nowMs = 2_000_000_000_000;
@@ -49,8 +51,8 @@ describe("auto queue order", () => {
     expect(sortedIds(unstarred, starred)).toEqual(["starred", "unstarred"]);
   });
 
-  it("puts a 5-hour reset within 20 minutes ahead of a starred account", () => {
-    const now = Date.now() / 1_000;
+  it("honors a usable user star before a 5-hour reset within 20 minutes", () => {
+    const now = NOW_MS / 1_000;
     const urgent = account("urgent", { hourly: 30, hourlyResetAt: now + 20 * 60, weekly: 60 });
     const starred = account("starred", {
       hourly: 100,
@@ -59,12 +61,12 @@ describe("auto queue order", () => {
       queuePriority: true
     });
 
-    expect(sortedIds(starred, urgent)).toEqual(["urgent", "starred"]);
+    expect(sortedIds(starred, urgent)).toEqual(["starred", "urgent"]);
     expect(urgent.queuePriority).not.toBe(true);
   });
 
-  it("uses the configured urgency thresholds for weekly, monthly, and subscription expiry", () => {
-    const nowSeconds = Date.now() / 1_000;
+  it("keeps a usable user star before weekly, monthly and subscription urgency", () => {
+    const nowSeconds = NOW_MS / 1_000;
     const nowMs = nowSeconds * 1_000;
     const starred = account("starred", {
       hourly: 100,
@@ -94,9 +96,9 @@ describe("auto queue order", () => {
       subscriptionExpiresAt: nowMs + 24 * 60 * 60 * 1_000
     });
 
-    expect(sortedIds(starred, urgentWeekly)[0]).toBe("urgent-weekly");
-    expect(sortedIds(starred, urgentMonthly)[0]).toBe("urgent-monthly");
-    expect(sortedIds(starred, urgentSubscription)[0]).toBe("urgent-subscription");
+    expect(sortedIds(starred, urgentWeekly)[0]).toBe("starred");
+    expect(sortedIds(starred, urgentMonthly)[0]).toBe("starred");
+    expect(sortedIds(starred, urgentSubscription)[0]).toBe("starred");
   });
 
   it("does not prioritize a starred account with no quota or credits", () => {
@@ -119,18 +121,19 @@ describe("auto queue order", () => {
   });
 
   it("ignores 5-hour quota and reset priority when weekly quota is zero", () => {
-    const now = Date.now() / 1_000;
+    const now = NOW_MS / 1_000;
     const highHourly = account("high-hourly", { hourly: 100, hourlyResetAt: now + 10 * 60, weekly: 0 });
     const lowHourly = account("low-hourly", { hourly: 10, hourlyResetAt: now + 60 * 60, weekly: 0 });
 
-    expect(compareCodexManagerAccountAutoQueueOrder(highHourly, lowHourly)).toBe(0);
+    expect(getCodexManagerAccountAutoQueueEfficiency(highHourly, { nowMs: NOW_MS }).score)
+      .toBe(getCodexManagerAccountAutoQueueEfficiency(lowHourly, { nowMs: NOW_MS }).score);
   });
 
-  it("places an account with missing weekly quota last, even if its 5-hour quota is full", () => {
+  it("allows verified usable hourly-only quota ahead of an exhausted account", () => {
     const missingWeekly = account("missing-weekly", { hourly: 100 });
     const exhaustedWeekly = account("exhausted-weekly", { hourly: 0, weekly: 0 });
 
-    expect(sortedIds(missingWeekly, exhaustedWeekly)).toEqual(["exhausted-weekly", "missing-weekly"]);
+    expect(sortedIds(missingWeekly, exhaustedWeekly)).toEqual(["missing-weekly", "exhausted-weekly"]);
   });
 
   it("uses automatic-switch thresholds instead of merely checking for quota above zero", () => {
@@ -142,7 +145,7 @@ describe("auto queue order", () => {
     expect(hasCodexManagerAccountAutoQueueCapability(aboveWeeklySwitchLimit, thresholds)).toBe(true);
   });
 
-  it("uses each window reset time before its percentage", () => {
+  it("balances scarce long-window quota when reset timestamps are already expired", () => {
     const renewsSooner = account("renews-sooner", {
       hourly: 80,
       hourlyResetAt: 1_000,
@@ -154,11 +157,11 @@ describe("auto queue order", () => {
       weekly: 100
     });
 
-    expect(sortedIds(renewsLater, renewsSooner)).toEqual(["renews-sooner", "renews-later"]);
+    expect(sortedIds(renewsLater, renewsSooner)).toEqual(["renews-later", "renews-sooner"]);
   });
 
-  it("uses percentage after reset time ties within each 5h, weekly, and monthly window", () => {
-    const higherHourly = account("higher-hourly", { hourly: 90, hourlyResetAt: 1_000, weekly: 20 });
+  it("balances each usable quota window when reset times tie", () => {
+    const higherHourly = account("higher-hourly", { hourly: 90, hourlyResetAt: 1_000, weekly: 100 });
     const lowerHourly = account("lower-hourly", { hourly: 80, hourlyResetAt: 1_000, weekly: 100 });
     expect(sortedIds(lowerHourly, higherHourly)).toEqual(["higher-hourly", "lower-hourly"]);
 
@@ -192,13 +195,13 @@ describe("auto queue order", () => {
     const renewsSooner = account("monthly-sooner", {
       hourlyPresent: false,
       monthly: 70,
-      weeklyResetAt: 2_000,
+      weeklyResetAt: NOW_MS / 1_000 + 2 * 86400,
       planType: "free"
     });
     const renewsLater = account("monthly-later", {
       hourlyPresent: false,
       monthly: 70,
-      weeklyResetAt: 3_000,
+      weeklyResetAt: NOW_MS / 1_000 + 3 * 86400,
       planType: "free"
     });
 
@@ -223,8 +226,8 @@ describe("auto queue order", () => {
   });
 
   it("uses the earliest subscription expiry after all earlier criteria tie", () => {
-    const sooner = account("sooner", { hourly: 80, weekly: 90, subscriptionExpiresAt: 1_000 });
-    const later = account("later", { hourly: 80, weekly: 90, subscriptionExpiresAt: 2_000 });
+    const sooner = account("sooner", { hourly: 80, weekly: 90, subscriptionExpiresAt: NOW_MS + 20 * 3600_000 });
+    const later = account("later", { hourly: 80, weekly: 90, subscriptionExpiresAt: NOW_MS + 23 * 3600_000 });
 
     expect(sortedIds(later, sooner)).toEqual(["sooner", "later"]);
   });
@@ -254,15 +257,15 @@ function account(id: string, options: AccountOptions): CodexManagerAccountRecord
     updatedAt: 1,
     planType: options.planType,
     queuePriority: options.queuePriority,
-    lastQuotaAt: options.lastQuotaAt,
+    lastQuotaAt: options.lastQuotaAt ?? NOW_MS - 1_000,
     subscriptionActiveUntil:
       options.subscriptionExpiresAt === undefined ? undefined : String(options.subscriptionExpiresAt / 1_000),
     quotaSummary: {
-      hourlyPercentage: options.hourly,
+      hourlyPercentage: options.hourly ?? 0,
       hourlyResetTime: options.hourlyResetAt,
       hourlyWindowMinutes: 300,
       hourlyWindowPresent: options.hourlyPresent ?? options.hourly !== undefined,
-      weeklyPercentage: longQuota,
+      weeklyPercentage: longQuota ?? 0,
       weeklyResetTime: options.weeklyResetAt,
       weeklyWindowMinutes: options.monthly === undefined ? 10_080 : 43_200,
       weeklyWindowPresent: longQuota !== undefined,
@@ -282,5 +285,5 @@ function account(id: string, options: AccountOptions): CodexManagerAccountRecord
 }
 
 function sortedIds(...accounts: CodexManagerAccountRecord[]): string[] {
-  return accounts.sort(compareCodexManagerAccountAutoQueueOrder).map((item) => item.id);
+  return accounts.sort((left, right) => compareCodexManagerAccountAutoQueueOrder(left, right, { nowMs: NOW_MS })).map((item) => item.id);
 }

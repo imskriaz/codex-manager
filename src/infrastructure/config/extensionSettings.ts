@@ -6,6 +6,7 @@ import type {
 } from "../../domain/dashboard/types";
 import { DashboardLanguage, DashboardLanguageOption, resolveDashboardLanguage } from "../../localization/languages";
 import { normalizeQuotaColorThresholds } from "../../utils";
+import { getAutoQueueQuotaFreshnessMs, normalizeAutoQueueThreshold } from "../../domain/autoQueuePolicy";
 
 const CODEX_ACCOUNTS_SECTION = "codexManager";
 
@@ -27,6 +28,9 @@ export class ExtensionSettingsStore {
       codexSessionTransport: readCodexSessionTransport(config),
       autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15)),
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
+      quotaFreshnessMs: getAutoQueueQuotaFreshnessMs(
+        normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15))
+      ),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
       // The 5-hour quota is always part of automatic quota control. Keep the
@@ -37,7 +41,7 @@ export class ExtensionSettingsStore {
       autoResumeEnabled: config.get<boolean>("autoResumeEnabled", false),
       crossWindowAccountModeEnabled: config.get<boolean>("crossWindowAccountModeEnabled", false),
       autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
-      autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0)),
+      autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0), 0),
       autoSwitchRefreshAllBeforeSwitchEnabled: config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false),
       autoResetEnabled: config.get<boolean>("autoResetEnabled", false),
       autoResetWeeklyThreshold: normalizeAutoResetWeeklyThreshold(config.get<number>("autoResetWeeklyThreshold", 0)),
@@ -85,9 +89,13 @@ export function normalizeCodexSessionTransport(value: string | undefined): Dashb
 }
 
 /** Machine-scoped transport must not inherit a legacy repository override. */
-export function readCodexSessionTransport(config: vscode.WorkspaceConfiguration = getCodexManagerConfiguration()): DashboardCodexSessionTransport {
+export function readCodexSessionTransport(
+  config: vscode.WorkspaceConfiguration = getCodexManagerConfiguration()
+): DashboardCodexSessionTransport {
   const inspected = config.inspect?.<string>("codexSessionTransport");
-  return normalizeCodexSessionTransport(inspected ? inspected.globalValue ?? inspected.defaultValue : config.get<string>("codexSessionTransport"));
+  return normalizeCodexSessionTransport(
+    inspected ? (inspected.globalValue ?? inspected.defaultValue) : config.get<string>("codexSessionTransport")
+  );
 }
 
 export function normalizeAutoRefreshMinutes(value: number): number {
@@ -126,24 +134,23 @@ export function getAutoRefreshCurrentMinutes(): number {
 }
 
 export function isAutoSwitchRefreshAllBeforeSwitchEnabled(): boolean {
-  return getCodexManagerConfiguration().get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false);
+  const config = getCodexManagerConfiguration();
+  return (
+    config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false) &&
+    (config.get<boolean>("autoSwitchEnabled", false) || config.get<boolean>("quotaWarningEnabled", false))
+  );
 }
 
 export function isHourlyQuotaControlEnabled(): boolean {
   return true;
 }
 
-export function normalizeAutoSwitchThreshold(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 20;
-  }
-
-  return Math.max(0, Math.min(20, Math.round(value)));
+export function normalizeAutoSwitchThreshold(value: number, fallback = 5): number {
+  return normalizeAutoQueueThreshold(value, fallback, 20);
 }
 
 export function normalizeAutoResetWeeklyThreshold(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(100, Math.round(value)));
+  return normalizeAutoQueueThreshold(value, 0, 100);
 }
 
 export function normalizeQuotaWarningThreshold(value: number): number {

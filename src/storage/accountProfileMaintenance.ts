@@ -19,37 +19,38 @@ export function applyQuotaUpdate(params: {
   params.account.lastQuotaAt = params.now;
   params.account.updatedAt = params.now;
   const previousQuotaSummary = params.account.quotaSummary;
-  const nextQuotaSummary = normalizeQuotaSummary(params.quotaSummary);
-  const incomingResetCreditsNextExpiresAt = nextQuotaSummary?.resetCreditsNextExpiresAt;
-  let preservedResetCreditsExpiry = false;
-  if (
-    nextQuotaSummary &&
-    nextQuotaSummary.resetCreditsNextExpiresAt == null &&
-    (nextQuotaSummary.resetCreditsAvailable ?? 0) > 0 &&
-    previousQuotaSummary?.resetCreditsNextExpiresAt != null
-  ) {
-    nextQuotaSummary.resetCreditsNextExpiresAt = previousQuotaSummary.resetCreditsNextExpiresAt;
-    preservedResetCreditsExpiry = true;
-  }
+  const nextQuotaSummary = normalizeQuotaSummary(
+    params.quotaSummary ?? (params.quotaError ? previousQuotaSummary : undefined)
+  );
   if (nextQuotaSummary && previousQuotaSummary) {
-    if (nextQuotaSummary.resetCreditsExcludedIds == null && previousQuotaSummary.resetCreditsExcludedIds?.length) {
-      nextQuotaSummary.resetCreditsExcludedIds = [...previousQuotaSummary.resetCreditsExcludedIds];
+    nextQuotaSummary.resetCreditsExcludedIds = [...new Set([
+      ...(previousQuotaSummary.resetCreditsExcludedIds ?? []),
+      ...(nextQuotaSummary.resetCreditsExcludedIds ?? [])
+    ])];
+    // Omitted reset information is not a replacement snapshot. A supplied new
+    // aggregate/list must not inherit expiry or IDs belonging to older credits.
+    if (nextQuotaSummary.resetCreditsAvailable === undefined) {
+      nextQuotaSummary.resetCreditsAvailable = previousQuotaSummary.resetCreditsAvailable;
+      nextQuotaSummary.resetCreditsNextExpiresAt = previousQuotaSummary.resetCreditsNextExpiresAt;
+      nextQuotaSummary.resetCreditsAvailableIds = previousQuotaSummary.resetCreditsAvailableIds
+        ? [...previousQuotaSummary.resetCreditsAvailableIds]
+        : undefined;
+    } else if (nextQuotaSummary.resetCreditsAvailableIds === undefined &&
+      nextQuotaSummary.resetCreditsExcludedIds.length > 0) {
+      // The usage aggregate does not identify excluded credits. A dedicated
+      // reset snapshot must verify any increase in usable reserves.
+      nextQuotaSummary.resetCreditsAvailable = Math.min(
+        nextQuotaSummary.resetCreditsAvailable, previousQuotaSummary.resetCreditsAvailable ?? 0
+      );
+      if (nextQuotaSummary.resetCreditsAvailable === 0) {
+        nextQuotaSummary.resetCreditsNextExpiresAt = undefined;
+      }
     }
-    if (nextQuotaSummary.resetCreditsAvailableIds == null && previousQuotaSummary.resetCreditsAvailableIds?.length) {
-      nextQuotaSummary.resetCreditsAvailableIds = [...previousQuotaSummary.resetCreditsAvailableIds];
+    if (nextQuotaSummary.resetCreditsAvailableIds) {
+      nextQuotaSummary.resetCreditsAvailableIds = nextQuotaSummary.resetCreditsAvailableIds.filter(
+        (id) => !nextQuotaSummary.resetCreditsExcludedIds?.includes(id)
+      );
     }
-  }
-  if ((previousQuotaSummary?.resetCreditsAvailable ?? nextQuotaSummary?.resetCreditsAvailable ?? 0) > 0) {
-    console.info("[codexManager] quota reset credits update", {
-      accountId: params.account.id,
-      remoteAccountId: params.account.accountId,
-      previousAvailable: previousQuotaSummary?.resetCreditsAvailable ?? null,
-      previousNextExpiresAt: previousQuotaSummary?.resetCreditsNextExpiresAt ?? null,
-      incomingAvailable: nextQuotaSummary?.resetCreditsAvailable ?? null,
-      incomingNextExpiresAt: incomingResetCreditsNextExpiresAt ?? null,
-      storedNextExpiresAt: nextQuotaSummary?.resetCreditsNextExpiresAt ?? null,
-      preservedResetCreditsExpiry
-    });
   }
   params.account.quotaSummary = nextQuotaSummary;
   params.account.quotaError = params.quotaError;

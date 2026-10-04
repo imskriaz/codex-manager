@@ -520,7 +520,7 @@ describe("AccountsRepository token persistence", () => {
     repo.dispose();
   });
 
-  it("keeps reset credits expiry when snapshot refresh still has available credits but no expiry", async () => {
+  it("replaces reset evidence without retaining expiry or IDs from the previous snapshot", async () => {
     const secrets = new Map<string, string>();
     const context = {
       globalStorageUri: {
@@ -553,7 +553,8 @@ describe("AccountsRepository token persistence", () => {
               weeklyWindowPresent: true,
               codeReviewPercentage: 0,
               resetCreditsAvailable: 1,
-              resetCreditsNextExpiresAt: 1_785_109_796
+              resetCreditsNextExpiresAt: 1_785_109_796,
+              resetCreditsAvailableIds: ["old-credit"]
             }
           }
         ]
@@ -564,11 +565,30 @@ describe("AccountsRepository token persistence", () => {
     const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     await repo.updateResetCreditsSnapshot("account-1", 1, undefined);
 
-    expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsNextExpiresAt).toBe(1_785_109_796);
+    expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsNextExpiresAt).toBeUndefined();
+    expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsAvailableIds).toBeUndefined();
 
-    await repo.updateResetCreditsSnapshot("account-1", 0, undefined);
+    await repo.updateResetCreditsSnapshot("account-1", 2.9, 1_900_000_000_000, ["bad", " good ", "good"]);
+    await repo.excludeResetCredit("account-1", "bad");
+    await repo.excludeResetCredit("account-1", " bad ");
+    expect((await repo.getAccount("account-1"))?.quotaSummary).toMatchObject({
+      resetCreditsAvailable: 1,
+      resetCreditsAvailableIds: ["good"],
+      resetCreditsExcludedIds: ["bad"]
+    });
+    expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsNextExpiresAt).toBeUndefined();
+
+    // Snapshot count is already filtered; the exclusion fence is not subtracted twice.
+    await repo.updateResetCreditsSnapshot("account-1", 1, 1_900_000_100, ["good"]);
+    expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsAvailable).toBe(1);
+    await repo.excludeResetCredit("account-1", "old-credit");
+    expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsAvailable).toBe(1);
+    expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsNextExpiresAt).toBe(1_900_000_100);
+
+    await repo.updateResetCreditsSnapshot("account-1", 0, 1_900_000_000, ["good"]);
 
     expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsNextExpiresAt).toBeUndefined();
+    expect((await repo.getAccount("account-1"))?.quotaSummary?.resetCreditsAvailableIds).toBeUndefined();
 
     repo.dispose();
   });

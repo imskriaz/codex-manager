@@ -164,6 +164,23 @@ describe("sessions sidebar layout", () => {
     expect(workbench).not.toContain("Open Sessions and retry");
   });
 
+  it("keeps automatic reload and resume settings outside the switch dependency block", () => {
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const switchStart = settings.indexOf("title={props.copy.autoSwitchTitle}");
+    const reloadStart = settings.indexOf("title={props.copy.autoSwitchReloadTitle}");
+    const switchEnd = settings.lastIndexOf("</SettingsToggleBlock>", reloadStart);
+    const resumeStart = settings.indexOf("title={props.copy.autoResumeTitle}");
+    expect(switchEnd).toBeGreaterThan(switchStart);
+    expect(reloadStart).toBeGreaterThan(switchEnd);
+    expect(resumeStart).toBeGreaterThan(reloadStart);
+    expect(settings.slice(reloadStart, settings.indexOf("/>", reloadStart))).toContain(
+      'className="settings-block-wide"'
+    );
+    expect(settings.slice(resumeStart, settings.indexOf("/>", resumeStart))).toContain(
+      'className="settings-block-wide"'
+    );
+  });
+
   it("returns to the workspace list after archive or delete", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const mutationBlockStart = main.indexOf(
@@ -489,15 +506,6 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('message.action === "openCodexCliSession"');
     expect(main).toContain("navigateDashboardPath(buildCliSessionPath(opened), setBrowserPath)");
     expect(main).toContain('onOpenInCodex={(session) => requestSessionAction("openCodexCliSession"');
-  });
-
-  it("nests auto resume under reload after auto switch", () => {
-    const source = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
-    const reloadStart = source.indexOf("props.copy.autoSwitchReloadTitle");
-    const resumeStart = source.indexOf("props.copy.autoResumeTitle");
-    expect(reloadStart).toBeGreaterThan(-1);
-    expect(resumeStart).toBeGreaterThan(reloadStart);
-    expect(source.slice(reloadStart, resumeStart)).toContain("settings-nested-stack");
   });
 
   it("keys automatic workspace environment loads so realtime renders cannot create a request loop", () => {

@@ -27,6 +27,7 @@ import { needsTokenRefresh, refreshTokens } from "../auth/oauth";
 import { shouldRetryWithoutWorkspace } from "./workspaceRetry";
 import { QUOTA_USAGE_URL, RESET_CREDITS_CONSUME_URL, RESET_CREDITS_URL } from "../infrastructure/config/apiEndpoints";
 import { extractClaims } from "../utils/jwt";
+import { normalizeUsableResetCount } from "../utils/quotaWindows";
 import { logNetworkEvent } from "../utils/debug";
 import {
   fetchWithTimeout,
@@ -57,6 +58,8 @@ const inflightQuotaRefreshes = new Map<string, Promise<QuotaRefreshResult>>();
 const quotaCacheGenerations = new Map<string, number>();
 
 export interface QuotaRefreshResult {
+  /** Start of the actual network request; preserved when callers join it. */
+  requestStartedAt?: number;
   quota?: CodexQuotaSummary;
   error?: CodexQuotaErrorInfo;
   skipped?: "disabled";
@@ -85,7 +88,7 @@ export async function refreshQuota(
     const cached = quotaCache.get(account.id);
     if (cached) {
       if (Date.now() - cached.timestamp < QUOTA_CACHE_TTL_MS) {
-        return { quota: cached.summary };
+        return { quota: cached.summary, requestStartedAt: cached.timestamp };
       }
       quotaCache.delete(account.id);
     }
@@ -96,13 +99,14 @@ export async function refreshQuota(
     return inflight;
   }
 
+  const requestStartedAt = Date.now();
   const refreshTask = (async (): Promise<QuotaRefreshResult> => {
     let effectiveTokens = tokens;
     let tokensUpdated = false;
 
     if (needsTokenRefresh(tokens) && options.allowTokenRefresh === true) {
       if (!tokens.refreshToken) {
-        return { error: buildError("Token expired and no refresh token is available") };
+        return { error: buildError("Token expired and no refresh token is available"), requestStartedAt };
       }
       effectiveTokens = await refreshTokens(tokens.refreshToken, tokens.idToken);
       effectiveTokens.accountId = effectiveTokens.accountId ?? account.accountId;
@@ -125,6 +129,7 @@ export async function refreshQuota(
 
     if (!usageResult.ok) {
       return {
+        requestStartedAt,
         error: buildError(extractErrorMessage(usageResult.status, usageResult.raw)),
         updatedTokens: tokensUpdated ? effectiveTokens : undefined
       };
@@ -141,6 +146,7 @@ export async function refreshQuota(
     }
 
     return {
+      requestStartedAt,
       quota: quotaSummary,
       updatedTokens: tokensUpdated ? effectiveTokens : undefined,
       updatedPlanType: usage.plan_type,
@@ -325,7 +331,7 @@ function normalizeResetCreditsAvailable(usage: CodexUsageResponse): number | und
     return undefined;
   }
   const value = src.available_count ?? src.availableCount;
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+  return normalizeOptionalInt(value);
 }
 
 /**
@@ -729,7 +735,7 @@ export function isResetCreditIneligibleError(error: unknown): boolean {
  * @param accessToken - access token
  * @param accountId - ChatGPT account ID
  */
-export async function consumeResetCredit(accessToken: string, accountId?: string): Promise<void> {
+export async function consumeResetCredit(accessToken: string, accountId?: string, requestId?: string): Promise<void> {
   const headers = new Headers({
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
@@ -740,7 +746,7 @@ export async function consumeResetCredit(accessToken: string, accountId?: string
   }
 
   // redeem_request_id 使用随机 UUID v4 风格标识
-  const redeemRequestId = `cr-${crypto.randomUUID()}`;
+  const redeemRequestId = requestId ?? `cr-${crypto.randomUUID()}`;
 
   const response = await fetchWithTimeout(
     RESET_CREDITS_CONSUME_URL,
@@ -777,24 +783,58 @@ function parseResetCreditsSnapshot(
   payload: Record<string, unknown>,
   excludedIds: readonly string[] = []
 ): CodexResetCreditsSnapshot {
+  const nowSeconds = Math.floor(Date.now() / 1000);
   const dataRecord = isResetCreditRecord(payload["data"]) ? payload["data"] : undefined;
   const creditsValue = payload["credits"] ?? dataRecord?.["credits"];
-  const allCredits: CodexResetCredit[] = Array.isArray(creditsValue)
-    ? creditsValue.filter(isResetCreditRecord).map(parseResetCreditRecord)
+  const parsedCredits: CodexResetCredit[] = Array.isArray(creditsValue)
+    ? creditsValue.filter(isResetCreditRecord).map((record) => parseResetCreditRecord(record, nowSeconds))
     : [];
-  const excluded = new Set(excludedIds.filter((id) => id.trim()));
+  // Prefer the conservative record if repeated IDs disagree about usability.
+  const uniqueCredits = new Map<string, CodexResetCredit>();
+  let duplicateAvailableCount = 0;
+  for (const credit of parsedCredits) {
+    const key = credit.id ?? JSON.stringify(credit);
+    const previous = uniqueCredits.get(key);
+    if (previous && (isAvailableResetCredit(previous) || isAvailableResetCredit(credit))) {
+      duplicateAvailableCount += 1;
+    }
+    if (!previous || !isAvailableResetCredit(credit)) {
+      uniqueCredits.set(key, credit);
+    } else if (isAvailableResetCredit(previous)) {
+      previous.expires_at = Math.min(previous.expires_at ?? Infinity, credit.expires_at ?? Infinity);
+      if (!Number.isFinite(previous.expires_at)) previous.expires_at = undefined;
+    }
+  }
+  const allCredits = [...uniqueCredits.values()];
+  const excluded = new Set(excludedIds.map((id) => id.trim()).filter(Boolean));
   const credits = allCredits.filter((credit) => !credit.id || !excluded.has(credit.id));
 
   const reportedAvailableCount =
     normalizeOptionalInt(payload["available_count"]) ??
     normalizeOptionalInt(payload["availableCount"]) ??
     normalizeOptionalInt(dataRecord?.["available_count"]) ??
-    normalizeOptionalInt(dataRecord?.["availableCount"]) ??
-    allCredits.filter(isAvailableResetCredit).length;
+    normalizeOptionalInt(dataRecord?.["availableCount"]);
   const excludedAvailableCount = allCredits.filter(
     (credit) => credit.id && excluded.has(credit.id) && isAvailableResetCredit(credit)
   ).length;
-  const availableCount = Math.max(0, reportedAvailableCount - excludedAvailableCount);
+  const usableCredits = credits.filter(isAvailableResetCredit);
+  const incorrectlyReportedCount = allCredits.filter(
+    (credit) =>
+      !isAvailableResetCredit(credit) &&
+      !["redeemed", "used", "consumed", "expired"].includes(credit.raw_status?.toLowerCase() ?? "")
+  ).length;
+  let availableCount =
+    reportedAvailableCount === undefined
+      ? usableCredits.length
+      : Math.max(
+          0,
+          reportedAvailableCount - excludedAvailableCount - incorrectlyReportedCount - duplicateAvailableCount
+        );
+  // A partial aggregate cannot demonstrate that an absent rejected credit was
+  // removed. Keep only positively identified usable reserves in that case.
+  if ([...excluded].some((id) => !allCredits.some((credit) => credit.id === id))) {
+    availableCount = Math.min(availableCount, usableCredits.length);
+  }
 
   const explicitNextExpiresAt =
     readResetCreditTimestamp(payload, [
@@ -812,48 +852,77 @@ function parseResetCreditsSnapshot(
         ])
       : undefined);
 
-  const derivedNextExpiresAt = credits
-    .filter(isAvailableResetCredit)
+  const derivedNextExpiresAt = usableCredits
     .map((c) => c.expires_at)
     .filter((v): v is number => typeof v === "number" && v > 0)
     .sort((a, b) => a - b)[0];
 
-  const nextExpiresAt = explicitNextExpiresAt ?? derivedNextExpiresAt;
+  // A listed earliest credit can be excluded/expired while the aggregate expiry
+  // still points to it. Prefer expiry tied to the filtered usable list.
+  const nextExpiresAt =
+    availableCount > 0
+      ? (derivedNextExpiresAt ??
+        (allCredits.length === 0 && excluded.size === 0 && (explicitNextExpiresAt ?? 0) > nowSeconds
+          ? explicitNextExpiresAt
+          : undefined))
+      : undefined;
+  // Aggregate-only evidence cannot prove which reserves survive an elapsed
+  // earliest expiry. Reconcile before advertising any usable reset.
+  if (allCredits.length === 0 && explicitNextExpiresAt !== undefined && explicitNextExpiresAt <= nowSeconds)
+    availableCount = 0;
+  credits.sort(
+    (left, right) =>
+      Number(!isAvailableResetCredit(left)) - Number(!isAvailableResetCredit(right)) ||
+      (left.expires_at ?? Infinity) - (right.expires_at ?? Infinity) ||
+      (left.id ?? "").localeCompare(right.id ?? "")
+  );
 
-  return { availableCount, credits, nextExpiresAt };
+  return { availableCount, credits, nextExpiresAt: availableCount > 0 ? nextExpiresAt : undefined };
 }
 
-function parseResetCreditRecord(record: Record<string, unknown>): CodexResetCredit {
+function parseResetCreditRecord(record: Record<string, unknown>, nowSeconds: number): CodexResetCredit {
   const rawStatus = readResetCreditString(record, ["status", "state"]);
   const expiresAt = readResetCreditTimestamp(record, ["expires_at", "expire_at", "expiresAt"]);
+  const redeemedAt = readResetCreditTimestamp(record, ["redeemed_at", "used_at", "consumed_at", "redeemedAt"]);
   return {
     id: readResetCreditString(record, ["id", "credit_id", "creditId"]),
-    status: normalizeResetCreditStatus(rawStatus, expiresAt),
+    status: redeemedAt
+      ? "redeemed"
+      : !rawStatus &&
+          !readResetCreditString(record, ["id", "credit_id", "creditId"]) &&
+          !expiresAt &&
+          !readResetCreditTimestamp(record, ["granted_at", "created_at", "grantedAt"])
+        ? "unknown"
+        : normalizeResetCreditStatus(rawStatus, expiresAt, nowSeconds),
     reset_type: readResetCreditString(record, ["type", "reset_type", "resetType"]),
     granted_at: readResetCreditTimestamp(record, ["granted_at", "created_at", "grantedAt"]),
     expires_at: expiresAt,
-    redeemed_at: readResetCreditTimestamp(record, ["redeemed_at", "used_at", "consumed_at", "redeemedAt"]),
+    redeemed_at: redeemedAt,
     raw_status: rawStatus
   };
 }
 
-function normalizeResetCreditStatus(rawStatus: string | undefined, expiresAt: number | undefined): string | undefined {
+function normalizeResetCreditStatus(
+  rawStatus: string | undefined,
+  expiresAt: number | undefined,
+  nowSeconds: number
+): string | undefined {
   const status = (rawStatus ?? "available").trim().toLowerCase();
   if (["redeemed", "used", "consumed", "expired"].includes(status)) {
     return status;
   }
-  if (typeof expiresAt === "number" && expiresAt <= Math.floor(Date.now() / 1000)) {
+  if (typeof expiresAt === "number" && expiresAt <= nowSeconds) {
     return "expired";
   }
-  return status;
+  return ["available", "unused", "unredeemed"].includes(status) ? "available" : status;
 }
 
 function isAvailableResetCredit(credit: CodexResetCredit): boolean {
   const status = credit.status?.trim().toLowerCase() ?? "available";
-  if (["redeemed", "used", "consumed", "expired"].includes(status)) {
+  if (status !== "available") {
     return false;
   }
-  return credit.expires_at === undefined || credit.expires_at > Math.floor(Date.now() / 1000);
+  return true;
 }
 
 function readResetCreditString(record: Record<string, unknown>, keys: string[]): string | undefined {
@@ -870,13 +939,15 @@ function readResetCreditTimestamp(record: Record<string, unknown>, keys: string[
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-      return value > 1_000_000_000_000 ? Math.floor(value / 1000) : value;
+      return value >= 1_000_000_000_000 ? Math.floor(value / 1000) : Math.floor(value);
     }
     if (typeof value === "string" && value.trim()) {
       const trimmed = value.trim();
       const numericTimestamp = Number(trimmed);
       if (Number.isFinite(numericTimestamp) && numericTimestamp > 0) {
-        return numericTimestamp > 1_000_000_000_000 ? Math.floor(numericTimestamp / 1000) : numericTimestamp;
+        return numericTimestamp >= 1_000_000_000_000
+          ? Math.floor(numericTimestamp / 1000)
+          : Math.floor(numericTimestamp);
       }
 
       const dateTimestamp = Date.parse(trimmed);
@@ -893,8 +964,9 @@ function isResetCreditRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeOptionalInt(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-    return value;
+  const parsed = typeof value === "string" && value.trim() ? Number(value.trim()) : value;
+  if (typeof parsed === "number" && Number.isFinite(parsed) && parsed >= 0) {
+    return normalizeUsableResetCount(parsed);
   }
   return undefined;
 }

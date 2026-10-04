@@ -3,7 +3,8 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { resolveAccountHealth } from "../../application/accounts/health";
 import { refreshImportedAccountQuota, refreshSingleQuota } from "../../application/accounts/quota";
-import { fetchResetCredits, consumeResetCredit, isResetCreditIneligibleError } from "../../services/quota";
+import { redeemAccountResetCredit } from "../../application/accounts/resetCreditRedemption";
+import { fetchResetCredits } from "../../services/quota";
 import { fetchDailyUsageBreakdown } from "../../services/usage";
 import {
   archiveCodexCliSession,
@@ -1943,51 +1944,26 @@ async function handleConsumeResetCredit(
   if (payload?.confirmed !== true) {
     const choice = await vscode.window.showWarningMessage(`${title}\n\n${body}`, { modal: true }, confirmBtn);
     if (choice !== confirmBtn) {
-      return undefined;
+      return { notice: { level: "info" as const, message: "Quota reset cancelled." } };
     }
   }
 
-  const tokens = await repo.getTokens(account.id);
-  if (!tokens?.accessToken) {
-    throw new Error("No access token available");
-  }
-
-  const accountId = account.accountId ?? undefined;
-  const attemptedResetId = account.quotaSummary?.resetCreditsAvailableIds?.[0];
+  let redeemed = false;
   try {
-    await consumeResetCredit(tokens.accessToken, accountId);
-  } catch (error) {
-    if (attemptedResetId && isResetCreditIneligibleError(error)) {
-      await repo.excludeResetCredit(account.id, attemptedResetId);
-      schedulePublishState?.();
-    }
-    throw error;
+    redeemed = await redeemAccountResetCredit(repo, account.id, undefined, async () => {
+    const refreshed = await refreshSingleQuota(repo, { refresh() { schedulePublishState?.(); } }, account.id, {
+      announce: false, refreshView: true, warnQuota: false, forceRefresh: true, reconcileResetAttempt: false
+    });
+    schedulePublishState?.();
+    if (refreshed.error || refreshed.skipped) throw new Error("Reset was submitted, but quota refresh failed. Refresh quota before retrying.");
+    return refreshed;
+    });
+  } finally {
+    schedulePublishState?.();
   }
+  if (!redeemed) throw new Error("Quota reset cancelled because the account or reset credit changed. Refresh quota and try again.");
+  const successMessage = isZh ? "速率限制已重置，你可以继续工作了。" : "Rate limit has been reset. You can continue working.";
+  if (!browserHost) void vscode.window.showInformationMessage(successMessage);
+  return { notice: { level: "info" as const, message: successMessage } };
 
-  const successMessage = isZh
-    ? "速率限制已重置，你可以继续工作了。"
-    : "Rate limit has been reset. You can continue working.";
-  if (!browserHost) {
-    void vscode.window.showInformationMessage(successMessage);
-  }
-
-  if (account) {
-    try {
-      if (browserHost) {
-        await refreshSingleQuota(repo, { refresh() {} }, account.id, {
-          announce: false,
-          refreshView: false,
-          warnQuota: false,
-          forceRefresh: true
-        });
-        schedulePublishState?.();
-      } else {
-        await vscode.commands.executeCommand("codexManager.refreshQuota", account);
-      }
-    } catch (error) {
-      console.warn("[codexManager] refresh quota after consuming reset credit failed:", error);
-      schedulePublishState?.();
-    }
-  }
-  return browserHost ? { notice: { level: "info" as const, message: successMessage } } : undefined;
 }

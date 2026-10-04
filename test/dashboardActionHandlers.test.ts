@@ -1,13 +1,16 @@
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import type { DashboardActionContext } from "../src/presentation/dashboard/actionHandlers";
 import * as encryptedSync from "../src/services/encryptedSync";
+import type { CodexManagerAccountRecord } from "../src/core/types";
 
-const { consumeResetCreditMock } = vi.hoisted(() => ({
-  consumeResetCreditMock: vi.fn().mockResolvedValue(undefined)
+const { consumeResetCreditMock, fetchResetCreditsMock, refreshQuotaMock } = vi.hoisted(() => ({
+  consumeResetCreditMock: vi.fn().mockResolvedValue(undefined),
+  fetchResetCreditsMock: vi.fn(),
+  refreshQuotaMock: vi.fn()
 }));
 const { unloadAuthFileMock } = vi.hoisted(() => ({
   unloadAuthFileMock: vi.fn()
@@ -25,7 +28,9 @@ vi.mock("../src/services/quota", async () => {
   const actual = await vi.importActual<typeof import("../src/services/quota")>("../src/services/quota");
   return {
     ...actual,
-    consumeResetCredit: consumeResetCreditMock
+    consumeResetCredit: consumeResetCreditMock,
+    fetchResetCredits: fetchResetCreditsMock,
+    refreshQuota: refreshQuotaMock
   };
 });
 
@@ -68,9 +73,14 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  consumeResetCreditMock.mockReset().mockResolvedValue(undefined);
+  fetchResetCreditsMock.mockReset();
+  refreshQuotaMock.mockReset();
   unloadAuthFileMock.mockReset().mockResolvedValue(undefined);
   sendCodexCliSessionMessageMock.mockReset().mockResolvedValue(undefined);
 });
+
+afterEach(() => { vi.restoreAllMocks(); });
 
 afterAll(async () => {
   await removeTestDirectory(operationDirectory);
@@ -987,99 +997,138 @@ describe("executeDashboardActionMessage", () => {
     expect(result.status).toBe("completed");
   });
 
-  it("waits for quota refresh after consuming a reset credit", async () => {
-    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue("Reset Rate Limit" as never);
-    vi.mocked(vscode.window.showInformationMessage).mockResolvedValue(undefined);
-    const executeCommandMock = vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
-    const repo = {
-      getAccount: vi.fn(async () => ({
-        id: "account-1",
-        email: "dev@example.com",
-        accountId: "acct-1",
-        quotaSummary: {
-          resetCreditsAvailable: 1
-        }
-      })),
-      getTokens: vi.fn(async () => ({
-        accessToken: "access-token"
-      }))
-    } as unknown as DashboardActionContext["repo"];
-
-    const result = await executeDashboardActionMessage(
-      {
-        context: {} as DashboardActionContext["context"],
-        repo,
-        resolveLanguage: () => "en",
-        schedulePublishState: vi.fn(),
-        publishState: vi.fn(),
-        oauth: {} as DashboardActionContext["oauth"],
-        announcements: {} as DashboardActionContext["announcements"],
-        getAnnouncementOptions: () => ({
-          version: "0.1.15",
-          locale: "en"
-        })
-      },
-      {
-        type: "dashboard:action",
-        action: "consumeResetCredit",
-        requestId: "req-2",
-        accountId: "account-1"
-      }
-    );
-
-    expect(executeCommandMock).toHaveBeenCalledWith(
-      "codexManager.refreshQuota",
-      expect.objectContaining({ id: "account-1" })
-    );
+  it("waits for verified quota before reporting reset completion", async () => {
+    const { context, repo, account } = createResetContext();
+    vi.mocked(vscode.window.showInformationMessage).mockClear();
+    let releaseRefresh!: () => void;
+    const refreshed = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    refreshQuotaMock.mockImplementationOnce(async () => {
+      const requestStartedAt = Date.now();
+      await refreshed;
+      return { quota: usableResetQuota(), requestStartedAt };
+    });
+    consumeResetCreditMock.mockImplementationOnce(async () => {
+      expect(repo.beginResetCreditAttempt).toHaveBeenCalledOnce();
+      expect(repo.flush).toHaveBeenCalledTimes(2);
+    });
+    const pending = executeDashboardActionMessage(context, {
+      type: "dashboard:action", action: "consumeResetCredit", requestId: "reset-verify-wait",
+      accountId: account.id, payload: { confirmed: true }
+    });
+    await vi.waitFor(() => expect(refreshQuotaMock).toHaveBeenCalledOnce());
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+    expect(account.resetCreditAttempt).toBeDefined();
+    releaseRefresh();
+    const result = await pending;
     expect(result.status).toBe("completed");
+    expect(result.payload?.notice?.message).toContain("Rate limit has been reset");
+    expect(consumeResetCreditMock).toHaveBeenCalledWith("access-token", "acct-1", expect.stringMatching(/^cr-/));
+    expect(repo.completeResetCreditAttempt).toHaveBeenCalledOnce();
+    expect(account.resetCreditAttempt).toBeUndefined();
+    expect(account.quotaSummary!.weeklyPercentage).toBe(90);
   });
 
   it("fences an ineligible reset credit by ID and publishes the updated count", async () => {
-    const ineligible = new APIError("Consume reset credit returned 403: rate_limit_reset_ineligible", {
-      statusCode: 403,
-      context: { errorCode: "rate_limit_reset_ineligible" }
+    const { context, repo, account } = createResetContext();
+    consumeResetCreditMock.mockRejectedValueOnce(new APIError("Consume reset credit returned 403: rate_limit_reset_ineligible", {
+      statusCode: 403, context: { errorCode: "rate_limit_reset_ineligible" }
+    }));
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action", action: "consumeResetCredit", requestId: "reset-ineligible",
+      accountId: account.id, payload: { confirmed: true }
     });
-    consumeResetCreditMock.mockReset().mockRejectedValueOnce(ineligible);
-    const excludeResetCredit = vi.fn().mockResolvedValue(undefined);
-    const schedulePublishState = vi.fn();
-    const repo = {
-      getAccount: vi.fn(async () => ({
-        id: "account-1",
-        email: "dev@example.com",
-        accountId: "acct-1",
-        quotaSummary: {
-          resetCreditsAvailable: 2,
-          resetCreditsAvailableIds: ["old-credit", "new-credit"]
-        }
-      })),
-      getTokens: vi.fn(async () => ({ accessToken: "access-token" })),
-      excludeResetCredit
-    } as unknown as DashboardActionContext["repo"];
-
-    const result = await executeDashboardActionMessage(
-      {
-        context: {} as DashboardActionContext["context"],
-        repo,
-        resolveLanguage: () => "en",
-        schedulePublishState,
-        publishState: vi.fn(),
-        oauth: {} as DashboardActionContext["oauth"],
-        announcements: {} as DashboardActionContext["announcements"],
-        getAnnouncementOptions: () => ({ version: "0.1.15", locale: "en" })
-      },
-      {
-        type: "dashboard:action",
-        action: "consumeResetCredit",
-        requestId: "req-ineligible",
-        accountId: "account-1",
-        payload: { confirmed: true }
-      }
-    );
-
-    expect(excludeResetCredit).toHaveBeenCalledWith("account-1", "old-credit");
-    expect(schedulePublishState).toHaveBeenCalled();
+    expect(repo.excludeResetCredit).toHaveBeenCalledWith(account.id, "old-credit");
+    expect(account.quotaSummary!.resetCreditsAvailable).toBe(1);
+    expect(account.quotaSummary!.resetCreditsExcludedIds).toEqual(["old-credit"]);
+    expect(repo.completeResetCreditAttempt).toHaveBeenCalledOnce();
+    expect(context.schedulePublishState).toHaveBeenCalled();
     expect(result.status).toBe("failed");
-    consumeResetCreditMock.mockReset().mockResolvedValue(undefined);
+  });
+
+  it("reports reset cancellation without redeeming a credit", async () => {
+    const { context, account } = createResetContext();
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce(undefined);
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action", action: "consumeResetCredit", requestId: "reset-cancel",
+      accountId: account.id
+    });
+    expect(result.status).toBe("completed");
+    expect(result.payload?.notice?.message).toContain("cancelled");
+    expect(fetchResetCreditsMock).not.toHaveBeenCalled();
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it("reports an unavailable reset reserve without issuing a POST", async () => {
+    const { context, account } = createResetContext();
+    fetchResetCreditsMock.mockReset().mockResolvedValue({ availableCount: 0, credits: [] });
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action", action: "consumeResetCredit", requestId: "reset-no-reserve",
+      accountId: account.id, payload: { confirmed: true }
+    });
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toContain("No usable reset credits");
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it("returns an uncertain POST failure and prevents a second redemption on retry", async () => {
+    const { context, repo, account } = createResetContext();
+    consumeResetCreditMock.mockRejectedValueOnce(new Error("connection closed after POST"));
+    const message = { type: "dashboard:action" as const, action: "consumeResetCredit" as const,
+      accountId: account.id, payload: { confirmed: true } };
+    const first = await executeDashboardActionMessage(context, { ...message, requestId: "reset-uncertain-first" });
+    const retry = await executeDashboardActionMessage(context, { ...message, requestId: "reset-uncertain-retry" });
+    expect(first.status).toBe("failed");
+    expect(first.errorMessage).toContain("connection closed");
+    expect(retry.status).toBe("failed");
+    expect(retry.errorMessage).toContain("unverified outcome");
+    expect(consumeResetCreditMock).toHaveBeenCalledOnce();
+    expect(account.resetCreditAttempt).toBeDefined();
+    expect(repo.completeResetCreditAttempt).not.toHaveBeenCalled();
+  });
+
+  it("keeps the attempt fenced and returns a visible failure if quota verification is offline", async () => {
+    const { context, repo, account } = createResetContext();
+    refreshQuotaMock.mockRejectedValueOnce(new Error("quota verification offline"));
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action", action: "consumeResetCredit", requestId: "reset-verification-offline",
+      accountId: account.id, payload: { confirmed: true }
+    });
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toContain("quota verification offline");
+    expect(account.resetCreditAttempt).toBeDefined();
+    expect(repo.completeResetCreditAttempt).not.toHaveBeenCalled();
+  });
+
+  it("does not redeem a credit if its durable attempt cannot be saved", async () => {
+    const { context, repo, account } = createResetContext();
+    repo.beginResetCreditAttempt.mockRejectedValueOnce(new Error("attempt storage full"));
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action", action: "consumeResetCredit", requestId: "reset-storage-full",
+      accountId: account.id, payload: { confirmed: true }
+    });
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toContain("storage full");
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it("does not claim success when the reserve expires during its durable fence write", async () => {
+    const { context, repo, account } = createResetContext();
+    const startedAt = Date.now();
+    const now = vi.spyOn(Date, "now").mockReturnValue(startedAt);
+    fetchResetCreditsMock.mockReset().mockResolvedValue({ availableCount: 1,
+      credits: [{ id: "expiring-credit", status: "available" }], nextExpiresAt: startedAt / 1000 + 0.5 });
+    repo.beginResetCreditAttempt.mockImplementationOnce(async (_id, requestId, availableBefore) => {
+      account.resetCreditAttempt = { requestId, attemptedAt: startedAt, availableBefore };
+      now.mockReturnValue(startedAt + 1000);
+    });
+    const result = await executeDashboardActionMessage(context, {
+      type: "dashboard:action", action: "consumeResetCredit", requestId: "reset-expired-during-write",
+      accountId: account.id, payload: { confirmed: true }
+    });
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toMatch(/cancelled|expired|no usable/i);
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+    expect(account.resetCreditAttempt).toBeUndefined();
   });
 
   it("keeps dashboard refresh separate from encrypted sync when enabled", async () => {
@@ -1703,4 +1752,58 @@ function createContext(): DashboardActionContext {
       locale: "en"
     })
   };
+}
+
+function usableResetQuota() {
+  return { hourlyPercentage: 90, hourlyWindowMinutes: 300, hourlyWindowPresent: true,
+    weeklyPercentage: 90, weeklyWindowMinutes: 10080, weeklyWindowPresent: true, codeReviewPercentage: 0 };
+}
+
+let resetFixtureId = 0;
+function createResetContext() {
+  const account: CodexManagerAccountRecord = {
+    id: `dashboard-reset-${++resetFixtureId}`, email: "dev@example.com", accountId: "acct-1",
+    isActive: false, createdAt: 1, updatedAt: 1, lastQuotaAt: Date.now(),
+    quotaSummary: { ...usableResetQuota(), hourlyPercentage: 0, weeklyPercentage: 0,
+      resetCreditsAvailable: 2, resetCreditsAvailableIds: ["old-credit", "new-credit"] }
+  };
+  fetchResetCreditsMock.mockResolvedValue({ availableCount: 0, credits: [] });
+  fetchResetCreditsMock.mockResolvedValueOnce({ availableCount: 2,
+    credits: [{ id: "old-credit", status: "available" }, { id: "new-credit", status: "available" }],
+    nextExpiresAt: Date.now() / 1000 + 3600 });
+  refreshQuotaMock.mockImplementation(async () => ({ quota: usableResetQuota(), requestStartedAt: Date.now() }));
+  const flush = vi.fn(async () => undefined);
+  const repo = {
+    getAccount: vi.fn(async () => account),
+    getTokens: vi.fn(async () => ({ idToken: "id-token", accessToken: "access-token" })),
+    updateQuota: vi.fn(async (_id: string, quota: CodexManagerAccountRecord["quotaSummary"], error?: CodexManagerAccountRecord["quotaError"]) => {
+      account.quotaSummary = quota;
+      account.quotaError = error;
+      account.lastQuotaAt = Date.now();
+      return account;
+    }),
+    updateResetCreditsSnapshot: vi.fn(async (_id: string, count: number, expiry?: number, ids?: string[]) => {
+      Object.assign(account.quotaSummary!, { resetCreditsAvailable: count, resetCreditsNextExpiresAt: expiry,
+        resetCreditsAvailableIds: ids ?? [] });
+    }),
+    beginResetCreditAttempt: vi.fn(async (_id: string, requestId: string, availableBefore: number) => {
+      account.resetCreditAttempt = { requestId, attemptedAt: Date.now(), availableBefore };
+      await flush();
+    }),
+    completeResetCreditAttempt: vi.fn(async (_id: string, requestId: string) => {
+      if (account.resetCreditAttempt?.requestId === requestId) delete account.resetCreditAttempt;
+      await flush();
+    }),
+    excludeResetCredit: vi.fn(async (_id: string, creditId: string) => {
+      const quota = account.quotaSummary!;
+      quota.resetCreditsAvailableIds = quota.resetCreditsAvailableIds!.filter((id) => id !== creditId);
+      quota.resetCreditsExcludedIds = [...(quota.resetCreditsExcludedIds ?? []), creditId];
+      quota.resetCreditsAvailable = quota.resetCreditsAvailableIds.length;
+    }),
+    refreshSubscriptionState: vi.fn(async () => undefined),
+    flush
+  };
+  const context = createContext();
+  context.repo = repo as unknown as DashboardActionContext["repo"];
+  return { context, repo, account };
 }

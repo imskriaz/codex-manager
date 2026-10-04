@@ -83,6 +83,7 @@ import {
 } from "../codex";
 import { refreshTokens } from "../auth/oauth";
 import { createKeyedMutex } from "../utils/concurrency";
+import { normalizeResetCreditExpiry, normalizeResetCreditIds, normalizeUsableResetCount } from "../utils/quotaWindows";
 import {
   CodexManagerAccountRecord,
   CodexManagerIndex,
@@ -1040,6 +1041,30 @@ export class AccountsRepository {
     return nextAccount;
   }
 
+  /** Persist before redemption so crash/reconnect cannot blindly consume another credit. */
+  async beginResetCreditAttempt(accountId: string, requestId: string, availableBefore: number): Promise<void> {
+    if (!requestId || requestId.length > 128 || !Number.isSafeInteger(availableBefore) || availableBefore <= 0) {
+      throw new Error("Invalid quota reset request metadata.");
+    }
+    const index = await this.readIndex();
+    const account = index.accounts.find((item) => item.id === accountId);
+    if (!account) throw createError.accountNotFound(accountId);
+    if (account.resetCreditAttempt)
+      throw new Error("A previous reset has an unverified outcome. Refresh quota before attempting another reset.");
+    account.resetCreditAttempt = { requestId, attemptedAt: Date.now(), availableBefore };
+    this.writeIndex(index);
+    await this.flush();
+  }
+
+  async completeResetCreditAttempt(accountId: string, requestId: string): Promise<void> {
+    const index = await this.readIndex();
+    const account = index.accounts.find((item) => item.id === accountId);
+    if (account?.resetCreditAttempt?.requestId !== requestId) return;
+    account.resetCreditAttempt = undefined;
+    this.writeIndex(index);
+    await this.flush();
+  }
+
   /**
    * 移除账号
    */
@@ -1374,25 +1399,14 @@ export class AccountsRepository {
     if (!account?.quotaSummary) {
       return;
     }
-    const previousNextExpiresAt = account.quotaSummary.resetCreditsNextExpiresAt;
-    const effectiveNextExpiresAt =
-      nextExpiresAt ?? (availableCount > 0 ? account.quotaSummary.resetCreditsNextExpiresAt : undefined);
-    if (availableCount > 0 || previousNextExpiresAt != null || nextExpiresAt != null) {
-      console.info("[codexManager] reset credits snapshot update", {
-        accountId,
-        previousAvailable: account.quotaSummary.resetCreditsAvailable ?? null,
-        previousNextExpiresAt: previousNextExpiresAt ?? null,
-        incomingAvailable: availableCount,
-        incomingNextExpiresAt: nextExpiresAt ?? null,
-        storedNextExpiresAt: effectiveNextExpiresAt ?? null,
-        preservedResetCreditsExpiry: nextExpiresAt == null && effectiveNextExpiresAt != null
-      });
-    }
-    account.quotaSummary.resetCreditsAvailable = availableCount;
-    account.quotaSummary.resetCreditsNextExpiresAt = effectiveNextExpiresAt;
-    if (availableIds) {
-      account.quotaSummary.resetCreditsAvailableIds = Array.from(new Set(availableIds.filter(Boolean)));
-    }
+    const summary = account.quotaSummary;
+    const count = normalizeUsableResetCount(availableCount);
+    summary.resetCreditsAvailable = count;
+    summary.resetCreditsNextExpiresAt = count > 0 ? normalizeResetCreditExpiry(nextExpiresAt) : undefined;
+    summary.resetCreditsAvailableIds =
+      count > 0
+        ? normalizeResetCreditIds(availableIds)?.filter((id) => !summary.resetCreditsExcludedIds?.includes(id))
+        : [];
     account.updatedAt = Date.now();
     this.writeIndex(index);
   }
@@ -1409,14 +1423,24 @@ export class AccountsRepository {
       return;
     }
     const summary = account.quotaSummary;
-    const excluded = new Set(summary.resetCreditsExcludedIds ?? []);
+    const excluded = new Set(normalizeResetCreditIds(summary.resetCreditsExcludedIds) ?? []);
+    if (excluded.has(normalizedId)) {
+      return;
+    }
+    const wasAvailable =
+      summary.resetCreditsAvailableIds === undefined || summary.resetCreditsAvailableIds.includes(normalizedId);
     excluded.add(normalizedId);
     summary.resetCreditsExcludedIds = Array.from(excluded);
     if (summary.resetCreditsAvailableIds) {
       summary.resetCreditsAvailableIds = summary.resetCreditsAvailableIds.filter((id) => id !== normalizedId);
     }
-    summary.resetCreditsAvailable = Math.max(0, (summary.resetCreditsAvailable ?? 0) - 1);
-    summary.resetCreditsNextExpiresAt = summary.resetCreditsAvailable ? summary.resetCreditsNextExpiresAt : undefined;
+    summary.resetCreditsAvailable = Math.max(
+      0,
+      normalizeUsableResetCount(summary.resetCreditsAvailable) - Number(wasAvailable)
+    );
+    // The rejected credit may own the recorded earliest expiry. Without a
+    // per-credit expiry map, clear it and let the next snapshot derive it.
+    if (wasAvailable) summary.resetCreditsNextExpiresAt = undefined;
     account.updatedAt = Date.now();
     this.writeIndex(index);
   }
@@ -1430,7 +1454,12 @@ export class AccountsRepository {
     if (!account?.quotaSummary) {
       return;
     }
-    await this.updateResetCreditsSnapshot(accountId, account.quotaSummary.resetCreditsAvailable ?? 0, nextExpiresAt);
+    await this.updateResetCreditsSnapshot(
+      accountId,
+      account.quotaSummary.resetCreditsAvailable ?? 0,
+      nextExpiresAt,
+      account.quotaSummary.resetCreditsAvailableIds
+    );
   }
 
   /**

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import * as vscode from "vscode";
 import type { CodexManagerAccountRecord, CodexTokens } from "../src/core/types";
 import type { AccountsRepository } from "../src/storage";
+import { clearQuotaCheckCoordination, recordPeerQuotaChecks } from "../src/services/quotaCheckCoordination";
 
 const { refreshQuotaMock, fetchResetCreditsMock, consumeResetCreditMock, clearTokenAutomationErrorMock } = vi.hoisted(
   () => ({
@@ -26,6 +27,12 @@ const {
 
 vi.mock("../src/services", () => ({
   refreshQuota: refreshQuotaMock,
+  fetchResetCredits: fetchResetCreditsMock,
+  consumeResetCredit: consumeResetCreditMock
+}));
+
+vi.mock("../src/services/quota", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/services/quota")>()),
   fetchResetCredits: fetchResetCreditsMock,
   consumeResetCredit: consumeResetCreditMock
 }));
@@ -72,6 +79,7 @@ describe("refreshSingleQuota token automation state", () => {
   };
 
   beforeEach(() => {
+    clearQuotaCheckCoordination();
     refreshQuotaMock.mockReset();
     fetchResetCreditsMock.mockReset();
     consumeResetCreditMock.mockReset();
@@ -440,7 +448,7 @@ describe("refreshSingleQuota token automation state", () => {
     expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 0, undefined, []);
   });
 
-  it("auto-switches to the candidate with the highest 5-hour quota before weekly quota", async () => {
+  it("auto-switches to the candidate with the best usable quota balance", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {
         const values: Record<string, unknown> = {
@@ -459,6 +467,7 @@ describe("refreshSingleQuota token automation state", () => {
       isActive: true,
       createdAt: 1,
       updatedAt: 1,
+      lastQuotaAt: Date.now(),
       quotaSummary: createQuotaSummary({ hourly: 90, weekly: 5 })
     };
     const sameEmailButLowerQuota: CodexManagerAccountRecord = {
@@ -468,6 +477,7 @@ describe("refreshSingleQuota token automation state", () => {
       isActive: false,
       createdAt: 1,
       updatedAt: 1,
+      lastQuotaAt: Date.now(),
       quotaSummary: createQuotaSummary({ hourly: 100, weekly: 30 })
     };
     const bestQuota: CodexManagerAccountRecord = {
@@ -477,6 +487,7 @@ describe("refreshSingleQuota token automation state", () => {
       isActive: false,
       createdAt: 1,
       updatedAt: 1,
+      lastQuotaAt: Date.now(),
       quotaSummary: createQuotaSummary({ hourly: 80, weekly: 85 })
     };
     const repo = {
@@ -493,15 +504,13 @@ describe("refreshSingleQuota token automation state", () => {
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, view);
 
     expect(switched).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(sameEmailButLowerQuota.id);
-    expect(repo.switchAccount).not.toHaveBeenCalledWith(bestQuota.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(bestQuota.id);
+    expect(repo.switchAccount).not.toHaveBeenCalledWith(sameEmailButLowerQuota.id);
   });
 
   it("uses the 5% hourly and 0% weekly defaults when thresholds are unset", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
-      get: vi.fn((key: string, defaultValue?: unknown) =>
-        key === "autoSwitchEnabled" ? true : defaultValue
-      ),
+      get: vi.fn((key: string, defaultValue?: unknown) => (key === "autoSwitchEnabled" ? true : defaultValue)),
       update: vi.fn()
     } as never);
 
@@ -843,6 +852,7 @@ describe("refreshSingleQuota token automation state", () => {
       isActive: true,
       createdAt: 1,
       updatedAt: 1,
+      lastQuotaAt: Date.now(),
       quotaSummary: createQuotaSummary({ hourly: 90, weekly: 5 })
     };
     const next: CodexManagerAccountRecord = {
@@ -851,6 +861,7 @@ describe("refreshSingleQuota token automation state", () => {
       isActive: false,
       createdAt: 1,
       updatedAt: 1,
+      lastQuotaAt: Date.now(),
       quotaSummary: createQuotaSummary({ hourly: 80, weekly: 85 })
     };
     const repo = {
@@ -972,7 +983,9 @@ describe("refreshSingleQuota token automation state", () => {
     fetchResetCreditsMock.mockResolvedValue({ availableCount: 0, credits: [] });
     setCurrentWindowRuntimeAccountId(candidate.id);
 
-    await expect(maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).resolves.toBe(true);
+    await expect(
+      maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
+    ).resolves.toBe(true);
 
     expect(repo.getTokens).toHaveBeenCalledWith(candidate.id, { bypassCache: true });
     expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id);
@@ -1004,7 +1017,9 @@ describe("refreshSingleQuota token automation state", () => {
     refreshQuotaMock.mockRejectedValue(new Error("network unavailable"));
     vi.mocked(vscode.window.showWarningMessage).mockClear();
 
-    await expect(maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).resolves.toBe(false);
+    await expect(
+      maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
+    ).resolves.toBe(false);
 
     expect(repo.switchAccount).not.toHaveBeenCalled();
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
@@ -1035,13 +1050,18 @@ describe("refreshSingleQuota token automation state", () => {
     } as never);
     const active = createAccount("safety-active", true, 90, 5);
     const candidate = createAccount("safety-candidate", false, 80, 85);
+    candidate.lastQuotaAt = Date.now() - 3 * 60 * 60_000;
     const tokens: CodexTokens = { idToken: "id", accessToken: "access" };
     const accounts = [active, candidate];
     const repo = {
       listAccounts: vi.fn(async () => accounts),
       getAccount: vi.fn(async (id: string) => accounts.find((account) => account.id === id)),
       getTokens: vi.fn(async () => tokens),
-      updateQuota: vi.fn(async (id: string) => accounts.find((account) => account.id === id)),
+      updateQuota: vi.fn(async (id: string) => {
+        const refreshed = accounts.find((account) => account.id === id)!;
+        refreshed.lastQuotaAt = Date.now();
+        return refreshed;
+      }),
       refreshSubscriptionState: vi.fn(async () => undefined),
       updateResetCreditsSnapshot: vi.fn(async () => undefined),
       switchAccount: vi.fn(async () => undefined)
@@ -1057,6 +1077,7 @@ describe("refreshSingleQuota token automation state", () => {
     expect(repo.getTokens).toHaveBeenCalledTimes(1);
     expect(repo.getTokens).not.toHaveBeenCalledWith(active.id, { bypassCache: true });
     expect(repo.getTokens).toHaveBeenCalledWith(candidate.id, { bypassCache: true });
+    expect(candidate.lastQuotaAt).toBeGreaterThan(Date.now() - 60_000);
     expect(
       vi
         .mocked(vscode.window.showWarningMessage)
@@ -1084,23 +1105,15 @@ describe("refreshSingleQuota token automation state", () => {
     resetTarget.quotaSummary!.resetCreditsAvailable = 1;
     setCurrentWindowRuntimeAccountId(resetTarget.id);
     const tokens: CodexTokens = { idToken: "id", accessToken: "access" };
-    const repo = {
-      listAccounts: vi.fn(async () => [active, resetTarget]),
-      getAccount: vi.fn(async (id: string) => (id === resetTarget.id ? resetTarget : active)),
-      getTokens: vi.fn(async () => tokens),
-      updateQuota: vi.fn(async () => resetTarget),
-      refreshSubscriptionState: vi.fn(async () => undefined),
-      updateResetCreditsSnapshot: vi.fn(async () => undefined),
-      switchAccount: vi.fn(async () => undefined)
-    };
-    refreshQuotaMock.mockResolvedValue({ quota: resetTarget.quotaSummary, error: undefined });
-    fetchResetCreditsMock.mockResolvedValue({ availableCount: 0, credits: [], nextExpiresAt: undefined });
+    const repo = createResetRepository([active, resetTarget], tokens);
+    prepareResetCreditSnapshot();
+    refreshQuotaMock.mockResolvedValue({ quota: createQuotaSummary({ hourly: 90, weekly: 90 }), error: undefined });
 
     await expect(
       maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
     ).resolves.toBe(true);
 
-    expect(consumeResetCreditMock).toHaveBeenCalledWith("access", undefined);
+    expect(consumeResetCreditMock).toHaveBeenCalledWith("access", undefined, expect.stringMatching(/^cr-/));
     expect(repo.switchAccount).toHaveBeenCalledWith(resetTarget.id);
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining("Reset quota for reset-target@example.com")
@@ -1126,25 +1139,17 @@ describe("refreshSingleQuota token automation state", () => {
     const active = createAccount("active-reset", true, 0, 0);
     active.quotaSummary!.resetCreditsAvailable = 1;
     const tokens: CodexTokens = { idToken: "id", accessToken: "active-access" };
-    const repo = {
-      listAccounts: vi.fn(async () => [active]),
-      getAccount: vi.fn(async () => active),
-      getTokens: vi.fn(async () => tokens),
-      updateQuota: vi.fn(async () => active),
-      refreshSubscriptionState: vi.fn(async () => undefined),
-      updateResetCreditsSnapshot: vi.fn(async () => undefined),
-      switchAccount: vi.fn(async () => undefined)
-    };
-    refreshQuotaMock.mockResolvedValue({ quota: active.quotaSummary, error: undefined });
-    fetchResetCreditsMock.mockResolvedValue({ availableCount: 0, credits: [], nextExpiresAt: undefined });
+    const repo = createResetRepository([active], tokens);
+    prepareResetCreditSnapshot();
+    refreshQuotaMock.mockResolvedValue({ quota: createQuotaSummary({ hourly: 90, weekly: 90 }), error: undefined });
 
     await expect(
       maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
     ).resolves.toBe(true);
 
-    expect(consumeResetCreditMock).toHaveBeenCalledWith("active-access", undefined);
+    expect(consumeResetCreditMock).toHaveBeenCalledWith("active-access", undefined, expect.stringMatching(/^cr-/));
     expect(repo.switchAccount).not.toHaveBeenCalled();
-    expect(reloadWindowNowMock).toHaveBeenCalled();
+    expect(reloadWindowNowMock).not.toHaveBeenCalled();
     expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).toContain("staying on the current account");
   });
 
@@ -1166,15 +1171,8 @@ describe("refreshSingleQuota token automation state", () => {
     active.quotaSummary!.resetCreditsAvailable = 1;
     const fallback = createAccount("reset-fallback", false, 15, 15);
     const tokens: CodexTokens = { idToken: "id", accessToken: "active-access" };
-    const repo = {
-      listAccounts: vi.fn(async () => [active, fallback]),
-      getAccount: vi.fn(async (id: string) => (id === fallback.id ? fallback : active)),
-      getTokens: vi.fn(async () => tokens),
-      updateQuota: vi.fn(async () => active),
-      refreshSubscriptionState: vi.fn(async () => undefined),
-      updateResetCreditsSnapshot: vi.fn(async () => undefined),
-      switchAccount: vi.fn(async () => undefined)
-    };
+    const repo = createResetRepository([active, fallback], tokens);
+    prepareResetCreditSnapshot();
     consumeResetCreditMock.mockRejectedValueOnce(new Error("reset endpoint unavailable"));
 
     await expect(
@@ -1204,17 +1202,8 @@ describe("refreshSingleQuota token automation state", () => {
     resetTarget.quotaSummary!.resetCreditsAvailable = 1;
     const fallback = createAccount("post-reset-fallback", false, 15, 15);
     const tokens: CodexTokens = { idToken: "id", accessToken: "access" };
-    const repo = {
-      listAccounts: vi.fn(async () => [active, resetTarget, fallback]),
-      getAccount: vi.fn(async (id: string) =>
-        id === resetTarget.id ? resetTarget : id === fallback.id ? fallback : active
-      ),
-      getTokens: vi.fn(async () => tokens),
-      updateQuota: vi.fn(async () => resetTarget),
-      refreshSubscriptionState: vi.fn(async () => undefined),
-      updateResetCreditsSnapshot: vi.fn(async () => undefined),
-      switchAccount: vi.fn(async () => undefined)
-    };
+    const repo = createResetRepository([active, resetTarget, fallback], tokens);
+    prepareResetCreditSnapshot();
     consumeResetCreditMock.mockRejectedValueOnce(new Error("credit already consumed"));
 
     await expect(
@@ -1675,6 +1664,7 @@ function createAccount(id: string, isActive: boolean, hourly: number, weekly: nu
     isActive,
     createdAt: 1,
     updatedAt: 1,
+    lastQuotaAt: Date.now(),
     quotaSummary: createQuotaSummary({ hourly, weekly })
   };
 }
@@ -1690,3 +1680,397 @@ function createQuotaSummary(values: { hourly: number; weekly: number }) {
     codeReviewPercentage: 0
   };
 }
+
+function prepareResetCreditSnapshot() {
+  fetchResetCreditsMock.mockResolvedValue({ availableCount: 0, credits: [], nextExpiresAt: undefined });
+  fetchResetCreditsMock.mockResolvedValueOnce({
+    availableCount: 1,
+    credits: [{ id: "verified-credit", status: "available" }],
+    nextExpiresAt: Math.floor(Date.now() / 1000) + 3600
+  });
+}
+
+function createResetRepository(accounts: CodexManagerAccountRecord[], tokens: CodexTokens) {
+  const find = (id: string) => {
+    const account = accounts.find((item) => item.id === id);
+    if (!account) throw new Error("Account missing in quota fixture");
+    return account;
+  };
+  return {
+    listAccounts: vi.fn(async () => accounts),
+    getAccount: vi.fn(async (id: string) => find(id)),
+    getTokens: vi.fn(async () => tokens),
+    updateQuota: vi.fn(
+      async (
+        id: string,
+        quota: CodexManagerAccountRecord["quotaSummary"],
+        error?: CodexManagerAccountRecord["quotaError"]
+      ) => {
+        const account = find(id);
+        account.quotaSummary = quota;
+        account.quotaError = error;
+        account.lastQuotaAt = Date.now();
+        return account;
+      }
+    ),
+    refreshSubscriptionState: vi.fn(async () => undefined),
+    updateResetCreditsSnapshot: vi.fn(async (id: string, count: number, expiry?: number, ids?: string[]) => {
+      const quota = find(id).quotaSummary!;
+      quota.resetCreditsAvailable = count;
+      quota.resetCreditsNextExpiresAt = expiry;
+      quota.resetCreditsAvailableIds = ids ?? [];
+    }),
+    beginResetCreditAttempt: vi.fn(async (id: string, requestId: string, availableBefore: number) => {
+      const account = find(id);
+      if (account.resetCreditAttempt) throw new Error("Reset outcome pending");
+      account.resetCreditAttempt = { requestId, attemptedAt: Date.now(), availableBefore };
+    }),
+    completeResetCreditAttempt: vi.fn(async (id: string, requestId: string) => {
+      const account = find(id);
+      if (account.resetCreditAttempt?.requestId === requestId) delete account.resetCreditAttempt;
+    }),
+    excludeResetCredit: vi.fn(async () => undefined),
+    flush: vi.fn(async () => undefined),
+    switchAccount: vi.fn(async () => undefined)
+  };
+}
+
+describe("shared queue policy revalidation and reset dependencies", () => {
+  const tokens: CodexTokens = { idToken: "id", accessToken: "reset-edge-access" };
+  let settings: Record<string, unknown>;
+  beforeEach(() => {
+    clearQuotaCheckCoordination();
+    refreshQuotaMock.mockReset();
+    fetchResetCreditsMock.mockReset();
+    consumeResetCreditMock.mockReset();
+    reloadWindowNowMock.mockReset();
+    autoReloadWindowForAccountMock.mockReset();
+    settings = {
+      autoSwitchEnabled: true,
+      autoSwitchHourlyThreshold: 5,
+      autoSwitchWeeklyThreshold: 0,
+      autoResetEnabled: true,
+      autoResetWeeklyThreshold: 0
+    };
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: (key: string, fallback?: unknown) => settings[key] ?? fallback
+    } as never);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearQuotaCheckCoordination();
+    consumeAutoSwitchNotice();
+  });
+
+  it("keeps a usable current account even when a preferred account has more capacity", async () => {
+    const active = createAccount("keep-current", true, 10, 10);
+    const preferred = createAccount("preferred-next", false, 90, 90);
+    preferred.queuePriority = true;
+    const repo = createResetRepository([active, preferred], tokens);
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["autoResetEnabled", "autoSwitchEnabled"])("does not consume resets when %s is off", async (key) => {
+    settings[key] = false;
+    const active = createAccount(`off-${key}`, true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 2;
+    const repo = createResetRepository([active], tokens);
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(fetchResetCreditsMock).not.toHaveBeenCalled();
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it("does not consume an expired aggregate reset reserve", async () => {
+    const active = createAccount("expired-reset", true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 2;
+    active.quotaSummary!.resetCreditsNextExpiresAt = Math.floor(Date.now() / 1000) - 1;
+    const repo = createResetRepository([active], tokens);
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels a planned switch when the current account recovers during evaluation", async () => {
+    const active = createAccount("recovered-current", true, 4, 90);
+    const target = createAccount("recovered-target", false, 90, 90);
+    const repo = createResetRepository([active, target], tokens);
+    repo.listAccounts
+      .mockImplementationOnce(async () => [active, target])
+      .mockImplementationOnce(async () => {
+        active.quotaSummary!.hourlyPercentage = 90;
+        return [active, target];
+      });
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("cancels selection when automatic switching is disabled while the list is being revalidated", async () => {
+    const active = createAccount("disable-race-active", true, 4, 90);
+    const target = createAccount("disable-race-target", false, 90, 90);
+    const repo = createResetRepository([active, target], tokens);
+    repo.listAccounts
+      .mockImplementationOnce(async () => [active, target])
+      .mockImplementationOnce(async () => {
+        settings.autoSwitchEnabled = false;
+        return [active, target];
+      });
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("checks the latest thresholds before switching to a previously eligible target", async () => {
+    const active = createAccount("threshold-race-active", true, 4, 90);
+    const target = createAccount("threshold-race-target", false, 10, 90);
+    const repo = createResetRepository([active, target], tokens);
+    repo.listAccounts
+      .mockImplementationOnce(async () => [active, target])
+      .mockImplementationOnce(async () => {
+        settings.autoSwitchHourlyThreshold = 20;
+        return [active, target];
+      });
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("rechecks account ownership after candidate evaluation", async () => {
+    const active = createAccount("ownership-race-active", true, 4, 90);
+    const target = createAccount("ownership-race-target", false, 90, 90);
+    const repo = createResetRepository([active, target], tokens);
+    const canUseAccount = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    expect(
+      await maybeAutoSwitchForActiveQuota(
+        repo as unknown as AccountsRepository,
+        { refresh: vi.fn() },
+        { canUseAccount }
+      )
+    ).toBe(false);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("cancels reset before POST when Auto Reset is disabled during the durable fence write", async () => {
+    const active = createAccount("reset-setting-race", true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 1;
+    const repo = createResetRepository([active], tokens);
+    prepareResetCreditSnapshot();
+    repo.beginResetCreditAttempt.mockImplementationOnce(async (_id, requestId, availableBefore) => {
+      active.resetCreditAttempt = { requestId, attemptedAt: Date.now(), availableBefore };
+      settings.autoResetEnabled = false;
+    });
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+    expect(repo.completeResetCreditAttempt).toHaveBeenCalledOnce();
+    expect(active.resetCreditAttempt).toBeUndefined();
+  });
+
+  it("does not POST a reset when the durable attempt cannot be stored", async () => {
+    const active = createAccount("reset-storage-full", true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 1;
+    const repo = createResetRepository([active], tokens);
+    prepareResetCreditSnapshot();
+    repo.beginResetCreditAttempt.mockRejectedValueOnce(new Error("reset fence storage full"));
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("retains the durable attempt when post-reset quota verification is offline", async () => {
+    const active = createAccount("reset-refresh-offline", true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 1;
+    const repo = createResetRepository([active], tokens);
+    prepareResetCreditSnapshot();
+    refreshQuotaMock.mockRejectedValueOnce(new Error("quota verification offline"));
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(consumeResetCreditMock).toHaveBeenCalledOnce();
+    expect(active.resetCreditAttempt?.requestId).toMatch(/^cr-/);
+    expect(repo.completeResetCreditAttempt).not.toHaveBeenCalled();
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not select an account whose reset outcome is still uncertain", async () => {
+    const active = createAccount("pending-current", true, 4, 90);
+    const target = createAccount("pending-target", false, 90, 90);
+    target.resetCreditAttempt = { requestId: "cr-pending", attemptedAt: Date.now(), availableBefore: 1 };
+    const repo = createResetRepository([active, target], tokens);
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("keeps reset uncertainty fenced through repeated automatic checks", async () => {
+    const active = createAccount("uncertain-reset-active", true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 2;
+    const repo = createResetRepository([active], tokens);
+    prepareResetCreditSnapshot();
+    consumeResetCreditMock.mockRejectedValueOnce(new Error("connection closed after POST"));
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(active.resetCreditAttempt?.requestId).toMatch(/^cr-/);
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(consumeResetCreditMock).toHaveBeenCalledOnce();
+    expect(repo.completeResetCreditAttempt).not.toHaveBeenCalled();
+  });
+
+  it("does not switch to a reset target when a successful POST restores insufficient quota", async () => {
+    const active = createAccount("unusable-post-active", true, 0, 0);
+    const target = createAccount("unusable-post-target", false, 0, 0);
+    target.quotaSummary!.resetCreditsAvailable = 1;
+    const repo = createResetRepository([active, target], tokens);
+    prepareResetCreditSnapshot();
+    refreshQuotaMock.mockResolvedValue({ quota: createQuotaSummary({ hourly: 4, weekly: 90 }), error: undefined });
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(consumeResetCreditMock).toHaveBeenCalledOnce();
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not revive a stale weekly value from a partial hourly-only peer snapshot", async () => {
+    const active = createAccount("partial-peer-active", true, 4, 90);
+    const target = createAccount("partial-peer-target", false, 90, 90);
+    target.lastQuotaAt = Date.now() - 2 * 60 * 60_000;
+    recordPeerQuotaChecks([
+      { id: target.id, email: target.email, lastQuotaAt: Date.now(), metrics: [{ key: "hourly", percentage: 90 }] }
+    ]);
+    const repo = createResetRepository([active, target], tokens);
+    refreshQuotaMock.mockRejectedValue(new Error("offline refresh"));
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    expect(target.lastQuotaAt).toBeLessThan(Date.now() - 60 * 60_000);
+  });
+
+  it("invalidates reset reserves and preserves an uncertain attempt when reserve GET fails after fresh quota", async () => {
+    const active = createAccount("pending-reserve-get-failed", true, 0, 0);
+    active.resetCreditAttempt = { requestId: "cr-reserve-uncertain", attemptedAt: Date.now() - 1000, availableBefore: 1 };
+    const repo = createResetRepository([active], tokens);
+    const quota = { ...createQuotaSummary({ hourly: 90, weekly: 90 }), resetCreditsAvailable: 1,
+      resetCreditsAvailableIds: ["old-reserve"], resetCreditsExcludedIds: ["rejected-credit"] };
+    refreshQuotaMock.mockImplementationOnce(async () => ({ quota, requestStartedAt: Date.now() }));
+    fetchResetCreditsMock.mockRejectedValueOnce(new Error("reserve GET offline"));
+    await refreshSingleQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() }, active.id,
+      { announce: false, forceRefresh: true, warnQuota: false });
+    expect(active.quotaSummary!.hourlyPercentage).toBe(90);
+    expect(active.quotaSummary!.resetCreditsAvailable).toBe(0);
+    expect(active.quotaSummary!.resetCreditsAvailableIds).toEqual([]);
+    expect(active.quotaSummary!.resetCreditsExcludedIds).toEqual(["rejected-credit"]);
+    expect(active.resetCreditAttempt?.requestId).toBe("cr-reserve-uncertain");
+    expect(repo.completeResetCreditAttempt).not.toHaveBeenCalled();
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it("reconciles an uncertain attempt only after fresh quota and a verified reduced reserve count", async () => {
+    const active = createAccount("pending-reserve-reconciled", true, 0, 0);
+    active.resetCreditAttempt = { requestId: "cr-reserve-verified", attemptedAt: Date.now() - 1000, availableBefore: 1 };
+    const repo = createResetRepository([active], tokens);
+    refreshQuotaMock.mockImplementationOnce(async () => ({
+      quota: createQuotaSummary({ hourly: 90, weekly: 90 }), requestStartedAt: Date.now()
+    }));
+    fetchResetCreditsMock.mockResolvedValueOnce({ availableCount: 0, credits: [] });
+    await refreshSingleQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() }, active.id,
+      { announce: false, forceRefresh: true, warnQuota: false });
+    expect(repo.completeResetCreditAttempt).toHaveBeenCalledWith(active.id, "cr-reserve-verified");
+    expect(active.resetCreditAttempt).toBeUndefined();
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it("uses a complete fresh peer snapshot without fetching the same quota again", async () => {
+    const active = createAccount("complete-peer-active", true, 4, 90);
+    const target = createAccount("complete-peer-target", false, 90, 90);
+    target.lastQuotaAt = Date.now() - 2 * 60 * 60_000;
+    recordPeerQuotaChecks([
+      {
+        id: target.id,
+        email: target.email,
+        lastQuotaAt: Date.now(),
+        metrics: [
+          { key: "hourly", percentage: 90 },
+          { key: "weekly", percentage: 90 }
+        ]
+      }
+    ]);
+    const repo = createResetRepository([active, target], tokens);
+    setCurrentWindowRuntimeAccountId(target.id);
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledWith(target.id);
+    expect(refreshQuotaMock).not.toHaveBeenCalled();
+    setCurrentWindowRuntimeAccountId(undefined);
+  });
+
+  it("does not promote quota from another workspace belonging to the same email", async () => {
+    const active = createAccount("other-workspace-active", true, 4, 90);
+    const target = createAccount("other-workspace-target", false, 90, 90);
+    target.accountId = "local-workspace";
+    target.lastQuotaAt = Date.now() - 2 * 60 * 60_000;
+    recordPeerQuotaChecks([
+      {
+        id: "remote-other-workspace",
+        email: target.email,
+        accountId: "foreign-workspace",
+        lastQuotaAt: Date.now(),
+        metrics: [
+          { key: "hourly", percentage: 90 },
+          { key: "weekly", percentage: 90 }
+        ]
+      }
+    ]);
+    const repo = createResetRepository([active, target], tokens);
+    refreshQuotaMock.mockRejectedValueOnce(new Error("local workspace offline"));
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
+      false
+    );
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("invalidates reset reserves when a quota refresh cannot verify their snapshot", async () => {
+    const active = createAccount("reset-snapshot-offline", true, 90, 90);
+    active.quotaSummary!.resetCreditsAvailable = 2;
+    active.resetCreditAttempt = { requestId: "uncertain", attemptedAt: Date.now() - 1000, availableBefore: 2 };
+    const repo = createResetRepository([active], tokens);
+    refreshQuotaMock.mockResolvedValueOnce({ quota: active.quotaSummary, requestStartedAt: Date.now() });
+    fetchResetCreditsMock.mockRejectedValueOnce(new Error("reset snapshot offline"));
+    await refreshSingleQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() }, active.id, {
+      announce: false,
+      forceRefresh: true,
+      warnQuota: false
+    });
+    expect(active.quotaSummary!.resetCreditsAvailable).toBe(0);
+    expect(active.resetCreditAttempt).toBeDefined();
+    expect(repo.completeResetCreditAttempt).not.toHaveBeenCalled();
+  });
+
+  it("accepts a verified hourly-only replacement for an exhausted long-window account", async () => {
+    const active = createAccount("long-exhausted", true, 90, 0);
+    const target = createAccount("hourly-only-alternative", false, 90, 0);
+    target.quotaSummary!.weeklyWindowPresent = false;
+    target.quotaSummary!.weeklyWindowMinutes = undefined;
+    const repo = createResetRepository([active, target], tokens);
+    setCurrentWindowRuntimeAccountId(target.id);
+    expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledWith(target.id);
+    setCurrentWindowRuntimeAccountId(undefined);
+  });
+});

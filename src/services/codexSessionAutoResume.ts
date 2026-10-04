@@ -1,18 +1,21 @@
 import * as vscode from "vscode";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
-import { openCodexSessionInVsCode, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { openCodexSessionInVsCode, readOpenCodexSessionIds, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
+export const AUTO_RESUME_OPEN_SESSION_IDS_KEY = "codexManager.autoResumeOpenSessionIds";
 export const MAX_AUTO_RESUME_SESSIONS = 200;
 const OPERATION_TIMEOUT_MS = 30_000;
 const STORAGE_TIMEOUT_MS = 5_000;
 type AutoResumeContext = Pick<vscode.ExtensionContext, "workspaceState">;
-type OperationKind = "capture" | "restore";
-type Operations = { tail: Promise<unknown>; capture?: Promise<unknown>; restore?: Promise<unknown> };
+type OperationKind = "capture" | "restore" | "track";
+type Operations = { tail: Promise<unknown>; capture?: Promise<unknown>; restore?: Promise<unknown>; track?: Promise<unknown> };
 const operations = new WeakMap<object, Operations>();
 const pendingWrites = new WeakMap<object, Promise<void>>();
 const recoveryIds = new WeakMap<object, string[]>();
+const openRecoveryIds = new WeakMap<object, string[]>();
+const unrestoredOpenSnapshots = new WeakSet<object>();
 
 // At most one capture and one restore: repeated requests join the original.
 function serialize<T>(context: AutoResumeContext, kind: OperationKind, operation: () => Promise<T>): Promise<T> {
@@ -35,7 +38,7 @@ function serialize<T>(context: AutoResumeContext, kind: OperationKind, operation
   void next
     .finally(() => {
       delete owner[kind];
-      if (!owner.capture && !owner.restore) operations.delete(context.workspaceState);
+      if (!owner.capture && !owner.restore && !owner.track) operations.delete(context.workspaceState);
     })
     .catch(() => undefined);
   return next;
@@ -60,10 +63,11 @@ function normalizeIds(value: unknown): string[] {
   return ids;
 }
 
-function readPersistedSessionIds(context: AutoResumeContext): string[] {
+function readPersistedSessionIds(context: AutoResumeContext, open = false): string[] {
+  if (open && openRecoveryIds.has(context.workspaceState)) return [...openRecoveryIds.get(context.workspaceState)!];
   return normalizeIds([
-    ...normalizeIds(context.workspaceState.get<unknown>(AUTO_RESUME_SESSION_IDS_KEY)),
-    ...(recoveryIds.get(context.workspaceState) ?? [])
+    ...normalizeIds(context.workspaceState.get<unknown>(open ? AUTO_RESUME_OPEN_SESSION_IDS_KEY : AUTO_RESUME_SESSION_IDS_KEY)),
+    ...((open ? openRecoveryIds : recoveryIds).get(context.workspaceState) ?? [])
   ]);
 }
 
@@ -98,13 +102,14 @@ async function bounded<T>(
   }
 }
 
-async function writeIds(context: AutoResumeContext, ids: string[], deadline: number): Promise<void> {
+async function writeIds(context: AutoResumeContext, ids: string[], deadline: number, open = false): Promise<void> {
   // Memento mutates its cache before the write resolves. Retain the previous
   // recovery IDs in this host too, until storage acknowledges the replacement.
-  const previous = readPersistedSessionIds(context);
-  recoveryIds.set(context.workspaceState, normalizeIds([...previous, ...ids]));
+  const previous = readPersistedSessionIds(context, open);
+  const recovery = open ? openRecoveryIds : recoveryIds;
+  recovery.set(context.workspaceState, open ? previous : normalizeIds([...previous, ...ids]));
   const write = Promise.resolve().then(() =>
-    context.workspaceState.update(AUTO_RESUME_SESSION_IDS_KEY, ids.length ? ids : undefined)
+    context.workspaceState.update(open ? AUTO_RESUME_OPEN_SESSION_IDS_KEY : AUTO_RESUME_SESSION_IDS_KEY, ids.length ? ids : undefined)
   );
   pendingWrites.set(context.workspaceState, write);
   void write
@@ -117,7 +122,7 @@ async function writeIds(context: AutoResumeContext, ids: string[], deadline: num
     Math.min(STORAGE_TIMEOUT_MS, deadline - Date.now()),
     "Auto-resume storage did not respond within its deadline. Retry Reload after storage responds."
   );
-  recoveryIds.delete(context.workspaceState);
+  recovery.delete(context.workspaceState);
 }
 
 async function clearIds(context: AutoResumeContext, deadline: number): Promise<void> {
@@ -140,6 +145,20 @@ async function clearIds(context: AutoResumeContext, deadline: number): Promise<v
     "Auto-resume storage did not respond while clearing recovery. Retry after storage responds."
   );
   recoveryIds.delete(context.workspaceState);
+  try {
+    openRecoveryIds.set(context.workspaceState, readPersistedSessionIds(context, true));
+  } catch {
+    /* Explicit disable must also clear a malformed open-tab snapshot. */
+  }
+  const openWrite = Promise.resolve().then(() => context.workspaceState.update(AUTO_RESUME_OPEN_SESSION_IDS_KEY, undefined));
+  pendingWrites.set(context.workspaceState, openWrite);
+  void openWrite.finally(() => {
+    if (pendingWrites.get(context.workspaceState) === openWrite) pendingWrites.delete(context.workspaceState);
+  }).catch(() => undefined);
+  await bounded(() => openWrite, Math.min(STORAGE_TIMEOUT_MS, deadline - Date.now()),
+    "Auto-resume storage did not respond while clearing saved tabs. Retry after storage responds.");
+  openRecoveryIds.delete(context.workspaceState);
+  unrestoredOpenSnapshots.delete(context.workspaceState);
 }
 
 /** Save running parent IDs at a managed reload boundary without losing pending recovery. */
@@ -198,6 +217,124 @@ export type AutoResumeResult = {
   failed: Array<{ sessionId: string; message: string }>;
 };
 
+/** Replace the open-tab snapshot; failed restoration remains in its separate recovery queue. */
+export function persistOpenCodexSessions(
+  context: AutoResumeContext,
+  readOpenParents: (signal?: AbortSignal) => Promise<string[]> = (signal) =>
+    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal, "open"),
+  signal?: AbortSignal
+): Promise<string[]> {
+  return serialize(context, "track", async () => {
+    signal?.throwIfAborted();
+    const deadline = Date.now() + OPERATION_TIMEOUT_MS;
+    if (!isAutoResumeAvailable()) {
+      await clearIds(context, deadline);
+      return [];
+    }
+    if (unrestoredOpenSnapshots.has(context.workspaceState)) {
+      // Startup may fail before it can durably transfer the previous tab snapshot.
+      // Do that transfer before a current (possibly empty) tab list replaces it.
+      await writeIds(context, normalizeIds([
+        ...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)
+      ]), deadline);
+      unrestoredOpenSnapshots.delete(context.workspaceState);
+    }
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", abort, { once: true });
+    const changed = vscode.workspace.onDidChangeConfiguration(() => {
+      if (!isAutoResumeAvailable()) controller.abort(new Error("Auto Resume was turned off."));
+    });
+    try {
+      const ids = normalizeIds(await bounded(() => readOpenParents(controller.signal), OPERATION_TIMEOUT_MS,
+        "Open Codex session discovery did not respond within 30 seconds. Saved tabs will retry later.", controller.signal));
+      if (!isAutoResumeAvailable()) {
+        await clearIds(context, deadline);
+        return [];
+      }
+      controller.signal.throwIfAborted();
+      const previous = readPersistedSessionIds(context, true);
+      if (openRecoveryIds.has(context.workspaceState) || previous.length !== ids.length || previous.some((id, index) => id !== ids[index]))
+        await writeIds(context, ids, deadline, true);
+      if (!isAutoResumeAvailable()) {
+        await clearIds(context, deadline);
+        return [];
+      }
+      return ids;
+    } catch (error) {
+      controller.abort(error);
+      if (!isAutoResumeAvailable() && !signal?.aborted) {
+        await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
+        return [];
+      }
+      throw error;
+    } finally {
+      changed?.dispose();
+      signal?.removeEventListener("abort", abort);
+    }
+  });
+}
+
+/** Install after startup restoration, so an initially empty editor cannot erase saved tabs. */
+export function registerCodexSessionAutoResumeTracking(context: AutoResumeContext): vscode.Disposable {
+  const controller = new AbortController();
+  let dirty = false;
+  let running = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let reported = false;
+  let savedSignature: string | undefined;
+  const capture = () => {
+    if (controller.signal.aborted) return;
+    dirty = true;
+    if (running) return;
+    if (timer) clearTimeout(timer);
+    timer = undefined;
+    running = true;
+    void (async () => {
+      try {
+        while (dirty && !controller.signal.aborted) {
+          dirty = false;
+          try {
+            const signature = `${isAutoResumeAvailable()}:${readOpenCodexSessionIds().sort().join(",")}`;
+            if (signature !== savedSignature) {
+              await persistOpenCodexSessions(context, undefined, controller.signal);
+              savedSignature = signature;
+            }
+            reported = false;
+          } catch (error) {
+            if (controller.signal.aborted) break;
+            console.warn("[codexManager] open Codex tabs could not be saved for auto resume", error);
+            if (!reported) {
+              reported = true;
+              void vscode.window.showWarningMessage(
+                `Auto Resume could not save open Codex tabs: ${error instanceof Error ? error.message : String(error)}. It will retry automatically.`
+              );
+            }
+            // One bounded retry timer also handles metadata arriving after the tab event.
+            dirty = false;
+            break;
+          }
+        }
+      } finally {
+        running = false;
+        if (!controller.signal.aborted && isAutoResumeAvailable()) timer = setTimeout(capture, 30_000);
+      }
+    })();
+  };
+  const tabs = vscode.window.tabGroups?.onDidChangeTabs?.(capture);
+  const configuration = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration("codexManager.autoResumeEnabled")) capture();
+  });
+  capture();
+  return { dispose: () => {
+    if (controller.signal.aborted) return;
+    controller.abort(new Error("Codex Manager is shutting down."));
+    if (timer) clearTimeout(timer);
+    tabs?.dispose();
+    configuration?.dispose();
+  } };
+}
+
 /** Acknowledge each successful tab; leave failed/uncertain opens durable for retry. */
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
@@ -209,9 +346,14 @@ export function resumePersistedCodexSessions(
       await clearIds(context, deadline);
       return { attempted: 0, opened: 0, failed: [] };
     }
-    const ids = readPersistedSessionIds(context);
-    if (!ids.length) return { attempted: 0, opened: 0, failed: [] };
+    unrestoredOpenSnapshots.add(context.workspaceState);
+    const ids = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
+    if (!ids.length) {
+      unrestoredOpenSnapshots.delete(context.workspaceState);
+      return { attempted: 0, opened: 0, failed: [] };
+    }
     await writeIds(context, ids, deadline);
+    unrestoredOpenSnapshots.delete(context.workspaceState);
     let remaining = [...ids];
     const result: AutoResumeResult = { attempted: ids.length, opened: 0, failed: [] };
     const controller = new AbortController();

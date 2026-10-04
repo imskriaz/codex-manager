@@ -8,6 +8,12 @@ export interface AutoQueueOrderValue {
   credits?: number;
   subscriptionExpiresAt?: number;
   lastQuotaAt?: number;
+  lastSelectedAt?: number;
+  sessionStartedAt?: number;
+  resetCreditsAvailable?: number;
+  /** Unix seconds, like quota window resetAt. */
+  resetCreditsNextExpiresAt?: number;
+  invalidQuota?: boolean;
 }
 
 export type AutoQueueDecisionReason = "quota-expiring" | "long-window-protected" | "starred-priority" | "quota-balance" | "stale-data";
@@ -28,7 +34,8 @@ export function calculateAutoQueueEfficiency(
 ): AutoQueueEfficiencyResult {
   const nowMs = options.nowMs ?? Date.now();
   const nowSeconds = nowMs / 1_000;
-  const ageMs = typeof value.lastQuotaAt === "number" ? Math.max(0, nowMs - value.lastQuotaAt) : options.staleAfterMs;
+  const ageMs = typeof value.lastQuotaAt === "number" && Number.isFinite(value.lastQuotaAt) && value.lastQuotaAt > 0 && value.lastQuotaAt <= nowMs
+    ? nowMs - value.lastQuotaAt : options.staleAfterMs;
   const freshness = clamp(1 - ageMs / Math.max(options.staleAfterMs, 1), 0, 1);
   const [hourly, weekly, monthly] = value.windows;
   const expiringRisk =
@@ -38,11 +45,16 @@ export function calculateAutoQueueEfficiency(
     expiringSubscriptionRisk(value.subscriptionExpiresAt, nowMs);
   const longWindow = monthly?.percentage !== undefined ? monthly : weekly;
   const longPercentage = finitePercentage(longWindow?.percentage);
-  const longWindowProtection = Math.pow((100 - longPercentage) / 100, monthly?.percentage !== undefined ? 2.2 : 1.7) * 85;
-  const balance = finitePercentage(hourly?.percentage) * 0.55 + longPercentage * 0.45;
+  const hasLongWindow = typeof longWindow?.percentage === "number" && Number.isFinite(longWindow.percentage);
+  const hasHourlyWindow = typeof hourly?.percentage === "number" && Number.isFinite(hourly.percentage);
+  const longWindowProtection = hasLongWindow ? Math.pow((100 - longPercentage) / 100, monthly?.percentage !== undefined ? 2.2 : 1.7) * 85 : 0;
+  const balance = hasHourlyWindow && hasLongWindow
+    ? finitePercentage(hourly?.percentage) * 0.55 + longPercentage * 0.45
+    : hasLongWindow ? longPercentage : finitePercentage(hourly?.percentage);
   const starredBonus = options.starred ? 22 : 0;
   const creditsBonus = value.credits === Number.POSITIVE_INFINITY ? 8 : Math.min(Math.max(value.credits ?? 0, 0), 25) * 0.1;
-  const score = (balance + expiringRisk + starredBonus + creditsBonus - longWindowProtection) * (0.65 + freshness * 0.35);
+  // A stale negative score must never improve merely because confidence fell.
+  const score = balance + expiringRisk + starredBonus + creditsBonus - longWindowProtection - (1 - freshness) * 35;
   let reason: AutoQueueDecisionReason = "quota-balance";
   if (freshness < 0.2) reason = "stale-data";
   else if (longWindowProtection >= 45) reason = "long-window-protected";
@@ -75,7 +87,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
- * Quota that is close to expiring must be used before starred accounts:
+ * Compare quota urgency after eligibility and explicit user stars:
  * 5-hour within 20 minutes, weekly within 3 hours, monthly within 1 day, and
  * subscription expiry within 1 day. Window precedence remains 5h, weekly,
  * monthly, then subscription.
@@ -112,46 +124,6 @@ export function compareAutoQueueUrgency(
   return leftExpiry - rightExpiry;
 }
 
-/**
- * Compares auto-queue candidates by remaining quota and the time until that
- * window resets. A criterion is ignored when either candidate is missing it,
- * so incomplete API responses do not penalize an otherwise usable account.
- */
-export function compareAutoQueueOrderValues(left: AutoQueueOrderValue, right: AutoQueueOrderValue): number {
-  const windowCount = Math.max(left.windows.length, right.windows.length);
-  for (let index = 0; index < windowCount; index += 1) {
-    const leftWindow = left.windows[index];
-    const rightWindow = right.windows[index];
-    if (!leftWindow || !rightWindow) {
-      continue;
-    }
-
-    // After urgent resets and explicit stars have been handled, preserve the
-    // remaining quota that expires first, then prefer the higher percentage.
-    const resetDifference = compareWhenBoth(leftWindow.resetAt, rightWindow.resetAt, 1);
-    if (resetDifference !== 0) {
-      return resetDifference;
-    }
-
-    const quotaDifference = compareWhenBoth(leftWindow.percentage, rightWindow.percentage, -1);
-    if (quotaDifference !== 0) {
-      return quotaDifference;
-    }
-  }
-
-  const creditsDifference = compareWhenBoth(left.credits, right.credits, -1);
-  if (creditsDifference !== 0) {
-    return creditsDifference;
-  }
-
-  const expiryDifference = compareWhenBoth(left.subscriptionExpiresAt, right.subscriptionExpiresAt, 1);
-  if (expiryDifference !== 0) {
-    return expiryDifference;
-  }
-
-  return compareWhenBoth(left.lastQuotaAt, right.lastQuotaAt, -1);
-}
-
 function urgentAt(value: number | undefined, now: number, threshold: number): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   const timeLeft = value - now;
@@ -173,20 +145,4 @@ export function parseCreditsOrderValue(
 
   const numericBalance = Number(credits.balance.replace(/[^0-9.-]/g, ""));
   return credits.balance.trim() && Number.isFinite(numericBalance) ? numericBalance : undefined;
-}
-
-function compareWhenBoth(left: number | undefined, right: number | undefined, direction: 1 | -1): number {
-  if (left === undefined || right === undefined) {
-    return 0;
-  }
-  if (!Number.isFinite(left) && left !== Number.POSITIVE_INFINITY) {
-    return 0;
-  }
-  if (!Number.isFinite(right) && right !== Number.POSITIVE_INFINITY) {
-    return 0;
-  }
-  if (left === right) {
-    return 0;
-  }
-  return direction * (left - right);
 }

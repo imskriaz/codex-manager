@@ -305,6 +305,7 @@ function mapAccount(
     addedAtLabel: formatAddedAt(account.createdAt, copy.never),
     loginAt: account.loginAt,
     sessionStartedAt: account.sessionStartedAt,
+    lastSelectedAt: account.lastSelectedAt,
     totalUsageMs: account.totalUsageMs,
     runningDeviceName: accountLease?.deviceName,
     runningOnThisDevice: accountLease?.isCurrentDevice,
@@ -334,6 +335,7 @@ function mapAccount(
         : copy.statusToggleTip
       : copy.statusLimitTip,
     hasQuota402: hasQuota402(account),
+    hasQuotaError: Boolean(account.quotaError),
     healthKind: health.kind,
     healthLabel: formatHealthLabel(health.kind, copy),
     healthMessage: health.message,
@@ -345,6 +347,7 @@ function mapAccount(
     lastQuotaAt: account.lastQuotaAt,
     resetCreditsAvailable,
     resetCreditsNextExpiresAt,
+    hasPendingResetCreditAttempt: Boolean(account.resetCreditAttempt),
     autoSwitchLockedUntil:
       autoSwitchRuntime?.lockedAccountId === account.id ? autoSwitchRuntime.lockedUntil : undefined,
     metrics: buildMetrics(account, copy, lang)

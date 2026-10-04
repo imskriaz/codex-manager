@@ -270,10 +270,10 @@ export function SettingsOverlay(props: {
                               ? "正在等待。請啟用加密同步並儲存共用密碼以啟動此主機。"
                               : "Waiting. Enable Encrypted Sync and save the shared password to arm this host."
                           : props.lang === "zh"
-                          ? "已启用。VS Code 关闭后中继会接管 127.0.0.1:39875；Cloudflared 端口无需改变。"
-                          : props.lang === "zh-hant"
-                            ? "已啟用。VS Code 關閉後中繼會接管 127.0.0.1:39875；Cloudflared 連接埠無需改變。"
-                            : "Enabled. The relay takes over 127.0.0.1:39875 after VS Code closes; Cloudflared needs no port change."
+                            ? "已启用。VS Code 关闭后中继会接管 127.0.0.1:39875；Cloudflared 端口无需改变。"
+                            : props.lang === "zh-hant"
+                              ? "已啟用。VS Code 關閉後中繼會接管 127.0.0.1:39875；Cloudflared 連接埠無需改變。"
+                              : "Enabled. The relay takes over 127.0.0.1:39875 after VS Code closes; Cloudflared needs no port change."
                         : props.lang === "zh"
                           ? "已停用。VS Code 关闭后不会运行独立中继。"
                           : props.lang === "zh-hant"
@@ -582,20 +582,20 @@ export function SettingsOverlay(props: {
               >
                 <div class={`settings-stack ${props.settings.autoSwitchEnabled ? "" : "is-hidden"}`}>
                   <SettingsDiscreteSlider
-                      value={props.settings.autoSwitchHourlyThreshold}
-                      values={AUTO_SWITCH_VALUES}
-                      accent="violet"
-                      sparseScale
-                      valueLabel={(value) => `${value}%`}
-                      description={(value) =>
-                        formatTemplate(props.copy.autoSwitchThresholdDescTemplate, {
-                          label: props.copy.hourlyLabel,
-                          value
-                        })
-                      }
-                      onPreview={(value) => props.onPatchSettings({ autoSwitchHourlyThreshold: value })}
-                      onCommit={(value) => patchAndSend("autoSwitchHourlyThreshold", value)}
-                    />
+                    value={props.settings.autoSwitchHourlyThreshold}
+                    values={AUTO_SWITCH_VALUES}
+                    accent="violet"
+                    sparseScale
+                    valueLabel={(value) => `${value}%`}
+                    description={(value) =>
+                      formatTemplate(props.copy.autoSwitchThresholdDescTemplate, {
+                        label: props.copy.hourlyLabel,
+                        value
+                      })
+                    }
+                    onPreview={(value) => props.onPatchSettings({ autoSwitchHourlyThreshold: value })}
+                    onCommit={(value) => patchAndSend("autoSwitchHourlyThreshold", value)}
+                  />
                   <SettingsDiscreteSlider
                     value={props.settings.autoSwitchWeeklyThreshold}
                     values={AUTO_SWITCH_VALUES}
@@ -639,24 +639,35 @@ export function SettingsOverlay(props: {
                       />
                     </div>
                   </SettingsToggleBlock>
-                  <SettingsToggleBlock
-                    title={props.copy.autoSwitchReloadTitle}
-                    sub={props.copy.autoSwitchReloadSub}
-                    enabled={props.settings.autoSwitchReloadWindowEnabled}
-                    onToggle={(enabled) => patchAndSend("autoSwitchReloadWindowEnabled", enabled)}
-                  >
-                    <div class="settings-stack settings-nested-stack">
-                      <SettingsToggleBlock
-                        title={props.copy.autoResumeTitle}
-                        sub={props.copy.autoResumeSub}
-                        enabled={props.settings.autoResumeEnabled === true}
-                        onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
-                      />
-                    </div>
-                  </SettingsToggleBlock>
                   <div class="settings-note">{props.copy.autoSwitchAnyNote}</div>
                 </div>
               </SettingsToggleBlock>
+              <SettingsToggleBlock
+                title={props.copy.autoSwitchReloadTitle}
+                sub={props.copy.autoSwitchReloadSub}
+                enabled={props.settings.autoSwitchReloadWindowEnabled}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("autoSwitchReloadWindowEnabled", enabled)}
+              />
+              <SettingsToggleBlock
+                title={props.copy.autoResumeTitle}
+                sub={props.copy.autoResumeSub}
+                enabled={props.settings.autoResumeEnabled === true}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
+              />
+              {(props.settings.autoSwitchEnabled || props.settings.quotaWarningEnabled) && (
+                <SettingsToggleBlock
+                  title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh all quotas before warning switch"}
+                  sub={
+                    props.copy.autoSwitchRefreshAllSub ??
+                    "When the warning limit is reached, refresh enabled accounts before showing the notification so the recommended account is current. If every account is below the automatic-switch threshold, the all-account timer also refreshes the current account until one becomes capable."
+                  }
+                  className="settings-block-wide"
+                  enabled={props.settings.autoSwitchRefreshAllBeforeSwitchEnabled === true}
+                  onToggle={(enabled) => patchAndSend("autoSwitchRefreshAllBeforeSwitchEnabled", enabled)}
+                />
+              )}
               <SettingsToggleBlock
                 title={props.copy.warningTitle}
                 sub={props.copy.warningSub}
@@ -665,27 +676,18 @@ export function SettingsOverlay(props: {
                 onToggle={(enabled) => patchAndSend("quotaWarningEnabled", enabled)}
               >
                 <div class={`settings-stack ${props.settings.quotaWarningEnabled ? "" : "is-hidden"}`}>
-                  <SettingsToggleBlock
-                    title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh all quotas before warning switch"}
-                    sub={
-                      props.copy.autoSwitchRefreshAllSub ??
-                      "When the warning limit is reached, refresh enabled accounts before showing the notification so the recommended account is current. If every account is below the automatic-switch threshold, the all-account timer also refreshes the current account until one becomes capable."
-                    }
-                    enabled={props.settings.autoSwitchRefreshAllBeforeSwitchEnabled === true}
-                    onToggle={(enabled) => patchAndSend("autoSwitchRefreshAllBeforeSwitchEnabled", enabled)}
-                  />
                   <SettingsDiscreteSlider
-                      value={props.settings.quotaWarningThreshold}
-                      values={WARNING_VALUES}
-                      accent="amber"
-                      scaleValues={WARNING_SCALE_VALUES}
-                      valueLabel={(value) => `${value}%`}
-                      description={(value) =>
-                        `${props.copy.hourlyLabel}: ${formatTemplate(props.copy.warningValueDescTemplate, value)}`
-                      }
-                      onPreview={(value) => props.onPatchSettings({ quotaWarningThreshold: value })}
-                      onCommit={(value) => patchAndSend("quotaWarningThreshold", value)}
-                    />
+                    value={props.settings.quotaWarningThreshold}
+                    values={WARNING_VALUES}
+                    accent="amber"
+                    scaleValues={WARNING_SCALE_VALUES}
+                    valueLabel={(value) => `${value}%`}
+                    description={(value) =>
+                      `${props.copy.hourlyLabel}: ${formatTemplate(props.copy.warningValueDescTemplate, value)}`
+                    }
+                    onPreview={(value) => props.onPatchSettings({ quotaWarningThreshold: value })}
+                    onCommit={(value) => patchAndSend("quotaWarningThreshold", value)}
+                  />
                   <SettingsDiscreteSlider
                     value={props.settings.quotaWarningWeeklyThreshold}
                     values={WEEKLY_WARNING_VALUES}

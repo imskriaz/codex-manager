@@ -16,6 +16,7 @@ export function markActive(index: CodexManagerIndex, accountId: string, now = Da
     account.isActive = nextActive;
     if (nextActive && (startsNewSession || account.sessionStartedAt == null)) {
       account.sessionStartedAt = now;
+      account.lastSelectedAt = now;
     }
   }
 }
@@ -91,6 +92,7 @@ export function syncActiveAccountState(
     }
     if (nextActive && (startsNewSession || account.sessionStartedAt == null)) {
       account.sessionStartedAt = now;
+      account.lastSelectedAt = now;
       changed = true;
     }
   }
@@ -208,6 +210,20 @@ function isValidAccountsIndex(value: unknown): value is CodexManagerIndex {
       typeof record.updatedAt === "number" &&
       (record.sessionStartedAt === undefined ||
         (typeof record.sessionStartedAt === "number" && Number.isFinite(record.sessionStartedAt))) &&
+      (record.lastSelectedAt === undefined ||
+        (typeof record.lastSelectedAt === "number" &&
+          Number.isFinite(record.lastSelectedAt) &&
+          record.lastSelectedAt >= 0)) &&
+      (record.resetCreditAttempt === undefined ||
+        (record.resetCreditAttempt !== null &&
+          typeof record.resetCreditAttempt === "object" &&
+          typeof record.resetCreditAttempt.requestId === "string" &&
+          record.resetCreditAttempt.requestId.length > 0 &&
+          record.resetCreditAttempt.requestId.length <= 128 &&
+          Number.isFinite(record.resetCreditAttempt.attemptedAt) &&
+          record.resetCreditAttempt.attemptedAt > 0 &&
+          Number.isSafeInteger(record.resetCreditAttempt.availableBefore) &&
+          record.resetCreditAttempt.availableBefore > 0)) &&
       (record.totalUsageMs === undefined ||
         (typeof record.totalUsageMs === "number" &&
           Number.isFinite(record.totalUsageMs) &&

@@ -3,6 +3,25 @@ import { CodexAdditionalQuotaLimit, CodexCreditsSummary, CodexQuotaSummary } fro
 const MAX_HOURLY_WINDOW_MINUTES = 360;
 const MIN_WEEKLY_WINDOW_MINUTES = 1440;
 
+/** Counts represent usable credits, already filtered by the provider snapshot. */
+export function normalizeUsableResetCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.floor(value))
+    : 0;
+}
+
+export function normalizeResetCreditExpiry(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  const seconds = Math.floor(value >= 1_000_000_000_000 ? value / 1000 : value);
+  return seconds > 0 ? seconds : undefined;
+}
+
+export function normalizeResetCreditIds(value: readonly string[] | undefined): string[] | undefined {
+  return value ? [...new Set(value.filter((id) => typeof id === "string").map((id) => id.trim()).filter(Boolean))] : undefined;
+}
+
 type QuotaWindowSnapshot = {
   slot: "hourly" | "weekly";
   percentage: number;
@@ -40,6 +59,8 @@ export function normalizeQuotaSummary(summary?: CodexQuotaSummary): CodexQuotaSu
   const resolvedHourly = classified.hourly ?? (isHourlyWindow(hourlyWindow) ? hourlyWindow : undefined);
   const resolvedWeekly = classified.weekly ?? (isWeeklyWindow(weeklyWindow) ? weeklyWindow : undefined);
   const weeklyExhausted = resolvedWeekly?.percentage === 0;
+  const resetCount = normalizeUsableResetCount(summary.resetCreditsAvailable);
+  const excludedResetIds = normalizeResetCreditIds(summary.resetCreditsExcludedIds);
 
   return {
     // A fully exhausted weekly/monthly window is the account-level limit. Keep
@@ -67,10 +88,19 @@ export function normalizeQuotaSummary(summary?: CodexQuotaSummary): CodexQuotaSu
       summary.additionalRateLimits?.map((limit) => ({ ...limit })) ??
       readAdditionalRateLimitsFromRawData(summary.rawData),
     credits: summary.credits ? { ...summary.credits } : readCreditsFromRawData(summary.rawData),
-    resetCreditsAvailable: summary.resetCreditsAvailable,
-    resetCreditsNextExpiresAt: summary.resetCreditsNextExpiresAt,
-    resetCreditsExcludedIds: summary.resetCreditsExcludedIds ? [...summary.resetCreditsExcludedIds] : undefined,
-    resetCreditsAvailableIds: summary.resetCreditsAvailableIds ? [...summary.resetCreditsAvailableIds] : undefined,
+    resetCreditsAvailable:
+      summary.resetCreditsAvailable === undefined ? undefined : resetCount,
+    resetCreditsNextExpiresAt:
+      resetCount > 0
+        ? normalizeResetCreditExpiry(summary.resetCreditsNextExpiresAt)
+        : undefined,
+    resetCreditsExcludedIds: excludedResetIds,
+    resetCreditsAvailableIds:
+      resetCount > 0
+        ? normalizeResetCreditIds(summary.resetCreditsAvailableIds)?.filter(
+            (id) => !excludedResetIds?.includes(id)
+          )
+        : undefined,
     rawData: summary.rawData
   };
 }

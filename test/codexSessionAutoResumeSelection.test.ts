@@ -39,6 +39,12 @@ function goals(home: string, statuses: Array<string | null>) {
   db.close();
 }
 describe("auto resume selection", () => {
+  it("records open idle parents without running locks and skips open sub-agents", async () => {
+    const home = await fixture();
+    await rm(path.join(home, "thread-writer-locks"), { recursive: true });
+    expect(await readAutoResumeCodexSessionIds(home, [], ids, undefined, "open")).toEqual([ids[0], ids[2]]);
+    expect(await readAutoResumeCodexSessionIds(home, [home], ids)).toEqual([]);
+  });
   it("selects all running active-goal parents and excludes a child with its own goal", async () => {
     const home = await fixture();
     goals(home, ["active", "active", "active"]);
@@ -179,6 +185,7 @@ describe("auto resume selection", () => {
   it("explains that all running parents resume and sub-agents are skipped", () => {
     const copy = getDashboardCopy("en").autoResumeSub;
     expect(copy).toContain("running parent sessions");
+    expect(copy).toContain("VS Code restart");
     expect(copy).toContain("Sub-agents are skipped");
   });
 });

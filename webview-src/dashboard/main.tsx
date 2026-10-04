@@ -22,13 +22,13 @@ import type {
   DashboardWorkspaceTerminalResult
 } from "../../src/domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../../src/core/types";
+import { createAutoQueuePolicy, type AutoQueuePolicy } from "../../src/domain/autoQueuePolicy";
 import { AnnouncementCenter } from "./announcementCenter";
 import { BatchSelectionBar, OverviewSection, RecoveryPanel } from "./components";
 import { postMessageToHost } from "./host";
 import {
   compareDashboardAutoQueueAccounts,
   compareDashboardQuotaBalance,
-  type DashboardAutoQueueCapabilityThresholds,
   hasDashboardAutoQueueCapability,
   sortWithQueuedAccount
 } from "./accountSorting";
@@ -1346,19 +1346,11 @@ function App() {
           uiPreferences.accountSearch,
           uiPreferences.filter,
           snapshot.settings.quotaYellowThreshold,
-          {
-            hourlyEnabled: true,
-            hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
-            weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
-          }
+          createAutoQueuePolicy(snapshot.settings, state.now)
         ),
         accountSort,
         uiPreferences.metricPriority,
-        {
-          hourlyEnabled: true,
-          hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
-          weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
-        },
+        createAutoQueuePolicy(snapshot.settings, state.now),
         snapshot.settings.encryptedSyncRegistryOverrideEnabled
       ),
     [
@@ -1366,6 +1358,11 @@ function App() {
       snapshot.settings.quotaYellowThreshold,
       snapshot.settings.autoSwitchHourlyThreshold,
       snapshot.settings.autoSwitchWeeklyThreshold,
+      snapshot.settings.autoSwitchEnabled,
+      snapshot.settings.autoResetEnabled,
+      snapshot.settings.autoResetWeeklyThreshold,
+      snapshot.settings.quotaFreshnessMs,
+      state.now,
       snapshot.settings.encryptedSyncRegistryOverrideEnabled,
       uiPreferences.accountSearch,
       uiPreferences.filter,
@@ -1455,11 +1452,7 @@ function App() {
   const validAccountCount = displayedAccounts.length - invalidAccountCount;
   const accountEnablement = countAccountEnablement(displayedAccounts);
   const claimedAccountCount = displayedAccounts.filter(isAccountClaimedByAnotherDevice).length;
-  const capabilityThresholds: DashboardAutoQueueCapabilityThresholds = {
-    hourlyEnabled: true,
-    hourlyThreshold: snapshot.settings.autoSwitchHourlyThreshold,
-    weeklyThreshold: snapshot.settings.autoSwitchWeeklyThreshold
-  };
+  const capabilityThresholds = createAutoQueuePolicy(snapshot.settings, state.now);
   const capableAccountCount = displayedAccounts.filter((account) =>
     hasDashboardAutoQueueCapability(account, capabilityThresholds)
   ).length;
@@ -2755,7 +2748,7 @@ function sortAccounts(
   accounts: DashboardAccountViewModel[],
   sort: AccountSort,
   metricPriority: MetricPriority,
-  capabilityThresholds: DashboardAutoQueueCapabilityThresholds,
+  capabilityThresholds: AutoQueuePolicy,
   registryOverrideEnabled = false
 ): DashboardAccountViewModel[] {
   const metricFor = (account: DashboardAccountViewModel, priority: MetricPriority) =>
@@ -2770,34 +2763,17 @@ function sortAccounts(
       (metric) => metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage)
     );
   const compareAutoQueue = (left: DashboardAccountViewModel, right: DashboardAccountViewModel): number => {
-    if (left.isActive !== right.isActive) return left.isActive ? -1 : 1;
-    if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
-    const leftCapable =
-      left.enabled &&
-      hasDashboardAutoQueueCapability(left, capabilityThresholds) &&
-      canRunAccountOnThisPc(left, false, registryOverrideEnabled);
-    const rightCapable =
-      right.enabled &&
-      hasDashboardAutoQueueCapability(right, capabilityThresholds) &&
-      canRunAccountOnThisPc(right, false, registryOverrideEnabled);
-    if (leftCapable !== rightCapable) return leftCapable ? -1 : 1;
-    const leftPriority = left.queuePriority && leftCapable;
-    const rightPriority = right.queuePriority && rightCapable;
-    if (leftPriority !== rightPriority) {
-      return leftPriority ? -1 : 1;
-    }
-
-    const healthRank = { healthy: 0, expiring: 1, quota: 2, refresh_failed: 3, disabled: 4, reauthorize: 5 } as const;
-    const healthDifference = healthRank[left.healthKind] - healthRank[right.healthKind];
-    if (healthDifference !== 0) return healthDifference;
-
-    return (
-      compareDashboardAutoQueueAccounts(left, right, capabilityThresholds) || left.email.localeCompare(right.email)
-    );
+    const leftOwned = canRunAccountOnThisPc(left, false, registryOverrideEnabled);
+    const rightOwned = canRunAccountOnThisPc(right, false, registryOverrideEnabled);
+    const leftEligible = leftOwned && hasDashboardAutoQueueCapability(left, capabilityThresholds);
+    const rightEligible = rightOwned && hasDashboardAutoQueueCapability(right, capabilityThresholds);
+    if (leftEligible !== rightEligible) return leftEligible ? -1 : 1;
+    if (leftOwned !== rightOwned) return leftOwned ? -1 : 1;
+    return compareDashboardAutoQueueAccounts(left, right, capabilityThresholds);
   };
 
   if (sort === "auto-queue") {
-    return sortWithQueuedAccount(accounts, compareAutoQueue);
+    return sortWithQueuedAccount(accounts, compareAutoQueue, false);
   }
 
   const valueFor = (account: DashboardAccountViewModel): number | string | undefined => {
@@ -2913,7 +2889,7 @@ function filterAccounts(
   query: string,
   filter: AccountFilter,
   threshold: number,
-  capabilityThresholds: DashboardAutoQueueCapabilityThresholds
+  capabilityThresholds: AutoQueuePolicy
 ): DashboardAccountViewModel[] {
   const normalized = query.trim().toLocaleLowerCase();
   return accounts.filter((account) => {

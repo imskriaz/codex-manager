@@ -3,31 +3,175 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as autoResumeSelection from "../src/services/codexSessionAutoResumeSelection";
 import {
   AUTO_RESUME_SESSION_IDS_KEY,
+  AUTO_RESUME_OPEN_SESSION_IDS_KEY,
   MAX_AUTO_RESUME_SESSIONS,
   formatAutoResumeResult,
   persistRunningCodexSessions,
+  persistOpenCodexSessions,
+  registerCodexSessionAutoResumeTracking,
   resumePersistedCodexSessions
 } from "../src/services/codexSessionAutoResume";
 
 function createContext(initial?: unknown) {
-  let value = initial;
+  const values = new Map<string, unknown>([[AUTO_RESUME_SESSION_IDS_KEY, initial]]);
   return {
     context: {
       workspaceState: {
-        get: vi.fn(() => value),
-        update: vi.fn(async (_key: string, next: unknown) => {
-          value = next;
+        get: vi.fn((key: string) => values.get(key)),
+        update: vi.fn(async (key: string, next: unknown) => {
+          values.set(key, next);
         })
       }
     } as never,
-    read: () => value,
-    set: (next: unknown) => {
-      value = next;
+    read: (key = AUTO_RESUME_SESSION_IDS_KEY) => values.get(key),
+    set: (next: unknown, key = AUTO_RESUME_SESSION_IDS_KEY) => {
+      values.set(key, next);
     }
   };
 }
+
+describe("durable open conversation recovery", () => {
+  const first = "01a04882-d037-7a42-ad24-9afb61901181";
+  const second = "01a04882-d037-7a42-ad24-9afb61901182";
+  beforeEach(() => {
+    vi.mocked(vscode.workspace.onDidChangeConfiguration).mockReset();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  });
+
+  it("records idle open tabs and restores them through a fresh host without a managed reload", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "codex-open-restart-"));
+    const file = path.join(root, "workspace.json");
+    const newHost = async () => {
+      const values = await readFile(file, "utf8").then((text) => JSON.parse(text) as Record<string, unknown>)
+        .catch(() => ({} as Record<string, unknown>));
+      return { workspaceState: {
+        get: (key: string) => values[key],
+        update: async (key: string, value: unknown) => {
+          values[key] = value;
+          await writeFile(file, JSON.stringify(values));
+        }
+      } } as never;
+    };
+    try {
+      await persistOpenCodexSessions(await newHost(), async () => [first, second]);
+      const open = vi.fn(async (_sessionId: string) => undefined);
+      expect((await resumePersistedCodexSessions(await newHost(), open)).opened).toBe(2);
+      expect(open.mock.calls.map(([id]) => id)).toEqual([first, second]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("captures tab changes and disposes its event subscription and retry timer on shutdown", async () => {
+    vi.useFakeTimers();
+    const previousTabs = vscode.window.tabGroups;
+    const dispose = vi.fn();
+    let changed: (() => void) | undefined;
+    let ids: string[] = [first];
+    const selection = vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds")
+      .mockImplementation(async () => [...ids]);
+    const tabs = () => ids.map((id) => ({ input: { viewType: "chatgpt.conversationEditor",
+      uri: { scheme: "openai-codex", authority: "route", path: `/local/${id}` } } }));
+    Object.assign(vscode.window, { tabGroups: {
+      get all() { return [{ tabs: tabs() }]; },
+      onDidChangeTabs: (listener: () => void) => { changed = listener; return { dispose }; }
+    } });
+    const state = createContext();
+    const tracker = registerCodexSessionAutoResumeTracking(state.context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+      ids = [second];
+      changed?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([second]);
+      tracker.dispose();
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      tracker.dispose();
+      Object.assign(vscode.window, { tabGroups: previousTabs });
+      selection.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("removes closed tabs while preserving failed restoration in its independent queue", async () => {
+    const state = createContext([second]);
+    await persistOpenCodexSessions(state.context, async () => [first]);
+    await persistOpenCodexSessions(state.context, async () => []);
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
+    const open = vi.fn(async (_sessionId: string) => undefined);
+    await resumePersistedCodexSessions(state.context, open);
+    expect(open.mock.calls.map(([id]) => id)).toEqual([second]);
+  });
+
+  it("keeps failed open tabs queued when the current window has no such tab", async () => {
+    const state = createContext();
+    await persistOpenCodexSessions(state.context, async () => [first]);
+    await resumePersistedCodexSessions(state.context, async () => { throw new Error("offline"); });
+    await persistOpenCodexSessions(state.context, async () => []);
+    expect(state.read()).toEqual([first]);
+  });
+
+  it("transfers the previous snapshot before replacing it after a failed startup storage write", async () => {
+    const state = createContext();
+    state.set([first], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+    state.context.workspaceState.update.mockRejectedValueOnce(new Error("disk full"));
+    await expect(resumePersistedCodexSessions(state.context, async () => undefined)).rejects.toThrow("disk full");
+    await persistOpenCodexSessions(state.context, async () => []);
+    expect(state.read()).toEqual([first]);
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
+  });
+
+  it("keeps the last acknowledged snapshot when discovery fails or the tab queue overflows", async () => {
+    const state = createContext();
+    await persistOpenCodexSessions(state.context, async () => [first]);
+    await expect(persistOpenCodexSessions(state.context, async () => { throw new Error("metadata incomplete"); }))
+      .rejects.toThrow("metadata incomplete");
+    const oversized = Array.from({ length: 201 }, (_, index) =>
+      `01a04882-d037-7a42-ad24-${index.toString(16).padStart(12, "0")}`);
+    await expect(persistOpenCodexSessions(state.context, async () => oversized)).rejects.toThrow("200");
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+  });
+
+  it("recovers the acknowledged snapshot when Memento updates its cache before a failed replacement", async () => {
+    const state = createContext();
+    await persistOpenCodexSessions(state.context, async () => [first]);
+    state.context.workspaceState.update.mockImplementationOnce(async (key, next) => {
+      state.set(next, key);
+      throw new Error("storage unavailable");
+    });
+    await expect(persistOpenCodexSessions(state.context, async () => [second])).rejects.toThrow("storage unavailable");
+    const open = vi.fn(async (_sessionId: string) => undefined);
+    await resumePersistedCodexSessions(state.context, open);
+    expect(open.mock.calls.map(([id]) => id)).toEqual([first]);
+  });
+
+  it("clears both records when disabled, without reading tabs", async () => {
+    const state = createContext([first]);
+    state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => false } as never);
+    const read = vi.fn(async () => [first]);
+    await persistOpenCodexSessions(state.context, read);
+    expect(read).not.toHaveBeenCalled();
+    expect(state.read()).toBeUndefined();
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
+  });
+
+  it("does not capture after tracker cancellation", async () => {
+    const state = createContext();
+    const controller = new AbortController();
+    controller.abort(new Error("shutting down"));
+    const read = vi.fn(async () => [first]);
+    await expect(persistOpenCodexSessions(state.context, read, controller.signal)).rejects.toThrow("shutting down");
+    expect(read).not.toHaveBeenCalled();
+    expect(state.context.workspaceState.update).not.toHaveBeenCalled();
+  });
+});
 
 describe("Codex session auto resume", () => {
   const id1 = "01a04882-d037-7a42-ad24-9afb61901181";
@@ -206,7 +350,7 @@ describe("Codex session auto resume", () => {
 
   it("normalizes UUID casing and drops invalid persisted identifiers", async () => {
     const state = createContext([id1.toUpperCase(), ` ${id1} `, "../escape", "", 4]);
-    const open = vi.fn(async () => undefined);
+    const open = vi.fn(async (_sessionId: string) => undefined);
     expect((await resumePersistedCodexSessions(state.context, open)).opened).toBe(1);
     expect(open).toHaveBeenCalledWith(id1, expect.any(AbortSignal));
   });
@@ -393,7 +537,7 @@ describe("Codex session auto resume", () => {
 
   it("serializes duplicate restoration without opening successful tabs twice", async () => {
     const state = createContext(["01a04882-d037-7a42-ad24-9afb61901181"]);
-    const open = vi.fn(async () => undefined);
+    const open = vi.fn(async (_sessionId: string) => undefined);
     const results = await Promise.all([
       resumePersistedCodexSessions(state.context, open),
       resumePersistedCodexSessions(state.context, open)
@@ -451,7 +595,7 @@ describe("Codex session auto resume", () => {
       "",
       null
     ]);
-    const open = vi.fn(async () => undefined);
+    const open = vi.fn(async (_sessionId: string) => undefined);
     expect((await resumePersistedCodexSessions(state.context, open)).opened).toBe(1);
     expect(open).toHaveBeenCalledOnce();
     expect(formatAutoResumeResult({ attempted: 1, opened: 1, failed: [] })).toBe(

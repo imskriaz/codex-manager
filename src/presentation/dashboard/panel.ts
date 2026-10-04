@@ -346,7 +346,9 @@ class DashboardPanelController {
           void this.postNotice("error", errorMessage).catch(() => undefined);
         },
         150,
-        message.action === "switch" ? "The account switched" : "Codex auth was unloaded"
+        message.action === "switch" ? "The account switched" : "Codex auth was unloaded",
+        message.action === "switch",
+        message.action === "switch"
       );
     }
   }

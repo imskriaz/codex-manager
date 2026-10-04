@@ -193,7 +193,7 @@ describe("compareDashboardAutoQueueAccounts", () => {
       switchQueued: false,
       creditsUnlimited: false,
       subscriptionExpiresAt: 1_000,
-      lastQuotaAt: 1
+      lastQuotaAt: Date.now()
     };
     const unstarred = {
       ...base,
@@ -216,7 +216,7 @@ describe("compareDashboardAutoQueueAccounts", () => {
     ]);
   });
 
-  it("puts an urgent 5-hour reset ahead of a starred dashboard account without changing its star", () => {
+  it("honors a usable user star before an urgent 5-hour reset without changing either star", () => {
     const now = Date.now() / 1_000;
     const base = {
       isActive: false,
@@ -224,7 +224,7 @@ describe("compareDashboardAutoQueueAccounts", () => {
       creditsUnlimited: false,
       creditsBalance: 0,
       subscriptionExpiresAt: Date.now() + 7 * 86_400_000,
-      lastQuotaAt: 1
+      lastQuotaAt: Date.now()
     };
     const urgent = {
       ...base,
@@ -240,8 +240,8 @@ describe("compareDashboardAutoQueueAccounts", () => {
     } as any;
 
     expect([starred, urgent].sort(compareDashboardAutoQueueAccounts).map((item) => item.id)).toEqual([
-      "urgent",
-      "starred"
+      "starred",
+      "urgent"
     ]);
     expect(urgent.queuePriority).toBe(false);
   });
@@ -252,7 +252,7 @@ describe("compareDashboardAutoQueueAccounts", () => {
       switchQueued: false,
       creditsUnlimited: false,
       subscriptionExpiresAt: 1_000,
-      lastQuotaAt: 1
+      lastQuotaAt: Date.now()
     };
     const lowerCredits = {
       ...base,
