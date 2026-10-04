@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { reloadExtensionHostWithSessionCapture } from "./extensionHostReload";
 
 const HOST_RECOVERY_VERSION_STATE_KEY = "codexManager.lastAutomaticRecoveryVersion";
 const scheduledRecoveryVersions = new WeakMap<vscode.ExtensionContext, Set<string>>();
@@ -48,25 +49,12 @@ async function persistRecoveryVersion(context: vscode.ExtensionContext, version:
 
 async function restartExtensionHostAutomatically(): Promise<void> {
   try {
-    await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+    await reloadExtensionHostWithSessionCapture(true);
   } catch (error) {
-    console.error("[codexManager] could not preserve sessions before automatic recovery", error);
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error("[codexManager] automatic extension recovery failed", error);
     void vscode.window.showErrorMessage(
-      "Codex Manager could not preserve sessions before restarting. Retry Reload after storage and session metadata are available."
+      `${detail} Run Developer: Reload Window after storage and pending commands settle.`
     );
-    return;
-  }
-  try {
-    await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
-  } catch (restartError) {
-    console.warn("[codexManager] extension host restart failed; reloading the window", restartError);
-    try {
-      await vscode.commands.executeCommand("workbench.action.reloadWindow");
-    } catch (reloadError) {
-      console.error("[codexManager] automatic extension recovery failed", reloadError);
-      void vscode.window.showErrorMessage(
-        "Codex Manager could not refresh its updated extension host automatically. Please reload the VS Code window."
-      );
-    }
   }
 }

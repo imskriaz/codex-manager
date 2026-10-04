@@ -56,7 +56,8 @@ const CLI_UNAVAILABLE_CACHE_TTL_MS = 5_000;
 const CLI_MODEL_LIST_CACHE_TTL_MS = 60_000;
 const CLI_MODEL_LIST_FAILURE_TTL_MS = 5_000;
 const CLI_TRANSCRIPT_PATH_CACHE_TTL_MS = 60_000;
-const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const editorOpens = new Map<string, Promise<void>>();
 // Codex model IDs may be provider-qualified (for example 9router's
 // `cx/gpt-5.2-codex`). They are passed as argv values, never shell text.
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,127}$/i;
@@ -224,11 +225,14 @@ export async function readRunningCodexSessionIds(codexHome = resolveCodexHome())
     if (error.code === "ENOENT") return [];
     throw error;
   });
-  const sessionIds = lockEntries
+  const lockedSessionIds = lockEntries
     .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".lock"))
     .map((entry) => entry.name.slice(0, -".lock".length))
     .filter((sessionId) => SESSION_ID_PATTERN.test(sessionId))
     .slice(0, MAX_SESSION_SCAN_ENTRIES);
+  const activeIds = path.resolve(codexHome) === path.resolve(resolveCodexHome())
+    ? [...activeCliTurns.keys(), ...activeAppServerTurns.keys()] : [];
+  const sessionIds = [...new Set([...lockedSessionIds, ...activeIds])];
   if (!sessionIds.length) {
     return [];
   }
@@ -1139,20 +1143,63 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
 export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal): Promise<void> {
   validateSessionId(sessionId);
   signal?.throwIfAborted();
-  await activateOfficialCodexExtension();
-  signal?.throwIfAborted();
-  // Auto Resume runs during extension-host activation. Await the official
-  // extension so its custom-editor provider is registered before openWith.
-  await vscode.commands.executeCommand(
-    "vscode.openWith",
-    createLocalCodexConversationUri(sessionId),
-    CODEX_CONVERSATION_VIEW_TYPE,
-    {
-      viewColumn: vscode.ViewColumn.Active,
-      preserveFocus: false,
-      preview: false
+  sessionId = sessionId.toLowerCase();
+  if (signal && readOpenCodexSessionIds(false).includes(sessionId)) return;
+  const pending = editorOpens.get(sessionId);
+  if (pending) {
+    await pending.catch(() => undefined);
+    signal?.throwIfAborted();
+    return openCodexSessionInVsCode(sessionId, signal);
+  }
+  const opening = (async () => {
+    await activateOfficialCodexExtension();
+    signal?.throwIfAborted();
+    // Auto Resume runs during extension-host activation. Await the official
+    // extension so its custom-editor provider is registered before openWith.
+    await vscode.commands.executeCommand(
+      "vscode.openWith",
+      createLocalCodexConversationUri(sessionId),
+      CODEX_CONVERSATION_VIEW_TYPE,
+      {
+        viewColumn: vscode.ViewColumn.Active,
+        preserveFocus: false,
+        preview: false
+      }
+    );
+    signal?.throwIfAborted();
+    if (!readOpenCodexSessionIds(false).includes(sessionId)) {
+      throw new Error(
+        "VS Code did not create a Codex conversation tab. Enable the official Codex extension and retry."
+      );
     }
-  );
+  })();
+  editorOpens.set(sessionId, opening);
+  try {
+    await opening;
+  } finally {
+    if (editorOpens.get(sessionId) === opening) editorOpens.delete(sessionId);
+  }
+}
+
+/** Inspect only native conversation tabs, never sidebar panels or other editors. */
+export function readOpenCodexSessionIds(includePreview = true): string[] {
+  const ids = (vscode.window.tabGroups?.all ?? [])
+    .flatMap((group) => group.tabs)
+    .flatMap((tab) => {
+      if (!includePreview && tab.isPreview) return [];
+      const input = tab.input as { viewType?: string; uri?: vscode.Uri } | undefined;
+      const uri = input?.uri;
+      if (
+        input?.viewType !== CODEX_CONVERSATION_VIEW_TYPE ||
+        uri?.scheme !== CODEX_CONVERSATION_SCHEME ||
+        uri.authority !== CODEX_CONVERSATION_AUTHORITY ||
+        !uri.path.startsWith("/local/")
+      )
+        return [];
+      const id = uri.path.slice("/local/".length);
+      return SESSION_ID_PATTERN.test(id) ? [id.toLowerCase()] : [];
+    });
+  return [...new Set(ids)];
 }
 
 /** Open a new chat in the official Codex webview panel. */
@@ -2638,20 +2685,28 @@ async function isCliSessionRunning(
 ): Promise<boolean> {
   if (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId)) return true;
   const lockPath = path.join(codexHome, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
-  const stat = await fs.stat(lockPath).catch(() => undefined);
-  if (!stat) return false;
+  const stat = await fs.lstat(lockPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!stat?.isFile() || stat.isSymbolicLink()) return false;
   // A writer lock can survive an interrupted/stopped Codex process. Treat it
   // as live only for a short lease, then require recent transcript activity
   // as corroboration instead of blocking resume for 15 minutes.
   const lockLeaseWindow = 2 * 60 * 1000;
-  if (Date.now() - stat.mtimeMs < lockLeaseWindow) return true;
+  const lockAge = Date.now() - stat.mtimeMs;
+  if (lockAge >= -60_000 && lockAge < lockLeaseWindow) return true;
   const activeWindow = 5 * 60 * 1000;
   // Some CLI versions keep the lock mtime fixed while the transcript is
   // actively appended. Use a recent transcript write as a secondary signal.
   const transcript = knownTranscriptPath ?? (await findCliSessionTranscript(codexHome, sessionId));
   if (!transcript) return false;
-  const transcriptStat = await fs.stat(transcript).catch(() => undefined);
-  return Boolean(transcriptStat && Date.now() - transcriptStat.mtimeMs < activeWindow);
+  const transcriptStat = await fs.lstat(transcript).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  const transcriptAge = transcriptStat ? Date.now() - transcriptStat.mtimeMs : Infinity;
+  return Boolean(transcriptStat?.isFile() && !transcriptStat.isSymbolicLink() && transcriptAge >= -60_000 && transcriptAge < activeWindow);
 }
 
 /** Locate all visible session transcripts in one bounded walk. The previous

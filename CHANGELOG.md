@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.15-pre2
+
+- Bound auto-resume capture, storage, pending session count, and total restoration time; coalesce overlapping captures, restores, and reloads.
+- Preserve recovery even when failed writes change VS Code's cached state, and block new writes until timed-out storage settles.
+- Stop pending restoration when Auto Resume is disabled; verify actual native tabs, reuse already restored tabs, and fence delayed editor opens.
+- Reconcile partial session metadata, reject incomplete parent metadata, skip database-confirmed archives, and handle Windows UNC paths and future-dated stale locks.
+
 ## 1.2.15-pre1
 
 - Preserve pending auto-resume IDs through discovery failures, editor failures, timeouts, and interrupted reloads; remove each ID only after its tab opens.

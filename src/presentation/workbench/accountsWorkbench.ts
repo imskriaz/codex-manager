@@ -96,10 +96,10 @@ export class AccountsWorkbench {
       ),
       vscode.commands.registerCommand(
         "codexManager.prepareDashboardForExtensionHostRestart",
-        async (options?: { autoResume?: boolean }) => {
-          if (options?.autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false)) {
-            await persistRunningCodexSessions(this.context);
-          }
+        async () => {
+          // Also clear pending recovery when the setting was turned off before
+          // this reload; stale IDs must not return if it is enabled afterward.
+          await persistRunningCodexSessions(this.context);
           return prepareQuotaSummaryPanelForExtensionHostRestart();
         }
       )

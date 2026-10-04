@@ -9,24 +9,74 @@ import {
 import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
 
 describe("account switch reload effects", () => {
+  it("joins concurrent Reload actions in one capture and restart", async () => {
+    let release: (() => void) | undefined;
+    vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command) => {
+      if (command === "codexManager.prepareDashboardForExtensionHostRestart")
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      return undefined;
+    });
+    const first = reloadWindowNow();
+    const second = reloadWindowNow();
+    release?.();
+    await Promise.all([first, second]);
+    expect(
+      vi
+        .mocked(vscode.commands.executeCommand)
+        .mock.calls.filter(([command]) => command === "workbench.action.restartExtensionHost")
+    ).toHaveLength(1);
+  });
+
+  it("does not bypass capture failure through either reload command", async () => {
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("storage full"));
+    await expect(reloadWindowNow()).rejects.toThrow("storage full");
+    expect(vscode.commands.executeCommand).toHaveBeenCalledOnce();
+  });
+
+  it("upgrades preservation when a later scheduled request needs it", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+      scheduleExtensionHostReload(undefined, 10, "first", false);
+      scheduleExtensionHostReload(undefined, 10, "second", true);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+        "codexManager.prepareDashboardForExtensionHostRestart",
+        { autoResume: true }
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   beforeEach(() => {
     vi.mocked(vscode.commands.executeCommand).mockReset();
     vi.mocked(vscode.window.showInformationMessage).mockReset();
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "crossWindowAccountModeEnabled" ? true : fallback } as vscode.WorkspaceConfiguration);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => (key === "crossWindowAccountModeEnabled" ? true : fallback)
+    } as vscode.WorkspaceConfiguration);
     setCurrentWindowRuntimeAccountId("current-account");
   });
 
   it("schedules automatic reload without a second prompt for shared-account windows", async () => {
     vi.useFakeTimers();
     try {
-      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as vscode.WorkspaceConfiguration);
+      vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+        get: (_key: string, fallback?: unknown) => fallback
+      } as vscode.WorkspaceConfiguration);
       vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
       await expect(promptWindowReloadForAccount({ id: "shared-next", email: "next@example.com" })).resolves.toBe(true);
       expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(300);
-      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+        "codexManager.prepareDashboardForExtensionHostRestart",
+        { autoResume: true }
+      );
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("restarts the extension host without reloading the full window when possible", async () => {
@@ -54,9 +104,7 @@ describe("account switch reload effects", () => {
       return undefined;
     });
 
-    await expect(
-      promptWindowReloadForAccount({ id: "next-account", email: "next@example.com" })
-    ).resolves.toBe(true);
+    await expect(promptWindowReloadForAccount({ id: "next-account", email: "next@example.com" })).resolves.toBe(true);
 
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(
       1,
@@ -71,7 +119,10 @@ describe("account switch reload effects", () => {
   it("captures goal-filtered sessions for the manual Reload button", async () => {
     vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
     await expect(reloadWindowNow()).resolves.toBe(true);
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      "codexManager.prepareDashboardForExtensionHostRestart",
+      { autoResume: true }
+    );
   });
 
   it("continues a requested reload if clearing stale notifications fails", async () => {
@@ -105,7 +156,10 @@ describe("account switch reload effects", () => {
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: false });
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+      "codexManager.prepareDashboardForExtensionHostRestart",
+      { autoResume: false }
+    );
     expect(onError).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));
     expect(secondHostError).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));
     expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));
@@ -123,7 +177,9 @@ describe("account switch reload effects", () => {
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
     expect(
-      vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "workbench.action.restartExtensionHost")
+      vi
+        .mocked(vscode.commands.executeCommand)
+        .mock.calls.filter(([command]) => command === "workbench.action.restartExtensionHost")
     ).toHaveLength(1);
     vi.useRealTimers();
   });

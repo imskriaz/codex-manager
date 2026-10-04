@@ -1,4 +1,8 @@
 import * as vscode from "vscode";
+import { reloadExtensionHostWithSessionCapture } from "../../utils/extensionHostReload";
+
+const reloadExtensionHostWithWindowFallback = (autoResume: boolean): Promise<void> =>
+  reloadExtensionHostWithSessionCapture(autoResume, true);
 import type { CodexManagerAccountRecord } from "../../core/types";
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import {
@@ -16,6 +20,7 @@ const CODEX_APP_RESTART_ENABLED = "codexAppRestartEnabled";
 let reloadPromptInFlight: Promise<boolean> | undefined;
 let scheduledExtensionHostReload: NodeJS.Timeout | undefined;
 const reloadFailureListeners = new Set<(message: string) => void>();
+let scheduledAutoResume = false;
 
 export function scheduleExtensionHostReload(
   onError?: (message: string) => void,
@@ -24,19 +29,28 @@ export function scheduleExtensionHostReload(
   autoResume = false
 ): NodeJS.Timeout {
   if (onError) reloadFailureListeners.add(onError);
+  scheduledAutoResume ||= autoResume;
   if (scheduledExtensionHostReload) {
     return scheduledExtensionHostReload;
   }
   scheduledExtensionHostReload = setTimeout(() => {
     scheduledExtensionHostReload = undefined;
+    const preserveSessions = scheduledAutoResume;
+    scheduledAutoResume = false;
     const failureListeners = [...reloadFailureListeners];
     reloadFailureListeners.clear();
-    void reloadExtensionHostWithWindowFallback(autoResume).catch((error: unknown) => {
+    void reloadExtensionHostWithWindowFallback(preserveSessions).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       const message = `${changeDescription}, but VS Code could not reload: ${detail}. Run Developer: Reload Window and try again.`;
       console.error("[codexManager] unable to reload after Codex credentials changed", error);
       void vscode.window.showErrorMessage(message);
-      for (const listener of failureListeners) listener(message);
+      for (const listener of failureListeners) {
+        try {
+          listener(message);
+        } catch (listenerError) {
+          console.warn("[codexManager] reload failure callback failed", listenerError);
+        }
+      }
     });
   }, delayMs);
   return scheduledExtensionHostReload;
@@ -113,8 +127,8 @@ export async function promptWindowReloadForAccount(
       copy.later
     );
     if (choice === copy.reloadNow) {
-      clearQueuedAccountSwitch();
       await reloadExtensionHostWithWindowFallback(true);
+      clearQueuedAccountSwitch();
       return true;
     }
     const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
@@ -137,15 +151,15 @@ export async function autoReloadWindowForAccount(accountId?: string): Promise<bo
     return false;
   }
 
-  clearQueuedAccountSwitch();
   await reloadExtensionHostWithWindowFallback(true);
+  clearQueuedAccountSwitch();
   return true;
 }
 
 /** Reload the current VS Code window regardless of the queued-account marker. */
 export async function reloadWindowNow(): Promise<boolean> {
-  clearQueuedAccountSwitch();
   await reloadExtensionHostWithWindowFallback(true);
+  clearQueuedAccountSwitch();
   return true;
 }
 
@@ -167,22 +181,4 @@ export function deferWindowReloadForAccount(accountId: string): boolean {
   }
   clearQueuedAccountSwitch();
   return false;
-}
-
-async function reloadExtensionHostWithWindowFallback(autoResume: boolean): Promise<void> {
-  const preserveSessions = autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false);
-  await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: preserveSessions });
-  // This is the user's explicit reload boundary: discard accumulated native
-  // choices and notices before the extension host (or window) restarts.
-  try {
-    await vscode.commands.executeCommand("notifications.clearAll");
-  } catch (error) {
-    console.warn("[codexManager] could not clear VS Code notifications before reload", error);
-  }
-  try {
-    await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
-  } catch (error) {
-    console.warn("[codexManager] extension host restart failed; reloading the VS Code window", error);
-    await vscode.commands.executeCommand("workbench.action.reloadWindow");
-  }
 }
