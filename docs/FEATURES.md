@@ -50,6 +50,10 @@ Set `codexAppPath` or `codexCliPath` only when automatic detection cannot find y
 
 Enable `cliIntegrationEnabled` to read local CLI indexes/transcripts on demand. Workspace inspection reads bounded JSONL transcript snapshots directly and never starts a Codex App Server or resumes a thread merely to display it. Active partial records are deferred until complete, and large histories are read from a bounded tail. **Open in Codex** is a separate explicit action. The extension stores tab metadata and session/project IDs, not conversation content.
 
+`autoResumeEnabled` captures running parent sessions in the current workspace before Codex Manager Reload or an automatic account-switch reload, independently of CLI integration or goals. IDs persist in VS Code workspace storage until the official Codex editor opens each tab. Discovery or storage errors prevent a managed reload from claiming preservation; editor failures and timeouts retain pending IDs for the next activation and show a warning. Successful tabs are removed individually. This reopens conversations; automatic task continuation belongs to Codex. A normal VS Code exit without a managed capture uses VS Code's own editor restoration.
+
+Acceptance for `1.2.15-pre1`: 40 focused checks and all 876 regression checks pass; lint has zero errors, both TypeScript gates pass, and VSIX layout/dependencies are verified. Two ordinary isolated VS Code launches verified native workspace-storage persistence through exit and reopening an official non-preview Codex tab. The post-1.2.12 change in `f497dca` cleared recovery state before discovery; the earlier consume-before-open path also lost failed opens. Both now preserve pending recovery. Native evidence is under ignored `output/auto-resume/`.
+
 ## Encrypted sync
 
 1. Connect the PCs through the authenticated peer WebSocket, or sign in to VS Code Settings Sync for the durable fallback.

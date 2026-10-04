@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.15-pre1
+
+- Preserve pending auto-resume IDs through discovery failures, editor failures, timeouts, and interrupted reloads; remove each ID only after its tab opens.
+- Restore saved Codex tabs before account/dashboard initialization, serialize concurrent capture/restore requests, and prevent late extension activation from opening timed-out tabs.
+
 ## 1.2.14
 
 - Remove the obsolete 5-hour Quota Control setting; 5-hour quota data is always included in automatic quota handling.

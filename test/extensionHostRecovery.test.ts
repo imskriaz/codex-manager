@@ -4,6 +4,20 @@ import * as vscode from "vscode";
 import { scheduleAutomaticExtensionHostRefresh } from "../src/utils/extensionHostRecovery";
 
 describe("automatic extension host recovery", () => {
+  it("does not bypass a failed session capture with a window reload", async () => {
+    vi.useFakeTimers();
+    try {
+      const execute = vi.mocked(vscode.commands.executeCommand);
+      execute.mockReset();
+      execute.mockRejectedValueOnce(new Error("storage full"));
+      const context = { globalState: { get: vi.fn(), update: vi.fn(async () => undefined) } } as never;
+      scheduleAutomaticExtensionHostRefresh(context, "capture-failure", 50);
+      await vi.advanceTimersByTimeAsync(50);
+      expect(execute).toHaveBeenCalledOnce();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("could not preserve sessions"));
+      execute.mockReset();
+    } finally { vi.useRealTimers(); }
+  });
   it("does not restart after a successful activation", () => {
     const extension = readFileSync("src/extension.ts", "utf8").replace(/\r\n/g, "\n");
     const activationBoundary = extension.slice(

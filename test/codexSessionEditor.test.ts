@@ -37,4 +37,21 @@ describe("Codex VS Code session editor", () => {
       }
     );
   });
+
+  it("does not open a late tab after activation exceeds the auto-resume deadline", async () => {
+    const controller = new AbortController();
+    activateExtension.mockImplementation(async () => {
+      controller.abort();
+    });
+    await expect(openCodexSessionInVsCode("01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3", controller.signal)).rejects.toThrow();
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("reports activation failure without claiming a tab opened", async () => {
+    activateExtension.mockRejectedValue(new Error("extension unavailable"));
+    await expect(openCodexSessionInVsCode("01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3")).rejects.toThrow(
+      "extension unavailable"
+    );
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+  });
 });

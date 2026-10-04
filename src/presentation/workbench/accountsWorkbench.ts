@@ -111,6 +111,26 @@ export class AccountsWorkbench {
     if (completedAutoSwitchNotice) {
       void vscode.window.showInformationMessage(completedAutoSwitchNotice);
     }
+    await measureStep("autoResumeCodexSessions", async () => {
+      try {
+        const result = await resumePersistedCodexSessions(this.context);
+        const message = formatAutoResumeResult(result);
+        if (!message) {
+          return;
+        }
+        if (result.failed.length) {
+          void vscode.window.showWarningMessage(`${message} Open Codex conversation history to retry.`);
+        } else {
+          void vscode.window.showInformationMessage(message);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn("[codexManager] auto resume failed", error);
+        void vscode.window.showWarningMessage(
+          `Auto resume could not restore running Codex sessions: ${detail}. Open Codex conversation history to retry.`
+        );
+      }
+    });
     const repoInit = await measureStep("repo.init", async () => this.repo.init());
     const encryptedSyncStartup = measureStep("encryptedSync.start", async () => {
       // Settings Sync is an optional transport. A broken provider, stale
@@ -249,26 +269,6 @@ export class AccountsWorkbench {
     });
     await measureStep("restoreDashboardAfterExtensionHostRestart", async () => {
       await restoreQuotaSummaryPanelAfterExtensionHostRestart(this.context, this.repo);
-    });
-    await measureStep("autoResumeCodexSessions", async () => {
-      try {
-        const result = await resumePersistedCodexSessions(this.context);
-        const message = formatAutoResumeResult(result);
-        if (!message) {
-          return;
-        }
-        if (result.failed.length) {
-          void vscode.window.showWarningMessage(`${message} Open Codex conversation history to retry.`);
-        } else {
-          void vscode.window.showInformationMessage(message);
-        }
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.warn("[codexManager] auto resume failed", error);
-        void vscode.window.showWarningMessage(
-          `Auto resume could not restore running Codex sessions: ${detail}. Open Codex conversation history to retry.`
-        );
-      }
     });
     console.info(
       `[codexManager] activation completed in ${Date.now() - activationStartedAt}ms`,

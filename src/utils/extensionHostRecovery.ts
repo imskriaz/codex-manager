@@ -49,6 +49,14 @@ async function persistRecoveryVersion(context: vscode.ExtensionContext, version:
 async function restartExtensionHostAutomatically(): Promise<void> {
   try {
     await vscode.commands.executeCommand("codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+  } catch (error) {
+    console.error("[codexManager] could not preserve sessions before automatic recovery", error);
+    void vscode.window.showErrorMessage(
+      "Codex Manager could not preserve sessions before restarting. Retry Reload after storage and session metadata are available."
+    );
+    return;
+  }
+  try {
     await vscode.commands.executeCommand("workbench.action.restartExtensionHost");
   } catch (restartError) {
     console.warn("[codexManager] extension host restart failed; reloading the window", restartError);

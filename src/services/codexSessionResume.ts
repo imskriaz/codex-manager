@@ -1136,9 +1136,11 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
 }
 
 /** Open a local Codex session in the official VS Code conversation editor. */
-export async function openCodexSessionInVsCode(sessionId: string): Promise<void> {
+export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal): Promise<void> {
   validateSessionId(sessionId);
+  signal?.throwIfAborted();
   await activateOfficialCodexExtension();
+  signal?.throwIfAborted();
   // Auto Resume runs during extension-host activation. Await the official
   // extension so its custom-editor provider is registered before openWith.
   await vscode.commands.executeCommand(
