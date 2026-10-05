@@ -56,11 +56,11 @@ describe("dashboard attention state", () => {
 
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).toContain('filter: "claimed"');
-    expect(source).toContain("shouldShowAccountCountFilter(claimedAccountCount, displayedAccounts.length)");
-    expect(source).toContain("shouldShowAccountCountFilter(accountEnablement.enabled, displayedAccounts.length)");
-    expect(source).toContain("shouldShowAccountCountFilter(accountEnablement.disabled, displayedAccounts.length)");
-    expect(source).toContain("shouldShowAccountCountFilter(validAccountCount, displayedAccounts.length)");
-    expect(source).toContain("shouldShowAccountCountFilter(invalidAccountCount, displayedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(claimedAccountCount, searchedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(accountEnablement.enabled, searchedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(accountEnablement.disabled, searchedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(validAccountCount, searchedAccounts.length)");
+    expect(source).toContain("shouldShowAccountCountFilter(invalidAccountCount, searchedAccounts.length)");
     expect(source.indexOf('filter: "claimed"')).toBeGreaterThan(source.indexOf('filter: "disabled"'));
   });
 });

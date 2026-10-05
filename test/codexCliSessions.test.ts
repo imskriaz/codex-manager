@@ -234,6 +234,21 @@ describe("Codex session integration", () => {
     ]);
   });
 
+  it("preserves named agent lifecycle and status detail without treating waits as completion", () => {
+    const items = parseCodexAppServerThreadItems({ thread: { turns: [{ status: "completed", items: [
+      { type: "collabToolCall", id: "start", tool: "spawn_agent", agentName: "Reviewer", status: "completed", prompt: "Review", agentsStates: { reviewer: "running" } },
+      { type: "collabToolCall", id: "wait", tool: "wait_agent", agentName: "Reviewer", status: "completed", result: "Still running" },
+      { type: "collabToolCall", id: "fail", tool: "spawn_agent", agentName: "Reviewer", status: "failed" },
+      { type: "collabToolCall", id: "finished", tool: "wait_agent", agentName: "Reviewer", status: "completed", agentsStates: { reviewer: { completed: "Reviewed" } } }
+    ] }] } });
+    expect(items).toMatchObject([
+      { title: "Reviewer started working", result: expect.stringContaining("running") },
+      { title: "Reviewer updated", result: "Still running" },
+      { title: "Reviewer failed", status: "failed" },
+      { title: "Reviewer finished", result: expect.stringContaining("Reviewed") }
+    ]);
+  });
+
   it("reads a former Codex-home journal only until the canonical journal exists", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-journal-migration-"));
     roots.push(root);

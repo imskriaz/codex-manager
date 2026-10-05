@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   compareDashboardAutoQueueAccounts,
   compareDashboardQuotaBalance,
+  filterAccounts,
+  hasDashboardQuotaRemaining,
   hasDashboardAutoQueueCapability,
   isDashboardAccountOutOfQuota,
   sortWithQueuedAccount
@@ -337,5 +339,26 @@ describe("compareDashboardAutoQueueAccounts", () => {
         weeklyThreshold: 20
       })
     ).toBe(true);
+  });
+});
+
+describe("quota filters", () => {
+  it("uses quota balance rather than eligibility and excludes unknown quota from over-quota counts", () => {
+    const account = (id: string, percentage?: number, extra = {}) => ({
+      id, email: id + "@example.com", enabled: true, healthKind: "healthy",
+      metrics: percentage === undefined ? [] : [{ key: "weekly", visible: true, percentage }], ...extra
+    }) as any;
+    const accounts = [
+      account("low", 1), account("disabled", 60, { enabled: false }), account("stale", 50, { lastQuotaAt: 1 }),
+      account("out", 0), account("unknown"), account("invalid", Number.NaN), account("negative", -1), account("too-high", 101),
+      account("error", 80, { healthKind: "quota" }), account("review-only", undefined, { metrics: [{ key: "review", visible: true, percentage: 0 }] })
+    ];
+    expect(filterAccounts(accounts, "", "capable", 20).map((account) => account.id)).toEqual(["low", "disabled", "stale"]);
+    expect(filterAccounts(accounts, "", "incapable", 20).map((account) => account.id)).toEqual(["out", "error"]);
+    expect(accounts.filter(hasDashboardQuotaRemaining)).toHaveLength(3);
+    expect(accounts.filter(isDashboardAccountOutOfQuota)).toHaveLength(2);
+    expect(filterAccounts(accounts, "STALE", "capable", 20).map((account) => account.id)).toEqual(["stale"]);
+    expect(filterAccounts(accounts, "unknown", "incapable", 20)).toEqual([]);
+    expect(filterAccounts(accounts, "", "low", 20).map((account) => account.id)).toEqual(["low", "out", "review-only"]);
   });
 });

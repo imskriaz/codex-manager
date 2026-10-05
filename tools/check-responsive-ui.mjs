@@ -22,9 +22,16 @@ const sessions = [
   { id: "01a04882-d037-7a42-ad24-9afb61901191", title: "Archived task", status: "idle", projectPath: "D:/demo", archived: true }
 ];
 sessions.push(sessions[0]);
+const previewImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+const longArguments = JSON.stringify({ cmd: `rg ${"preserved-whitespace ".repeat(80)}`, workdir: "D:/demo" });
 const messages = [
-  { id: "user", kind: "message", role: "user", text: "Review the workspace and explain the result." },
-  { id: "assistant", kind: "message", role: "assistant", text: "The workspace is ready.\n\n```ts\nconst answer = 42;\n```\n\n[Documentation](https://example.com/docs)\n\n| Item | State |\n| --- | --- |\n| Chat | Ready |" }
+  { id: "user", kind: "message", role: "user", text: "Review the workspace and explain the result.", images: [{ src: previewImage, alt: "Attachment preview" }] },
+  { id: "tool", kind: "tool-call", title: "exec", text: "Script completed", status: "completed", arguments: longArguments, result: `Output:\n${"wide output ".repeat(100)}` },
+  { id: "command", kind: "command", text: "node tools/check-ui.mjs", command: "node tools/check-ui.mjs", output: ("Line of shell output " + "wide ".repeat(40) + "\n").repeat(70), cwd: "D:/demo", status: "completed", durationMs: 2500 },
+  { id: "changes", kind: "file-change", text: "Updated files", status: "completed", changes: ["one.ts", "two.ts", "three.ts", "four.ts"].map(path => ({ path, kind: "update", diff: "@@ -1 +1 @@\n-old\n+new\n" })) },
+  { id: "goal", kind: "tool-call", title: "Used create_goal", text: "Goal started", status: "completed", arguments: JSON.stringify({ objective: "Build the compact workspace" }) },
+  { id: "agent-start", kind: "collaboration", title: "Reviewer started working", text: "Review the UI", status: "completed" },
+  { id: "assistant", kind: "message", role: "assistant", text: `The workspace is ready.\n\n\`\`\`ts\nconst answer = 42;\n\`\`\`\n\n[Documentation](https://example.com/docs)\n\n| Item | State |\n| --- | --- |\n| Chat | Ready |\n\n![Markdown preview](${previewImage})` }
 ];
 const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "workspace-write" };
 const mockHost = `(() => {
@@ -82,7 +89,8 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWSER || "msedge", headless: true });
 const results = [];
 try {
-  for (const [width, height] of (process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
+  const selectedWidth = Number(process.argv.find((argument) => argument.startsWith("--width="))?.slice(8));
+  for (const [width, height] of (selectedWidth ? [[selectedWidth, selectedWidth <= 760 ? 844 : 1000]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: width <= 760, serviceWorkers: "block", permissions: ["clipboard-read", "clipboard-write"] });
     if (width === 320) await context.addInitScript(() => {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
@@ -132,15 +140,92 @@ try {
     await page.getByRole("button", { name: "Expand demo", exact: true }).click();
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Only distinct parent sessions should appear");
     assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 1, "Running parent needs an icon");
+    await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
+    await page.getByText("Running elsewhere · wait to send", { exact: true }).waitFor();
+    const lockedStatus = page.locator(".cli-conversation > .cli-composer-unavailable.is-running");
+    assert.ok((await lockedStatus.boundingBox()).height <= 34, "Session status stays one compact line");
+    assert.equal(await lockedStatus.locator(".cli-live-spinner").count(), 1, "External turns show a spinner beside their status");
+    await page.evaluate(({ sessionId }) => {
+      const live = { sessionId, streamId: "ui-check-stream", sequence: 1, updatedAt: Date.now(), status: "running", messages: [] };
+      window.__spinnerLive = live;
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: live } }));
+    }, { sessionId: runningId });
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 2, status: "completed" } } })));
+    await page.waitForFunction(() => !document.querySelector(".cli-session-row.is-running .cli-session-spinner"));
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 3 } } })));
+    assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 0, "A stale running snapshot cannot revive a completed spinner");
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).waitFor();
     if (width <= 760) assert.equal(await page.locator(".cli-rail-toggle").getAttribute("aria-expanded"), "false", "Selecting a chat closes the mobile drawer");
     console.log(`Checking ${width}x${height}: realtime messages`);
     await page.getByText("Live transcript update", { exact: true }).waitFor({ timeout: 12_000 });
-    const copyCode = page.getByRole("button", { name: "Copy code", exact: true }).first();
+    const completedWork = page.locator(".cli-completed-work").first();
+    assert.equal(await completedWork.evaluate(element => element.open), false, "Completed work starts compact");
+    await page.screenshot({ path: path.join(output, "completed-turn-" + width + ".png") });
+    await completedWork.locator(":scope > summary").click();
+    await page.getByText("Reviewer started working", { exact: true }).waitFor();
+    assert.equal(await page.locator(".cli-completed-file").count(), 3, "Completed changes preview three files");
+    await page.getByRole("button", { name: "Show 1 more file", exact: true }).click();
+    assert.equal(await page.locator(".cli-completed-file").count(), 4);
+    await page.getByRole("button", { name: "Show fewer files", exact: true }).click();
+    assert.equal(await page.locator(".cli-goal-strip > summary").count(), 1, "Goal stays above composer");
+    const imageTrigger = page.getByRole("button", { name: "Preview Attachment preview", exact: true });
+    await imageTrigger.click();
+    await page.getByRole("dialog", { name: "Attachment preview", exact: true }).waitFor().catch(async error => {
+      console.log("Image state", await page.locator(".cli-image-lightbox").count(), await imageTrigger.boundingBox());
+      await page.screenshot({ path: path.join(output, "image-failure-" + width + ".png") });
+      throw error;
+    });
+    await page.keyboard.press("Escape");
+    await page.locator(".cli-image-lightbox").waitFor({ state: "detached" });
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Preview Attachment preview");
+    await page.getByRole("button", { name: "Preview image", exact: true }).first().press("Enter");
+    await page.getByRole("dialog", { name: "Markdown preview", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Close image preview", exact: true }).click();
+    await page.locator(".cli-image-lightbox").waitFor({ state: "detached" });
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Preview image");
+    const tool = page.locator(".cli-activity.is-tool-call").first();
+    const toolGroup = page.locator(".cli-activity-group-details").first();
+    if (!await toolGroup.evaluate(element => element.open)) await toolGroup.locator(":scope > summary").click();
+    await page.waitForFunction(() => document.querySelector(".cli-activity-group-details")?.open).catch(async error => {
+      console.log("Group state");
+      await page.screenshot({ path: path.join(output, "group-failure-" + width + ".png") });
+      throw error;
+    });
+    await tool.locator(":scope > summary").click();
+    const argumentCode = tool.locator(".cli-code-surface pre").first();
+    assert.equal(await argumentCode.evaluate(element => getComputedStyle(element).whiteSpace), "pre", "Tool arguments preserve whitespace");
+    assert.ok(await argumentCode.evaluate(element => element.scrollWidth > element.clientWidth), "Long arguments scroll horizontally");
+    await tool.getByRole("button", { name: "Copy code", exact: true }).click();
+    await tool.getByText("Copied", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), longArguments, "Tool copy preserves the full payload");
+    const command = page.locator(".cli-activity.is-command").first();
+    await command.locator(":scope > summary").click();
+    const shellOutput = command.locator(".cli-code-surface pre");
+    assert.ok(await shellOutput.evaluate(element => element.scrollWidth > element.clientWidth && element.scrollHeight > element.clientHeight), "Shell output scrolls in both directions");
+    const fileChange = page.locator(".cli-file-change-list > details").first();
+    await fileChange.locator(":scope > summary").click();
+    assert.equal(await fileChange.locator(".cli-diff-line.is-added").count(), 1);
+    assert.equal(await fileChange.locator(".cli-diff-line.is-removed").count(), 1);
+    assert.ok((await fileChange.locator(":scope > summary").boundingBox()).height <= 34, "File changes stay one compact row");
+
+    await page.screenshot({ path: path.join(output, "tool-details-" + width + "x" + height + ".png") });
+    await toolGroup.locator(":scope > summary").click();
+    assert.equal(await page.getByText("List workspace terminals completed.", { exact: true }).count(), 0, "Routine background refreshes do not show success toasts");
+    const copyCode = page.locator(".cli-markdown-code-block .cli-code-copy").first();
     await copyCode.click();
-    await page.getByText("Code copied.", { exact: true }).first().waitFor();
+    await page.waitForFunction(() => document.querySelector(".cli-markdown-code-block .cli-code-copy")?.textContent === "Copied").catch(async error => {
+      console.log("Copy feedback:", await page.locator(".cli-code-copy-feedback").allTextContents());
+      await page.screenshot({ path: path.join(output, "copy-failure-" + width + ".png") });
+      throw error;
+    });
     assert.equal((await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n"), "const answer = 42;\n");
+    await page.waitForFunction(() => document.querySelector(".cli-markdown-code-block .cli-code-copy")?.textContent === "Copy code");
+    await page.evaluate(() => { window.__originalClipboardWrite = navigator.clipboard.writeText.bind(navigator.clipboard); navigator.clipboard.writeText = () => Promise.reject(new Error("Clipboard unavailable")); });
+    await copyCode.click();
+    await page.getByText("Code could not be copied. Select the code and copy it manually.", { exact: true }).waitFor();
+    await page.evaluate(() => { navigator.clipboard.writeText = window.__originalClipboardWrite; });
     const documentation = page.getByRole("link", { name: "Documentation", exact: true }).first();
     assert.equal(await documentation.getAttribute("target"), "_blank");
     assert.match(await documentation.getAttribute("rel"), /noopener/);
@@ -174,7 +259,7 @@ try {
     const initialMessageHeight = await userMessage.evaluate(element => element.getBoundingClientRect().height);
     await page.mouse.move(width - 2, height - 2);
     assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).opacity), "0", "Actions start hidden");
-    if (width <= 760) await userMessage.tap(); else await userMessage.hover();
+    if (width <= 760) await userMessage.locator(".cli-session-message-text").tap(); else await userMessage.hover();
     await userMessage.getByRole("button", { name: "Quote", exact: true }).click();
     assert.equal(await userMessage.evaluate(element => element.getBoundingClientRect().height), initialMessageHeight, "Actions never add message height");
     assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).position), "absolute", "Actions anchor to the message");
@@ -201,7 +286,7 @@ try {
     assert.equal(await composer.inputValue(), "", "New chats must not inherit another chat's draft");
     await page.evaluate(() => window.__releaseAttachmentRead());
     await page.getByRole("button", { name: "Attach files", exact: true }).waitFor();
-    await page.getByText("Attachments added to the original chat draft. Return to that chat to use them.", { exact: true }).first().waitFor();
+    await page.getByText("Attachments saved in the previous chat draft. Return there to use them.", { exact: true }).waitFor();
     const emptyComposerHeight = (await page.locator(".cli-composer").boundingBox()).height;
     assert.ok(emptyComposerHeight <= 110, `Empty composer is compact at ${width}px (${emptyComposerHeight}px)`);
     await composer.fill("First line\nSecond line\nThird line\nFourth line");
@@ -257,11 +342,11 @@ try {
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await composer.fill("Keep this new draft");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldSendResult })));
-    await page.getByText("Codex completed the turn in the original chat.", { exact: true }).first().waitFor();
+    assert.equal(await page.getByText("Codex completed the turn in the original chat.", { exact: true }).count(), 0, "Routine completion feedback stays out of the toast stack");
     assert.equal(new URL(page.url()).pathname, "/", "A completed turn cannot pull the user back to its conversation");
     assert.equal(await composer.inputValue(), "Keep this new draft");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
-    await page.getByText("New Codex chat is ready.", { exact: true }).first().waitFor();
+    assert.equal(await page.getByText("New Codex chat is ready.", { exact: true }).count(), 0, "Routine chat feedback stays out of the toast stack");
     await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === "");
     assert.equal(new URL(page.url()).pathname, "/01a04882-d037-7a42-ad24-9afb61901198", "A new-session acknowledgement opens the accepted thread without requiring another list/catalog payload");
     assert.equal(await composer.inputValue(), "", "A newly accepted chat clears only its submitted project draft");
@@ -275,7 +360,7 @@ try {
     const activeChatUrl = page.url();
     await composer.fill("Keep the currently selected chat");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldArchiveResult })));
-    await page.getByText("Original chat archived.", { exact: true }).first().waitFor();
+    assert.equal(await page.getByText("Original chat archived.", { exact: true }).count(), 0, "Routine archive feedback stays out of the toast stack");
     assert.equal(page.url(), activeChatUrl, "A delayed archive must not navigate away from another selected chat");
     assert.equal(await composer.inputValue(), "Keep the currently selected chat");
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
@@ -288,6 +373,22 @@ try {
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } })));
     console.log(`Checking ${width}x${height}: dashboard and settings`);
     await page.goto(`${origin}/dash`);
+    await page.locator("#cliSessionsButton").click();
+    await page.locator(".cli-sessions-popover").waitFor();
+    assert.equal(await page.locator(".cli-running-count").first().textContent(), "1", "Badge excludes running child agents");
+    await page.getByText("2 sessions · 1 running", { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
+    for (const name of ["Within quota", "Over quota"]) {
+      const filter = page.getByRole("button", { name: new RegExp("^" + name + " \\d+$") });
+      if (!await filter.count()) continue;
+      const count = Number((await filter.textContent()).trim().split(" ").at(-1));
+      await filter.click();
+      await page.waitForFunction(count => document.querySelectorAll(".saved-card-container").length === count, count);
+    }
+    await page.locator(".account-count-badges > button").first().click();
+    await page.locator('input[name="account-search"]').fill("codex-ui-no-matching-account");
+    await page.waitForFunction(() => document.querySelectorAll(".saved-card-container").length === 0 && document.querySelector(".account-count-badges > button")?.textContent.trim() === "Total 0");
+    await page.locator('input[name="account-search"]').fill("");
     await page.locator("#settingsOpenButton").click();
     await page.locator(".overlay.open").waitFor();
     for (const tab of await page.locator(".settings-tab").all()) {

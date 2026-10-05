@@ -29,7 +29,7 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
     return () => {
       const previouslyFocused = previouslyFocusedRef.current;
       if (previouslyFocused?.isConnected) {
-        window.requestAnimationFrame(() => previouslyFocused.focus());
+        window.requestAnimationFrame(() => previouslyFocused.focus({ preventScroll: true }));
       }
     };
   }, [open]);

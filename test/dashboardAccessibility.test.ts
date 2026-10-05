@@ -10,7 +10,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(primitives).toContain('event.key !== "Tab"');
     expect(primitives).toContain('role="dialog"');
     expect(primitives).toContain('aria-modal="true"');
-    expect(primitives).toContain("previouslyFocused.focus()");
+    expect(primitives).toContain("previouslyFocused.focus({ preventScroll: true })");
   });
 
   it("gives custom settings and announcement dialogs names and keyboard handling", () => {

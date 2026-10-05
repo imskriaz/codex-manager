@@ -2,7 +2,12 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 import {
   consolidateSessionMessages,
-  partitionLiveTurnActivity,
+  groupCompletedTurns,
+  summarizeChangedFiles,
+  parseDiffLines,
+  countPeerSessions,
+  getMessagePrompt,
+  getSessionGoal,
   getCompletedTurnCopyText,
   parseQuestionReply,
   consolidatedActivityLabel,
@@ -14,6 +19,27 @@ import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashbo
 import { getDashboardCopy } from "../src/application/dashboard/copy";
 
 describe("sessions sidebar layout", () => {
+  it("keeps routine browser feedback inline while preserving live status and tool copy controls", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(main).toContain('if (next.level === "info") return;');
+    expect(main).toContain("const running = isCliTurnActive(live);");
+    expect(main).toContain("setCliSessions((sessions) => sessions.map(patchSession));");
+    expect(source).toContain("function CopySnippet");
+    expect(source).toContain("function ImagePreview");
+    expect(source).toContain("function ImageLightbox");
+    expect(source).toContain('closest("summary,button,img")) followLatestRef.current = false');
+    expect(source).toContain('setPreview({ src: event.target.src, alt: event.target.alt })');
+    expect(source).toContain('aria-label="Close image preview"');
+    expect(source).toContain('class="cli-code-surface"');
+    expect(source).toContain('label={failed ? "Copy error" : "Copy result"}');
+    expect(css).toContain("overflow-x: auto");
+    expect(css).toContain("cli-code-copy-float");
+    expect(css).toContain("cli-image-lightbox");
+    expect(css).toContain("white-space: nowrap; text-overflow: ellipsis");
+  });
+
   it("shows Latest only for hidden content below the viewport and avoids threshold flicker", () => {
     expect(shouldShowLatestButton(500, 600, 0)).toBe(false);
     expect(shouldShowLatestButton(601, 600, 0)).toBe(false);
@@ -94,7 +120,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('name="reasoning-effort"');
     expect(source).toContain('aria-label="Reasoning"');
     expect(source).toContain("activitySummary(messages)");
-    expect(source).toContain('class="cli-activity-summary"');
+    expect(source).toContain('class="cli-turn-change-bar"');
     expect(css).toContain(".cli-activity-summary");
     expect(source).toContain('name="sandbox-mode"');
     expect(source).toContain('aria-label="Access mode"');
@@ -350,7 +376,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("SessionShareModal");
     expect(source).toContain("cli-session-images");
     expect(source).toContain("composerBlockedByOwner");
-    expect(source).toContain("Composer disabled here until that run finishes.");
+    expect(source).toContain("Running elsewhere · wait to send");
     expect(css).toContain("content-visibility: auto");
     expect(css).toContain("contain-intrinsic-size");
     expect(css).toContain(".cli-workspace .cli-context-tab-scroll");
@@ -536,15 +562,16 @@ describe("sessions sidebar layout", () => {
       { id: "command-3", kind: "command", status: "inProgress", text: "npm run build" }
     ]);
 
-    expect(items).toHaveLength(7);
+    expect(items).toHaveLength(8);
     expect(items[2]).toMatchObject({
       id: "activity-group-change-1",
-      messages: [{ id: "change-1" }, { id: "command-1" }, { id: "command-2" }]
+      messages: [{ id: "change-1" }, { id: "command-1" }]
     });
     expect(items[3]).toMatchObject({ id: "assistant-2" });
-    expect(items[4]).toMatchObject({ id: "thinking-live", status: "inProgress" });
-    expect(items[5]).toMatchObject({ id: "user-2" });
-    expect(items[6]).toMatchObject({ id: "command-3", status: "inProgress" });
+    expect(items[4]).toMatchObject({ id: "activity-group-command-2", messages: [{ id: "command-2" }] });
+    expect(items[5]).toMatchObject({ id: "thinking-live", status: "inProgress" });
+    expect(items[6]).toMatchObject({ id: "user-2" });
+    expect(items[7]).toMatchObject({ id: "command-3", status: "inProgress" });
   });
 
   it("defaults the workspace rail to Active when no session is selected", () => {
@@ -585,7 +612,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain('message.command ?? message.text');
     expect(source).toContain('<strong>Arguments</strong>');
-    expect(source).toContain('message.title ?? "Ran command"');
+    expect(source).toContain('message.command ?? message.text).split("\\n")[0]');
   });
 
   it("keeps line spacing readable while collapsing oversized paragraph gaps", () => {
@@ -597,29 +624,61 @@ describe("sessions sidebar layout", () => {
     expect(styles).toContain(".cli-message-paragraph + .cli-message-paragraph { margin-top: .18em; }");
   });
 
-  it("shows only the running turn's activity above the composer and returns it to history when complete", () => {
+  it("keeps live tools chronological and collapses only completed work before its answer", () => {
     const items = consolidateSessionMessages([
-      { id: "user-1", kind: "message", role: "user", text: "Earlier task" },
+      { id: "user-1", role: "user", text: "Earlier task" },
       { id: "old-change", kind: "file-change", text: "Changed old.ts" },
-      { id: "old-answer", kind: "message", role: "assistant", text: "Done." },
-      { id: "user-2", kind: "message", role: "user", text: "Current task" },
+      { id: "old-answer", role: "assistant", text: "Done." },
+      { id: "user-2", role: "user", text: "Current task" },
       { id: "new-change", kind: "file-change", text: "Changed new.ts" },
-      { id: "new-comment", kind: "message", role: "assistant", text: "Checking tests." },
+      { id: "new-comment", role: "assistant", text: "Checking tests." },
       { id: "new-command", kind: "command", status: "inProgress", text: "npm test" }
     ]);
-    const running = partitionLiveTurnActivity(items, true);
-    expect(running.transcriptItems.map((item) => item.id)).toEqual(["user-1", "activity-group-old-change", "old-answer", "user-2", "new-comment"]);
-    expect(running.liveActivityItems.map((item) => item.id)).toEqual(["activity-group-new-change", "new-command"]);
-    expect(partitionLiveTurnActivity(items, false).transcriptItems).toEqual(items);
-    expect(partitionLiveTurnActivity(items, false).liveActivityItems).toEqual([]);
-    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
-    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
-    const liveTray = source.indexOf('class="cli-live-turn-activity"');
-    const composer = source.indexOf('{selectedArchived ? (', liveTray);
-    expect(liveTray).toBeGreaterThan(source.indexOf('class="cli-message-region"'));
-    expect(composer).toBeGreaterThan(liveTray);
-    expect(css).toContain('.cli-workspace .cli-conversation.has-session.has-live-activity {');
-    expect(css).toContain('.cli-workspace .cli-live-turn-activity {');
+    const running = groupCompletedTurns(items, true);
+    expect(running.map((item) => item.id)).toEqual(["user-1", "completed-turn-activity-group-old-change", "user-2", "activity-group-new-change", "new-comment", "new-command"]);
+    expect(running[1]).toMatchObject({ answer: { id: "old-answer" } });
+    expect(groupCompletedTurns(items, false).at(-1)).toMatchObject({ id: "new-command" });
+    const failed = consolidateSessionMessages([{ id: "u", role: "user", text: "Task" }, { id: "error", kind: "error", status: "failed", text: "Failed" }]);
+    expect(groupCompletedTurns(failed, false)).toEqual(failed);
+  });
+
+  it("shares unique parent counts across PC totals and running badges", () => {
+    const sessions = [
+      { id: "a", title: "A", status: "running" as const },
+      { id: "a", title: "A", status: "running" as const },
+      { id: "b", title: "B", status: "idle" as const },
+      { id: "child", title: "Child", status: "running" as const, parentSessionId: "a" },
+      { id: "archived", title: "Archived", status: "running" as const, archived: true },
+      { id: "a", title: "Remote", status: "running" as const, remote: true, deviceId: "other" }
+    ];
+    expect(countPeerSessions(sessions, [{ id: "host", local: true }, { id: "other" }])).toEqual([
+      { id: "host", total: 2, running: 1 }, { id: "other", total: 1, running: 1 }
+    ]);
+    expect(countPeerSessions([], [{ id: "host", local: true }])).toEqual([{ id: "host", total: 0, running: 0 }]);
+  });
+
+  it("counts repeated edits once and shares correct diff line numbers with both views", () => {
+    const diff = "--- a/a.ts\n+++ b/a.ts\n@@ -7,2 +9,2 @@\n-old\n+++literal\n context\n\\ No newline at end of file";
+    expect(parseDiffLines(diff).slice(3)).toMatchObject([
+      { kind: "removed", oldLine: 7 }, { kind: "added", newLine: 9 }, { kind: "context", oldLine: 8, newLine: 10 }, { kind: "meta" }
+    ]);
+    expect(summarizeChangedFiles([
+      { id: "first", text: "", changes: [{ path: "a.ts", kind: "update", diff }] },
+      { id: "second", text: "", changes: [{ path: "a.ts", kind: "update", diff: "+raw\n-raw\n" }, { path: "b.ts", kind: "add" }] }
+    ])).toEqual([{ path: "a.ts", additions: 2, deletions: 2 }, { path: "b.ts", additions: 0, deletions: 0 }]);
+    expect(parseDiffLines("@@ malformed\n+raw")[1]).toMatchObject({ kind: "added", newLine: undefined });
+  });
+
+  it("retries the matching turn and shows only valid recorded goals", () => {
+    const messages = [{ id: "u1", role: "user" as const, text: "First" }, { id: "a1", role: "assistant" as const, text: "Done" }, { id: "u2", role: "user" as const, text: "Second" }];
+    expect(getMessagePrompt(messages, "a1")).toBe("First");
+    expect(getMessagePrompt(messages, "missing")).toBeUndefined();
+    const goal = { id: "goal", kind: "tool-call" as const, title: "Used create_goal", text: "", status: "completed" as const, arguments: '{"objective":"Build editor"}' };
+    expect(getSessionGoal([goal])).toMatchObject({ objective: "Build editor", status: "active" });
+    expect(getSessionGoal([goal, { ...goal, id: "failed", title: "update_goal failed", status: "failed", arguments: '{"status":"complete"}' }])).toMatchObject({ status: "active" });
+    expect(getSessionGoal([goal, { ...goal, id: "get", title: "Used get_goal", result: '{"goal":{"objective":"Build editor","status":"paused","elapsed_ms":1200}}' }])).toMatchObject({ status: "paused", elapsedMs: 1200 });
+    expect(getSessionGoal([{ ...goal, arguments: "{partial" }])).toBeUndefined();
+    expect(getSessionGoal([{ id: "plan", kind: "plan", text: "Ordinary plan" }])).toBeUndefined();
   });
 
   it("keeps the Environment inspector closed until the user opens it", () => {
@@ -679,8 +738,9 @@ describe("sessions sidebar layout", () => {
       { id: "tool-1", kind: "tool-call", status: "completed", text: "Searched docs" }
     ]);
 
-    expect(items).toHaveLength(3);
-    expect(items[1]).toMatchObject({ id: "activity-group-command-1", messages: [{ id: "command-1" }, { id: "tool-1" }] });
+    expect(items).toHaveLength(4);
+    expect(items[1]).toMatchObject({ id: "activity-group-command-1", messages: [{ id: "command-1" }] });
+    expect(items[3]).toMatchObject({ id: "activity-group-tool-1", messages: [{ id: "tool-1" }] });
     expect(items[2]).toMatchObject({ id: "image-1", kind: "image", images: [{ src: "data:image/png;base64,AA==" }] });
   });
 

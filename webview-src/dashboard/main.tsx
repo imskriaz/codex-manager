@@ -30,6 +30,9 @@ import { postMessageToHost } from "./host";
 import {
   compareDashboardAutoQueueAccounts,
   compareDashboardQuotaBalance,
+  filterAccounts,
+  hasDashboardQuotaRemaining,
+  isDashboardAccountOutOfQuota,
   hasDashboardAutoQueueCapability,
   sortWithQueuedAccount
 } from "./accountSorting";
@@ -74,8 +77,8 @@ import { onboardingFailureMessage } from "./onboardingFeedback";
 import { classifyCliSessionListResult } from "./cliSessionListResult";
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
-import { loadUiPreferences, saveUiPreferences, type AccountFilter, type UiPreferences } from "./preferences";
-import type { CliSessionFeedback } from "./cliSessionsModal";
+import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
+import { countPeerSessions, type CliSessionFeedback } from "./cliSessionsModal";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive } from "./cliSessionLiveState";
 import {
@@ -204,6 +207,15 @@ function App() {
         cliLiveStatesRef.current = Object.fromEntries(Object.entries({ ...cliLiveStatesRef.current, [key]: live }).sort((a, b) => b[1].updatedAt - a[1].updatedAt).slice(0, 30));
         setCliLiveStates(cliLiveStatesRef.current);
       }
+      // Realtime snapshots are authoritative for the visible running marker.
+      // The session index can lag behind the stream by one refresh tick.
+      const running = isCliTurnActive(live);
+      const patchSession = (session: DashboardCliSessionSummary): DashboardCliSessionSummary =>
+        session.id === live.sessionId && (session.deviceId ?? undefined) === (live.deviceId ?? undefined)
+          ? { ...session, status: running ? "running" : "idle", ...(running ? {} : { canStop: false }) }
+          : session;
+      setCliSessions((sessions) => sessions.map(patchSession));
+      setSelectedCliSession((session) => session ? patchSession(session) : session);
       liveAuthority.current.add(key);
     } else if (previous?.streamId !== live.streamId && live.updatedAt < (previous?.updatedAt ?? 0)) {
       liveAuthority.current.delete(key);
@@ -221,7 +233,7 @@ function App() {
   const showCliSessionFeedback = useCallback((feedback: CliSessionFeedback): void => {
     // These updates are already visible in their panel and were causing a
     // stream of stacked toasts while the workspace refreshed in the background.
-    if (feedback.level === "info" && /^(Sessions refreshed\.|Environment action completed\.|Terminal action completed\.|Terminal command completed\.|List workspace terminals completed\.|File saved\.|File refreshed\.|Project files refreshed\.)$/i.test(feedback.message)) return;
+    if (feedback.level === "info") return;
     setCliSessionFeedback(feedback);
   }, []);
   const [codexRequests, setCodexRequests] = useState<DashboardCodexServerRequest[]>([]);
@@ -315,6 +327,7 @@ function App() {
   const [browserLastSyncAt, setBrowserLastSyncAt] = useState<number>();
   const showNotice = useCallback(
     (next: DashboardNotice) => {
+      if (next.level === "info") return;
       noticeControllerRef.current?.show(next);
       pushBrowserNotification(next);
     },
@@ -727,11 +740,20 @@ function App() {
           else if (requestedTarget) {
             const key = cliSessionTargetKey(requestedTarget);
             if (cliLiveStatesRef.current[key]?.streamId === requestedStream) {
-              liveAuthority.current.delete(key);
-              const { [key]: removed, ...remaining } = cliLiveStatesRef.current;
-              void removed;
-              cliLiveStatesRef.current = remaining;
-              setCliLiveStates(remaining);
+              const previousLive = cliLiveStatesRef.current[key];
+              if (previousLive && ["completed", "cancelled", "failed"].includes(previousLive.status)) {
+                // Keep the bounded terminal snapshot as an ordering guard. A
+                // history refresh must not let delayed running events revive it.
+                historicalStreams.current.add(previousLive.streamId);
+                if (historicalStreams.current.size > 60) historicalStreams.current.delete(historicalStreams.current.values().next().value!);
+                liveAuthority.current.add(key);
+              } else {
+                liveAuthority.current.delete(key);
+                const { [key]: removed, ...remaining } = cliLiveStatesRef.current;
+                void removed;
+                cliLiveStatesRef.current = remaining;
+                setCliLiveStates(remaining);
+              }
             }
           }
           setCliSessionMessages(message.payload?.cliSessionMessages ?? []);
@@ -1368,9 +1390,8 @@ function App() {
       : [{ id: "local", name: "This PC", sessionCount: 0, connected: true, local: true }];
   const selectedPeer =
     pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
-  const runningCliSessionCount = cliSessions.filter(
-    (session) => session.status === "running" && !session.archived
-  ).length;
+  const pcSessionCounts = countPeerSessions(cliSessions, pcOptions);
+  const runningCliSessionCount = pcSessionCounts.reduce((sum, peer) => sum + peer.running, 0);
   const displayedAccounts =
     selectedPeer && !selectedPeer.local ? (snapshot.peerAccounts?.[selectedPeer.id] ?? []) : snapshot.accounts;
   const overviewAccount = resolveOverviewAccount(displayedAccounts);
@@ -1416,8 +1437,7 @@ function App() {
           displayedAccounts,
           uiPreferences.accountSearch,
           uiPreferences.filter,
-          snapshot.settings.quotaYellowThreshold,
-          createAutoQueuePolicy(snapshot.settings, state.now)
+          snapshot.settings.quotaYellowThreshold
         ),
         accountSort,
         uiPreferences.metricPriority,
@@ -1519,15 +1539,14 @@ function App() {
     snapshot.encryptedSyncSessionCount,
     displayedAccounts.length
   );
-  const invalidAccountCount = displayedAccounts.filter(isAccountAttention).length;
-  const validAccountCount = displayedAccounts.length - invalidAccountCount;
-  const accountEnablement = countAccountEnablement(displayedAccounts);
-  const claimedAccountCount = displayedAccounts.filter(isAccountClaimedByAnotherDevice).length;
   const capabilityThresholds = createAutoQueuePolicy(snapshot.settings, state.now);
-  const capableAccountCount = displayedAccounts.filter((account) =>
-    hasDashboardAutoQueueCapability(account, capabilityThresholds)
-  ).length;
-  const incapableAccountCount = displayedAccounts.length - capableAccountCount;
+  const searchedAccounts = filterAccounts(displayedAccounts, uiPreferences.accountSearch, "all", snapshot.settings.quotaYellowThreshold);
+  const invalidAccountCount = searchedAccounts.filter(isAccountAttention).length;
+  const validAccountCount = searchedAccounts.length - invalidAccountCount;
+  const accountEnablement = countAccountEnablement(searchedAccounts);
+  const claimedAccountCount = searchedAccounts.filter(isAccountClaimedByAnotherDevice).length;
+  const capableAccountCount = searchedAccounts.filter(hasDashboardQuotaRemaining).length;
+  const incapableAccountCount = searchedAccounts.filter(isDashboardAccountOutOfQuota).length;
   const availableMetrics = Array.from(
     new Map(
       displayedAccounts
@@ -2015,6 +2034,9 @@ function App() {
               ) : null}
               {snapshot.settings.cliIntegrationEnabled === true ? (
                 <CliSessionsMenu
+                  counts={pcSessionCounts}
+                  countsReady={liveSessionListReceived.current || cliSessions.length > 0}
+                  countsNote={cliSessionsError ? "Refresh failed" : !liveSessionListReceived.current && cliSessions.length ? "Cached" : undefined}
                   peers={pcOptions}
                   runningCount={runningCliSessionCount}
                   lang={snapshot.lang}
@@ -2172,9 +2194,9 @@ function App() {
                       aria-pressed={uiPreferences.filter === "all"}
                       onClick={() => setUiPreferences((current) => ({ ...current, filter: "all" }))}
                     >
-                      {resolveUiText("total", snapshot.lang)} {displayedAccounts.length}
+                      {resolveUiText("total", snapshot.lang)} {searchedAccounts.length}
                     </button>
-                    {shouldShowAccountCountFilter(accountEnablement.enabled, displayedAccounts.length) ? (
+                    {shouldShowAccountCountFilter(accountEnablement.enabled, searchedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-enabled header-count-link ${uiPreferences.filter === "enabled" ? "is-selected" : ""}`}
                         type="button"
@@ -2184,7 +2206,7 @@ function App() {
                         {resolveUiText("enabled", snapshot.lang)} {accountEnablement.enabled}
                       </button>
                     ) : null}
-                    {shouldShowAccountCountFilter(accountEnablement.disabled, displayedAccounts.length) ? (
+                    {shouldShowAccountCountFilter(accountEnablement.disabled, searchedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-disabled header-count-link ${uiPreferences.filter === "disabled" ? "is-selected" : ""}`}
                         type="button"
@@ -2194,7 +2216,7 @@ function App() {
                         {resolveUiText("disabled", snapshot.lang)} {accountEnablement.disabled}
                       </button>
                     ) : null}
-                    {shouldShowAccountCountFilter(claimedAccountCount, displayedAccounts.length) ? (
+                    {shouldShowAccountCountFilter(claimedAccountCount, searchedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-claimed header-count-link ${uiPreferences.filter === "claimed" ? "is-selected" : ""}`}
                         type="button"
@@ -2204,7 +2226,7 @@ function App() {
                         {resolveUiText("claimed", snapshot.lang)} {claimedAccountCount}
                       </button>
                     ) : null}
-                    {shouldShowAccountCountFilter(validAccountCount, displayedAccounts.length) ? (
+                    {shouldShowAccountCountFilter(validAccountCount, searchedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-valid header-count-link ${uiPreferences.filter === "healthy" ? "is-selected" : ""}`}
                         type="button"
@@ -2214,7 +2236,7 @@ function App() {
                         {resolveUiText("valid", snapshot.lang)} {validAccountCount}
                       </button>
                     ) : null}
-                    {shouldShowAccountCountFilter(invalidAccountCount, displayedAccounts.length) ? (
+                    {shouldShowAccountCountFilter(invalidAccountCount, searchedAccounts.length) ? (
                       <button
                         class={`header-count-badge header-count-link ${invalidAccountCount ? "is-invalid" : ""} ${uiPreferences.filter === "attention" ? "is-selected" : ""}`}
                         type="button"
@@ -2224,7 +2246,7 @@ function App() {
                         {resolveUiText("invalid", snapshot.lang)} {invalidAccountCount}
                       </button>
                     ) : null}
-                    {shouldShowAccountCountFilter(capableAccountCount, displayedAccounts.length) ? (
+                    {shouldShowAccountCountFilter(capableAccountCount, searchedAccounts.length) ? (
                       <button
                         class={`header-count-badge is-capable header-count-link ${uiPreferences.filter === "capable" ? "is-selected" : ""}`}
                         type="button"
@@ -2234,7 +2256,7 @@ function App() {
                         {resolveUiText("capable", snapshot.lang)} {capableAccountCount}
                       </button>
                     ) : null}
-                    {shouldShowAccountCountFilter(incapableAccountCount, displayedAccounts.length) ? (
+                    {shouldShowAccountCountFilter(incapableAccountCount, searchedAccounts.length) ? (
                       <button
                         class={`header-count-badge header-count-link ${incapableAccountCount ? "is-incapable" : ""} ${uiPreferences.filter === "incapable" ? "is-selected" : ""}`}
                         type="button"
@@ -2961,40 +2983,6 @@ function sameUsageHistory(left: readonly DashboardUsageSample[], right: readonly
   });
 }
 
-function filterAccounts(
-  accounts: DashboardAccountViewModel[],
-  query: string,
-  filter: AccountFilter,
-  threshold: number,
-  capabilityThresholds: AutoQueuePolicy
-): DashboardAccountViewModel[] {
-  const normalized = query.trim().toLocaleLowerCase();
-  return accounts.filter((account) => {
-    const matchesQuery =
-      !normalized ||
-      [account.email, account.displayName, account.accountName, account.workspaceLabel]
-        .filter(Boolean)
-        .some((value) => value!.toLocaleLowerCase().includes(normalized));
-    const percentages = account.metrics
-      .filter((metric) => metric.visible && typeof metric.percentage === "number")
-      .map((metric) => metric.percentage as number);
-    const low = percentages.some((value) => value <= threshold);
-    const attention = isAccountAttention(account);
-    const matchesFilter =
-      filter === "all" ||
-      (filter === "healthy" && !attention) ||
-      (filter === "attention" && attention) ||
-      (filter === "low" && low) ||
-      (filter === "active" && account.isActive) ||
-      (filter === "enabled" && account.enabled) ||
-      (filter === "disabled" && !account.enabled) ||
-      (filter === "claimed" && isAccountClaimedByAnotherDevice(account)) ||
-      (filter === "capable" && hasDashboardAutoQueueCapability(account, capabilityThresholds)) ||
-      (filter === "incapable" && !hasDashboardAutoQueueCapability(account, capabilityThresholds));
-    return matchesQuery && matchesFilter;
-  });
-}
-
 function PcPickerControl(props: {
   peers: DashboardPeerView[];
   accountsByPeerId: Record<string, DashboardAccountViewModel[]>;
@@ -3123,6 +3111,9 @@ function PcPickerControl(props: {
 }
 
 function CliSessionsMenu(props: {
+  counts: ReturnType<typeof countPeerSessions>;
+  countsReady: boolean;
+  countsNote?: string;
   peers: DashboardPeerView[];
   runningCount: number;
   lang: string;
@@ -3247,7 +3238,7 @@ function CliSessionsMenu(props: {
                     <span class={`cli-sessions-pc-status ${peer.connected ? "is-online" : ""}`} aria-hidden="true" />
                     <span class="cli-sessions-pc-copy">
                       <strong>{peerName(peer)}</strong>
-                      <small>{sessionLabel(peer.sessionCount)}</small>
+                      <small>{props.countsReady ? sessionLabel(props.counts.find((count) => count.id === peer.id)?.total ?? 0) + " · " + (props.counts.find((count) => count.id === peer.id)?.running ?? 0) + " running" + (props.countsNote ? " · " + props.countsNote : "") : props.countsNote ? "Sessions unavailable · refresh to retry" : "Loading sessions…"}</small>
                     </span>
                     <span class={`cli-sessions-pc-state ${peer.connected ? "is-online" : ""}`}>
                       {peer.connected ? onlineLabel : offlineLabel}

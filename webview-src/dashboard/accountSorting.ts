@@ -1,3 +1,5 @@
+import type { AccountFilter } from "./preferences";
+import { isAccountAttention, isAccountClaimedByAnotherDevice } from "./helpers";
 import type { DashboardAccountViewModel } from "../../src/domain/dashboard/types";
 import {
   compareAutoQueueCandidates,
@@ -71,8 +73,33 @@ export function isDashboardAccountOutOfQuota(account: DashboardAccountViewModel)
       (metric.key === "hourly" || metric.key === "weekly") &&
       typeof metric.percentage === "number" &&
       Number.isFinite(metric.percentage) &&
-      metric.percentage <= 0
+      metric.percentage === 0
   );
+}
+
+/** Quota filters describe the recorded balance, independent of auto-switch eligibility. */
+export function hasDashboardQuotaRemaining(account: DashboardAccountViewModel): boolean {
+  return !isDashboardAccountOutOfQuota(account) && hasDashboardAutoQueueCapability(account);
+}
+
+export function filterAccounts(accounts: DashboardAccountViewModel[], query: string, filter: AccountFilter, threshold: number): DashboardAccountViewModel[] {
+  const normalized = query.trim().toLocaleLowerCase();
+  return accounts.filter((account) => {
+    const matchesQuery = !normalized || [account.email, account.displayName, account.accountName, account.workspaceLabel]
+      .some((value) => value?.toLocaleLowerCase().includes(normalized));
+    const attention = isAccountAttention(account);
+    const matchesFilter = filter === "all"
+      || (filter === "healthy" && !attention)
+      || (filter === "attention" && attention)
+      || (filter === "low" && account.metrics.some((metric) => metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage) && metric.percentage >= 0 && metric.percentage <= threshold))
+      || (filter === "active" && account.isActive)
+      || (filter === "enabled" && account.enabled)
+      || (filter === "disabled" && !account.enabled)
+      || (filter === "claimed" && isAccountClaimedByAnotherDevice(account))
+      || (filter === "capable" && hasDashboardQuotaRemaining(account))
+      || (filter === "incapable" && isDashboardAccountOutOfQuota(account));
+    return matchesQuery && matchesFilter;
+  });
 }
 
 export function toDashboardAutoQueueOrderValue(account: DashboardAccountViewModel): AutoQueueCandidate {

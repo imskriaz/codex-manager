@@ -1559,7 +1559,7 @@ function parseAppServerThreadItem(
         status: error ? "failed" : status,
         timestamp
       };
-    const result = readHumanText(item["result"] ?? item["output"]);
+    const result = readHumanText(item["result"] ?? item["output"]) ?? safeDisplayJson(item["result"] ?? item["output"]);
     const failed = Boolean(error) || status === "failed";
     return {
       id,
@@ -1599,7 +1599,7 @@ function parseAppServerThreadItem(
       subtitle: server,
       text: error ?? (typeof item["progress"] === "string" ? item["progress"] : `${server} used ${tool}.`),
       arguments: safeDisplayJson(rawArguments),
-      result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]),
+      result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]) ?? safeDisplayJson(item["result"] ?? item["contentItems"] ?? item["success"]),
       debug,
       durationMs,
       status: failed ? "failed" : status,
@@ -1613,12 +1613,26 @@ function parseAppServerThreadItem(
         : typeof item["kind"] === "string"
           ? item["kind"]
           : "Agent activity";
+    const name = [item["agentName"], item["agentNickname"], item["name"]].find((value) => typeof value === "string" && value.trim()) as string | undefined;
+    const states = item["agentsStates"];
+    const agentStates = states && typeof states === "object" ? Object.values(states) : [];
+    const finished = agentStates.length > 0 && agentStates.every((state) => {
+      if (state === "completed") return true;
+      return state && typeof state === "object" && ("completed" in state || (state as Record<string, unknown>)["status"] === "completed");
+    });
+    const lifecycle = status === "completed" ? /spawn|start/i.test(tool) ? "started working" : /close/i.test(tool) ? "closed" : finished ? "finished" : undefined : undefined;
+    const title = status === "failed" ? (name ? name + " failed" : "Agent action failed")
+      : name ? name + (status === "inProgress" ? " working" : lifecycle ? " " + lifecycle : " updated")
+      : lifecycle ? "Agent " + lifecycle : status === "inProgress" ? "Working with an agent" : "Agent activity";
     return {
       id,
       kind: "collaboration",
-      title: status === "inProgress" ? "Working with an agent" : "Agent activity",
+      title,
       text: typeof item["prompt"] === "string" ? item["prompt"].slice(0, MAX_SESSION_MESSAGE_CHARS) : tool,
       subtitle: tool,
+      arguments: safeDisplayJson(item["arguments"]),
+      result: readHumanText(item["agentsStates"] ?? item["result"] ?? item["output"]) ?? safeDisplayJson(item["agentsStates"] ?? item["result"] ?? item["output"]),
+      debug: safeDisplayJson(item),
       status,
       timestamp
     };
@@ -3194,7 +3208,7 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
           timestamp
         };
       }
-      const result = readHumanText(output) || "Tool completed.";
+      const result = readHumanText(output) ?? safeDisplayJson(output) ?? "Tool completed.";
       return {
         id: callId,
         kind: "tool-call",
