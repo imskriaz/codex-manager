@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { resolveAccountHealth } from "../../application/accounts/health";
@@ -24,10 +25,12 @@ import {
   renameCodexCliSession,
   startCodexCliSession,
   sendCodexCliSessionMessage,
+  steerCodexCliSessionTurn,
   unarchiveCodexCliSession
 } from "../../services/codexSessionResume";
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import { respondCodexAppServerPrompt } from "../../services/codexAppServerPrompts";
+import { getCodexSessionLiveState } from "../../services/codexSessionLive";
 import { unloadAuthFile } from "../../codex";
 import { upsertDashboardDailyUsageCache } from "../../services/dashboardUsageHistory";
 import {
@@ -116,6 +119,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "getCodexCliSessionMessages",
   "getCodexSubAgentMessages",
   "sendCodexCliSessionMessage",
+  "steerCodexCliSessionTurn",
   "cancelCodexCliSessionTurn",
   "respondCodexServerRequest",
   "openCodexCliSession",
@@ -194,6 +198,13 @@ const ACCOUNT_REQUIRED_ACTIONS = new Set<DashboardActionName>([
   "consumeResetCredit"
 ]);
 
+type SessionActionResult = Awaited<ReturnType<typeof executeDashboardActionMessageCore>>;
+const sessionActionRequestsByContext = new WeakMap<vscode.ExtensionContext, Map<string, {
+  fingerprint: string; expiresAt: number; pending: boolean; result: Promise<SessionActionResult>;
+}>>();
+const SESSION_REQUEST_TTL_MS = 10 * 60_000;
+const MAX_SESSION_REQUESTS = 128;
+
 export async function executeDashboardActionMessage(
   ctx: DashboardActionContext,
   message: Extract<DashboardClientMessage, { type: "dashboard:action" }>
@@ -202,12 +213,49 @@ export async function executeDashboardActionMessage(
   payload?: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"];
   errorMessage?: string;
 }> {
-  return runWithPersistentOperation(
+  const execute = () => runWithPersistentOperation(
     `dashboard:${message.action}`,
     () => executeDashboardActionMessageCore(ctx, message),
     { hostKind: ctx.hostKind ?? "webview" },
     (result) => ({ status: result.status, errorMessage: result.errorMessage })
   );
+  if (!["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn"].includes(message.action)) return execute();
+  if (typeof message.requestId !== "string" || !message.requestId.trim() || message.requestId.length > 256)
+    return { status: "failed", errorMessage: "The session request identifier is invalid. Refresh the session and try again." };
+  let sessionActionRequests = sessionActionRequestsByContext.get(ctx.context);
+  if (!sessionActionRequests) {
+    sessionActionRequests = new Map();
+    sessionActionRequestsByContext.set(ctx.context, sessionActionRequests);
+  }
+  const now = Date.now();
+  for (const [id, request] of sessionActionRequests) {
+    if (!request.pending && request.expiresAt <= now) sessionActionRequests.delete(id);
+  }
+  const fingerprint = createHash("sha256").update(JSON.stringify([message.action, message.accountId, message.payload])).digest("hex");
+  const existing = sessionActionRequests.get(message.requestId);
+  if (existing) return existing.fingerprint === fingerprint ? existing.result : {
+    status: "failed", errorMessage: "This request identifier was already used for a different session action. Refresh and try again."
+  };
+  if (sessionActionRequests.size >= MAX_SESSION_REQUESTS) return {
+    status: "failed", errorMessage: "The session request queue is full. Wait for recent requests to expire before retrying."
+  };
+  const request = { fingerprint, expiresAt: now + SESSION_REQUEST_TTL_MS, pending: true, result: Promise.resolve({ status: "failed" } as SessionActionResult) };
+  sessionActionRequests.set(message.requestId, request);
+  request.result = Promise.resolve().then(execute).then((result) => {
+    request.pending = false;
+    request.expiresAt = Date.now() + SESSION_REQUEST_TTL_MS;
+    // Retain the outcome, without retaining transcripts, attachments or live snapshots.
+    request.result = Promise.resolve({ status: result.status, errorMessage: result.errorMessage,
+      payload: result.payload ? { cliSession: result.payload.cliSession, notice: result.payload.notice } : undefined });
+    return result;
+  }, (error: unknown) => {
+    const result: SessionActionResult = { status: "failed", errorMessage: getErrorMessage(error) };
+    request.pending = false;
+    request.expiresAt = Date.now() + SESSION_REQUEST_TTL_MS;
+    request.result = Promise.resolve(result);
+    return result;
+  });
+  return request.result;
 }
 
 async function executeDashboardActionMessageCore(
@@ -766,6 +814,8 @@ async function runDashboardAction(
       return handleGetCodexCliSessionMessages(payload?.sessionId, payload?.projectPath);
     case "sendCodexCliSessionMessage":
       return handleSendCodexCliSessionMessage(payload);
+    case "steerCodexCliSessionTurn":
+      return handleSteerCodexCliSessionTurn(payload);
     case "cancelCodexCliSessionTurn":
       return handleCancelCodexCliSessionTurn(payload?.sessionId);
     case "respondCodexServerRequest":
@@ -1747,7 +1797,7 @@ async function handleGetCodexCliSessionMessages(sessionId: string | undefined, r
   }
   if (cliSession.archived) throw new Error("Archived sessions cannot be opened. Restore the session first.");
   const cliSessionMessages = await readCodexCliSessionMessages(sessionId);
-  return { cliSession, cliSessionMessages };
+  return { cliSession, cliSessionMessages, cliSessionLive: getCodexSessionLiveState(sessionId) };
 }
 
 async function canonicalProjectPath(projectPath: string): Promise<string> {
@@ -1799,6 +1849,21 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
   };
 }
 
+async function handleSteerCodexCliSessionTurn(payload: DashboardActionPayload | undefined) {
+  ensureCliIntegrationEnabled();
+  if (!payload?.sessionId) throw new Error("Choose a session first.");
+  if (typeof payload.expectedTurnId !== "string" || !payload.expectedTurnId.trim() || payload.expectedTurnId.length > 256)
+    throw new Error("The active turn changed. Refresh this session before sending a follow-up.");
+  const session = await ensureCliSessionIsActive(payload.sessionId);
+  if (payload.projectPath?.trim() && session.projectPath?.trim() &&
+    await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(session.projectPath))
+    throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
+  await steerCodexCliSessionTurn({ sessionId: payload.sessionId, expectedTurnId: payload.expectedTurnId,
+    text: payload.text ?? "", attachments: payload.attachments });
+  return { cliSessionLive: getCodexSessionLiveState(payload.sessionId),
+    notice: { level: "info" as const, message: "Follow-up sent to the active Codex turn." } };
+}
+
 async function handleCancelCodexCliSessionTurn(sessionId: string | undefined) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
@@ -1821,6 +1886,7 @@ async function handleOpenCodexCliSession(sessionId: string | undefined, openInBr
     return {
       cliSession: session,
       cliSessionMessages: await readCodexCliSessionMessages(sessionId),
+      cliSessionLive: getCodexSessionLiveState(sessionId),
       notice: { level: "info" as const, message: "Opened the session in the browser dashboard." }
     };
   }

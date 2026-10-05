@@ -1,23 +1,22 @@
 # Changelog
 
-## 1.2.15-pre2
-
-- Bound auto-resume capture, storage, pending session count, and total restoration time; coalesce overlapping captures, restores, and reloads.
-- Preserve recovery even when failed writes change VS Code's cached state, and block new writes until timed-out storage settles.
-- Stop pending restoration when Auto Resume is disabled; verify actual native tabs, reuse already restored tabs, and fence delayed editor opens.
-- Reconcile partial session metadata, reject incomplete parent metadata, skip database-confirmed archives, and handle Windows UNC paths and future-dated stale locks.
-
-## 1.2.15-pre1
-
-- Preserve pending auto-resume IDs through discovery failures, editor failures, timeouts, and interrupted reloads; remove each ID only after its tab opens.
-- Restore saved Codex tabs before account/dashboard initialization, serialize concurrent capture/restore requests, and prevent late extension activation from opening timed-out tabs.
-
 ## 1.2.14
 
+- Stream live Codex responses, tools, plans, diffs and usage into the shared browser/VS Code workspace. Add fenced active-turn steering, reconnect recovery, bounded peer delivery, and reload-safe drafts without automatically resending uncertain requests.
+- Add **Resume goal sessions only**, enabled by default under Auto Switch and Auto Resume. Check active goals before capture and reopening; retain recovery when goal storage cannot be read.
+- Keep account cards responsive with natural height and two main quota rows, move plan badges into card footers, and remove the redundant Current badge in cards. Keep table presentation unchanged.
+- Save open parent conversations continuously and restore them after ordinary VS Code restarts. Preserve failed recovery until native tabs actually open.
+- Refresh Auto Resume by closing previous Codex conversation tabs, then reopening only saved sessions. Preserve file editors and unsaved drafts, and bound retries, storage writes, restoration time, and duplicate requests.
+- Make Auto Resume depend on Auto Switch, hide its control while Auto Switch is off, and retain the saved child preference.
+- Restore previously open Codex Manager dashboard tabs after ordinary restarts using native VS Code webview persistence. Closed dashboards stay closed; restored and manually opened panels are deduplicated.
+- Share account queue ordering across automation, the dashboard, and pickers. Prefer capable starred accounts, retain the current account while usable, balance equal-capacity selection, and verify stale or failed quota before switching.
+- Count only usable, nonexpired reset credits when Auto Switch and Auto Reset are enabled. Persist reset attempts before consumption, prevent duplicate redemption after timeouts or restarts, and verify restored quota.
+- Respect automation setting dependencies and ownership, recheck preferences before switching or reloading, recover bounded scheduler failures, and reject stale or conflicting peer quota.
+
 - Remove the obsolete 5-hour Quota Control setting; 5-hour quota data is always included in automatic quota handling.
-- Auto-resume now reopens every running parent session after supported reloads without requiring goals, while continuing to exclude sub-agents.
+- Auto-resume supports running parent sessions after supported reloads, with an optional goal filter and continued sub-agent exclusion.
 - Redesign the composer with a compact single-line draft that grows while typing and shrinks after clearing, plus a settings popover for model, reasoning, and access.
-- Make auto-resume include every running parent session in the workspace, normalize Windows extended paths, and skip only sub-agents.
+- Include eligible running parent sessions in the workspace, normalize Windows extended paths, and exclude sub-agents.
 - Keep delayed archive, delete, rename, restore, and fork results scoped to their original chat; invalidate the correct device cache without disrupting another conversation.
 - Show interrupted message/agent loading on connection loss instead of silently clearing its waiting state.
 - Keep the session menu within narrow mobile viewports when toolbar actions wrap, with full-width touch targets and scrollable overflow.
@@ -39,8 +38,7 @@
 
 - Open newly created chats as soon as Codex accepts them, stream the first response, allow Stop, and report interrupted transports immediately.
 
-- Reopen every running parent session after Reload or automatic switching, scoped to the current workspace when project metadata is available. Skip sub-agents.
-- Explain in Settings that automatic continuation requires a goal.
+- Reopen eligible running parent sessions after Reload or automatic switching, scoped to the current workspace when project metadata is available. Skip sub-agents.
 - Keep disabled accounts loaded across reloads and restarts. Authentication is unloaded only when the user explicitly chooses Unload.
 
 - Keep session discovery available during slow app-server initialization using bounded local history reads, shared in-flight refreshes, and automatic retry. Launch JavaScript Codex shims correctly inside the VS Code extension host.

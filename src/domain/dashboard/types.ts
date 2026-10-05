@@ -20,6 +20,7 @@ export type DashboardSettingKey =
   | "autoSwitchEnabled"
   | "autoSwitchReloadWindowEnabled"
   | "autoResumeEnabled"
+  | "autoResumeGoalOnlyEnabled"
   | "crossWindowAccountModeEnabled"
   | "autoSwitchHourlyThreshold"
   | "autoSwitchWeeklyThreshold"
@@ -61,6 +62,7 @@ export interface DashboardSettings {
   autoSwitchReloadWindowEnabled: boolean;
   /** Restore local parent Codex conversation tabs after VS Code restarts. */
   autoResumeEnabled?: boolean;
+  autoResumeGoalOnlyEnabled?: boolean;
   /** Assign independent accounts and CODEX_HOME values to VS Code windows. */
   crossWindowAccountModeEnabled?: boolean;
   autoSwitchHourlyThreshold: number;
@@ -282,6 +284,8 @@ export interface DashboardCopy {
   autoSwitchReloadSub: string;
   autoResumeTitle: string;
   autoResumeSub: string;
+  autoResumeGoalOnlyTitle: string;
+  autoResumeGoalOnlySub: string;
   crossWindowAccountModeTitle?: string;
   crossWindowAccountModeSub?: string;
   autoSwitchLockMinutesTitle: string;
@@ -557,6 +561,7 @@ export type DashboardActionName =
   | "getCodexSubAgentMessages"
   | "getCodexCliSessionMessages"
   | "sendCodexCliSessionMessage"
+  | "steerCodexCliSessionTurn"
   | "cancelCodexCliSessionTurn"
   | "respondCodexServerRequest"
   | "openCodexCliSession"
@@ -606,6 +611,8 @@ export interface DashboardActionPayload {
   enabled?: boolean;
   days?: number;
   sessionId?: string;
+  /** Fence steering to the active turn observed by this client. */
+  expectedTurnId?: string;
   model?: string;
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
@@ -663,6 +670,8 @@ export interface DashboardCliSessionSummary {
 
 export interface DashboardCliSessionMessage {
   id: string;
+  /** Provider turn identity, when present in history or live events. */
+  turnId?: string;
   kind?:
     | "message"
     | "reasoning"
@@ -703,6 +712,27 @@ export interface DashboardCliSessionMessage {
 }
 
 export type DashboardCliSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+
+/** Bounded current-turn snapshot shared by both dashboard hosts. */
+export interface DashboardCodexSessionLiveState {
+  sessionId: string;
+  deviceId?: string;
+  streamId: string;
+  sequence: number;
+  turnId?: string;
+  status: "starting" | "running" | "completed" | "cancelled" | "failed" | "disconnected";
+  updatedAt: number;
+  messages: DashboardCliSessionMessage[];
+  plan?: { explanation?: string; steps: Array<{ step: string; status: "pending" | "inProgress" | "completed" }> };
+  diff?: string;
+  tokenUsage?: { total?: number; input?: number; cachedInput?: number; output?: number; reasoningOutput?: number; contextWindow?: number };
+  rateLimits?: {
+    primary?: { usedPercent: number; windowDurationMins?: number; resetsAt?: number };
+    secondary?: { usedPercent: number; windowDurationMins?: number; resetsAt?: number };
+  };
+  error?: string;
+  truncated?: boolean;
+}
 
 export interface DashboardCliModelOption {
   id: string;
@@ -832,6 +862,7 @@ export interface DashboardActionResultPayload {
   cliSessions?: DashboardCliSessionSummary[];
   cliSession?: DashboardCliSessionSummary;
   cliSessionMessages?: DashboardCliSessionMessage[];
+  cliSessionLive?: DashboardCodexSessionLiveState;
   cliSubAgentSession?: DashboardCliSessionSummary;
   cliSubAgentMessages?: DashboardCliSessionMessage[];
   cliComposerConfig?: DashboardCliComposerConfig;
@@ -912,6 +943,7 @@ export type DashboardHostMessage =
       result: DashboardWorkspaceTerminalResult;
     }
   | { type: "dashboard:codex-request"; request: DashboardCodexServerRequest }
+  | { type: "dashboard:codex-session-live"; state: DashboardCodexSessionLiveState }
   | { type: "dashboard:codex-request-resolved"; requestId: string; deviceId?: string }
   | {
       type: "dashboard:oauth-authorized";

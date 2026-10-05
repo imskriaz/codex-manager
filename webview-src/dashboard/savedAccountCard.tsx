@@ -363,6 +363,7 @@ export function SavedAccountCard(props: {
             : 3;
     return priority(left.key) - priority(right.key);
   });
+  const cardMetrics = visibleMetrics.filter((metric) => metric.key === "hourly" || metric.key === "weekly");
   // A newly switched-in account keeps its previous quota summary until the
   // first refresh for the new session. Do not style that stale snapshot as a
   // live low-quota warning.
@@ -752,7 +753,7 @@ export function SavedAccountCard(props: {
         <div class={`saved-card-inner ${flipped ? "flipped" : ""}`}>
           <section
             class={`saved-card saved-card-front ${cardStateClass}`}
-            aria-label={emailDisplay}
+            aria-label={account.isActive ? `${emailDisplay}: ${copy.current}` : emailDisplay}
             aria-hidden={flipped}
             inert={flipped}
           >
@@ -791,13 +792,6 @@ export function SavedAccountCard(props: {
                         ) : null}
                         {queuedLabel}
                       </button>
-                    ) : account.isActive ? (
-                      <span class="pill active">{copy.current}</span>
-                    ) : null}
-                    {cardPlanBadge ? (
-                      <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>
-                        {cardPlanBadge}
-                      </span>
                     ) : null}
                     {renderHealthPill(account)}
                   </h3>
@@ -826,8 +820,8 @@ export function SavedAccountCard(props: {
             </div>
 
             <div class="saved-progress">
-              {visibleMetrics.length > 0 ? (
-                visibleMetrics.map((metric) => (
+              {cardMetrics.length > 0 ? (
+                cardMetrics.map((metric) => (
                   <MetricRow
                     key={metric.key}
                     metric={metric}
@@ -844,6 +838,11 @@ export function SavedAccountCard(props: {
             <div class="saved-card-footer">
               <div class="saved-credit-summary">
                 <>
+                  {cardPlanBadge ? (
+                    <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>
+                      {cardPlanBadge}
+                    </span>
+                  ) : null}
                   {runningDeviceLabel ? (
                     <span class="saved-credits-line saved-running-device" title={runningDeviceLabel}>
                       {runningDeviceLabel}

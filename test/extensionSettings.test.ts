@@ -27,6 +27,7 @@ describe("5-hour quota control defaults", () => {
         .toBe(autoSwitchEnabled && autoResumeEnabled);
       expect(update).not.toHaveBeenCalled();
       expect(values.autoResumeEnabled).toBe(autoResumeEnabled);
+      expect(new ExtensionSettingsStore().getDashboardSettings().autoResumeGoalOnlyEnabled).toBe(true);
     }
   );
 

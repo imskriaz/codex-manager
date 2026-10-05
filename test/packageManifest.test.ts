@@ -21,7 +21,9 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.2.15-pre5");
+    expect(manifest.version).toBe("1.2.14");
+    expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
+      .toContain("onWebviewPanel:codexQuotaSummary");
   });
 
   it("ships a Marketplace changelog", () => {
@@ -148,6 +150,8 @@ describe("extension manifest configuration", () => {
     expect(property?.markdownDescription).toContain("reopen them after a VS Code restart");
     expect(property?.markdownDescription).toContain("save open parent conversation tabs as they change");
     expect(property?.markdownDescription).toContain("while Auto Switch is enabled");
+    expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeGoalOnlyEnabled"])
+      .toMatchObject({ type: "boolean", scope: "machine", default: true });
   });
 
   it("declares quota graph history retention with a 7-day default", () => {

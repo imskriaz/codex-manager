@@ -9,12 +9,46 @@ import {
 } from "./codexSessionResume";
 import { readSubAgentMetadata } from "../domain/sessionSource";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
+import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 
 type SqliteDatabase = {
   prepare(sql: string): { get(id: string): Record<string, unknown> | undefined };
   close(): void;
 };
 type SqliteModule = { DatabaseSync: new (file: string, options: { readOnly: boolean }) => SqliteDatabase };
+
+export function isAutoResumeGoalOnlyEnabled(): boolean {
+  return getCodexManagerConfiguration().get<boolean>("autoResumeGoalOnlyEnabled", true) === true;
+}
+
+/** Goal absence is ineligible; unreadable goal state retains recovery for retry. */
+export async function filterAutoResumeGoalSessionIds(
+  ids: string[], home = resolveCodexHome(), signal?: AbortSignal, goalOnly = isAutoResumeGoalOnlyEnabled()
+): Promise<string[]> {
+  signal?.throwIfAborted();
+  if (!goalOnly || !ids.length) return ids;
+  let db: SqliteDatabase | undefined;
+  try {
+    const names = await fs.readdir(home).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    const candidates = names.filter((name) => /^goals_[0-9]+\.sqlite$/.test(name));
+    candidates.sort((a, b) => Number(b.split("_")[1]?.split(".")[0]) - Number(a.split("_")[1]?.split(".")[0]));
+    if (!candidates[0]) return [];
+    const moduleName = "node:sqlite";
+    const sqlite = await import(moduleName) as SqliteModule;
+    db = new sqlite.DatabaseSync(path.join(home, candidates[0]), { readOnly: true });
+    const statement = db.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
+    return ids.filter((id) => {
+      signal?.throwIfAborted();
+      return statement.get(id)?.["status"] === "active";
+    });
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw new Error(`Auto Resume could not verify active goals. Saved recovery was retained; retry after goal storage is available. ${error instanceof Error ? error.message : String(error)}`);
+  } finally { db?.close(); }
+}
 
 /** Optional runtime capability: never create or migrate Codex's databases. */
 async function openMetadataDatabase(home: string, prefix: string): Promise<SqliteDatabase | undefined> {
@@ -39,7 +73,8 @@ export async function readAutoResumeCodexSessionIds(
   workspacePaths = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
   openSessionIds = readOpenCodexSessionIds(),
   signal?: AbortSignal,
-  selection: "running" | "open" = "running"
+  selection: "running" | "open" = "running",
+  goalOnly = isAutoResumeGoalOnlyEnabled()
 ): Promise<string[]> {
   signal?.throwIfAborted();
   const running = selection === "open" ? openSessionIds : await readRunningCodexSessionIds(home);
@@ -122,7 +157,7 @@ export async function readAutoResumeCodexSessionIds(
         continue;
       parents.push(id);
     }
-    return parents;
+    return filterAutoResumeGoalSessionIds(parents, home, signal, goalOnly);
   } finally {
     state?.close();
   }

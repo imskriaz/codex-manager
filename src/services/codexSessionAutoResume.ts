@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, SESSION_ID_PATTERN } from "./codexSessionResume";
-import { readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
+import { filterAutoResumeGoalSessionIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
 export const AUTO_RESUME_OPEN_SESSION_IDS_KEY = "codexManager.autoResumeOpenSessionIds";
@@ -173,6 +173,7 @@ export function persistRunningCodexSessions(
       await clearIds(context, deadline);
       return [];
     }
+    const goalOnly = isAutoResumeGoalOnlyEnabled();
     const controller = new AbortController();
     const changed = vscode.workspace.onDidChangeConfiguration(() => {
       if (!isAutoResumeAvailable()) controller.abort(new Error("Auto Resume was turned off."));
@@ -198,7 +199,11 @@ export function persistRunningCodexSessions(
         await clearIds(context, deadline);
         return [];
       }
-      const ids = normalizeIds([...readPersistedSessionIds(context), ...normalizeIds(running)]);
+      const ids = await bounded(() => filterAutoResumeGoalSessionIds(normalizeIds([
+        ...readPersistedSessionIds(context), ...normalizeIds(running)
+      ]), undefined, controller.signal), deadline - Date.now(),
+        "Auto Resume could not verify goals before saving recovery.", controller.signal);
+      if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Retry after preferences settle.");
       await writeIds(context, ids, deadline);
       if (controller.signal.aborted || !isAutoResumeAvailable()) {
         await clearIds(context, deadline);
@@ -239,6 +244,7 @@ export function persistOpenCodexSessions(
       ]), deadline);
       unrestoredOpenSnapshots.delete(context.workspaceState);
     }
+    const goalOnly = isAutoResumeGoalOnlyEnabled();
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     signal?.addEventListener("abort", abort, { once: true });
@@ -246,8 +252,11 @@ export function persistOpenCodexSessions(
       if (!isAutoResumeAvailable()) controller.abort(new Error("Auto Resume was turned off."));
     });
     try {
-      const ids = normalizeIds(await bounded(() => readOpenParents(controller.signal), OPERATION_TIMEOUT_MS,
+      const discovered = normalizeIds(await bounded(() => readOpenParents(controller.signal), OPERATION_TIMEOUT_MS,
         "Open Codex session discovery did not respond within 30 seconds. Saved tabs will retry later.", controller.signal));
+      const ids = await bounded(() => filterAutoResumeGoalSessionIds(discovered, undefined, controller.signal), deadline - Date.now(),
+        "Auto Resume could not verify goals before saving open tabs.", controller.signal);
+      if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Saved tabs were retained for retry.");
       if (!isAutoResumeAvailable()) {
         await clearIds(context, deadline);
         return [];
@@ -295,8 +304,10 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
         while (dirty && !controller.signal.aborted) {
           dirty = false;
           try {
-            const signature = `${isAutoResumeAvailable()}:${readOpenCodexSessionIds().sort().join(",")}`;
-            if (signature !== savedSignature) {
+            const goalOnly = isAutoResumeGoalOnlyEnabled();
+            const signature = `${isAutoResumeAvailable()}:${goalOnly}:${readOpenCodexSessionIds().sort().join(",")}`;
+            // A goal may become active while the same tabs remain open.
+            if (signature !== savedSignature || (isAutoResumeAvailable() && goalOnly)) {
               await persistOpenCodexSessions(context, undefined, controller.signal);
               savedSignature = signature;
             }
@@ -323,7 +334,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   };
   const tabs = vscode.window.tabGroups?.onDidChangeTabs?.(capture);
   const configuration = vscode.workspace.onDidChangeConfiguration((event) => {
-    if (event.affectsConfiguration("codexManager.autoResumeEnabled") ||
+    if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled") || event.affectsConfiguration("codexManager.autoResumeEnabled") ||
         event.affectsConfiguration("codexManager.autoSwitchEnabled")) capture();
   });
   capture();
@@ -349,7 +360,19 @@ export function resumePersistedCodexSessions(
       return { attempted: 0, opened: 0, failed: [] };
     }
     unrestoredOpenSnapshots.add(context.workspaceState);
-    const ids = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
+    const goalOnly = isAutoResumeGoalOnlyEnabled();
+    const savedIds = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
+    const ids = await bounded(() => filterAutoResumeGoalSessionIds(savedIds), deadline - Date.now(),
+      "Auto Resume could not verify goals within 30 seconds. Saved recovery was retained.");
+    if (!isAutoResumeAvailable()) {
+      await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
+      return { attempted: 0, opened: 0, failed: [] };
+    }
+    if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during discovery. Retry to verify the saved sessions.");
+    if (savedIds.length && ids.length !== savedIds.length) {
+      await writeIds(context, ids, deadline);
+      await writeIds(context, ids, deadline, true);
+    }
     if (!ids.length) {
       unrestoredOpenSnapshots.delete(context.workspaceState);
       return { attempted: 0, opened: 0, failed: [] };
@@ -359,12 +382,17 @@ export function resumePersistedCodexSessions(
     let remaining = [...ids];
     const result: AutoResumeResult = { attempted: ids.length, opened: 0, failed: [] };
     const controller = new AbortController();
-    const changed = vscode.workspace.onDidChangeConfiguration(() => {
+    const changed = vscode.workspace.onDidChangeConfiguration((event) => {
       if (!isAutoResumeAvailable())
         controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
+      else if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled"))
+        controller.abort(new Error("The goal-only preference changed. Remaining sessions will be checked again on the next activation."));
     });
     try {
       try {
+        if (!isAutoResumeAvailable() || goalOnly !== isAutoResumeGoalOnlyEnabled())
+          controller.abort(new Error("Auto Resume preferences changed before closing previous tabs. Saved sessions were retained."));
+        controller.signal.throwIfAborted();
         await bounded(() => closeSessions(controller.signal), deadline - Date.now(),
           "VS Code did not close the previous Codex tabs within 30 seconds. Saved sessions will retry on the next activation.",
           controller.signal);
@@ -385,6 +413,13 @@ export function resumePersistedCodexSessions(
             )
           );
         try {
+          controller.signal.throwIfAborted();
+          if (!(await bounded(() => filterAutoResumeGoalSessionIds([id], undefined, controller.signal), deadline - Date.now(),
+            "Auto Resume could not verify this session's goal before its deadline.", controller.signal)).length) {
+            remaining = remaining.filter((candidate) => candidate !== id);
+            await writeIds(context, remaining, deadline);
+            continue;
+          }
           await bounded(
             () => openSession(id, controller.signal),
             deadline - Date.now(),

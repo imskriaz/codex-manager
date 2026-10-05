@@ -4,7 +4,7 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
-vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {} }));
+vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { readCodexCliSessions, readCodexCliSessionMessages } from "../src/services/codexSessionResume";
 
 const id = "01a04882-d037-7a42-ad24-9afb61901188";

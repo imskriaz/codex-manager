@@ -8,6 +8,7 @@ import type {
   DashboardActionPayload,
   DashboardCliComposerConfig,
   DashboardCodexServerRequest,
+  DashboardCodexSessionLiveState,
   DashboardCliSessionMessage,
   DashboardCliSessionSummary,
   DashboardHostMessage,
@@ -75,6 +76,8 @@ import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey,
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type AccountFilter, type UiPreferences } from "./preferences";
 import type { CliSessionFeedback } from "./cliSessionsModal";
+import type { CliSubmissionResult } from "./cliSessionComposerState";
+import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive } from "./cliSessionLiveState";
 import {
   invalidateCliSessionCache,
   mergeCachedCliSession,
@@ -178,12 +181,35 @@ function App() {
   const [cliSessions, setCliSessions] = useState<DashboardCliSessionSummary[]>([]);
   const [agentMessages, setAgentMessages] = useState<Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>>({});
   const messageRequests = useRef(new Map<string, CliSessionTarget>());
+  const messageRequestStreams = useRef(new Map<string, string | undefined>());
+  const historicalStreams = useRef(new Set<string>());
   const turnRequests = useRef(new Map<string, CliSessionTarget>());
   const sessionActionRequests = useRef(new Map<string, CliSessionTarget>());
   const messageViewRevision = useRef(0);
   const liveSessionListReceived = useRef(false);
   const agentRequests = useRef(new Map<string, string>());
   const [cliSessionMessages, setCliSessionMessages] = useState<DashboardCliSessionMessage[]>([]);
+  const [cliLiveStates, setCliLiveStates] = useState<Record<string, DashboardCodexSessionLiveState>>({});
+  const cliLiveStatesRef = useRef<Record<string, DashboardCodexSessionLiveState>>({});
+  const liveAuthority = useRef(new Set<string>());
+  const [submissionResults, setSubmissionResults] = useState<CliSubmissionResult[]>([]);
+  const recordSubmissionResult = (requestId: string, status: CliSubmissionResult["status"]) =>
+    setSubmissionResults((current) => [...current.filter((result) => result.requestId !== requestId), { requestId, status }].slice(-128));
+  const acceptLiveSnapshot = (live: DashboardCodexSessionLiveState, replay = false): void => {
+    const key = cliSessionTargetKey({ id: live.sessionId, deviceId: live.deviceId });
+    const previous = cliLiveStatesRef.current[key];
+    const duplicateReplay = replay && previous?.streamId === live.streamId && previous.sequence === live.sequence && previous.status === live.status;
+    if (duplicateReplay || acceptCliLiveState(previous, live)) {
+      if (!duplicateReplay) {
+        cliLiveStatesRef.current = Object.fromEntries(Object.entries({ ...cliLiveStatesRef.current, [key]: live }).sort((a, b) => b[1].updatedAt - a[1].updatedAt).slice(0, 30));
+        setCliLiveStates(cliLiveStatesRef.current);
+      }
+      liveAuthority.current.add(key);
+    } else if (previous?.streamId !== live.streamId && live.updatedAt < (previous?.updatedAt ?? 0)) {
+      liveAuthority.current.delete(key);
+      setCliLiveStates({ ...cliLiveStatesRef.current });
+    }
+  };
   const [selectedCliSession, setSelectedCliSession] = useState<DashboardCliSessionSummary>();
   const [selectedPeerId, setSelectedPeerId] = useState<string>("local");
   const [pcPickerOpen, setPcPickerOpen] = useState(false);
@@ -317,14 +343,15 @@ function App() {
           message: "Refreshing sessions did not finish in time. Try again."
         });
       }
-      if (action === "startCodexCliSession" || action === "sendCodexCliSessionMessage") {
+      if (action === "startCodexCliSession" || action === "sendCodexCliSessionMessage" || action === "steerCodexCliSessionTurn") {
+        recordSubmissionResult(requestId, "failed");
         turnRequests.current.delete(requestId);
         showCliSessionFeedback({
           key: Date.now(),
           level: "warning",
           message: action === "startCodexCliSession"
             ? "Starting the Codex session timed out. Refresh sessions before trying again."
-            : "The Codex turn timed out. Refresh this session before trying again."
+            : "The request timed out and may still be running. Your draft is saved. Refresh this session before deciding whether to send it again."
         });
       }
       if (!onboardingOpen) return;
@@ -409,7 +436,10 @@ function App() {
           : undefined;
       const projectPath = cliSessions.find((session) => sameCliSessionTarget(session, target))?.projectPath ?? routeProject;
       const requestId = sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath });
-      if (requestId) messageRequests.current.set(requestId, target);
+      if (requestId) {
+        messageRequests.current.set(requestId, target);
+        messageRequestStreams.current.set(requestId, cliLiveStatesRef.current[cliSessionTargetKey(target)]?.streamId);
+      }
     },
     [cliSessions, sendAction]
   );
@@ -484,13 +514,21 @@ function App() {
       if (message.type === "dashboard:connection") {
         setRealtimeConnected(message.connected);
         if (!message.connected) {
+          liveAuthority.current.clear();
           if ([...messageRequests.current.values()].some((target) => sameCliSessionTarget(target, currentSessionTarget()))) {
             setCliSessionMessagesError("Connection lost while loading messages. Reconnecting; use Refresh conversation if needed.");
           }
           messageRequests.current.clear();
+          messageRequestStreams.current.clear();
           agentRequests.current.clear();
           setAgentMessages((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, value.loading ? { ...value, loading: false, error: "Connection lost while loading agent messages. Reconnecting; use Refresh if needed." } : value])));
         }
+        return;
+      }
+      if (message.type === "dashboard:codex-session-live") {
+        acceptLiveSnapshot(message.state);
+        if (!isCliTurnActive(message.state) && sameCliSessionTarget({ id: message.state.sessionId, deviceId: message.state.deviceId }, currentSessionTarget()))
+          requestCliSessionMessages(message.state.sessionId, message.state.deviceId, true);
         return;
       }
       if (message.type === "dashboard:host-status") {
@@ -499,13 +537,13 @@ function App() {
         return;
       }
       if (message.type === "dashboard:codex-request") {
-        setCodexRequests((current) => current.some((request) => request.id === message.request.id)
+        setCodexRequests((current) => current.some((request) => request.id === message.request.id && request.deviceId === message.request.deviceId)
           ? current : [...current, message.request]);
         setCodexRequestError(undefined);
         return;
       }
       if (message.type === "dashboard:codex-request-resolved") {
-        setCodexRequests((current) => current.filter((request) => request.id !== message.requestId));
+        setCodexRequests((current) => current.filter((request) => request.id !== message.requestId || request.deviceId !== message.deviceId));
         setCodexRequestError(undefined);
         return;
       }
@@ -673,10 +711,29 @@ function App() {
       }
       if (message.type === "dashboard:action-result" && message.action === "getCodexCliSessionMessages") {
         const requestedTarget = messageRequests.current.get(message.requestId);
+        const requestedStream = messageRequestStreams.current.get(message.requestId);
+        messageRequestStreams.current.delete(message.requestId);
         messageRequests.current.delete(message.requestId);
         if (!sameCliSessionTarget(requestedTarget, currentSessionTarget())) return;
         messageViewRevision.current++;
         if (message.status === "completed") {
+          if (message.payload?.cliSessionLive) {
+            acceptLiveSnapshot(message.payload.cliSessionLive, true);
+            if (!isCliTurnActive(message.payload.cliSessionLive)) {
+              historicalStreams.current.add(message.payload.cliSessionLive.streamId);
+              if (historicalStreams.current.size > 60) historicalStreams.current.delete(historicalStreams.current.values().next().value!);
+            }
+          }
+          else if (requestedTarget) {
+            const key = cliSessionTargetKey(requestedTarget);
+            if (cliLiveStatesRef.current[key]?.streamId === requestedStream) {
+              liveAuthority.current.delete(key);
+              const { [key]: removed, ...remaining } = cliLiveStatesRef.current;
+              void removed;
+              cliLiveStatesRef.current = remaining;
+              setCliLiveStates(remaining);
+            }
+          }
           setCliSessionMessages(message.payload?.cliSessionMessages ?? []);
           if (message.payload?.cliSession?.id)
             void writeCliSessionMessagesCache(message.payload.cliSession.id, message.payload?.cliSessionMessages ?? [], requestedTarget?.deviceId);
@@ -705,9 +762,16 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "sendCodexCliSessionMessage") {
+        recordSubmissionResult(message.requestId, message.status === "completed" && !message.payload?.cliSession ? "failed" : message.status);
+        if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         const target = turnRequests.current.get(message.requestId);
         turnRequests.current.delete(message.requestId);
         if (!target) return;
+        if (message.status === "completed" && !message.payload?.cliSession) {
+          showCliSessionFeedback({ key: Date.now(), level: "warning", message: "The send response was incomplete. Your draft is saved; refresh the original conversation before sending again." });
+          if (sameCliSessionTarget(target, currentSessionTarget())) requestCliSessionMessages(target.id, target.deviceId, true);
+          return;
+        }
         if (!sameCliSessionTarget(target, currentSessionTarget())) {
           if (message.status === "completed") {
             if (message.payload?.cliSessions) setCliSessions((current) => mergeCachedCliSessions(message.payload!.cliSessions!, current));
@@ -746,6 +810,8 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "startCodexCliSession") {
+        recordSubmissionResult(message.requestId, message.status === "completed" && !message.payload?.cliSession ? "failed" : message.status);
+        if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         if (message.status === "completed" && message.payload?.cliSession) {
           const session = message.payload.cliSession;
           const sessions = mergeCachedCliSessions([session, ...(message.payload.cliSessions ?? cliSessions).filter((candidate) => !sameCliSessionTarget(candidate, session))], cliSessions);
@@ -773,6 +839,11 @@ function App() {
             message: message.error ?? "New Codex chat could not be started."
           });
         }
+      }
+      if (message.type === "dashboard:action-result" && message.action === "steerCodexCliSessionTurn") {
+        recordSubmissionResult(message.requestId, message.status);
+        if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
+        showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.payload?.notice?.message ?? message.error ?? (message.status === "completed" ? "Follow-up sent to the running turn." : "Follow-up could not be confirmed. Your draft is saved; refresh before trying again.") });
       }
       if (message.type === "dashboard:action-result" && message.action === "cancelCodexCliSessionTurn") {
         showCliSessionFeedback({
@@ -1852,7 +1923,7 @@ function App() {
       {codexRequests[0]
         ? createPortal(
             <CodexRequestDialog
-              key={codexRequests[0].id}
+              key={`${codexRequests[0].deviceId ?? "local"}:${codexRequests[0].id}`}
               request={codexRequests[0]}
               queuedCount={codexRequests.length - 1}
               busy={isActionPending("respondCodexServerRequest")}
@@ -2454,12 +2525,16 @@ function App() {
               privacyMode={state.privacyMode}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
-              messages={cliSessionMessages}
+              messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
+              liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
+              connected={realtimeConnected && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected)) && (!selectedCliSession || !cliLiveStates[cliSessionTargetKey(selectedCliSession)] || liveAuthority.current.has(cliSessionTargetKey(selectedCliSession)))}
+              submissionResults={submissionResults}
+              steering={isActionPending("steerCodexCliSessionTurn")}
               composerConfig={cliComposerConfig}
               loading={isActionPending("listCodexCliSessions")}
               starting={isActionPending("startCodexCliSession")}
               messagesLoading={isActionPending("getCodexCliSessionMessages")}
-              sending={isActionPending("sendCodexCliSessionMessage")}
+              sending={isActionPending("sendCodexCliSessionMessage") && [...turnRequests.current.values()].some((target) => sameCliSessionTarget(target, selectedCliSession))}
               stopping={isActionPending("cancelCodexCliSessionTurn")}
               mutating={[
                 "openNewCodexWebview",
@@ -2571,7 +2646,8 @@ function App() {
                   targetDeviceId: selectedCliSession?.deviceId
                 })
               }
-              onStart={(input) => sendAction("startCodexCliSession", undefined, input)}
+              onStart={(input) => sendAction("startCodexCliSession", undefined, { ...input, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
+              onSteer={(input) => selectedCliSession ? sendAction("steerCodexCliSessionTurn", undefined, { ...input, sessionId: selectedCliSession.id, targetDeviceId: selectedCliSession.deviceId, projectPath: selectedCliSession.projectPath }) : undefined}
               onSend={(input) => {
                 if (!selectedCliSession) return;
                 const requestId = sendAction("sendCodexCliSessionMessage", undefined, {
@@ -2580,6 +2656,7 @@ function App() {
                   ...input
                 });
                 if (requestId) turnRequests.current.set(requestId, selectedCliSession);
+                return requestId;
               }}
               onStop={(session) =>
                 sendAction("cancelCodexCliSessionTurn", undefined, {

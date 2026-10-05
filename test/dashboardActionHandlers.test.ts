@@ -15,12 +15,13 @@ const { consumeResetCreditMock, fetchResetCreditsMock, refreshQuotaMock } = vi.h
 const { unloadAuthFileMock } = vi.hoisted(() => ({
   unloadAuthFileMock: vi.fn()
 }));
-const { readCodexCliSessionsMock, readCodexCliSessionSummaryMock, readCodexCliSessionMessagesMock, sendCodexCliSessionMessageMock } = vi.hoisted(
+const { readCodexCliSessionsMock, readCodexCliSessionSummaryMock, readCodexCliSessionMessagesMock, sendCodexCliSessionMessageMock, steerCodexCliSessionTurnMock } = vi.hoisted(
   () => ({
     readCodexCliSessionsMock: vi.fn(),
     readCodexCliSessionSummaryMock: vi.fn(),
     readCodexCliSessionMessagesMock: vi.fn(),
-    sendCodexCliSessionMessageMock: vi.fn()
+    sendCodexCliSessionMessageMock: vi.fn(),
+    steerCodexCliSessionTurnMock: vi.fn()
   })
 );
 
@@ -51,7 +52,8 @@ vi.mock("../src/services/codexSessionResume", async () => {
     readCodexCliSessions: readCodexCliSessionsMock,
     readCodexCliSessionSummary: readCodexCliSessionSummaryMock,
     readCodexCliSessionMessages: readCodexCliSessionMessagesMock,
-    sendCodexCliSessionMessage: sendCodexCliSessionMessageMock
+    sendCodexCliSessionMessage: sendCodexCliSessionMessageMock,
+    steerCodexCliSessionTurn: steerCodexCliSessionTurnMock
   };
 });
 
@@ -78,6 +80,7 @@ beforeEach(() => {
   refreshQuotaMock.mockReset();
   unloadAuthFileMock.mockReset().mockResolvedValue(undefined);
   sendCodexCliSessionMessageMock.mockReset().mockResolvedValue(undefined);
+  steerCodexCliSessionTurnMock.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -112,6 +115,55 @@ describe("CLI session list freshness", () => {
 });
 
 describe("executeDashboardActionMessage", () => {
+  it("bounds the request queue and expires settled requests before admitting another", async () => {
+    const ctx = createContext();
+    const request = { type: "dashboard:action" as const, action: "steerCodexCliSessionTurn" as const,
+      requestId: "queue-overflow", payload: { sessionId: "invalid", text: "Follow up" } };
+    for (let index = 0; index < 128; index++)
+      expect((await executeDashboardActionMessage(ctx, { ...request, requestId: `bounded-${index}` })).status).toBe("failed");
+    expect((await executeDashboardActionMessage(ctx, request)).errorMessage).toMatch(/queue is full/i);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 600_001);
+    try {
+      expect((await executeDashboardActionMessage(ctx, request)).errorMessage).not.toMatch(/queue is full/i);
+      expect(steerCodexCliSessionTurnMock).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+
+  it("joins duplicate session sends and rejects reusing their request ID with a different payload", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback === false ? true : fallback } as never);
+    const session = { id: "01a04882-d037-7a42-ad24-9afb61901188", title: "Session", status: "idle", archived: false };
+    readCodexCliSessionSummaryMock.mockResolvedValue(session);
+    readCodexCliSessionsMock.mockResolvedValue([session]);
+    readCodexCliSessionMessagesMock.mockResolvedValue([]);
+    let finish!: () => void;
+    sendCodexCliSessionMessageMock.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    const ctx = createContext();
+    const request = { type: "dashboard:action" as const, action: "sendCodexCliSessionMessage" as const,
+      requestId: "duplicate-session-send", payload: { sessionId: session.id, text: "Continue" } };
+    const first = executeDashboardActionMessage(ctx, request);
+    const duplicate = executeDashboardActionMessage(ctx, request);
+    expect((await executeDashboardActionMessage(ctx, { ...request, payload: { ...request.payload, text: "Changed" } })).status).toBe("failed");
+    finish();
+    expect((await first).status).toBe("completed");
+    expect((await duplicate).status).toBe("completed");
+    expect((await executeDashboardActionMessage(ctx, request)).status).toBe("completed");
+    expect(sendCodexCliSessionMessageMock).toHaveBeenCalledOnce();
+  });
+
+  it("requires a turn fence and preserves steering project ownership", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback === false ? true : fallback } as never);
+    const sessionId = "01a04882-d037-7a42-ad24-9afb61901188";
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id: sessionId, title: "Session", status: "running", archived: false, projectPath: "D:/project" });
+    const ctx = createContext();
+    expect((await executeDashboardActionMessage(ctx, { type: "dashboard:action", action: "steerCodexCliSessionTurn", requestId: "missing-fence", payload: { sessionId, text: "Follow up" } })).status).toBe("failed");
+    const mismatch = await executeDashboardActionMessage(ctx, { type: "dashboard:action", action: "steerCodexCliSessionTurn", requestId: "wrong-project-steer", payload: { sessionId, text: "Follow up", expectedTurnId: "turn-1", projectPath: "D:/other" } });
+    expect(mismatch.errorMessage).toContain("different project");
+    expect(steerCodexCliSessionTurnMock).not.toHaveBeenCalled();
+    const valid = await executeDashboardActionMessage(ctx, { type: "dashboard:action", action: "steerCodexCliSessionTurn", requestId: "valid-steer", payload: { sessionId, text: "Follow up", expectedTurnId: "turn-1" } });
+    expect(valid.status).toBe("completed");
+    expect(steerCodexCliSessionTurnMock).toHaveBeenCalledWith({ sessionId, text: "Follow up", expectedTurnId: "turn-1", attachments: undefined });
+  });
   it.each([true, false])("saves cross-PC sync as %s and reports completion", async (enabled) => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({

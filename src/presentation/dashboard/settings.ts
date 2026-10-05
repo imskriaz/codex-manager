@@ -40,6 +40,7 @@ export async function handleDashboardSettingUpdate(
     case "autoSwitchEnabled":
     case "autoSwitchReloadWindowEnabled":
     case "autoResumeEnabled":
+    case "autoResumeGoalOnlyEnabled":
     case "crossWindowAccountModeEnabled":
     case "autoSwitchRefreshAllBeforeSwitchEnabled":
     case "autoResetEnabled":
@@ -242,6 +243,7 @@ function resolveConfigurationTarget(
     key === "cliIntegrationEnabled" ||
     key === "codexSessionTransport" ||
     key === "autoResumeEnabled" ||
+    key === "autoResumeGoalOnlyEnabled" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||
     key === "fullCrossPcAccountSyncEnabled"

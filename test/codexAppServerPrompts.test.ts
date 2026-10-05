@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { attachCodexAppServerPrompts, respondCodexAppServerPrompt } from "../src/services/codexAppServerPrompts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { attachCodexAppServerPrompts, respondCodexAppServerPrompt, listPendingCodexAppServerPrompts } from "../src/services/codexAppServerPrompts";
 import type { AppServerRequest, CodexAppServerRpc } from "../src/services/codexAppServerRpc";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
@@ -14,8 +14,42 @@ function createRpc() {
   } as unknown as CodexAppServerRpc;
   return { rpc, emit: (request: AppServerRequest) => receive?.(request), answerServerRequest, rejectServerRequest };
 }
+afterEach(() => vi.useRealTimers());
 
 describe("Codex app-server dashboard prompts", () => {
+  it("deduplicates provider request IDs, refuses mismatched threads, and fails a full prompt queue", () => {
+    const fake = createRpc();
+    const detach = attachCodexAppServerPrompts(fake.rpc, "thread-1");
+    try {
+      const request = { id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", command: "echo hi" } };
+      fake.emit(request);
+      fake.emit(request);
+      expect(listPendingCodexAppServerPrompts()).toHaveLength(1);
+      fake.emit({ ...request, id: 2, params: { ...request.params, threadId: "other-thread" } });
+      expect(listPendingCodexAppServerPrompts()).toHaveLength(1);
+      for (let id = 3; id < 33; id++) fake.emit({ ...request, id });
+      expect(listPendingCodexAppServerPrompts()).toHaveLength(30);
+      expect(fake.rejectServerRequest).toHaveBeenCalledWith(32, expect.any(String));
+    } finally { detach(); }
+    expect(listPendingCodexAppServerPrompts()).toEqual([]);
+  });
+
+  it("retains a visible prompt on response-write failure, validates decisions, and expires unanswered prompts", () => {
+    vi.useFakeTimers();
+    const fake = createRpc();
+    const detach = attachCodexAppServerPrompts(fake.rpc, "thread-1");
+    try {
+      fake.emit({ id: 1, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", command: "echo hi" } });
+      const request = listPendingCodexAppServerPrompts()[0]!;
+      expect(() => respondCodexAppServerPrompt(request.id, "yes" as never)).toThrow(/Approve or Decline/);
+      fake.answerServerRequest.mockImplementationOnce(() => { throw new Error("write failed"); });
+      expect(() => respondCodexAppServerPrompt(request.id, "approve")).toThrow("write failed");
+      expect(listPendingCodexAppServerPrompts()).toHaveLength(1);
+      vi.advanceTimersByTime(5 * 60_000);
+      expect(listPendingCodexAppServerPrompts()).toEqual([]);
+      expect(fake.rejectServerRequest).toHaveBeenCalledWith(1, expect.stringMatching(/timed out/));
+    } finally { detach(); }
+  });
   it("requires an explicit one-request command approval and resolves its UI", () => {
     const fake = createRpc();
     const events: Array<{ type: string; request?: { id: string; title: string }; requestId?: string }> = [];

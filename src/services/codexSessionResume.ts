@@ -9,8 +9,9 @@ import * as readline from "readline";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
 import { prepareChatInput, type ChatAttachment } from "../domain/chatAttachments";
 import { appServerChatInput, withCliImageAttachments } from "./codexChatAttachments";
-import { CodexAppServerRpc, CodexAppServerTurnInterruptedError } from "./codexAppServerRpc";
+import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts } from "./codexAppServerPrompts";
+import { reserveCodexSessionLive } from "./codexSessionLive";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -83,6 +84,7 @@ type CliTranscriptMessageCache = {
   nextSequence: number;
   messages: DashboardCliSessionMessage[];
   windowed: boolean;
+  currentTurnId?: string;
 };
 type CliTranscriptReadResult = {
   messages: DashboardCliSessionMessage[];
@@ -1032,10 +1034,12 @@ async function startAppServerSession(options: {
 }, onStarted: (sessionId: string) => void): Promise<string> {
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
-  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
-  const detachPrompts = attachCodexAppServerPrompts(rpc, "");
+  const live = reserveCodexSessionLive();
+  let rpc: CodexAppServerRpc | undefined;
+  let detachPrompts: () => void = () => undefined;
   let threadId: string | undefined;
   try {
+    rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
     recordPersistentEvent("info", "session-start", "App-server thread/start requested", { transport: "app-server-stdio" });
     const result = await rpc.request<{ thread?: { id?: unknown } }>("thread/start", {
       cwd,
@@ -1046,6 +1050,8 @@ async function startAppServerSession(options: {
     const candidateThreadId = typeof result.thread?.id === "string" ? result.thread.id : undefined;
     if (!candidateThreadId || !SESSION_ID_PATTERN.test(candidateThreadId)) throw new Error("Codex app-server did not return a valid session ID.");
     threadId = candidateThreadId;
+    live.attach(threadId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(threadId!)?.cancelRequested === true && !activeAppServerTurns.get(threadId!)?.turnId);
+    detachPrompts = attachCodexAppServerPrompts(rpc, threadId);
     activeAppServerTurns.set(threadId, { rpc });
     await rpc.startAndWaitForTurn(threadId, {
       threadId: candidateThreadId,
@@ -1057,16 +1063,21 @@ async function startAppServerSession(options: {
     }, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(candidateThreadId);
       if (active) active.turnId = turnId;
+      live.started(turnId);
       onStarted(candidateThreadId);
     });
+    live.finish("completed");
     return threadId;
   } catch (error) {
-    if (error instanceof CodexAppServerTurnInterruptedError || (threadId && activeAppServerTurns.get(threadId)?.cancelRequested)) throw new CodexCliTurnCancelledError();
+    const cancelled = error instanceof CodexAppServerTurnInterruptedError || (threadId !== undefined && activeAppServerTurns.get(threadId)?.cancelRequested === true && !activeAppServerTurns.get(threadId)?.turnId);
+    live.finish(cancelled ? "cancelled" : error instanceof CodexAppServerDisconnectedError ? "disconnected" : "failed", error instanceof Error ? error.message : String(error));
+    if (cancelled) throw new CodexCliTurnCancelledError();
     throw error;
   } finally {
     detachPrompts();
     if (threadId) activeAppServerTurns.delete(threadId);
-    rpc.close();
+    rpc?.close();
+    live.dispose();
   }
 }
 
@@ -1083,10 +1094,14 @@ async function sendAppServerSessionMessage(options: {
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
   if (activeAppServerTurns.has(options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
-  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
-  const detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
-  activeAppServerTurns.set(options.sessionId, { rpc });
+  const live = reserveCodexSessionLive();
+  let rpc: CodexAppServerRpc | undefined;
+  let detachPrompts: () => void = () => undefined;
   try {
+    rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
+    live.attach(options.sessionId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
+    detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
+    activeAppServerTurns.set(options.sessionId, { rpc });
     await rpc.request("thread/resume", { threadId: options.sessionId, cwd });
     await rpc.startAndWaitForTurn(options.sessionId, {
       threadId: options.sessionId,
@@ -1098,16 +1113,35 @@ async function sendAppServerSessionMessage(options: {
     }, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(options.sessionId);
       if (active) active.turnId = turnId;
+      live.started(turnId);
     });
+    live.finish("completed");
   } catch (error) {
-    if (error instanceof CodexAppServerTurnInterruptedError || activeAppServerTurns.get(options.sessionId)?.cancelRequested) throw new CodexCliTurnCancelledError();
+    const cancelled = error instanceof CodexAppServerTurnInterruptedError || (activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
+    live.finish(cancelled ? "cancelled" : error instanceof CodexAppServerDisconnectedError ? "disconnected" : "failed", error instanceof Error ? error.message : String(error));
+    if (cancelled) throw new CodexCliTurnCancelledError();
     throw error;
   } finally {
     detachPrompts();
     activeAppServerTurns.delete(options.sessionId);
-    rpc.close();
+    rpc?.close();
+    live.dispose();
   }
   });
+}
+
+/** Steering uses the owned active connection, independently of the turn's mutation lock. */
+export async function steerCodexCliSessionTurn(options: { sessionId: string; text: string; attachments?: ChatAttachment[]; expectedTurnId: string }): Promise<void> {
+  validateSessionId(options.sessionId);
+  const prepared = prepareChatInput(options.text, options.attachments);
+  const active = activeAppServerTurns.get(options.sessionId);
+  if (!active || !active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
+  if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
+  const result = await active.rpc.request<{ turnId?: string }>("turn/steer", {
+    threadId: options.sessionId, expectedTurnId: options.expectedTurnId,
+    input: appServerChatInput(prepared.text, prepared.attachments)
+  });
+  if (result.turnId !== options.expectedTurnId) throw new Error("Codex did not confirm guidance for the expected turn. Refresh before retrying.");
 }
 
 function toAppServerSandbox(mode: DashboardCliSandboxMode, cwd: string): Record<string, unknown> {
@@ -1393,7 +1427,7 @@ export function parseCodexAppServerThreadItems(value: unknown): DashboardCliSess
     const timestamp = unixSecondsToIso(turn.startedAt);
     for (const [itemIndex, item] of (turn.items ?? []).entries()) {
       const parsed = parseAppServerThreadItem(item, `${turnIndex}-${itemIndex}`, status, timestamp);
-      if (parsed) output.push(parsed);
+      if (parsed) output.push({ ...parsed, ...(typeof turn.id === "string" ? { turnId: turn.id } : {}) });
     }
     if (turn.error?.message && typeof turn.error.message === "string") {
       const turnId = typeof turn.id === "string" || typeof turn.id === "number" ? String(turn.id) : String(turnIndex);
@@ -1403,6 +1437,7 @@ export function parseCodexAppServerThreadItems(value: unknown): DashboardCliSess
         text: turn.error.message.slice(0, MAX_SESSION_MESSAGE_CHARS),
         title: "Turn failed",
         status: "failed",
+        ...(typeof turn.id === "string" ? { turnId: turn.id } : {}),
         timestamp: unixSecondsToIso(turn.completedAt) ?? timestamp
       });
     }
@@ -1562,7 +1597,7 @@ function parseAppServerThreadItem(
       kind: "tool-call",
       title: status === "inProgress" ? `Using ${tool}` : failed ? `${tool} failed` : `Used ${tool}`,
       subtitle: server,
-      text: error ?? `${server} used ${tool}.`,
+      text: error ?? (typeof item["progress"] === "string" ? item["progress"] : `${server} used ${tool}.`),
       arguments: safeDisplayJson(rawArguments),
       result: error ?? readHumanText(item["result"] ?? item["contentItems"] ?? item["success"]),
       debug,
@@ -2886,10 +2921,11 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
     const combined = Buffer.concat([cached.remainder, snapshot.buffer]);
     const split = splitCompleteJsonlRecords(combined);
     let remainder = split.remainder;
-    const addedMessages = parseCliTranscriptLines(split.complete.toString("utf8"), cached.nextSequence);
+    const turnContext = { turnId: cached.currentTurnId };
+    const addedMessages = parseCliTranscriptLines(split.complete.toString("utf8"), cached.nextSequence, turnContext);
     const trailingText = remainder.toString("utf8");
     const trailingMessage = trailingText.trim()
-      ? parseCliSessionMessage(trailingText, cached.nextSequence + addedMessages.length)
+      ? parseTaggedCliSessionMessage(trailingText, cached.nextSequence + addedMessages.length, turnContext)
       : undefined;
     if (trailingMessage) {
       mergeCliTranscriptMessage(addedMessages, trailingMessage);
@@ -2904,7 +2940,8 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
       remainder,
       nextSequence: cached.nextSequence + addedMessages.length,
       messages: mergedMessages.slice(-MAX_VISIBLE_SESSION_MESSAGES),
-      windowed: cached.windowed
+      windowed: cached.windowed,
+      currentTurnId: turnContext.turnId
     };
   } else {
     let raw = snapshot.buffer;
@@ -2914,9 +2951,10 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
     }
     const split = splitCompleteJsonlRecords(raw);
     let remainder = split.remainder;
-    const messages = parseCliTranscriptLines(split.complete.toString("utf8"), 0);
+    const turnContext: { turnId?: string } = {};
+    const messages = parseCliTranscriptLines(split.complete.toString("utf8"), 0, turnContext);
     const trailingText = remainder.toString("utf8");
-    const trailingMessage = trailingText.trim() ? parseCliSessionMessage(trailingText, messages.length) : undefined;
+    const trailingMessage = trailingText.trim() ? parseTaggedCliSessionMessage(trailingText, messages.length, turnContext) : undefined;
     if (trailingMessage) {
       mergeCliTranscriptMessage(messages, trailingMessage);
       remainder = Buffer.alloc(0);
@@ -2928,7 +2966,8 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
       remainder,
       nextSequence: messages.length,
       messages: messages.slice(-MAX_VISIBLE_SESSION_MESSAGES),
-      windowed: snapshot.startOffset > 0
+      windowed: snapshot.startOffset > 0,
+      currentTurnId: turnContext.turnId
     };
   }
   cliTranscriptMessageCache.delete(cacheKey);
@@ -2955,15 +2994,30 @@ function splitCompleteJsonlRecords(buffer: Buffer): { complete: Buffer; remainde
     : { complete: Buffer.alloc(0), remainder: buffer };
 }
 
-function parseCliTranscriptLines(raw: string, startingSequence: number): DashboardCliSessionMessage[] {
+function parseCliTranscriptLines(raw: string, startingSequence: number, turnContext: { turnId?: string }): DashboardCliSessionMessage[] {
   const messages: DashboardCliSessionMessage[] = [];
   let sequence = startingSequence;
   for (const line of raw.split(/\r?\n/)) {
-    const message = parseCliSessionMessage(line, sequence);
+    const message = parseTaggedCliSessionMessage(line, sequence, turnContext);
     if (!message) continue;
     if (mergeCliTranscriptMessage(messages, message)) sequence += 1;
   }
   return messages;
+}
+
+function parseTaggedCliSessionMessage(line: string, sequence: number, context: { turnId?: string }): DashboardCliSessionMessage | undefined {
+  let endsTurn = false;
+  try {
+    const value = JSON.parse(line) as { type?: string; payload?: { type?: string; turn_id?: string; turnId?: string; id?: string } };
+    const payload = value.payload;
+    const id = payload?.turn_id ?? payload?.turnId;
+    if (typeof id === "string" && id.length <= 256 && (value.type === "turn_context" || payload?.type === "task_started")) context.turnId = id;
+    endsTurn = value.type === "event_msg" && ["task_complete", "task_completed", "turn_aborted"].includes(payload?.type ?? "");
+  } catch { /* Partial and malformed JSON records do not change turn ownership. */ }
+  const message = parseCliSessionMessage(line, sequence);
+  const tagged = message && context.turnId ? { ...message, turnId: context.turnId } : message;
+  if (endsTurn) context.turnId = undefined;
+  return tagged;
 }
 
 function mergeCliTranscriptMessage(
@@ -2979,6 +3033,7 @@ function mergeCliTranscriptMessage(
       ? messages.findIndex(
           (candidate) =>
             candidate.id === message.id &&
+            candidate.turnId === message.turnId &&
             candidate.kind !== "message" &&
             (candidate.kind === message.kind || message.kind === "image" || message.kind === "tool-call")
         )
@@ -2992,7 +3047,7 @@ function mergeCliTranscriptMessage(
   ) {
     for (let index = messages.length - 1; index >= Math.max(0, messages.length - 2); index -= 1) {
       const candidate = messages[index]!;
-      if (candidate.kind === "tool-call" && candidate.status === "inProgress") {
+      if (candidate.kind === "tool-call" && candidate.status === "inProgress" && candidate.turnId === message.turnId) {
         existingIndex = index;
         break;
       }
@@ -3001,7 +3056,7 @@ function mergeCliTranscriptMessage(
   if (existingIndex < 0 && (!message.kind || message.kind === "message")) {
     for (let index = messages.length - 1; index >= Math.max(0, messages.length - 3); index -= 1) {
       const candidate = messages[index]!;
-      if (candidate.role === message.role && candidate.text.trim() === message.text.trim()) {
+      if (candidate.role === message.role && candidate.turnId === message.turnId && candidate.text.trim() === message.text.trim()) {
         existingIndex = index;
         break;
       }

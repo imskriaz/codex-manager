@@ -10571,6 +10571,15 @@ html[data-theme="dark"] .cli-terminal-panel {
   margin: 0;
 }
 
+.dashboard-view-cards .saved-credit-summary { flex-wrap: wrap; gap: 4px 8px; }
+.dashboard-view-cards .saved-credit-summary .saved-plan-badge { flex-shrink: 0; }
+
+.cli-turn-details { max-height: 180px; overflow: auto; flex-shrink: 0; overflow-wrap: anywhere; }
+.cli-turn-details:empty { display: none; }
+.cli-turn-details .cli-activity > summary { display: list-item; list-style: disclosure-closed inside; }
+.cli-turn-details .cli-activity[open] > summary { list-style-type: disclosure-open; }
+.cli-turn-details .cli-activity > summary::-webkit-details-marker { display: inline; }
+
 .dashboard-view-cards .accounts-empty-filter {
   grid-column: 1 / -1;
 }

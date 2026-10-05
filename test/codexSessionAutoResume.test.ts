@@ -35,6 +35,7 @@ function createContext(initial?: unknown) {
 }
 
 beforeEach(() => {
+  vi.spyOn(autoResumeSelection, "filterAutoResumeGoalSessionIds").mockImplementation(async (ids) => ids);
   vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
 });
 
@@ -44,6 +45,62 @@ describe("durable open conversation recovery", () => {
   beforeEach(() => {
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  });
+
+  it("records a newly active goal without requiring its open tab to change", async () => {
+    vi.useFakeTimers();
+    const state = createContext();
+    vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([first]);
+    vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds").mockResolvedValue([first]);
+    let active = false;
+    vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds).mockImplementation(async (ids) => active ? ids : []);
+    const tracker = registerCodexSessionAutoResumeTracking(state.context);
+    try {
+      await vi.advanceTimersByTimeAsync(1);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
+      active = true;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+      const writes = state.context.workspaceState.update.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(state.context.workspaceState.update.mock.calls.length).toBe(writes);
+    } finally { tracker.dispose(); vi.useRealTimers(); }
+  });
+
+  it("filters saved recovery before closing and never closes when no active goal remains", async () => {
+    vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds).mockImplementation(async (ids) => ids.filter((id) => id === first));
+    const state = createContext([first, second]);
+    state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+    const open = vi.fn(async () => undefined);
+    const close = vi.fn(async () => undefined);
+    expect((await resumePersistedCodexSessions(state.context, open, close)).opened).toBe(1);
+    expect(open).toHaveBeenCalledWith(first, expect.any(AbortSignal));
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+    close.mockClear();
+    open.mockClear();
+    expect((await resumePersistedCodexSessions(createContext([second]).context, open, close)).attempted).toBe(0);
+    expect(close).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("retains both recovery records and existing tabs when goal storage cannot be read", async () => {
+    vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds).mockRejectedValue(new Error("goal storage unavailable"));
+    const state = createContext([first]);
+    state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+    const close = vi.fn();
+    await expect(resumePersistedCodexSessions(state.context, vi.fn(), close)).rejects.toThrow("goal storage unavailable");
+    expect(state.read()).toEqual([first]);
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([second]);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("rechecks goals that become inactive after closing before opening each saved session", async () => {
+    const state = createContext([first]);
+    vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds).mockResolvedValueOnce([first]).mockResolvedValue([]);
+    const open = vi.fn();
+    expect((await resumePersistedCodexSessions(state.context, open, async () => undefined)).opened).toBe(0);
+    expect(open).not.toHaveBeenCalled();
+    expect(state.read()).toBeUndefined();
   });
 
   it("records idle open tabs and restores them through a fresh host without a managed reload", async () => {

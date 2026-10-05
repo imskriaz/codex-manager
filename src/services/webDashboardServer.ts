@@ -52,6 +52,9 @@ import {
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
+import { listCodexSessionLiveStates } from "./codexSessionLive";
+import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
+import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 
 const WEB_DASHBOARD_PORT = 39875;
 const LEGACY_PASSWORD_SECRET_KEY = "codexManager.webDashboard.passwordHash.v1";
@@ -73,6 +76,7 @@ const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const CLI_SESSION_RECONCILE_MS = 30_000;
 
 export function getPeerActionTimeoutMs(action: DashboardActionName): number {
+  if (action === "steerCodexCliSessionTurn") return 40_000;
   if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession") {
     return 15 * 60_000 + 15_000;
   }
@@ -172,6 +176,11 @@ type PeerCodexRequestResolvedMessage = {
 type PeerAggregateMessage = {
   type: "peer:aggregate";
   peers: PeerSessionMessage[];
+};
+type PeerCodexSessionLiveMessage = {
+  type: "peer:codex-session-live";
+  deviceId: string;
+  state: DashboardCodexSessionLiveState;
 };
 type LocalPeerState = Pick<PeerSessionMessage, "sessions" | "accounts" | "enablementRegistry">;
 
@@ -371,6 +380,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private notificationResolutionSubscription: vscode.Disposable | undefined;
   private readonly assetCache = new Map<string, { content: Buffer; gzip: Buffer; etag: string }>();
   private readonly dashboardRealtimeSubscription: () => void;
+  private readonly remoteSessionLive = new Map<string, DashboardCodexSessionLiveState>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -397,6 +407,10 @@ export class WebDashboardServer implements vscode.Disposable {
     );
     this.encryptedSync?.setRealtimeSyncPublisher?.(() => this.publishPeerVault(true));
     this.dashboardRealtimeSubscription = subscribeDashboardRealtime((message) => {
+      if (message.type === "dashboard:codex-session-live") {
+        this.publishSessionLive(message.state);
+        return;
+      }
       const remoteOrigin = message.type === "dashboard:terminal-output" ? message.output.deviceId
         : message.type === "dashboard:terminal-complete" ? message.result.deviceId
           : message.type === "dashboard:codex-request" ? message.request.deviceId
@@ -516,6 +530,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.server = undefined;
     for (const socket of this.webSocketClients) socket.close();
     this.webSocketClients.clear();
+    this.remoteSessionLive.clear();
     this.workspaceViewerLastSeen.clear();
     this.notificationMirrorSubscription?.dispose();
     this.notificationMirrorSubscription = undefined;
@@ -1055,6 +1070,8 @@ export class WebDashboardServer implements vscode.Disposable {
       for (const request of [...listPendingCodexAppServerPrompts(), ...this.remoteCodexPrompts.values()]) {
         messages.push({ type: "dashboard:codex-request", request });
       }
+      for (const state of [...listCodexSessionLiveStates(), ...this.currentRemoteSessionLive()])
+        messages.push({ type: "dashboard:codex-session-live", state });
     }
     messages.push({ type: "dashboard:snapshot", state: await this.buildState() });
     return { messages, reloadAfterResponse };
@@ -1203,7 +1220,8 @@ export class WebDashboardServer implements vscode.Disposable {
       payload: {
         ...payload,
         ...(Array.isArray(payload["cliSessions"]) ? { cliSessions: payload["cliSessions"].map(decorateSession) } : {}),
-        ...(payload["cliSession"] ? { cliSession: decorateSession(payload["cliSession"]) } : {})
+        ...(payload["cliSession"] ? { cliSession: decorateSession(payload["cliSession"]) } : {}),
+        ...(isCodexSessionLiveState(payload["cliSessionLive"]) ? { cliSessionLive: { ...payload["cliSessionLive"], deviceId } } : {})
       }
     };
   }
@@ -1253,12 +1271,56 @@ export class WebDashboardServer implements vscode.Disposable {
     });
   }
 
+  private currentRemoteSessionLive(): DashboardCodexSessionLiveState[] {
+    const now = Date.now();
+    for (const [key, state] of this.remoteSessionLive) {
+      if (state.updatedAt > now + 30_000 || now - state.updatedAt >= 5 * 60_000 ||
+        ((state.status === "starting" || state.status === "running") && !this.peerSessions.has(state.deviceId!)))
+        this.remoteSessionLive.delete(key);
+    }
+    return [...this.remoteSessionLive.values()];
+  }
+
+  private publishSessionLive(state: DashboardCodexSessionLiveState): void {
+    if (!isCodexSessionLiveState(state)) return;
+    if (state.deviceId) {
+      if (state.updatedAt > Date.now() + 30_000 || Date.now() - state.updatedAt >= 5 * 60_000) return;
+      this.currentRemoteSessionLive();
+      const key = JSON.stringify([state.deviceId, state.sessionId]);
+      if (!isNewerCodexSessionLiveState(state, this.remoteSessionLive.get(key))) return;
+      this.remoteSessionLive.set(key, state);
+      while (this.remoteSessionLive.size > 30 || Buffer.byteLength(JSON.stringify([...this.remoteSessionLive.values()])) > 4 * 1024 * 1024)
+        this.remoteSessionLive.delete(this.remoteSessionLive.keys().next().value!);
+    }
+    const message = JSON.stringify({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
+    for (const socket of this.webSocketClients) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, "Live updates need to reconnect"); continue; }
+      socket.send(message);
+    }
+    const peerMessage = JSON.stringify({ type: "peer:codex-session-live", deviceId: state.deviceId ?? this.deviceId,
+      state: { ...state, deviceId: undefined } } satisfies PeerCodexSessionLiveMessage);
+    if (!state.deviceId && this.peerSocket?.readyState === UndiciWebSocket.OPEN) {
+      if (this.peerSocket.bufferedAmount > 4 * 1024 * 1024) this.peerSocket.close(1013, "Live updates need to reconnect");
+      else this.peerSocket.send(peerMessage);
+    }
+    for (const [deviceId, socket] of this.peerSockets) {
+      if (deviceId === state.deviceId || socket.readyState !== WebSocket.OPEN) continue;
+      if (socket.bufferedAmount > 4 * 1024 * 1024) socket.close(1013, "Live updates need to reconnect");
+      else socket.send(peerMessage);
+    }
+  }
+
   private async sendRealtimeSnapshot(socket: WebSocket): Promise<void> {
     try {
       if (socket.readyState === WebSocket.OPEN) {
         const state = await this.buildState();
         this.lastRealtimeSignature = buildDashboardStateSignature(state);
         socket.send(JSON.stringify({ type: "dashboard:snapshot", state }));
+        for (const live of [...listCodexSessionLiveStates(), ...this.currentRemoteSessionLive()]) {
+          if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, "Live updates need to reconnect"); break; }
+          socket.send(JSON.stringify({ type: "dashboard:codex-session-live", state: live } satisfies DashboardHostMessage));
+        }
       }
     } catch (error) {
       console.warn("[codexManager] WebSocket snapshot failed", error);
@@ -1808,7 +1870,7 @@ export class WebDashboardServer implements vscode.Disposable {
         Partial<PeerTerminalOutputMessage> &
         Partial<PeerTerminalCompleteMessage> &
         Partial<PeerCodexRequestMessage> &
-        Partial<PeerCodexRequestResolvedMessage>;
+        Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionLiveMessage>;
       if (message.type === "peer:vault") {
         await this.acceptPeerVault(message, sourceSocket);
         return;
@@ -1832,6 +1894,13 @@ export class WebDashboardServer implements vscode.Disposable {
           this.peerActionWaiters.delete(message.requestId);
           waiter(message as unknown as PeerActionResultMessage);
         }
+        return;
+      }
+      if (message.type === "peer:codex-session-live") {
+        if (!this.authenticatedPeerSockets.has(sourceSocket) || typeof message.deviceId !== "string" ||
+          this.peerSockets.get(message.deviceId) !== sourceSocket || !isCodexSessionLiveState(message.state) ||
+          message.deviceId === this.deviceId || (message.state.deviceId && message.state.deviceId !== message.deviceId)) return;
+        publishDashboardRealtime({ type: "dashboard:codex-session-live", state: { ...message.state, deviceId: message.deviceId } });
         return;
       }
       if (message.type === "peer:terminal-output" && message.output && message.deviceId !== this.deviceId) {
@@ -1878,6 +1947,12 @@ export class WebDashboardServer implements vscode.Disposable {
         peers: [local, ...this.peerSessions.values()]
       } satisfies PeerAggregateMessage)
     );
+    for (const state of [...listCodexSessionLiveStates(), ...this.currentRemoteSessionLive()]) {
+      if (this.peerSockets.get(state.deviceId ?? "") === socket) continue;
+      if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, "Live updates need to reconnect"); break; }
+      socket.send(JSON.stringify({ type: "peer:codex-session-live", deviceId: state.deviceId ?? this.deviceId,
+        state: { ...state, deviceId: undefined } } satisfies PeerCodexSessionLiveMessage));
+    }
   }
 
   private async broadcastPeerAggregate(): Promise<void> {
@@ -2040,6 +2115,10 @@ export class WebDashboardServer implements vscode.Disposable {
     socket.addEventListener("open", () => {
       void (async () => {
         await this.publishPeerSessions();
+        for (const state of listCodexSessionLiveStates()) {
+          if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, "Live updates need to reconnect"); break; }
+          socket.send(JSON.stringify({ type: "peer:codex-session-live", deviceId: this.deviceId, state } satisfies PeerCodexSessionLiveMessage));
+        }
         await this.publishPeerVault();
       })();
       if (this.peerHttpHeartbeatTimer) clearInterval(this.peerHttpHeartbeatTimer);
@@ -2055,7 +2134,7 @@ export class WebDashboardServer implements vscode.Disposable {
             Partial<PeerTerminalOutputMessage> &
             Partial<PeerTerminalCompleteMessage> &
             Partial<PeerCodexRequestMessage> &
-            Partial<PeerCodexRequestResolvedMessage>;
+            Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionLiveMessage>;
           if (message.type === "peer:action") void this.executePeerAction(message, (value) => socket.send(value));
           if (message.type === "peer:action-result" && typeof message.requestId === "string") {
             const waiter = this.peerActionWaiters.get(message.requestId);
@@ -2066,6 +2145,11 @@ export class WebDashboardServer implements vscode.Disposable {
           }
           if (message.type === "peer:terminal-output" && message.output && message.deviceId !== this.deviceId) {
             publishDashboardRealtime({ type: "dashboard:terminal-output", output: { ...message.output, deviceId: message.deviceId } });
+          }
+          if (message.type === "peer:codex-session-live" && typeof message.deviceId === "string" &&
+            message.deviceId !== this.deviceId && this.peerSessions.has(message.deviceId) &&
+            isCodexSessionLiveState(message.state) && (!message.state.deviceId || message.state.deviceId === message.deviceId)) {
+            publishDashboardRealtime({ type: "dashboard:codex-session-live", state: { ...message.state, deviceId: message.deviceId } });
           }
           if (message.type === "peer:terminal-complete" && message.result && message.deviceId !== this.deviceId) {
             publishDashboardRealtime({ type: "dashboard:terminal-complete", result: { ...message.result, deviceId: message.deviceId } });

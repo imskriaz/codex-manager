@@ -13,6 +13,43 @@ function child() {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
 describe("app-server initialization recovery", () => {
+  it("bounds incomplete protocol lines and rejects every waiter on disconnect", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    const request = rpc.request("thread/read", {});
+    processChild.stdout.write("x".repeat(4 * 1024 * 1024 + 1));
+    await expect(request).rejects.toThrow(/oversized unfinished/);
+    expect(processChild.kill).toHaveBeenCalled();
+  });
+
+  it("keeps server requests separate when their ID matches a client request", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    const request = rpc.request("thread/read", {});
+    const callback = vi.fn();
+    rpc.onServerRequest(callback);
+    processChild.stdout.write(JSON.stringify({ id: 2, method: "item/tool/requestUserInput", params: {} }) + "\n");
+    expect(callback).toHaveBeenCalled();
+    processChild.stdout.write(JSON.stringify({ id: 2, result: { confirmed: true } }) + "\n");
+    await expect(request).resolves.toEqual({ confirmed: true });
+    rpc.close();
+  });
+
+  it("refuses oversized requests and a full request queue without leaking waiters", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    await expect(rpc.request("turn/start", { text: "x".repeat(2 * 1024 * 1024 + 1) })).rejects.toThrow(/too large/);
+    const requests = Array.from({ length: 64 }, () => rpc.request("thread/read", {}).catch((error: unknown) => error));
+    await expect(rpc.request("thread/read", {})).rejects.toThrow(/queue is full/);
+    rpc.close();
+    expect((await Promise.all(requests)).every((value) => value instanceof Error)).toBe(true);
+  });
   it("ignores malformed protocol envelopes without breaking initialization", async () => {
     const processChild = child();
     const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());

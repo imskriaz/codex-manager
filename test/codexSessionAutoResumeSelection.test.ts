@@ -3,10 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
+import { filterAutoResumeGoalSessionIds, readAutoResumeCodexSessionIds as selectSessions } from "../src/services/codexSessionAutoResumeSelection";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
 
 const roots: string[] = [];
+const readAutoResumeCodexSessionIds = (...args: Parameters<typeof selectSessions>) =>
+  selectSessions(args[0], args[1], args[2], args[3], args[4], args[5] ?? false);
 const ids = [
   "01a04882-d037-7a42-ad24-9afb61901188",
   "01a04882-d037-7a42-ad24-9afb61901189",
@@ -39,6 +41,31 @@ function goals(home: string, statuses: Array<string | null>) {
   db.close();
 }
 describe("auto resume selection", () => {
+  it("goal-only filters capture and open tabs to active parent goals", async () => {
+    const home = await fixture();
+    goals(home, ["active", "active", "complete"]);
+    expect(await selectSessions(home, [home], ids, undefined, "running", true)).toEqual([ids[0]]);
+    expect(await selectSessions(home, [], ids, undefined, "open", true)).toEqual([ids[0]]);
+  });
+  it.each(["paused", "blocked", "complete", "usage_limited", "budget_limited"])(
+    "goal-only excludes %s goals", async (status) => {
+      const home = await fixture();
+      goals(home, [status, "active", null]);
+      expect(await selectSessions(home, [home], ids, undefined, "running", true)).toEqual([]);
+    }
+  );
+  it("goal-only skips missing goals and retains recovery on corrupt or incompatible storage", async () => {
+    const home = await fixture();
+    expect(await filterAutoResumeGoalSessionIds(ids, home, undefined, true)).toEqual([]);
+    await writeFile(path.join(home, "goals_1.sqlite"), "corrupt");
+    await expect(filterAutoResumeGoalSessionIds(ids, home, undefined, true)).rejects.toThrow("Saved recovery was retained");
+    await rm(path.join(home, "goals_1.sqlite"));
+    const db = new DatabaseSync(path.join(home, "goals_1.sqlite"));
+    db.exec("CREATE TABLE future_schema (id TEXT)");
+    db.close();
+    await expect(filterAutoResumeGoalSessionIds(ids, home, undefined, true)).rejects.toThrow("Saved recovery was retained");
+    expect(await filterAutoResumeGoalSessionIds(ids, home, undefined, false)).toEqual(ids);
+  });
   it("records open idle parents without running locks and skips open sub-agents", async () => {
     const home = await fixture();
     await rm(path.join(home, "thread-writer-locks"), { recursive: true });

@@ -31,6 +31,7 @@ import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindi
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "../../services/dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
 import { listPendingCodexAppServerPrompts } from "../../services/codexAppServerPrompts";
+import { listCodexSessionLiveStates } from "../../services/codexSessionLive";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
 const REOPEN_AFTER_HOST_RESTART_KEY = "codexManager.reopenDashboardAfterHostRestart";
@@ -130,25 +131,40 @@ class DashboardPanelController {
       }
     );
     subscribeDashboardRealtime((message) => {
-      if (message.type === "dashboard:terminal-output" || message.type === "dashboard:terminal-complete" || message.type === "dashboard:codex-request" || message.type === "dashboard:codex-request-resolved") {
+      if (message.type === "dashboard:terminal-output" || message.type === "dashboard:terminal-complete" || message.type === "dashboard:codex-request" || message.type === "dashboard:codex-request-resolved" || message.type === "dashboard:codex-session-live") {
         void this.panel?.webview.postMessage(message);
       }
     });
   }
 
-  open(): void {
+  open(restoredPanel?: vscode.WebviewPanel): void {
     const panelTitle = this.getPanelTitle();
     const iconUri = this.getPanelIconUri();
     const targetColumn = this.getTargetViewColumn();
 
+    if (restoredPanel && this.panel && restoredPanel !== this.panel) {
+      restoredPanel.dispose();
+    }
     if (!this.panel) {
-      this.panel = vscode.window.createWebviewPanel(DASHBOARD_VIEW_TYPE, panelTitle, targetColumn, {
+      this.panel = restoredPanel ?? vscode.window.createWebviewPanel(DASHBOARD_VIEW_TYPE, panelTitle, targetColumn, {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
       });
+      this.panel.title = panelTitle;
+      this.panel.webview.options = {
+        enableScripts: true,
+        localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
+      };
       this.panel.iconPath = iconUri;
-      this.panel.webview.html = renderDashboardShell(this.context, this.panel.webview, this.settingsStore);
+      try {
+        this.panel.webview.html = renderDashboardShell(this.context, this.panel.webview, this.settingsStore);
+      } catch (error) {
+        const failedPanel = this.panel;
+        this.panel = undefined;
+        if (!restoredPanel) failedPanel.dispose();
+        throw error;
+      }
 
       this.panel.onDidDispose(() => {
         if (this.publishTimer) {
@@ -170,6 +186,9 @@ class DashboardPanelController {
             this.webviewReady = true;
             this.schedulePublishState();
             this.startCliSessionRealtime();
+            for (const state of listCodexSessionLiveStates()) {
+              void this.panel?.webview.postMessage({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
+            }
             for (const request of listPendingCodexAppServerPrompts()) {
               void this.panel?.webview.postMessage({ type: "dashboard:codex-request", request } satisfies DashboardHostMessage);
             }
@@ -499,6 +518,19 @@ export function openQuotaSummaryPanel(context: vscode.ExtensionContext, repo: Ac
   dashboardPanelController.open();
 }
 
+export function registerDashboardPanelSerializer(
+  context: vscode.ExtensionContext, repo: AccountsRepository
+): vscode.Disposable {
+  return vscode.window.registerWebviewPanelSerializer(DASHBOARD_VIEW_TYPE, {
+    async deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
+      dashboardPanelController ??= new DashboardPanelController(context, repo);
+      dashboardPanelController.open(panel);
+      if (context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false))
+        await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
+    }
+  });
+}
+
 export async function prepareQuotaSummaryPanelForExtensionHostRestart(): Promise<boolean> {
   return dashboardPanelController?.prepareForExtensionHostRestart() ?? false;
 }
@@ -510,8 +542,8 @@ export async function restoreQuotaSummaryPanelAfterExtensionHostRestart(
   if (!context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false)) {
     return;
   }
-  await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
   openQuotaSummaryPanel(context, repo);
+  await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
 }
 
 export async function refreshQuotaSummaryPanel(): Promise<void> {

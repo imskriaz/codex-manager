@@ -2,6 +2,7 @@ import type { DashboardActionName, DashboardClientMessage } from "../../src/doma
 
 declare function acquireVsCodeApi(): {
   postMessage(message: DashboardClientMessage): void;
+  setState?(state: { dashboardOpen: true }): void;
 };
 
 const vscodeApi =
@@ -12,6 +13,8 @@ const vscodeApi =
           console.debug("[codex-manager] dashboard message", message);
         }
       };
+
+if ("setState" in vscodeApi) vscodeApi.setState?.({ dashboardOpen: true });
 
 export const BLOCKING_GLOBAL_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
@@ -50,6 +53,8 @@ export function getActionTimeoutMs(action: DashboardActionName): number {
       return 60_000;
     case "cancelWorkspaceTerminalCommand":
       return 10_000;
+    case "steerCodexCliSessionTurn":
+      return 45_000;
     case "details":
     case "reloadPrompt":
     case "reauthorize":
