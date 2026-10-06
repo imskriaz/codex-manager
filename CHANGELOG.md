@@ -2,6 +2,7 @@
 
 ## 1.2.15
 
+- Prevent stale session project paths from being reused by new chats; new sessions now choose only currently open workspace folders.
 - Fit mobile session headers into two compact title/meta rows with status and a single actions menu. Remove the duplicate Sessions button and compact composer, goal, and live status rows while preserving their controls.
 
 - Keep browser session links compact by resolving the project from the session record; legacy project query links are cleaned up when opened.

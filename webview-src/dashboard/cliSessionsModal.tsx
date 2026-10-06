@@ -504,16 +504,16 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const hasInProgressActivity = props.messages.some((message) => message.status === "inProgress");
   const projects = props.composerConfig?.projects ?? [];
   const composerProjects = useMemo(() => {
-    const known = new Set(projects.map((project) => project.path.toLocaleLowerCase()));
-    const extraPaths = [props.selectedSession?.projectPath, newChatProject, ...props.sessions.map((session) => session.projectPath)]
-      .filter((projectPath): projectPath is string => typeof projectPath === "string" && projectPath.length > 0 && !known.has(projectPath.toLocaleLowerCase()));
+    const known = new Set(projects.map((project) => canonicalWebPath(project.path)));
+    const extraPaths = (props.selectedSession ? [props.selectedSession.projectPath] : [])
+      .filter((projectPath): projectPath is string => typeof projectPath === "string" && projectPath.length > 0 && !known.has(canonicalWebPath(projectPath)));
     const uniqueExtraPaths = extraPaths.filter((projectPath, index, all) => all.findIndex((candidate) => canonicalWebPath(candidate) === canonicalWebPath(projectPath)) === index);
     return [...projects, ...uniqueExtraPaths.map((projectPath) => ({
       id: `session-project:${projectPath}`,
       label: projectDisplayName(projectPath),
       path: projectPath
     }))];
-  }, [newChatProject, projects, props.selectedSession?.projectPath, props.sessions]);
+  }, [projects, props.selectedSession?.projectPath]);
   const railFiles = useMemo(() => props.messages.flatMap((message) => message.changes ?? []).filter((change, index, all) => all.findIndex((item) => item.path === change.path) === index), [props.messages]);
   const railAgents = useMemo(() => props.messages.filter((message) => message.kind === "collaboration"), [props.messages]);
   const retryMessage = (id: string): void => {
@@ -535,8 +535,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const startNewChat = (nextProject?: string): void => {
     if (mobileLayout) setRailCollapsed(true);
     props.onBackToList();
-    setNewChatProject(nextProject ?? projectPath ?? projects[0]?.path ?? "");
-    setProjectPath(nextProject ?? projectPath ?? projects[0]?.path);
+    const selected = projects.find((project) => nextProject && canonicalWebPath(project.path) === canonicalWebPath(nextProject))?.path ?? projects[0]?.path ?? "";
+    setNewChatProject(selected);
+    setProjectPath(selected);
   };
   const localPeerId = props.peers?.find((peer) => peer.local)?.id;
   const pcGroups = useMemo(() => {

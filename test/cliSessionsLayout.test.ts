@@ -541,7 +541,7 @@ describe("sessions sidebar layout", () => {
     expect(settings).not.toContain("Codex default");
     expect(main).not.toContain("codexSessionDefault");
     expect(main).toContain('requestSessionAction("openCodexCliSession"');
-    expect(source).toContain("setNewChatProject(nextProject ?? projectPath ?? projects[0]?.path ?? \"\")");
+    expect(source).toContain("const selected = projects.find((project) => nextProject && canonicalWebPath(project.path) === canonicalWebPath(nextProject))?.path ?? projects[0]?.path ?? \"\";");
     expect(source).not.toContain("props.onOpenNewInCodex();");
   });
 
