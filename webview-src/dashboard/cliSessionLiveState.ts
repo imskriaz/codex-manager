@@ -1,8 +1,22 @@
-import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../../src/domain/dashboard/types";
+import type { DashboardCliSessionMessage, DashboardCliSessionSummary, DashboardCodexSessionLiveState } from "../../src/domain/dashboard/types";
 import { isNewerCodexSessionLiveState } from "../../src/domain/codexSessionLive";
 
 export function isCliTurnActive(state: DashboardCodexSessionLiveState | undefined): boolean {
   return state?.status === "starting" || state?.status === "running";
+}
+
+/** Keep a delayed session-index refresh from reviving a completed live turn. */
+export function reconcileCliSessionStatuses(
+  sessions: DashboardCliSessionSummary[],
+  liveStates: Record<string, DashboardCodexSessionLiveState>
+): DashboardCliSessionSummary[] {
+  return sessions.map((session) => {
+    const live = liveStates[`${session.deviceId ?? "local"}:${session.id}`];
+    if (!live || live.sessionId !== session.id || (live.deviceId ?? undefined) !== (session.deviceId ?? undefined)) return session;
+    if (isCliTurnActive(live)) return { ...session, status: "running" };
+    if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", canStop: false };
+    return session;
+  });
 }
 
 /** Full snapshots replace earlier snapshots; a terminal stream cannot become running again. */

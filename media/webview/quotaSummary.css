@@ -14867,7 +14867,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-completed-work > summary::-webkit-details-marker { display: none; }
 .cli-workspace .cli-completed-work > summary svg { width: 12px; height: 12px; transform: rotate(-90deg); }
 .cli-workspace .cli-completed-work[open] > summary svg { transform: rotate(0); }
-.cli-workspace .cli-completed-work > summary small { color: var(--danger); }
+
 .cli-workspace .cli-completed-work-body { display: grid; gap: 12px; padding-top: 10px; }
 .cli-workspace .cli-completed-changes { min-width: 0; overflow: hidden; border: 1px solid var(--border-default); border-radius: 9px; }
 .cli-workspace .cli-completed-changes header { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border-default); font-size: 12px; }

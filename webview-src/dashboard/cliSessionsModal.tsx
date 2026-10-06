@@ -595,7 +595,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const renderSession = (session: DashboardCliSessionSummary): preact.ComponentChildren => session.archived ? (
     <div role="listitem" class="cli-session-row is-archived" key={`${session.deviceId ?? "local"}:${session.id}`}>
-        <span class="cli-session-row-main"><strong title={session.title}>{session.title}</strong><small>{relativeTime(session.updatedAt)}</small></span>
+        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small></span>
       <span class="cli-session-row-actions">
         <IconButton label={`Restore ${session.title}`} disabled={props.mutating} onClick={() => props.onUnarchive(session)}><RestoreIcon /></IconButton>
         <IconButton label={`Delete ${session.title}`} disabled={props.mutating} danger onClick={() => setDeleteTarget(session)}><TrashIcon /></IconButton>
@@ -607,7 +607,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         <span class="cli-session-row-status" title={session.status === "running" || (props.liveState?.sessionId === session.id && props.liveState.deviceId === session.deviceId && isCliTurnActive(props.liveState)) ? "Running" : session.locked ? "Locked" : "Complete"} aria-label={session.status === "running" || (props.liveState?.sessionId === session.id && props.liveState.deviceId === session.deviceId && isCliTurnActive(props.liveState)) ? "Running" : session.locked ? "Locked" : "Complete"}>
           {session.status === "running" || (props.liveState?.sessionId === session.id && (props.liveState.deviceId ?? undefined) === (session.deviceId ?? undefined) && isCliTurnActive(props.liveState)) ? <span class="cli-session-spinner" aria-hidden="true" /> : session.locked ? <ShieldIcon /> : <CheckIcon />}
         </span>
-        <span class="cli-session-row-main"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta">{relativeTime(session.updatedAt)}</small></span>
+        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small></span>
       </button>
       <span class="cli-session-row-actions">
         {session.status === "running" ? (session.canStop ? <IconButton label={`Stop ${session.title}`} disabled={props.mutating} onClick={() => props.onStop(session)}><StopIcon /></IconButton> : null) : <>
@@ -915,7 +915,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                     ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />
                     : <SessionMessage key={item.id} message={item} logoUri={props.logoUri} turnCopyText={turnCopyText.get(item.id)} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? () => retryMessage(item.id) : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />)}
                   {showWorking ? <WorkingMessage /> : null}
-                  <LiveTurnDetails state={props.liveState} connected={props.connected !== false} />
+                  <LiveTurnDetails state={props.liveState} />
                   <div />
                 </div>
               </section>
@@ -926,8 +926,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : composerBlockedByOwner ? (
-                <div class="cli-composer-unavailable is-running" role="status" title={`${props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}. Wait for that run to finish.` : "Session locked. Wait for Codex to release the lock."} Next turn: ${selectedModel?.label ?? model ?? "Default"} · ${reasoningEffort ?? "Default"} · ${sandboxMode}`}>
-                  {props.selectedSession.status === "running" ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span><strong>{props.selectedSession.status === "running" ? "Running elsewhere · wait to send" : "Session locked · wait to send"}</strong><small class="cli-locked-turn-settings">{selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full access" : sandboxMode === "read-only" ? "Read only" : "Workspace write"}</small></span>
+                <div class={`cli-composer-unavailable is-running ${props.connected === false ? "is-reconnecting" : ""}`} role="status" title={props.connected === false ? "The live connection is unavailable. Sending resumes after reconnect." : `${props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}. Wait for that run to finish.` : "Session locked. Wait for Codex to release the lock."} Next turn: ${selectedModel?.label ?? model ?? "Default"} · ${reasoningEffort ?? "Default"} · ${sandboxMode}`}>
+                  {props.connected === false ? <span class="cli-live-spinner" aria-hidden="true" /> : props.selectedSession.status === "running" ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span><strong>{props.connected === false ? "Reconnecting · live updates paused" : props.selectedSession.status === "running" ? "Running elsewhere · wait to send" : "Session locked · wait to send"}</strong><small class="cli-locked-turn-settings"> - {selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full access" : sandboxMode === "read-only" ? "Read only" : "Workspace write"}</small></span>
                 </div>
               ) : (
                 <Composer
@@ -1154,11 +1154,10 @@ function Composer(props: {
   </form><div class="cli-composer-location"><EmptyFolderIcon /><select name="project-path" value={props.projectPath ?? ""} aria-label="Project" title={props.projectPath ?? "Work locally"} disabled={props.projectLocked} onChange={(event) => props.onProject(event.currentTarget.value)}>{props.projects.map((project) => <option value={project.path} key={project.id}>{project.label}</option>)}</select></div></>;
 }
 
-function LiveTurnDetails({ state, connected }: { state?: DashboardCodexSessionLiveState; connected: boolean }) {
+function LiveTurnDetails({ state }: { state?: DashboardCodexSessionLiveState }) {
   const tokens = state?.tokenUsage;
   const counts = tokens ? [["Input", tokens.input], ["Cached", tokens.cachedInput], ["Output", tokens.output], ["Reasoning", tokens.reasoningOutput], ["Total", tokens.total], ["Context", tokens.contextWindow]].filter((entry) => typeof entry[1] === "number") : [];
   return <div class="cli-turn-details">
-    {!connected ? <p class="cli-composer-unavailable" role="status">Reconnecting. Your draft is saved; sending is available after the conversation reconnects.</p> : null}
     {state?.error ? <p class="cli-composer-unavailable" role="alert">{state.error}</p> : null}
     {state?.truncated ? <p role="status">Live activity reached its display limit. Refresh the conversation after the turn ends to load its saved history.</p> : null}
     {state?.plan?.steps.length ? <details class="cli-activity is-plan"><summary><strong>Current plan</strong></summary><div class="cli-activity-body">{state.plan.explanation ? <p>{state.plan.explanation}</p> : null}<ol>{state.plan.steps.map((step, index) => <li key={index}>{step.status === "completed" ? "✓ " : step.status === "inProgress" ? "In progress · " : "Pending · "}{step.step}</li>)}</ol></div></details> : null}
@@ -1529,10 +1528,9 @@ function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetr
   const start = Date.parse(turn.startedAt ?? messages.find((message) => message.timestamp)?.timestamp ?? "");
   const end = Date.parse(turn.answer.timestamp ?? messages.filter((message) => message.timestamp).at(-1)?.timestamp ?? "");
   const duration = Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : undefined;
-  const failed = messages.filter((message) => message.status === "failed" || message.kind === "error").length;
   const turnCopy = [...messages, turn.answer].filter((message) => message.role === "assistant" && (!message.kind || message.kind === "message")).map((message) => message.text).join("\n\n");
   return <div class="cli-completed-turn">
-    <details class="cli-completed-work"><summary><span>{duration !== undefined ? `Worked for ${formatDuration(duration)}` : "Worked"}</span>{failed ? <small>{failed} failed operation{failed === 1 ? "" : "s"}</small> : null}<ChevronIcon /></summary><div class="cli-completed-work-body">{turn.items.map((item) => "messages" in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <SessionMessage key={item.id} message={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div></details>
+    <details class="cli-completed-work"><summary><span>{duration !== undefined ? `Worked for ${formatDuration(duration)}` : "Worked"}</span><ChevronIcon /></summary><div class="cli-completed-work-body">{turn.items.map((item) => "messages" in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <SessionMessage key={item.id} message={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div></details>
     <SessionMessage message={turn.answer} logoUri={logoUri} turnCopyText={turnCopy} onRetryPrompt={onRetryPrompt} onActionFeedback={onActionFeedback} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />
     <CompletedTurnChanges messages={messages} onOpenReviews={onOpenReviews} />
   </div>;
@@ -1569,15 +1567,14 @@ function isGroupableTurnActivity(message: DashboardCliSessionMessage): boolean {
 
 function ActivityGroup({ messages, onOpenFile, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const running = messages.some((message) => message.status === "inProgress");
-  const failed = messages.some((message) => message.status === "failed" || message.kind === "error");
   const summary = activitySummary(messages);
   const incomplete = messages.find((message) => message.status && !["completed", "inProgress", "failed"].includes(message.status))?.status;
-  return <div class={`cli-activity-group ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`}>
+  return <div class={`cli-activity-group ${running ? "is-running" : ""}`}>
     <details class="cli-activity-group-details" open={running}>
     <summary title={consolidatedActivityLabel(messages)}>
       <span class="cli-activity-icon"><ToolIcon /></span>
       <span class="cli-activity-heading"><strong>{consolidatedActivityLabel(messages)}</strong>{summary?.files ? <small><b class="is-added">+{summary.additions}</b> <b class="is-removed">−{summary.deletions}</b></small> : null}</span>
-      <span class={`cli-activity-status ${running ? "is-inProgress" : failed ? "is-failed" : incomplete ? "is-" + incomplete : "is-completed"}`}>{running ? <i /> : failed ? "Failed" : incomplete ? capitalize(incomplete) : <CheckIcon />}</span>
+      <span class={`cli-activity-status ${running ? "is-inProgress" : incomplete ? "is-" + incomplete : "is-completed"}`}>{running ? <i /> : incomplete ? capitalize(incomplete) : <CheckIcon />}</span>
       <ChevronIcon />
     </summary>
     <div class="cli-activity-group-body">{messages.map((message) => message.kind === "file-change" && message.changes?.length && (!message.status || message.status === "completed") ? <FileChangeDetails key={message.id} changes={message.changes} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <ActivityMessage key={message.id} message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div>
@@ -2168,6 +2165,11 @@ function capitalize(value: string): string { return value.charAt(0).toUpperCase(
 function projectDisplayName(value: string): string {
   const normalized = value.replace(/[\\/]+$/, "");
   return normalized.split(/[\\/]/).at(-1) || value;
+}
+function sessionMeta(session: DashboardCliSessionSummary): string {
+  const project = session.projectPath ? projectDisplayName(session.projectPath) : "Workspace";
+  const surface = session.sessionSurface === "vscode" ? "VS Code" : session.sessionSurface === "cli" ? "CLI" : "Compute";
+  return `${project} - ${surface}`;
 }
 function workspaceRelativePath(filePath: string, projectPath: string | undefined): string {
   const file = canonicalWebPath(filePath);

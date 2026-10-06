@@ -80,7 +80,7 @@ import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
 import { countPeerSessions, type CliSessionFeedback } from "./cliSessionsModal";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
-import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive } from "./cliSessionLiveState";
+import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import {
   invalidateCliSessionCache,
   mergeCachedCliSession,
@@ -655,7 +655,7 @@ function App() {
           if (result.apply) {
             liveSessionListReceived.current = true;
             const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessions);
-            setCliSessions(sessions);
+            setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
             // Realtime list pushes intentionally omit the heavier composer
             // catalog. Preserve the last known catalog so the response box does
             // not disappear while sessions update in the background.
@@ -796,7 +796,7 @@ function App() {
         }
         if (!sameCliSessionTarget(target, currentSessionTarget())) {
           if (message.status === "completed") {
-            if (message.payload?.cliSessions) setCliSessions((current) => mergeCachedCliSessions(message.payload!.cliSessions!, current));
+            if (message.payload?.cliSessions) setCliSessions((current) => reconcileCliSessionStatuses(mergeCachedCliSessions(message.payload!.cliSessions!, current), cliLiveStatesRef.current));
             void writeCliSessionMessagesCache(target.id, message.payload?.cliSessionMessages ?? [], target.deviceId);
           }
           showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.status === "completed" ? "Codex completed the turn in the original chat." : message.error ?? "The turn in the original chat did not complete. Return to that chat and retry." });
@@ -805,7 +805,7 @@ function App() {
         messageViewRevision.current++;
         if (message.status === "completed") {
           const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? cliSessions, cliSessions);
-          setCliSessions(sessions);
+          setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           setCliSessionMessages(message.payload?.cliSessionMessages ?? []);
           if (message.payload?.cliSession?.id) {
             void writeCliSessionMessagesCache(message.payload.cliSession.id, message.payload?.cliSessionMessages ?? [], target.deviceId);
@@ -837,7 +837,7 @@ function App() {
         if (message.status === "completed" && message.payload?.cliSession) {
           const session = message.payload.cliSession;
           const sessions = mergeCachedCliSessions([session, ...(message.payload.cliSessions ?? cliSessions).filter((candidate) => !sameCliSessionTarget(candidate, session))], cliSessions);
-          setCliSessions(sessions);
+          setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           setCliComposerConfig(message.payload.cliComposerConfig ?? cliComposerConfig);
           if (currentSessionTarget() && !sameCliSessionTarget(currentSessionTarget(), session)) {
             showCliSessionFeedback({ key: Date.now(), level: "info", message: "New Codex chat is ready. Open it from the session list." });
@@ -1051,7 +1051,7 @@ function App() {
         });
         if (message.status === "completed" && message.payload?.cliSessions) {
           const sessions = mergeCachedCliSessions(message.payload.cliSessions, cliSessions);
-          setCliSessions(sessions);
+          setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig });
         }
         if (applyToCurrentChat && message.status === "completed" && message.action === "renameCodexCliSession" && message.payload?.cliSession)
@@ -1203,7 +1203,7 @@ function App() {
     if (!hasBrowserWorkspaceShell(browserPath)) return;
     void readCliSessionListCache().then((cached) => {
       if (cached && !liveSessionListReceived.current) {
-        setCliSessions(cached.sessions);
+        setCliSessions(reconcileCliSessionStatuses(cached.sessions, cliLiveStatesRef.current));
         setCliComposerConfig(cached.composerConfig);
       }
       // Cached content paints immediately, but every page opening revalidates

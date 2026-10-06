@@ -15,10 +15,16 @@ import {
   filterCliSessionsBySection,
   shouldShowLatestButton
 } from "../webview-src/dashboard/cliSessionsModal";
+import { reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
 
 describe("sessions sidebar layout", () => {
+  it("keeps a completed live turn idle across a stale session-list refresh", () => {
+    const sessions = [{ id: "s", title: "Task", status: "running" as const }];
+    const live = { "local:s": { sessionId: "s", streamId: "stream", sequence: 4, updatedAt: 4, status: "completed" as const, messages: [] } };
+    expect(reconcileCliSessionStatuses(sessions, live)[0]).toMatchObject({ status: "idle", canStop: false });
+  });
   it("keeps routine browser feedback inline while preserving live status and tool copy controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
@@ -27,6 +33,8 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain("const running = isCliTurnActive(live);");
     expect(main).toContain("setCliSessions((sessions) => sessions.map(patchSession));");
     expect(source).toContain("function CopySnippet");
+    expect(source).toContain("Reconnecting · live updates paused");
+    expect(source).not.toContain("Reconnecting. Your draft is saved; sending is available after the conversation reconnects.");
     expect(source).toContain("function ImagePreview");
     expect(source).toContain("function ImageLightbox");
     expect(source).toContain('closest("summary,button,img")) followLatestRef.current = false');
@@ -56,14 +64,14 @@ describe("sessions sidebar layout", () => {
     expect(css).toMatch(/\.cli-scroll-latest \{[^}]*right: 16px; bottom: 12px;/);
   });
 
-  it("keeps each session title and time on one line without repeating its project", () => {
+  it("keeps each session title and compact project metadata on one line", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const renderSession = source.slice(source.indexOf("const renderSession ="), source.indexOf("const returnToSessionList"));
-    expect(renderSession).toContain('<span class="cli-session-row-main"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta">{relativeTime(session.updatedAt)}</small></span>');
-    expect(renderSession).not.toContain('class="cli-session-project"');
-    expect(renderSession).not.toContain('has-project');
-    expect(css).toMatch(/\.cli-session-row-main \{\s*display: grid;\s*grid-template-columns: minmax\(0, 1fr\) auto;/);
+    expect(renderSession).toContain('class="cli-session-row-main has-project"');
+    expect(renderSession).toContain("{sessionMeta(session)}");
+    expect(renderSession).toContain("{relativeTime(session.updatedAt)}");
+    expect(css).toContain(".cli-session-row-meta > span");
     expect(css).toContain(".cli-workspace .cli-project-sessions .cli-session-row { min-height: 27px;");
   });
 
