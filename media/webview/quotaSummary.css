@@ -14958,3 +14958,53 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-session-images { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
 .cli-workspace .cli-image-preview-trigger { align-items: center; justify-content: center; min-width: 56px; min-height: 56px; max-width: min(100%, 180px); max-height: 140px; }
 .cli-workspace .cli-image-preview-trigger img { width: auto; max-width: 180px; max-height: 140px; object-fit: contain; }
+
+/* Mobile keeps the same information hierarchy while reclaiming vertical space. */
+@media (max-width: 760px) {
+  .cli-workspace .cli-session-rail,
+  .cli-workspace.is-dashboard-mode .cli-session-rail,
+  .cli-workspace.is-rail-collapsed .cli-session-rail { width: min(292px, calc(100vw - 32px)); padding-inline: 6px; }
+  .cli-workspace .cli-rail-header { min-height: 38px; }
+  .cli-workspace .cli-rail-brand { padding-left: 42px; }
+  .cli-workspace .cli-session-filters { padding-block: 4px; }
+  .cli-workspace .cli-session-list-region { padding-inline: 0; }
+  .cli-workspace .cli-conversation-header,
+  .cli-workspace.is-rail-collapsed .cli-conversation-header { min-height: 42px; padding: 5px 8px 5px 50px; }
+  .cli-workspace .cli-conversation-actions > button,
+  .cli-workspace .cli-session-menu-wrap > button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+  .cli-workspace .cli-message-viewport { padding: 8px 8px 6px; }
+  .cli-workspace .cli-session-messages { gap: 6px; }
+  .cli-workspace .cli-session-message.is-user .cli-session-message-text { max-width: 94%; padding: 7px 9px; border-radius: 10px; }
+  .cli-workspace .cli-completed-turn { gap: 8px; }
+  .cli-workspace .cli-completed-work-body { gap: 6px; padding-top: 6px; }
+  .cli-workspace .cli-activity-summary,
+  .cli-workspace .cli-activity-group-details > summary,
+  .cli-workspace .cli-activity > summary { min-height: 24px; padding-block: 1px; }
+  .cli-workspace .cli-turn-change-bar { width: calc(100% - 12px); margin-bottom: 2px; padding: 5px 8px; }
+  .cli-workspace .cli-composer,
+  .cli-workspace .cli-composer:has(.cli-attachment-list) { width: calc(100% - 12px); margin-bottom: 3px; padding: 6px 8px; gap: 4px; }
+  .cli-workspace .cli-composer-location,
+  .cli-workspace .cli-composer-location.is-top { width: calc(100% - 12px); min-height: 20px; margin: 0 auto 1px; }
+  .cli-workspace .cli-composer textarea { min-height: 24px; max-height: min(112px, 24dvh); font-size: 16px; line-height: 1.35; }
+  .cli-workspace .cli-composer-toolbar { gap: 4px; }
+  .cli-workspace .cli-composer-selectors { flex: 1 1 auto; gap: 2px; }
+  .cli-workspace .cli-composer-selectors select { max-width: min(128px, 34vw); }
+  .cli-workspace .cli-composer-options-toggle { max-width: 104px; padding-inline: 5px; }
+  .cli-workspace .cli-terminal-panel.cli-context-panel-v3:not(.is-collapsed) { z-index: 21020; width: 100vw; max-width: 100vw; }
+  .cli-workspace .cli-context-tabbar { min-height: 36px; padding: 2px 4px; }
+  .cli-workspace .cli-context-tab-scroll { gap: 1px; touch-action: pan-x; }
+  .cli-workspace .cli-context-tab-scroll > span > button,
+  .cli-workspace .cli-terminal-header-actions > button { min-height: 36px; }
+  .cli-workspace .cli-agent-workspace { padding: 8px; gap: 6px; }
+  .cli-workspace .cli-agent-row { padding: 8px; }
+  .cli-workspace .cli-terminal-output { padding: 6px; }
+  .cli-workspace .cli-terminal-command { min-height: 36px; padding: 3px 6px; }
+}
+
+@media (max-width: 420px) {
+  .cli-workspace .cli-conversation-title h1 { max-width: 48vw; font-size: 13px; }
+  .cli-workspace .cli-session-message-text { font-size: 12px; line-height: 1.5; }
+  .cli-workspace .cli-activity-heading strong { font-size: 10px; }
+  .cli-workspace .cli-composer-selectors select { max-width: 104px; }
+  .cli-workspace .cli-composer-options-toggle { max-width: 88px; }
+}
