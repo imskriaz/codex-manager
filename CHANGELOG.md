@@ -2,6 +2,8 @@
 
 ## 1.2.15
 
+- Fit mobile session headers into two compact title/meta rows with status and a single actions menu. Remove the duplicate Sessions button and compact composer, goal, and live status rows while preserving their controls.
+
 - Keep browser session links compact by resolving the project from the session record; legacy project query links are cleaned up when opened.
 - Tighten mobile workspace spacing across the session rail, transcript, composer, tool panels, and tabs while preserving touch targets and horizontal scrolling.
 - Add a direct empty-state new-chat action so compact browser layouts can start a session without opening the hidden sidebar first.

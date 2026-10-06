@@ -14980,8 +14980,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .cli-workspace .cli-rail-brand { padding-left: 42px; }
   .cli-workspace .cli-session-filters { padding-block: 4px; }
   .cli-workspace .cli-session-list-region { padding-inline: 0; }
-  .cli-workspace .cli-conversation-header,
-  .cli-workspace.is-rail-collapsed .cli-conversation-header { min-height: 42px; padding: 5px 8px 5px 50px; }
   .cli-workspace .cli-conversation-actions > button,
   .cli-workspace .cli-session-menu-wrap > button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
   .cli-workspace .cli-message-viewport { padding: 8px 8px 6px; }
@@ -15011,10 +15009,41 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .cli-workspace .cli-agent-row { padding: 8px; }
   .cli-workspace .cli-terminal-output { padding: 6px; }
   .cli-workspace .cli-terminal-command { min-height: 36px; padding: 3px 6px; }
+  .cli-workspace .cli-conversation-header,
+  .cli-workspace.is-rail-collapsed .cli-conversation-header { position: relative; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; min-height: 44px; padding: 3px 6px 3px 46px; }
+  .cli-workspace .cli-rail-toggle,
+  .cli-workspace.is-dashboard-mode .cli-rail-toggle { top: max(3px, env(safe-area-inset-top)); left: max(5px, env(safe-area-inset-left)); width: 36px; height: 36px; }
+  .cli-workspace .cli-conversation-title { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 0; }
+  .cli-workspace .cli-conversation-title-line { display: flex; min-height: 0; gap: 4px; }
+  .cli-workspace .cli-conversation-title h1 { max-width: 100%; font-size: 12px; }
+  .cli-workspace .cli-state-pill { width: 6px; height: 6px; padding: 0; border: 0; border-radius: 50%; font-size: 0; background: var(--text-muted); }
+  .cli-workspace .cli-state-pill.is-running { background: #22c55e; }
+  .cli-workspace .cli-conversation-project { grid-column: 1; grid-row: 2; justify-content: flex-start; gap: 3px; max-width: 100%; font-size: 9px; }
+  .cli-workspace .cli-conversation-project svg { width: 11px; height: 11px; }
+  .cli-workspace .cli-conversation-project span { display: none; }
+  .cli-workspace .cli-conversation-project strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .cli-workspace .cli-conversation-actions { gap: 0; flex-wrap: nowrap; }
+  .cli-workspace .cli-session-menu-wrap { position: relative; }
+  .cli-workspace .cli-conversation-actions > :not(.cli-session-menu-wrap) { display: none; }
+  .cli-workspace .cli-session-menu-wrap > button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+  .cli-workspace .cli-session-menu { top: calc(100% + 3px); width: min(210px, calc(100vw - 18px)); }
+  .cli-workspace .cli-composer-toolbar { flex-wrap: nowrap; }
+  .cli-workspace .cli-composer-selectors { flex: 1 1 0; min-width: 0; }
+  .cli-workspace .cli-composer-access { min-width: 0; }
+  .cli-workspace .cli-stop-button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0; font-size: 0; }
+  .cli-workspace .cli-composer-unavailable { width: calc(100% - 12px); margin-bottom: 3px; padding: 4px 6px; font-size: 10px; }
+  .cli-workspace .cli-composer-unavailable.is-running { min-height: 28px; gap: 4px; }
+  .cli-workspace .cli-goal-strip { margin: 2px 6px 0; font-size: 10px; }
+  .cli-workspace .cli-goal-strip > summary { padding: 4px 6px; gap: 4px; }
+}
+
+.cli-workspace .cli-session-menu .cli-mobile-menu-item { display: none; }
+@media (max-width: 760px) {
+  .cli-workspace .cli-session-menu button.cli-mobile-menu-item { display: flex; }
+  .cli-workspace .cli-session-menu span.cli-mobile-menu-item { display: block; height: 1px; margin: 4px 0; background: var(--border-default); }
 }
 
 @media (max-width: 420px) {
-  .cli-workspace .cli-conversation-title h1 { max-width: 48vw; font-size: 13px; }
   .cli-workspace .cli-session-message-text { font-size: 12px; line-height: 1.5; }
   .cli-workspace .cli-activity-heading strong { font-size: 10px; }
   .cli-workspace .cli-composer-selectors select { max-width: 104px; }

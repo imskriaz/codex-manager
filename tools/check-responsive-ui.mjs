@@ -160,7 +160,16 @@ try {
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).waitFor();
-    if (width <= 760) assert.equal(await page.locator(".cli-rail-toggle").getAttribute("aria-expanded"), "false", "Selecting a chat closes the mobile drawer");
+    if (width <= 760) {
+      assert.equal(await page.locator(".cli-rail-toggle").getAttribute("aria-expanded"), "false", "Selecting a chat closes the mobile drawer");
+      const header = await page.locator(".cli-conversation-header").boundingBox();
+      assert.ok(header.height <= 44, `Mobile session header fits one row (${header.height}px)`);
+      assert.equal(await page.locator(".cli-mobile-back").count(), 0, "Sidebar icon replaces duplicate Sessions button");
+      assert.equal(await page.locator(".cli-conversation-actions > button:visible").count(), 0, "Secondary actions live in the mobile menu");
+      const title = await page.locator(".cli-conversation-title h1").boundingBox();
+      const project = await page.locator(".cli-conversation-project").boundingBox();
+      assert.ok(project.y > title.y && project.x <= title.x + 2, "Title and project meta stay left-aligned on two compact rows");
+    }
     console.log(`Checking ${width}x${height}: realtime messages`);
     await page.getByText("Live transcript update", { exact: true }).waitFor({ timeout: 12_000 });
     const completedWork = page.locator(".cli-completed-work").first();
@@ -233,7 +242,10 @@ try {
     assert.equal(await documentation.getAttribute("target"), "_blank");
     assert.match(await documentation.getAttribute("rel"), /noopener/);
     assert.equal(await page.locator(".cli-message-markdown table").first().getByRole("cell", { name: "Ready", exact: true }).count(), 1);
-    await page.getByRole("button", { name: "Share", exact: true }).click();
+    if (width <= 760) {
+      await page.getByRole("button", { name: "Session actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Share", exact: true }).click();
+    } else await page.getByRole("button", { name: "Share", exact: true }).click();
     await page.getByRole("dialog", { name: "Share session" }).waitFor();
     await page.keyboard.press("Escape");
     await page.locator(".cli-share-modal").waitFor({ state: "detached" });
@@ -241,7 +253,10 @@ try {
     await page.getByRole("menuitem", { name: "Copy link", exact: true }).waitFor();
     await page.keyboard.press("Escape");
     await page.locator(".cli-session-menu").waitFor({ state: "detached" });
-    await page.getByRole("button", { name: "Show Environment", exact: true }).click();
+    if (width <= 760) {
+      await page.getByRole("button", { name: "Session actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Show Environment", exact: true }).click();
+    } else await page.getByRole("button", { name: "Show Environment", exact: true }).click();
     await page.locator(".cli-environment-popover").waitFor();
     console.log(`Checking ${width}x${height}: Agent tabs`);
     await page.getByRole("button", { name: /^Agents/ }).click();
@@ -253,7 +268,12 @@ try {
     await page.evaluate(() => document.querySelector('.cli-environment-popover button[aria-label="Close Environment"]')?.click());
     await page.locator(".cli-environment-popover").waitFor({ state: "detached" });
     await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
-    await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
+    if (width <= 760) {
+      await page.getByRole("button", { name: "Session actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Show workspace tools", exact: true }).click();
+    } else {
+      await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
+    }
     assert.equal(await page.getByRole("button", { name: "New VS Code terminal", exact: true }).count(), 0, "Only one panel creation control");
     for (const tool of ["files", "reviews"]) {
       await page.getByRole("button", { name: "Add workspace tool or terminal", exact: true }).click();
@@ -334,7 +354,10 @@ try {
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     await page.evaluate(() => { window.__holdNextMessageRead = true; window.__heldMessageResult = undefined; });
-    await page.getByRole("button", { name: "Refresh conversation", exact: true }).click();
+    if (width <= 760) {
+      await page.getByRole("button", { name: "Session actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Refresh conversation", exact: true }).click();
+    } else await page.getByRole("button", { name: "Refresh conversation", exact: true }).click();
     await page.waitForFunction(() => window.__heldMessageResult);
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.getByRole("button", { name: "New chat", exact: true }).click();

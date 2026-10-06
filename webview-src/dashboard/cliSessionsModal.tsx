@@ -1060,8 +1060,7 @@ function ConversationHeader(props: {
   const [name, setName] = useState(props.session.title);
   useEffect(() => setName(props.session.title), [props.session.id, props.session.title]);
   return <header class="cli-conversation-header">
-    <button type="button" class="cli-mobile-back" onClick={props.onBack}><ArrowLeftIcon /> Sessions</button>
-    <div class="cli-conversation-title"><div class="cli-conversation-title-line"><h1>{props.session.title}</h1><span class={`cli-state-pill ${props.archived ? "is-archived" : props.session.status === "running" ? "is-running" : ""}`}>{props.archived ? "Archived" : props.session.status === "running" ? "Running" : "Ready"}</span></div>{props.session.projectPath ? <div class="cli-conversation-project" title={props.session.projectPath}><EmptyFolderIcon /><strong>{projectDisplayName(props.session.projectPath)}</strong><span>{props.session.projectPath}</span></div> : null}</div>
+    <div class="cli-conversation-title"><div class="cli-conversation-title-line"><h1>{props.session.title}</h1><span title={props.archived ? "Archived" : props.session.status === "running" ? "Running" : "Ready"} aria-label={props.archived ? "Archived" : props.session.status === "running" ? "Running" : "Ready"} class={`cli-state-pill ${props.archived ? "is-archived" : props.session.status === "running" ? "is-running" : ""}`}>{props.archived ? "Archived" : props.session.status === "running" ? "Running" : "Ready"}</span></div>{props.session.projectPath ? <div class="cli-conversation-project" title={props.session.projectPath}><EmptyFolderIcon /><strong>{projectDisplayName(props.session.projectPath)}</strong><span>{props.session.projectPath}</span></div> : null}</div>
     <div class="cli-conversation-actions">
       {!props.archived ? <><IconButton label="Refresh conversation" disabled={props.busy} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class="cli-secondary-button" disabled={props.busy || props.sending} onClick={props.onShare}><ShareIcon /> Share</button></> : <button type="button" class="cli-secondary-button" disabled={props.busy} onClick={props.onRestore}><RestoreIcon /> Restore</button>}
       <IconButton label={props.environmentOpen ? "Hide Environment" : "Show Environment"} onClick={props.onToggleEnvironment}><ChangesIcon /></IconButton>
@@ -1069,6 +1068,12 @@ function ConversationHeader(props: {
       <div class="cli-session-menu-wrap" ref={menuRef}>
         <button type="button" class="cli-icon-button" aria-label="Session actions" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreIcon /></button>
         {menuOpen ? <div class="cli-session-menu" role="menu">
+          {!props.archived ? <>
+            <button type="button" role="menuitem" class="cli-mobile-menu-item" disabled={props.busy} onClick={() => { setMenuOpen(false); props.onRefresh(); }}><RefreshIcon /> Refresh conversation</button>
+            <button type="button" role="menuitem" class="cli-mobile-menu-item" onClick={() => { setMenuOpen(false); props.onToggleEnvironment(); }}><ChangesIcon /> {props.environmentOpen ? "Hide Environment" : "Show Environment"}</button>
+            {props.terminalCollapsed ? <button type="button" role="menuitem" class="cli-mobile-menu-item" onClick={() => { setMenuOpen(false); props.onToggleTerminal(); }}><PanelIcon /> Show workspace tools</button> : null}
+            <span class="cli-mobile-menu-item" />
+          </> : <button type="button" role="menuitem" class="cli-mobile-menu-item" disabled={props.busy} onClick={() => { setMenuOpen(false); props.onRestore(); }}><RestoreIcon /> Restore</button>}
           {!props.archived ? <>
             <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); setRenaming(true); }}><PencilIcon /> Rename</button>
             <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onFork(); }}><ForkIcon /> Fork session</button>
@@ -1155,7 +1160,7 @@ function Composer(props: {
           <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
         </div> : null}
       </div>
-      <span>{props.draft.length > 60_000 ? `${64_000 - props.draft.length} left` : null}</span>{props.sending ? <button type="button" class="cli-stop-button" disabled={props.stopping} aria-busy={props.stopping} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping" : "Stop"}</button> : null}{!props.sending || props.canSteer ? <button type="submit" class="cli-send-button" disabled={props.submitDisabled || props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label={props.canSteer ? "Send follow-up" : "Send message"} title={props.canSteer ? "Send follow-up to the running turn" : "Send message"}><SendIcon /></button> : null}</div></div>
+      <span>{props.draft.length > 60_000 ? `${64_000 - props.draft.length} left` : null}</span>{props.sending ? <button type="button" class="cli-stop-button" disabled={props.stopping} aria-busy={props.stopping} aria-label={props.stopping ? "Stopping" : "Stop"} title={props.stopping ? "Stopping" : "Stop"} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping" : "Stop"}</button> : null}{!props.sending || props.canSteer ? <button type="submit" class="cli-send-button" disabled={props.submitDisabled || props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label={props.canSteer ? "Send follow-up" : "Send message"} title={props.canSteer ? "Send follow-up to the running turn" : "Send message"}><SendIcon /></button> : null}</div></div>
   </form></>;
 }
 
@@ -2238,7 +2243,6 @@ function SessionListIcon() { return <Icon><path d="M4 6h16M4 12h16M4 18h16" fill
 function SidebarIcon() { return <Icon><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 4v16" fill="none" stroke="currentColor" stroke-width="1.7"/></Icon>; }
 function DashboardIcon() { return <Icon><rect x="4" y="4" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="4" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="14" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="14" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/></Icon>; }
 function CodexSessionIcon() { return <Icon><path d="M8.3 3.2a5 5 0 0 1 8.5 2.1 5 5 0 0 1 2 8.5 5 5 0 0 1-2.1 8.5 5 5 0 0 1-8.5-2.1 5 5 0 0 1-2-8.5 5 5 0 0 1 2.1-8.5Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m8.2 12 2.5 2.5 5.2-5.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
-function ArrowLeftIcon() { return <Icon><path d="m14.5 5-7 7 7 7M8 12h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function CloseIcon() { return <Icon><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></Icon>; }
 function SearchIcon() { return <Icon><circle cx="10.8" cy="10.8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m15.5 15.5 4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></Icon>; }
 function RefreshIcon() { return <Icon><path d="M20 4v6h-6M4 20v-6h6M5.2 9a7 7 0 0 1 11.6-4.1L20 10M4 14l3.2 5.1A7 7 0 0 0 18.8 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
