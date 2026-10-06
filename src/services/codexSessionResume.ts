@@ -394,7 +394,8 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
       if (session.archived) return withMetadata;
       const locked = lockedIds.has(session.id);
       const canStop = activeAppServerTurns.has(session.id);
-      const running = session.status === "running" || canStop || (locked && await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id)));
+      const transcriptState = locked ? await readRecentTranscriptTurnState(transcriptPaths.get(session.id)) : "unknown";
+      const running = (session.status === "running" && transcriptState !== "terminal") || canStop || (locked && await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id)));
       return {
         ...withMetadata,
         status: running ? "running" as const : "idle" as const,
@@ -2760,18 +2761,40 @@ async function isCliSessionRunning(
   // as corroboration instead of blocking resume for 15 minutes.
   const lockLeaseWindow = 2 * 60 * 1000;
   const lockAge = Date.now() - stat.mtimeMs;
-  if (lockAge >= -60_000 && lockAge < lockLeaseWindow) return true;
+  if (lockAge >= -60_000 && lockAge < lockLeaseWindow) {
+    const transcriptState = await readRecentTranscriptTurnState(knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId));
+    if (transcriptState === "terminal") return false;
+    if (transcriptState === "active") return true;
+    return true;
+  }
   const activeWindow = 5 * 60 * 1000;
   // Some CLI versions keep the lock mtime fixed while the transcript is
   // actively appended. Use a recent transcript write as a secondary signal.
   const transcript = knownTranscriptPath ?? (await findCliSessionTranscript(codexHome, sessionId));
   if (!transcript) return false;
+  if (await readRecentTranscriptTurnState(transcript) === "terminal") return false;
   const transcriptStat = await fs.lstat(transcript).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
   const transcriptAge = transcriptStat ? Date.now() - transcriptStat.mtimeMs : Infinity;
   return Boolean(transcriptStat?.isFile() && !transcriptStat.isSymbolicLink() && transcriptAge >= -60_000 && transcriptAge < activeWindow);
+}
+
+type RecentTranscriptTurnState = "active" | "terminal" | "unknown";
+
+async function readRecentTranscriptTurnState(transcriptPath: string | undefined): Promise<RecentTranscriptTurnState> {
+  if (!transcriptPath) return "unknown";
+  const raw = await readSafeFileSnapshot(transcriptPath, {
+    maxBytes: 128 * 1024,
+    startOffset: (stat) => Math.max(0, stat.size - 128 * 1024)
+  }).then((snapshot) => snapshot.buffer.toString("utf8")).catch(() => "");
+  let state: RecentTranscriptTurnState = "unknown";
+  for (const line of raw.split(/\r?\n/)) {
+    if (/"type"\s*:\s*"(?:task_complete|task_completed|turn_aborted|turn\/completed)"/.test(line)) state = "terminal";
+    else if (/"type"\s*:\s*"(?:task_started|turn_started|item_started|turn\/started)"/.test(line)) state = "active";
+  }
+  return state;
 }
 
 /** Locate all visible session transcripts in one bounded walk. The previous

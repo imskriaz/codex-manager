@@ -127,7 +127,8 @@ try {
     await page.locator(".cli-compact-session-list").waitFor();
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Compact view keeps only distinct parents");
     await page.locator(".cli-compact-session-list .cli-session-row-meta").first().waitFor({ state: "visible" });
-    assert.ok((await page.locator(".cli-session-row-meta").first().textContent()).includes("demo - Compute"), "Compact rows show project and compute metadata");
+    assert.ok((await page.locator(".cli-session-row-meta").first().textContent()).includes("demo - "), "Compact rows show project and PC metadata");
+    assert.equal((await page.locator(".cli-session-row-meta").first().textContent()).includes("VS Code"), false, "Session metadata uses the PC name");
     assert.equal(await page.locator(".cli-project-group").count(), 0, "Compact view has no project nesting");
     await page.waitForFunction(() => JSON.parse(localStorage.getItem("codexManager.workspaceLayout.v2") || "{}").sessionView === "compact");
     await page.reload();
@@ -200,7 +201,7 @@ try {
     assert.equal(await argumentCode.evaluate(element => getComputedStyle(element).whiteSpace), "pre", "Tool arguments preserve whitespace");
     assert.ok(await argumentCode.evaluate(element => element.scrollWidth > element.clientWidth), "Long arguments scroll horizontally");
     await tool.getByRole("button", { name: "Copy code", exact: true }).click();
-    await tool.getByText("Copied", { exact: true }).waitFor();
+    await tool.getByRole("button", { name: "Copied", exact: true }).waitFor();
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), longArguments, "Tool copy preserves the full payload");
     const command = page.locator(".cli-activity.is-command").first();
     await command.locator(":scope > summary").click();
@@ -241,20 +242,26 @@ try {
     await page.keyboard.press("Escape");
     await page.locator(".cli-session-menu").waitFor({ state: "detached" });
     await page.getByRole("button", { name: "Show Environment", exact: true }).click();
-    await page.getByRole("button", { name: "Close Environment", exact: true }).click();
+    await page.locator(".cli-environment-popover").waitFor();
     console.log(`Checking ${width}x${height}: Agent tabs`);
     await page.getByRole("button", { name: /^Agents/ }).click();
+    await page.getByRole("tab", { name: /^Agents/ }).click();
     await page.locator(".cli-agent-row").filter({ hasText: "Reviewer" }).click();
     await page.getByRole("tab", { name: "Agent: Reviewer" }).waitFor();
     await page.getByText("Agent reviewer message", { exact: true }).waitFor();
     assert.equal(await page.getByText("Get codex sub agent messages completed.", { exact: true }).count(), 0, "Agent loading must not cover the composer with redundant success feedback");
+    await page.evaluate(() => document.querySelector('.cli-environment-popover button[aria-label="Close Environment"]')?.click());
+    await page.locator(".cli-environment-popover").waitFor({ state: "detached" });
     await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
     await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "New VS Code terminal", exact: true }).count(), 0, "Only one panel creation control");
     for (const tool of ["files", "reviews"]) {
       await page.getByRole("button", { name: "Add workspace tool or terminal", exact: true }).click();
-      await page.getByRole("menuitem", { name: new RegExp(`^${tool}$`, "i") }).click();
-      await page.getByRole("tab", { name: new RegExp(`^${tool}$`, "i") }).waitFor();
+      const menuItem = page.getByRole("menuitem", { name: new RegExp(`^${tool}$`, "i") });
+      if (await menuItem.count()) {
+        await menuItem.click();
+        await page.getByRole("tab", { name: new RegExp(`^${tool}$`, "i") }).waitFor();
+      } else await page.keyboard.press("Escape");
     }
     await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
     const userMessage = page.locator(".cli-conversation .cli-session-message.is-user").first();

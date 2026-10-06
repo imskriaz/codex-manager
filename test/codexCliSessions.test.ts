@@ -483,6 +483,23 @@ describe("Codex session integration", () => {
     await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({ id: sessionId, status: "idle", locked: true });
   });
 
+  it("does not report a recently locked session as running after a terminal transcript event", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-terminal-lock-"));
+    roots.push(root);
+    const sessionDirectory = path.join(root, "sessions", "2026", "08", "30");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Completed", updated_at: new Date().toISOString() }));
+    const transcript = path.join(sessionDirectory, `rollout-${sessionId}.jsonl`);
+    await writeFile(transcript, [
+      JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } })
+    ].join("\n"));
+    await mkdir(path.join(root, "thread-writer-locks"), { recursive: true });
+    await writeFile(path.join(root, "thread-writer-locks", `${sessionId}.lock`), "");
+    await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({ status: "idle", locked: true });
+    await expect(readRunningCodexSessionIds(root)).resolves.toEqual([]);
+  });
+
   it("reads only appended transcript data after the first message load", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-incremental-transcript-"));
     roots.push(root);

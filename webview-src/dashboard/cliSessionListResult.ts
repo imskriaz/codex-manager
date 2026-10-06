@@ -5,7 +5,7 @@ export function classifyCliSessionListResult(
   explicitRefreshRequestId?: string
 ): { apply: boolean; explicitRefresh: boolean; nextRealtimeRevision: number } {
   const explicitRefresh = requestId === explicitRefreshRequestId;
-  const staleRealtime = typeof realtimeRevision === "number" && realtimeRevision <= lastRealtimeRevision;
+  const staleRealtime = (requestId.startsWith("realtime-") || explicitRefresh) && typeof realtimeRevision === "number" && realtimeRevision <= lastRealtimeRevision;
   return {
     apply: !staleRealtime,
     explicitRefresh,

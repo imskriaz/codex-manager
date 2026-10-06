@@ -25,4 +25,12 @@ describe("dashboard session-list result routing", () => {
       nextRealtimeRevision: 6
     });
   });
+
+  it("applies a direct list response after a newer realtime revision", () => {
+    expect(classifyCliSessionListResult("request-1", 5, 8)).toEqual({
+      apply: true,
+      explicitRefresh: false,
+      nextRealtimeRevision: 8
+    });
+  });
 });

@@ -34,6 +34,8 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain("const running = isCliTurnActive(live);");
     expect(main).toContain("setCliSessions((sessions) => sessions.map(patchSession));");
     expect(source).toContain("function CopySnippet");
+    expect(source).toContain("selected project is not an open workspace folder");
+    expect(css).toContain("touch-action: pan-x");
     expect(source).toContain("Reconnecting · live updates paused");
     expect(source).not.toContain("Reconnecting. Your draft is saved; sending is available after the conversation reconnects.");
     expect(source).toContain("function ImagePreview");
@@ -70,7 +72,7 @@ describe("sessions sidebar layout", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const renderSession = source.slice(source.indexOf("const renderSession ="), source.indexOf("const returnToSessionList"));
     expect(renderSession).toContain('class="cli-session-row-main has-project"');
-    expect(renderSession).toContain("{sessionMeta(session)}");
+    expect(renderSession).toContain("{sessionMeta(session, props.peers)}");
     expect(renderSession).toContain("{relativeTime(session.updatedAt)}");
     expect(css).toContain(".cli-session-row-meta > span");
     expect(css).toContain(".cli-workspace .cli-project-sessions .cli-session-row { min-height: 27px;");
@@ -123,6 +125,8 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain("<AccountDock");
     expect(source).toContain('class="cli-account-footer"');
     expect(source).toContain('name="project-path"');
+    expect(source).toContain('class="cli-composer-location is-top"');
+    expect(source).toContain("!props.projectLocked");
     expect(source).toContain('name="sandbox-mode"');
     expect(source).toContain('name="model"');
     expect(source).toContain('aria-label="Model"');
@@ -299,7 +303,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-project-select span { display: flex; align-items: baseline; gap: 6px; }");
     expect(css).toContain(".cli-context-edge-resizer");
     expect(css).toContain(".cli-review-file-list");
-    expect(source).toContain('const resolvedFilePath = filePath && tab === "files" ? workspaceRelativePath(filePath, selectedProjectPath) : filePath;');
+    expect(source).toContain('const resolvedFilePath = filePath && tab === "files" ? workspaceRelativePath(filePath, toolProjectPath) : filePath;');
     expect(source).toContain('onOpenFile={(filePath) => props.onAdd("files", filePath)}');
     expect(source).toContain('currentPath ? "cli-files-workbench is-detail" : "cli-files-workbench is-list"');
     expect(source).toContain('{currentPath ? null : <div class="cli-file-tree">');
@@ -379,7 +383,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('title="Cut selected code to the clipboard"');
     expect(source).toContain('navigator.clipboard.writeText(view.state.sliceDoc(selection.from, selection.to))');
     expect(source).toContain("onTab={selectContextTab}");
-    expect(source).toContain("if (filePath) props.onReadFile(filePath, selectedProjectPath)");
+    expect(source).toContain("if (filePath) props.onReadFile(filePath, toolProjectPath)");
     expect(source).toContain("target.scrollLeft += event.deltaY");
     expect(source).toContain('scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" })');
     expect(source).toContain("SessionShareModal");
