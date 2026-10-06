@@ -10,13 +10,20 @@ export function reconcileCliSessionStatuses(
   sessions: DashboardCliSessionSummary[],
   liveStates: Record<string, DashboardCodexSessionLiveState>
 ): DashboardCliSessionSummary[] {
-  return sessions.map((session) => {
-    const live = liveStates[`${session.deviceId ?? "local"}:${session.id}`];
-    if (!live || live.sessionId !== session.id || (live.deviceId ?? undefined) !== (session.deviceId ?? undefined)) return session;
-    if (isCliTurnActive(live)) return { ...session, status: "running" };
-    if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", canStop: false };
-    return session;
-  });
+  return sessions.map((session) => reconcileCliSessionStatus(session, liveStates));
+}
+
+export function reconcileCliSessionStatus(
+  session: DashboardCliSessionSummary,
+  liveStates: Record<string, DashboardCodexSessionLiveState>
+): DashboardCliSessionSummary {
+  const live = liveStates[`${session.deviceId ?? "local"}:${session.id}`];
+  if (!live || live.sessionId !== session.id || (live.deviceId ?? undefined) !== (session.deviceId ?? undefined)) return session;
+  // A later index update can describe a new turn started outside this host.
+  if (Date.parse(session.updatedAt ?? "") > live.updatedAt) return session;
+  if (isCliTurnActive(live)) return { ...session, status: "running" };
+  if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", canStop: false };
+  return session;
 }
 
 /** Full snapshots replace earlier snapshots; a terminal stream cannot become running again. */

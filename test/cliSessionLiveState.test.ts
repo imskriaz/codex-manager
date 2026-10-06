@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../src/domain/dashboard/types";
-import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive } from "../webview-src/dashboard/cliSessionLiveState";
+import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus } from "../webview-src/dashboard/cliSessionLiveState";
 
 const message = (id: string, text: string, turnId?: string, role: "user" | "assistant" = "assistant"): DashboardCliSessionMessage => ({ id, text, role, turnId });
 const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): DashboardCodexSessionLiveState => ({ sessionId: "chat", streamId: "stream", sequence: 1, updatedAt: 100, status: "running", turnId: "turn", messages: [], ...changes });
 
 describe("shared browser/native live turn reconciliation", () => {
+  it("honors terminal state for stale index rows without hiding a newer external turn", () => {
+    const row = { id: "chat", title: "Task", status: "running" as const };
+    const states = { "local:chat": snapshot({ status: "completed", updatedAt: 1000 }) };
+    expect(reconcileCliSessionStatus(row, states)).toMatchObject({ status: "idle", canStop: false });
+    const newer = { ...row, updatedAt: new Date(2000).toISOString() };
+    expect(reconcileCliSessionStatus(newer, states)).toBe(newer);
+    expect(reconcileCliSessionStatus({ ...row, deviceId: "remote" }, states).status).toBe("running");
+    expect(reconcileCliSessionStatus(row, { "local:chat": snapshot({ status: "disconnected" }) })).toBe(row);
+  });
   it("ignores duplicate, out-of-order and obsolete stream snapshots", () => {
     const previous = snapshot();
     expect(acceptCliLiveState(previous, snapshot())).toBe(false);

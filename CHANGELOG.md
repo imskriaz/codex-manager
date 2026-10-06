@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.15
+
+- Redesign the Codex chat workspace with compact transcript grouping, inline tool details, scrollable code and diff surfaces, copy controls, image previews, completed-turn summaries, and compact session metadata.
+- Remove routine browser success toasts while keeping actionable failures, reconnect status, and storage or send warnings visible in context.
+- Keep live session state authoritative across delayed history/list responses so completed turns cannot reappear as running; align PC, quota, search, and filter counts with the rows they display.
+- Improve reconnect, stale, duplicate, agent, goal, attachment, retry, and image handling across browser and VS Code views.
+
 ## 1.2.14
 
 - Stream live Codex responses, tools, plans, diffs and usage into the shared browser/VS Code workspace. Add fenced active-turn steering, reconnect recovery, bounded peer delivery, and reload-safe drafts without automatically resending uncertain requests.

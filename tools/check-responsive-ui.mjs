@@ -126,6 +126,8 @@ try {
     await page.getByRole("button", { name: "Show compact session list", exact: true }).click();
     await page.locator(".cli-compact-session-list").waitFor();
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Compact view keeps only distinct parents");
+    await page.locator(".cli-compact-session-list .cli-session-row-meta").first().waitFor({ state: "visible" });
+    assert.ok((await page.locator(".cli-session-row-meta").first().textContent()).includes("demo - Compute"), "Compact rows show project and compute metadata");
     assert.equal(await page.locator(".cli-project-group").count(), 0, "Compact view has no project nesting");
     await page.waitForFunction(() => JSON.parse(localStorage.getItem("codexManager.workspaceLayout.v2") || "{}").sessionView === "compact");
     await page.reload();
@@ -367,9 +369,8 @@ try {
     assert.ok(overflow <= 2, `Chat overflows by ${overflow}px at ${width}px`);
     await page.screenshot({ path: path.join(output, `chat-${width}x${height}.png`) });
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "unreachable" } })));
-    await page.getByText("Dashboard host unavailable", { exact: true }).waitFor();
-    const banner = await page.locator(".dashboard-connection-banner").boundingBox();
-    assert.ok(banner && banner.x >= width - banner.width - 24 && banner.y + banner.height >= height - 24, "Connection notice sits bottom-right");
+    await page.getByText("Reconnecting · live updates paused", { exact: true }).waitFor();
+    assert.equal(await page.locator(".dashboard-connection-banner").count(), 0, "Chat uses its inline reconnect status without a floating notice");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } })));
     console.log(`Checking ${width}x${height}: dashboard and settings`);
     await page.goto(`${origin}/dash`);

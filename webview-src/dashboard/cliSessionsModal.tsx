@@ -65,7 +65,7 @@ export function filterCliSessionsBySection(
 export function countPeerSessions(sessions: DashboardCliSessionSummary[], peers: Array<{ id: string; local?: boolean }>) {
   const active = filterCliSessionsBySection(sessions, "active");
   return peers.map((peer) => {
-    const rows = active.filter((session) => peer.local ? !session.remote || session.deviceId === peer.id : session.remote && session.deviceId === peer.id);
+    const rows = active.filter((session) => peer.local ? !session.remote : session.remote && session.deviceId === peer.id);
     return { id: peer.id, total: rows.length, running: rows.filter((session) => session.status === "running").length };
   });
 }
@@ -925,7 +925,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {turnChanges ? <div class="cli-turn-change-bar" role="group" aria-label="Turn changes"><span>{turnChanges.files} file{turnChanges.files === 1 ? "" : "s"} changed <b class="is-added">+{turnChanges.additions}</b> <b class="is-removed">−{turnChanges.deletions}</b></span><button type="button" onClick={() => openContextTab("reviews")}>View changes</button></div> : null}
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
-              ) : composerBlockedByOwner ? (
+              ) : composerBlockedByOwner || props.connected === false ? (
                 <div class={`cli-composer-unavailable is-running ${props.connected === false ? "is-reconnecting" : ""}`} role="status" title={props.connected === false ? "The live connection is unavailable. Sending resumes after reconnect." : `${props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}. Wait for that run to finish.` : "Session locked. Wait for Codex to release the lock."} Next turn: ${selectedModel?.label ?? model ?? "Default"} · ${reasoningEffort ?? "Default"} · ${sandboxMode}`}>
                   {props.connected === false ? <span class="cli-live-spinner" aria-hidden="true" /> : props.selectedSession.status === "running" ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span><strong>{props.connected === false ? "Reconnecting · live updates paused" : props.selectedSession.status === "running" ? "Running elsewhere · wait to send" : "Session locked · wait to send"}</strong><small class="cli-locked-turn-settings"> - {selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full access" : sandboxMode === "read-only" ? "Read only" : "Workspace write"}</small></span>
                 </div>
@@ -943,7 +943,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   reasoningOptions={reasoningOptions}
                   sending={currentTurnRunning}
                   canSteer={canSteer}
-                  submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey) || props.steering}
+                  submitDisabled={!props.connected || !draftReadyKeys.has(draftKey) || props.steering}
                   stopping={props.stopping}
                   onDraft={setDraft}
                   onModel={(nextModel) => {

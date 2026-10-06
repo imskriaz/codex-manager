@@ -14657,7 +14657,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-sidebar-actions button svg { width: 16px; height: 16px; }
 .cli-workspace .cli-session-section-toggle.is-active { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .cli-workspace .cli-compact-session-list .cli-session-row { min-height: 30px; padding-block: 1px; }
-.cli-workspace .cli-compact-session-list .cli-session-row-main small,
 .cli-workspace .cli-compact-session-list .cli-session-row-status[aria-label="Complete"] { display: none; }
 @media (max-width: 760px) {
   .cli-workspace .cli-primary-nav .cli-sidebar-actions > button { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }

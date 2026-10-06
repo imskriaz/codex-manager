@@ -15,7 +15,7 @@ import {
   filterCliSessionsBySection,
   shouldShowLatestButton
 } from "../webview-src/dashboard/cliSessionsModal";
-import { reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
+import { reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
 
@@ -24,6 +24,7 @@ describe("sessions sidebar layout", () => {
     const sessions = [{ id: "s", title: "Task", status: "running" as const }];
     const live = { "local:s": { sessionId: "s", streamId: "stream", sequence: 4, updatedAt: 4, status: "completed" as const, messages: [] } };
     expect(reconcileCliSessionStatuses(sessions, live)[0]).toMatchObject({ status: "idle", canStop: false });
+    expect(reconcileCliSessionStatus({ ...sessions[0], status: "running" }, live).status).toBe("idle");
   });
   it("keeps routine browser feedback inline while preserving live status and tool copy controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
@@ -238,7 +239,7 @@ describe("sessions sidebar layout", () => {
     const branch = main.slice(branchStart, main.indexOf("} else if (routeSession)", branchStart));
 
     expect(branchStart).toBeGreaterThan(-1);
-    expect(branch).toContain("setSelectedCliSession(routeSession)");
+    expect(branch).toContain("setSelectedCliSession(reconcileCliSessionStatus(routeSession, cliLiveStatesRef.current))");
     expect(branch).toContain("This session is archived. Restore it below");
     expect(branch).not.toContain('navigateDashboardPath("/dash", setBrowserPath)');
   });

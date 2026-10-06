@@ -80,7 +80,7 @@ import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
 import { countPeerSessions, type CliSessionFeedback } from "./cliSessionsModal";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
-import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatuses } from "./cliSessionLiveState";
+import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import {
   invalidateCliSessionCache,
   mergeCachedCliSession,
@@ -667,7 +667,7 @@ function App() {
               const routeDevice = new URLSearchParams(window.location.search).get("device");
               const routeSession = sessions.find((session) => session.id === routeId && (routeDevice ? session.deviceId === routeDevice : !session.remote));
               if (routeSession?.archived) {
-                setSelectedCliSession(routeSession);
+                setSelectedCliSession(reconcileCliSessionStatus(routeSession, cliLiveStatesRef.current));
                 setCliSessionMessages([]);
                 showCliSessionFeedback({
                   key: Date.now(),
@@ -684,7 +684,7 @@ function App() {
                   previousRouteSession.projectPath !== routeSession.projectPath ||
                   previousRouteSession.runningBy !== routeSession.runningBy ||
                   previousRouteSession.canStop !== routeSession.canStop;
-                setSelectedCliSession(routeSession);
+                setSelectedCliSession(reconcileCliSessionStatus(routeSession, cliLiveStatesRef.current));
                 // A running turn appends activity events to its transcript while
                 // the session index can keep the same updatedAt. Refresh the
                 // selected transcript on every realtime tick so commands and
@@ -761,7 +761,7 @@ function App() {
             void writeCliSessionMessagesCache(message.payload.cliSession.id, message.payload?.cliSessionMessages ?? [], requestedTarget?.deviceId);
           setSelectedCliSession(
             message.payload?.cliSession
-              ? mergeCachedCliSession(message.payload.cliSession, selectedCliSession)
+              ? reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current)
               : selectedCliSession
           );
           setCliSessionMessagesError(undefined);
@@ -770,7 +770,7 @@ function App() {
           if (/archived sessions cannot be opened/i.test(error)) {
             const routeId = getCliSessionIdFromPath(window.location.pathname);
             const routeSession = routeId ? cliSessions.find((session) => session.id === routeId) : undefined;
-            if (routeSession) setSelectedCliSession(routeSession);
+            if (routeSession) setSelectedCliSession(reconcileCliSessionStatus(routeSession, cliLiveStatesRef.current));
             setCliSessionMessages([]);
             setCliSessionMessagesError(undefined);
             showCliSessionFeedback({
@@ -816,7 +816,7 @@ function App() {
           }
           setSelectedCliSession(
             message.payload?.cliSession
-              ? mergeCachedCliSession(message.payload.cliSession, selectedCliSession)
+              ? reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current)
               : selectedCliSession
           );
           setCliSessionMessagesError(undefined);
@@ -845,7 +845,7 @@ function App() {
           }
           messageViewRevision.current++;
           selectedCliSessionRef.current = session;
-          setSelectedCliSession(mergeCachedCliSession(session, selectedCliSession));
+          setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(session, selectedCliSession), cliLiveStatesRef.current));
           setCliSessionMessages(message.payload.cliSessionMessages ?? []);
           setCliSessionMessagesError(undefined);
           navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
@@ -1055,7 +1055,7 @@ function App() {
           void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig });
         }
         if (applyToCurrentChat && message.status === "completed" && message.action === "renameCodexCliSession" && message.payload?.cliSession)
-          setSelectedCliSession(mergeCachedCliSession(message.payload.cliSession, selectedCliSession));
+          setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current));
         if (
           isBrowserDashboard &&
           applyToCurrentChat &&
@@ -1063,7 +1063,7 @@ function App() {
           message.action === "openCodexCliSession" &&
           message.payload?.cliSession
         ) {
-          const opened = mergeCachedCliSession(message.payload.cliSession, selectedCliSession);
+          const opened = reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current);
           messageViewRevision.current++;
           selectedCliSessionRef.current = opened;
           navigateDashboardPath(buildCliSessionPath(opened), setBrowserPath);
@@ -1074,7 +1074,7 @@ function App() {
         if (applyToCurrentChat && message.status === "completed" && message.action === "forkCodexCliSession" && message.payload?.cliSession) {
           messageViewRevision.current++;
           selectedCliSessionRef.current = message.payload.cliSession;
-          setSelectedCliSession(mergeCachedCliSession(message.payload.cliSession, selectedCliSession));
+          setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current));
           setCliSessionMessages([]);
           navigateDashboardPath(buildCliSessionPath(message.payload.cliSession), setBrowserPath);
         }
@@ -1092,7 +1092,7 @@ function App() {
         }
         if (applyToCurrentChat && message.status === "completed" && message.action === "unarchiveCodexCliSession" && selectedCliSession) {
           const restored = message.payload?.cliSessions?.find((session) => sameCliSessionTarget(session, target));
-          if (restored) setSelectedCliSession(restored);
+          if (restored) setSelectedCliSession(reconcileCliSessionStatus(restored, cliLiveStatesRef.current));
         }
       }
     },
@@ -1421,7 +1421,7 @@ function App() {
     }
     navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
     selectedCliSessionRef.current = session;
-    setSelectedCliSession(session);
+    setSelectedCliSession(reconcileCliSessionStatus(session, cliLiveStatesRef.current));
     setCliSessionMessages([]);
     setCliSessionMessagesError(undefined);
     const revision = ++messageViewRevision.current;
@@ -1912,7 +1912,7 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
-      {isBrowserDashboard && browserHostStage !== "live" && browserHostStage !== "connecting"
+      {isBrowserDashboard && !isCliSessionsPath(browserPath) && browserHostStage !== "live" && browserHostStage !== "connecting"
         ? createPortal(<BrowserConnectionBanner stage={browserHostStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
         : null}
       {notice && !(isBrowserDashboard && isCliSessionsPath(browserPath) && cliSessionFeedback?.message === notice.message)
@@ -2549,7 +2549,7 @@ function App() {
               selectedSession={selectedCliSession}
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
-              connected={realtimeConnected && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected)) && (!selectedCliSession || !cliLiveStates[cliSessionTargetKey(selectedCliSession)] || liveAuthority.current.has(cliSessionTargetKey(selectedCliSession)))}
+              connected={realtimeConnected && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected)) && (!selectedCliSession || !cliLiveStates[cliSessionTargetKey(selectedCliSession)] || liveAuthority.current.has(cliSessionTargetKey(selectedCliSession)))}
               submissionResults={submissionResults}
               steering={isActionPending("steerCodexCliSessionTurn")}
               composerConfig={cliComposerConfig}
