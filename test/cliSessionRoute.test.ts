@@ -3,10 +3,10 @@ import { buildCliSessionPath, cliSessionTargetFromLocation, sameCliSessionTarget
 
 const id = "01a04882-d037-7a42-ad24-9afb61901188";
 describe("conversation routing", () => {
-  it("round-trips device and project identity without mixing copied sessions", () => {
-    const url = new URL(buildCliSessionPath({ id, deviceId: "pc:a & b", projectPath: "D:/Project & space" }), "http://localhost");
+  it("keeps copied session links compact and device-scoped", () => {
+    const url = new URL(buildCliSessionPath({ id, deviceId: "pc:a & b" }), "http://localhost");
     expect(cliSessionTargetFromLocation(url.pathname, url.search)).toEqual({ id, deviceId: "pc:a & b" });
-    expect(url.searchParams.get("project")).toBe("D:/Project & space");
+    expect(url.searchParams.has("project")).toBe(false);
     expect(sameCliSessionTarget({ id, deviceId: "pc-a" }, { id, deviceId: "pc-b" })).toBe(false);
   });
   it("rejects stale responses when no chat is selected and supports local legacy links", () => {

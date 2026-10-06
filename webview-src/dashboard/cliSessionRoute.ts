@@ -1,6 +1,4 @@
-import type { DashboardCliSessionSummary } from "../../src/domain/dashboard/types";
-
-export type CliSessionTarget = Pick<DashboardCliSessionSummary, "id" | "deviceId">;
+export type CliSessionTarget = { id: string; deviceId?: string };
 export function cliSessionTargetKey(target: CliSessionTarget): string {
   return JSON.stringify([target.deviceId ?? "local", target.id]);
 }
@@ -15,9 +13,8 @@ export function cliSessionTargetFromLocation(pathname: string, search: string): 
   return { id, deviceId: new URLSearchParams(search).get("device") || undefined };
 }
 
-export function buildCliSessionPath(session: CliSessionTarget & Pick<DashboardCliSessionSummary, "projectPath">): string {
+export function buildCliSessionPath(session: CliSessionTarget): string {
   const query = new URLSearchParams();
-  if (session.projectPath?.trim()) query.set("project", session.projectPath.trim());
   if (session.deviceId) query.set("device", session.deviceId);
   return `/${session.id}${query.size ? `?${query.toString()}` : ""}`;
 }

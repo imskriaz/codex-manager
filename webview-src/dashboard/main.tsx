@@ -136,6 +136,14 @@ function navigateDashboardPath(path: string, setPath: (value: string) => void): 
   setPath(url.pathname);
 }
 
+function replaceDashboardPath(path: string, setPath: (value: string) => void): void {
+  const url = new URL(path, window.location.origin);
+  if (window.location.pathname !== url.pathname || window.location.search !== url.search) {
+    window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+  }
+  setPath(url.pathname);
+}
+
 function isAccountSort(value: string | null): value is AccountSort {
   return (
     value === "auto-queue" ||
@@ -443,11 +451,7 @@ function App() {
       const previous = lastCliMessageRequestRef.current;
       if (!force && sameCliSessionTarget(previous?.target, target) && previous && now - previous.at < 2_000) return;
       lastCliMessageRequestRef.current = { target, at: now };
-      const routeProject =
-        getCliSessionIdFromPath(window.location.pathname) === sessionId
-          ? new URLSearchParams(window.location.search).get("project")?.trim()
-          : undefined;
-      const projectPath = cliSessions.find((session) => sameCliSessionTarget(session, target))?.projectPath ?? routeProject;
+      const projectPath = cliSessions.find((session) => sameCliSessionTarget(session, target))?.projectPath;
       const requestId = sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath });
       if (requestId) {
         messageRequests.current.set(requestId, target);
@@ -675,6 +679,7 @@ function App() {
                   message: "This session is archived. Restore it below to continue the conversation."
                 });
               } else if (routeSession) {
+                if (new URLSearchParams(window.location.search).has("project")) replaceDashboardPath(buildCliSessionPath(routeSession), setBrowserPath);
                 const previousRouteSession =
                   sameCliSessionTarget(selectedCliSessionRef.current, routeSession) ? selectedCliSessionRef.current : undefined;
                 const sessionChanged =
