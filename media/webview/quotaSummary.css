@@ -7567,6 +7567,18 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-workspace-empty p {
   font-size: 13px;
 }
+.cli-empty-new-chat {
+  min-height: 34px;
+  margin-top: 16px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border-default));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.cli-empty-new-chat:hover { background: color-mix(in srgb, var(--accent) 20%, var(--bg-surface)); }
 .cli-empty-mark {
   width: 58px;
   height: 58px;

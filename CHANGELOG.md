@@ -3,6 +3,7 @@
 ## 1.2.15
 
 - Tighten mobile workspace spacing across the session rail, transcript, composer, tool panels, and tabs while preserving touch targets and horizontal scrolling.
+- Add a direct empty-state new-chat action so compact browser layouts can start a session without opening the hidden sidebar first.
 - Keep Environment and workspace tools single-surface on compact screens, move Agents into Environment, make file image previews open in a lightbox, clear deleted editors, and keep stale terminal/session state from showing a false running spinner.
 - Redesign the Codex chat workspace with compact transcript grouping, inline tool details, scrollable code and diff surfaces, copy controls, image previews, completed-turn summaries, and compact session metadata.
 - Remove routine browser success toasts while keeping actionable failures, reconnect status, and storage or send warnings visible in context.
