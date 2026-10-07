@@ -26,9 +26,24 @@ const WORKSPACE_READ_TIMEOUT_MS = 5_000;
 const HIDDEN_TREE_DIRECTORIES = new Set([".git", "node_modules"]);
 const activeTerminalCommands = new Map<string, ChildProcessWithoutNullStreams>();
 const activeTerminalCancels = new Map<string, () => void>();
+const nativeTerminalIds = new WeakMap<vscode.Terminal, string>();
+const knownIdleTerminals = new WeakSet<vscode.Terminal>();
+const uncertainTerminals = new WeakSet<vscode.Terminal>();
+const startingTerminals = new Set<string>();
+function nativeTerminalId(terminal: vscode.Terminal): string {
+  let id = nativeTerminalIds.get(terminal);
+  if (!id) { id = `native-terminal:${crypto.randomUUID()}`; nativeTerminalIds.set(terminal, id); }
+  return id;
+}
+function findNativeTerminal(id: string | undefined): vscode.Terminal | undefined {
+  const terminals = vscode.window.terminals ?? [];
+  return terminals.find((terminal) => nativeTerminalId(terminal) === id)
+    ?? terminals.find((terminal) => terminal.name === id);
+}
 const dashboardTerminalExecutions = new WeakSet<vscode.TerminalShellExecution>();
 const startingDashboardCommands = new Set<string>();
 const observedTerminalExecutions = new Map<vscode.TerminalShellExecution, {
+  terminal: vscode.Terminal;
   id: string;
   terminalId: string;
   command: string;
@@ -37,6 +52,8 @@ const observedTerminalExecutions = new Map<vscode.TerminalShellExecution, {
   output: string;
   emit: ReturnType<typeof createTerminalOutputEmitter>;
   reading: Promise<void>;
+  cancelled: boolean;
+  cancelTimeout?: ReturnType<typeof setTimeout>;
 }>();
 const cancelledTerminalCommands = new Set<string>();
 const environmentReads = new Map<string, Promise<DashboardWorkspaceEnvironment>>();
@@ -74,15 +91,30 @@ export function resolveWorkspaceProjectPath(projectPath: string | undefined): st
   throw new Error("The selected project is not an open workspace folder.");
 }
 
-export async function readWorkspaceEnvironment(projectPath: string | undefined): Promise<DashboardWorkspaceEnvironment> {
+export async function readWorkspaceEnvironment(projectPath: string | undefined, includeBranchDiff = false): Promise<DashboardWorkspaceEnvironment> {
   const cwd = resolveWorkspaceProjectPath(projectPath);
-  const pending = environmentReads.get(cwd);
-  if (pending) return pending;
-  const read = readWorkspaceEnvironmentInternal(cwd).finally(() => {
-    if (environmentReads.get(cwd) === read) environmentReads.delete(cwd);
-  });
-  environmentReads.set(cwd, read);
-  return read;
+  let read = environmentReads.get(cwd);
+  if (!read) {
+    read = readWorkspaceEnvironmentInternal(cwd).finally(() => {
+      if (environmentReads.get(cwd) === read) environmentReads.delete(cwd);
+    });
+    environmentReads.set(cwd, read);
+  }
+  const environment = await read;
+  if (!includeBranchDiff) return environment;
+  if (!environment.isGitRepository) throw new Error("This project is not a Git repository. Select a Git project before comparing branches.");
+  const upstream = await runProcess("git", ["rev-parse", "--verify", "@{upstream}"], cwd, GIT_TIMEOUT_MS);
+  if (upstream.timedOut) throw new Error("Git comparison timed out. Refresh the comparison to try again.");
+  let reference = upstream.exitCode === 0 ? "@{upstream}" : "HEAD";
+  if (upstream.exitCode !== 0) {
+    const head = await runProcess("git", ["rev-parse", "--verify", "HEAD"], cwd, GIT_TIMEOUT_MS);
+    if (head.timedOut) throw new Error("Git comparison timed out. Refresh the comparison to try again.");
+    if (head.exitCode !== 0) reference = "";
+  }
+  const diff = await runProcess("git", ["diff", "--no-ext-diff", "--no-color", "--relative", ...(reference ? [reference] : ["--cached"]), "--", "."], cwd, GIT_TIMEOUT_MS);
+  if (diff.timedOut) throw new Error("Git comparison timed out. Refresh the comparison to try again.");
+  if (diff.exitCode !== 0) throw new Error(diff.stderr.trim() || "Git comparison failed. Refresh to try again.");
+  return { ...environment, branchDiff: diff.stdout, branchDiffBase: reference === "@{upstream}" ? environment.upstream ?? reference : reference || "empty tree", branchDiffTruncated: Buffer.byteLength(diff.stdout, "utf8") >= MAX_OUTPUT_BYTES };
 }
 
 export async function listWorkspaceFiles(projectPath: string | undefined): Promise<DashboardWorkspaceFileEntry[]> {
@@ -171,10 +203,11 @@ export async function deleteWorkspaceFile(
 }
 
 function terminalInfo(terminal: vscode.Terminal): DashboardWorkspaceTerminalInfo {
+  const sameNames = vscode.window.terminals.filter((item) => item.name === terminal.name);
   return {
-    id: terminal.name,
-    name: terminal.name,
-    state: terminal.exitStatus ? "idle" : "running",
+    id: nativeTerminalId(terminal),
+    name: sameNames.length > 1 ? `${terminal.name} (${sameNames.indexOf(terminal) + 1})` : terminal.name,
+    state: activeTerminalCancels.has(nativeTerminalId(terminal)) || [...observedTerminalExecutions.values()].some((record) => record.terminal === terminal) ? "running" : knownIdleTerminals.has(terminal) || terminal.exitStatus ? "idle" : "unknown",
     isActive: vscode.window.activeTerminal === terminal
   };
 }
@@ -194,18 +227,23 @@ export function createWorkspaceTerminal(
     : profile === "cmd"
       ? (process.env["ComSpec"] || "cmd.exe")
       : profile === "bash" ? "bash" : undefined;
+  const baseName = name?.trim() || `Codex · ${path.basename(cwd) || "Workspace"}`;
+  let terminalName = baseName;
+  let ordinal = 2;
+  while (vscode.window.terminals.some((terminal) => terminal.name === terminalName)) terminalName = `${baseName} (${ordinal++})`;
   const terminal = vscode.window.createTerminal({
-    name: name?.trim() || `Codex · ${path.basename(cwd) || "Workspace"}`,
+    name: terminalName,
     cwd: vscode.Uri.file(cwd),
     ...(shellPath ? { shellPath } : {})
   });
+  knownIdleTerminals.add(terminal);
   terminal.show(true);
   return terminalInfo(terminal);
 }
 
 export function focusWorkspaceTerminal(terminalId: string | undefined): DashboardWorkspaceTerminalInfo {
   const wanted = terminalId?.trim();
-  const terminal = vscode.window.terminals.find((item) => item.name === wanted);
+  const terminal = findNativeTerminal(wanted);
   if (!terminal) throw new Error("That VS Code terminal is no longer open. Refresh the terminal list.");
   terminal.show(true);
   return terminalInfo(terminal);
@@ -219,43 +257,61 @@ export function registerWorkspaceTerminalMonitoring(context: vscode.ExtensionCon
   const onEnd = vscode.window.onDidEndTerminalShellExecution;
   if (typeof onStart !== "function" || typeof onEnd !== "function") return;
   context.subscriptions.push(onStart(({ terminal, execution }) => {
-    if (dashboardTerminalExecutions.has(execution) || startingDashboardCommands.has(`${terminal.name}\0${execution.commandLine.value.trim()}`)) return;
+    if (dashboardTerminalExecutions.has(execution) || startingDashboardCommands.has(`${nativeTerminalId(terminal)}\0${execution.commandLine.value.trim()}`)) return;
     const command = execution.commandLine.value.trim();
     if (!command) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const cwd = execution.cwd?.fsPath ?? resolveWorkspaceProjectPath(undefined);
     const record = {
-      id, terminalId: terminal.name, command, cwd, startedAt: Date.now(), output: "",
-      emit: createTerminalOutputEmitter({ id, terminalId: terminal.name, command, cwd }),
-      reading: Promise.resolve()
+      id, terminal, terminalId: nativeTerminalId(terminal), command, cwd, startedAt: Date.now(), output: "",
+      emit: createTerminalOutputEmitter({ id, terminalId: nativeTerminalId(terminal), command, cwd }),
+      reading: Promise.resolve(), cancelled: false
     };
     observedTerminalExecutions.set(execution, record);
+    knownIdleTerminals.delete(terminal);
+    record.emit("terminal", "Command started in the VS Code terminal.\n");
     record.reading = (async () => {
       try {
         for await (const raw of execution.read()) {
+          if (!observedTerminalExecutions.has(execution)) break;
           const chunk = cleanTerminalOutput(raw);
           record.output = appendBoundedOutput(record.output, chunk);
           record.emit("terminal", chunk);
         }
       } catch (error) {
+        completeObservedTerminal(execution, "failed", undefined, "The terminal output stream ended unexpectedly. Check the VS Code terminal.");
         console.warn("[codexManager] VS Code terminal stream ended unexpectedly", error);
       }
     })();
   }));
-  context.subscriptions.push(onEnd(({ execution, exitCode }) => {
+  context.subscriptions.push(onEnd(({ terminal, execution, exitCode }) => {
+    knownIdleTerminals.add(terminal);
+    uncertainTerminals.delete(terminal);
     const record = observedTerminalExecutions.get(execution);
     if (!record) return;
-    observedTerminalExecutions.delete(execution);
-    const status: DashboardWorkspaceTerminalResult["status"] = exitCode === 0 ? "completed" : "failed";
-    void record.reading.finally(() => publishDashboardRealtime({
-      type: "dashboard:terminal-complete",
-      result: {
-        id: record.id, terminalId: record.terminalId, command: record.command, cwd: record.cwd,
-        output: record.output || "No terminal output was captured.", exitCode,
-        durationMs: Date.now() - record.startedAt, status, finishedAt: new Date().toISOString()
-      }
-    }));
+    knownIdleTerminals.add(record.terminal);
+    const status: DashboardWorkspaceTerminalResult["status"] = record.cancelled ? "cancelled" : exitCode === 0 ? "completed" : exitCode === undefined ? "untracked" : "failed";
+    const timeout = setTimeout(() => completeObservedTerminal(execution, status, exitCode, "The output stream did not finish; only captured output is shown."), 1_000);
+    void record.reading.finally(() => { clearTimeout(timeout); completeObservedTerminal(execution, status, exitCode, exitCode === undefined ? "Command ended, but VS Code did not report an exit code. Check the terminal." : undefined); });
   }));
+  if (typeof vscode.window.onDidCloseTerminal === "function") context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
+    for (const [execution, record] of observedTerminalExecutions) {
+      if (record.terminal === terminal) completeObservedTerminal(execution, "cancelled", undefined, "The terminal was closed before completion was confirmed.");
+    }
+  }));
+}
+
+function completeObservedTerminal(execution: vscode.TerminalShellExecution, status: DashboardWorkspaceTerminalResult["status"], exitCode?: number, detail?: string): void {
+  const record = observedTerminalExecutions.get(execution);
+  if (!record) return;
+  observedTerminalExecutions.delete(execution);
+  if (!knownIdleTerminals.has(record.terminal)) uncertainTerminals.add(record.terminal);
+  clearTimeout(record.cancelTimeout);
+  publishDashboardRealtime({ type: "dashboard:terminal-complete", result: {
+    id: record.id, terminalId: record.terminalId, command: record.command, cwd: record.cwd,
+    output: [record.output, detail].filter(Boolean).join("\n") || "No terminal output was captured.", exitCode,
+    durationMs: Date.now() - record.startedAt, status, finishedAt: new Date().toISOString()
+  } });
 }
 
 export async function saveWorkspaceFile(
@@ -284,10 +340,10 @@ export async function saveWorkspaceFile(
   // truncates first, so a competing editor or interrupted process can leave a
   // zero-byte/partially written workspace file. The destination is untouched
   // if the other app has changed it while the editor was open.
-  const temporaryPath = `${absolute}.${process.pid}.${Date.now()}.codex-manager.tmp`;
-  await fs.writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" });
-  await fs.chmod(temporaryPath, stat.mode).catch(() => undefined);
+  const temporaryPath = `${absolute}.${crypto.randomUUID()}.codex-manager.tmp`;
   try {
+    await fs.writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" });
+    await fs.chmod(temporaryPath, stat.mode).catch(() => undefined);
     const current = await fs.stat(absolute);
     if (current.size !== stat.size || current.mtimeMs !== stat.mtimeMs) {
       throw new Error("The file changed in another app while it was open. Reload it before saving.");
@@ -416,7 +472,11 @@ export async function runWorkspaceTerminalCommand(options: {
   }
   const terminalId = normalizeTerminalId(options.terminalId);
   const requestedTerminalName = options.terminalId?.trim();
-  if (activeTerminalCommands.has(terminalId) || (requestedTerminalName && activeTerminalCancels.has(requestedTerminalName))) {
+  const selectedTerminal = findNativeTerminal(requestedTerminalName);
+  if (requestedTerminalName?.startsWith("native-terminal:") && !selectedTerminal) throw new Error("That VS Code terminal is no longer open. Refresh the terminal list.");
+  const selectedId = selectedTerminal ? nativeTerminalId(selectedTerminal) : requestedTerminalName;
+  if (selectedTerminal && uncertainTerminals.has(selectedTerminal)) throw new Error("The previous command has not confirmed completion. Check the VS Code terminal before starting another command.");
+  if (activeTerminalCommands.has(terminalId) || (selectedId && (activeTerminalCancels.has(selectedId) || startingTerminals.has(selectedId))) || (selectedTerminal && [...observedTerminalExecutions.values()].some((record) => record.terminal === selectedTerminal))) {
     throw new Error("A command is already running in this terminal. Stop it or wait for it to finish.");
   }
   const cwd = resolveWorkspaceProjectPath(options.projectPath);
@@ -425,103 +485,149 @@ export async function runWorkspaceTerminalCommand(options: {
   // host provides one. The detached runner below remains a compatibility path
   // for older/test hosts without a terminal API.
   if (typeof vscode.window.createTerminal === "function") {
-    const terminal: vscode.Terminal = vscode.window.terminals.find((item) => item.name === options.terminalId)
+    const terminal: vscode.Terminal = selectedTerminal
       ?? vscode.window.createTerminal({
         name: options.terminalId?.trim() || `Codex · ${path.basename(cwd) || "Workspace"}`,
         cwd: vscode.Uri.file(cwd)
       });
-    terminal.show(true);
-    const startedAt = Date.now();
-    const emit = createTerminalOutputEmitter({ id, terminalId: terminal.name, command, cwd });
-    if (!terminal.shellIntegration && typeof vscode.window.onDidChangeTerminalShellIntegration === "function") {
-      await new Promise<void>((resolve) => {
-        const subscription = vscode.window.onDidChangeTerminalShellIntegration((event) => {
-          if (event.terminal !== terminal) return;
-          clearTimeout(timeout);
-          subscription.dispose();
-          resolve();
+    const actualId = nativeTerminalId(terminal);
+    const previouslyIdle = knownIdleTerminals.has(terminal) || !selectedTerminal;
+    startingTerminals.add(actualId);
+    let cancelledBeforeStart = false;
+    const cancelPreparation = (): void => { cancelledBeforeStart = true; };
+    activeTerminalCancels.set(actualId, cancelPreparation);
+    knownIdleTerminals.delete(terminal);
+    try {
+      terminal.show(true);
+      const startedAt = Date.now();
+      const terminalContext = { id, terminalId: actualId, command, cwd: selectedTerminal ? "" : cwd };
+      const emit = createTerminalOutputEmitter(terminalContext);
+      if (!terminal.shellIntegration && typeof vscode.window.onDidChangeTerminalShellIntegration === "function") {
+        await new Promise<void>((resolve) => {
+          const subscription = vscode.window.onDidChangeTerminalShellIntegration((event) => {
+            if (event.terminal !== terminal) return;
+            clearTimeout(timeout);
+            subscription.dispose();
+            resolve();
+          });
+          const timeout = setTimeout(() => { subscription.dispose(); resolve(); }, 2_000);
         });
-        const timeout = setTimeout(() => { subscription.dispose(); resolve(); }, 2_000);
-      });
-    }
-    // Shell integration gives us the real terminal stream without replacing
-    // the user's VS Code terminal. Read immediately so no output is missed.
-    if (terminal.shellIntegration) {
-      const startKey = `${terminal.name}\0${command}`;
-      startingDashboardCommands.add(startKey);
-      let execution: vscode.TerminalShellExecution;
-      try {
-        execution = terminal.shellIntegration.executeCommand(command);
-      } catch (error) {
-        startingDashboardCommands.delete(startKey);
-        throw error;
       }
-      dashboardTerminalExecutions.add(execution);
-      queueMicrotask(() => startingDashboardCommands.delete(startKey));
-      const endEvent = new Promise<number | undefined>((resolve) => {
-        const subscription = vscode.window.onDidEndTerminalShellExecution((event) => {
-          if (event.execution !== execution) return;
-          subscription.dispose();
-          resolve(event.exitCode);
-        });
-      });
-      let capturedOutput = "";
-      let cancelled = false;
-      activeTerminalCancels.set(terminal.name, () => {
-        cancelled = true;
-        terminal.sendText("\u0003", false);
-      });
-      emit("terminal", "Command started in the VS Code terminal.\n");
-      void (async () => {
+      if (cancelledBeforeStart) {
+        if (previouslyIdle) knownIdleTerminals.add(terminal);
+        const result: DashboardWorkspaceTerminalResult = { ...terminalContext, output: "Command cancelled before it started.", durationMs: Date.now() - startedAt, status: "cancelled", finishedAt: new Date().toISOString() };
+        publishDashboardRealtime({ type: "dashboard:terminal-complete", result });
+        throw new WorkspaceTerminalCommandError(result.output, result);
+      }
+      if ([...observedTerminalExecutions.values()].some((record) => record.terminal === terminal)) throw new Error("This terminal started another command. Wait for it to finish before retrying.");
+      // Shell integration gives us the real terminal stream without replacing
+      // the user's VS Code terminal. Read immediately so no output is missed.
+      if (terminal.shellIntegration) {
+        const startKey = `${actualId}\0${command}`;
+        startingDashboardCommands.add(startKey);
+        let execution: vscode.TerminalShellExecution;
         try {
-          for await (const chunk of execution.read()) {
-            const text = cleanTerminalOutput(chunk);
-            capturedOutput = appendBoundedOutput(capturedOutput, text);
-            emit("terminal", text);
-          }
-          const exitCode = await endEvent;
-          const status: DashboardWorkspaceTerminalResult["status"] = cancelled
-            ? "cancelled"
-            : exitCode === 0 ? "completed" : "failed";
-          const result: DashboardWorkspaceTerminalResult = {
-            id,
-            terminalId: terminal.name,
-            command,
-            cwd,
-            output: capturedOutput || (status === "completed" ? "Command completed without output." : "No command output was captured."),
-            exitCode,
-            durationMs: Date.now() - startedAt,
-            status,
-            finishedAt: new Date().toISOString()
-          };
-          publishDashboardRealtime({ type: "dashboard:terminal-complete", result });
+          execution = terminal.shellIntegration.executeCommand(command);
         } catch (error) {
+          startingDashboardCommands.delete(startKey);
+          throw error;
+        }
+        dashboardTerminalExecutions.add(execution);
+        terminalContext.cwd = execution.cwd?.fsPath ?? terminalContext.cwd;
+        queueMicrotask(() => startingDashboardCommands.delete(startKey));
+        let capturedOutput = "";
+        let cancelled = false;
+        let ended = false;
+        let finished = false;
+        let cancelTimeout: ReturnType<typeof setTimeout> | undefined;
+        const subscriptions: vscode.Disposable[] = [];
+        const finish = (status: DashboardWorkspaceTerminalResult["status"], exitCode?: number, detail?: string): void => {
+        if (finished) return;
+        finished = true;
+        if (!ended) uncertainTerminals.add(terminal);
+          clearTimeout(timeout);
+          clearTimeout(cancelTimeout);
+          subscriptions.forEach((subscription) => { subscription.dispose(); });
+          if (activeTerminalCancels.get(actualId) === cancelNativeCommand) activeTerminalCancels.delete(actualId);
           publishDashboardRealtime({
             type: "dashboard:terminal-complete",
             result: {
-              id, terminalId: terminal.name, command, cwd,
-              output: capturedOutput || (error instanceof Error ? error.message : String(error)),
-              durationMs: Date.now() - startedAt, status: cancelled ? "cancelled" : "failed",
-              finishedAt: new Date().toISOString()
+              ...terminalContext,
+              output: [capturedOutput, detail].filter(Boolean).join("\n") || (status === "completed" ? "Command completed without output." : "No command output was captured."),
+              exitCode, durationMs: Date.now() - startedAt, status, finishedAt: new Date().toISOString()
             }
           });
-        } finally {
-          activeTerminalCancels.delete(terminal.name);
-        }
-      })();
-      return {
-        id, terminalId: terminal.name, command, cwd,
-        output: "Command started in the real VS Code terminal.",
-        durationMs: 0, status: "running", finishedAt: new Date().toISOString()
-      };
+        };
+        const timeout = setTimeout(() => {
+          try { terminal.sendText("\u0003", false); }
+          catch { /* Completion below also explains that the shell must be checked. */ }
+          finally { finish("timedOut", undefined, "Command timed out after 2 minutes; an interrupt was requested. Check the VS Code terminal before retrying."); }
+        }, COMMAND_TIMEOUT_MS);
+      const cancelNativeCommand = () => {
+          if (ended) throw new Error("This command already finished. Its remaining output is being collected.");
+          if (cancelled) return;
+          cancelled = true;
+          try { terminal.sendText("\u0003", false); }
+          finally {
+            cancelTimeout = setTimeout(() => finish("untracked", undefined, "Stop requested; the shell did not confirm completion. Check the VS Code terminal before retrying."), 5_000);
+          }
+        };
+        activeTerminalCancels.set(actualId, cancelNativeCommand);
+        let reading: Promise<void> = Promise.resolve();
+        subscriptions.push(vscode.window.onDidEndTerminalShellExecution((event) => {
+        if (event.execution !== execution) return;
+        ended = true;
+        uncertainTerminals.delete(terminal);
+          knownIdleTerminals.add(terminal);
+          // Drain buffered output, but a broken stream must not hold completion open.
+          const status = cancelled ? "cancelled" : event.exitCode === 0 ? "completed" : event.exitCode === undefined ? "untracked" : "failed";
+          const drainTimeout = setTimeout(() => finish(status, event.exitCode, "The output stream did not finish; only captured output is shown."), 1_000);
+          void reading.finally(() => {
+            clearTimeout(drainTimeout);
+            finish(status, event.exitCode, event.exitCode === undefined && !cancelled ? "Command ended, but VS Code did not report an exit code. Check the terminal." : undefined);
+          });
+        }));
+        if (typeof vscode.window.onDidCloseTerminal === "function") subscriptions.push(vscode.window.onDidCloseTerminal((closed) => {
+        if (closed === terminal) { ended = true; finish("cancelled", undefined, "The terminal was closed before command completion was confirmed."); }
+        }));
+        emit("terminal", "Command started in the VS Code terminal.\n");
+        reading = (async () => {
+          try {
+            for await (const chunk of execution.read()) {
+              if (finished) break;
+              const text = cleanTerminalOutput(chunk);
+              capturedOutput = appendBoundedOutput(capturedOutput, text);
+              emit("terminal", text);
+            }
+          } catch (error) {
+            finish(cancelled ? "cancelled" : "failed", undefined, error instanceof Error ? error.message : String(error));
+          }
+        })();
+        return {
+          ...terminalContext,
+          output: "Command started in the real VS Code terminal.",
+          durationMs: 0, status: "running", finishedAt: new Date().toISOString()
+        };
+      }
+      // Shell integration is not available for some remote/legacy terminals.
+      // Keep the command in the real VS Code terminal and make that limitation
+      // explicit in the dashboard rather than rendering an empty log.
+      const fallback = "Command sent to the real VS Code terminal. Shell integration is unavailable, so VS Code does not expose its output to the dashboard; view the terminal tab for live output.";
+      emit("terminal", `${fallback}\n`);
+      try { terminal.sendText(command, true); }
+      catch (error) {
+        const message = error instanceof Error ? error.message : "The command could not be sent to VS Code.";
+        const result: DashboardWorkspaceTerminalResult = { ...terminalContext, output: message, durationMs: 0, status: "failed", finishedAt: new Date().toISOString() };
+        publishDashboardRealtime({ type: "dashboard:terminal-complete", result });
+        throw new WorkspaceTerminalCommandError(message, result);
+      }
+      const result: DashboardWorkspaceTerminalResult = { ...terminalContext, output: fallback, durationMs: 0, status: "untracked", finishedAt: new Date().toISOString() };
+      publishDashboardRealtime({ type: "dashboard:terminal-complete", result });
+      return result;
+    } finally {
+      startingTerminals.delete(actualId);
+      if (activeTerminalCancels.get(actualId) === cancelPreparation) activeTerminalCancels.delete(actualId);
     }
-    // Shell integration is not available for some remote/legacy terminals.
-    // Keep the command in the real VS Code terminal and make that limitation
-    // explicit in the dashboard rather than rendering an empty log.
-    const fallback = "Command sent to the real VS Code terminal. Shell integration is unavailable, so VS Code does not expose its output to the dashboard; view the terminal tab for live output.";
-    emit("terminal", `${fallback}\n`);
-    terminal.sendText(command, true);
-    return { id, terminalId: terminal.name, command, cwd, output: fallback, durationMs: 0, status: "untracked", finishedAt: new Date().toISOString() };
   }
   const shell = process.platform === "win32"
     ? resolveWindowsShell(command)
@@ -548,6 +654,7 @@ export async function runWorkspaceTerminalCommand(options: {
     status,
     finishedAt: new Date().toISOString()
   };
+  publishDashboardRealtime({ type: "dashboard:terminal-complete", result });
   if (status !== "completed") {
     const message = status === "cancelled"
       ? "Terminal command cancelled."
@@ -561,12 +668,22 @@ export async function runWorkspaceTerminalCommand(options: {
 
 export function cancelWorkspaceTerminalCommand(terminalId: string | undefined): boolean {
   const actualName = terminalId?.trim();
-  const cancelRealTerminal = actualName ? activeTerminalCancels.get(actualName) : undefined;
+  const terminal = findNativeTerminal(actualName);
+  const actualId = terminal ? nativeTerminalId(terminal) : actualName;
+  const cancelRealTerminal = actualId ? activeTerminalCancels.get(actualId) : undefined;
   if (cancelRealTerminal) {
     cancelRealTerminal();
     return true;
   }
   const normalized = normalizeTerminalId(terminalId);
+  for (const [execution, record] of observedTerminalExecutions) {
+    if (record.terminal !== terminal || knownIdleTerminals.has(record.terminal)) continue;
+    if (record.cancelled) return true;
+    record.terminal.sendText("\u0003", false);
+    record.cancelled = true;
+    record.cancelTimeout = setTimeout(() => completeObservedTerminal(execution, "untracked", undefined, "Stop requested; the shell did not confirm completion. Check the VS Code terminal before retrying."), 5_000);
+    return true;
+  }
   const child = activeTerminalCommands.get(normalized);
   if (child) {
     cancelledTerminalCommands.add(normalized);

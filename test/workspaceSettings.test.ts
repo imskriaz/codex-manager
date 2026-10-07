@@ -21,6 +21,7 @@ describe("experimental workspace setting", () => {
 it("only automatically inspects open roots and their descendants", () => {
   const roots = [{ path: "D:\\Projects\\Codex-Manager" }, { path: "/work/App" }];
   expect(isOpenWorkspaceProject("d:/projects/codex-manager/src", roots)).toBe(true);
+  expect(isOpenWorkspaceProject("d:/projects/app", [{ path: "D:/" }])).toBe(true);
   expect(isOpenWorkspaceProject("D:/Projects/Codex-Manager-other", roots)).toBe(false);
   expect(isOpenWorkspaceProject("/work/app", roots)).toBe(false);
   expect(isOpenWorkspaceProject("/work/App/src", roots)).toBe(true);

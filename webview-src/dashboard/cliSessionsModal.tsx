@@ -39,7 +39,7 @@ import { readSubAgentMetadata } from "../../src/domain/sessionSource";
 import { cliSessionTargetKey } from "./cliSessionRoute";
 import { isCliTurnActive } from "./cliSessionLiveState";
 import { useModalAccessibility } from "./primitives";
-import { getSensitiveDisplayValue } from "./helpers";
+import { getSensitiveDisplayValue, isOpenWorkspaceProject } from "./helpers";
 import { readCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, cliComposerDraftKey, resolveCliComposerSettings, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
 
@@ -193,7 +193,7 @@ export type CliSessionsPageProps = {
   onSelect: (session: DashboardCliSessionSummary) => void;
   onBackToList: () => void;
   onRefreshMessages: () => void;
-  onRefreshEnvironment: (projectPath?: string) => void;
+  onRefreshEnvironment: (projectPath?: string, includeBranchDiff?: boolean) => void;
   onRunTerminal: (command: string, projectPath?: string, terminalId?: string) => void;
   onListTerminals: () => void;
   onCreateTerminal: (profile: "default" | "powershell" | "cmd" | "bash", projectPath?: string) => void;
@@ -291,6 +291,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerWidth < 1180);
   const [contextTabs, setContextTabs] = useState<WorkspaceTab[]>([]);
   const [activeContextTab, setActiveContextTab] = useState<WorkspaceTab>("terminal");
+  const [branchReview, setBranchReview] = useState(false);
+  useEffect(() => setBranchReview(false), [props.selectedSession?.id, props.selectedSession?.deviceId]);
   const [contextAddOpen, setContextAddOpen] = useState(false);
   // Match Codex's quiet workspace default: the Environment inspector is
   // available from the header, but it should not cover the conversation on
@@ -529,7 +531,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const showWorking = currentTurnRunning && !hasInProgressActivity;
   const selectedProjectPath = props.selectedSession?.projectPath ?? newChatProject ?? projectPath;
   const openProjectPaths = props.composerConfig?.projects ?? [];
-  const toolProjectPath = props.selectedSession?.remote || !selectedProjectPath || openProjectPaths.length === 0 || openProjectPaths.some((project) => canonicalWebPath(project.path) === canonicalWebPath(selectedProjectPath))
+  const toolProjectPath = props.selectedSession?.remote || !selectedProjectPath || openProjectPaths.length === 0 || isOpenWorkspaceProject(selectedProjectPath, openProjectPaths)
     ? selectedProjectPath
     : openProjectPaths[0]?.path;
   const startNewChat = (nextProject?: string): void => {
@@ -589,6 +591,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
   };
   const openContextTab = (tab: WorkspaceToolTab, filePath?: string): void => {
+    if (tab === "reviews") setBranchReview(false);
     const resolvedFilePath = filePath && tab === "files" ? workspaceRelativePath(filePath, toolProjectPath) : filePath;
     const tabId: WorkspaceTab = resolvedFilePath ? `${tab === "agents" ? "agent" : tab === "files" ? "file" : "review"}:${resolvedFilePath}` : tab;
     setContextTabs((current) => {
@@ -905,7 +908,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 onRefresh={props.onRefreshEnvironment}
                 onCommit={props.onCommitWorkspace}
                 onPush={props.onPushWorkspace}
-                onCompare={() => openContextTab("reviews")}
+                onCompare={() => { setEnvironmentOpen(false); openContextTab("reviews"); setBranchReview(true); props.onRefreshEnvironment(toolProjectPath, true); }}
                 onAgents={() => { setEnvironmentOpen(false); openContextTab("agents"); }}
                 agentCount={railAgents.length}
               /> : null}
@@ -994,7 +997,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           results={props.terminalResults}
           liveOutputs={props.terminalLiveOutputs}
           terminals={props.workspaceTerminals}
-          running={props.terminalRunning}
+          running={props.terminalRunning || props.terminalLiveOutputs.some((output) => output.terminalId === props.workspaceTerminals.find((terminal) => terminal.isActive)?.id)}
           stopping={props.terminalStopping}
           collapsed={contextCollapsed}
           tabs={contextTabs}
@@ -1003,6 +1006,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           files={props.workspaceFiles}
           filesByPath={props.workspaceFilesByPath}
           fileChanges={railFiles}
+          branchReview={branchReview}
+          branchEnvironment={props.environment && toolProjectPath && canonicalWebPath(props.environment.projectPath) === canonicalWebPath(toolProjectPath) ? props.environment : undefined}
+          comparisonLoading={props.environmentLoading}
+          onCompareBranch={() => props.onRefreshEnvironment(toolProjectPath, true)}
+          onShowTurnReview={() => setBranchReview(false)}
           agents={railAgents}
           agentSessions={props.sessions.map((session) => ({ ...session, ...readSubAgentMetadata(session) })).filter((session) => session.subAgent && session.parentSessionId === props.selectedSession?.id && (session.deviceId ?? "local") === (props.selectedSession?.deviceId ?? "local"))}
           agentMessages={props.agentMessages ?? {}}
@@ -1645,6 +1653,11 @@ function WorkspaceContextPanel(props: {
   files: DashboardWorkspaceFileEntry[];
   filesByPath: Record<string, DashboardWorkspaceFile>;
   fileChanges: Array<{ path: string; diff?: string }>;
+  branchReview: boolean;
+  branchEnvironment?: DashboardWorkspaceEnvironment;
+  comparisonLoading: boolean;
+  onCompareBranch: () => void;
+  onShowTurnReview: () => void;
   agents: DashboardCliSessionMessage[];
   agentSessions: DashboardCliSessionSummary[];
   agentMessages: Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>;
@@ -1709,17 +1722,22 @@ function WorkspaceContextPanel(props: {
       {props.liveOutputs.map((output) => <article class="is-running" key={output.id}><div><span aria-hidden="true">›</span><code>{output.command}</code></div><pre>{output.chunk || "Waiting for terminal output…"}</pre><small>running · live output</small></article>)}
       {props.results.map((result) => <article class={`is-${result.status}`} key={result.id}><div><span aria-hidden="true">›</span><code>{result.command}</code></div><pre>{result.output}</pre><small>{result.status} · {formatTerminalDuration(result.durationMs)}{result.exitCode !== undefined ? ` · exit ${result.exitCode}` : ""}</small></article>)}
       {props.running ? <div class="cli-terminal-running" role="status"><span class="cli-live-spinner" aria-hidden="true" /> Running command…</div> : null}
-      {!followOutput ? <button type="button" class="cli-terminal-latest" onClick={() => {
+      {!followOutput ? <button type="button" class="cli-terminal-latest" aria-label="Scroll to latest terminal output" title="Scroll to latest terminal output" onClick={() => {
         if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
         setFollowOutput(true);
-      }}>Latest output ↓</button> : null}
+      }}><ChevronIcon /></button> : null}
     </div>
     <form class="cli-terminal-command" onSubmit={(event) => { event.preventDefault(); const command = props.draft.trim(); if (command && !props.running) props.onRun(command, props.terminals.find((terminal) => terminal.isActive)?.id); }}>
       <span aria-hidden="true">$</span><input name="terminal-command" value={props.draft} autoComplete="off" spellcheck={false} aria-label="Terminal command" placeholder="Run a command…" disabled={props.running} onInput={(event) => props.onDraft(event.currentTarget.value)} />
       {props.running ? <button type="button" class="is-stop" disabled={props.stopping} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping…" : "Stop"}</button> : <button type="submit" disabled={!props.draft.trim()} aria-label="Run terminal command"><SendIcon /></button>}
     </form>
-    </> : props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView files={props.files} file={activePath ? props.filesByPath[activePath] : undefined} activePath={activePath} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : props.tabs.includes(props.activeTab) && activeKind === "reviews" ? <WorkspaceReviewsView changes={props.fileChanges} agents={props.agents} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : <div class="cli-context-empty cli-context-empty-start"><PanelIcon /><strong>Select a tool</strong><span>Use + to open Terminal, Files, or Reviews.</span></div>}
+    </> : props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView files={props.files} file={activePath ? props.filesByPath[activePath] : undefined} activePath={activePath} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} agents={props.agents} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : <div class="cli-context-empty cli-context-empty-start"><PanelIcon /><strong>Select a tool</strong><span>Use + to open Terminal, Files, or Reviews.</span></div>}
   </aside>;
+}
+
+function BranchComparison(props: { environment?: DashboardWorkspaceEnvironment; loading: boolean; onRefresh: () => void; onShowTurnReview: () => void }) {
+  const diff = props.environment?.branchDiff;
+  return <div class="cli-reviews-view cli-branch-comparison"><header><ReviewIcon /><span><strong>Compare branch</strong><small>{props.environment?.branchDiffBase ? `Against ${props.environment.branchDiffBase}` : "Git comparison"}</small></span><IconButton label="Show turn changes" onClick={props.onShowTurnReview}><ReviewIcon /></IconButton><IconButton label="Refresh comparison" disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton></header>{props.loading ? <div class="cli-context-empty" role="status"><span class="cli-live-spinner" />Comparing branch…</div> : diff !== undefined ? <>{props.environment?.branchDiffTruncated ? <p role="status">Preview limited. Open the repository in VS Code for the full diff.</p> : null}{diff.trim() ? <DiffPreview diff={diff} /> : <div class="cli-context-empty" role="status">No tracked differences from {props.environment?.branchDiffBase ?? "the comparison base"}.</div>}</> : <div class="cli-context-empty" role="status">Comparison unavailable. Use Refresh comparison to retry.</div>}</div>;
 }
 
 function AgentWorkspace(props: { sessions: DashboardCliSessionSummary[]; data: Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>; activeId?: string; onOpen: (id: string) => void; onRefresh?: (agent: DashboardCliSessionSummary) => void; onFeedback: (notice: DashboardNotice) => void }) {

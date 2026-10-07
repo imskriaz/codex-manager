@@ -80,7 +80,9 @@ try {
     assert.equal(await page.locator(".cli-workspace-feedback.is-error").count(), 0, "Opening real chat must not fail automatic workspace inspection");
     await page.screenshot({ path: path.join(output, `workspace-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "Real UI fits viewport");
-    if (width === 1440 && process.argv.includes("--create-session")) {
+    let createdSessionId;
+    if (process.argv.includes("--create-session")) {
+      if (width === 390) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
       await page.getByRole("button", { name: "New chat", exact: true }).click();
       await page.getByRole("textbox", { name: "Message Codex", exact: true }).fill("Reply exactly UI smoke test OK. Do not run tools or modify any files.");
       const startedAt = Date.now();
@@ -89,6 +91,7 @@ try {
       const created = await page.evaluate(() => window.__liveEvents.filter(event => event.type === "dashboard:action-result" && event.action === "startCodexCliSession").at(-1));
       assert.equal(created.status, "completed", created.error || "Real new-session creation must complete");
       assert.ok(created.payload?.cliSession?.id, "Created chat has a session ID");
+      createdSessionId = created.payload.cliSession.id;
       await page.locator(".cli-conversation .cli-session-message.is-assistant").filter({ hasText: "UI smoke test OK" }).waitFor({ timeout: 95_000 });
       console.log("Real new chat and first response completed in " + (Date.now() - startedAt) + "ms.");
     }
@@ -98,7 +101,7 @@ try {
     await context.setOffline(false);
     await page.waitForFunction(() => window.__liveEvents.filter(event => event.type === "dashboard:connection").at(-1)?.connected === true, null, { timeout: 30_000 });
     assert.deepEqual(errors, [], "Real browser runtime errors");
-    results.push({ width, loadMs, sessions: sessions.length, children: childIds.length, messages, reconnect: "passed" });
+    results.push({ width, loadMs, sessions: sessions.length, children: childIds.length, messages, newChat: createdSessionId ? "first response passed" : "not requested", reconnect: "passed" });
     await context.close();
   }
   await writeFile(path.join(output, "results.json"), JSON.stringify(results, null, 2));

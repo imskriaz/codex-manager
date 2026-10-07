@@ -28,7 +28,7 @@ async function fixture(
     await writeFile(path.join(home, "thread-writer-locks", `${id}.lock`), "");
     await writeFile(
       path.join(home, "sessions", `rollout-${id}.jsonl`),
-      JSON.stringify({ type: "session_meta", payload: { id, source: sources[index], cwd: home } }) + "\n"
+      JSON.stringify({ type: "session_meta", payload: { id, source: sources[index], cwd: home } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }) + "\n"
     );
   }
   return home;
@@ -115,7 +115,8 @@ describe("auto resume selection", () => {
     insert.run(ids[0]!, "vscode", home);
     insert.run(ids[2]!, "vscode", home);
     db.close();
-    expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0], ids[2]]);
+    expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([]);
+    expect(await readAutoResumeCodexSessionIds(home, [home], ids, undefined, "open")).toEqual([ids[0], ids[2]]);
   });
   it("skips child metadata in a truncated record and rejects incomplete parent metadata", async () => {
     const home = await fixture();
@@ -125,7 +126,8 @@ describe("auto resume selection", () => {
       '{"type":"session_meta","payload":{"source":{"subagent":"review"},"instructions":"' + "x".repeat(1100000)
     );
     await writeFile(path.join(home, "sessions", `rollout-${ids[2]}.jsonl`), "partial");
-    await expect(readAutoResumeCodexSessionIds(home, [home])).rejects.toThrow("metadata is missing or incomplete");
+    expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0]]);
+    await expect(readAutoResumeCodexSessionIds(home, [home], ids, undefined, "open")).rejects.toThrow("metadata is missing or incomplete");
   });
 
   it("fills partial database metadata from transcripts and excludes child evidence", async () => {
@@ -193,7 +195,7 @@ describe("auto resume selection", () => {
     ].entries()) {
       await writeFile(
         path.join(home, "sessions", `rollout-${ids[i]}.jsonl`),
-        JSON.stringify({ type: "session_meta", payload: { source: "vscode", cwd } })
+        JSON.stringify({ type: "session_meta", payload: { source: "vscode", cwd } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_started" } })
       );
     }
     expect(await readAutoResumeCodexSessionIds(home, ["c:\\projects\\DEMO", "\\\\server\\share\\project"], [])).toEqual(

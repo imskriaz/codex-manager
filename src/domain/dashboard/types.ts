@@ -618,6 +618,7 @@ export interface DashboardActionPayload {
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
   filePath?: string;
+  includeBranchDiff?: boolean;
   fileContent?: string;
   fileRevision?: string;
   command?: string;
@@ -769,6 +770,9 @@ export interface DashboardWorkspaceEnvironment {
   ahead: number;
   behind: number;
   hasRemote: boolean;
+  branchDiff?: string;
+  branchDiffBase?: string;
+  branchDiffTruncated?: boolean;
 }
 
 export interface DashboardWorkspaceFileEntry {
@@ -834,7 +838,7 @@ export interface DashboardCodexServerRequest {
 export interface DashboardWorkspaceTerminalInfo {
   id: string;
   name: string;
-  state: "running" | "idle";
+  state: "running" | "idle" | "unknown";
   cwd?: string;
   shellPath?: string;
   processId?: number;
@@ -873,6 +877,10 @@ export interface DashboardActionResultPayload {
   workspaceTerminal?: DashboardWorkspaceTerminalInfo;
   deletedWorkspaceFilePath?: string;
   terminalResult?: DashboardWorkspaceTerminalResult;
+  terminalLiveOutputs?: DashboardWorkspaceTerminalOutput[];
+  terminalResults?: DashboardWorkspaceTerminalResult[];
+  terminalActivityEpoch?: string;
+  terminalActivityDeviceId?: string;
   /** Monotonic server revision used to discard stale realtime session lists. */
   realtimeRevision?: number;
   /** The active credentials changed and this VS Code window should be reloaded. */

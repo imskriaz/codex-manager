@@ -323,6 +323,18 @@ const WEB_DASHBOARD_PUBLIC_ASSETS = new Set([
   "/assets/icon-192.png", "/assets/icon-512.png", "/assets/codex.svg"
 ]);
 
+export function getWebDashboardAssetVersion(extensionPath: string, version: string): string {
+  const fingerprint = crypto.createHash("sha256");
+  for (const asset of Object.values(WEB_DASHBOARD_ASSETS)) {
+    fingerprint.update(asset.parts.join("/"));
+    try {
+      const stat = fsSync.statSync(path.join(extensionPath, ...asset.parts));
+      fingerprint.update(`${stat.size}:${stat.mtimeMs}`);
+    } catch { fingerprint.update("unavailable"); }
+  }
+  return `${version}-${fingerprint.digest("hex").slice(0, 12)}`;
+}
+
 export class WebDashboardServer implements vscode.Disposable {
   private server: http.Server | undefined;
   private readonly webSocketClients = new Set<WebSocket>();
@@ -379,6 +391,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private notificationMirrorSubscription: vscode.Disposable | undefined;
   private notificationResolutionSubscription: vscode.Disposable | undefined;
   private readonly assetCache = new Map<string, { content: Buffer; gzip: Buffer; etag: string }>();
+  private readonly assetVersion: string;
   private readonly dashboardRealtimeSubscription: () => void;
   private readonly remoteSessionLive = new Map<string, DashboardCodexSessionLiveState>();
 
@@ -387,6 +400,7 @@ export class WebDashboardServer implements vscode.Disposable {
     private readonly repo: AccountsRepository,
     private readonly encryptedSync?: EncryptedSyncManager
   ) {
+    this.assetVersion = getWebDashboardAssetVersion(context.extensionUri.fsPath, String((context.extension?.packageJSON as { version?: string } | undefined)?.version ?? "dev"));
     this.deviceId = context.globalState?.get<string>("codexManager.webDashboard.deviceId") ?? crypto.randomUUID();
     void context.globalState?.update("codexManager.webDashboard.deviceId", this.deviceId);
     this.announcements = new AnnouncementService(getCodexManagerStorageRoot(), context.extensionUri.fsPath);
@@ -745,8 +759,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "GET" && isWebDashboardPagePath(path)) {
-      const version = String((this.context.extension.packageJSON as { version?: string }).version ?? "dev");
-      this.sendHtml(response, dashboardPage(!isLocalWebDashboardRequest(request), version));
+      this.sendHtml(response, dashboardPage(!isLocalWebDashboardRequest(request), this.assetVersion));
       return;
     }
     response.statusCode = 404;
@@ -1214,6 +1227,7 @@ export class WebDashboardServer implements vscode.Disposable {
       if (!session || typeof session !== "object") return session;
       return { ...session, deviceId, deviceName: peer?.deviceName, remote: true };
     };
+    const decorateTerminal = (entry: unknown): unknown => entry && typeof entry === "object" ? { ...entry, deviceId } : entry;
     const payload = result.payload as Record<string, unknown>;
     return {
       ...result,
@@ -1221,7 +1235,10 @@ export class WebDashboardServer implements vscode.Disposable {
         ...payload,
         ...(Array.isArray(payload["cliSessions"]) ? { cliSessions: payload["cliSessions"].map(decorateSession) } : {}),
         ...(payload["cliSession"] ? { cliSession: decorateSession(payload["cliSession"]) } : {}),
-        ...(isCodexSessionLiveState(payload["cliSessionLive"]) ? { cliSessionLive: { ...payload["cliSessionLive"], deviceId } } : {})
+        ...(isCodexSessionLiveState(payload["cliSessionLive"]) ? { cliSessionLive: { ...payload["cliSessionLive"], deviceId } } : {}),
+        ...(Array.isArray(payload["terminalLiveOutputs"]) ? { terminalLiveOutputs: payload["terminalLiveOutputs"].map(decorateTerminal) } : {}),
+        ...(Array.isArray(payload["terminalResults"]) ? { terminalResults: payload["terminalResults"].map(decorateTerminal) } : {}),
+        ...(typeof payload["terminalActivityEpoch"] === "string" ? { terminalActivityDeviceId: deviceId } : {})
       }
     };
   }
@@ -2372,7 +2389,7 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       response.setHeader("Content-Type", asset.contentType);
       const requestedVersion = new URL(request.url ?? requestPath, this.getUrl()).searchParams.get("v");
-      const currentVersion = String((this.context.extension.packageJSON as { version?: string }).version ?? "dev");
+      const currentVersion = this.assetVersion;
       response.setHeader("Cache-Control", requestPath === "/service-worker.js" ? "no-store"
         : requestedVersion === currentVersion ? "private, max-age=31536000, immutable" : "private, max-age=300");
       response.setHeader("ETag", cached.etag);

@@ -1,9 +1,12 @@
 import { EventEmitter } from "events";
-import { readFileSync } from "fs";
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type * as http from "http";
 import { describe, expect, it, vi } from "vitest";
 import {
   isLocalWebDashboardRequest,
+  getWebDashboardAssetVersion,
   isCliSessionWatchPath,
   isTrustedWebDashboardOrigin,
   isWebDashboardPagePath,
@@ -14,6 +17,19 @@ import {
 } from "../src/services/webDashboardServer";
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 import { normalizeCloudflaredDomain } from "../src/presentation/dashboard/settings";
+
+it("invalidates browser assets when a build changes within the requested release version", () => {
+  const folder = mkdtempSync(join(tmpdir(), "codex-assets-"));
+  try {
+    mkdirSync(join(folder, "media", "webview"), { recursive: true });
+    const file = join(folder, "media", "webview", "browserHost.js");
+    writeFileSync(file, "first");
+    const version = getWebDashboardAssetVersion(folder, "1.2.15");
+    expect(getWebDashboardAssetVersion(folder, "1.2.15")).toBe(version);
+    writeFileSync(file, "updated build");
+    expect(getWebDashboardAssetVersion(folder, "1.2.15")).not.toBe(version);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
 
 function createRequest(): http.IncomingMessage & EventEmitter {
   const request = new EventEmitter() as http.IncomingMessage & EventEmitter;
@@ -203,8 +219,9 @@ describe("browser PWA routes", () => {
       const privateState = await get("/api/state", true);
       expect(privateState.status).toBe(401);
       const dashboard = await get("/");
-      expect(dashboard.body).toContain('rel="manifest" href="/manifest.webmanifest?v=1.2.10-pre1"');
-      expect(dashboard.body).toContain('src="/assets/browserHost.js?v=1.2.10-pre1"');
+      const assetVersion = getWebDashboardAssetVersion(process.cwd(), "1.2.10-pre1");
+      expect(dashboard.body).toContain(`rel="manifest" href="/manifest.webmanifest?v=${assetVersion}"`);
+      expect(dashboard.body).toContain(`src="/assets/browserHost.js?v=${assetVersion}"`);
       expect(dashboard.headers.get("cache-control")).toBe("no-store");
     } finally {
       server.dispose();

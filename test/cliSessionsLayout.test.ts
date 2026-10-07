@@ -31,8 +31,6 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(main).toContain('if (next.level === "info") return;');
-    expect(main).toContain("const running = isCliTurnActive(live);");
-    expect(main).toContain("setCliSessions((sessions) => sessions.map(patchSession));");
     expect(source).toContain("function CopySnippet");
     expect(source).toContain("selected project is not an open workspace folder");
     expect(css).toContain("touch-action: pan-x");

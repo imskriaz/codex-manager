@@ -2,6 +2,7 @@ import { render } from "preact";
 import { createPortal } from "preact/compat";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
 import packageJson from "../../package.json";
+import { emptyWorkspaceTerminalActivity, reduceWorkspaceTerminalActivity } from "../../src/domain/workspaceTerminalActivity";
 import type {
   DashboardAccountViewModel,
   DashboardActionName,
@@ -18,9 +19,7 @@ import type {
   DashboardWorkspaceEnvironment,
   DashboardWorkspaceFile,
   DashboardWorkspaceFileEntry,
-  DashboardWorkspaceTerminalInfo,
-  DashboardWorkspaceTerminalOutput,
-  DashboardWorkspaceTerminalResult
+  DashboardWorkspaceTerminalInfo
 } from "../../src/domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../../src/core/types";
 import { createAutoQueuePolicy, type AutoQueuePolicy } from "../../src/domain/autoQueuePolicy";
@@ -217,11 +216,8 @@ function App() {
       }
       // Realtime snapshots are authoritative for the visible running marker.
       // The session index can lag behind the stream by one refresh tick.
-      const running = isCliTurnActive(live);
       const patchSession = (session: DashboardCliSessionSummary): DashboardCliSessionSummary =>
-        session.id === live.sessionId && (session.deviceId ?? undefined) === (live.deviceId ?? undefined)
-          ? { ...session, status: running ? "running" : "idle", ...(running ? {} : { canStop: false }) }
-          : session;
+        reconcileCliSessionStatus(session, cliLiveStatesRef.current);
       setCliSessions((sessions) => sessions.map(patchSession));
       setSelectedCliSession((session) => session ? patchSession(session) : session);
       liveAuthority.current.add(key);
@@ -247,8 +243,10 @@ function App() {
   const [codexRequests, setCodexRequests] = useState<DashboardCodexServerRequest[]>([]);
   const [codexRequestError, setCodexRequestError] = useState<string>();
   const [workspaceEnvironment, setWorkspaceEnvironment] = useState<DashboardWorkspaceEnvironment>();
-  const [terminalResults, setTerminalResults] = useState<DashboardWorkspaceTerminalResult[]>([]);
-  const [terminalLiveOutputs, setTerminalLiveOutputs] = useState<Record<string, DashboardWorkspaceTerminalOutput>>({});
+  const [terminalActivity, dispatchTerminalActivity] = useReducer(reduceWorkspaceTerminalActivity, emptyWorkspaceTerminalActivity);
+  const terminalResults = terminalActivity.results;
+  const terminalLiveOutputs = terminalActivity.outputs;
+  const terminalEpochs = useRef<Record<string, string>>({});
   const [workspaceTerminals, setWorkspaceTerminals] = useState<DashboardWorkspaceTerminalInfo[]>([]);
   const [workspaceFiles, setWorkspaceFiles] = useState<DashboardWorkspaceFileEntry[]>([]);
   const [workspaceFilesByPath, setWorkspaceFilesByPath] = useState<Record<string, DashboardWorkspaceFile>>({});
@@ -461,8 +459,8 @@ function App() {
     [cliSessions, sendAction]
   );
   const requestWorkspaceEnvironment = useCallback(
-    (projectPath?: string): void => {
-      sendAction("getWorkspaceEnvironment", undefined, { projectPath, targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
+    (projectPath?: string, includeBranchDiff?: boolean): void => {
+      sendAction("getWorkspaceEnvironment", undefined, { projectPath, includeBranchDiff, targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
     },
     [sendAction, selectedPeerId]
   );
@@ -566,6 +564,7 @@ function App() {
       }
       if (message.type === "dashboard:action-result" && message.action === "respondCodexServerRequest") {
         setCodexRequestError(message.status === "completed" ? undefined : (message.error ?? "Codex could not receive this response. Try again or refresh the session."));
+        if (message.status !== "completed") showCliSessionFeedback({ key: Date.now(), level: "error", message: message.error ?? "Codex could not receive this response. Try again or refresh the session." });
       }
       if (message.type === "dashboard:notification-dismissed") {
         setBrowserActionRequest((current) =>
@@ -906,13 +905,7 @@ function App() {
       if (message.type === "dashboard:action-result" && message.action === "runWorkspaceTerminalCommand") {
         if (message.payload?.terminalResult && message.payload.terminalResult.status !== "running") {
           const completed = message.payload.terminalResult;
-          setTerminalResults((current) => [...current.filter((result) => result.id !== completed.id), completed].slice(-100));
-          setTerminalLiveOutputs((current) => {
-            if (!current[completed.id]) return current;
-            const next = { ...current };
-            delete next[completed.id];
-            return next;
-          });
+          dispatchTerminalActivity({ result: completed });
         }
         showCliSessionFeedback({
           key: Date.now(),
@@ -926,32 +919,32 @@ function App() {
         requestWorkspaceTerminals();
       }
       if (message.type === "dashboard:terminal-output") {
-        setTerminalLiveOutputs((current) => {
-          const previous = current[message.output.id];
-          const output = previous
-            ? { ...previous, chunk: previous.chunk + message.output.chunk, sequence: message.output.sequence }
-            : message.output;
-          return { ...current, [message.output.id]: output };
-        });
+        dispatchTerminalActivity({ output: message.output });
       }
       if (message.type === "dashboard:terminal-complete") {
-        setTerminalResults((current) => [...current.filter((result) => result.id !== message.result.id), message.result].slice(-100));
-        setTerminalLiveOutputs((current) => {
-          if (!current[message.result.id]) return current;
-          const next = { ...current };
-          delete next[message.result.id];
-          return next;
-        });
+        dispatchTerminalActivity({ result: message.result });
       }
       if (
         message.type === "dashboard:action-result" &&
         ["listWorkspaceTerminals", "createWorkspaceTerminal", "focusWorkspaceTerminal"].includes(message.action)
       ) {
         if (message.status === "completed") {
-          setWorkspaceTerminals(
-            message.payload?.workspaceTerminals ??
-              (message.payload?.workspaceTerminal ? [message.payload.workspaceTerminal] : [])
-          );
+          const epoch = message.payload?.terminalActivityEpoch;
+          if (epoch) {
+            const device = message.payload?.terminalActivityDeviceId ?? "local";
+            const previous = terminalEpochs.current[device];
+            if (previous && previous !== epoch) dispatchTerminalActivity({ resetDevice: device });
+            terminalEpochs.current[device] = epoch;
+          }
+          for (const result of message.payload?.terminalResults ?? []) dispatchTerminalActivity({ result });
+          for (const output of message.payload?.terminalLiveOutputs ?? []) dispatchTerminalActivity({ output, replay: true });
+          const terminals = message.payload?.workspaceTerminals ?? [];
+          const selected = message.payload?.workspaceTerminal;
+          // VS Code reports activeTerminal asynchronously. Keep the acknowledged
+          // target selected so the next command reaches the terminal the user chose.
+          setWorkspaceTerminals(selected
+            ? [...terminals.filter(terminal => terminal.id !== selected.id).map(terminal => ({ ...terminal, isActive: false })), { ...selected, isActive: true }]
+            : terminals);
           if (message.action !== "listWorkspaceTerminals") {
             showCliSessionFeedback({
               key: Date.now(),
@@ -1113,6 +1106,9 @@ function App() {
   }, [snapshot?.dailyUsageCache]);
 
   const workspaceRootsKey = cliComposerConfig?.projects?.map((project) => project.path).join("\n") ?? "";
+  useEffect(() => {
+    if (isBrowserDashboard && realtimeConnected && hasBrowserWorkspaceShell(browserPath)) requestWorkspaceTerminals();
+  }, [isBrowserDashboard, realtimeConnected, requestWorkspaceTerminals]);
   useEffect(() => {
     if (!isBrowserDashboard || !hasBrowserWorkspaceShell(browserPath)) return;
     const projectPath = selectedCliSession?.projectPath ?? cliComposerConfig?.projects?.[0]?.path;
@@ -2586,8 +2582,8 @@ function App() {
               messagesError={cliSessionMessagesError}
               feedback={cliSessionFeedback}
               environment={workspaceEnvironment}
-              terminalResults={terminalResults}
-              terminalLiveOutputs={Object.values(terminalLiveOutputs)}
+              terminalResults={terminalResults.filter((result) => selectedPeer?.local !== false ? !result.deviceId : result.deviceId === selectedPeer.id)}
+              terminalLiveOutputs={Object.values(terminalLiveOutputs).filter((output) => selectedPeer?.local !== false ? !output.deviceId : output.deviceId === selectedPeer.id)}
               workspaceTerminals={workspaceTerminals}
               environmentLoading={isActionPending("getWorkspaceEnvironment")}
               terminalRunning={isActionPending("runWorkspaceTerminalCommand")}
@@ -2622,9 +2618,10 @@ function App() {
                 selectedCliSession &&
                 requestCliSessionMessages(selectedCliSession.id, selectedCliSession.deviceId, true)
               }
-              onRefreshEnvironment={(projectPath) => {
+              onRefreshEnvironment={(projectPath, includeBranchDiff) => {
+                if (includeBranchDiff) setWorkspaceEnvironment((current) => current ? { ...current, branchDiff: undefined, branchDiffBase: undefined, branchDiffTruncated: undefined } : current);
                 lastAutomaticWorkspaceLoadRef.current = undefined;
-                requestWorkspaceEnvironment(projectPath);
+                requestWorkspaceEnvironment(projectPath, includeBranchDiff);
               }}
               onRunTerminal={(command, projectPath, terminalId) =>
                 sendAction("runWorkspaceTerminalCommand", undefined, { command, projectPath, terminalId, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })
@@ -2641,7 +2638,7 @@ function App() {
               onPushWorkspace={(projectPath) =>
                 sendAction("pushWorkspaceBranch", undefined, { projectPath, confirmed: true })
               }
-              onClearTerminal={() => { setTerminalResults([]); setTerminalLiveOutputs({}); }}
+              onClearTerminal={() => dispatchTerminalActivity({ clear: true, deviceId: selectedPeer?.local !== false ? "local" : selectedPeer.id })}
               onListFiles={(projectPath) =>
                 sendAction("listWorkspaceFiles", undefined, {
                   projectPath,

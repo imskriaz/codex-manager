@@ -10,6 +10,11 @@ import {
   readCodexCliComposerConfig,
   readCodexCliSessionMessages,
   readCodexCliSessionSummary,
+  readNewCodexCliSessionSummary,
+  renameCodexCliSession,
+  archiveCodexCliSession,
+  unarchiveCodexCliSession,
+  deleteCodexCliSession,
   readCodexCliSessions,
   readRunningCodexSessionIds,
   readTrackedCliTurns,
@@ -108,6 +113,15 @@ describe("Codex session integration", () => {
       await expect(startCodexCliSession({ text: "Create the session", projectPath: process.cwd() })).resolves.toBe(sessionId);
       await expect(readFile(marker, "utf8")).resolves.toContain("exec --json --color never --skip-git-repo-check -");
       await expect.poll(async () => (await readCodexCliSessionSummary(sessionId, root))?.status).toBe("idle");
+      await writeFile(script, "if(!process.argv.includes('app-server')) process.exit(0); require('node:readline').createInterface({input:process.stdin}).on('line', line => { const message=JSON.parse(line); if(message.id) process.stdout.write(JSON.stringify({id:message.id,result:{}})+'\\n'); });", "utf8");
+      await renameCodexCliSession(sessionId, "Renamed session");
+      expect(readNewCodexCliSessionSummary(sessionId)?.title).toBe("Renamed session");
+      await archiveCodexCliSession(sessionId);
+      expect(readNewCodexCliSessionSummary(sessionId)?.archived).toBe(true);
+      await unarchiveCodexCliSession(sessionId);
+      expect(readNewCodexCliSessionSummary(sessionId)?.archived).toBe(false);
+      await deleteCodexCliSession(sessionId);
+      expect(readNewCodexCliSessionSummary(sessionId)).toBeUndefined();
     } finally {
       if (previousPath === undefined) delete process.env["CODEX_CLI_PATH"];
       else process.env["CODEX_CLI_PATH"] = previousPath;
@@ -343,6 +357,7 @@ describe("Codex session integration", () => {
     const transcript = path.join(root, "sessions", "2026", "08", "28", `rollout-${sessionId}.jsonl`);
     await writeFile(transcript, [
       JSON.stringify({ type: "session_meta", payload: { cwd: "D:/repo", originator: "codex_vscode", source: "vscode" } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }),
       JSON.stringify({ type: "response_item", timestamp: "2026-08-28T20:50:00Z", payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "hidden" }] } }),
       JSON.stringify({ type: "response_item", timestamp: "2026-08-28T20:50:01Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Hello" }] } }),
       JSON.stringify({ type: "response_item", timestamp: "2026-08-28T20:50:02Z", payload: { type: "message", role: "assistant", phase: "commentary", content: [{ type: "output_text", text: "Hi there" }] } })
@@ -480,7 +495,7 @@ describe("Codex session integration", () => {
     const stale = new Date(Date.now() - 10 * 60 * 1000);
     await utimes(lock, stale, stale);
     await utimes(transcript, stale, stale);
-    await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({ id: sessionId, status: "idle", locked: true });
+    await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({ id: sessionId, status: "idle", locked: false });
   });
 
   it("does not report a recently locked session as running after a terminal transcript event", async () => {
@@ -496,7 +511,7 @@ describe("Codex session integration", () => {
     ].join("\n"));
     await mkdir(path.join(root, "thread-writer-locks"), { recursive: true });
     await writeFile(path.join(root, "thread-writer-locks", `${sessionId}.lock`), "");
-    await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({ status: "idle", locked: true });
+    await expect(readCodexCliSessionSummary(sessionId, root)).resolves.toMatchObject({ status: "idle", locked: false });
     await expect(readRunningCodexSessionIds(root)).resolves.toEqual([]);
   });
 
@@ -847,7 +862,7 @@ describe("Codex session integration", () => {
     });
   });
 
-  it("finds all running session locks without applying the dashboard display limit", async () => {
+  it("requires active transcript evidence for recent locks without applying the dashboard display limit", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-running-sessions-"));
     roots.push(root);
     const secondId = "01a04882-d037-7a42-ad24-9afb61901189";
@@ -856,7 +871,9 @@ describe("Codex session integration", () => {
     await writeFile(path.join(lockDirectory, `${sessionId}.lock`), "");
     await writeFile(path.join(lockDirectory, `${secondId}.lock`), "");
     await writeFile(path.join(lockDirectory, "not-a-session.lock"), "");
+    await mkdir(path.join(root, "sessions"));
+    await writeFile(path.join(root, "sessions", `rollout-${sessionId}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }));
 
-    await expect(readRunningCodexSessionIds(root)).resolves.toEqual([sessionId, secondId]);
+    await expect(readRunningCodexSessionIds(root)).resolves.toEqual([sessionId]);
   });
 });

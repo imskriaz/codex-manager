@@ -10,7 +10,7 @@ import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSo
 import { prepareChatInput, type ChatAttachment } from "../domain/chatAttachments";
 import { appServerChatInput, withCliImageAttachments } from "./codexChatAttachments";
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError } from "./codexAppServerRpc";
-import { attachCodexAppServerPrompts } from "./codexAppServerPrompts";
+import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { reserveCodexSessionLive } from "./codexSessionLive";
 import type {
   DashboardCliComposerConfig,
@@ -399,7 +399,7 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
       return {
         ...withMetadata,
         status: running ? "running" as const : "idle" as const,
-        ...(locked ? { locked: true } : {}),
+        locked: running,
         ...(running ? { runningBy: canStop ? "Codex Manager" : "another Codex process", canStop } : {})
       };
     }));
@@ -444,9 +444,6 @@ async function toCliSessionSummary(
 ): Promise<DashboardCliSessionSummary> {
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
   const running = !archived && (await isCliSessionRunning(codexHome, entry.id, transcriptPath));
-  const locked = !archived && await fs.stat(path.join(codexHome, SESSION_LOCK_DIRECTORY, `${entry.id}.lock`))
-    .then((stat) => stat.isFile())
-    .catch(() => false);
   const canStop = running && (activeCliTurns.has(entry.id) || activeAppServerTurns.has(entry.id));
   return {
     id: entry.id,
@@ -456,7 +453,7 @@ async function toCliSessionSummary(
     ...(metadata.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
     ...(metadata.projectPath ? { projectPath: metadata.projectPath } : {}),
     ...(metadata.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {}),
-    ...(locked ? { locked: true } : {}),
+    locked: running,
     ...(running ? { runningBy: canStop ? "Codex Manager" : "another Codex process", canStop } : {}),
     archived
   };
@@ -1160,6 +1157,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     recordPersistentEvent("info", "session-stop", "App-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: "app-server-stdio" });
     try {
       await activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000);
+      cancelCodexAppServerPrompts(sessionId);
     } catch (error) {
       activeAppServer.cancelRequested = false;
       throw error;
@@ -1279,6 +1277,8 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
   await runCliSessionMutation(sessionId, "Codex session rename", () =>
     runCodexAppServerRequest("thread/name/set", { threadId: sessionId, name: normalized })
   );
+  const recent = recentNewSessions.get(sessionId);
+  if (recent) recent.summary = { ...recent.summary, title: normalized };
 }
 
 export async function forkCodexCliSession(sessionId: string): Promise<string> {
@@ -1303,6 +1303,8 @@ export async function archiveCodexCliSession(sessionId: string): Promise<void> {
       ? runCodexCliUtility(["archive", sessionId], "archive the session")
       : runCodexAppServerRequest("thread/archive", { threadId: sessionId }).then(() => undefined)
   );
+  const recent = recentNewSessions.get(sessionId);
+  if (recent) recent.summary = { ...recent.summary, archived: true };
 }
 
 export async function unarchiveCodexCliSession(sessionId: string): Promise<void> {
@@ -1312,6 +1314,8 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
       ? runCodexCliUtility(["unarchive", sessionId], "restore the session")
       : runCodexAppServerRequest("thread/unarchive", { threadId: sessionId }).then(() => undefined)
   );
+  const recent = recentNewSessions.get(sessionId);
+  if (recent) recent.summary = { ...recent.summary, archived: false };
 }
 
 export async function deleteCodexCliSession(sessionId: string): Promise<void> {
@@ -1325,6 +1329,8 @@ export async function deleteCodexCliSession(sessionId: string): Promise<void> {
       await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
     }
   });
+  recentNewSessions.delete(sessionId);
+  newSessionFailures.delete(sessionId);
 }
 
 export async function readCodexCliSessionMessages(
@@ -2761,24 +2767,22 @@ async function isCliSessionRunning(
   // as corroboration instead of blocking resume for 15 minutes.
   const lockLeaseWindow = 2 * 60 * 1000;
   const lockAge = Date.now() - stat.mtimeMs;
-  if (lockAge >= -60_000 && lockAge < lockLeaseWindow) {
-    const transcriptState = await readRecentTranscriptTurnState(knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId));
-    if (transcriptState === "terminal") return false;
-    if (transcriptState === "active") return true;
+  const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId);
+  if (await readRecentTranscriptTurnState(transcript) !== "active") return false;
+  const bootTime = Date.now() - os.uptime() * 1_000;
+  if (lockAge >= -60_000 && lockAge < lockLeaseWindow && stat.mtimeMs >= bootTime) {
     return true;
   }
   const activeWindow = 5 * 60 * 1000;
   // Some CLI versions keep the lock mtime fixed while the transcript is
   // actively appended. Use a recent transcript write as a secondary signal.
-  const transcript = knownTranscriptPath ?? (await findCliSessionTranscript(codexHome, sessionId));
   if (!transcript) return false;
-  if (await readRecentTranscriptTurnState(transcript) === "terminal") return false;
   const transcriptStat = await fs.lstat(transcript).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
   const transcriptAge = transcriptStat ? Date.now() - transcriptStat.mtimeMs : Infinity;
-  return Boolean(transcriptStat?.isFile() && !transcriptStat.isSymbolicLink() && transcriptAge >= -60_000 && transcriptAge < activeWindow);
+  return Boolean(transcriptStat?.isFile() && !transcriptStat.isSymbolicLink() && transcriptStat.mtimeMs >= bootTime && transcriptAge >= -60_000 && transcriptAge < activeWindow);
 }
 
 type RecentTranscriptTurnState = "active" | "terminal" | "unknown";

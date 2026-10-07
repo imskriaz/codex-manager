@@ -60,7 +60,12 @@ const mockHost = `(() => {
           messageReads++;
           payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages};
         } else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:[{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
-        else if(message.action === 'getWorkspaceEnvironment') payload = {workspaceEnvironment:{projectPath:'D:/demo',projectName:'demo',isGitRepository:true,branch:'main',changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false}};
+        else if(message.action === 'getWorkspaceEnvironment') {
+          if(message.payload?.includeBranchDiff && window.__failNextComparison) {
+            window.__failNextComparison = false;
+            error = 'Simulated Git comparison failure.';
+          } else payload = {workspaceEnvironment:{projectPath:'D:/demo',projectName:'demo',isGitRepository:true,branch:'main',changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false,...(message.payload?.includeBranchDiff ? {branchDiff:'diff --git a/compare.ts b/compare.ts\\n--- a/compare.ts\\n+++ b/compare.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n',branchDiffBase:'origin/main'} : {})}};
+        }
         else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:[]};
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:[]};
         else error = 'Simulated action failure. Your draft is preserved.';
@@ -258,6 +263,21 @@ try {
       await page.getByRole("menuitem", { name: "Show Environment", exact: true }).click();
     } else await page.getByRole("button", { name: "Show Environment", exact: true }).click();
     await page.locator(".cli-environment-popover").waitFor();
+    await page.getByRole("button", { name: "Compare branch", exact: true }).click();
+    await page.locator(".cli-branch-comparison .cli-diff-surface").waitFor();
+    await page.evaluate(() => { window.__failNextComparison = true; });
+    await page.getByRole("button", { name: "Refresh comparison", exact: true }).click();
+    await page.getByText("Simulated Git comparison failure.", { exact: true }).waitFor();
+    await page.getByText("Comparison unavailable. Use Refresh comparison to retry.", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Refresh comparison", exact: true }).click();
+    await page.locator(".cli-branch-comparison .cli-diff-surface").waitFor();
+    await page.getByRole("button", { name: "Show turn changes", exact: true }).click();
+    assert.equal(await page.locator(".cli-branch-comparison").count(), 0);
+    if (width <= 1180) await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
+    if (width <= 760) {
+      await page.getByRole("button", { name: "Session actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Show Environment", exact: true }).click();
+    } else await page.getByRole("button", { name: "Show Environment", exact: true }).click();
     console.log(`Checking ${width}x${height}: Agent tabs`);
     await page.getByRole("button", { name: /^Agents/ }).click();
     await page.getByRole("tab", { name: /^Agents/ }).click();

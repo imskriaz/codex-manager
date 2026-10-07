@@ -5296,6 +5296,11 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-terminal-output article.is-cancelled small { color: #b77b1e; }
 .cli-terminal-running { display: flex; align-items: center; gap: 7px; color: color-mix(in srgb, currentColor 65%, transparent); }
 .cli-terminal-latest { position: sticky; bottom: 4px; display: block; margin: 8px auto 0; padding: 5px 9px; border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-elevated); color: var(--text-primary); box-shadow: 0 3px 12px #0002; font: inherit; cursor: pointer; }
+.cli-workspace .cli-terminal-latest { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; }
+.cli-workspace .cli-terminal-latest svg { width: 15px; height: 15px; }
+.cli-branch-comparison > header > span { flex: 1; }
+.cli-branch-comparison > header small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cli-branch-comparison > header .cli-icon-button { flex-shrink: 0; }
 
 .cli-terminal-command {
   display: grid;

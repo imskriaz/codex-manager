@@ -7,9 +7,9 @@ const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): Dashbo
 
 describe("shared browser/native live turn reconciliation", () => {
   it("honors terminal state for stale index rows without hiding a newer external turn", () => {
-    const row = { id: "chat", title: "Task", status: "running" as const };
+    const row = { id: "chat", title: "Task", status: "running" as const, locked: true };
     const states = { "local:chat": snapshot({ status: "completed", updatedAt: 1000 }) };
-    expect(reconcileCliSessionStatus(row, states)).toMatchObject({ status: "idle", canStop: false });
+    expect(reconcileCliSessionStatus(row, states)).toMatchObject({ status: "idle", locked: false, canStop: false });
     const newer = { ...row, updatedAt: new Date(2000).toISOString() };
     expect(reconcileCliSessionStatus(newer, states)).toBe(newer);
     expect(reconcileCliSessionStatus({ ...row, deviceId: "remote" }, states).status).toBe("running");

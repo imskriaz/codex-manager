@@ -68,6 +68,14 @@ export function attachCodexAppServerPrompts(rpc: CodexAppServerRpc, threadId: st
   return () => { offDisconnect?.(); cleanup(); };
 }
 
+export function cancelCodexAppServerPrompts(threadId: string): void {
+  for (const [id, pending] of pendingPrompts) {
+    if (pending.request.threadId !== threadId) continue;
+    try { pending.rpc.rejectServerRequest(pending.serverId, "The user stopped this Codex turn."); } catch { /* disconnected */ }
+    finishPrompt(id, pending);
+  }
+}
+
 export function respondCodexAppServerPrompt(
   requestId: string,
   decision: "approve" | "decline",
@@ -75,7 +83,10 @@ export function respondCodexAppServerPrompt(
 ): void {
   if (decision !== "approve" && decision !== "decline") throw new Error("Choose Approve or Decline for this Codex request.");
   const pending = pendingPrompts.get(requestId);
-  if (!pending) throw new Error("This Codex prompt is no longer active. Refresh the session before continuing.");
+  if (!pending) {
+    publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId });
+    throw new Error("This Codex prompt is no longer active. Refresh the session before continuing.");
+  }
   if (Date.now() >= pending.expiresAt) {
     try { pending.rpc.rejectServerRequest(pending.serverId, "The dashboard prompt expired without a user answer."); } catch { /* disconnected */ }
     finishPrompt(requestId, pending);

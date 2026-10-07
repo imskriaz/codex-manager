@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { attachCodexAppServerPrompts, respondCodexAppServerPrompt, listPendingCodexAppServerPrompts } from "../src/services/codexAppServerPrompts";
+import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts, respondCodexAppServerPrompt, listPendingCodexAppServerPrompts } from "../src/services/codexAppServerPrompts";
 import type { AppServerRequest, CodexAppServerRpc } from "../src/services/codexAppServerRpc";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
@@ -17,6 +17,24 @@ function createRpc() {
 afterEach(() => vi.useRealTimers());
 
 describe("Codex app-server dashboard prompts", () => {
+  it("removes a stopped turn's prompts while preserving other sessions and resolving stale replies", () => {
+    const first = createRpc();
+    const second = createRpc();
+    const detachFirst = attachCodexAppServerPrompts(first.rpc, "first");
+    const detachSecond = attachCodexAppServerPrompts(second.rpc, "second");
+    const events: Array<{ type: string; requestId?: string }> = [];
+    const unsubscribe = subscribeDashboardRealtime(message => events.push(message));
+    try {
+      first.emit({ id: 1, method: "item/commandExecution/requestApproval", params: { command: "echo first" } });
+      second.emit({ id: 2, method: "item/commandExecution/requestApproval", params: { command: "echo second" } });
+      const request = listPendingCodexAppServerPrompts().find(item => item.threadId === "first")!;
+      cancelCodexAppServerPrompts("first");
+      expect(first.rejectServerRequest).toHaveBeenCalledWith(1, expect.stringContaining("stopped"));
+      expect(listPendingCodexAppServerPrompts().map(item => item.threadId)).toEqual(["second"]);
+      expect(() => respondCodexAppServerPrompt(request.id, "approve")).toThrow(/no longer active/);
+      expect(events.filter(event => event.type === "dashboard:codex-request-resolved" && event.requestId === request.id)).toHaveLength(2);
+    } finally { detachFirst(); detachSecond(); unsubscribe(); }
+  });
   it("deduplicates provider request IDs, refuses mismatched threads, and fails a full prompt queue", () => {
     const fake = createRpc();
     const detach = attachCodexAppServerPrompts(fake.rpc, "thread-1");

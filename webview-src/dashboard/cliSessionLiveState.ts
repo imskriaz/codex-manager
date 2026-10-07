@@ -22,7 +22,7 @@ export function reconcileCliSessionStatus(
   // A later index update can describe a new turn started outside this host.
   if (Date.parse(session.updatedAt ?? "") > live.updatedAt) return session;
   if (isCliTurnActive(live)) return { ...session, status: "running" };
-  if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", canStop: false };
+  if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", locked: false, canStop: false, runningBy: undefined };
   return session;
 }
 

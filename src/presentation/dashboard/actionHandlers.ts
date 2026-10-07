@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { readWorkspaceTerminalActivity } from "../../services/dashboardRealtime";
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
@@ -835,7 +836,7 @@ async function runDashboardAction(
     case "deleteCodexCliSession":
       return handleDeleteCodexCliSession(payload);
     case "getWorkspaceEnvironment":
-      return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath) };
+      return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath, payload?.includeBranchDiff === true) };
     case "listWorkspaceFiles":
       return { workspaceFiles: await listWorkspaceFiles(payload?.projectPath) };
     case "readWorkspaceFile":
@@ -859,7 +860,7 @@ async function runDashboardAction(
       };
     }
     case "listWorkspaceTerminals":
-      return { workspaceTerminals: listWorkspaceTerminals() };
+      return { workspaceTerminals: listWorkspaceTerminals(), ...readWorkspaceTerminalActivity() };
     case "createWorkspaceTerminal":
       return {
         workspaceTerminal: createWorkspaceTerminal(

@@ -354,7 +354,8 @@
     "format": "prettier --write \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
     "test:ui": "npm run build:webview && node tools/check-responsive-ui.mjs",
-    "test:ui:live": "node tools/check-live-ui.mjs"
+    "test:ui:live": "node tools/check-live-ui.mjs",
+    "test:ui:actions": "node tools/check-live-actions.mjs --mutate"
   },
   "dependencies": {
     "mammoth": "^1.12.2",

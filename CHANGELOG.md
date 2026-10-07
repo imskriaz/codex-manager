@@ -2,6 +2,12 @@
 
 ## 1.2.15
 
+- Require active transcript evidence for leftover writer locks, restore the composer after completed live turns, retain renamed session titles, and dismiss approvals when their turn stops or the request expires.
+- Route duplicate terminal names by stable IDs, reject closed selections, and make uncertain status after a host restart explicit. Invalidate cached browser assets when the installed build changes.
+- Keep terminal Stop controls active until execution finishes, recover bounded terminal activity after browser reload or reconnection, and prevent duplicate or delayed output from restarting completed commands. Settle closed, interrupted, timed out, and broken terminal streams visibly.
+- Extend real browser checks to mobile chat creation and disposable file, terminal, session, and Git actions.
+- Make Compare branch fetch the actual Git diff against the upstream or local base, with bounded previews, empty states, and retry. Preserve the turn review view and use an icon for scrolling to the latest terminal output.
+
 - Prevent stale session project paths from being reused by new chats; new sessions now choose only currently open workspace folders.
 - Fit mobile session headers into two compact title/meta rows with status and a single actions menu. Remove the duplicate Sessions button and compact composer, goal, and live status rows while preserving their controls.
 
