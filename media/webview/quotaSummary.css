@@ -7111,32 +7111,26 @@ html[data-theme="dark"] .cli-terminal-panel {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: min(460px, calc(100vw - 32px));
+  box-sizing: border-box;
   gap: 12px;
-  padding: 8px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border-default));
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border-default));
+  border-radius: 12px;
   background: color-mix(in srgb, var(--danger) 7%, var(--bg-page));
+  box-shadow: 0 20px 60px rgb(0 0 0 / 32%);
 }
+.cli-delete-overlay { position: fixed; z-index: var(--dashboard-z-overlay, 30000); inset: 0; display: grid; place-items: center; padding: 16px; background: rgb(3 7 12 / 58%); backdrop-filter: blur(3px); }
+.cli-delete-confirm-copy,
+.cli-delete-confirm-actions { display: flex; align-items: center; gap: 8px; }
+.cli-delete-confirm-copy { min-width: 0; }
+.cli-delete-confirm-copy > svg { flex: 0 0 auto; color: var(--danger); }
+.cli-delete-confirm-actions { flex: 0 0 auto; justify-content: flex-end; }
 .cli-delete-confirm.is-compact {
   align-items: stretch;
   flex-direction: column;
-  margin: 6px 2px 0;
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--border-default));
-  border-radius: 7px;
 }
-.cli-delete-confirm.is-compact > div {
-  justify-content: flex-end;
-}
-.cli-delete-confirm > span,
-.cli-delete-confirm > div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.cli-delete-confirm > span > svg {
-  color: var(--danger);
-}
-.cli-delete-confirm span span {
+.cli-delete-confirm-copy span {
   color: var(--text-muted);
   font-size: 9px;
 }
@@ -12988,7 +12982,7 @@ select:focus-visible,
   box-shadow: 0 18px 46px rgb(0 0 0 / 24%), 0 0 0 1px rgb(255 255 255 / 3%);
 }
 .cli-workspace .cli-session-menu { z-index: 10060; }
-.cli-workspace .cli-delete-confirm { position: relative; z-index: 10070; }
+.cli-workspace .cli-delete-overlay { z-index: var(--dashboard-z-overlay, 30000); }
 .cli-workspace .cli-terminal-panel {
   background: color-mix(in srgb, var(--bg-surface) 90%, var(--bg-base));
   color: var(--text-secondary);
@@ -14318,21 +14312,10 @@ body.is-dashboard-workspace-route #dashboard-main {
   opacity: 0;
   pointer-events: none;
 }
-.cli-workspace .cli-session-row.is-archived:hover .cli-session-row-main small,
-.cli-workspace .cli-session-row.is-archived:focus-within .cli-session-row-main small {
-  display: none;
-}
-.cli-workspace .cli-session-row.is-archived:hover .cli-session-row-main,
-.cli-workspace .cli-session-row.is-archived:focus-within .cli-session-row-main {
-  grid-template-columns: minmax(0, 1fr);
-}
-.cli-workspace .cli-session-row:not(.is-archived):hover .cli-session-row-main small,
-.cli-workspace .cli-session-row:not(.is-archived):focus-within .cli-session-row-main small {
-  display: none;
-}
-.cli-workspace .cli-session-row:not(.is-archived):hover .cli-session-row-main,
-.cli-workspace .cli-session-row:not(.is-archived):focus-within .cli-session-row-main {
-  grid-template-columns: minmax(0, 1fr);
+/* Keep the title/meta pair stable while hover actions appear over the row. */
+.cli-workspace .cli-session-row-main,
+.cli-workspace .cli-session-row-main small {
+  transition: none;
 }
 
 /* Exhausted accounts remain visibly distinct in both layouts and themes. */
@@ -14629,22 +14612,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-session-message.has-turn-copy .cli-session-message-body { padding-right: 0; }
 .cli-workspace .cli-message-actions {
   position: absolute; top: 2px; right: 2px; z-index: 3;
-  transform: none; display: flex; flex-wrap: nowrap;
-  gap: 2px; margin: 0; padding: 2px;
-  border: 1px solid var(--border-default); border-radius: 8px;
-  background: var(--bg-surface); box-shadow: 0 2px 8px rgb(0 0 0 / 10%);
-  opacity: 0; pointer-events: none; transition: opacity 120ms ease;
+  transform: none; display: block; margin: 0; padding: 0;
+  opacity: 1; pointer-events: auto;
 }
-.cli-workspace .cli-session-message:hover .cli-message-actions,
-.cli-workspace .cli-session-message:focus-within .cli-message-actions { opacity: 1; pointer-events: auto; }
-.cli-workspace .cli-message-actions button { display: grid; place-items: center; width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 5px; }
-.cli-workspace .cli-message-actions button svg { width: 16px; height: 16px; }
+.cli-workspace .cli-message-actions-toggle { display: grid; place-items: center; width: 22px; min-width: 22px; height: 22px; min-height: 22px; padding: 3px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.cli-workspace .cli-message-actions-toggle:hover,
+.cli-workspace .cli-message-actions-toggle:focus-visible { border-color: var(--border-default); background: var(--bg-hover); color: var(--text-primary); }
+.cli-workspace .cli-message-actions-toggle svg { width: 14px; height: 14px; }
+.cli-workspace .cli-message-action-menu { position: absolute; top: 26px; right: 0; display: none; gap: 2px; padding: 2px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); box-shadow: 0 2px 8px rgb(0 0 0 / 10%); }
+.cli-workspace .cli-session-message.has-actions-open .cli-message-action-menu { display: flex; }
+.cli-workspace .cli-session-message.has-actions-open .cli-session-message-body { padding-top: 28px; }
+.cli-workspace .cli-message-action-menu button { display: grid; place-items: center; width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 4px; }
+.cli-workspace .cli-message-action-menu button svg { width: 14px; height: 14px; }
 .cli-workspace .cli-message-viewport { padding-top: 32px; }
 @media (hover: none) {
-  .cli-workspace .cli-session-message:not(:focus-within) .cli-message-actions { opacity: 0; pointer-events: none; }
-  .cli-workspace .cli-message-actions button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+  .cli-workspace .cli-message-actions-toggle { width: 28px; min-width: 28px; height: 28px; min-height: 28px; }
+  .cli-workspace .cli-message-action-menu button { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
 }
-@media (prefers-reduced-motion: reduce) { .cli-workspace .cli-message-actions { transition: none; } }
 
 /* Keep expand/collapse in place; hovering must never turn it into New chat. */
 .cli-workspace .cli-project-actions { flex: 0 0 auto; }

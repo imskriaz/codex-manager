@@ -139,7 +139,12 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('aria-label="Good response"');
     expect(source).not.toContain('aria-label="Needs improvement"');
     expect(source).toContain('class="cli-message-actions"');
+    expect(source).toContain('class="cli-message-actions-toggle"');
+    expect(source).toContain('aria-label={actionsOpen ? "Hide message actions" : "Show message actions"}');
     expect(css).toContain(".cli-turn-copy");
+    expect(css).toContain('.cli-session-message.has-actions-open .cli-message-action-menu');
+    expect(css).toContain('.cli-message-actions-toggle');
+    expect(css).not.toContain('.cli-session-message:hover .cli-message-actions');
     const composerStart = source.indexOf("function Composer(");
     const composer = source.slice(composerStart, source.indexOf("function SessionMessage", composerStart));
     expect(composer).not.toContain("<SparkIcon />");
@@ -323,9 +328,12 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain('.cli-workspace .cli-message-link');
     expect(source).toContain('cli-message-markdown');
     expect(css).toMatch(/\.cli-workspace \.cli-session-row-actions \{\r?\n  position: absolute;/);
-    expect(css).toContain('.cli-session-row.is-archived:hover .cli-session-row-main small');
-    expect(css).toContain('.cli-session-row.is-archived:hover .cli-session-row-main,');
-    expect(css).toContain('.cli-session-row:not(.is-archived):hover .cli-session-row-main small');
+    expect(css).toContain('Keep the title/meta pair stable while hover actions appear over the row.');
+    expect(css).not.toContain('.cli-session-row.is-archived:hover .cli-session-row-main small');
+    expect(css).not.toContain('.cli-session-row:not(.is-archived):hover .cli-session-row-main small');
+    expect(source).toContain('class="cli-delete-overlay"');
+    expect(source).toContain('aria-modal="true"');
+    expect(css).toContain('.cli-delete-overlay { position: fixed;');
     expect(css).toContain('.cli-workspace .cli-project-sessions .cli-session-row { min-height: 24px;');
     expect(css).toContain('.cli-workspace .cli-project-group .cli-project-row { min-height: 21px; }');
     expect(css).toContain('.cli-workspace .cli-pc-group-toggle { min-height: 24px;');

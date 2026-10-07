@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.15-pre1
+
+- Keep session titles and project metadata on two stable lines when hover actions appear, center destructive delete confirmations in the workspace, and keep Codex question answers in a focused modal. Message actions now open from a compact click target instead of hover.
+
 ## 1.2.15
 
 - Require active transcript evidence for leftover writer locks, restore the composer after completed live turns, retain renamed session titles, and dismiss approvals when their turn stops or the request expires.
