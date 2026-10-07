@@ -141,6 +141,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('class="cli-message-actions"');
     expect(source).toContain('class="cli-message-actions-toggle"');
     expect(source).toContain('aria-label={actionsOpen ? "Hide message actions" : "Show message actions"}');
+    expect(source).toContain('session.status === "running" || session.locked');
+    expect(source).toContain('props.selectedSession?.status === "running" || props.selectedSession?.locked');
     expect(css).toContain(".cli-turn-copy");
     expect(css).toContain('.cli-session-message.has-actions-open .cli-message-action-menu');
     expect(css).toContain('.cli-message-actions-toggle');

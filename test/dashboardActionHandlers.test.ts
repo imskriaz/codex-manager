@@ -423,6 +423,32 @@ describe("executeDashboardActionMessage", () => {
     }
   });
 
+  it("rejects a reply while another writer owns the session", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)
+    } as unknown as vscode.WorkspaceConfiguration);
+    const sessionId = "01a04882-d037-7a42-ad24-9afb61901188";
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce({
+      id: sessionId,
+      title: "Busy session",
+      status: "running",
+      locked: true,
+      runningBy: "another Codex process",
+      archived: false
+    });
+
+    const result = await executeDashboardActionMessage(createContext(), {
+      type: "dashboard:action",
+      action: "sendCodexCliSessionMessage",
+      requestId: "req-send-active-writer",
+      payload: { sessionId, text: "Continue" }
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toMatch(/active writer.*another Codex process/i);
+    expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
+  });
+
   it("rejects a reply routed to a different project and leaves the session untouched", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
       get: (key: string, fallback?: unknown) => (key === "cliIntegrationEnabled" ? true : fallback)

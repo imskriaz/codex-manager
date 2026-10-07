@@ -2762,6 +2762,10 @@ async function isCliSessionRunning(
     throw error;
   });
   if (!stat?.isFile() || stat.isSymbolicLink()) return false;
+  // Codex keeps the lock file present after a turn, but Windows refuses a
+  // second handle while the writer owns it. That OS signal is authoritative
+  // even when the transcript tail no longer contains the turn-start marker.
+  if (await isWriterLockHeld(lockPath)) return true;
   // A writer lock can survive an interrupted/stopped Codex process. Treat it
   // as live only for a short lease, then require recent transcript activity
   // as corroboration instead of blocking resume for 15 minutes.
@@ -2783,6 +2787,16 @@ async function isCliSessionRunning(
   });
   const transcriptAge = transcriptStat ? Date.now() - transcriptStat.mtimeMs : Infinity;
   return Boolean(transcriptStat?.isFile() && !transcriptStat.isSymbolicLink() && transcriptStat.mtimeMs >= bootTime && transcriptAge >= -60_000 && transcriptAge < activeWindow);
+}
+
+async function isWriterLockHeld(lockPath: string): Promise<boolean> {
+  try {
+    const handle = await fs.open(lockPath, "r+");
+    await handle.close();
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EBUSY" || (error as NodeJS.ErrnoException).code === "EACCES";
+  }
 }
 
 type RecentTranscriptTurnState = "active" | "terminal" | "unknown";

@@ -487,7 +487,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 
   const activeSessions = filterCliSessionsBySection(props.sessions, "active");
   const archivedSessions = filterCliSessionsBySection(props.sessions, "archived");
-  const runningCount = activeSessions.filter((session) => session.status === "running").length;
+  const runningCount = activeSessions.filter((session) => session.status === "running" || session.locked).length;
   const visibleSessions = useMemo(() => {
     const source = section === "active" ? activeSessions : archivedSessions;
     const query = search.trim().toLocaleLowerCase();
@@ -523,8 +523,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (prompt !== undefined) draftFromMessage(prompt, false);
     else reportLocalFeedback({ level: "warning", message: "No user prompt is available to retry." });
   };
-  const turnCopyText = useMemo(() => getCompletedTurnCopyText(props.messages, props.sending || props.selectedSession?.status === "running"), [props.messages, props.sending, props.selectedSession?.status]);
-  const currentTurnRunning = Boolean(props.sending || ownedLiveTurn || props.selectedSession?.status === "running");
+  const turnCopyText = useMemo(() => getCompletedTurnCopyText(props.messages, props.sending || props.selectedSession?.status === "running" || props.selectedSession?.locked), [props.messages, props.sending, props.selectedSession?.status, props.selectedSession?.locked]);
+  const currentTurnRunning = Boolean(props.sending || ownedLiveTurn || props.selectedSession?.status === "running" || props.selectedSession?.locked);
   const transcriptItems = useMemo(() => groupCompletedTurns(consolidateSessionMessages(props.messages), currentTurnRunning), [props.messages, currentTurnRunning]);
   const goal = useMemo(() => getSessionGoal(props.messages), [props.messages]);
   const turnChanges = useMemo(() => summarizeTurnChanges(props.messages, props.liveState?.turnId), [props.messages, props.liveState?.turnId]);
@@ -611,10 +611,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </span>
     </div>
   ) : (
-    <div role="listitem" class={`cli-session-row ${(session.status === "running" || (props.liveState?.sessionId === session.id && (props.liveState.deviceId ?? undefined) === (session.deviceId ?? undefined) && isCliTurnActive(props.liveState))) ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
+    <div role="listitem" class={`cli-session-row ${(session.status === "running" || session.locked || (props.liveState?.sessionId === session.id && (props.liveState.deviceId ?? undefined) === (session.deviceId ?? undefined) && isCliTurnActive(props.liveState))) ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
-        <span class="cli-session-row-status" title={session.status === "running" || (props.liveState?.sessionId === session.id && props.liveState.deviceId === session.deviceId && isCliTurnActive(props.liveState)) ? "Running" : session.locked ? "Locked" : "Complete"} aria-label={session.status === "running" || (props.liveState?.sessionId === session.id && props.liveState.deviceId === session.deviceId && isCliTurnActive(props.liveState)) ? "Running" : session.locked ? "Locked" : "Complete"}>
-          {session.status === "running" || (props.liveState?.sessionId === session.id && (props.liveState.deviceId ?? undefined) === (session.deviceId ?? undefined) && isCliTurnActive(props.liveState)) ? <span class="cli-session-spinner" aria-hidden="true" /> : session.locked ? <ShieldIcon /> : <CheckIcon />}
+        <span class="cli-session-row-status" title={session.status === "running" || session.locked || (props.liveState?.sessionId === session.id && props.liveState.deviceId === session.deviceId && isCliTurnActive(props.liveState)) ? "Running" : "Complete"} aria-label={session.status === "running" || session.locked || (props.liveState?.sessionId === session.id && props.liveState.deviceId === session.deviceId && isCliTurnActive(props.liveState)) ? "Running" : "Complete"}>
+          {session.status === "running" || session.locked || (props.liveState?.sessionId === session.id && (props.liveState.deviceId ?? undefined) === (session.deviceId ?? undefined) && isCliTurnActive(props.liveState)) ? <span class="cli-session-spinner" aria-hidden="true" /> : <CheckIcon />}
         </span>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta"><span>{sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small></span>
       </button>
@@ -937,7 +937,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : composerBlockedByOwner || props.connected === false ? (
                 <div class={`cli-composer-unavailable is-running ${props.connected === false ? "is-reconnecting" : ""}`} role="status" title={props.connected === false ? "The live connection is unavailable. Sending resumes after reconnect." : `${props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}. Wait for that run to finish.` : "Session locked. Wait for Codex to release the lock."} Next turn: ${selectedModel?.label ?? model ?? "Default"} · ${reasoningEffort ?? "Default"} · ${sandboxMode}`}>
-                  {props.connected === false ? <span class="cli-live-spinner" aria-hidden="true" /> : props.selectedSession.status === "running" ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span><strong>{props.connected === false ? "Reconnecting · live updates paused" : props.selectedSession.status === "running" ? "Running elsewhere · wait to send" : "Session locked · wait to send"}</strong><small class="cli-locked-turn-settings"> - {selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full access" : sandboxMode === "read-only" ? "Read only" : "Workspace write"}</small></span>
+                  {props.connected === false ? <span class="cli-live-spinner" aria-hidden="true" /> : props.selectedSession.status === "running" || props.selectedSession.locked ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span><strong>{props.connected === false ? "Reconnecting · live updates paused" : props.selectedSession.status === "running" || props.selectedSession.locked ? "Running elsewhere · wait to send" : "Session locked · wait to send"}</strong><small class="cli-locked-turn-settings"> - {selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full access" : sandboxMode === "read-only" ? "Read only" : "Workspace write"}</small></span>
                 </div>
               ) : (
                 <Composer

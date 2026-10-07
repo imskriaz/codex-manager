@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.15-pre2
+
+- Detect an actively held Codex writer lock on Windows, keep the running spinner authoritative, and reject sends while another writer owns the session.
+
 ## 1.2.15-pre1
 
 - Keep session titles and project metadata on two stable lines when hover actions appear, center destructive delete confirmations in the workspace, and keep Codex question answers in a focused modal. Message actions now open from a compact click target instead of hover.
