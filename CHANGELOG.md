@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.16
+
+- Fix live session reconciliation and writer-lock handling so running state, spinners, and composer locking stay accurate.
+- Keep message actions compact and click-driven, remove the redundant active badge, and add Ctrl/Cmd+mouse-wheel zoom for VS Code webviews.
+
 ## 1.2.15-pre2
 
 - Detect an actively held Codex writer lock on Windows, keep the running spinner authoritative, and reject sends while another writer owns the session.

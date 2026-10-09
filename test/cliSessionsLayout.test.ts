@@ -22,7 +22,7 @@ import { getDashboardCopy } from "../src/application/dashboard/copy";
 describe("sessions sidebar layout", () => {
   it("keeps a completed live turn idle across a stale session-list refresh", () => {
     const sessions = [{ id: "s", title: "Task", status: "running" as const }];
-    const live = { "local:s": { sessionId: "s", streamId: "stream", sequence: 4, updatedAt: 4, status: "completed" as const, messages: [] } };
+    const live = { [JSON.stringify(["local", "s"])]: { sessionId: "s", streamId: "stream", sequence: 4, updatedAt: 4, status: "completed" as const, messages: [] } };
     expect(reconcileCliSessionStatuses(sessions, live)[0]).toMatchObject({ status: "idle", canStop: false });
     expect(reconcileCliSessionStatus({ ...sessions[0], status: "running" }, live).status).toBe("idle");
   });

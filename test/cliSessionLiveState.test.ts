@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../src/domain/dashboard/types";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus } from "../webview-src/dashboard/cliSessionLiveState";
+import { cliSessionTargetKey } from "../webview-src/dashboard/cliSessionRoute";
 
 const message = (id: string, text: string, turnId?: string, role: "user" | "assistant" = "assistant"): DashboardCliSessionMessage => ({ id, text, role, turnId });
 const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): DashboardCodexSessionLiveState => ({ sessionId: "chat", streamId: "stream", sequence: 1, updatedAt: 100, status: "running", turnId: "turn", messages: [], ...changes });
@@ -8,12 +9,20 @@ const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): Dashbo
 describe("shared browser/native live turn reconciliation", () => {
   it("honors terminal state for stale index rows without hiding a newer external turn", () => {
     const row = { id: "chat", title: "Task", status: "running" as const, locked: true };
-    const states = { "local:chat": snapshot({ status: "completed", updatedAt: 1000 }) };
+    const states = { [cliSessionTargetKey(row)]: snapshot({ status: "completed", updatedAt: 1000 }) };
     expect(reconcileCliSessionStatus(row, states)).toMatchObject({ status: "idle", locked: false, canStop: false });
     const newer = { ...row, updatedAt: new Date(2000).toISOString() };
     expect(reconcileCliSessionStatus(newer, states)).toBe(newer);
     expect(reconcileCliSessionStatus({ ...row, deviceId: "remote" }, states).status).toBe("running");
-    expect(reconcileCliSessionStatus(row, { "local:chat": snapshot({ status: "disconnected" }) })).toBe(row);
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status: "disconnected" }) })).toBe(row);
+  });
+  it("reconciles remote completion and local aliases using the live registry's target keys", () => {
+    const remote = { id: "chat", deviceId: "pc:remote", title: "Task", status: "running" as const, locked: true };
+    const states = { [cliSessionTargetKey(remote)]: snapshot({ deviceId: remote.deviceId, status: "completed" }) };
+    expect(reconcileCliSessionStatus(remote, states)).toMatchObject({ status: "idle", locked: false });
+    expect(reconcileCliSessionStatus({ ...remote, deviceId: "other" }, states).status).toBe("running");
+    const local = { ...remote, deviceId: "local" };
+    expect(reconcileCliSessionStatus(local, { [cliSessionTargetKey(local)]: snapshot({ status: "completed" }) }).status).toBe("idle");
   });
   it("ignores duplicate, out-of-order and obsolete stream snapshots", () => {
     const previous = snapshot();

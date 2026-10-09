@@ -538,8 +538,6 @@ export function SavedAccountCard(props: {
                       {props.reloadPromptPending ? <span class="saved-toggle-spinner" aria-hidden="true"></span> : null}
                       {queuedLabel}
                     </button>
-                  ) : account.isActive ? (
-                    <span class="pill active">{copy.current}</span>
                   ) : null}
                   {renderHealthPill(account)}
                   {subscriptionRemaining ? (

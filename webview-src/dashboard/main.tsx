@@ -91,6 +91,7 @@ import {
   writeCliSessionListCache,
   writeCliSessionMessagesCache
 } from "./cliSessionCache";
+import { clampWebviewZoom, nextWebviewZoom } from "./webviewZoom";
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 const USAGE_HISTORY_STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
@@ -159,6 +160,41 @@ function isAccountSort(value: string | null): value is AccountSort {
 
 function App() {
   const isBrowserDashboard = document.documentElement.dataset["dashboardHost"] === "browser";
+  useEffect(() => {
+    if (isBrowserDashboard) return;
+    const storageKey = "codexManager.webviewZoom.v1";
+    const body = document.body;
+    let zoom = 1;
+    try {
+      const stored = Number(window.localStorage.getItem(storageKey));
+      if (Number.isFinite(stored)) zoom = clampWebviewZoom(stored);
+    } catch {
+      // Restricted webviews can disable storage; zoom still works for this session.
+    }
+    const apply = (value: number) => {
+      zoom = clampWebviewZoom(value);
+      body.style.zoom = String(zoom);
+      try { window.localStorage.setItem(storageKey, String(zoom)); } catch { /* ignore unavailable storage */ }
+    };
+    apply(zoom);
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.deltaY === 0) return;
+      event.preventDefault();
+      apply(nextWebviewZoom(zoom, event.deltaY));
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key !== "0") return;
+      event.preventDefault();
+      apply(1);
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("keydown", onKeyDown);
+      body.style.zoom = "";
+    };
+  }, [isBrowserDashboard]);
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [announcementsOpen, setAnnouncementsOpen] = useState(false);

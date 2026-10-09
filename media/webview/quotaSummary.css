@@ -14611,22 +14611,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-session-message-body { position: relative; }
 .cli-workspace .cli-session-message.has-turn-copy .cli-session-message-body { padding-right: 0; }
 .cli-workspace .cli-message-actions {
-  position: absolute; top: 2px; right: 2px; z-index: 3;
-  transform: none; display: block; margin: 0; padding: 0;
+  position: static; z-index: 3; min-height: 28px;
+  transform: none; display: flex; flex-direction: row-reverse; justify-content: flex-start; margin: 0; padding: 0;
   opacity: 1; pointer-events: auto;
 }
 .cli-workspace .cli-message-actions-toggle { display: grid; place-items: center; width: 22px; min-width: 22px; height: 22px; min-height: 22px; padding: 3px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .cli-workspace .cli-message-actions-toggle:hover,
 .cli-workspace .cli-message-actions-toggle:focus-visible { border-color: var(--border-default); background: var(--bg-hover); color: var(--text-primary); }
 .cli-workspace .cli-message-actions-toggle svg { width: 14px; height: 14px; }
-.cli-workspace .cli-message-action-menu { position: absolute; top: 26px; right: 0; display: none; gap: 2px; padding: 2px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); box-shadow: 0 2px 8px rgb(0 0 0 / 10%); }
-.cli-workspace .cli-session-message.has-actions-open .cli-message-action-menu { display: flex; }
-.cli-workspace .cli-session-message.has-actions-open .cli-session-message-body { padding-top: 28px; }
+.cli-workspace .cli-message-action-menu { position: static; display: flex; visibility: hidden; pointer-events: none; gap: 2px; padding: 2px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); }
+.cli-workspace .cli-session-message.has-actions-open .cli-message-action-menu { visibility: visible; pointer-events: auto; }
 .cli-workspace .cli-message-action-menu button { display: grid; place-items: center; width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 4px; }
 .cli-workspace .cli-message-action-menu button svg { width: 14px; height: 14px; }
 .cli-workspace .cli-message-viewport { padding-top: 32px; }
 @media (hover: none) {
   .cli-workspace .cli-message-actions-toggle { width: 28px; min-width: 28px; height: 28px; min-height: 28px; }
+  .cli-workspace .cli-message-actions { min-height: 38px; }
   .cli-workspace .cli-message-action-menu button { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
 }
 
@@ -14776,7 +14776,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-session-message.is-user .cli-session-message-body { grid-column: 1; grid-row: 1; min-width: 0; max-width: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; }
 .cli-workspace .cli-session-message.is-user .cli-session-message-text { width: fit-content; max-width: min(100%, 680px); margin-left: auto; padding: 9px 12px; border: 1px solid var(--border-default); border-radius: 14px; background: color-mix(in srgb, var(--text-primary) 5%, var(--bg-surface)); }
 .cli-workspace .cli-session-message.is-user .cli-session-message-head { justify-content: flex-end; }
-.cli-workspace .cli-session-message.is-user .cli-message-actions { justify-content: flex-end; }
+.cli-workspace .cli-session-message.is-user .cli-message-actions { justify-content: flex-start; }
 .cli-workspace .cli-message-actions { margin-top: 5px; gap: 3px; }
 .cli-workspace .cli-message-actions button { color: var(--text-muted); }
 .cli-workspace .cli-activity-group { margin: 0; border: 0; border-radius: 0; background: transparent; }

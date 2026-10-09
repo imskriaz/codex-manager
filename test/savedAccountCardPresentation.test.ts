@@ -56,7 +56,7 @@ describe("saved account card presentation", () => {
     const footer = cardView.slice(cardView.indexOf('<div class="saved-card-footer">'));
     expect(footer).toContain("{cardPlanBadge}");
     const table = source.slice(source.indexOf("if (props.compactRow)"), source.indexOf("saved-card saved-card-front"));
-    expect(table).toContain("{copy.current}");
+    expect(table).not.toContain('<span class="pill active">{copy.current}</span>');
     expect(table).toContain("{cardPlanBadge}");
     expect(styles).not.toMatch(/\.dashboard-view-cards \.accounts-grid\s*{[^}]*(?:grid-auto-rows:\s*1fr|align-items:\s*stretch)/s);
     expect(cardView).toContain("cardMetrics.map");

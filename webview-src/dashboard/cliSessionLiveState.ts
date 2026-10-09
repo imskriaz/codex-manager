@@ -1,5 +1,6 @@
 import type { DashboardCliSessionMessage, DashboardCliSessionSummary, DashboardCodexSessionLiveState } from "../../src/domain/dashboard/types";
 import { isNewerCodexSessionLiveState } from "../../src/domain/codexSessionLive";
+import { cliSessionTargetKey, sameCliSessionTarget } from "./cliSessionRoute";
 
 export function isCliTurnActive(state: DashboardCodexSessionLiveState | undefined): boolean {
   return state?.status === "starting" || state?.status === "running";
@@ -17,8 +18,8 @@ export function reconcileCliSessionStatus(
   session: DashboardCliSessionSummary,
   liveStates: Record<string, DashboardCodexSessionLiveState>
 ): DashboardCliSessionSummary {
-  const live = liveStates[`${session.deviceId ?? "local"}:${session.id}`];
-  if (!live || live.sessionId !== session.id || (live.deviceId ?? undefined) !== (session.deviceId ?? undefined)) return session;
+  const live = liveStates[cliSessionTargetKey(session)];
+  if (!live || !sameCliSessionTarget(session, { id: live.sessionId, deviceId: live.deviceId })) return session;
   // A later index update can describe a new turn started outside this host.
   if (Date.parse(session.updatedAt ?? "") > live.updatedAt) return session;
   if (isCliTurnActive(live)) return { ...session, status: "running" };

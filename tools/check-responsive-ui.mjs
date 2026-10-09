@@ -307,11 +307,11 @@ try {
     const userMessage = page.locator(".cli-conversation .cli-session-message.is-user").first();
     const initialMessageHeight = await userMessage.evaluate(element => element.getBoundingClientRect().height);
     await page.mouse.move(width - 2, height - 2);
-    assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).opacity), "0", "Actions start hidden");
-    if (width <= 760) await userMessage.locator(".cli-session-message-text").tap(); else await userMessage.hover();
+    assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).opacity), "1", "Action toggle remains available");
+    await userMessage.getByRole("button", { name: "Show message actions", exact: true }).click();
     await userMessage.getByRole("button", { name: "Quote", exact: true }).click();
     assert.equal(await userMessage.evaluate(element => element.getBoundingClientRect().height), initialMessageHeight, "Actions never add message height");
-    assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).position), "absolute", "Actions anchor to the message");
+    assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).position), "static", "Actions stay in the message flow");
     assert.match(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), /^> /);
     await page.locator('input[type="file"][aria-label="Choose attachments"]').setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Review this text attachment") });
     await page.getByRole("button", { name: "Remove notes.txt", exact: true }).waitFor();

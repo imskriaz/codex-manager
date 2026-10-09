@@ -1091,7 +1091,7 @@ async function sendAppServerSessionMessage(options: {
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
   const cwd = resolveCliProjectPath(options.projectPath);
   await assertUsableCliProjectPath(cwd);
-  if (activeAppServerTurns.has(options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
+  if (await isCliSessionRunning(resolveCodexHome(), options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
   const live = reserveCodexSessionLive();
   let rpc: CodexAppServerRpc | undefined;
   let detachPrompts: () => void = () => undefined;
@@ -2791,11 +2791,14 @@ async function isCliSessionRunning(
 
 async function isWriterLockHeld(lockPath: string): Promise<boolean> {
   try {
-    const handle = await fs.open(lockPath, "r+");
+    const handle = await fs.open(lockPath, "r");
     await handle.close();
     return false;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EBUSY" || (error as NodeJS.ErrnoException).code === "EACCES";
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EBUSY") return true;
+    if (code === "ENOENT") return false;
+    throw error;
   }
 }
 
