@@ -15,6 +15,7 @@ describe("mobile dashboard header", () => {
 
   it("keeps session rows two lines while actions overlay on hover", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(css).toContain(".cli-session-spinner { display: inline-block;");
     expect(css).toContain(".cli-workspace .cli-session-row-main { min-height: 27px;");
     expect(css).toContain(".cli-workspace .cli-session-row-actions { top: 50%;");
     expect(css).toContain("padding-right: 8px;");

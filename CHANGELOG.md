@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.18
+
+- Ensure running-session spinners render visibly in compact and mobile lists.
+
 ## 1.2.17
 
 - Keep the mobile dashboard header on one row with secondary actions under a compact overflow menu.

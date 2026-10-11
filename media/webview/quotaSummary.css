@@ -6366,7 +6366,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-session-row-select { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px; min-width: 0; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .cli-session-row-status { display: grid; place-items: center; width: 14px; height: 14px; color: var(--accent-blue); }
 .cli-session-row-status svg { width: 13px; height: 13px; }
-.cli-session-spinner { width: 10px; height: 10px; border: 1.5px solid color-mix(in srgb, var(--accent-blue) 25%, transparent); border-top-color: var(--accent-blue); border-radius: 50%; animation: cli-session-spin .8s linear infinite; }
+.cli-session-spinner { display: inline-block; flex: 0 0 auto; width: 10px; height: 10px; box-sizing: border-box; border: 1.5px solid color-mix(in srgb, var(--accent-blue) 25%, transparent); border-top-color: var(--accent-blue); border-radius: 50%; animation: cli-session-spin .8s linear infinite; }
 @keyframes cli-session-spin { to { transform: rotate(360deg); } }
 .cli-session-row:hover {
   background: var(--surface-hover);
