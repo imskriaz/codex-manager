@@ -8,6 +8,7 @@
 
 - Keep the mobile dashboard header on one row with secondary actions under a compact overflow menu.
 - Preserve two-line session list rows when hover actions appear.
+- Ensure running-session spinners render visibly in compact and mobile lists.
 
 ## 1.2.16
 
