@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.17
+
+- Keep the mobile dashboard header on one row with secondary actions under a compact overflow menu.
+- Preserve two-line session list rows when hover actions appear.
+
 ## 1.2.16
 
 - Fix live session reconciliation and writer-lock handling so running state, spinners, and composer locking stay accurate.

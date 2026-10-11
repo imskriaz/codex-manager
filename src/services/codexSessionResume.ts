@@ -2496,7 +2496,7 @@ async function runCodexAppServerRequest<T = unknown>(
       method: "initialize",
       id: 1,
       params: {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.14" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.17" },
         capabilities: null
       }
     });

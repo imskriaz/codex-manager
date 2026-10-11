@@ -236,7 +236,9 @@
           error: detail
         });
       }
-      dispatch({ type: "dashboard:notice", level: "error", message: detail });
+      // Action failures already have a request-scoped result. Do not emit a
+      // second standalone toast for the same failed action.
+      if (message?.type !== "dashboard:action") dispatch({ type: "dashboard:notice", level: "error", message: detail });
     }
   };
 

@@ -138,11 +138,7 @@ describe("browser dashboard bridge", () => {
       status: "failed",
       error: "Dashboard action failed (502)"
     });
-    expect(events).toContainEqual({
-      type: "dashboard:notice",
-      level: "error",
-      message: "Dashboard action failed (502)"
-    });
+    expect(events.filter((event) => event.type === "dashboard:notice")).toEqual([]);
   });
 
   it("reports an unconfirmed action when the live socket closes and checks host reachability", async () => {

@@ -5363,6 +5363,95 @@ html[data-theme="dark"] .cli-terminal-panel {
   .cli-terminal-panel:not(.is-collapsed) { position: fixed; z-index: 10040; top: 0; right: 0; bottom: 0; width: min(92vw, var(--cli-terminal-width)); }
 }
 
+.cli-workspace .cli-rail-brand {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.cli-workspace .cli-rail-brand:hover,
+.cli-workspace .cli-rail-brand:focus-visible { color: var(--text-primary); }
+.cli-workspace .cli-dashboard-nav { min-width: 0; }
+.cli-workspace .cli-new-chat-icon { flex: 0 0 auto; }
+
+/* Keep the dashboard header on one mobile row. Secondary actions remain
+   available from the compact overflow control instead of pushing content down. */
+@media (max-width: 600px) {
+  .dashboard-density-compact .hero {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding-bottom: 8px;
+  }
+  .dashboard-density-compact .brand {
+    width: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .dashboard-density-compact .brand.has-pc-picker { gap: 6px; }
+  .dashboard-density-compact .dashboard-pc-picker { min-width: 0; }
+  .dashboard-density-compact .dashboard-pc-picker-trigger {
+    width: min(156px, 42vw);
+    min-width: 0;
+    max-width: 156px;
+  }
+  .dashboard-density-compact .hero-settings {
+    width: auto;
+    flex: 0 0 auto;
+    overflow: visible;
+    padding: 0;
+  }
+  .dashboard-density-compact .hero-settings > .settings-btn,
+  .dashboard-density-compact .hero-settings > .cli-sessions-menu,
+  .dashboard-density-compact .hero-settings > .dashboard-live-status { display: none; }
+  .dashboard-mobile-actions { position: relative; display: block; }
+  .dashboard-mobile-actions > summary { list-style: none; cursor: pointer; }
+  .dashboard-mobile-actions > summary::-webkit-details-marker { display: none; }
+  .dashboard-mobile-actions[open] > summary { border-color: var(--border-accent); background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-elevated)); }
+  .dashboard-mobile-actions-menu {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 6px);
+    right: 0;
+    display: grid;
+    min-width: 190px;
+    padding: 5px;
+    border: 1px solid var(--border-default);
+    border-radius: 9px;
+    background: var(--bg-elevated);
+    box-shadow: 0 10px 24px rgb(0 0 0 / 18%);
+  }
+  .dashboard-mobile-actions-menu button {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 36px;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .dashboard-mobile-actions-menu button:hover,
+  .dashboard-mobile-actions-menu button:focus-visible { background: var(--surface-hover); }
+  .dashboard-mobile-actions-menu button > span { display: inline-flex; width: 18px; justify-content: center; }
+}
+
+/* Hover actions are overlays, so session rows keep their two-line height and
+   title/meta alignment when the pointer enters or leaves. */
+.cli-workspace .cli-session-row-main { min-height: 27px; grid-template-rows: minmax(0, 1fr) auto; }
+.cli-workspace .cli-session-row-main strong { min-width: 0; }
+.cli-workspace .cli-session-row-actions { top: 50%; right: 4px; transform: translateY(-50%); }
+@media (max-width: 760px) {
+  .cli-workspace .cli-session-row-main { min-height: 40px; }
+  .cli-workspace .cli-session-row:has(.cli-session-row-actions button) .cli-session-row-select { padding-right: 8px; }
+}
+
 /* First-run onboarding: a focused, editorial sequence that keeps setup in one modal. */
 .onboarding-modal {
   width: min(620px, calc(100vw - 32px));
@@ -15037,4 +15126,49 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .cli-workspace .cli-activity-heading strong { font-size: 10px; }
   .cli-workspace .cli-composer-selectors select { max-width: 104px; }
   .cli-workspace .cli-composer-options-toggle { max-width: 88px; }
+}
+
+/* Final workspace action placement: keep controls floating after all responsive rules. */
+.cli-workspace .cli-session-message-body { position: relative; }
+.cli-workspace .cli-message-actions {
+  position: absolute;
+  z-index: 3;
+  right: 4px;
+  bottom: 4px;
+  min-height: 0;
+  margin: 0;
+  flex-wrap: nowrap;
+}
+.cli-workspace .cli-message-action-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  flex-direction: row;
+  white-space: nowrap;
+}
+.cli-workspace .cli-session-row { position: relative; }
+.cli-workspace .cli-session-row-actions {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+}
+@media (max-width: 760px) {
+  .cli-workspace .cli-session-row:has(.cli-session-row-actions button) .cli-session-row-select { padding-right: 8px; }
+  .cli-workspace .cli-message-actions { right: 2px; bottom: 2px; }
+}
+
+/* Final compact dashboard header overrides. */
+@media (max-width: 600px) {
+  .dashboard-density-compact .hero { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 8px; }
+  .dashboard-density-compact .brand { width: auto; flex: 1 1 auto; min-width: 0; }
+  .dashboard-density-compact .brand.has-pc-picker { gap: 6px; }
+  .dashboard-density-compact .hero-settings { width: auto; flex: 0 0 auto; overflow: visible; padding: 0; }
+  .dashboard-density-compact .hero-settings > .settings-btn,
+  .dashboard-density-compact .hero-settings > .cli-sessions-menu,
+  .dashboard-density-compact .hero-settings > .dashboard-live-status { display: none; }
+  .dashboard-mobile-actions { display: block; position: relative; }
+  .dashboard-mobile-actions > summary { list-style: none; cursor: pointer; }
+  .dashboard-mobile-actions > summary::-webkit-details-marker { display: none; }
 }

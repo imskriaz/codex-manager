@@ -2150,6 +2150,28 @@ function App() {
                   </span>
                 </span>
               </button>
+              <DashboardMobileActions
+                lang={snapshot.lang}
+                privacyMode={state.privacyMode}
+                privacyToggleLabel={privacyToggleLabel}
+                privacyPending={isActionPending("setPrivacyMode")}
+                syncPending={syncPending}
+                settingsTitle={snapshot.copy.settingsTitle}
+                aboutTitle={resolveAboutTitle(snapshot.lang)}
+                onSessions={() => {
+                  setPcPickerOpen(false);
+                  setCliSessionsMenuOpen(true);
+                  requestCliSessions();
+                }}
+                onPrivacyToggle={() => {
+                  const privacyMode = !state.privacyMode;
+                  dispatch({ type: "toggle-privacy" });
+                  sendAction("setPrivacyMode", undefined, { privacyMode });
+                }}
+                onSync={handleSyncNow}
+                onSettings={() => dispatch({ type: "open-settings" })}
+                onAbout={() => setAboutOpen(true)}
+              />
             </div>
           </div>
           <OverviewSection
@@ -2586,6 +2608,7 @@ function App() {
               selectedSession={selectedCliSession}
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
+              liveStates={cliLiveStates}
               connected={realtimeConnected && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected)) && (!selectedCliSession || !cliLiveStates[cliSessionTargetKey(selectedCliSession)] || liveAuthority.current.has(cliSessionTargetKey(selectedCliSession)))}
               submissionResults={submissionResults}
               steering={isActionPending("steerCodexCliSessionTurn")}
@@ -2819,6 +2842,50 @@ function App() {
         onDownloadJson={modals.handleDownloadShareJson}
       />
     </>
+  );
+}
+
+function DashboardMobileActions(props: {
+  lang: string;
+  privacyMode: boolean;
+  privacyToggleLabel: string;
+  privacyPending: boolean;
+  syncPending: boolean;
+  settingsTitle: string;
+  aboutTitle: string;
+  onSessions: () => void;
+  onPrivacyToggle: () => void;
+  onSync: () => void;
+  onSettings: () => void;
+  onAbout: () => void;
+}) {
+  const closeMenu = (event: MouseEvent): void => {
+    (event.currentTarget as HTMLElement).closest("details")?.removeAttribute("open");
+  };
+  const menuLabel = props.lang === "zh" ? "更多操作" : props.lang === "zh-hant" ? "更多操作" : "More actions";
+  return (
+    <details class="dashboard-mobile-actions">
+      <summary class="settings-btn action-btn icon-only" aria-label={menuLabel} title={menuLabel}>
+        <span class="button-face"><span class="button-icon" aria-hidden="true">•••</span></span>
+      </summary>
+      <div class="dashboard-mobile-actions-menu" role="menu" aria-label={menuLabel}>
+        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSessions(); }}>
+          <span aria-hidden="true">▦</span>Sessions
+        </button>
+        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onPrivacyToggle(); }} disabled={props.privacyPending}>
+          <span aria-hidden="true">{props.privacyMode ? <EyeOffIcon /> : <EyeIcon />}</span>{props.privacyToggleLabel}
+        </button>
+        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSync(); }} disabled={props.syncPending}>
+          <span aria-hidden="true">↻</span>Sync now
+        </button>
+        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSettings(); }}>
+          <span aria-hidden="true">⚙</span>{props.settingsTitle}
+        </button>
+        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onAbout(); }}>
+          <span aria-hidden="true"><InfoIcon /></span>{props.aboutTitle}
+        </button>
+      </div>
+    </details>
   );
 }
 

@@ -311,7 +311,7 @@ try {
     await userMessage.getByRole("button", { name: "Show message actions", exact: true }).click();
     await userMessage.getByRole("button", { name: "Quote", exact: true }).click();
     assert.equal(await userMessage.evaluate(element => element.getBoundingClientRect().height), initialMessageHeight, "Actions never add message height");
-    assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).position), "static", "Actions stay in the message flow");
+    assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).position), "absolute", "Actions float over the message without adding height");
     assert.match(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), /^> /);
     await page.locator('input[type="file"][aria-label="Choose attachments"]').setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Review this text attachment") });
     await page.getByRole("button", { name: "Remove notes.txt", exact: true }).waitFor();
@@ -424,7 +424,10 @@ try {
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } })));
     console.log(`Checking ${width}x${height}: dashboard and settings`);
     await page.goto(`${origin}/dash`);
-    await page.locator("#cliSessionsButton").click();
+    if (width <= 760) {
+      await page.locator(".dashboard-mobile-actions > summary").click();
+      await page.getByRole("menuitem", { name: "Sessions", exact: true }).click();
+    } else await page.locator("#cliSessionsButton").click();
     await page.locator(".cli-sessions-popover").waitFor();
     assert.equal(await page.locator(".cli-running-count").first().textContent(), "1", "Badge excludes running child agents");
     await page.getByText("2 sessions · 1 running", { exact: true }).waitFor();
@@ -440,7 +443,10 @@ try {
     await page.locator('input[name="account-search"]').fill("codex-ui-no-matching-account");
     await page.waitForFunction(() => document.querySelectorAll(".saved-card-container").length === 0 && document.querySelector(".account-count-badges > button")?.textContent.trim() === "Total 0");
     await page.locator('input[name="account-search"]').fill("");
-    await page.locator("#settingsOpenButton").click();
+    if (width <= 760) {
+      await page.locator(".dashboard-mobile-actions > summary").click();
+      await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    } else await page.locator("#settingsOpenButton").click();
     await page.locator(".overlay.open").waitFor();
     for (const tab of await page.locator(".settings-tab").all()) {
       await tab.click();
