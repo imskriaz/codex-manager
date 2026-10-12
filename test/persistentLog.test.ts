@@ -20,6 +20,47 @@ afterEach(async () => {
 });
 
 describe("persistent diagnostics", () => {
+  it("bounds queued diagnostics during slow storage and records the skipped count", async () => {
+    const root = await makeTemporaryDirectory();
+    await fs.mkdir(root, { recursive: true });
+    const append = fs.appendFile;
+    let resume!: () => void;
+    const paused = new Promise<void>((resolve) => { resume = resolve; });
+    const appendSpy = vi.fn(async (...args: Parameters<typeof fs.appendFile>) => { await paused; await append(...args); });
+    const logger = new PersistentFileLogger(root, 3, () => new Date(), undefined, appendSpy);
+    const readDetail = vi.fn(() => "value");
+    for (let index = 0; index < 500; index++) logger.write("info", "test", "queued", { get detail() { return readDetail(); } });
+    expect(readDetail).toHaveBeenCalledTimes(128);
+    await Promise.resolve();
+    expect(appendSpy).toHaveBeenCalledOnce();
+    resume();
+    await logger.flush();
+    expect(appendSpy).toHaveBeenCalledTimes(129);
+    expect(await fs.readFile(logger.currentLogPath, "utf8")).toContain('"droppedRecords":372');
+    logger.write("info", "test", "recovered");
+    await logger.flush();
+    expect(await fs.readFile(logger.currentLogPath, "utf8")).toContain("recovered");
+  });
+
+  it("caps queued bytes and retains a bounded record for oversized messages", async () => {
+    const root = await makeTemporaryDirectory();
+    await fs.mkdir(root, { recursive: true });
+    const append = fs.appendFile;
+    let resume!: () => void;
+    const paused = new Promise<void>((resolve) => { resume = resolve; });
+    const appendSpy = vi.fn(async (...args: Parameters<typeof fs.appendFile>) => { await paused; await append(...args); });
+    const logger = new PersistentFileLogger(root, 3, () => new Date(), undefined, appendSpy);
+    for (let index = 0; index < 128; index++) logger.write("info", "test", "queued bytes", { value: "x".repeat(30_000) });
+    resume();
+    await logger.flush();
+    expect(appendSpy.mock.calls.reduce((sum, args) => sum + Buffer.byteLength(String(args[1])), 0)).toBeLessThan(2 * 1024 * 1024 + 1024);
+    logger.write("info", "test", "x".repeat(100_000));
+    await logger.flush();
+    const lastLine = String(appendSpy.mock.calls.at(-1)?.[1]);
+    expect(Buffer.byteLength(lastLine)).toBeLessThan(64 * 1024);
+    expect(lastLine).toContain('"truncated":true');
+  });
+
   it("keeps exactly three UTC log days and preserves sanitized error detail", async () => {
     const root = await makeTemporaryDirectory();
     await Promise.all(

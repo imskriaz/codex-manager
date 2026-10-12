@@ -11,6 +11,8 @@ const LOG_FILE_PREFIX = "codex-manager-";
 const LOG_FILE_PATTERN = /^codex-manager-(\d{4}-\d{2}-\d{2})(?:\.\d+)?\.jsonl$/;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_PERSISTENT_LOG_RECORD_BYTES = 64 * 1024;
+const MAX_PENDING_LOG_RECORDS = 128;
+const MAX_PENDING_LOG_BYTES = 2 * 1024 * 1024;
 
 type PersistentLogLevel = "debug" | "info" | "warning" | "error";
 type OperationStatus = "completed" | "cancelled" | "failed";
@@ -44,12 +46,16 @@ export class PersistentFileLogger {
   private writeError: unknown;
   private writeFailureReported = false;
   private activeUtcDate: string | undefined;
+  private pendingWrites = 0;
+  private pendingBytes = 0;
+  private droppedRecords = 0;
 
   constructor(
     readonly logDirectory: string,
     private readonly retentionDays = PERSISTENT_LOG_RETENTION_DAYS,
     private readonly now: () => Date = () => new Date(),
-    private readonly onWriteFailure?: (error: unknown) => void
+    private readonly onWriteFailure?: (error: unknown) => void,
+    private readonly appendFile: typeof fs.appendFile = fs.appendFile
   ) {}
 
   get currentLogPath(): string {
@@ -83,6 +89,10 @@ export class PersistentFileLogger {
     error?: unknown,
     correlation?: Partial<Pick<PersistentLogRecord, "operationId" | "traceId" | "parentOperationId" | "durationMs">>
   ): void {
+    if (this.pendingWrites >= MAX_PENDING_LOG_RECORDS || this.pendingBytes >= MAX_PENDING_LOG_BYTES) {
+      this.droppedRecords += 1;
+      return;
+    }
     const context = operationContext.getStore();
     const recordTime = this.now();
     let line: string;
@@ -109,6 +119,13 @@ export class PersistentFileLogger {
         error: { message: toErrorMessage(serializationError) }
       })}\n`;
     }
+    const lineBytes = Buffer.byteLength(line, "utf8");
+    if (this.pendingBytes + lineBytes > MAX_PENDING_LOG_BYTES) {
+      this.droppedRecords += 1;
+      return;
+    }
+    this.pendingWrites += 1;
+    this.pendingBytes += lineBytes;
     const utcDate = toUtcDate(recordTime);
     const targetPath = path.join(this.logDirectory, `${LOG_FILE_PREFIX}${utcDate}.jsonl`);
     const dayChanged = this.activeUtcDate !== undefined && this.activeUtcDate !== utcDate;
@@ -118,7 +135,7 @@ export class PersistentFileLogger {
         if (dayChanged) {
           await this.pruneExpiredLogs();
         }
-        await fs.appendFile(targetPath, line, "utf8");
+        await this.appendFile(targetPath, line, "utf8");
         this.writeError = undefined;
         this.writeFailureReported = false;
       })
@@ -128,11 +145,22 @@ export class PersistentFileLogger {
           this.writeFailureReported = true;
           this.onWriteFailure?.(caught);
         }
+      })
+      .finally(() => {
+        this.pendingWrites -= 1;
+        this.pendingBytes -= lineBytes;
       });
   }
 
   async flush(): Promise<void> {
-    await this.writeChain;
+    do {
+      await this.writeChain;
+      if (this.pendingWrites === 0 && this.droppedRecords > 0) {
+        const droppedRecords = this.droppedRecords;
+        this.droppedRecords = 0;
+        this.write("warning", "persistent-log", "Diagnostic records were skipped while storage was busy", { droppedRecords });
+      }
+    } while (this.pendingWrites > 0);
     if (this.writeError !== undefined) {
       throw toError(this.writeError);
     }
@@ -427,8 +455,8 @@ function serializeLogRecord(record: PersistentLogRecord): string {
   return `${JSON.stringify({
     timestamp: record.timestamp,
     level: record.level,
-    scope: record.scope,
-    message: record.message,
+    scope: record.scope.slice(0, 512),
+    message: record.message.slice(0, 4096),
     operationId: record.operationId,
     traceId: record.traceId,
     parentOperationId: record.parentOperationId,

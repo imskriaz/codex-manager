@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.18-pre3
+
+- Drain bounded diagnostic queues through flush() without mutating the active write promise while it settles.
+
 ## 1.2.18-pre2
 
 - Correct running-session detection and auto-resume selection for long turns, completed conversations with retained writer locks, and partial or duplicate transcript events.
