@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.18-pre2
+
+- Correct running-session detection and auto-resume selection for long turns, completed conversations with retained writer locks, and partial or duplicate transcript events.
+
+
 ## 1.2.18
 
 - Ensure running-session spinners render visibly in compact and mobile lists.

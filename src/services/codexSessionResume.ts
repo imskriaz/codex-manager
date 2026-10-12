@@ -378,7 +378,7 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
     const lockedIds = new Set(sessions.filter((session) => !session.archived && locks.has(`${session.id}.lock`)).map((session) => session.id));
     const stateRecords = new Map((await readStateSessionRecords(codexHome)).map((record) => [record.id, record]));
     const metadataIds = new Set(sessions.filter((session) => !session.subAgent || !session.parentSessionId || !session.projectPath || !session.sessionSurface).map((session) => session.id));
-    const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set([...lockedIds, ...metadataIds]));
+    const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(sessions.map((session) => session.id)));
     const enriched = await Promise.all(sessions.map(async (session) => {
       const metadata = metadataIds.has(session.id)
         ? await readCliSessionMetadata(codexHome, session.id, transcriptPaths.get(session.id))
@@ -393,14 +393,15 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
       };
       if (session.archived) return withMetadata;
       const locked = lockedIds.has(session.id);
-      const canStop = activeAppServerTurns.has(session.id);
-      const transcriptState = locked ? await readRecentTranscriptTurnState(transcriptPaths.get(session.id)) : "unknown";
+      const canStop = activeCliTurns.has(session.id) || activeAppServerTurns.has(session.id);
+      const transcriptState = await readRecentTranscriptTurnState(transcriptPaths.get(session.id));
       const running = (session.status === "running" && transcriptState !== "terminal") || canStop || (locked && await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id)));
       return {
         ...withMetadata,
         status: running ? "running" as const : "idle" as const,
         locked: running,
-        ...(running ? { runningBy: canStop ? "Codex Manager" : "another Codex process", canStop } : {})
+        runningBy: running ? (canStop ? "Codex Manager" : "another Codex process") : undefined,
+        canStop: running && canStop
       };
     }));
     return enriched.sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
@@ -2496,7 +2497,7 @@ async function runCodexAppServerRequest<T = unknown>(
       method: "initialize",
       id: 1,
       params: {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.17" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.18-pre2" },
         capabilities: null
       }
     });
@@ -2755,24 +2756,25 @@ async function isCliSessionRunning(
   sessionId: string,
   knownTranscriptPath?: string
 ): Promise<boolean> {
-  if (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId)) return true;
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) &&
+      (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId))) return true;
   const lockPath = path.join(codexHome, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
   const stat = await fs.lstat(lockPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
   if (!stat?.isFile() || stat.isSymbolicLink()) return false;
-  // Codex keeps the lock file present after a turn, but Windows refuses a
-  // second handle while the writer owns it. That OS signal is authoritative
-  // even when the transcript tail no longer contains the turn-start marker.
+  const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId);
+  const turnState = await readRecentTranscriptTurnState(transcript);
+  // A loaded conversation can retain its writer lock after its turn finishes.
+  if (turnState === "terminal") return false;
   if (await isWriterLockHeld(lockPath)) return true;
   // A writer lock can survive an interrupted/stopped Codex process. Treat it
   // as live only for a short lease, then require recent transcript activity
   // as corroboration instead of blocking resume for 15 minutes.
   const lockLeaseWindow = 2 * 60 * 1000;
   const lockAge = Date.now() - stat.mtimeMs;
-  const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId);
-  if (await readRecentTranscriptTurnState(transcript) !== "active") return false;
+  if (turnState !== "active") return false;
   const bootTime = Date.now() - os.uptime() * 1_000;
   if (lockAge >= -60_000 && lockAge < lockLeaseWindow && stat.mtimeMs >= bootTime) {
     return true;
@@ -2803,19 +2805,59 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
 }
 
 type RecentTranscriptTurnState = "active" | "terminal" | "unknown";
+const cliTranscriptTurnStateCache = new Map<string, {
+  size: number; mtimeMs: number; offset: number;
+  state: RecentTranscriptTurnState; resumeState: RecentTranscriptTurnState;
+  turnId?: string; resumeTurnId?: string;
+}>();
 
 async function readRecentTranscriptTurnState(transcriptPath: string | undefined): Promise<RecentTranscriptTurnState> {
   if (!transcriptPath) return "unknown";
-  const raw = await readSafeFileSnapshot(transcriptPath, {
-    maxBytes: 128 * 1024,
-    startOffset: (stat) => Math.max(0, stat.size - 128 * 1024)
-  }).then((snapshot) => snapshot.buffer.toString("utf8")).catch(() => "");
-  let state: RecentTranscriptTurnState = "unknown";
-  for (const line of raw.split(/\r?\n/)) {
-    if (/"type"\s*:\s*"(?:task_complete|task_completed|turn_aborted|turn\/completed)"/.test(line)) state = "terminal";
-    else if (/"type"\s*:\s*"(?:task_started|turn_started|item_started|turn\/started)"/.test(line)) state = "active";
+  const previous = cliTranscriptTurnStateCache.get(transcriptPath);
+  let maxBytes = previous ? MAX_SESSION_TRANSCRIPT_READ_BYTES : 128 * 1024;
+  for (;;) {
+    let incremental = false;
+    const snapshot = await readSafeFileSnapshot(transcriptPath, {
+      maxBytes,
+      startOffset: (stat) => {
+        if (previous?.size === stat.size && previous.mtimeMs === stat.mtimeMs) return stat.size;
+        incremental = Boolean(previous && stat.size > previous.size && stat.size - previous.offset <= MAX_SESSION_TRANSCRIPT_READ_BYTES);
+        return incremental ? previous!.offset : Math.max(0, stat.size - maxBytes);
+      }
+    }).catch(() => undefined);
+    if (!snapshot) { cliTranscriptTurnStateCache.delete(transcriptPath); return "unknown"; }
+    if (previous?.size === snapshot.size && previous.mtimeMs === snapshot.mtimeMs) return previous.state;
+    let state: RecentTranscriptTurnState = incremental ? previous!.resumeState : "unknown";
+    let turnId = incremental ? previous!.resumeTurnId : undefined;
+    const lines = snapshot.buffer.toString("utf8").split("\n");
+    // A bounded initial read may begin in the middle of a JSON record.
+    if (!incremental && snapshot.startOffset > 0) lines.shift();
+    let resumeState = state;
+    let resumeTurnId = turnId;
+    for (const [index, line] of lines.entries()) {
+      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; }
+      try {
+        const record = JSON.parse(line) as { type?: string; turn_id?: string; payload?: { type?: string; turn_id?: string } };
+        const type = record?.type === "event_msg" ? record.payload?.type : record?.type;
+        const eventTurnId = record?.type === "event_msg" ? record.payload?.turn_id : record?.turn_id;
+        if (["task_complete", "task_completed", "task_failed", "turn_aborted", "turn_failed", "turn/completed", "turn.completed"].includes(type ?? "")) {
+          if (!eventTurnId || !turnId || eventTurnId === turnId) { state = "terminal"; turnId = eventTurnId ?? turnId; }
+        } else if (["task_started", "turn_started", "turn/started", "turn.started"].includes(type ?? "")) {
+          if (state !== "terminal" || !eventTurnId || eventTurnId !== turnId) { state = "active"; turnId = eventTurnId; }
+        }
+      } catch { /* Ignore partial records and quoted event text. */ }
+    }
+    if (state === "unknown" && !incremental && snapshot.startOffset > 0 && maxBytes < MAX_SESSION_TRANSCRIPT_READ_BYTES) {
+      maxBytes = Math.min(MAX_SESSION_TRANSCRIPT_READ_BYTES, maxBytes * 8);
+      continue;
+    }
+    cliTranscriptTurnStateCache.set(transcriptPath, {
+      size: snapshot.size, mtimeMs: snapshot.mtimeMs,
+      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId
+    });
+    if (cliTranscriptTurnStateCache.size > MAX_VISIBLE_CLI_SESSIONS * 3) cliTranscriptTurnStateCache.delete(cliTranscriptTurnStateCache.keys().next().value!);
+    return state;
   }
-  return state;
 }
 
 /** Locate all visible session transcripts in one bounded walk. The previous
