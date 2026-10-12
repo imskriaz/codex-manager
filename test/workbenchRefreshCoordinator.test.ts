@@ -46,6 +46,18 @@ type ExternalChangeSync = {
 };
 
 describe("workbench external account synchronization", () => {
+  it("retries an unchanged snapshot after a view refresh fails", async () => {
+    const repo = {
+      listAccounts: vi.fn().mockResolvedValue([]),
+      getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 })
+    };
+    const refresh = vi.fn().mockRejectedValueOnce(new Error("Dashboard temporarily unavailable")).mockResolvedValue(undefined);
+    const coordinator = new WorkbenchRefreshCoordinator({} as never, repo as never, { refresh } as never);
+    await expect(coordinator.refreshViewsIfNeeded()).rejects.toThrow("temporarily unavailable");
+    await coordinator.refreshViewsIfNeeded();
+    await coordinator.refreshViewsIfNeeded();
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
   beforeEach(() => {
     vi.mocked(autoReloadWindowForAccount).mockReset();
     vi.mocked(promptWindowReloadForAccount).mockReset();

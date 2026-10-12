@@ -4,6 +4,9 @@ export async function runWithConcurrencyLimit<T>(
   worker: (item: T, index: number) => Promise<void>,
   options: { delayMs?: number } = {}
 ): Promise<void> {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new RangeError("The concurrency limit must be a positive integer.");
+  }
   if (items.length === 0) {
     return;
   }
@@ -12,9 +15,10 @@ export async function runWithConcurrencyLimit<T>(
   const runnerCount = Math.min(limit, items.length);
   const delayMs = Math.max(0, options.delayMs ?? 0);
 
-  await Promise.all(
+  let failed = false;
+  const results = await Promise.allSettled(
     Array.from({ length: runnerCount }, async () => {
-      while (cursor < items.length) {
+      while (!failed && cursor < items.length) {
         const index = cursor++;
         const item = items[index];
         if (item === undefined) {
@@ -24,10 +28,18 @@ export async function runWithConcurrencyLimit<T>(
         if (delayMs > 0) {
           await sleep(delayMs);
         }
-        await worker(item, index);
+        if (failed) return;
+        try {
+          await worker(item, index);
+        } catch (error) {
+          failed = true;
+          throw error;
+        }
       }
     })
   );
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) throw failure.reason;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -49,7 +61,10 @@ export function createKeyedMutex(): {
       const tail = tails.get(key) ?? Promise.resolve();
       const next = tail.then(() => task());
       // 失败不阻断后续排队
-      tails.set(key, next.then(() => undefined, () => undefined));
+      const settled = next.then(() => undefined, () => undefined).then(() => {
+        if (tails.get(key) === settled) tails.delete(key);
+      });
+      tails.set(key, settled);
       return next;
     }
   };

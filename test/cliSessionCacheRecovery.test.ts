@@ -2,6 +2,34 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); });
 describe("browser cache recovery", () => {
+  it("bounds stalled cache writes and invalidations and allows a later write", async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+    let complete = false;
+    const abort = vi.fn();
+    const db = { transaction: () => {
+      const transaction = { abort, oncomplete: undefined as undefined | (() => void), objectStore: () => ({ put: () => undefined, delete: () => undefined }) };
+      if (complete) queueMicrotask(() => transaction.oncomplete?.());
+      return transaction;
+    } };
+    vi.stubGlobal("indexedDB", { open: () => {
+      const request = { result: db, onsuccess: undefined as undefined | (() => void) };
+      queueMicrotask(() => request.onsuccess?.());
+      return request;
+    } });
+    const cache = await import("../webview-src/dashboard/cliSessionCache");
+    const writes = Promise.all([
+      cache.writeCliSessionMessagesCache("session", []),
+      cache.invalidateCliSessionCache("session"),
+      cache.writeDashboardStateCache({ usageHistory: [] } as never)
+    ]);
+    await vi.advanceTimersByTimeAsync(3000);
+    await expect(writes).resolves.toHaveLength(3);
+    expect(abort).toHaveBeenCalledTimes(3);
+    complete = true;
+    await expect(cache.writeDashboardStateCache({ usageHistory: [] } as never)).resolves.toBeUndefined();
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("bounds a stalled draft read and reports failed draft writes", async () => {
     vi.useFakeTimers();
     const abort = vi.fn();

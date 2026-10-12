@@ -213,6 +213,7 @@ class DashboardPanelController {
           },
           onUsageHistory: async (samples) => {
             await saveDashboardUsageHistory(this.context, samples);
+            if (!samples.length) await this.postNotice("warning", "Usage history cleared. New quota changes will start a fresh history.");
           }
         }).catch((error) => {
           const detail = error instanceof Error ? error.message : String(error);

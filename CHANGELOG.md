@@ -8,6 +8,14 @@
 
 - Correct running-session detection and auto-resume selection for long turns, completed conversations with retained writer locks, and partial or duplicate transcript events.
 
+## 1.2.18-pre1
+
+- Serialize dashboard usage persistence across VS Code and browser surfaces, reject future-dated cache entries, and make history appends linear for large datasets.
+- Keep provider deadlines active through response bodies, bound stalled browser actions and cache transactions, and preserve completed actions when dashboard refresh fails.
+- Recover from storage and refresh failures, reject malformed credentials and preferences, and preserve window account isolation through initialization and disposal.
+- Report relay launch and shutdown failures accurately, handle subprocess stream errors, and stop failed batches after active work settles.
+- Avoid excessive diagnostic-redaction work for long values and serialize overlapping window account lifecycle operations.
+- Bound transcript retention and diagnostic write queues, reduce live-stream serialization, and avoid redundant transcript polling after session-list updates.
 
 ## 1.2.18
 

@@ -464,6 +464,8 @@ function App() {
   const lastCliListRequestAtRef = useRef(0);
   const lastCliRealtimeRevisionRef = useRef(0);
   const lastCliMessageRequestRef = useRef<{ target: CliSessionTarget; at: number }>();
+  const cliSessionsRef = useRef(cliSessions);
+  cliSessionsRef.current = cliSessions;
   const requestSessionAction = (action: DashboardActionName, session: CliSessionTarget, payload?: DashboardActionPayload): void => {
     const requestId = sendAction(action, undefined, { ...payload, sessionId: session.id, targetDeviceId: session.deviceId });
     if (requestId) sessionActionRequests.current.set(requestId, session);
@@ -485,14 +487,14 @@ function App() {
       const previous = lastCliMessageRequestRef.current;
       if (!force && sameCliSessionTarget(previous?.target, target) && previous && now - previous.at < 2_000) return;
       lastCliMessageRequestRef.current = { target, at: now };
-      const projectPath = cliSessions.find((session) => sameCliSessionTarget(session, target))?.projectPath;
+      const projectPath = cliSessionsRef.current.find((session) => sameCliSessionTarget(session, target))?.projectPath;
       const requestId = sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath });
       if (requestId) {
         messageRequests.current.set(requestId, target);
         messageRequestStreams.current.set(requestId, cliLiveStatesRef.current[cliSessionTargetKey(target)]?.streamId);
       }
     },
-    [cliSessions, sendAction]
+    [sendAction]
   );
   const requestWorkspaceEnvironment = useCallback(
     (projectPath?: string, includeBranchDiff?: boolean): void => {
@@ -2516,6 +2518,7 @@ function App() {
         onClearCodexCliPath={() => postMessageToHost({ type: "dashboard:clearCodexCliPath" })}
         onClearUsageHistory={() => {
           setUsageHistory([]);
+          postMessageToHost({ type: "dashboard:usage-history", samples: [] });
           try {
             window.localStorage.removeItem(USAGE_HISTORY_STORAGE_KEY);
           } catch {

@@ -47,11 +47,16 @@ try {
     });
     const start = Date.now();
     await page.goto(`${origin}/dash`);
-    await page.locator("#settingsOpenButton").waitFor();
+    await page.locator("#settingsOpenButton").waitFor({ state: "attached" });
     await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:connection" && event.connected));
     const loadMs = Date.now() - start;
     console.log(`${width}px: real host connected in ${loadMs}ms`);
-    await page.locator("#settingsOpenButton").click();
+    if (width === 390) {
+      await page.locator(".dashboard-mobile-actions > summary").click();
+      await page.locator(".dashboard-mobile-actions-menu [role=menuitem]").nth(3).click();
+    } else {
+      await page.locator("#settingsOpenButton").click();
+    }
     for (const tab of await page.locator(".settings-tab").all()) await tab.click();
     await page.keyboard.press("Escape");
     await page.goto(`${origin}/workspace`);
@@ -67,9 +72,13 @@ try {
 
     assert.equal(await page.locator(".cli-session-row-select").count(), 0, "Real projects start collapsed");
     if (sessions.some(session => !session.archived && !session.subAgent && !session.parentSessionId)) await page.locator(".cli-project-collapse").first().waitFor();
-    for (const expand of await page.locator(".cli-project-collapse").all()) await expand.click();
-    if (sessions.some(session => !session.archived && !session.subAgent && !session.parentSessionId)) await page.locator(".cli-session-row-select").first().waitFor();
-    assert.equal(await page.locator(".cli-session-row-select").count(), new Set(sessions.filter(session => !session.archived && !session.subAgent && !session.parentSessionId).map(session => `${session.deviceId || "local"}:${session.id}`)).size, "Real list contains parents only");
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const collapsedProjects = page.locator('.cli-project-collapse[aria-expanded="false"]');
+      while (await collapsedProjects.count()) await collapsedProjects.first().click();
+    }
+    const expectedParentRows = new Set(sessions.filter(session => !session.archived && !session.subAgent && !session.parentSessionId).map(session => `${session.deviceId || "local"}:${session.id}`)).size;
+    if (expectedParentRows > 0) await page.waitForFunction((expected) => document.querySelectorAll(".cli-session-row-select").length === expected, expectedParentRows);
+    assert.equal(await page.locator(".cli-session-row-select").count(), expectedParentRows, "Real list contains parents only");
     const row = page.locator(".cli-session-row-select").first();
     let messages = 0;
     if (await row.count()) {

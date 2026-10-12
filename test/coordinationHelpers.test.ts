@@ -8,7 +8,7 @@ import {
   shouldRunAccountScheduler
 } from "../src/presentation/workbench/refreshSignature";
 import { buildDashboardStateSignature } from "../src/presentation/dashboard/signature";
-import { runWithConcurrencyLimit } from "../src/utils/concurrency";
+import { createKeyedMutex, runWithConcurrencyLimit } from "../src/utils/concurrency";
 import {
   normalizeAutoRefreshMinutes,
   normalizeCurrentAutoRefreshMinutes,
@@ -106,6 +106,30 @@ describe("scheduler settings helpers", () => {
 });
 
 describe("runWithConcurrencyLimit", () => {
+  it.each([0, -1, 0.5, NaN, Infinity])("rejects an invalid concurrency limit: %s", async (limit) => {
+    const worker = vi.fn();
+    await expect(runWithConcurrencyLimit([1], limit, worker)).rejects.toThrow("positive integer");
+    expect(worker).not.toHaveBeenCalled();
+  });
+
+  it("waits for active workers and stops taking new items after a failure", async () => {
+    let finish!: () => void;
+    const active = new Promise<void>((resolve) => { finish = resolve; });
+    const started: number[] = [];
+    const work = runWithConcurrencyLimit([1, 2, 3, 4], 2, async (value) => {
+      started.push(value);
+      if (value === 1) await active;
+      else throw new Error("worker failed");
+    });
+    let settled = false;
+    const checked = expect(work).rejects.toThrow("worker failed").finally(() => { settled = true; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finish();
+    await checked;
+    expect(started).toEqual([1, 2]);
+  });
   it("propagates unexpected worker failures", async () => {
     await expect(
       runWithConcurrencyLimit([1, 2, 3], 2, async (value) => {
@@ -114,6 +138,25 @@ describe("runWithConcurrencyLimit", () => {
         }
       })
     ).rejects.toThrow("boom");
+  });
+});
+
+describe("keyed mutex recovery", () => {
+  it("serializes same-key tasks, permits unrelated work, and recovers from a rejection", async () => {
+    const mutex = createKeyedMutex();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const order: string[] = [];
+    const first = mutex.runExclusive("a", async () => { order.push("first"); await blocked; throw new Error("failed"); });
+    const checked = expect(first).rejects.toThrow("failed");
+    const next = mutex.runExclusive("a", async () => { order.push("next"); return "done"; });
+    await expect(mutex.runExclusive("b", async () => "independent")).resolves.toBe("independent");
+    expect(order).toEqual(["first"]);
+    release();
+    await checked;
+    await expect(next).resolves.toBe("done");
+    await expect(mutex.runExclusive("a", async () => "recovered")).resolves.toBe("recovered");
+    expect(order).toEqual(["first", "next"]);
   });
 });
 

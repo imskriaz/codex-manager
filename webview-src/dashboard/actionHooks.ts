@@ -18,7 +18,7 @@ export function useDashboardActions(
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      dispatch({ type: "tick", now: Date.now() });
+      if (document.visibilityState === "visible") dispatch({ type: "tick", now: Date.now() });
     }, 30_000);
 
     return () => {

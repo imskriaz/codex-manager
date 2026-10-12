@@ -23,12 +23,14 @@ export function loadUiPreferences(): UiPreferences {
     const currentRaw = window.localStorage.getItem(UI_PREFERENCES_STORAGE_KEY);
     const raw = currentRaw ?? window.localStorage.getItem(LEGACY_UI_PREFERENCES_STORAGE_KEY);
     if (!raw) return DEFAULT_UI_PREFERENCES;
-    const parsed = JSON.parse(raw) as Partial<UiPreferences>;
+    const parsed = JSON.parse(raw) as Partial<UiPreferences> | null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return DEFAULT_UI_PREFERENCES;
+    const filters: readonly string[] = ["all", "healthy", "attention", "low", "active", "enabled", "disabled", "claimed", "capable", "incapable"];
     return {
-      filter: (parsed.filter as string) === "pinned" ? "all" : (parsed.filter ?? DEFAULT_UI_PREFERENCES.filter),
-      view: currentRaw ? (parsed.view ?? "cards") : "cards",
-      metricPriority: parsed.metricPriority ?? DEFAULT_UI_PREFERENCES.metricPriority,
-      accountSearch: typeof parsed.accountSearch === "string" ? parsed.accountSearch : ""
+      filter: typeof parsed.filter === "string" && filters.includes(parsed.filter) ? parsed.filter : "all",
+      view: currentRaw && parsed.view === "list" ? "list" : "cards",
+      metricPriority: typeof parsed.metricPriority === "string" && parsed.metricPriority.length <= 256 ? parsed.metricPriority : DEFAULT_UI_PREFERENCES.metricPriority,
+      accountSearch: typeof parsed.accountSearch === "string" ? parsed.accountSearch.slice(0, 4096) : ""
     };
   } catch {
     return DEFAULT_UI_PREFERENCES;

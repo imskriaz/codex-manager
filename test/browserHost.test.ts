@@ -3,6 +3,68 @@ import { runInNewContext } from "vm";
 import { describe, expect, it, vi } from "vitest";
 
 describe("browser dashboard bridge", () => {
+  it("aborts a stalled HTTP action and reports its unconfirmed outcome", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const timers: Array<() => void> = [];
+    const windowMock = {
+      dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      setTimeout: (callback: () => void) => { timers.push(callback); return timers.length; },
+      clearTimeout: vi.fn(), location: { reload: vi.fn() },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock, MessageEvent: Event, AbortController,
+      fetch: vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))))),
+      console: { error: vi.fn(), warn: vi.fn() }, Error, Array, JSON, Date, Map
+    });
+    const pending = windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", requestId: "stalled", action: "switch" });
+    timers[0]!();
+    await pending;
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:action-result", requestId: "stalled", status: "failed", error: expect.stringContaining("outcome is unknown") }));
+    expect(windowMock.clearTimeout).toHaveBeenCalledOnce();
+  });
+
+  it("bounds the socket queue, expires pending actions, and removes completed timers", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const timers = new Map<number, () => void>();
+    let nextTimer = 0;
+    let socket!: Socket;
+    class Socket {
+      static readonly OPEN = 1;
+      readyState = 0;
+      listeners = new Map<string, (event?: unknown) => void>();
+      send = vi.fn(); close = vi.fn();
+      constructor() { socket = this; }
+      addEventListener(type: string, callback: (event?: unknown) => void) { this.listeners.set(type, callback); }
+    }
+    const windowMock = {
+      dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      setTimeout: (callback: () => void) => { timers.set(++nextTimer, callback); return nextTimer; },
+      clearTimeout: (id: number) => timers.delete(id),
+      location: { protocol: "http:", host: "127.0.0.1:39875", reload: vi.fn() }, WebSocket: Socket,
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock, MessageEvent: Event, fetch: vi.fn(), console: { error: vi.fn(), warn: vi.fn() }, Error, Array, JSON, Date, Map
+    });
+    socket.readyState = Socket.OPEN;
+    socket.listeners.get("open")!();
+    const post = windowMock.acquireVsCodeApi!().postMessage;
+    for (let id = 0; id < 129; id++) await post({ type: "dashboard:action", requestId: `queue-${id}`, action: "refresh" });
+    expect(socket.send).toHaveBeenCalledTimes(128);
+    expect(events).toContainEqual(expect.objectContaining({ requestId: "queue-128", status: "failed", error: expect.stringContaining("queue is full") }));
+    await post({ type: "dashboard:action", requestId: "queue-0", action: "refresh" });
+    expect(socket.send).toHaveBeenCalledTimes(128);
+    socket.listeners.get("message")!({ data: JSON.stringify({ type: "dashboard:action-result", requestId: "queue-0", status: "completed" }) });
+    expect(timers.size).toBe(127);
+    for (const callback of [...timers.values()]) callback();
+    expect(timers.size).toBe(0);
+    expect(events.filter((event) => event.status === "failed" && String(event.error).includes("outcome is unknown"))).toHaveLength(127);
+    await post({ type: "dashboard:action", requestId: "recovered", action: "refresh" });
+    expect(socket.send).toHaveBeenCalledTimes(129);
+  });
   it("uses the live WebSocket for requests and publishes connection state without polling", async () => {
     const events: unknown[] = [];
     const sockets: TestWebSocket[] = [];

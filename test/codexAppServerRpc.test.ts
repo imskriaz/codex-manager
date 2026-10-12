@@ -13,6 +13,13 @@ function child() {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
 describe("app-server initialization recovery", () => {
+  it.each(["stdout", "stderr"] as const)("reports %s pipe failures and rejects pending work", async (pipe) => {
+    const processChild = child();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild[pipe].emit("error", new Error("read pipe closed"));
+    await expect(pending).rejects.toThrow("read pipe closed");
+    expect(processChild.kill).toHaveBeenCalledOnce();
+  });
   it("bounds incomplete protocol lines and rejects every waiter on disconnect", async () => {
     const processChild = child();
     const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());

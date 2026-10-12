@@ -9,6 +9,15 @@
   let lastProbeAt = 0;
   let snapshotInFlight;
   const pendingSocketActions = new Map();
+  const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage"].includes(message?.action)
+    ? 15 * 60_000 + 15_000
+    : ["addAccount", "importCurrent", "startOAuthAutoFlow"].includes(message?.action)
+      ? 10 * 60_000 + 30_000 : 135_000;
+  const forgetSocketAction = (requestId) => {
+    const pending = pendingSocketActions.get(requestId);
+    if (pending?.timer !== undefined) window.clearTimeout?.(pending.timer);
+    pendingSocketActions.delete(requestId);
+  };
 
   const dispatch = (message) => {
     window.dispatchEvent(new MessageEvent("message", { data: message }));
@@ -76,7 +85,9 @@
   };
 
   const failUnconfirmedSocketActions = () => {
-    for (const [requestId, action] of pendingSocketActions) {
+    for (const [requestId, pending] of pendingSocketActions) {
+      const action = pending.message;
+      forgetSocketAction(requestId);
       dispatch({
         type: "dashboard:action-result",
         requestId,
@@ -139,7 +150,7 @@
       try {
         const message = JSON.parse(event.data);
         if (!message?.type) return;
-        if (message.type === "dashboard:action-result") pendingSocketActions.delete(message.requestId);
+        if (message.type === "dashboard:action-result") forgetSocketAction(message.requestId);
         if (message.type === "dashboard:snapshot") {
           lastSyncAt = Date.now();
           publishStatus("live");
@@ -195,12 +206,24 @@
       return;
     }
     let reachedHost = false;
+    let timer;
     try {
       if (realtimeSocket && realtimeSocket.readyState === window.WebSocket.OPEN) {
-        if (message?.type === "dashboard:action" && message.requestId) pendingSocketActions.set(message.requestId, message);
+        reachedHost = true;
+        if (message?.type === "dashboard:action" && message.requestId) {
+          if (pendingSocketActions.has(message.requestId)) return;
+          if (pendingSocketActions.size >= 128) throw new Error("The dashboard request queue is full. Wait for pending actions before retrying.");
+          const actionTimer = window.setTimeout?.(() => {
+            forgetSocketAction(message.requestId);
+            dispatch({ type: "dashboard:action-result", requestId: message.requestId, action: message.action, accountId: message.accountId, status: "failed", error: "This action was not confirmed in time. Its outcome is unknown; refresh and verify before retrying." });
+          }, requestTimeoutMs(message));
+          pendingSocketActions.set(message.requestId, { message, timer: actionTimer });
+        }
         realtimeSocket.send(JSON.stringify(message));
         return;
       }
+      const controller = typeof AbortController === "undefined" ? undefined : new AbortController();
+      timer = controller ? window.setTimeout(() => controller.abort(), requestTimeoutMs(message)) : undefined;
       const response = await fetch("/api/message", {
         method: "POST",
         cache: "no-store",
@@ -208,7 +231,8 @@
           "Content-Type": "application/json",
           "X-Codex-Dashboard": "1"
         },
-        body: JSON.stringify(message)
+        body: JSON.stringify(message),
+        ...(controller ? { signal: controller.signal } : {})
       });
       reachedHost = true;
       if (response.status === 401) {
@@ -224,9 +248,11 @@
     } catch (error) {
       if (!reachedHost) publishStatus("unreachable");
       console.error("[codex-manager] browser dashboard bridge", error);
-      const detail = error instanceof Error ? error.message : "The dashboard action failed. Please try again.";
+      const detail = error?.name === "AbortError"
+        ? "This action was not confirmed in time. Its outcome is unknown; refresh and verify before retrying."
+        : error instanceof Error ? error.message : "The dashboard action failed. Please try again.";
       if (message?.type === "dashboard:action") {
-        pendingSocketActions.delete(message.requestId);
+        forgetSocketAction(message.requestId);
         dispatch({
           type: "dashboard:action-result",
           requestId: message.requestId,
@@ -239,6 +265,8 @@
       // Action failures already have a request-scoped result. Do not emit a
       // second standalone toast for the same failed action.
       if (message?.type !== "dashboard:action") dispatch({ type: "dashboard:notice", level: "error", message: detail });
+    } finally {
+      if (timer !== undefined) window.clearTimeout?.(timer);
     }
   };
 

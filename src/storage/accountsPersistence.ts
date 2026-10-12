@@ -83,10 +83,15 @@ export async function writeIndexAtomically(
   parseAccountsIndex(serialized, tempPath);
   const handle = await fs.open(tempPath, "wx", 0o600);
   try {
-    await handle.writeFile(serialized, "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
+    try {
+      await handle.writeFile(serialized, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    await fs.unlink(tempPath).catch(() => undefined);
+    throw error;
   }
   await replaceFileWithRetry(tempPath, indexPath, operations);
   await fs.chmod(indexPath, 0o600).catch(() => undefined);
@@ -98,10 +103,15 @@ export function writeIndexAtomicallySync(indexPath: string, index: CodexManagerI
   parseAccountsIndex(serialized, tempPath);
   const descriptor = fsSync.openSync(tempPath, "wx", 0o600);
   try {
-    fsSync.writeFileSync(descriptor, serialized, "utf8");
-    fsSync.fsyncSync(descriptor);
-  } finally {
-    fsSync.closeSync(descriptor);
+    try {
+      fsSync.writeFileSync(descriptor, serialized, "utf8");
+      fsSync.fsyncSync(descriptor);
+    } finally {
+      fsSync.closeSync(descriptor);
+    }
+  } catch (error) {
+    try { fsSync.unlinkSync(tempPath); } catch { /* The live index remains untouched. */ }
+    throw error;
   }
   replaceFileWithRetrySync(tempPath, indexPath);
   try {

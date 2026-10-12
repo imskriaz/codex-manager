@@ -151,7 +151,7 @@ function redactDebugScalar(value: unknown): unknown {
 
 export function redactDebugText(value: string): string {
   return value
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
+    .replace(/(?<![A-Z0-9._%+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
     .replace(/"(?:access|refresh|id|session|auth)[-_ ]?token"\s*:\s*"[^"]*"/gi, '"token":"[redacted]"')
     .replace(/"authorization"\s*:\s*"[^"]*"/gi, '"authorization":"[redacted]"')
     .replace(/"(?:api[-_ ]?key|password|secret|cookie)"\s*:\s*"[^"]*"/gi, '"secret":"[redacted]"')

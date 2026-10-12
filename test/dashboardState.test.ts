@@ -39,6 +39,19 @@ describe("sortDashboardAccounts", () => {
 });
 
 describe("buildDashboardState token recovery", () => {
+  it("isolates a credential read failure and recovers that account on the next snapshot", async () => {
+    const accounts = ["storage-unavailable", "storage-healthy"].map((id) => ({ id, email: `${id}@example.com`, createdAt: 1, updatedAt: 1 }));
+    const tokens = { idToken: "id", accessToken: "valid", refreshToken: "refresh" };
+    const getTokens = vi.fn().mockRejectedValueOnce(new Error("Secret Storage unavailable")).mockResolvedValue(tokens);
+    const repo = { getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }), listAccounts: vi.fn().mockResolvedValue(accounts), getTokens };
+    const settings = { resolveLanguage: () => "en", getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" }) };
+    const failed = await buildDashboardState(repo as never, settings as never, "logo", { announcements: [], unreadIds: [] });
+    expect(failed.accounts).toHaveLength(2);
+    expect(failed.accounts.find((account) => account.id === "storage-unavailable")).toMatchObject({ healthKind: "refresh_failed", healthMessage: expect.stringContaining("Secret Storage unavailable") });
+    expect(failed.accounts.find((account) => account.id === "storage-healthy")?.healthKind).toBe("healthy");
+    const recovered = await buildDashboardState(repo as never, settings as never, "logo", { announcements: [], unreadIds: [] });
+    expect(recovered.accounts.every((account) => account.healthKind === "healthy")).toBe(true);
+  });
   it("clears a stale refresh failure after another path restores a valid access token", async () => {
     needsTokenRefreshMock.mockImplementation((tokens: { accessToken: string }) => tokens.accessToken === "expired");
     refreshTokensMock.mockRejectedValue(new Error("temporary provider outage"));

@@ -51,6 +51,14 @@ export function resolveAccountHealth(
     };
   }
 
+  if (!tokens?.accessToken || !tokens.idToken) {
+    return {
+      kind: "reauthorize",
+      issueKey: "reauthorize:missing-credentials",
+      message: "Stored credentials are missing. Reauthorize this account to continue."
+    };
+  }
+
   if (tokens?.accessToken && tokens.idToken && needsTokenRefresh(tokens, automation.skewSeconds || 600)) {
     if (!tokens.refreshToken?.trim()) {
       return {

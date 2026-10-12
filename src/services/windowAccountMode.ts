@@ -6,6 +6,7 @@ import type { CodexManagerAccountRecord } from "../core/types";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
+import { createKeyedMutex } from "../utils/concurrency";
 
 const SETTING = "crossWindowAccountModeEnabled";
 const REGISTRY_FILE = "window-account-slots-v1.json";
@@ -26,14 +27,18 @@ type Registry = { slots: WindowSlot[] };
 let slot: WindowSlot | undefined;
 let heartbeat: NodeJS.Timeout | undefined;
 let originalHome: string | undefined;
+const lifecycle = createKeyedMutex();
 
 export function isCrossWindowAccountModeEnabled(): boolean {
   return getCodexManagerConfiguration().get<boolean>(SETTING, false) === true;
 }
 
-export async function initializeCrossWindowAccountMode(): Promise<void> {
-  if (!isCrossWindowAccountModeEnabled()) return;
-  originalHome ??= process.env["CODEX_HOME"];
+export function initializeCrossWindowAccountMode(): Promise<void> {
+  return lifecycle.runExclusive("window-mode", initializeWindowMode);
+}
+
+async function initializeWindowMode(): Promise<void> {
+  if (!isCrossWindowAccountModeEnabled() || slot) return;
   const session = vscode.env.sessionId || "unknown-session";
   const workspaceIdentity =
     vscode.workspace.workspaceFile?.toString() ??
@@ -46,27 +51,36 @@ export async function initializeCrossWindowAccountMode(): Promise<void> {
   const home = path.join(getCodexManagerStorageRoot(), HOME_DIRECTORY, slotId);
   await fs.mkdir(home, { recursive: true, mode: 0o700 });
   await fs.chmod(home, 0o700).catch(() => undefined);
-  process.env["CODEX_HOME"] = home;
-  slot = { slotId, home, pid: process.pid, heartbeatAt: Date.now() };
+  const initializedSlot = { slotId, home, pid: process.pid, heartbeatAt: Date.now() };
   await writeRegistry((registry) => {
     registry.slots = registry.slots.filter((candidate) => candidate.slotId !== slotId);
-    registry.slots.push(slot!);
+    registry.slots.push(initializedSlot);
   });
+  originalHome = process.env["CODEX_HOME"];
+  process.env["CODEX_HOME"] = home;
+  slot = initializedSlot;
   heartbeat = setInterval(() => {
     if (!slot) return;
-    slot.heartbeatAt = Date.now();
+    const currentSlot = slot;
+    currentSlot.heartbeatAt = Date.now();
     void writeRegistry((registry) => {
-      const current = registry.slots.find((candidate) => candidate.slotId === slot!.slotId);
-      if (current) Object.assign(current, slot);
-      else registry.slots.push(slot!);
+      if (slot !== currentSlot) return;
+      const current = registry.slots.find((candidate) => candidate.slotId === currentSlot.slotId);
+      if (current) Object.assign(current, currentSlot);
+      else registry.slots.push(currentSlot);
     }).catch((error) => console.warn("[codexManager] parallel window heartbeat failed:", error));
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
 }
 
-export async function disposeCrossWindowAccountMode(): Promise<void> {
+export function disposeCrossWindowAccountMode(): Promise<void> {
+  return lifecycle.runExclusive("window-mode", disposeWindowMode);
+}
+
+async function disposeWindowMode(): Promise<void> {
   if (heartbeat) clearInterval(heartbeat);
   heartbeat = undefined;
+  if (!slot) return;
   if (slot) {
     const released = slot.slotId;
     slot = undefined;
@@ -99,23 +113,31 @@ export function canWindowUseAccount(accountId: string): boolean {
   return true;
 }
 
-export async function claimCrossWindowAccount(accountId: string): Promise<void> {
+export function claimCrossWindowAccount(accountId: string): Promise<void> {
+  return lifecycle.runExclusive("window-mode", () => claimWindowAccount(accountId));
+}
+
+async function claimWindowAccount(accountId: string): Promise<void> {
   if (!isCrossWindowAccountModeEnabled() || !slot) return;
   await writeRegistry((registry) => {
     const current = registry.slots.find((candidate) => candidate.slotId === slot!.slotId);
     if (!current) throw new Error("This VS Code window is no longer registered for parallel accounts.");
     current.accountId = accountId;
-    slot!.accountId = accountId;
   });
+  slot.accountId = accountId;
 }
 
-export async function releaseCrossWindowAccount(accountId?: string): Promise<void> {
+export function releaseCrossWindowAccount(accountId?: string): Promise<void> {
+  return lifecycle.runExclusive("window-mode", () => releaseWindowAccount(accountId));
+}
+
+async function releaseWindowAccount(accountId?: string): Promise<void> {
   if (!isCrossWindowAccountModeEnabled() || !slot) return;
   await writeRegistry((registry) => {
     const current = registry.slots.find((candidate) => candidate.slotId === slot!.slotId);
     if (current && (!accountId || current.accountId === accountId)) current.accountId = undefined;
-    if (!accountId || slot!.accountId === accountId) slot!.accountId = undefined;
   });
+  if (!accountId || slot.accountId === accountId) slot.accountId = undefined;
 }
 
 export async function ensureCrossWindowAccountAssignment(
@@ -165,8 +187,12 @@ async function writeRegistry(mutator: (registry: Registry) => void): Promise<voi
     registry.slots = registry.slots.filter(isLive);
     mutator(registry);
     const temp = `${file}.tmp-${process.pid}-${crypto.randomUUID()}`;
-    await fs.writeFile(temp, JSON.stringify(registry, null, 2), { encoding: "utf8", mode: 0o600 });
-    await fs.rename(temp, file);
+    try {
+      await fs.writeFile(temp, JSON.stringify(registry, null, 2), { encoding: "utf8", mode: 0o600 });
+      await fs.rename(temp, file);
+    } finally {
+      await fs.rm(temp, { force: true }).catch(() => undefined);
+    }
   });
 }
 
@@ -185,13 +211,14 @@ function isValidSlot(value: unknown): value is WindowSlot {
   return (
     typeof candidate.slotId === "string" &&
     typeof candidate.home === "string" &&
-    typeof candidate.pid === "number" &&
-    typeof candidate.heartbeatAt === "number"
+    typeof candidate.pid === "number" && Number.isInteger(candidate.pid) && candidate.pid > 0 &&
+    typeof candidate.heartbeatAt === "number" && Number.isFinite(candidate.heartbeatAt)
   );
 }
 
 function isLive(candidate: WindowSlot): boolean {
-  return Date.now() - candidate.heartbeatAt <= STALE_AFTER_MS;
+  const age = Date.now() - candidate.heartbeatAt;
+  return age >= 0 && age <= STALE_AFTER_MS;
 }
 
 function hash(value: string): string {

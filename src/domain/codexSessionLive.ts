@@ -3,6 +3,8 @@ import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from 
 export const MAX_CODEX_LIVE_STATE_BYTES = 1024 * 1024;
 export const MAX_CODEX_LIVE_ITEMS = 200;
 const MAX_TEXT = 12_000;
+const encoder = new TextEncoder();
+const jsonBytes = (value: unknown): number => encoder.encode(JSON.stringify(value)).length;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const terminal = (status: DashboardCodexSessionLiveState["status"]) => status !== "starting" && status !== "running";
 const record = (value: unknown): Record<string, unknown> | undefined => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -66,6 +68,9 @@ function validMessage(value: unknown): boolean {
 /** Keep raw protocol items only for the current turn; the existing parser owns rendering. */
 export class CodexSessionLiveReducer {
   private readonly items = new Map<string, Record<string, unknown>>();
+  private readonly itemBytes = new Map<string, number>();
+  private retainedItemBytes = 0;
+  private snapshotJson: string | undefined;
   private readonly earlyCompletions = new Map<string, unknown>();
   private state: DashboardCodexSessionLiveState;
 
@@ -162,20 +167,32 @@ export class CodexSessionLiveReducer {
   }
 
   snapshot(): DashboardCodexSessionLiveState {
+    if (this.snapshotJson) return JSON.parse(this.snapshotJson) as DashboardCodexSessionLiveState;
     const state = { ...this.state, messages: this.parseItems({ thread: { turns: [{ id: this.state.turnId, status: this.state.status === "running" ? "inProgress" : this.state.status, items: [...this.items.values()] }] } }) };
-    while (new TextEncoder().encode(JSON.stringify(state)).length > MAX_CODEX_LIVE_STATE_BYTES && state["messages"].length) {
-      state["messages"].shift();
+    const sizes = state.messages.map(jsonBytes);
+    let bytes = jsonBytes({ ...state, messages: [], truncated: true }) + sizes.reduce((sum, size) => sum + size, 0) + Math.max(0, sizes.length - 1);
+    let start = 0;
+    while (bytes > MAX_CODEX_LIVE_STATE_BYTES && start < sizes.length) {
+      bytes -= sizes[start++]! + (start < sizes.length ? 1 : 0);
       state["truncated"] = true;
     }
-    return JSON.parse(JSON.stringify(state)) as DashboardCodexSessionLiveState;
+    state.messages = state.messages.slice(start);
+    this.snapshotJson = JSON.stringify(state);
+    return JSON.parse(this.snapshotJson) as DashboardCodexSessionLiveState;
   }
 
-  private changed(): void { this.state.sequence += 1; this.state.updatedAt = Math.max(this.state.updatedAt + 1, Date.now()); }
+  private changed(): void { this.snapshotJson = undefined; this.state.sequence += 1; this.state.updatedAt = Math.max(this.state.updatedAt + 1, Date.now()); }
   private putItem(id: string, item: Record<string, unknown>): void {
     if (id.length > 256) return;
+    const bytes = jsonBytes(item);
+    this.retainedItemBytes += bytes - (this.itemBytes.get(id) ?? 0);
+    this.itemBytes.set(id, bytes);
     this.items.set(id, item);
-    while (this.items.size > MAX_CODEX_LIVE_ITEMS || new TextEncoder().encode(JSON.stringify([...this.items.values()])).length > MAX_CODEX_LIVE_STATE_BYTES / 2) {
-      this.items.delete(this.items.keys().next().value!);
+    while (this.items.size > MAX_CODEX_LIVE_ITEMS || this.retainedItemBytes + this.items.size + 1 > MAX_CODEX_LIVE_STATE_BYTES / 2) {
+      const oldest = this.items.keys().next().value!;
+      this.retainedItemBytes -= this.itemBytes.get(oldest)!;
+      this.itemBytes.delete(oldest);
+      this.items.delete(oldest);
       this.state.truncated = true;
     }
   }

@@ -234,11 +234,11 @@ export async function invalidateCliSessionCache(sessionId?: string, deviceId?: s
   if (!db) return;
   await new Promise<void>((resolve) => {
     const transaction = db.transaction(STORE_NAME, "readwrite");
+    const finish = (): void => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } finish(); }, 3_000);
     transaction.objectStore(STORE_NAME).delete("list");
     if (sessionId) transaction.objectStore(STORE_NAME).delete(`messages:${JSON.stringify([deviceId ?? "local", sessionId])}`);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
+    transaction.oncomplete = transaction.onerror = transaction.onabort = finish;
   }).catch(() => undefined);
 }
 
@@ -276,9 +276,9 @@ async function writeRecord(record: CacheRecord): Promise<void> {
   if (!db) return;
   await new Promise<void>((resolve) => {
     const transaction = db.transaction(STORE_NAME, "readwrite");
+    const finish = (): void => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } finish(); }, 3_000);
     transaction.objectStore(STORE_NAME).put(record);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-    transaction.onabort = () => resolve();
+    transaction.oncomplete = transaction.onerror = transaction.onabort = finish;
   }).catch(() => undefined);
 }

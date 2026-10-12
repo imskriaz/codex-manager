@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { removeTestDirectory } from "./testFilesystem";
 import {
   CrossWindowOperationBusyError,
@@ -14,6 +14,26 @@ import {
 } from "../src/utils/crossWindowOperations";
 
 describe("CrossWindowOperationCoordinator", () => {
+  it("retries initialization after unavailable storage recovers", async () => {
+    const directory = await createTestDirectory("cross-window-init-retry");
+    const lockRoot = path.join(directory, "cross-window-operations-v1");
+    await fs.writeFile(lockRoot, "storage blocker");
+    const coordinator = new CrossWindowOperationCoordinator(directory);
+    await expect(coordinator.initialize()).rejects.toThrow();
+    await fs.unlink(lockRoot);
+    await expect(coordinator.runExclusive("retry", "Retry", async () => "recovered")).resolves.toBe("recovered");
+    await removeTestDirectory(directory);
+  });
+
+  it("does not suppress startup recovery after a backwards clock correction", async () => {
+    const directory = await createTestDirectory("cross-window-clock-recovery");
+    await configureCrossWindowOperationCoordinator(directory);
+    await fs.writeFile(path.join(directory, "startup-sync-cooldown.json"), JSON.stringify({ completedAt: Date.now() + 86_400_000 }));
+    const task = vi.fn(async () => "recovered");
+    expect(await runCentralAccountOperationWithCooldown("Recovery", 60_000, task)).toEqual({ ran: true, value: "recovered" });
+    expect(task).toHaveBeenCalledOnce();
+    await removeTestDirectory(directory);
+  });
   it("shares completed maintenance across coordinator restarts and retries failures", async () => {
     const directory = await createTestDirectory("shared-maintenance");
     await configureCrossWindowOperationCoordinator(directory);

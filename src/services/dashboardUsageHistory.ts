@@ -6,6 +6,19 @@ const STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
 const MAX_SAMPLES = 10_000;
 const DAILY_USAGE_CACHE_KEY = "codexManager.dashboardDailyUsageCache.v1";
 const MAX_DAILY_USAGE_CACHE_ENTRIES = 64;
+const MAX_FUTURE_TIMESTAMP_SKEW_MS = 5 * 60_000;
+
+// Serialize shared panel/browser storage reads and writes to prevent lost updates.
+const usageHistoryWriteQueues = new WeakMap<vscode.Memento, Promise<void>>();
+
+function enqueueUsageHistoryWrite<T>(context: vscode.ExtensionContext, task: () => Promise<T>): Promise<T> {
+  const run = (usageHistoryWriteQueues.get(context.globalState) ?? Promise.resolve()).then(task);
+  usageHistoryWriteQueues.set(context.globalState, run.then(
+    () => undefined,
+    () => undefined
+  ));
+  return run;
+}
 
 export function readDashboardUsageHistory(context: vscode.ExtensionContext): DashboardUsageSample[] {
   return normalizeDashboardUsageHistory(context.globalState.get<unknown>(STORAGE_KEY));
@@ -21,15 +34,25 @@ export async function upsertDashboardDailyUsageCache(
   usage: CodexDailyUsageBreakdown,
   fetchedAt = Date.now()
 ): Promise<DashboardDailyUsageCacheEntry[]> {
-  const entries = readDashboardDailyUsageCache(context).filter((entry) => entry.accountId !== accountId);
-  entries.push({ accountId, fetchedAt, usage });
-  const normalized = normalizeDashboardDailyUsageCache(entries);
-  await context.globalState.update(DAILY_USAGE_CACHE_KEY, normalized);
-  return normalized;
+  if (!normalizeDashboardDailyUsageCache([{ accountId, fetchedAt, usage }]).length) {
+    throw new Error("The daily usage cache entry is invalid.");
+  }
+  return enqueueUsageHistoryWrite(context, async () => {
+    const current = readDashboardDailyUsageCache(context);
+    const previous = current.find((entry) => entry.accountId === accountId);
+    if (previous && previous.fetchedAt > fetchedAt) return current;
+    const entries = current.filter((entry) => entry.accountId !== accountId);
+    entries.push({ accountId, fetchedAt, usage });
+    const normalized = normalizeDashboardDailyUsageCache(entries);
+    await context.globalState.update(DAILY_USAGE_CACHE_KEY, normalized);
+    return normalized;
+  });
 }
 
 export function normalizeDashboardDailyUsageCache(value: unknown): DashboardDailyUsageCacheEntry[] {
   if (!Array.isArray(value)) return [];
+  const latestAllowedTimestamp = Date.now() + MAX_FUTURE_TIMESTAMP_SKEW_MS;
+  const seen = new Set<string>();
   return value
     .filter((item): item is DashboardDailyUsageCacheEntry => {
       if (!item || typeof item !== "object") return false;
@@ -40,10 +63,17 @@ export function normalizeDashboardDailyUsageCache(value: unknown): DashboardDail
         entry.accountId.length <= 4096 &&
         typeof entry.fetchedAt === "number" &&
         Number.isFinite(entry.fetchedAt) &&
+        entry.fetchedAt > 0 &&
+        entry.fetchedAt <= latestAllowedTimestamp &&
         isDailyUsageBreakdown(entry.usage)
       );
     })
     .sort((left, right) => right.fetchedAt - left.fetchedAt)
+    .filter((entry) => {
+      if (seen.has(entry.accountId)) return false;
+      seen.add(entry.accountId);
+      return true;
+    })
     .slice(0, MAX_DAILY_USAGE_CACHE_ENTRIES);
 }
 
@@ -74,7 +104,16 @@ export async function saveDashboardUsageHistory(
   samples: readonly DashboardUsageSample[]
 ): Promise<void> {
   const normalized = normalizeDashboardUsageHistory(samples);
-  await context.globalState.update(STORAGE_KEY, normalized);
+  await enqueueUsageHistoryWrite(context, async () => {
+    if (samples.length === 0) {
+      await context.globalState.update(STORAGE_KEY, []);
+      return;
+    }
+    const current = readDashboardUsageHistory(context);
+    const merged = new Map(current.map((sample) => [`${sample.accountId}:${sample.at}`, sample]));
+    for (const sample of normalized) merged.set(`${sample.accountId}:${sample.at}`, sample);
+    await context.globalState.update(STORAGE_KEY, normalizeDashboardUsageHistory([...merged.values()]));
+  });
 }
 
 export async function appendDashboardUsageSnapshot(
@@ -82,39 +121,50 @@ export async function appendDashboardUsageSnapshot(
   state: DashboardState,
   at = Date.now()
 ): Promise<DashboardUsageSample[]> {
-  const retentionDays = state.settings.usageHistoryRetentionDays;
-  const cutoff = retentionDays > 0 ? at - retentionDays * 86_400_000 : Number.NEGATIVE_INFINITY;
-  const stored = readDashboardUsageHistory(context);
-  const current = stored.filter((sample) => sample.at >= cutoff);
-  let changed = current.length !== stored.length;
-  for (const account of state.accounts) {
-    const sample: DashboardUsageSample = {
-      at,
-      accountId: account.id,
-      hourly: account.metrics.find((metric) => metric.period === "hourly")?.percentage,
-      weekly: account.metrics.find((metric) => metric.period === "weekly" || metric.period === "monthly")?.percentage,
-      review: account.metrics.find((metric) => metric.key.includes("review"))?.percentage
-    };
-    const previous = [...current].reverse().find((item) => item.accountId === account.id);
-    if (
-      previous &&
-      previous.hourly === sample.hourly &&
-      previous.weekly === sample.weekly &&
-      previous.review === sample.review
-    ) {
-      continue;
-    }
-    current.push(sample);
-    changed = true;
+  if (!Number.isFinite(at) || at <= 0 || at > Date.now() + MAX_FUTURE_TIMESTAMP_SKEW_MS) {
+    throw new Error("The usage snapshot timestamp is invalid.");
   }
-  const normalized = normalizeDashboardUsageHistory(current);
-  if (changed) await context.globalState.update(STORAGE_KEY, normalized);
-  return normalized;
+  return enqueueUsageHistoryWrite(context, async () => {
+    const retentionDays = state.settings.usageHistoryRetentionDays;
+    const cutoff = retentionDays > 0 ? at - retentionDays * 86_400_000 : Number.NEGATIVE_INFINITY;
+    const stored = readDashboardUsageHistory(context);
+    const current = stored.filter((sample) => sample.at >= cutoff);
+    const previousByAccount = new Map<string, DashboardUsageSample>();
+    for (const sample of current) previousByAccount.set(sample.accountId, sample);
+    let changed = current.length !== stored.length;
+    for (const account of state.accounts) {
+      const sample: DashboardUsageSample = {
+        at,
+        accountId: account.id,
+        hourly: account.metrics.find((metric) => metric.period === "hourly")?.percentage,
+        weekly: account.metrics.find((metric) => metric.period === "weekly" || metric.period === "monthly")?.percentage,
+        review: account.metrics.find((metric) => metric.key.includes("review"))?.percentage
+      };
+      const previous = previousByAccount.get(account.id);
+      if (previous && previous.at > at) continue;
+      if (
+        previous &&
+        previous.hourly === sample.hourly &&
+        previous.weekly === sample.weekly &&
+        previous.review === sample.review
+      ) {
+        continue;
+      }
+      current.push(sample);
+      previousByAccount.set(account.id, sample);
+      changed = true;
+    }
+    if (!changed) return current;
+    const normalized = normalizeDashboardUsageHistory(current);
+    await context.globalState.update(STORAGE_KEY, normalized);
+    return normalized;
+  });
 }
 
 export function normalizeDashboardUsageHistory(value: unknown): DashboardUsageSample[] {
   if (!Array.isArray(value)) return [];
-  const normalized: DashboardUsageSample[] = [];
+  const latestAllowedTimestamp = Date.now() + MAX_FUTURE_TIMESTAMP_SKEW_MS;
+  const normalized = new Map<string, DashboardUsageSample>();
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
     const sample = item as Partial<DashboardUsageSample>;
@@ -122,6 +172,7 @@ export function normalizeDashboardUsageHistory(value: unknown): DashboardUsageSa
       typeof sample.at !== "number" ||
       !Number.isFinite(sample.at) ||
       sample.at <= 0 ||
+      sample.at > latestAllowedTimestamp ||
       typeof sample.accountId !== "string" ||
       !sample.accountId.trim() ||
       sample.accountId.length > 4096
@@ -131,7 +182,7 @@ export function normalizeDashboardUsageHistory(value: unknown): DashboardUsageSa
     const hourly = normalizePercentage(sample.hourly);
     const weekly = normalizePercentage(sample.weekly);
     const review = normalizePercentage(sample.review);
-    normalized.push({
+    normalized.set(`${sample.accountId}:${sample.at}`, {
       at: sample.at,
       accountId: sample.accountId,
       ...(hourly !== undefined ? { hourly } : {}),
@@ -139,7 +190,7 @@ export function normalizeDashboardUsageHistory(value: unknown): DashboardUsageSa
       ...(review !== undefined ? { review } : {})
     });
   }
-  return normalized.sort((left, right) => left.at - right.at).slice(-MAX_SAMPLES);
+  return [...normalized.values()].sort((left, right) => left.at - right.at).slice(-MAX_SAMPLES);
 }
 
 function normalizePercentage(value: unknown): number | undefined {

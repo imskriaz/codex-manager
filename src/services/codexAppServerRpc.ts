@@ -33,6 +33,8 @@ export class CodexAppServerRpc {
     this.child = child;
     child.on("error", (error) => this.fail(error));
     child.stdin.on("error", (error) => this.fail(error));
+    child.stdout.on("error", (error) => this.fail(error));
+    child.stderr.on("error", (error) => this.fail(error));
     child.on("close", (code) => this.fail(new Error(`Codex app-server exited with code ${code ?? "unknown"}.`)));
   }
 

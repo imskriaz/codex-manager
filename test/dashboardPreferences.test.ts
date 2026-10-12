@@ -92,4 +92,13 @@ describe("dashboard preferences", () => {
       accountSearch: ""
     });
   });
+
+  it.each([null, [], { filter: 42, view: {}, metricPriority: {}, accountSearch: [] }, { filter: "invalid", view: "invalid", metricPriority: "x".repeat(300) }])
+    ("validates JSON preference values before restoring them: %j", async (value) => {
+      Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: createStorage({
+        "codexManager.dashboardUiPreferences.v2": JSON.stringify(value)
+      }) } });
+      const { loadUiPreferences } = await import("../webview-src/dashboard/preferences");
+      expect(loadUiPreferences()).toMatchObject({ filter: "all", view: "cards", metricPriority: "hourly", accountSearch: "" });
+    });
 });

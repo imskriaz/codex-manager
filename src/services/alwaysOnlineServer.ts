@@ -25,6 +25,7 @@ type PreparedRelay = RelayConfig & {
 
 export class AlwaysOnlineServer implements vscode.Disposable {
   private child: ChildProcess | undefined;
+  private childLaunchError: Error | undefined;
   private sessionActive = false;
   private preparedRelay: PreparedRelay | undefined;
   private waitingForConfiguration = false;
@@ -96,7 +97,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     if (existingPid) {
       // A changed encrypted-sync passphrase changes the relay key; restart so
       // peers are not split across two authentication keys.
-      if (prepared.previousKey === prepared.hostKey && prepared.previousAdminToken === prepared.adminToken) {
+      if (prepared.previousKey === prepared.hostKey && prepared.previousAdminToken === prepared.adminToken && await relayIsHealthy(prepared.port)) {
         return "already-running";
       }
       await waitForRelayShutdown(
@@ -110,8 +111,10 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     }
     this.spawnPreparedRelay(prepared);
     const ready = await waitForRelay(prepared.port);
-    if (!ready && !(await portIsOccupied(prepared.port))) {
+    if (!ready) {
       this.child = undefined;
+      if (this.childLaunchError) throw this.childLaunchError;
+      if (await portIsOccupied(prepared.port)) throw new Error("The detached relay could not become ready because the dashboard port is occupied. Close the other host and retry.");
       throw new Error("The detached Node.js relay did not become ready on 127.0.0.1:39875.");
     }
     return "started";
@@ -218,6 +221,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
 
   private spawnPreparedRelay(prepared: PreparedRelay): void {
     const node = resolveNodeExecutable();
+    this.childLaunchError = undefined;
     this.child = spawn(node, [prepared.scriptTarget, prepared.configPath], {
       detached: true,
       stdio: "ignore",
@@ -226,6 +230,10 @@ export class AlwaysOnlineServer implements vscode.Disposable {
         ...process.env,
         ELECTRON_RUN_AS_NODE: node === process.execPath ? "1" : process.env["ELECTRON_RUN_AS_NODE"]
       }
+    });
+    this.child.on("error", (error) => {
+      this.childLaunchError = error;
+      console.warn("[codexManager] detached relay could not launch", error);
     });
     this.child.unref();
   }
@@ -264,18 +272,22 @@ function resolveNodeExecutable(): string {
 
 function relayIsHealthy(port: number): Promise<boolean> {
   return new Promise((resolve) => {
+    const finish = (healthy: boolean): void => { clearTimeout(deadline); resolve(healthy); };
+    const deadline = setTimeout(() => { request.destroy(); finish(false); }, 800);
     const request = http.get({ host: "127.0.0.1", port, path: "/health", timeout: 800 }, (response) => {
       let body = "";
       response.setEncoding("utf8");
       response.on("data", (chunk) => {
         if (body.length <= 4096) body += chunk;
       });
-      response.once("end", () => resolve(isAlwaysOnlineRelayHealthResponse(response.statusCode, body)));
+      response.once("end", () => finish(isAlwaysOnlineRelayHealthResponse(response.statusCode, body)));
+      response.once("error", () => finish(false));
+      response.once("aborted", () => finish(false));
     });
-    request.on("error", () => resolve(false));
+    request.on("error", () => finish(false));
     request.on("timeout", () => {
       request.destroy();
-      resolve(false);
+      finish(false);
     });
   });
 }
@@ -324,6 +336,8 @@ function waitForRelay(port: number): Promise<boolean> {
 
 function requestShutdown(port: number, token: string): Promise<void> {
   return new Promise((resolve) => {
+    const finish = (): void => { clearTimeout(deadline); resolve(); };
+    const deadline = setTimeout(() => { request.destroy(); finish(); }, 1_000);
     const request = http.request(
       {
         host: "127.0.0.1",
@@ -335,13 +349,15 @@ function requestShutdown(port: number, token: string): Promise<void> {
       },
       (response) => {
         response.resume();
-        response.once("end", () => resolve());
+        response.once("end", finish);
+        response.once("error", finish);
+        response.once("aborted", finish);
       }
     );
-    request.on("error", () => resolve());
+    request.on("error", finish);
     request.on("timeout", () => {
       request.destroy();
-      resolve();
+      finish();
     });
     request.end();
   });
@@ -394,6 +410,7 @@ async function waitForRelayShutdown(port: number, token: string, pidPath: string
     await requestShutdown(port, token);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  throw new Error("The detached relay did not confirm shutdown. Check the running relay before retrying.");
 }
 
 export function relayConfigPath(storageRoot: string): string {

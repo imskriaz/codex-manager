@@ -35,6 +35,7 @@ const MAX_SESSION_INDEX_BYTES = 5 * 1024 * 1024;
 const MAX_SESSION_TRANSCRIPT_READ_BYTES = 25 * 1024 * 1024;
 const MAX_VISIBLE_CLI_SESSIONS = 200;
 const MAX_VISIBLE_SESSION_MESSAGES = 250;
+const MAX_TRANSCRIPT_CACHE_BYTES = 32 * 1024 * 1024;
 const MAX_SESSION_MESSAGE_CHARS = 12_000;
 const MAX_SESSION_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_SESSION_IMAGE_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -94,7 +95,7 @@ type CliTranscriptReadResult = {
   partialLine: boolean;
   windowed: boolean;
 };
-const cliTranscriptMessageCache = new Map<string, CliTranscriptMessageCache>();
+const cliTranscriptMessageCache = new Map<string, CliTranscriptMessageCache & { retainedBytes: number }>();
 const cliTranscriptMetadataCache = new Map<
   string,
   {
@@ -2497,7 +2498,7 @@ async function runCodexAppServerRequest<T = unknown>(
       method: "initialize",
       id: 1,
       params: {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.18-pre2" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.18-pre3" },
         capabilities: null
       }
     });
@@ -3022,13 +3023,15 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
     const split = splitCompleteJsonlRecords(combined);
     let remainder = split.remainder;
     const turnContext = { turnId: cached.currentTurnId };
-    const addedMessages = parseCliTranscriptLines(split.complete.toString("utf8"), cached.nextSequence, turnContext);
+    const parsed = parseCliTranscriptLines(split.complete.toString("utf8"), cached.nextSequence, turnContext);
+    const addedMessages = parsed.messages;
+    let nextSequence = parsed.nextSequence;
     const trailingText = remainder.toString("utf8");
     const trailingMessage = trailingText.trim()
-      ? parseTaggedCliSessionMessage(trailingText, cached.nextSequence + addedMessages.length, turnContext)
+      ? parseTaggedCliSessionMessage(trailingText, nextSequence, turnContext)
       : undefined;
     if (trailingMessage) {
-      mergeCliTranscriptMessage(addedMessages, trailingMessage);
+      if (mergeCliTranscriptMessage(addedMessages, trailingMessage)) nextSequence += 1;
       remainder = Buffer.alloc(0);
     }
     const mergedMessages = [...cached.messages];
@@ -3038,7 +3041,7 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
       mtimeMs: snapshot.mtimeMs,
       offset: snapshot.endOffset,
       remainder,
-      nextSequence: cached.nextSequence + addedMessages.length,
+      nextSequence,
       messages: mergedMessages.slice(-MAX_VISIBLE_SESSION_MESSAGES),
       windowed: cached.windowed,
       currentTurnId: turnContext.turnId
@@ -3052,11 +3055,13 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
     const split = splitCompleteJsonlRecords(raw);
     let remainder = split.remainder;
     const turnContext: { turnId?: string } = {};
-    const messages = parseCliTranscriptLines(split.complete.toString("utf8"), 0, turnContext);
+    const parsed = parseCliTranscriptLines(split.complete.toString("utf8"), 0, turnContext);
+    const messages = parsed.messages;
+    let nextSequence = parsed.nextSequence;
     const trailingText = remainder.toString("utf8");
-    const trailingMessage = trailingText.trim() ? parseTaggedCliSessionMessage(trailingText, messages.length, turnContext) : undefined;
+    const trailingMessage = trailingText.trim() ? parseTaggedCliSessionMessage(trailingText, nextSequence, turnContext) : undefined;
     if (trailingMessage) {
-      mergeCliTranscriptMessage(messages, trailingMessage);
+      if (mergeCliTranscriptMessage(messages, trailingMessage)) nextSequence += 1;
       remainder = Buffer.alloc(0);
     }
     next = {
@@ -3064,17 +3069,22 @@ async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<
       mtimeMs: snapshot.mtimeMs,
       offset: snapshot.endOffset,
       remainder,
-      nextSequence: messages.length,
+      nextSequence,
       messages: messages.slice(-MAX_VISIBLE_SESSION_MESSAGES),
       windowed: snapshot.startOffset > 0,
       currentTurnId: turnContext.turnId
     };
   }
   cliTranscriptMessageCache.delete(cacheKey);
-  cliTranscriptMessageCache.set(cacheKey, next);
-  while (cliTranscriptMessageCache.size > 32) {
+  // A subarray can retain the complete 25 MB read window for a tiny partial record.
+  next.remainder = Buffer.from(next.remainder);
+  const retainedBytes = next.remainder.byteLength + JSON.stringify(next.messages).length * 2;
+  cliTranscriptMessageCache.set(cacheKey, { ...next, retainedBytes });
+  let totalBytes = [...cliTranscriptMessageCache.values()].reduce((sum, entry) => sum + entry.retainedBytes, 0);
+  while (cliTranscriptMessageCache.size > 32 || totalBytes > MAX_TRANSCRIPT_CACHE_BYTES) {
     const oldest = cliTranscriptMessageCache.keys().next().value as string | undefined;
     if (!oldest) break;
+    totalBytes -= cliTranscriptMessageCache.get(oldest)!.retainedBytes;
     cliTranscriptMessageCache.delete(oldest);
   }
   return {
@@ -3094,15 +3104,15 @@ function splitCompleteJsonlRecords(buffer: Buffer): { complete: Buffer; remainde
     : { complete: Buffer.alloc(0), remainder: buffer };
 }
 
-function parseCliTranscriptLines(raw: string, startingSequence: number, turnContext: { turnId?: string }): DashboardCliSessionMessage[] {
+function parseCliTranscriptLines(raw: string, startingSequence: number, turnContext: { turnId?: string }): { messages: DashboardCliSessionMessage[]; nextSequence: number } {
   const messages: DashboardCliSessionMessage[] = [];
   let sequence = startingSequence;
-  for (const line of raw.split(/\r?\n/)) {
+  for (const [line] of raw.matchAll(/[^\n]+/g)) {
     const message = parseTaggedCliSessionMessage(line, sequence, turnContext);
     if (!message) continue;
     if (mergeCliTranscriptMessage(messages, message)) sequence += 1;
   }
-  return messages;
+  return { messages, nextSequence: sequence };
 }
 
 function parseTaggedCliSessionMessage(line: string, sequence: number, context: { turnId?: string }): DashboardCliSessionMessage | undefined {
@@ -3207,6 +3217,7 @@ function mergeCliTranscriptMessage(
     return false;
   }
   messages.push(message);
+  if (messages.length > MAX_VISIBLE_SESSION_MESSAGES) messages.splice(0, messages.length - MAX_VISIBLE_SESSION_MESSAGES);
   return true;
 }
 

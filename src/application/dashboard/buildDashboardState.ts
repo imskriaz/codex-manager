@@ -81,7 +81,13 @@ export async function buildDashboardState(
   const pendingEnablementAccountIds = new Set(getPendingEnablementAccountIds());
   const tokenEntries = await Promise.all(
     accounts.map(async (account) => {
-      let tokens = await repo.getTokens(account.id, { bypassCache: true });
+      let tokens: CodexTokens | undefined;
+      try {
+        tokens = await repo.getTokens(account.id, { bypassCache: true });
+      } catch (error) {
+        markTokenAutomationRefreshFailure(account.id, `Stored credentials could not be read: ${toDashboardRefreshFailureMessage(error)}`);
+        return [account.id, undefined] as const;
+      }
       const tokenNeedsRefresh = Boolean(tokens && needsTokenRefresh(tokens, 0));
       const refreshToken = tokens?.refreshToken?.trim();
       if (!tokenNeedsRefresh) {

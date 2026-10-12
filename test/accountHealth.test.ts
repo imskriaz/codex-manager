@@ -8,6 +8,11 @@ function tokenExpiringAt(epochSeconds: number): string {
 }
 
 describe("account token health", () => {
+  it("requires reauthorization when stored credentials are missing", () => {
+    expect(resolveAccountHealth({ id: "missing" } as never, undefined, { accounts: {} } as never)).toMatchObject({
+      kind: "reauthorize", message: expect.stringContaining("Stored credentials are missing")
+    });
+  });
   it("keeps an account healthy when only its ID token is expired", () => {
     const now = Math.floor(Date.now() / 1000);
     const account: CodexManagerAccountRecord = {

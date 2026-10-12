@@ -8,6 +8,7 @@ const DEFAULT_RETRY_DELAYS_MS = [1000, 3000, 7000] as const;
 const PROVIDER_MIN_REQUEST_SPACING_MS = 250;
 const PROVIDER_MAX_CONCURRENCY = 2;
 const PROVIDER_COOLDOWN_MS = 30_000;
+const MAX_PROVIDER_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 let providerInFlight = 0;
 let providerNextRequestAt = 0;
@@ -56,14 +57,14 @@ export async function fetchWithTimeout(
         } as Parameters<typeof undiciFetch>[1]
       )) as unknown as Response;
       noteProviderResponse(response);
-      return response;
+      return await bufferProviderResponse(response, controller.signal);
     }
     const response = await fetch(input, {
       ...init,
       signal: controller.signal
     });
     noteProviderResponse(response);
-    return response;
+    return await bufferProviderResponse(response, controller.signal);
   } catch (error) {
     if (timedOut) {
       throw new NetworkError(`${timeoutLabel} timed out after ${Math.round(timeoutMs / 1000)}s`, {
@@ -77,6 +78,44 @@ export async function fetchWithTimeout(
     clearTimeout(timer);
     callerSignal?.removeEventListener("abort", onCallerAbort);
     if (acquired) releaseProviderRequestSlot();
+  }
+}
+
+// Keep the deadline and provider slot until the body arrives, not just headers.
+async function bufferProviderResponse(response: Response, signal: AbortSignal): Promise<Response> {
+  if (!response.body) return response;
+  const reader: ReadableStreamDefaultReader<Uint8Array> = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  const onAbort = () => { void reader.cancel(signal.reason).catch(() => undefined); };
+  signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    throwIfAborted(signal);
+    while (true) {
+      const chunk = await reader.read();
+      throwIfAborted(signal);
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > MAX_PROVIDER_RESPONSE_BYTES) {
+        void reader.cancel().catch(() => undefined);
+        throw new Error("The provider response exceeds the safe 8 MB limit. Try again later.");
+      }
+      chunks.push(chunk.value);
+    }
+    const buffered = new Response(Buffer.concat(chunks, bytes), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    });
+    Object.defineProperties(buffered, {
+      url: { value: response.url },
+      redirected: { value: response.redirected },
+      type: { value: response.type }
+    });
+    return buffered;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    reader.releaseLock();
   }
 }
 

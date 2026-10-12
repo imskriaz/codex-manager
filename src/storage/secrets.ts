@@ -11,7 +11,17 @@ export class SecretStore {
     if (!raw) {
       return undefined;
     }
-    return JSON.parse(raw) as CodexTokens;
+    let value: Partial<CodexTokens> | null;
+    try { value = JSON.parse(raw) as Partial<CodexTokens> | null; }
+    catch { throw new Error("Stored credentials are invalid. Reauthorize this account to replace them."); }
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+      typeof value.idToken !== "string" || !value.idToken.trim() ||
+      typeof value.accessToken !== "string" || !value.accessToken.trim() ||
+      (value.refreshToken !== undefined && typeof value.refreshToken !== "string") ||
+      (value.accountId !== undefined && typeof value.accountId !== "string")) {
+      throw new Error("Stored credentials are invalid. Reauthorize this account to replace them.");
+    }
+    return value as CodexTokens;
   }
 
   async setTokens(accountId: string, tokens: CodexTokens): Promise<void> {

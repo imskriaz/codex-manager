@@ -338,7 +338,7 @@ export function getWebDashboardAssetVersion(extensionPath: string, version: stri
 export class WebDashboardServer implements vscode.Disposable {
   private server: http.Server | undefined;
   private readonly webSocketClients = new Set<WebSocket>();
-  private readonly webSocketServer = new WebSocketServer({ noServer: true });
+  private readonly webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_DASHBOARD_MESSAGE_BYTES });
   private realtimePublishInFlight = false;
   private realtimePublishQueued = false;
   private stateBuildInFlight: Promise<DashboardState> | undefined;
@@ -447,6 +447,7 @@ export class WebDashboardServer implements vscode.Disposable {
       }
     });
     this.webSocketServer.on("connection", (socket, request) => {
+      socket.on("error", (error) => console.warn("[codexManager] dashboard socket failed", error));
       this.webSocketLastPong.set(socket, Date.now());
       socket.on("pong", () => this.webSocketLastPong.set(socket, Date.now()));
       const query = new URL(request.url ?? "/", this.getUrl()).searchParams;
@@ -1000,7 +1001,7 @@ export class WebDashboardServer implements vscode.Disposable {
           payload: relayed.payload as never,
           error: relayed.error
         });
-        messages.push({ type: "dashboard:snapshot", state: await this.buildState() });
+        await this.appendClientSnapshot(messages, message);
         return { messages, reloadAfterResponse };
       }
       const collected = await withDashboardNotificationSuppression(async () => {
@@ -1077,6 +1078,7 @@ export class WebDashboardServer implements vscode.Disposable {
       await clearDashboardCodexCliPath();
     } else if (message.type === "dashboard:usage-history") {
       await saveDashboardUsageHistory(this.context, message.samples);
+      if (!message.samples.length) messages.push({ type: "dashboard:notice", level: "warning", message: "Usage history cleared. New quota changes will start a fresh history." });
     }
 
     if (message.type === "dashboard:ready") {
@@ -1086,8 +1088,21 @@ export class WebDashboardServer implements vscode.Disposable {
       for (const state of [...listCodexSessionLiveStates(), ...this.currentRemoteSessionLive()])
         messages.push({ type: "dashboard:codex-session-live", state });
     }
-    messages.push({ type: "dashboard:snapshot", state: await this.buildState() });
+    await this.appendClientSnapshot(messages, message);
     return { messages, reloadAfterResponse };
+  }
+
+  private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
+    try {
+      messages.push({ type: "dashboard:snapshot", state: await this.buildState() });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (request.type === "dashboard:action" && request.action === "refreshView") {
+        const result = messages.find((message) => message.type === "dashboard:action-result" && message.requestId === request.requestId);
+        if (result?.type === "dashboard:action-result") { result.status = "failed"; result.error = detail; return; }
+      }
+      messages.push({ type: "dashboard:notice", level: "warning", message: `Dashboard state could not refresh: ${detail}. Refresh the dashboard to try again.` });
+    }
   }
 
   private async relayPeerAction(

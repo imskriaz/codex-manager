@@ -102,4 +102,56 @@ describe("provider network safety", () => {
     await Promise.all([first, second]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("times out a response that sends headers but never finishes its body", async () => {
+    vi.resetModules();
+    const cancel = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ cancel }), { status: 200 })));
+    const { fetchWithTimeout } = await import("../src/utils/network");
+    await expect(fetchWithTimeout("https://example.test/stalled", {}, 30, "Body read"))
+      .rejects.toThrow("Body read timed out");
+    expect(cancel).toHaveBeenCalledOnce();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("recovered")));
+    await expect((await fetchWithTimeout("https://example.test/retry")).text()).resolves.toBe("recovered");
+  });
+
+  it("rejects an oversized body and releases its stream", async () => {
+    vi.resetModules();
+    const cancel = vi.fn();
+    const body = new ReadableStream({ start: (controller) => controller.enqueue(new Uint8Array(8 * 1024 * 1024 + 1)), cancel });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body)));
+    const { fetchWithTimeout } = await import("../src/utils/network");
+    await expect(fetchWithTimeout("https://example.test/oversized")).rejects.toThrow("safe 8 MB limit");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("preserves response metadata and JSON after buffering and accepts empty responses", async () => {
+    vi.resetModules();
+    const original = new Response('{"ok":true}', { status: 201, statusText: "Created", headers: { "x-test": "value" } });
+    Object.defineProperty(original, "url", { value: "https://example.test/response" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(original).mockResolvedValueOnce(new Response(null, { status: 204 })));
+    const { fetchWithTimeout } = await import("../src/utils/network");
+    const response = await fetchWithTimeout("https://example.test/request");
+    expect(response.status).toBe(201);
+    expect(response.url).toBe(original.url);
+    expect(response.statusText).toBe("Created");
+    expect(response.headers.get("x-test")).toBe("value");
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect((await fetchWithTimeout("https://example.test/empty")).status).toBe(204);
+  });
+
+  it("honors caller cancellation after headers arrive", async () => {
+    vi.resetModules();
+    const cancel = vi.fn();
+    const fetchMock = vi.fn(async () => new Response(new ReadableStream({ cancel })));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchWithTimeout } = await import("../src/utils/network");
+    const controller = new AbortController();
+    const request = fetchWithTimeout("https://example.test/body", { signal: controller.signal });
+    const result = expect(request).rejects.toThrow("Cancelled by caller");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    controller.abort(new Error("Cancelled by caller"));
+    await result;
+    expect(cancel).toHaveBeenCalledOnce();
+  });
 });

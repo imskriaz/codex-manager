@@ -57,7 +57,10 @@ export class CrossWindowOperationCoordinator {
       this.cleanupAbandonedLocks().catch((error: unknown) => {
         console.warn("[codexManager] cross-window operation cleanup skipped:", error);
       })
-    );
+    ).catch((error: unknown) => {
+      this.initializeTask = undefined;
+      throw error;
+    });
     return this.initializeTask;
   }
 
@@ -273,7 +276,8 @@ export async function runCentralAccountOperationWithCooldown<T>(
     if (markerPath) {
       try {
         const marker = JSON.parse(await fs.readFile(markerPath, "utf8")) as { completedAt?: unknown };
-        if (typeof marker.completedAt === "number" && Date.now() - marker.completedAt < cooldownMs) {
+        const age = typeof marker.completedAt === "number" ? Date.now() - marker.completedAt : Infinity;
+        if (age >= 0 && age < cooldownMs) {
           return { ran: false };
         }
       } catch {

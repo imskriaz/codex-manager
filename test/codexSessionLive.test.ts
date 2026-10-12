@@ -12,6 +12,35 @@ const params = (values: Record<string, unknown>) => ({ threadId: sessionId, turn
 afterEach(() => vi.useRealTimers());
 
 describe("Codex live current turn", () => {
+  it("reuses unchanged snapshots without exposing mutable cached state", () => {
+    const parse = vi.fn(parseCodexAppServerThreadItems);
+    const live = new CodexSessionLiveReducer(sessionId, streamId, parse);
+    live.started("turn-1");
+    live.accept("item/started", params({ item: { id: "reply", type: "agentMessage", text: "Hello" } }));
+    const snapshot = live.snapshot();
+    snapshot.messages[0]!.text = "caller mutation";
+    expect(live.snapshot().messages[0]?.text).toBe("Hello");
+    expect(parse).toHaveBeenCalledOnce();
+    live.accept("item/agentMessage/delta", params({ itemId: "reply", delta: " world" }));
+    expect(live.snapshot().messages[0]?.text).toBe("Hello world");
+    expect(parse).toHaveBeenCalledTimes(2);
+    live.finish("completed");
+    expect(live.snapshot().status).toBe("completed");
+    expect(parse).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds multibyte snapshots after replacements and many evictions", () => {
+    const parse = () => Array.from({ length: 200 }, (_, index) => ({ id: String(index), text: "界".repeat(12_000) }));
+    const live = new CodexSessionLiveReducer(sessionId, streamId, parse);
+    live.started("turn-1");
+    for (let index = 0; index < 300; index++) live.accept("item/started", params({ item: { id: `item-${index}`, type: "agentMessage", text: "界".repeat(12_000) } }));
+    live.accept("item/completed", params({ item: { id: "item-299", type: "agentMessage", text: "short" } }));
+    const state = live.snapshot();
+    expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThanOrEqual(MAX_CODEX_LIVE_STATE_BYTES);
+    expect(state.truncated).toBe(true);
+    expect(state.messages.at(-1)?.id).toBe("199");
+  });
+
   it("streams items, readable reasoning, command output and authoritative completions", () => {
     const live = reducer();
     live.started("turn-1");

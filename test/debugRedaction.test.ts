@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { redactDebugText } from "../src/utils/debug";
 
 describe("debug-log redaction", () => {
+  it("redacts long candidates without retrying every character", () => {
+    const long = "x".repeat(70_000);
+    expect(redactDebugText(long)).toBe(long);
+    expect(redactDebugText(`${long}@invalid`)).toBe(`${long}@invalid`);
+    expect(redactDebugText(`${long}@example.invalid user@example.invalid`)).toBe("[redacted-email] [redacted-email]");
+    expect(redactDebugText("+user@example.invalid .user@example.invalid")).toBe("[redacted-email] [redacted-email]");
+  }, 1_000);
+
   it("removes common credentials and account identifiers before backup export", () => {
     const raw = [
       "email=user@example.com",

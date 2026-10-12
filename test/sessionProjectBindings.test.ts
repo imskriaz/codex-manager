@@ -2,6 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import { canonicalProjectPath, stabilizeSessionProjectPaths } from "../src/services/sessionProjectBindings";
 
 describe("session project bindings", () => {
+  it.each([null, [], { broken: { projectPath: 42, updatedAt: 1 } }, { broken: null }])
+    ("keeps session discovery available with corrupt saved bindings: %j", async (stored) => {
+      const context = { globalState: { get: () => stored, update: vi.fn() } };
+      await expect(stabilizeSessionProjectPaths(context as never, [{ id: "broken", title: "Session", status: "idle" }]))
+        .resolves.toEqual([{ id: "broken", title: "Session", status: "idle" }]);
+    });
+  it("keeps path casing on case-sensitive systems and preserves filesystem roots", async () => {
+    const path = await import("node:path");
+    const root = path.parse(process.cwd()).root;
+    expect(canonicalProjectPath(root)).toBe(root.replace(/\\/g, "/").toLowerCase());
+    if (process.platform !== "win32") expect(canonicalProjectPath("/Projects/Upper")).not.toBe(canonicalProjectPath("/projects/upper"));
+  });
   it("normalizes Windows device prefixes and separators", () => {
     expect(canonicalProjectPath("\\\\?\\D:\\Projects\\codex-manager\\"))
       .toBe(canonicalProjectPath("D:/Projects/codex-manager"));

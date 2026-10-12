@@ -96,8 +96,8 @@ export class WorkbenchRefreshCoordinator {
       return;
     }
 
-    this.lastRefreshSignature = signature;
     await Promise.all([this.statusBar.refresh(), refreshDetailsPanel(), refreshQuotaSummaryPanel()]);
+    this.lastRefreshSignature = signature;
   }
 
   async autoImportCurrentAccountIfNeeded(view: RefreshView): Promise<void> {

@@ -35,6 +35,41 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it("keeps a bounded transcript window and unique sequence IDs across large appends", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-bounded-window-"));
+    roots.push(root);
+    const directory = path.join(root, "sessions");
+    await mkdir(directory);
+    const transcript = path.join(directory, `rollout-${sessionId}.jsonl`);
+    const line = (index: number) => JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `message-${index}` }] } });
+    await writeFile(transcript, Array.from({ length: 750 }, (_, index) => line(index)).join("\n") + "\n");
+    const initial = await readCodexCliSessionMessages(sessionId, root);
+    expect(initial).toHaveLength(250);
+    expect(initial[0]?.text).toBe("message-500");
+    await writeFile(transcript, Array.from({ length: 500 }, (_, index) => line(index + 750)).join("\n") + "\n" + line(1250), { flag: "a" });
+    const appended = await readCodexCliSessionMessages(sessionId, root);
+    expect(appended).toHaveLength(250);
+    expect(appended[0]?.text).toBe("message-1001");
+    expect(appended.at(-1)?.id).toMatch(/^1250-/);
+    expect(new Set(appended.map((message) => message.id)).size).toBe(250);
+    await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toEqual(appended);
+  });
+
+  it("copies a partial record so it cannot retain the entire transcript read buffer", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-buffer-retention-"));
+    roots.push(root);
+    await mkdir(path.join(root, "sessions"));
+    const tail = '{"partial":';
+    await writeFile(path.join(root, "sessions", `rollout-${sessionId}.jsonl`), " ".repeat(100_000) + "\n" + tail);
+    const copy = vi.spyOn(Buffer, "from");
+    try {
+      await expect(readCodexCliSessionMessages(sessionId, root)).resolves.toEqual([]);
+      const index = copy.mock.calls.findIndex(([value]) => Buffer.isBuffer(value) && value.toString() === tail);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect((copy.mock.results[index]?.value as Buffer).buffer.byteLength).toBeLessThan(100_000);
+    } finally { copy.mockRestore(); }
+  });
+
   it("includes the per-user Windows Codex install and launcher shims", () => {
     const candidates = getCodexCliPathCandidates("win32", {
       LOCALAPPDATA: "C:\\Users\\demo\\AppData\\Local",

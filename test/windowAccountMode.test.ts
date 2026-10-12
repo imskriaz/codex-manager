@@ -55,6 +55,49 @@ describe("parallel window account mode", () => {
     await expect(fs.stat(path.join(testState.root, "window-account-slots-v1.json"))).rejects.toMatchObject({
       code: "ENOENT"
     });
+    await disposeCrossWindowAccountMode();
+    expect(process.env["CODEX_HOME"]).toBe(normalHome);
+    await disposeCrossWindowAccountMode();
+    expect(process.env["CODEX_HOME"]).toBe(normalHome);
+  });
+
+  it("restores the original home after repeated initialization and disposal", async () => {
+    const normalHome = process.env["CODEX_HOME"];
+    testState.enabled = true;
+    await initializeCrossWindowAccountMode();
+    const home = getCrossWindowHome();
+    await initializeCrossWindowAccountMode();
+    expect(getCrossWindowHome()).toBe(home);
+    await disposeCrossWindowAccountMode();
+    expect(process.env["CODEX_HOME"]).toBe(normalHome);
+    await disposeCrossWindowAccountMode();
+    expect(process.env["CODEX_HOME"]).toBe(normalHome);
+  });
+
+  it("serializes overlapping initialization, account claims, and disposal", async () => {
+    const normalHome = process.env["CODEX_HOME"];
+    testState.enabled = true;
+    await Promise.all([initializeCrossWindowAccountMode(), initializeCrossWindowAccountMode(), claimCrossWindowAccount("account-a")]);
+    expect(getCrossWindowAccountId()).toBe("account-a");
+    await Promise.all([disposeCrossWindowAccountMode(), disposeCrossWindowAccountMode(), initializeCrossWindowAccountMode(), disposeCrossWindowAccountMode()]);
+    expect(process.env["CODEX_HOME"]).toBe(normalHome);
+    expect(getCrossWindowHome()).toBeUndefined();
+    expect(JSON.parse(await fs.readFile(path.join(testState.root, "window-account-slots-v1.json"), "utf8"))).toEqual({ slots: [] });
+  });
+
+  it("preserves the original home when registry storage fails and retries cleanly", async () => {
+    const normalHome = process.env["CODEX_HOME"];
+    testState.enabled = true;
+    await fs.mkdir(path.join(testState.root, "window-account-slots-v1.json"));
+    await expect(initializeCrossWindowAccountMode()).rejects.toThrow();
+    expect(process.env["CODEX_HOME"]).toBe(normalHome);
+    expect(getCrossWindowHome()).toBeUndefined();
+    expect((await fs.readdir(testState.root)).some((name) => name.includes(".tmp-"))).toBe(false);
+    await fs.rmdir(path.join(testState.root, "window-account-slots-v1.json"));
+    await initializeCrossWindowAccountMode();
+    expect(getCrossWindowHome()).toBeDefined();
+    await disposeCrossWindowAccountMode();
+    expect(process.env["CODEX_HOME"]).toBe(normalHome);
   });
 
   it("uses an isolated home and stores only account identifiers in its registry", async () => {
