@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.18
+
+- Capture open Codex conversation tabs synchronously before managed reloads so the old tabs can be closed and resumed reliably.
+
 ## 1.2.18-pre3
 
 - Drain bounded diagnostic queues through flush() without mutating the active write promise while it settles.

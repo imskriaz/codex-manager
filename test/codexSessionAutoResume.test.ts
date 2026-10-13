@@ -10,6 +10,7 @@ import {
   AUTO_RESUME_OPEN_SESSION_IDS_KEY,
   MAX_AUTO_RESUME_SESSIONS,
   formatAutoResumeResult,
+  prepareCodexSessionsForExtensionHostRestart,
   persistRunningCodexSessions,
   persistOpenCodexSessions,
   registerCodexSessionAutoResumeTracking,
@@ -45,6 +46,19 @@ describe("durable open conversation recovery", () => {
   beforeEach(() => {
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  });
+
+  it("captures open parent tabs synchronously before a managed reload", async () => {
+    const state = createContext([first]);
+    state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+    await prepareCodexSessionsForExtensionHostRestart(
+      state.context,
+      true,
+      async () => [first],
+      async () => [second]
+    );
+    expect(state.read()).toEqual([first]);
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([second]);
   });
 
   it("records a newly active goal without requiring its open tab to change", async () => {

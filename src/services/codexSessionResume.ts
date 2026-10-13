@@ -1269,8 +1269,6 @@ async function activateOfficialCodexExtension(): Promise<vscode.Extension<unknow
 }
 
 /** @deprecated Use openCodexSessionInVsCode; this alias preserves dashboard integrations. */
-export const openCodexCliSessionInVsCode = openCodexSessionInVsCode;
-
 export async function renameCodexCliSession(sessionId: string, name: string): Promise<void> {
   validateSessionId(sessionId);
   const normalized = name.trim().replace(/\s+/g, " ");
@@ -2498,7 +2496,7 @@ async function runCodexAppServerRequest<T = unknown>(
       method: "initialize",
       id: 1,
       params: {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.18-pre3" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.18" },
         capabilities: null
       }
     });

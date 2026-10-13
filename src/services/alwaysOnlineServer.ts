@@ -412,11 +412,3 @@ async function waitForRelayShutdown(port: number, token: string, pidPath: string
   }
   throw new Error("The detached relay did not confirm shutdown. Check the running relay before retrying.");
 }
-
-export function relayConfigPath(storageRoot: string): string {
-  return path.join(storageRoot, CONFIG_FILE);
-}
-
-export function relayPidPath(storageRoot: string): string {
-  return path.join(storageRoot, PID_FILE);
-}

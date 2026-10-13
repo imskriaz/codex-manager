@@ -562,15 +562,6 @@ export function resolveOverviewContextAction(
   return "switch";
 }
 
-export function resolveOverviewContextLabel(
-  action: "switch" | "reload" | "rescue",
-  lang: DashboardState["lang"]
-): string {
-  if (lang === "zh") return action === "switch" ? "切换" : action === "reload" ? "重载" : "救援";
-  if (lang === "zh-hant") return action === "switch" ? "切換" : action === "reload" ? "重載" : "救援";
-  return action === "switch" ? "Switch" : action === "reload" ? "Reload" : "Rescue";
-}
-
 /*
  * The lock dialog is rendered below the toolbar markup. Keep it separate from
  * the compact contextual action row so Lock remains available through More.

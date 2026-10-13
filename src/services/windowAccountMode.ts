@@ -97,10 +97,6 @@ export function getCrossWindowHome(): string | undefined {
   return slot?.home;
 }
 
-export function getCrossWindowSlotId(): string | undefined {
-  return slot?.slotId;
-}
-
 export function getCrossWindowAccountId(): string | undefined {
   return slot?.accountId;
 }

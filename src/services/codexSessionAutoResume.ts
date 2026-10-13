@@ -216,6 +216,17 @@ export function persistRunningCodexSessions(
   });
 }
 
+/** Capture both running sessions and currently open parent tabs before a managed reload. */
+export async function prepareCodexSessionsForExtensionHostRestart(
+  context: AutoResumeContext,
+  autoResume: boolean,
+  readRunningSessionIds?: (signal?: AbortSignal) => Promise<string[]>,
+  readOpenParents?: (signal?: AbortSignal) => Promise<string[]>
+): Promise<void> {
+  await persistRunningCodexSessions(context, readRunningSessionIds);
+  if (autoResume) await persistOpenCodexSessions(context, readOpenParents);
+}
+
 export type AutoResumeResult = {
   attempted: number;
   opened: number;

@@ -2,7 +2,7 @@ import * as fs from "fs/promises";
 import * as fsSync from "fs";
 import * as path from "path";
 import { CodexManagerIndex } from "../core/types";
-import { getBackupPath, parseAccountsIndex, readCurrentIndexForBackupSync } from "./accountsIndex";
+import { getBackupPath, parseAccountsIndex } from "./accountsIndex";
 
 // Windows can briefly keep the previous index handle open during extension
 // host replacement/update. Give the owner enough time to release it before
@@ -47,29 +47,6 @@ export async function backupCurrentIndex(indexPath: string, backupCount: number)
   }
 
   await writeIndexAtomically(getBackupPath(indexPath, 1), current, ".tmp");
-}
-
-export function backupCurrentIndexSync(indexPath: string, backupCount: number): void {
-  const current = readCurrentIndexForBackupSync(indexPath);
-  if (!current) {
-    return;
-  }
-
-  for (let slot = backupCount; slot >= 2; slot -= 1) {
-    const from = getBackupPath(indexPath, slot - 1);
-    const to = getBackupPath(indexPath, slot);
-    try {
-      const raw = fsSync.readFileSync(from, "utf8");
-      const snapshot = parseAccountsIndex(raw, from);
-      writeIndexAtomicallySync(to, snapshot, ".tmp");
-    } catch (error) {
-      if (!isFileNotFoundError(error)) {
-        console.error(`[codexManager] failed to rotate backup ${slot - 1} -> ${slot}:`, error);
-      }
-    }
-  }
-
-  writeIndexAtomicallySync(getBackupPath(indexPath, 1), parseAccountsIndex(current, indexPath), ".tmp");
 }
 
 export async function writeIndexAtomically(
@@ -198,15 +175,10 @@ function replaceFileWithRetrySync(tempPath: string, indexPath: string): void {
       return;
     } catch (error) {
       lastError = error;
-      if (!isTransientReplaceError(error) || attempt === REPLACE_RETRY_DELAYS_MS.length) {
-        break;
-      }
+      if (!isTransientReplaceError(error) || attempt === REPLACE_RETRY_DELAYS_MS.length) break;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, REPLACE_RETRY_DELAYS_MS[attempt]!);
     }
   }
-
-  // Asynchronous persistence owns normal writes. Shutdown must not truncate a
-  // shared live index merely because another process still has it open.
   throw lastError;
 }
 
@@ -221,20 +193,6 @@ function isTransientReplaceError(error: unknown): boolean {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export function countAvailableBackupsSyncSafe(indexPath: string, backupCount: number): number {
-  let count = 0;
-  for (let slot = 1; slot <= backupCount; slot += 1) {
-    const backupPath = getBackupPath(indexPath, slot);
-    try {
-      parseAccountsIndex(fsSync.readFileSync(backupPath, "utf8"), backupPath);
-      count += 1;
-    } catch {
-      // Only validated backups are reported as available.
-    }
-  }
-  return count;
 }
 
 export function isFileNotFoundError(error: unknown): boolean {

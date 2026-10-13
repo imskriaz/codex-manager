@@ -1,4 +1,3 @@
-import * as fsSync from "fs";
 import { createError } from "../core/errors";
 import type { CodexManagerAccountRecord, CodexManagerIndex } from "../core/types";
 import { normalizeQuotaSummary } from "../utils/quotaWindows";
@@ -149,27 +148,6 @@ export function parseAccountsIndex(raw: string, filePath: string): CodexManagerI
 
 export function getBackupPath(indexPath: string, slot: number): string {
   return indexPath.replace(/\.json$/i, `.backup-${slot}.json`);
-}
-
-export function countAvailableBackupsSync(indexPath: string, backupCount: number): number {
-  let count = 0;
-  for (let slot = 1; slot <= backupCount; slot += 1) {
-    if (fsSync.existsSync(getBackupPath(indexPath, slot))) {
-      count += 1;
-    }
-  }
-
-  return count;
-}
-
-export function readCurrentIndexForBackupSync(indexPath: string): string | undefined {
-  try {
-    const raw = fsSync.readFileSync(indexPath, "utf8");
-    parseAccountsIndex(raw, indexPath);
-    return raw;
-  } catch {
-    return undefined;
-  }
 }
 
 function isValidAccountsIndex(value: unknown): value is CodexManagerIndex {

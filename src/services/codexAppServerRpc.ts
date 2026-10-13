@@ -52,7 +52,7 @@ export class CodexAppServerRpc {
     try {
       child.stdout.on("data", (chunk: Buffer) => client.receiveChunk(chunk));
       await client.request("initialize", {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.18-pre3" },
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.18" },
         capabilities: null
       }, 30_000);
       client.send({ method: "initialized", params: {} });

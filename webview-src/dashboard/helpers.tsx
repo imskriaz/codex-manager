@@ -141,24 +141,6 @@ export function formatTemplate(template: string, value: number | Record<string, 
   );
 }
 
-export function formatSavedAccountsSummary(
-  lang: DashboardState["lang"],
-  count: number,
-  validCount: number,
-  invalidCount: number
-): string {
-  switch (lang) {
-    case "zh":
-      return `共 ${count} 个，有效 ${validCount}，失效 ${invalidCount}`;
-    case "zh-hant":
-      return `共 ${count} 個，有效 ${validCount}，失效 ${invalidCount}`;
-    case "ja":
-      return `合計 ${count} 件・有効 ${validCount}・無効 ${invalidCount}`;
-    default:
-      return `${count} total · ${validCount} valid · ${invalidCount} invalid`;
-  }
-}
-
 export function resolveOverviewAccount(accounts: DashboardAccountViewModel[]): DashboardAccountViewModel | undefined {
   return (
     accounts.find((account) => account.switchQueued) ??

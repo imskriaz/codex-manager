@@ -22,7 +22,7 @@ import {
 } from "../../services/windowAccountMode";
 import {
   formatAutoResumeResult,
-  persistRunningCodexSessions,
+  prepareCodexSessionsForExtensionHostRestart,
   registerCodexSessionAutoResumeTracking,
   resumePersistedCodexSessions
 } from "../../services/codexSessionAutoResume";
@@ -100,10 +100,10 @@ export class AccountsWorkbench {
       ),
       vscode.commands.registerCommand(
         "codexManager.prepareDashboardForExtensionHostRestart",
-        async () => {
+        async (options?: { autoResume?: boolean }) => {
           // Also clear pending recovery when the setting was turned off before
           // this reload; stale IDs must not return if it is enabled afterward.
-          await persistRunningCodexSessions(this.context);
+          await prepareCodexSessionsForExtensionHostRestart(this.context, options?.autoResume === true);
           return prepareQuotaSummaryPanelForExtensionHostRestart();
         }
       )

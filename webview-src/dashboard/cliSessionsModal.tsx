@@ -2141,21 +2141,6 @@ function SessionShareModal(props: { title: string; url: string; onClose: () => v
   return <div ref={accessibility.modalRef} onKeyDown={accessibility.onKeyDown} class="cli-share-overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) props.onClose(); }}><section class="cli-share-modal" role="dialog" aria-modal="true" aria-labelledby="cli-share-title"><header><span><ShareIcon /><strong id="cli-share-title">Share session</strong></span><IconButton label="Close share dialog" onClick={props.onClose}><CloseIcon /></IconButton></header><p>Anyone with access to this dashboard can open <strong>{props.title}</strong> from this link.</p><div class="cli-share-link-row"><input value={props.url} readOnly aria-label="Session link" onFocus={(event) => event.currentTarget.select()} /><button type="button" onClick={() => void copy()}><CopyIcon /> {copied ? "Copied" : "Copy"}</button></div></section></div>;
 }
 
-export function RailFiles(props: { files: Array<{ path: string; diff?: string }>; projectPath?: string }) {
-  return <section class="cli-rail-explorer" aria-label="Workspace file explorer">
-    <div class="cli-rail-explorer-heading"><span><EmptyFolderIcon /><strong>Files</strong></span><small>{props.files.length} changed</small></div>
-    {props.projectPath ? <div class="cli-rail-root"><EmptyFolderIcon /><span title={props.projectPath}>{projectDisplayName(props.projectPath)}</span></div> : null}
-    {props.files.length === 0 ? <div class="cli-context-empty"><EmptyFolderIcon /><span>No file changes recorded.</span></div> : <div class="cli-rail-file-list">{props.files.map((file) => <details key={file.path}><summary><FileIcon /><span title={file.path}>{file.path}</span><ChevronIcon /></summary>{file.diff ? <pre>{file.diff}</pre> : <small>No diff preview recorded.</small>}</details>)}</div>}
-  </section>;
-}
-
-export function RailAgents(props: { messages: DashboardCliSessionMessage[] }) {
-  return <section class="cli-rail-explorer" aria-label="Workspace agents">
-    <div class="cli-rail-explorer-heading"><span><ForkIcon /><strong>Agents</strong></span><small>{props.messages.length} active</small></div>
-    {props.messages.length === 0 ? <div class="cli-context-empty"><ForkIcon /><span>No agent activity recorded.</span></div> : <div class="cli-rail-agent-list">{props.messages.map((message) => <article key={message.id}><ForkIcon /><div><strong>{message.title ?? "Agent activity"}</strong><span>{message.text}</span></div></article>)}</div>}
-  </section>;
-}
-
 function WorkingMessage() {
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);

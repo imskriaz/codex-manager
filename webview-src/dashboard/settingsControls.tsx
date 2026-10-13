@@ -168,33 +168,6 @@ export function SettingsToggleBlock(props: {
   );
 }
 
-export function SettingsPreferenceRow(props: {
-  title: string;
-  sub: string;
-  enabled: boolean;
-  onToggle: (enabled: boolean) => void;
-}) {
-  return (
-    <div class="settings-preference-row">
-      <div class="settings-block-head">
-        <div class="settings-block-title">{props.title}</div>
-        <div class="settings-block-sub">{props.sub}</div>
-      </div>
-      <button
-        class={`settings-inline-toggle ${props.enabled ? "active" : ""}`}
-        type="button"
-        aria-label={props.title}
-        aria-pressed={props.enabled}
-        onClick={() => props.onToggle(!props.enabled)}
-      >
-        <span class="settings-inline-toggle-track">
-          <span class="settings-inline-toggle-thumb"></span>
-        </span>
-      </button>
-    </div>
-  );
-}
-
 export function SettingsPathBlock(props: {
   copy: DashboardCopy;
   pathValue: string;
