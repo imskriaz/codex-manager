@@ -15323,7 +15323,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
   .dashboard-density-compact .dashboard-account-toolbar .account-search-control,
   .dashboard-density-compact .dashboard-account-toolbar .dashboard-select-control,
   .dashboard-density-compact .dashboard-account-toolbar .dashboard-select-control select { min-height: 34px; height: 34px; }
-  .dashboard-density-compact .dashboard-account-toolbar .account-search-control input,
+  .dashboard-density-compact .dashboard-account-toolbar .account-search-control input { font-size: 16px; }
   .dashboard-density-compact .dashboard-account-toolbar .dashboard-select-control select { font-size: 14px; }
   .dashboard-density-compact .dashboard-account-toolbar .account-search-control button { height: 30px; }
   .dashboard-density-compact .dashboard-account-toolbar .dashboard-view-controls,
