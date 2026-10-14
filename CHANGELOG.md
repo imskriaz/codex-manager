@@ -2,6 +2,7 @@
 
 ## 1.2.19
 
+- Open Auto Resume sessions sequentially with per-window focus and settle time; a slow window no longer blocks or drops later sessions, and failed windows remain queued for retry.
 - Allow workspace tools to use existing Codex project folders that are not open in VS Code, avoiding repeated dashboard errors while preserving path validation.
 - Polish public read-only share pages with responsive conversation cards, snapshot metadata, and mobile-friendly typography; expand README coverage and refreshed desktop/mobile screenshots for remote use.
 - Permit secure dashboard WebSockets explicitly and reconnect stale mobile connections after network changes, returning from suspension, or manual retry. Tighten mobile session title and metadata spacing.

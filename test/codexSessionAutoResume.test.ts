@@ -663,10 +663,10 @@ describe("Codex session auto resume", () => {
       const pending = resumePersistedCodexSessions(state.context, open);
       await vi.advanceTimersByTimeAsync(30_000);
       const result = await pending;
-      expect(result.opened).toBe(0);
-      expect(result.failed).toHaveLength(2);
-      expect(result.failed[0]?.message).toContain("30 seconds");
-      expect(open).toHaveBeenCalledOnce();
+      expect(result.opened).toBe(1);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]?.message).toContain("8 seconds");
+      expect(open).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

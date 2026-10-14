@@ -7,6 +7,7 @@ export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
 export const AUTO_RESUME_OPEN_SESSION_IDS_KEY = "codexManager.autoResumeOpenSessionIds";
 export const MAX_AUTO_RESUME_SESSIONS = 200;
 const OPERATION_TIMEOUT_MS = 30_000;
+const PER_SESSION_OPEN_TIMEOUT_MS = 8_000;
 const STORAGE_TIMEOUT_MS = 5_000;
 type AutoResumeContext = Pick<vscode.ExtensionContext, "workspaceState">;
 type OperationKind = "capture" | "restore" | "track";
@@ -433,16 +434,27 @@ export function resumePersistedCodexSessions(
             await writeIds(context, remaining, deadline);
             continue;
           }
-          await bounded(
-            () => openSession(id, controller.signal),
-            deadline - Date.now(),
-            "The Codex editor did not respond within 30 seconds. Remaining sessions will retry on the next activation.",
-            controller.signal
-          );
+          const sessionController = new AbortController();
+          const stopSession = () => sessionController.abort(controller.signal.reason);
+          controller.signal.addEventListener("abort", stopSession, { once: true });
+          try {
+            await bounded(
+            () => openSession(id, sessionController.signal),
+            Math.min(PER_SESSION_OPEN_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
+            "This Codex window did not finish opening within 8 seconds. The remaining sessions will continue opening; this one will retry on the next activation.",
+            sessionController.signal
+            );
+          } catch (error) {
+            sessionController.abort(error);
+            throw error;
+          } finally {
+            controller.signal.removeEventListener("abort", stopSession);
+          }
         } catch (error) {
           // An editor command cannot be recalled once VS Code accepted it. Abort
           // before activation can dispatch it, and retain uncertain IDs for replay.
-          if (Date.now() >= deadline) controller.abort(error);
+          // A single slow editor must not cancel the restore of other sessions.
+          // Keep the ID durable so the failed window is retried next activation.
           result.failed.push({ sessionId: id, message: error instanceof Error ? error.message : String(error) });
           continue;
         }
