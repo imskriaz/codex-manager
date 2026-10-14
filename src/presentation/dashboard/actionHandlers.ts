@@ -69,6 +69,7 @@ import type { SwitchAccountCommandResult } from "../../application/accounts/comm
 import { AccountsRepository } from "../../storage";
 import { AnnouncementService, type AnnouncementOptions } from "../../services/announcements";
 import { runWithConcurrencyLimit, waitWithin } from "../../utils/concurrency";
+import { runWithBulkProviderRequests } from "../../utils/network";
 import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
 import { clearAutoSwitchLock, setAutoSwitchLock } from "../workbench/autoSwitchState";
@@ -1364,7 +1365,7 @@ async function handleBatchRefresh(
   let success = 0;
   let failed = 0;
   const failures: DashboardBatchResultFailure[] = [];
-  await runWithConcurrencyLimit(
+  await runWithBulkProviderRequests(() => runWithConcurrencyLimit(
     targetIds,
     CODEX_BATCH_REFRESH_CONCURRENCY,
     async (id) => {
@@ -1385,10 +1386,13 @@ async function handleBatchRefresh(
           message: toFailureMessage(error)
         });
         console.warn(`[codexManager] batch quota refresh failed for ${id}:`, error);
+      } finally {
+        // Keep completed accounts visible while a later account is slow.
+        schedulePublishState();
       }
     },
     { delayMs: CODEX_BATCH_REFRESH_DELAY_MS }
-  );
+  ));
   schedulePublishState();
   const message = translate("message.batchRefreshSummary", {
     success,
@@ -1422,7 +1426,7 @@ async function handleBatchResync(
   let success = 0;
   let failed = 0;
   const failures: DashboardBatchResultFailure[] = [];
-  await runWithConcurrencyLimit(
+  await runWithBulkProviderRequests(() => runWithConcurrencyLimit(
     targetIds,
     4,
     async (id) => {
@@ -1437,10 +1441,12 @@ async function handleBatchResync(
           message: toFailureMessage(error)
         });
         console.warn(`[codexManager] batch profile resync failed for ${id}:`, error);
+      } finally {
+        schedulePublishState();
       }
     },
     { delayMs: CODEX_BATCH_REFRESH_DELAY_MS }
-  );
+  ));
   schedulePublishState();
   const message = translate("message.batchResyncSummary", {
     success,

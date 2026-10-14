@@ -1,6 +1,7 @@
 import { NetworkError, ErrorCode } from "../core/errors";
 import { fetch as undiciFetch } from "undici";
 import { setTimeout as realSetTimeout } from "node:timers";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironment";
 
 const DEFAULT_FETCH_TIMEOUT_MS = 15000;
@@ -14,7 +15,14 @@ let providerInFlight = 0;
 let providerNextRequestAt = 0;
 let providerCooldownUntil = 0;
 let providerLastObservedAt = 0;
-const providerWaiters: Array<() => void> = [];
+let providerBulkInFlight = 0;
+const providerRequestContext = new AsyncLocalStorage<boolean>();
+const providerWaiters: Array<{ bulk: boolean; wake: () => void }> = [];
+
+/** Mark provider calls made by a batch so foreground requests keep one slot. */
+export function runWithBulkProviderRequests<T>(task: () => T): T {
+  return providerRequestContext.run(true, task);
+}
 
 export interface RetryWithBackoffOptions<T> {
   delaysMs?: readonly number[];
@@ -42,9 +50,10 @@ export async function fetchWithTimeout(
     controller.abort();
   }, timeoutMs);
   let acquired = false;
+  const bulk = providerRequestContext.getStore() === true;
 
   try {
-    await acquireProviderRequestSlot(controller.signal);
+    await acquireProviderRequestSlot(controller.signal, bulk);
     acquired = true;
     const dispatcher = getCodexProxyDispatcher();
     if (dispatcher) {
@@ -77,7 +86,7 @@ export async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
     callerSignal?.removeEventListener("abort", onCallerAbort);
-    if (acquired) releaseProviderRequestSlot();
+    if (acquired) releaseProviderRequestSlot(bulk);
   }
 }
 
@@ -119,9 +128,9 @@ async function bufferProviderResponse(response: Response, signal: AbortSignal): 
   }
 }
 
-async function acquireProviderRequestSlot(signal: AbortSignal): Promise<void> {
-  while (providerInFlight >= PROVIDER_MAX_CONCURRENCY) {
-    await waitForProviderSlot(signal);
+async function acquireProviderRequestSlot(signal: AbortSignal, bulk: boolean): Promise<void> {
+  while (!canStartProviderRequest(bulk)) {
+    await waitForProviderSlot(signal, bulk);
   }
   throwIfAborted(signal);
   const now = Date.now();
@@ -134,6 +143,7 @@ async function acquireProviderRequestSlot(signal: AbortSignal): Promise<void> {
   providerLastObservedAt = now;
   const requestAt = Math.max(now, providerNextRequestAt, providerCooldownUntil);
   providerInFlight += 1;
+  if (bulk) providerBulkInFlight += 1;
   providerNextRequestAt = requestAt + PROVIDER_MIN_REQUEST_SPACING_MS;
   try {
     let readyAt = requestAt;
@@ -153,24 +163,26 @@ async function acquireProviderRequestSlot(signal: AbortSignal): Promise<void> {
       readyAt = providerCooldownUntil;
     }
   } catch (error) {
-    releaseProviderRequestSlot();
+    releaseProviderRequestSlot(bulk);
     throw error;
   }
 }
 
-function waitForProviderSlot(signal: AbortSignal): Promise<void> {
+function waitForProviderSlot(signal: AbortSignal, bulk: boolean): Promise<void> {
   throwIfAborted(signal);
   return new Promise<void>((resolve, reject) => {
+    const entry: { bulk: boolean; wake: () => void } = { bulk, wake: () => undefined };
     const waiter = () => {
       signal.removeEventListener("abort", onAbort);
       resolve();
     };
+    entry.wake = waiter;
     const onAbort = () => {
-      const index = providerWaiters.indexOf(waiter);
+      const index = providerWaiters.indexOf(entry);
       if (index >= 0) providerWaiters.splice(index, 1);
       reject(abortReason(signal));
     };
-    providerWaiters.push(waiter);
+    providerWaiters.push(entry);
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
   });
@@ -200,9 +212,17 @@ function abortReason(signal: AbortSignal): Error {
   return signal.reason instanceof Error ? signal.reason : new DOMException("The request was aborted", "AbortError");
 }
 
-function releaseProviderRequestSlot(): void {
+function releaseProviderRequestSlot(bulk: boolean): void {
   providerInFlight = Math.max(0, providerInFlight - 1);
-  providerWaiters.shift()?.();
+  if (bulk) providerBulkInFlight = Math.max(0, providerBulkInFlight - 1);
+  const foreground = providerWaiters.findIndex((waiter) => !waiter.bulk && canStartProviderRequest(false));
+  const fallback = providerWaiters.findIndex((waiter) => canStartProviderRequest(waiter.bulk));
+  const index = foreground >= 0 ? foreground : fallback;
+  if (index >= 0) providerWaiters.splice(index, 1)[0]?.wake();
+}
+
+function canStartProviderRequest(bulk: boolean): boolean {
+  return providerInFlight < PROVIDER_MAX_CONCURRENCY && (!bulk || providerBulkInFlight < 1);
 }
 
 function noteProviderResponse(response: Response): void {

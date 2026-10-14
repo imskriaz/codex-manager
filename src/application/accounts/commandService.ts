@@ -8,6 +8,7 @@ import { AccountsRepository } from "../../storage";
 import { buildAccountStorageId } from "../../utils/accountIdentity";
 import { extractClaims } from "../../utils/jwt";
 import { runWithConcurrencyLimit, waitWithin } from "../../utils/concurrency";
+import { runWithBulkProviderRequests } from "../../utils/network";
 import { needsWindowReloadForAccount } from "../../presentation/workbench/windowRuntimeAccount";
 import { getCommandCopy, getLanguage, logNetworkEvent, resolveLongQuotaLabel, t } from "../../utils";
 import { getAutoRefreshMinutes, getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
@@ -388,7 +389,7 @@ export class AccountsCommandService {
     const failures: DashboardBatchResult["failures"] = [];
     const refreshAll = async (progress?: vscode.Progress<{ message?: string; increment?: number }>) => {
       let started = 0;
-      await runWithConcurrencyLimit(
+      await runWithBulkProviderRequests(() => runWithConcurrencyLimit(
         accounts,
         options?.silent ? REFRESH_ALL_SILENT_CONCURRENCY : REFRESH_ALL_MANUAL_CONCURRENCY,
         async (account) => {
@@ -426,10 +427,14 @@ export class AccountsCommandService {
             failed += 1;
             failures.push({ accountId: account.id, email: account.email, message: getErrorMessage(error) });
             console.warn(`[codexManager] refresh all failed for ${account.email}:`, error);
+          } finally {
+            // Publish each completed account so the initiating dashboard and
+            // other windows do not wait for the slowest account in the batch.
+            this.view.refresh();
           }
         },
         { delayMs: options?.silent ? REFRESH_ALL_SILENT_DELAY_MS : REFRESH_ALL_MANUAL_DELAY_MS }
-      );
+      ));
     };
 
     if (options?.silent) {

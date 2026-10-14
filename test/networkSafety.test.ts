@@ -65,6 +65,34 @@ describe("provider network safety", () => {
     await expect(Promise.all(requests)).resolves.toHaveLength(3);
   });
 
+  it("keeps a foreground request parallel with a quota batch", async () => {
+    vi.resetModules();
+    const pending: Array<(response: Response) => void> = [];
+    const fetchMock = vi.fn((input: string) => new Promise<Response>((resolve) => {
+      pending.push(resolve);
+      void input;
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchWithTimeout, runWithBulkProviderRequests } = await import("../src/utils/network");
+
+    const firstBatch = runWithBulkProviderRequests(() => fetchWithTimeout("https://example.test/batch-one"));
+    const secondBatch = runWithBulkProviderRequests(() => fetchWithTimeout("https://example.test/batch-two"));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1), { timeout: 1_000 });
+
+    const foreground = fetchWithTimeout("https://example.test/interactive");
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), { timeout: 1_000 });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://example.test/batch-one",
+      "https://example.test/interactive"
+    ]);
+
+    pending[0]!(new Response("batch"));
+    pending[1]!(new Response("interactive"));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3), { timeout: 1_000 });
+    pending[2]!(new Response("batch-2"));
+    await expect(Promise.all([firstBatch, secondBatch, foreground])).resolves.toHaveLength(3);
+  });
+
   it("times out while queued and never starts an expired request", async () => {
     vi.resetModules();
     const pending: Array<(response: Response) => void> = [];
