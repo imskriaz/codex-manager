@@ -79,6 +79,7 @@ import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey,
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
 import { countPeerSessions, type CliSessionFeedback } from "./cliSessionsModal";
+import { mergeDashboardPeers } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import {
@@ -1421,7 +1422,7 @@ function App() {
     );
   }
 
-  const connectedPeers = snapshot.connectedPeers ?? [];
+  const connectedPeers = mergeDashboardPeers(snapshot.connectedPeers ?? [], cliSessions);
   const pcOptions =
     connectedPeers.length > 0
       ? connectedPeers

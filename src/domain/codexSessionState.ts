@@ -1,4 +1,4 @@
-import type { DashboardCliSessionSummary, DashboardCodexSessionLiveState, DashboardCodexSessionGoal } from "./dashboard/types";
+import type { DashboardCliSessionSummary, DashboardCodexSessionLiveState, DashboardCodexSessionGoal, DashboardPeerView } from "./dashboard/types";
 import { readSubAgentMetadata } from "./sessionSource";
 
 export function isCliTurnActive(state: DashboardCodexSessionLiveState | undefined): boolean {
@@ -50,6 +50,21 @@ export function countPeerSessions(
     );
     return { id: peer.id, total: rows.length, running: rows.filter(isCodexSessionRunning).length };
   });
+}
+
+/** Keep the PC picker complete when a session action arrives before the next state snapshot. */
+export function mergeDashboardPeers(
+  peers: readonly DashboardPeerView[],
+  sessions: readonly DashboardCliSessionSummary[]
+): DashboardPeerView[] {
+  const merged = peers.map((peer) => ({ ...peer }));
+  const known = new Set(merged.map((peer) => peer.id));
+  for (const session of sessions) {
+    if (!session.remote || !session.deviceId || known.has(session.deviceId)) continue;
+    known.add(session.deviceId);
+    merged.push({ id: session.deviceId, name: session.deviceName?.trim() || "Remote PC", sessionCount: 0, connected: true, local: false });
+  }
+  return merged;
 }
 
 export function stabilizeCliSessionOrder(sessions: DashboardCliSessionSummary[], order: Map<string, number>): DashboardCliSessionSummary[] {
