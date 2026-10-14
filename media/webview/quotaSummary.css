@@ -15197,9 +15197,45 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   transform: translateY(-50%);
 }
 
-.browser-notification-offer { position: fixed; z-index: var(--dashboard-z-toast, 40000); right: 16px; bottom: 16px; width: min(400px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; box-sizing: border-box; padding: 16px; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); color: var(--text-primary); box-shadow: var(--shadow-lg); }
-.browser-notification-offer .settings-block { padding: 0; border: 0; background: transparent; }
-.browser-notification-offer > button { margin-top: 12px; }
+.browser-notification-offer {
+  position: fixed; z-index: var(--dashboard-z-toast, 40000);
+  right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom));
+  width: min(380px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto;
+  box-sizing: border-box; padding: 14px; border: 1px solid var(--border-default); border-radius: 12px;
+  background: var(--bg-surface); color: var(--text-primary); box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+}
+.browser-notification-heading { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.browser-notification-heading > div { flex: 1; min-width: 0; }
+.browser-notification-heading strong, .browser-notification-heading .settings-block-title { display: block; margin: 1px 0 0; font-size: 13px; line-height: 1.35; font-weight: 600; }
+.browser-notification-heading p { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--text-secondary); overflow-wrap: anywhere; }
+.browser-notification-mark { display: grid; place-items: center; flex: 0 0 32px; height: 32px; border-radius: 9px; color: var(--accent-blue); background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface)); }
+.browser-notification-mark svg { width: 18px; height: 18px; }
+.browser-notification-offer.is-enabled .browser-notification-mark { color: var(--accent-green); background: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface)); }
+.browser-notification-dismiss { display: grid; place-items: center; flex: 0 0 28px; height: 28px; padding: 0; margin: -4px -4px 0 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.browser-notification-dismiss svg { width: 16px; height: 16px; }
+.browser-notification-dismiss:hover { background: var(--surface-hover); color: var(--text-primary); }
+.browser-notification-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.browser-notification-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; min-width: 0; min-height: 36px; padding: 7px 12px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-elevated); color: var(--text-primary); font: inherit; font-size: 12px; line-height: 1.35; cursor: pointer; }
+.browser-notification-button:hover { background: var(--surface-hover); }
+.browser-notification-button.is-primary { border-color: var(--accent-blue); background: var(--accent-blue); color: #fff; }
+.browser-notification-button.is-primary:hover { filter: brightness(.94); }
+.browser-notification-button.is-quiet { border-color: transparent; background: transparent; color: var(--text-secondary); }
+.browser-notification-button:disabled, .browser-notification-dismiss:disabled { opacity: .6; cursor: wait; }
+.browser-notification-button:focus-visible, .browser-notification-dismiss:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.browser-notification-feedback { margin: 10px 0 0; padding: 8px 10px; border-radius: 6px; color: var(--text-primary); background: color-mix(in srgb, var(--accent-green) 7%, var(--bg-surface)); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.browser-notification-feedback.is-failed { background: color-mix(in srgb, var(--accent-red) 7%, var(--bg-surface)); }
+.browser-notification-badge { flex: 0 0 auto; padding: 3px 7px; border-radius: 6px; background: var(--bg-muted); color: var(--text-muted); font-size: 11px; }
+.browser-notification-badge.is-enabled { color: var(--accent-green); background: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface)); }
+.browser-notification-settings .browser-notification-actions { margin-top: 8px; }
+.browser-notification-help { margin-top: 8px; color: var(--text-muted); font-size: 12px; }
+.browser-notification-help > summary { cursor: pointer; }
+.browser-notification-help p { margin: 6px 0 0; }
+.browser-notification-spinner { width: 12px; height: 12px; border: 2px solid rgb(255 255 255 / 35%); border-top-color: currentColor; border-radius: 50%; animation: cli-session-spin 800ms linear infinite; }
+@media (max-width: 760px) {
+  .browser-notification-offer { right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); width: min(380px, calc(100vw - 16px)); padding: 12px; }
+  .browser-notification-button { min-height: 40px; }
+  .browser-notification-dismiss { flex-basis: 32px; height: 32px; }
+}
 
 /* Optional footer rows must fit above the composer on narrow screens. */
 .cli-workspace .cli-conversation.has-session { display: flex; flex-direction: column; }
@@ -15219,4 +15255,44 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-workspace .cli-session-row:has(.cli-session-row-actions button):focus-within .cli-session-spinner { visibility: hidden; }
 @media (max-width: 760px) {
   .cli-workspace .cli-session-row:has(.cli-session-row-actions button) .cli-session-spinner { visibility: hidden; }
+}
+
+/* Compact mobile rhythm with legible text and one account-control row. */
+@media (max-width: 760px) {
+  .dashboard-density-compact > .section { padding-inline: 8px; padding-bottom: 8px; }
+  .dashboard-density-compact .hero { padding-bottom: 6px; }
+  .overview-shell { padding: 6px; gap: 6px; }
+  .overview-main, .overview-bottom-row { gap: 6px; }
+  .overview-metrics, .overview-actions { padding: 6px; }
+  .accounts-grid { gap: 6px; }
+  .accounts-section-header { margin-bottom: 4px; }
+  .dashboard-account-toolbar { display: flex; flex-wrap: nowrap; gap: 4px; padding-block: 3px; margin-bottom: 6px; overflow: visible; }
+  .dashboard-account-toolbar .account-search-control { flex: 1 1 0; width: auto; min-width: 0; height: 40px; min-height: 40px; grid-column: auto; padding-inline: 6px; gap: 3px; }
+  .dashboard-account-toolbar .account-search-control input { flex: 1 1 0; min-width: 0; width: 0; font-size: 16px; }
+  .dashboard-account-toolbar .account-search-control button { flex: 0 0 28px; width: 28px; height: 36px; }
+  .dashboard-account-toolbar .dashboard-select-control { flex: 0 1 32%; width: auto; min-width: 0; min-height: 40px; }
+  .dashboard-account-toolbar .dashboard-select-control select { width: 100%; min-width: 0; max-width: 130px; min-height: 40px; font-size: 16px; padding-inline: 5px 16px; }
+  .dashboard-account-toolbar .dashboard-view-controls { flex: 0 0 40px; margin: 0; }
+  .dashboard-account-toolbar .dashboard-view-toggle { width: 40px; min-width: 40px; height: 40px; }
+  .dashboard-density-compact .saved-title h3, .settings-block-title { font-size: 13px; }
+  .dashboard-density-compact .saved-sub, .dashboard-density-compact .saved-progress .foot,
+  .dashboard-density-compact .saved-credit-summary, .dashboard-density-compact .pill,
+  .dashboard-density-compact .grid-label, .dashboard-density-compact .meta-value,
+  .dashboard-density-compact .account-count-badges button { font-size: 11px; line-height: 1.35; }
+  .dashboard-density-compact .saved-progress .row-head, .dashboard-density-compact .saved-progress .percent { font-size: 12px; }
+  .settings-modal-body { padding: 8px; }
+  .settings-tab-panel { gap: 8px; }
+  .settings-block { padding: 10px; gap: 6px; }
+  .settings-note, .settings-block-sub, .settings-note-item, .segment-copy { font-size: 12px; line-height: 1.4; }
+  .settings-tab-description { display: none; }
+  .cli-workspace .cli-session-message-text { font-size: 13px; line-height: 1.45; }
+  .cli-workspace .cli-message-markdown { line-height: 1.45; }
+  .cli-workspace .cli-message-markdown p, .cli-workspace .cli-message-markdown ul, .cli-workspace .cli-message-markdown ol { margin-block: 5px; }
+  .cli-workspace .cli-message-markdown > :first-child { margin-top: 0; }
+  .cli-workspace .cli-message-markdown > :last-child { margin-bottom: 0; }
+  .cli-workspace .cli-session-row-main { min-height: 0; grid-template-rows: auto auto; row-gap: 1px; }
+  .cli-workspace .cli-session-row-main > strong { font-size: 12px; line-height: 1.25; }
+  .cli-workspace .cli-session-row-meta, .cli-workspace .cli-conversation-project,
+  .cli-workspace .cli-activity-heading strong, .cli-workspace .cli-composer-unavailable { font-size: 11px; }
+  .cli-workspace .cli-conversation-title h1 { font-size: 13px; }
 }

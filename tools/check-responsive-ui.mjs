@@ -139,6 +139,12 @@ try {
     await page.locator(".cli-compact-session-list").waitFor();
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Compact view keeps only distinct parents");
     await page.locator(".cli-compact-session-list .cli-session-row-meta").first().waitFor({ state: "visible" });
+    if (width <= 760) {
+      const titleBounds = await page.locator(".cli-session-row-main > strong").first().boundingBox();
+      const metaBounds = await page.locator(".cli-session-row-meta").first().boundingBox();
+      assert.ok(metaBounds.y - titleBounds.y - titleBounds.height <= 2, "Mobile title and metadata have no excessive gap");
+      assert.ok((await page.locator(".cli-session-row-select").first().boundingBox()).height >= 40, "Compact text keeps the row touch target");
+    }
     const initialOrder = await page.locator(".cli-session-row-main > strong").allTextContents();
     await page.evaluate(() => { window.__uiSessions.reverse(); window.__uiSessions.forEach(session => { session.updatedAt = new Date().toISOString(); }); });
     await page.getByRole("button", { name: "Refresh sessions", exact: true }).click();
@@ -247,7 +253,7 @@ try {
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Preview image");
     const tool = page.locator(".cli-activity.is-tool-call").first();
     const toolGroup = page.locator(".cli-activity-group-details").first();
-    if (!await toolGroup.evaluate(element => element.open)) await toolGroup.locator(":scope > summary").click();
+    if (!await toolGroup.evaluate(element => element.open)) await toolGroup.locator(":scope > summary").press("Enter");
     await toolGroup.evaluate(element => ({ open: element.open, text: element.textContent.slice(0,80) })).then(value => console.log("Opened tool group", value));
     await page.waitForFunction(() => document.querySelector(".cli-activity-group-details")?.open).catch(async error => {
       console.log("Group state", await page.locator(".cli-activity-group-details").evaluateAll(elements => elements.map(element => ({ open: element.open, text: element.textContent.slice(0,80) }))));
@@ -516,8 +522,19 @@ try {
     }
     await page.locator(".account-count-badges > button").first().click();
     await page.locator('input[name="account-search"]').fill("codex-ui-no-matching-account");
+    const searchInput = page.getByRole("searchbox", { name: /Search accounts/i });
+    assert.equal(await searchInput.getAttribute("type"), "text", "Search has no native duplicate clear control");
+    assert.equal(await page.locator(".account-search-control button").count(), 1, "There is exactly one clear button");
+    if (width <= 760) {
+      const controlBounds = await page.locator(".dashboard-account-toolbar > :visible").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
+      assert.ok(controlBounds.every(bounds => Math.abs(bounds.y - controlBounds[0].y) <= 2), "Search, sort/filter, and view toggle stay on one row");
+      assert.ok((await page.locator(".dashboard-account-toolbar").boundingBox()).height <= 50, "Account toolbar has no extra row");
+      assert.equal(await searchInput.evaluate(element => getComputedStyle(element).fontSize), "16px", "Mobile search avoids iOS zoom");
+    }
+
     await page.waitForFunction(() => document.querySelectorAll(".saved-card-container").length === 0 && document.querySelector(".account-count-badges > button")?.textContent.trim() === "Total 0");
-    await page.locator('input[name="account-search"]').fill("");
+    await page.locator(".account-search-control button").click();
+    assert.equal(await searchInput.inputValue(), "", "The custom clear control clears search");
     if (width <= 760) {
       await page.locator(".dashboard-mobile-actions > summary").click();
       await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -531,6 +548,7 @@ try {
     assert.equal(await page.locator('[data-setting-key="backgroundTokenRefreshEnabled"]').count(), 0);
     await page.keyboard.press("Escape");
     assert.equal(await page.locator(".overlay.open").count(), 0, "Escape closes Settings");
+    await page.waitForFunction(() => !document.querySelector(".overlay.open") && [...document.querySelectorAll(".overlay")].every(element => getComputedStyle(element).visibility === "hidden" || getComputedStyle(element).display === "none" || getComputedStyle(element).opacity === "0"));
     assert.deepEqual(errors, [], "Browser runtime errors");
     await page.screenshot({ path: path.join(output, `dashboard-${width}x${height}.png`) });
     results.push({ width, height, checks: "parent list, running icon, chat, live messages, Agent tabs, share, session menu, Environment, Files, Reviews, quote, attachment, failed send, settings" });

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 type InstallPrompt = Event & { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }> };
 type InstallWindow = Window & { codexInstallPrompt?: InstallPrompt };
 
-export async function browserPushRequest(path: string, body?: unknown): Promise<{ publicKey?: string; subscribed?: boolean }> {
+export async function browserPushRequest(path: string, body?: unknown): Promise<{ publicKey?: string; subscribed?: boolean; subscriptions?: number; accepted?: number; failed?: number }> {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 15_000);
   try {
@@ -16,7 +16,7 @@ export async function browserPushRequest(path: string, body?: unknown): Promise<
         ? { headers: { "Content-Type": "application/json", "X-Codex-Dashboard": "1" }, body: JSON.stringify(body) }
         : {})
     });
-    const result = (await response.json()) as { error?: string; publicKey?: string; subscribed?: boolean };
+    const result = (await response.json()) as { error?: string; publicKey?: string; subscribed?: boolean; subscriptions?: number; accepted?: number; failed?: number };
     if (!response.ok)
       throw new Error(
         response.status === 401
@@ -191,36 +191,37 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     }
   };
 
+  const sendTest = async () => {
+    if (busy) return;
+    setBusy(true); setFailed(false); setFeedback("");
+    try {
+      const result = await browserPushRequest("test", {});
+      if (![result.subscriptions, result.accepted, result.failed].every(value => Number.isSafeInteger(value) && value! >= 0 && value! <= 64) || result.accepted! + result.failed! !== result.subscriptions)
+        throw new Error("Delivery was not confirmed. Check your phone before retrying.");
+      const accepted = result.accepted!;
+      const failures = result.failed!;
+      setFailed(!accepted || failures > 0);
+      setFeedback(!result.subscriptions ? "No subscribed devices were found. Enable notifications on your phone, then retry." :
+        `Push service accepted the test for ${accepted} device${accepted === 1 ? "" : "s"}.${failures ? ` ${failures} failed; reconnect or enable notifications again on those devices.` : " Check your phone’s notifications."}`);
+    } catch (error) {
+      setFailed(true);
+      setFeedback(error instanceof Error && error.name !== "AbortError" ? error.message : "Delivery was not confirmed in time. Check your phone before retrying.");
+    } finally { setBusy(false); }
+  };
+
   if (props.offerOnLoad && (!initialized || dismissed || (enabled && !feedback))) return null;
-  const content = (
-    <div class="settings-block settings-block-wide">
-      <div class="settings-block-title">{props.offerOnLoad ? "Get notifications on this device" : "Browser notifications & installed app"}</div>
-      <p class="settings-note">
-        Receive account switches, warnings, failures, and actions on this device. On iPhone or iPad, use Share → Add to
-        Home Screen and open the installed app first. The app opens a recovery screen offline and reconnects when the
-        host returns.
-      </p>
-      {!supported && (
-        <p class="settings-note">
-          Push is unavailable here. Use an HTTPS dashboard in a supported browser or installed app.
-        </p>
-      )}
-      <button type="button" class="settings-btn" aria-label={props.offerOnLoad ? "Subscribe to browser notifications" : undefined} disabled={busy || !supported} onClick={() => void toggle()}>
-        {busy ? "Please wait…" : enabled ? "Disable notifications" : "Enable notifications"}
-      </button>
-      {install && (
-        <button type="button" class="settings-btn" disabled={busy} onClick={() => void installApp()}>
-          Install app
-        </button>
-      )}
-      {feedback && (
-        <p class="settings-note" role={failed ? "alert" : "status"}>
-          {feedback}
-        </p>
-      )}
-    </div>
-  );
-  return props.offerOnLoad ? <aside class="browser-notification-offer" aria-label="Notification subscription" role="region">
-    {content}<button type="button" class="settings-btn" disabled={busy} onClick={() => setDismissed(true)}>{enabled ? "Done" : "Later"}</button>
-  </aside> : content;
+  const bell = <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>;
+  const feedbackView = feedback ? <p class={`browser-notification-feedback ${failed ? "is-failed" : ""}`} role={failed ? "alert" : "status"}>{feedback}</p> : null;
+  if (props.offerOnLoad) return <aside class={`browser-notification-offer ${enabled ? "is-enabled" : ""}`} aria-label="Notification subscription" role="region">
+    <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><strong>{enabled ? "Notifications enabled" : "Get notifications on this device"}</strong><p>{enabled ? "You're ready for important updates." : "Account switches, important alerts, and actions while this tab is closed."}</p></div><button type="button" class="browser-notification-dismiss" aria-label="Dismiss notification offer" title="Dismiss" disabled={busy} onClick={() => setDismissed(true)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button></div>
+    {feedbackView}
+    <div class="browser-notification-actions">{enabled ? <button type="button" class="browser-notification-button is-primary" onClick={() => setDismissed(true)}>Done</button> : <><button type="button" class="browser-notification-button is-primary" aria-label="Subscribe to browser notifications" aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? <><span class="browser-notification-spinner" aria-hidden="true"/> Please wait…</> : "Enable notifications"}</button><button type="button" class="browser-notification-button is-quiet" disabled={busy} onClick={() => setDismissed(true)}>Not now</button></>}</div>
+  </aside>;
+  return <div class="settings-block settings-block-wide browser-notification-settings">
+    <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><div class="settings-block-title">Browser notifications & installed app</div><p>{enabled ? "Notifications are enabled on this device." : "Get account switches, important alerts, and available actions."}</p></div><span class={`browser-notification-badge ${enabled ? "is-enabled" : ""}`}>{enabled ? "On" : "Off"}</span></div>
+    {!supported ? <p class="settings-note">Push is unavailable here. Use an HTTPS dashboard in a supported browser or installed app.</p> : null}
+    <div class="browser-notification-actions"><button type="button" class={`browser-notification-button ${enabled ? "" : "is-primary"}`} aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? "Please wait…" : enabled ? "Disable notifications" : "Enable notifications"}</button><button type="button" class="browser-notification-button" disabled={busy || !supported} onClick={() => void sendTest()}>Send test notification</button>{install ? <button type="button" class="browser-notification-button" disabled={busy} onClick={() => void installApp()}>Install app</button> : null}</div>
+    {feedbackView}
+    <details class="browser-notification-help"><summary>Install & offline help</summary><p class="settings-note">On iPhone or iPad, use Share → Add to Home Screen, then enable notifications in the installed app. Offline, the app keeps drafts and shows a recovery screen until the host returns.</p></details>
+  </div>;
 }

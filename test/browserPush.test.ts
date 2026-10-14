@@ -39,6 +39,48 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("persistent browser push", () => {
+  it("reports actual provider acceptance and removes rejected subscriptions from a test send", async () => {
+    await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
+    await service.subscribe(subscription("expired"), "other", "https://dashboard.example", password);
+    send.mockResolvedValueOnce({ statusCode: 201 }).mockRejectedValueOnce({ statusCode: 410 });
+    expect(await service.sendTest()).toEqual({ subscriptions: 2, accepted: 1, failed: 1 });
+    expect(send).toHaveBeenCalledWith(expect.anything(), expect.stringContaining("Test notification:"), expect.objectContaining({ TTL: 120, timeout: 8000, urgency: "high" }));
+    send.mockClear();
+    expect(await service.sendTest()).toEqual({ subscriptions: 1, accepted: 1, failed: 0 });
+    expect(send).toHaveBeenCalledOnce();
+  });
+  it("does not claim delivery with no subscribers, a changed password, or a provider failure", async () => {
+    expect(await service.sendTest()).toEqual({ subscriptions: 0, accepted: 0, failed: 0 });
+    const phone = subscription();
+    await service.subscribe(phone, "phone", "https://dashboard.example", password);
+    password = "rotated";
+    expect(await service.sendTest()).toEqual({ subscriptions: 0, accepted: 0, failed: 0 });
+    expect(send).not.toHaveBeenCalled();
+    await service.subscribe(phone, "phone", "https://dashboard.example", password);
+    send.mockRejectedValueOnce(new Error("Provider timeout"));
+    expect(await service.sendTest()).toEqual({ subscriptions: 1, accepted: 0, failed: 1 });
+    expect(await service.sendTest()).toEqual({ subscriptions: 1, accepted: 1, failed: 0 });
+  });
+  it("coalesces repeated test requests and exposes them to reload delivery flushing", async () => {
+    await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
+    let finish: (() => void) | undefined;
+    send.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const first = service.sendTest(); expect(service.sendTest()).toBe(first);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    let flushed = false; void service.flush().then(() => { flushed = true; });
+    expect(flushed).toBe(false); finish!();
+    expect(await first).toEqual({ subscriptions: 1, accepted: 1, failed: 0 });
+    await service.flush(); expect(flushed).toBe(true); expect(send).toHaveBeenCalledOnce();
+  });
+  it("surfaces storage and full-queue failures without leaving test delivery stuck", async () => {
+    stored.set("codexManager.browserPush.v1", "corrupt");
+    await expect(service.sendTest()).rejects.toThrow();
+    stored.clear(); await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
+    (service as unknown as { queued: number }).queued = 32;
+    await expect(service.sendTest()).rejects.toThrow("busy");
+    (service as unknown as { queued: number }).queued = 0;
+    expect(await service.sendTest()).toEqual({ subscriptions: 1, accepted: 1, failed: 0 });
+  });
   it("checks the registered owner and detects logout or changed-password subscriptions", async () => {
     const item = subscription(); await service.subscribe(item, "owner", "https://dashboard.example", password);
     expect(await service.isSubscribed(item.endpoint, "owner", "https://dashboard.example")).toBe(true);

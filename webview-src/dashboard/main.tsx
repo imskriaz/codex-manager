@@ -2360,7 +2360,9 @@ function App() {
                 <input
                   ref={searchInputRef}
                   name="account-search"
-                  type="search"
+                  type="text"
+                  role="searchbox"
+                  inputMode="search"
                   autoComplete="off"
                   value={uiPreferences.accountSearch}
                   onInput={(event) =>

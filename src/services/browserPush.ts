@@ -45,6 +45,7 @@ export class BrowserPushService {
   private queued = 0;
   private recent = new Map<string, number>();
   private readonly actions = new Map<string, string[]>();
+  private testing: Promise<{ subscriptions: number; accepted: number; failed: number }> | undefined;
 
   constructor(
     private readonly secrets: vscode.SecretStorage,
@@ -198,6 +199,42 @@ export class BrowserPushService {
   }
 
   flush(): Promise<void> { return this.sends; }
+
+  /** Provider acceptance is observable; the browser controls when a phone displays the push. */
+  sendTest(): Promise<{ subscriptions: number; accepted: number; failed: number }> {
+    if (this.testing) return this.testing;
+    if (this.queued >= 32) return Promise.reject(new Error("Notification delivery is busy. Retry shortly."));
+    this.queued++;
+    const work = this.sends.catch(() => undefined).then(async () => {
+      await this.mutations.catch(() => undefined);
+      const state = await this.read();
+      const password = await this.password();
+      const subscriptions = state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).filter(subscription =>
+        subscription.expiresAt > Date.now() && (subscription.password === undefined || subscription.password === password));
+      const result = { subscriptions: subscriptions.length, accepted: 0, failed: 0 };
+      const expired = new Set<string>();
+      const payload = JSON.stringify({ title: "Codex Manager", body: "Test notification: notifications are enabled on this device. Open Codex Manager to review your dashboard.", tag: "codex-manager-delivery-test", url: "/dash", createdAt: Date.now() });
+      await Promise.all(subscriptions.map(async subscription => {
+        try {
+          await webPush.sendNotification(validateBrowserPushSubscription(subscription), payload, {
+            TTL: 120, urgency: "high", timeout: 8000,
+            vapidDetails: { subject: "https://github.com/imskriaz/codex-manager", ...state.keys }
+          });
+          result.accepted++;
+        } catch (error) {
+          result.failed++;
+          if ([404, 410].includes((error as { statusCode?: number }).statusCode ?? 0)) expired.add(subscription.endpoint);
+        }
+      }));
+      if (expired.size) await this.mutate(current => {
+        current.subscriptions = current.subscriptions.filter(subscription => !expired.has(subscription.endpoint));
+      });
+      return result;
+    }).finally(() => { this.queued--; if (this.testing === work) this.testing = undefined; });
+    this.testing = work;
+    this.sends = work.then(() => undefined, () => undefined);
+    return work;
+  }
 
   async isSubscribed(endpoint: string, owner: string, origin: string): Promise<boolean> {
     await this.mutations.catch(() => undefined);

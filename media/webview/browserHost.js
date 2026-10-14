@@ -8,6 +8,7 @@
   let lastSyncAt;
   let lastProbeAt = 0;
   let snapshotInFlight;
+  let hiddenAt;
   const pendingSocketActions = new Map();
   const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage"].includes(message?.action)
     ? 15 * 60_000 + 15_000
@@ -101,6 +102,7 @@
   };
 
   const scheduleReconnect = () => {
+    if (isBrowserOffline()) { publishStatus("offline"); return; }
     if (reconnectTimer !== undefined) return;
     const delay = reconnectDelayMs;
     reconnectDelayMs = Math.min(reconnectDelayMs * 2, maxReconnectDelayMs);
@@ -112,6 +114,7 @@
   };
 
   const connectRealtime = () => {
+    if (isBrowserOffline()) { publishStatus("offline"); return; }
     if (connectingSocket || realtimeSocket) return;
     if (typeof window.WebSocket !== "function") {
       dispatch({ type: "dashboard:connection", transport: "websocket", connected: false });
@@ -147,6 +150,7 @@
       publishStatus("live");
     });
     socket.addEventListener("message", (event) => {
+      if (realtimeSocket !== socket) return;
       try {
         const message = JSON.parse(event.data);
         if (!message?.type) return;
@@ -181,23 +185,30 @@
     socket.addEventListener("error", () => undefined);
   };
 
+  const restartRealtime = () => {
+    resetConnectingSocket();
+    const active = realtimeSocket;
+    realtimeSocket = undefined;
+    try { active?.close(); } catch { /* Already disconnected. */ }
+    failUnconfirmedSocketActions();
+    if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+    publishConnection();
+    publishStatus("connecting");
+    connectRealtime();
+  };
+
   const postMessage = async (message) => {
     if (message?.type === "dashboard:ready" || message?.type === "dashboard:retry-connection") {
       const manual = message.type === "dashboard:retry-connection";
       publishConnection();
-      if (manual && !isRealtimeOpen()) {
-        resetConnectingSocket();
-        if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-        reconnectTimer = undefined;
-        publishStatus("connecting");
-        connectRealtime();
-      }
+      if (manual) restartRealtime();
       try {
         const loaded = await loadSnapshot();
         if (manual && loaded) dispatch({
           type: "dashboard:notice",
-          level: realtimeSocket ? "info" : "warning",
-          message: realtimeSocket ? "Dashboard reconnected and live updates resumed." : "Dashboard responded. Live updates are still reconnecting."
+          level: isRealtimeOpen() ? "info" : "warning",
+          message: isRealtimeOpen() ? "Dashboard reconnected and live updates resumed." : "Dashboard responded. Live updates are still reconnecting."
         });
       } catch (error) {
         console.error("[codex-manager] dashboard refresh", error);
@@ -278,12 +289,7 @@
 
   if (typeof window.addEventListener === "function") {
     window.addEventListener("online", () => {
-      if (isRealtimeOpen()) { publishConnection(); publishStatus("live"); return; }
-      resetConnectingSocket();
-      publishStatus("connecting");
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      reconnectTimer = undefined;
-      connectRealtime();
+      restartRealtime();
       void loadSnapshot().catch(() => undefined);
     });
     window.addEventListener("offline", () => {
@@ -291,6 +297,8 @@
       const active = realtimeSocket;
       realtimeSocket = undefined;
       try { active?.close(); } catch { /* Network already unavailable. */ }
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
       failUnconfirmedSocketActions();
       publishConnection();
       publishStatus("unreachable");
@@ -316,7 +324,9 @@
   }
 
   if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return;
+    if (document.visibilityState !== "visible") { hiddenAt = Date.now(); return; }
+    if (hiddenAt !== undefined && Date.now() - hiddenAt >= 15_000) restartRealtime();
+    hiddenAt = undefined;
     publishConnection();
     if (!isRealtimeOpen()) connectRealtime();
     void loadSnapshot().catch(() => undefined);

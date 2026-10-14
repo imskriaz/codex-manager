@@ -3,6 +3,66 @@ import { runInNewContext } from "vm";
 import { describe, expect, it, vi } from "vitest";
 
 describe("browser dashboard bridge", () => {
+  it("replaces stale sockets on retry, network recovery, and suspension without replaying actions", async () => {
+    const events: Array<Record<string, unknown>> = [], sockets: Socket[] = [];
+    const listeners = new Map<string, () => void>();
+    let now = 1000;
+    const navigatorMock = { onLine: true };
+    const documentMock = { visibilityState: "visible", addEventListener: (name: string, callback: () => void) => listeners.set(name, callback) };
+    class Socket {
+      static readonly OPEN = 1;
+      readyState = 0;
+      listeners = new Map<string, (event?: unknown) => void>();
+      send = vi.fn(); close = vi.fn(() => { this.readyState = 3; });
+      constructor(public url: string) { sockets.push(this); }
+      addEventListener(name: string, callback: (event?: unknown) => void) { this.listeners.set(name, callback); }
+      open() { this.readyState = Socket.OPEN; this.listeners.get("open")!(); }
+    }
+    const windowMock = {
+      dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      setTimeout: vi.fn(), clearTimeout: vi.fn(),
+      addEventListener: (name: string, callback: () => void) => listeners.set(name, callback),
+      location: { protocol: "https:", host: "dashboard.example.com", reload: vi.fn() }, WebSocket: Socket,
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock, document: documentMock, navigator: navigatorMock, MessageEvent: Event,
+      fetch: vi.fn(async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => ({}) })),
+      console: { error: vi.fn(), warn: vi.fn() }, Error, Array, JSON, Date: { now: () => now }, Map
+    });
+    const post = windowMock.acquireVsCodeApi!().postMessage;
+    expect(sockets[0]!.url).toBe("wss://dashboard.example.com/ws");
+    sockets[0]!.open();
+    await post({ type: "dashboard:action", requestId: "unconfirmed", action: "switch" });
+    await post({ type: "dashboard:retry-connection" });
+    expect(sockets[0]!.close).toHaveBeenCalledOnce();
+    expect(events.filter(event => event.requestId === "unconfirmed")).toEqual([expect.objectContaining({ status: "failed", error: expect.stringContaining("outcome is unknown") })]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:notice", level: "warning" }));
+    sockets[0]!.listeners.get("message")!({ data: JSON.stringify({ type: "dashboard:snapshot", state: { stale: true } }) });
+    expect(events).not.toContainEqual(expect.objectContaining({ state: { stale: true } }));
+    sockets[1]!.open();
+    listeners.get("online")!();
+    expect(sockets[1]!.close).toHaveBeenCalledOnce();
+    sockets[2]!.open();
+    documentMock.visibilityState = "hidden"; listeners.get("visibilitychange")!();
+    now += 1000; documentMock.visibilityState = "visible"; listeners.get("visibilitychange")!();
+    expect(sockets).toHaveLength(3);
+    documentMock.visibilityState = "hidden"; listeners.get("visibilitychange")!();
+    now += 16000; documentMock.visibilityState = "visible"; listeners.get("visibilitychange")!();
+    expect(sockets[2]!.close).toHaveBeenCalledOnce();
+    expect(sockets).toHaveLength(4);
+    sockets[3]!.open();
+    await post({ type: "dashboard:action", requestId: "recovered", action: "listCodexCliSessions" });
+    expect(sockets[3]!.send).toHaveBeenCalledOnce();
+    expect(sockets.slice(1, 3).every(socket => socket.send.mock.calls.length === 0)).toBe(true);
+    navigatorMock.onLine = false; listeners.get("offline")!();
+    expect(events).toContainEqual(expect.objectContaining({ stage: "offline" }));
+    documentMock.visibilityState = "visible"; listeners.get("visibilitychange")!();
+    expect(sockets).toHaveLength(4);
+    navigatorMock.onLine = true; listeners.get("online")!();
+    expect(sockets).toHaveLength(5);
+  });
   it("aborts a stalled HTTP action and reports its unconfirmed outcome", async () => {
     const events: Array<Record<string, unknown>> = [];
     const timers: Array<() => void> = [];

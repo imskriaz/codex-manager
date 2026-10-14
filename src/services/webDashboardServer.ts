@@ -514,7 +514,7 @@ export class WebDashboardServer implements vscode.Disposable {
       });
     });
     this.server.on("upgrade", (request, socket, head) => {
-      void this.handleWebSocketUpgrade(request, socket, head);
+      void this.handleWebSocketUpgrade(request, socket, head).catch(() => socket.destroy());
     });
     await new Promise<void>((resolve, reject) => {
       const server = this.server!;
@@ -689,6 +689,9 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+    const configuredCloudflaredOrigin = normalizeCloudflaredDomain(
+      this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""
+    );
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("X-Frame-Options", "DENY");
@@ -697,7 +700,7 @@ export class WebDashboardServer implements vscode.Disposable {
     response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     response.setHeader(
       "Content-Security-Policy",
-      "default-src 'none'; img-src 'self' https: data:; media-src data:; frame-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+      `default-src 'none'; img-src 'self' https: data:; media-src data:; frame-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ${getWebDashboardConnectSources(request, configuredCloudflaredOrigin)}; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`
     );
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
@@ -758,9 +761,6 @@ export class WebDashboardServer implements vscode.Disposable {
       await this.sendAsset(path, request, response);
       return;
     }
-    const configuredCloudflaredOrigin = normalizeCloudflaredDomain(
-      this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""
-    );
     if (method === "POST" && !isTrustedWebDashboardOrigin(request, configuredCloudflaredOrigin || undefined)) {
       response.statusCode = 403;
       if (path.startsWith("/api/")) this.sendJson(response, { error: "Cross-origin dashboard request rejected" });
@@ -812,6 +812,10 @@ export class WebDashboardServer implements vscode.Disposable {
         const body = JSON.parse(await readDashboardRequestBody(request, 8192)) as Record<string, unknown>;
         const owner = fingerprintWebDashboardSession(readDashboardSessionToken(request) ?? "local");
         const origin = request.headers.origin ?? this.getUrl();
+        if (path === "/api/push/test") {
+          this.sendJson(response, await this.browserPush.sendTest());
+          return;
+        }
         if (path === "/api/push/status" && typeof body["endpoint"] === "string") {
           this.sendJson(response, { subscribed: await this.browserPush.isSubscribed(body["endpoint"], owner, origin) });
           return;
@@ -2748,6 +2752,27 @@ export function isLocalWebDashboardRequest(request: Pick<http.IncomingMessage, "
   // keep the request behind authentication rather than trusting only the
   // peer address (a tunnel can also connect from loopback).
   return false;
+}
+
+/** Permit only this dashboard's explicit socket origins in the browser policy. */
+export function getWebDashboardConnectSources(
+  request: Pick<http.IncomingMessage, "headers">,
+  configuredOrigin = ""
+): string {
+  const sources = new Set(["'self'"]);
+  const forwardedHost = request.headers["x-forwarded-host"];
+  const host = (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost)?.split(",", 1)[0]?.trim() ?? request.headers.host;
+  // Some browsers need explicit socket schemes; keep them scoped to this host.
+  if (host && /^[a-z\d.\-:[\]]+$/i.test(host)) {
+    try {
+      const parsed = new URL(`http://${host}`);
+      sources.add(`ws://${parsed.host}`);
+      sources.add(`wss://${parsed.host}`);
+    } catch { /* Invalid hosts cannot extend the policy. */ }
+  }
+  const publicOrigin = normalizeCloudflaredDomain(configuredOrigin);
+  if (publicOrigin) sources.add(`wss://${new URL(publicOrigin).host}`);
+  return [...sources].join(" ");
 }
 
 /** Reject browser requests whose Origin does not match the addressed dashboard. */

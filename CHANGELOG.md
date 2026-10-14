@@ -2,6 +2,9 @@
 
 ## 1.2.19
 
+- Permit secure dashboard WebSockets explicitly and reconnect stale mobile connections after network changes, returning from suspension, or manual retry. Tighten mobile session title and metadata spacing.
+- Polish browser notification cards, add provider-confirmed test notifications, standardize mobile text, and keep account search/filter/view controls on one row with one clear button.
+
 - Hide the desktop overview account-details block on small screens while retaining usage, quotas, and actions.
 - Compact small dashboard headers: remove the empty top spacer, use the logo as the left sidebar button, and omit the unrelated right floating workspace toggle.
 - Add explicit, expiring, revocable read-only conversation snapshot links that work without dashboard sign-in.

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   isLocalWebDashboardRequest,
   getWebDashboardAssetVersion,
+  getWebDashboardConnectSources,
   isCliSessionWatchPath,
   isTrustedWebDashboardOrigin,
   isWebDashboardPagePath,
@@ -36,6 +37,17 @@ function createRequest(): http.IncomingMessage & EventEmitter {
   request.setEncoding = vi.fn().mockReturnValue(request);
   return request;
 }
+
+it("permits dashboard WebSocket schemes through direct and rewritten proxy hosts without broadening CSP", () => {
+  expect(getWebDashboardConnectSources({ headers: { host: "127.0.0.1:39875" } })).toBe("'self' ws://127.0.0.1:39875 wss://127.0.0.1:39875");
+  expect(getWebDashboardConnectSources({ headers: { host: "localhost:39875", "x-forwarded-host": "dashboard.example.com" } })).toBe("'self' ws://dashboard.example.com wss://dashboard.example.com");
+  expect(getWebDashboardConnectSources({ headers: { host: "localhost:39875" } }, "https://dashboard.example.com")).toContain("wss://dashboard.example.com");
+  expect(getWebDashboardConnectSources({ headers: { host: "[::1]:39875" } })).toContain("ws://[::1]:39875");
+  for (const host of ["bad; connect-src *", "user@host", "host/path", "host?query", "host#hash", "'unsafe-inline'", "*", "host:invalid"]) {
+    expect(getWebDashboardConnectSources({ headers: { host } })).toBe("'self'");
+  }
+  expect(getWebDashboardConnectSources({ headers: {} }, "https://user:password@example.com")).toBe("'self'");
+});
 
 function account(id: string, lastQuotaAt: number, percentage: number, enabled = true): DashboardAccountViewModel {
   return {
@@ -208,6 +220,15 @@ describe("browser PWA routes", () => {
       expect((await call(`/api/state?token=${token}`)).statusCode).toBe(401);
       expect((await call(`/api/share/revoke?token=${token}`, "POST", input)).statusCode).toBe(401);
       expect((await call("/share/invalid")).statusCode).toBe(404);
+      const delivery = vi.spyOn((server as any).browserPush, "sendTest").mockResolvedValue({ subscriptions: 1, accepted: 1, failed: 0 });
+      expect((await call("/api/push/test", "POST", {})).statusCode).toBe(401);
+      expect(delivery).not.toHaveBeenCalled();
+      const testPush = await call("/api/push/test", "POST", {}, true);
+      expect(testPush.statusCode).toBe(200);
+      expect(JSON.parse(testPush.body)).toEqual({ subscriptions: 1, accepted: 1, failed: 0 });
+      delivery.mockRejectedValueOnce(new Error("Push storage unavailable"));
+      const failedPush = await call("/api/push/test", "POST", {}, true);
+      expect(failedPush.statusCode).toBe(400); expect(failedPush.body).toContain("Push storage unavailable");
       expect((await call("/api/share/revoke", "POST", input, true)).statusCode).toBe(200);
       expect((await call(`/share/${token}`)).statusCode).toBe(404);
     } finally { server.dispose(); }
@@ -255,6 +276,7 @@ describe("browser PWA routes", () => {
       expect(dashboard.body).toContain(`rel="manifest" href="/manifest.webmanifest?v=${assetVersion}"`);
       expect(dashboard.body).toContain(`src="/assets/browserHost.js?v=${assetVersion}"`);
       expect(dashboard.headers.get("cache-control")).toBe("no-store");
+      expect(dashboard.headers.get("content-security-policy")).toContain("connect-src 'self' ws://127.0.0.1:39875 wss://127.0.0.1:39875;");
     } finally {
       server.dispose();
     }
