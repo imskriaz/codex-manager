@@ -20,6 +20,32 @@ function createServer() {
 }
 
 describe("browser action completion during state failure", () => {
+  it("returns a completed action within 250ms when its optional snapshot stalls", async () => {
+    vi.useFakeTimers();
+    buildState.mockReturnValue(new Promise(() => undefined));
+    executeAction.mockResolvedValue({ status: "completed", payload: { reloadScheduled: true } });
+    const { server, internal } = createServer();
+    try {
+      const work = internal.processClientMessage({ type: "dashboard:action", action: "switch", requestId: "slow-snapshot" });
+      await vi.advanceTimersByTimeAsync(250);
+      const result = await work;
+      expect(result.reloadAfterResponse).toBe(true);
+      expect(result.messages).toContainEqual(expect.objectContaining({ requestId: "slow-snapshot", status: "completed" }));
+      expect(result.messages).toContainEqual(expect.objectContaining({ type: "dashboard:notice", level: "warning", message: expect.stringContaining("still loading") }));
+    } finally { server.dispose(); vi.useRealTimers(); }
+  });
+
+  it("bounds a stalled explicit snapshot refresh and reports failure", async () => {
+    vi.useFakeTimers();
+    buildState.mockReturnValue(new Promise(() => undefined));
+    executeAction.mockResolvedValue({ status: "completed" });
+    const { server, internal } = createServer();
+    try {
+      const work = internal.processClientMessage({ type: "dashboard:action", action: "refreshView", requestId: "slow-refresh" });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect((await work).messages).toContainEqual(expect.objectContaining({ requestId: "slow-refresh", status: "failed", error: "Dashboard state is still loading" }));
+    } finally { server.dispose(); vi.useRealTimers(); }
+  });
   it("preserves a successful mutation and scheduled reload when snapshot building fails", async () => {
     buildState.mockRejectedValue(new Error("storage temporarily unavailable"));
     executeAction.mockResolvedValue({ status: "completed", payload: { reloadScheduled: true } });

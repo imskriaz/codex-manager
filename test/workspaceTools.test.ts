@@ -2,6 +2,8 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { execFileSync } from "child_process";
+import * as childProcess from "child_process";
+vi.mock("child_process", { spy: true });
 import { promises as fs } from "fs";
 import { describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
@@ -455,14 +457,36 @@ describe("workspace tools", () => {
 
       const environment = await commitWorkspaceChanges(projectPath, "Verify workspace commit", true);
 
-      expect(environment.isGitRepository).toBe(true);
-      expect(environment.changes).toBe(0);
+      if (environment) {
+        expect(environment.isGitRepository).toBe(true);
+        expect(environment.changes).toBe(0);
+      }
+      expect(execFileSync("git", ["status", "--porcelain"], { cwd: projectPath, encoding: "utf8" }).trim()).toBe("");
       expect(execFileSync("git", ["log", "-1", "--pretty=%s"], { cwd: projectPath, encoding: "utf8" }).trim())
         .toBe("Verify workspace commit");
     } finally {
       restoreWorkspace();
       await rm(projectPath, { recursive: true, force: true });
     }
+  });
+
+  it("preserves a successful commit when follow-up workspace inspection fails", async () => {
+    const projectPath = await mkdtemp(join(tmpdir(), "codex-workspace-commit-"));
+    const restoreWorkspace = exposeWorkspaceRoot(projectPath);
+    const { spawn: originalSpawn } = await vi.importActual<typeof childProcess>("child_process");
+    const spawn = vi.mocked(childProcess.spawn).mockImplementation(((command: string, args: string[], options: never) => {
+      if (args[0] === "status") throw new Error("status inspection unavailable");
+      return originalSpawn(command, args, options);
+    }) as typeof childProcess.spawn);
+    try {
+      execFileSync("git", ["init"], { cwd: projectPath, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "workspace-test@example.invalid"], { cwd: projectPath });
+      execFileSync("git", ["config", "user.name", "Workspace Test"], { cwd: projectPath });
+      await writeFile(join(projectPath, "proof.txt"), "commit proof\n");
+      await expect(commitWorkspaceChanges(projectPath, "Confirmed commit", true)).resolves.toBeUndefined();
+      expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: projectPath, encoding: "utf8" }).trim()).toBe("1");
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("status inspection unavailable"));
+    } finally { spawn.mockImplementation(originalSpawn); restoreWorkspace(); await rm(projectPath, { recursive: true, force: true }); }
   });
 });
 

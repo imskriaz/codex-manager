@@ -14,7 +14,7 @@ describe("dashboard action feedback", () => {
   it("shows a warning when the cross-PC sync toggle times out", () => {
     expect(noticeFromActionTimeout("setCrossPcSyncEnabled")).toMatchObject({
       level: "warning",
-      message: expect.stringMatching(/did not finish in time.*try again/i)
+      message: expect.stringMatching(/outcome is unknown.*verify before retrying/i)
     });
   });
   it("surfaces the host error from every failed action result", () => {
@@ -46,7 +46,7 @@ describe("dashboard action feedback", () => {
   it("turns a client-side action timeout into an actionable warning", () => {
     expect(noticeFromActionTimeout("configureEncryptedSync")).toEqual({
       level: "warning",
-      message: "Configure encrypted sync did not finish in time. Check VS Code notifications, then try again."
+      message: "Configure encrypted sync was not confirmed in time. Its outcome is unknown; refresh and verify before retrying."
     });
   });
 

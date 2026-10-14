@@ -49,7 +49,7 @@ export function noticeFromActionResult(
 export function noticeFromActionTimeout(action: DashboardActionName): DashboardNotice {
   return {
     level: "warning",
-    message: `${formatActionName(action)} did not finish in time. Check VS Code notifications, then try again.`
+    message: `${formatActionName(action)} was not confirmed in time. Its outcome is unknown; refresh and verify before retrying.`
   };
 }
 

@@ -178,6 +178,11 @@ describe("auto refresh scheduler", () => {
     };
     const repo = { listAccounts: vi.fn(async () => [account]) } as unknown as AccountsRepository;
     const onRefresh = vi.fn();
+    refreshSingleQuotaSafelyMock.mockImplementationOnce(async () => {
+      account.quotaSummary.hourlyPercentage = 100;
+      account.quotaSummary.hourlyResetTime = Date.now() / 1000 + 3600;
+      return true;
+    });
     const disposable = registerAutoRefreshScheduler({
       context: { subscriptions: [] } as never,
       repo,
@@ -185,7 +190,9 @@ describe("auto refresh scheduler", () => {
       canRefreshAccount: () => true
     });
 
-    await vi.advanceTimersByTimeAsync(6_000);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() =>
       expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), account.id, {
         allowTokenRefresh: true,
@@ -308,18 +315,19 @@ describe("auto refresh scheduler", () => {
     disposable.dispose();
   });
 
-  it("does not refresh a due reset when both configured quota cadences are off", async () => {
+  it("refreshes a due reset once even when both periodic quota cadences are off", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) =>
         key === "autoRefreshMinutes" || key === "autoRefreshCurrentMinutes" ? 0 : fallback
     } as never);
+    const resetAt = Date.now() / 1_000 - 2;
     const repo = {
       listAccounts: vi.fn(async () => [
         {
           id: "disabled-cadence",
           isActive: true,
           enabled: true,
-          quotaSummary: { weeklyResetTime: Date.now() / 1_000 - 2 }
+          quotaSummary: { weeklyResetTime: resetAt }
         }
       ])
     } as unknown as AccountsRepository;
@@ -329,12 +337,12 @@ describe("auto refresh scheduler", () => {
       onRefresh: vi.fn()
     });
     await vi.advanceTimersByTimeAsync(600_000);
-    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
-    expect(maybeAutoSwitchForActiveQuotaMock).not.toHaveBeenCalled();
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledOnce();
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledOnce();
     disposable.dispose();
   });
 
-  it("does not poll an inactive reset through the current-account cadence", async () => {
+  it("refreshes an inactive account on expiry when only current-account auto-refresh is enabled", async () => {
     const repo = {
       listAccounts: vi.fn(async () => [
         { id: "inactive", isActive: false, enabled: true, quotaSummary: { weeklyResetTime: Date.now() / 1_000 - 2 } }
@@ -345,9 +353,197 @@ describe("auto refresh scheduler", () => {
       repo,
       onRefresh: vi.fn()
     });
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledWith(repo, expect.anything(), "inactive", expect.anything());
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
     disposable.dispose();
+  });
+
+  it.each(["review", "additional-hourly", "additional-weekly"])("refreshes when the %s countdown expires", async (window) => {
+    const resetAt = Date.now() / 1_000 + 3;
+    const quotaSummary = window === "review"
+      ? { codeReviewWindowPresent: true, codeReviewResetTime: resetAt }
+      : { additionalRateLimits: [{
+          limitName: "Model quota",
+          hourlyWindowPresent: window === "additional-hourly",
+          hourlyResetTime: resetAt,
+          weeklyWindowPresent: window === "additional-weekly",
+          weeklyResetTime: resetAt
+        }] };
+    const repo = { listAccounts: vi.fn(async () => [{ id: window, enabled: true, quotaSummary }]) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    scheduler.dispose();
+  });
+
+  it("ignores missing, invalid, hidden and disabled reset windows", async () => {
+    const due = Date.now() / 1_000 - 2;
+    const accounts = [
+      { id: "missing", enabled: true },
+      { id: "invalid", enabled: true, quotaSummary: { hourlyResetTime: Number.NaN, weeklyResetTime: Number.POSITIVE_INFINITY, codeReviewWindowPresent: true, codeReviewResetTime: -1 } },
+      { id: "hidden", enabled: true, quotaSummary: { hourlyWindowPresent: false, hourlyResetTime: due, weeklyWindowPresent: false, weeklyResetTime: due, codeReviewWindowPresent: false, codeReviewResetTime: due, additionalRateLimits: [
+        { limitName: "Model quota", hourlyWindowPresent: false, hourlyResetTime: due },
+        { limitName: "Reserve quota", weeklyWindowPresent: true, weeklyResetTime: due }
+      ] } },
+      { id: "disabled", enabled: false, isActive: false, quotaSummary: { weeklyResetTime: due } }
+    ];
+    const repo = { listAccounts: vi.fn(async () => accounts) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    scheduler.dispose();
+  });
+
+  it("discovers an account added after startup and schedules changed reset deadlines", async () => {
+    const accounts = [] as Array<{ id: string; enabled: boolean; quotaSummary: { weeklyResetTime: number } }>;
+    const repo = { listAccounts: vi.fn(async () => accounts) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+    accounts.push({ id: "imported", enabled: true, quotaSummary: { weeklyResetTime: (Date.now() + 8_000) / 1_000 } });
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    accounts[0].quotaSummary.weeklyResetTime = (Date.now() + 4_000) / 1_000;
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(2);
+    scheduler.dispose();
+  });
+
+  it.each(["removed", "disabled", "postponed"])("rechecks a deadline whose account was %s", async (change) => {
+    const accounts = [{ id: "changed", enabled: true, quotaSummary: { weeklyResetTime: (Date.now() + 3_000) / 1_000 } }];
+    const repo = { listAccounts: vi.fn(async () => accounts) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(1_000);
+    if (change === "removed") accounts.pop();
+    if (change === "disabled") accounts[0].enabled = false;
+    if (change === "postponed") accounts[0].quotaSummary.weeklyResetTime += 3_600;
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    scheduler.dispose();
+  });
+
+  it("recovers a failed initial snapshot read without waiting for the periodic cadence", async () => {
+    const account = { id: "initial-read-retry", enabled: true, quotaSummary: { weeklyResetTime: Date.now() / 1_000 - 2 } };
+    const repo = { listAccounts: vi.fn().mockResolvedValue([account]).mockRejectedValueOnce(new Error("Storage unavailable")) } as unknown as AccountsRepository;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    scheduler.dispose();
+  });
+
+  it("refreshes after ownership returns without exhausting failure retries while unowned", async () => {
+    let owned = false;
+    const account = { id: "ownership-recovery", enabled: true, quotaSummary: { weeklyResetTime: Date.now() / 1_000 - 2 } };
+    const repo = { listAccounts: vi.fn(async () => [account]) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn(), canRefreshAccount: () => owned });
+    await vi.advanceTimersByTimeAsync(20 * 60_000);
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    owned = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    scheduler.dispose();
+  });
+
+  it("shares simultaneous deadlines and does not duplicate an in-flight expiry refresh", async () => {
+    let finish: ((value: boolean) => void) | undefined;
+    refreshSingleQuotaSafelyMock.mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    const due = Date.now() / 1_000 - 2;
+    const account = { id: "in-flight", enabled: true, quotaSummary: { hourlyResetTime: due, weeklyResetTime: due, codeReviewWindowPresent: true, codeReviewResetTime: due } };
+    const repo = { listAccounts: vi.fn(async () => [account]) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    finish?.(true);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    scheduler.dispose();
+  });
+
+  it("keeps a pending countdown refresh when periodic polling is turned off", async () => {
+    let enabled = true;
+    let configurationChanged: ((event: vscode.ConfigurationChangeEvent) => void) | undefined;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => key === "autoRefreshMinutes" ? (enabled ? 5 : 0) : key === "autoRefreshCurrentMinutes" ? 0 : fallback
+    } as never);
+    vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((listener) => {
+      configurationChanged = listener;
+      return { dispose: vi.fn() };
+    });
+    const account = { id: "config-reset", enabled: true, quotaSummary: { weeklyResetTime: (Date.now() + 3_000) / 1_000 } };
+    const repo = { listAccounts: vi.fn(async () => [account]) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(1_000);
+    enabled = false;
+    configurationChanged?.({ affectsConfiguration: (key: string) => key === "codexManager.autoRefreshMinutes" } as never);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    enabled = true;
+    configurationChanged?.({ affectsConfiguration: (key: string) => key === "codexManager.autoRefreshMinutes" } as never);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(1);
+    scheduler.dispose();
+  });
+
+  it("retries an expired countdown that still reports zero, then stops after quota recovers", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
+      key === "autoRefreshMinutes" || key === "autoRefreshCurrentMinutes" ? 0 : fallback } as never);
+    const account = { id: "still-zero", enabled: true, lastQuotaAt: Date.now(),
+      quotaSummary: { weeklyPercentage: 0, weeklyResetTime: Date.now() / 1000 - 2 } };
+    const repo = { listAccounts: vi.fn(async () => [account]) } as unknown as AccountsRepository;
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledOnce();
+    refreshSingleQuotaSafelyMock.mockImplementationOnce(async () => {
+      account.quotaSummary.weeklyPercentage = 100;
+      account.quotaSummary.weeklyResetTime = Date.now() / 1000 + 3600;
+      account.lastQuotaAt = Date.now();
+      return true;
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(2);
+    scheduler.dispose();
+  });
+
+  it("reuses a successful post-reset refresh without another request after startup", async () => {
+    const account = { id: "already-refreshed", enabled: true, lastQuotaAt: Date.now(),
+      quotaSummary: { weeklyPercentage: 100, weeklyResetTime: Date.now() / 1000 - 2 } };
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never,
+      repo: { listAccounts: async () => [account] } as never, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
+    scheduler.dispose();
+  });
+
+  it("recovers an expired account after an extended outage when no periodic fallback covers it", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
+      key === "autoRefreshMinutes" || key === "autoRefreshCurrentMinutes" ? 0 : fallback } as never);
+    const account = { id: "outage-reset", enabled: true, quotaSummary: { weeklyPercentage: 0, weeklyResetTime: Date.now() / 1000 - 2 } };
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never,
+      repo: { listAccounts: async () => [account] } as never, onRefresh: vi.fn() });
+    refreshSingleQuotaSafelyMock.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(17 * 60_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(6);
+    refreshSingleQuotaSafelyMock.mockImplementationOnce(async () => {
+      account.quotaSummary.weeklyPercentage = 100;
+      account.quotaSummary.weeklyResetTime = Date.now() / 1000 + 3600;
+      return true;
+    });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(refreshSingleQuotaSafelyMock).toHaveBeenCalledTimes(7);
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledOnce();
+    scheduler.dispose();
   });
 
   it("does not recreate quota-reset timers after disposal", async () => {

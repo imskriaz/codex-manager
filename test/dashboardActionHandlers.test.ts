@@ -15,6 +15,7 @@ const { consumeResetCreditMock, fetchResetCreditsMock, refreshQuotaMock } = vi.h
 const { unloadAuthFileMock } = vi.hoisted(() => ({
   unloadAuthFileMock: vi.fn()
 }));
+const { archiveSessionMock } = vi.hoisted(() => ({ archiveSessionMock: vi.fn() }));
 const { readCodexCliSessionsMock, readCodexCliSessionSummaryMock, readCodexCliSessionMessagesMock, sendCodexCliSessionMessageMock, steerCodexCliSessionTurnMock } = vi.hoisted(
   () => ({
     readCodexCliSessionsMock: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock("../src/services/codexSessionResume", async () => {
   );
   return {
     ...actual,
+    archiveCodexCliSession: archiveSessionMock,
     readCodexCliSessions: readCodexCliSessionsMock,
     readCodexCliSessionSummary: readCodexCliSessionSummaryMock,
     readCodexCliSessionMessages: readCodexCliSessionMessagesMock,
@@ -115,6 +117,44 @@ describe("CLI session list freshness", () => {
 });
 
 describe("executeDashboardActionMessage", () => {
+  it("preserves session mutation success when discovery fails afterward", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+    const session = { id: "01a04882-d037-7a42-ad24-9afb61901188", title: "Chat", status: "idle", archived: false };
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
+    archiveSessionMock.mockResolvedValueOnce(undefined);
+    readCodexCliSessionsMock.mockRejectedValueOnce(new Error("discovery unavailable"));
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "archiveCodexCliSession", requestId: "archive-discovery-failure", payload: { sessionId: session.id } });
+    expect(result).toMatchObject({ status: "completed", payload: { notice: { level: "warning", message: expect.stringContaining("discovery unavailable") } } });
+    expect(archiveSessionMock).toHaveBeenCalledWith(session.id);
+  });
+  it("returns a failed quota action when the command returns a provider error", async () => {
+    const ctx = createContext();
+    ctx.repo = { getAccount: vi.fn(async () => ({ id: "one" })) } as never;
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValueOnce({ error: { message: "Provider offline" } });
+    const result = await executeDashboardActionMessage(ctx, { type: "dashboard:action", action: "refresh", accountId: "one", requestId: "quota-provider-error" });
+    expect(result).toMatchObject({ status: "failed", errorMessage: "Provider offline" });
+  });
+
+  it("counts returned provider errors in a quota batch and refreshes duplicate IDs once", async () => {
+    const { context, account } = createResetContext();
+    refreshQuotaMock.mockResolvedValue({ error: { message: "Provider unavailable", timestamp: Date.now() } });
+    const result = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "batchRefresh", requestId: "batch-provider-error", payload: { accountIds: [account.id, account.id] } });
+    expect(result.payload?.batchResult).toMatchObject({ successCount: 0, failedCount: 1, failures: [{ accountId: account.id, message: "Provider unavailable" }] });
+    expect(refreshQuotaMock).toHaveBeenCalledOnce();
+  });
+
+  it("finishes a sent turn without scanning unrelated sessions and warns if transcript loading fails", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+    const session = { id: "01a04882-d037-7a42-ad24-9afb61901188", title: "Chat", status: "idle", archived: false };
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
+    readCodexCliSessionMessagesMock.mockRejectedValueOnce(new Error("history unavailable"));
+    readCodexCliSessionsMock.mockClear().mockReturnValue(new Promise(() => undefined));
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "sendCodexCliSessionMessage", requestId: "turn-history-failure", payload: { sessionId: session.id, text: "Continue" } });
+    expect(result).toMatchObject({ status: "completed", payload: { cliSession: { id: session.id }, notice: { level: "warning", message: expect.stringContaining("history unavailable") } } });
+    expect(readCodexCliSessionsMock).not.toHaveBeenCalled();
+    expect(result.payload?.cliSessionMessages).toBeUndefined();
+    readCodexCliSessionsMock.mockReset();
+  });
   it("bounds the request queue and expires settled requests before admitting another", async () => {
     const ctx = createContext();
     const request = { type: "dashboard:action" as const, action: "steerCodexCliSessionTurn" as const,
@@ -617,7 +657,7 @@ describe("executeDashboardActionMessage", () => {
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.restartExtensionHost");
   });
 
-  it("forces a reload when the VS Code dashboard Reload button is clicked", async () => {
+  it("delivers the action result before restarting when the dashboard Reload button is clicked", async () => {
     vi.mocked(vscode.commands.executeCommand).mockReset().mockResolvedValue(undefined);
     const account = { id: "account-next", email: "next@example.com" };
     const context = {
@@ -636,7 +676,8 @@ describe("executeDashboardActionMessage", () => {
 
     expect(result.status).toBe("completed");
     expect(result.payload?.notice?.message).toMatch(/reloading/i);
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+    expect(result.payload?.reloadScheduled).toBe(true);
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.restartExtensionHost");
   });
 
   it("reloads manually when no saved account is selected", async () => {
@@ -649,10 +690,14 @@ describe("executeDashboardActionMessage", () => {
     });
     expect(result.status).toBe("completed");
     expect(result.payload?.notice?.message).toMatch(/reloading/i);
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+    expect(result.payload?.reloadScheduled).toBe(true);
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.restartExtensionHost");
   });
 
   it("switches directly for the port dashboard and schedules reload after its response", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => key === "autoSwitchReloadWindowEnabled" ? true : fallback
+    } as vscode.WorkspaceConfiguration);
     setCurrentWindowRuntimeAccountId("current-window-account");
     vi.mocked(vscode.commands.executeCommand).mockClear();
     const account = {
@@ -773,7 +818,7 @@ describe("executeDashboardActionMessage", () => {
 
     expect(result.status).toBe("completed");
     expect(repo.switchAccount).not.toHaveBeenCalled();
-    expect(result.payload?.notice?.message).toBe("race@example.com is already active.");
+    expect(result.payload?.notice?.message).toContain("race@example.com is already active.");
   });
 
   it("keeps the VS Code webview switch on the registered VS Code command", async () => {
@@ -1642,6 +1687,33 @@ describe("executeDashboardActionMessage", () => {
       level: "info",
       message: "Enabled 2 valid accounts; skipped 2 invalid accounts."
     });
+  });
+
+  it("queues a browser account change without falsely scheduling reload while auto reload is off", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    setCurrentWindowRuntimeAccountId("previous");
+    vi.mocked(vscode.commands.executeCommand).mockReset();
+    const account = { id: "reload-off-target", email: "target@example.test", isActive: false };
+    const repo = { getAccount: async () => account, switchAccount: vi.fn(async () => account), flush: async () => undefined };
+    const result = await executeDashboardActionMessage({ ...createContext(), repo: repo as never, hostKind: "browser" }, {
+      type: "dashboard:action", action: "switch", requestId: "reload-off-switch", accountId: account.id
+    });
+    expect(result).toMatchObject({ status: "completed", payload: { reloadScheduled: false,
+      notice: { message: expect.stringContaining("Reload VS Code to apply this account") } } });
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("retries a browser reload for the already-active isolated account without another auth write", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
+      ["autoSwitchReloadWindowEnabled", "crossWindowAccountModeEnabled"].includes(key) ? true : fallback } as never);
+    setCurrentWindowRuntimeAccountId(undefined);
+    const account = { id: "isolated-retry", email: "target@example.test", isActive: true };
+    const repo = { getAccount: async () => account, switchAccount: vi.fn(), flush: async () => undefined };
+    const result = await executeDashboardActionMessage({ ...createContext(), repo: repo as never, hostKind: "browser" }, {
+      type: "dashboard:action", action: "switch", requestId: "isolated-retry-switch", accountId: account.id
+    });
+    expect(result.payload?.reloadScheduled).toBe(true);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
   });
 
   it("reports accounts that encrypted sync prevents Enable All from claiming", async () => {

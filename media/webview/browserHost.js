@@ -8,12 +8,17 @@
   let lastSyncAt;
   let lastProbeAt = 0;
   let snapshotInFlight;
+  let latestSnapshot;
   let hiddenAt;
   const pendingSocketActions = new Map();
   const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage"].includes(message?.action)
     ? 15 * 60_000 + 15_000
     : ["addAccount", "importCurrent", "startOAuthAutoFlow"].includes(message?.action)
-      ? 10 * 60_000 + 30_000 : 135_000;
+      ? 10 * 60_000 + 30_000
+      : ["refreshAll", "batchRefresh", "batchResyncProfile"].includes(message?.action)
+        ? (message.action === "batchResyncProfile" ? 300_000 : 240_000) * Math.max(1, message.payload?.accountIds?.length || lastAccountCount) + 15_000
+        : message?.action === "refreshView" ? 8_000 : message?.action === "resyncProfile" ? 315_000 : message?.action === "refresh" ? 255_000 : 135_000;
+  let lastAccountCount = 1;
   const forgetSocketAction = (requestId) => {
     const pending = pendingSocketActions.get(requestId);
     if (pending?.timer !== undefined) window.clearTimeout?.(pending.timer);
@@ -21,6 +26,10 @@
   };
 
   const dispatch = (message) => {
+    if (message?.type === "dashboard:snapshot") {
+      latestSnapshot = message;
+      lastAccountCount = message.state?.accounts?.length || 1;
+    }
     window.dispatchEvent(new MessageEvent("message", { data: message }));
   };
 
@@ -201,6 +210,8 @@
   const postMessage = async (message) => {
     if (message?.type === "dashboard:ready" || message?.type === "dashboard:retry-connection") {
       const manual = message.type === "dashboard:retry-connection";
+      // Startup snapshots can arrive before the dashboard installs its listener.
+      if (latestSnapshot) dispatch(latestSnapshot);
       publishConnection();
       if (manual) restartRealtime();
       try {
@@ -219,7 +230,9 @@
     let reachedHost = false;
     let timer;
     try {
-      if (realtimeSocket && realtimeSocket.readyState === window.WebSocket.OPEN) {
+      if (isBrowserOffline()) throw new Error("The browser is offline. This action was not sent; reconnect and try again.");
+      // Manual view recovery must work even when an open socket stops responding.
+      if (realtimeSocket && realtimeSocket.readyState === window.WebSocket.OPEN && message?.action !== "refreshView") {
         reachedHost = true;
         if (message?.type === "dashboard:action" && message.requestId) {
           if (pendingSocketActions.has(message.requestId)) return;

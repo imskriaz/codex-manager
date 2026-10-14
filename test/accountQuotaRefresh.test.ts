@@ -53,6 +53,7 @@ vi.mock("../src/application/accounts/switchEffects", () => ({
 import {
   maybeAutoSwitchForActiveQuota,
   maybeWarnForAccount,
+  refreshImportedAccountQuota,
   refreshSingleQuota,
   refreshSingleQuotaSafely
 } from "../src/application/accounts/quota";
@@ -88,7 +89,7 @@ describe("refreshSingleQuota token automation state", () => {
     clearTokenAutomationErrorMock.mockReset();
     handleCodexAppRestartPreferenceMock.mockReset();
     autoReloadWindowForAccountMock.mockReset();
-    promptWindowReloadForAccountMock.mockReset();
+    promptWindowReloadForAccountMock.mockReset().mockResolvedValue(false);
     reloadWindowNowMock.mockReset();
   });
 
@@ -122,6 +123,51 @@ describe("refreshSingleQuota token automation state", () => {
 
     expect(repo.getTokens).toHaveBeenCalledWith(account.id, { bypassCache: true });
     expect(clearTokenAutomationErrorMock).toHaveBeenCalledWith(account.id);
+  });
+
+  it("finishes quota refresh while optional subscription work is pending and persists it on completion", async () => {
+    let finish!: () => void;
+    const subscription = new Promise<void>(resolve => { finish = resolve; });
+    const repo = {
+      getAccount: vi.fn(async () => account), getTokens: vi.fn(async () => tokens),
+      updateQuota: vi.fn(async () => account), refreshSubscriptionState: vi.fn(() => subscription),
+      flush: vi.fn(async () => undefined)
+    };
+    const view = { refresh: vi.fn() };
+    refreshQuotaMock.mockResolvedValue({});
+    await expect(refreshSingleQuota(repo as unknown as AccountsRepository, view, account.id, { warnQuota: false })).resolves.toEqual({});
+    expect(repo.refreshSubscriptionState).toHaveBeenCalled();
+    const previousFlushes = repo.flush.mock.calls.length;
+    finish();
+    await subscription;
+    await Promise.resolve();
+    expect(repo.flush.mock.calls.length).toBeGreaterThan(previousFlushes);
+  });
+
+  it("preserves subscription failure when account-info sync explicitly requires it", async () => {
+    const repo = {
+      getAccount: vi.fn(async () => account), getTokens: vi.fn(async () => tokens),
+      updateQuota: vi.fn(async () => account), refreshSubscriptionState: vi.fn(async () => { throw new Error("subscription offline"); })
+    };
+    refreshQuotaMock.mockResolvedValue({});
+    await expect(refreshSingleQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() }, account.id,
+      { awaitSubscriptionRefresh: true, warnQuota: false })).rejects.toThrow("subscription offline");
+  });
+
+  it("returns a pending warning for initial quota enrichment and persists its later result", async () => {
+    let finish!: (result: object) => void;
+    refreshQuotaMock.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const repo = {
+      getAccount: vi.fn(async () => account), getTokens: vi.fn(async () => tokens),
+      updateQuota: vi.fn(async () => account), refreshSubscriptionState: vi.fn(async () => undefined),
+      flush: vi.fn(async () => undefined)
+    };
+    const result = await refreshImportedAccountQuota(repo as unknown as AccountsRepository, account.id);
+    expect(result.error?.message).toContain("account is saved");
+    expect(repo.updateQuota).not.toHaveBeenCalled();
+    finish({});
+    await vi.waitFor(() => expect(repo.updateQuota).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(repo.flush).toHaveBeenCalled());
   });
 
   it("shows a terminal success notification after a manual quota refresh", async () => {
@@ -526,17 +572,42 @@ describe("refreshSingleQuota token automation state", () => {
     } finally { release(["running"]); }
   });
 
-  it("continues automatic switching with a warning on inconclusive session inspection", async () => {
+  it("pauses automatic switching with a warning on inconclusive session inspection", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
     const active = createAccount("inspection-active", true, 0, 0);
     const next = createAccount("inspection-next", false, 90, 90);
     setCurrentWindowRuntimeAccountId(next.id);
     const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
     vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockRejectedValue(new Error("Storage unavailable"));
-    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(next.id);
-    expect(isAutoSwitchWaitingForSessions()).toBe(false);
-    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("will continue"));
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    expect(isAutoSwitchWaitingForSessions()).toBe(true);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("Manual switching is still available"));
+  });
+
+  it("does not hold automatic selection on an unanswered reload prompt", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => key === "autoSwitchEnabled" ? true : fallback } as never);
+    const active = createAccount("prompt-active", true, 0, 0);
+    const next = createAccount("prompt-next", false, 90, 90);
+    setCurrentWindowRuntimeAccountId(active.id);
+    promptWindowReloadForAccountMock.mockReturnValue(new Promise(() => undefined));
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    await expect(maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).resolves.toBe(true);
+    await expect(maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).resolves.toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledTimes(2);
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.switchResult).toBe("switched");
+  });
+
+  it("reports a cancelled automatic reload as a pending account change", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchReloadWindowEnabled"].includes(key) ? true : fallback } as never);
+    const active = createAccount("cancel-reload-active", true, 0, 0);
+    const next = createAccount("cancel-reload-next", false, 90, 90);
+    setCurrentWindowRuntimeAccountId(active.id);
+    autoReloadWindowForAccountMock.mockResolvedValue(false);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    await expect(maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).resolves.toBe(true);
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).toContain("Reload VS Code to apply this account");
+    expect(consumeAutoSwitchNotice()).toBeUndefined();
   });
 
   it.each([
@@ -1006,9 +1077,9 @@ describe("refreshSingleQuota token automation state", () => {
 
     expect(switched).toBe(true);
     expect(handleCodexAppRestartPreferenceMock).toHaveBeenCalledWith({ allowManualPrompt: false });
-    expect(autoReloadWindowForAccountMock).toHaveBeenCalledWith(next.id);
-    expect(consumeAutoSwitchNotice()).toBe("Switched to next@example.com and reloaded.");
-    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).toBe("Switched to next@example.com and reloaded.");
+    expect(autoReloadWindowForAccountMock).toHaveBeenCalledWith(next.id, true);
+    expect(consumeAutoSwitchNotice()).toEqual(expect.stringContaining("Codex reloaded"));
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).toContain("Codex reloaded");
   });
 
   it("shows a notification when auto switch succeeds without requiring a reload", async () => {

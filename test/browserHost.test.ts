@@ -3,6 +3,49 @@ import { runInNewContext } from "vm";
 import { describe, expect, it, vi } from "vitest";
 
 describe("browser dashboard bridge", () => {
+  it("replays an earlier snapshot immediately when a dashboard listener becomes ready", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const snapshot = { accounts: [{ id: "one" }] };
+    let finishSecond!: (response: unknown) => void;
+    const response = { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => snapshot };
+    const fetchMock = vi.fn().mockResolvedValueOnce(response).mockImplementationOnce(() => new Promise(resolve => { finishSecond = resolve; }));
+    const windowMock = {
+      dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { reload: vi.fn() },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock, MessageEvent: Event, fetch: fetchMock,
+      console: { error: vi.fn(), warn: vi.fn() }, Error, Array, JSON, Date, Map
+    });
+    const post = windowMock.acquireVsCodeApi!().postMessage;
+    await post({ type: "dashboard:ready" });
+    events.length = 0;
+    const pending = post({ type: "dashboard:ready" });
+    expect(events).toContainEqual({ type: "dashboard:snapshot", state: snapshot });
+    finishSecond(response);
+    await pending;
+  });
+  it("rejects an offline browser action immediately without sending it or starting a timeout", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn();
+    const timer = vi.fn();
+    const windowMock = {
+      dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      setTimeout: timer, clearTimeout: vi.fn(), location: { reload: vi.fn() },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock, navigator: { onLine: false }, MessageEvent: Event, fetch: fetchMock,
+      console: { error: vi.fn(), warn: vi.fn() }, Error, Array, JSON, Date, Map
+    });
+    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", action: "switch", requestId: "offline" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(timer).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({ requestId: "offline", status: "failed", error: expect.stringContaining("was not sent") }));
+  });
   it("replaces stale sockets on retry, network recovery, and suspension without replaying actions", async () => {
     const events: Array<Record<string, unknown>> = [], sockets: Socket[] = [];
     const listeners = new Map<string, () => void>();
@@ -199,6 +242,14 @@ describe("browser dashboard bridge", () => {
 
     expect(windowMock.setInterval).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => "application/json" },
+      json: async () => ({ messages: [{ type: "dashboard:action-result", action: "refreshView", requestId: "recover-view", status: "completed" }] })
+    });
+    await windowMock.acquireVsCodeApi?.().postMessage({ type: "dashboard:action", action: "refreshView", requestId: "recover-view" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/message", expect.objectContaining({ method: "POST" }));
+    expect(sockets[0]!.send).toHaveBeenCalledTimes(1);
+    expect(events).toContainEqual(expect.objectContaining({ requestId: "recover-view", status: "completed" }));
   });
 
   it("does not close a browser WebSocket re-entrantly from its error event", () => {

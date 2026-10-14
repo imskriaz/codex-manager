@@ -5,6 +5,7 @@ export type PendingActionRequest = {
   action: DashboardActionName;
   accountId?: string;
   requestedAt: number;
+  timeoutMs?: number;
 };
 
 export type AppState = {

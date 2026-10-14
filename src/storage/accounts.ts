@@ -81,8 +81,10 @@ import {
   readAuthFile,
   writeAuthFile
 } from "../codex";
-import { refreshTokens } from "../auth/oauth";
-import { createKeyedMutex } from "../utils/concurrency";
+import { needsTokenRefresh, refreshTokens } from "../auth/oauth";
+import { createKeyedMutex, waitWithin } from "../utils/concurrency";
+import { publishDashboardRealtime } from "../services/dashboardRealtime";
+import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
 import { normalizeResetCreditExpiry, normalizeResetCreditIds, normalizeUsableResetCount } from "../utils/quotaWindows";
 import {
   CodexManagerAccountRecord,
@@ -539,21 +541,28 @@ export class AccountsRepository {
       });
     }
 
+    const freshIndex = await this.readIndex();
+    const freshAccount = freshIndex.accounts.find((item) => item.id === accountId);
+    const freshTokens = await this.getTokens(accountId, { bypassCache: true });
+    if (!freshAccount || !freshTokens || !areTokenCredentialsEqual(tokens, freshTokens)) {
+      throw new Error("The account changed while its profile was refreshing. Refresh the account and try again.");
+    }
+
     if (
       applyRemoteProfileFromTokens({
-        account,
+        account: freshAccount,
         tokens,
         remoteProfile,
-        planType: account.planType,
+        planType: freshAccount.planType,
         allowAccountIdRepair: true
       })
     ) {
-      account.updatedAt = Date.now();
-      account.dismissedHealthIssueKey = undefined;
-      this.writeIndex(index);
+      freshAccount.updatedAt = Date.now();
+      freshAccount.dismissedHealthIssueKey = undefined;
+      this.writeIndex(freshIndex);
     }
 
-    return account;
+    return freshAccount;
   }
 
   async dismissHealthIssue(accountId: string, issueKey?: string): Promise<CodexManagerAccountRecord> {
@@ -634,12 +643,7 @@ export class AccountsRepository {
     };
 
     // 异步获取远程配置，不阻塞主要流程
-    let remoteProfile;
-    try {
-      remoteProfile = await fetchRemoteAccountProfile(tokens);
-    } catch {
-      remoteProfile = undefined;
-    }
+    const remoteProfile = options.identityFallback ? undefined : await this.readOptionalAccountProfile(tokens);
 
     const index = options.allowRecoveryWrite ? await this.readIndexForRecovery() : await this.readIndex();
     const previousActiveId = index.currentAccountId;
@@ -968,10 +972,15 @@ export class AccountsRepository {
         await claimCrossWindowAccount(accountId);
       }
       let account: CodexManagerAccountRecord;
+      let authChanged = false;
       try {
         await this.switchCoordinator?.prepareAccountSwitch(accountId);
-        account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true);
+        account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true, () => { authChanged = true; });
+        await this.flush();
       } catch (error) {
+        if (authChanged) {
+          throw new Error(`The Codex credentials changed, but the account selection could not be saved: ${error instanceof Error ? error.message : String(error)}. Check storage and the active account before retrying.`);
+        }
         try { await this.switchCoordinator?.cancelAccountSwitch(accountId); }
         catch { void vscode.window.showWarningMessage("The switch failed and its account claim could not be released. Reconnect and sync claims before retrying."); }
         if (parallelMode && previousAccountId !== accountId) {
@@ -988,9 +997,10 @@ export class AccountsRepository {
     }));
   }
 
-  private async switchAccountLocked(accountId: string, forceTokenRefresh = false): Promise<CodexManagerAccountRecord> {
-    const index = await this.readIndex();
-    const account = index.accounts.find((item) => item.id === accountId);
+  private async switchAccountLocked(accountId: string, forceTokenRefresh: boolean, onAuthWritten: () => void): Promise<CodexManagerAccountRecord> {
+    let index = await this.readIndex();
+    assertWriteAllowed(this.state);
+    let account = index.accounts.find((item) => item.id === accountId);
 
     if (!account) {
       throw createError.accountNotFound(accountId);
@@ -1004,13 +1014,28 @@ export class AccountsRepository {
     }
 
     // 切号前按需刷新 token，避免写入过期 token 导致 codex 登录失败（对齐 cockpit switch_account_managed）
-    const effectiveTokens = {
+    let effectiveTokens = {
       ...tokens,
       accountId: account.accountId ?? tokens.accountId
     };
 
     let backgroundRotation: (() => Promise<void>) | undefined;
-    if (forceTokenRefresh && tokens.refreshToken) {
+    if (needsTokenRefresh(tokens, 0)) {
+      if (!tokens.refreshToken) throw new Error(`The saved credentials for ${account.email} have expired. Reauthorize the account before switching.`);
+      const refreshed = await refreshTokens(tokens.refreshToken, tokens.idToken);
+      effectiveTokens = { ...refreshed, accountId: refreshed.accountId ?? account.accountId ?? tokens.accountId };
+      index = await this.readIndex();
+      assertWriteAllowed(this.state);
+      account = index.accounts.find((item) => item.id === accountId);
+      if (!account) throw createError.accountNotFound(accountId);
+      const latestTokens = await this.getTokens(accountId, { bypassCache: true });
+      if (!latestTokens || !areTokenCredentialsEqual(tokens, latestTokens)) {
+        throw new Error("The account credentials changed during token refresh. Refresh the account and try again.");
+      }
+      await this.secretStore.setTokens(accountId, effectiveTokens);
+      this.invalidateTokenCache();
+    } else if (forceTokenRefresh && tokens.refreshToken) {
+      const accountSnapshot = account;
       // Manual switching must remain immediate. Rotate in the background after
       // the new auth file is written; updateTokens will rewrite auth.json only
       // if this account is still active when the rotation completes.
@@ -1019,15 +1044,20 @@ export class AccountsRepository {
           const refreshed = await refreshTokens(tokens.refreshToken!, tokens.idToken);
           await this.updateTokens(accountId, {
             ...refreshed,
-            accountId: refreshed.accountId ?? account.accountId ?? tokens.accountId
+            accountId: refreshed.accountId ?? accountSnapshot.accountId ?? tokens.accountId
           });
         } catch (error) {
-          console.warn(`[codexManager] token rotation failed after switching ${account.email}:`, error);
+          console.warn(`[codexManager] token rotation failed after switching ${accountSnapshot.email}:`, error);
+          const message = `Switched to ${accountSnapshot.email}, but its token refresh failed: ${error instanceof Error ? error.message : String(error)}. Refresh or reauthorize this account if Codex cannot connect.`;
+          publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+          if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
         }
       };
     }
 
     await writeAuthFile(effectiveTokens);
+    onAuthWritten();
+    index = await this.readIndex();
 
     const nextAccount = switchActiveAccount(index, accountId, Date.now(), this.codexHomeStateKey);
     if (!nextAccount) {
@@ -1173,6 +1203,13 @@ export class AccountsRepository {
     updatedPlanType?: string,
     updatedSubscriptionActiveUntil?: string
   ): Promise<CodexManagerAccountRecord> {
+    const storedTokens = updatedTokens ?? (await this.secretStore.getTokens(accountId));
+    const before = await this.getAccount(accountId);
+    let remoteProfile;
+    if (storedTokens && before && shouldAttemptRemoteProfileRepair(before, updatedPlanType ?? before.planType)) {
+      remoteProfile = await this.readOptionalAccountProfile(storedTokens);
+    }
+    // Apply the quota to the latest index after optional network work finishes.
     const index = await this.readIndex();
     const account = index.accounts.find((item) => item.id === accountId);
 
@@ -1189,24 +1226,18 @@ export class AccountsRepository {
       updatedSubscriptionActiveUntil,
       now
     });
-    const storedTokens = updatedTokens ?? (await this.secretStore.getTokens(accountId));
     const previousStoredAccountId = storedTokens?.accountId;
     if (storedTokens) {
       syncLoginAtFromTokens(account, storedTokens);
     }
 
-    if (storedTokens && shouldAttemptRemoteProfileRepair(account, effectivePlanType)) {
-      // Keep profile repair in the same central operation so it cannot write
-      // an older index snapshot after another VS Code window starts an action.
-      const remoteProfile = await fetchRemoteAccountProfile(storedTokens).catch(() => undefined);
-      if (remoteProfile) {
-        applyRemoteProfileFromTokens({
-          account,
-          tokens: storedTokens,
-          remoteProfile,
-          planType: effectivePlanType
-        });
-      }
+    if (storedTokens && remoteProfile) {
+      applyRemoteProfileFromTokens({
+        account,
+        tokens: storedTokens,
+        remoteProfile,
+        planType: effectivePlanType
+      });
     }
 
     const nextStoredTokens =
@@ -1226,6 +1257,25 @@ export class AccountsRepository {
     this.writeIndex(index);
 
     return account;
+  }
+
+  private reportProfileRefreshWarning(error: unknown): void {
+    const message = `Local account changes can continue, but profile details could not refresh: ${error instanceof Error ? error.message : String(error)}. Resync the profile later.`;
+    publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+    if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
+  }
+
+  private async readOptionalAccountProfile(tokens: CodexTokens) {
+    const controller = new AbortController();
+    try {
+      return await waitWithin(fetchRemoteAccountProfile(tokens, { signal: controller.signal }), 500, "Account profile is still loading");
+    } catch (error) {
+      this.reportProfileRefreshWarning(error);
+      return undefined;
+    } finally {
+      // Optional profile requests must not keep provider slots after their deadline.
+      controller.abort();
+    }
   }
 
   /**

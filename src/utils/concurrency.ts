@@ -25,7 +25,7 @@ export async function runWithConcurrencyLimit<T>(
           return;
         }
 
-        if (delayMs > 0) {
+        if (delayMs > 0 && index >= runnerCount) {
           await sleep(delayMs);
         }
         if (failed) return;
@@ -40,6 +40,21 @@ export async function runWithConcurrencyLimit<T>(
   );
   const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (failure) throw failure.reason;
+}
+
+/** Bound optional reads without cancelling or releasing an in-flight mutation. */
+export async function waitWithin<T>(work: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function sleep(ms: number): Promise<void> {

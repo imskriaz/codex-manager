@@ -6,6 +6,7 @@ import type * as http from "http";
 import { describe, expect, it, vi } from "vitest";
 import {
   isLocalWebDashboardRequest,
+  getPeerActionTimeoutMs,
   getWebDashboardAssetVersion,
   getWebDashboardConnectSources,
   isCliSessionWatchPath,
@@ -16,6 +17,13 @@ import {
   readDashboardRequestBody,
   WebDashboardServer
 } from "../src/services/webDashboardServer";
+
+it("allows remote batches and sync to reach the same deadline as their local action", () => {
+  expect(getPeerActionTimeoutMs("batchRefresh", 4)).toBe(960_000);
+  expect(getPeerActionTimeoutMs("batchResyncProfile", 2)).toBe(600_000);
+  expect(getPeerActionTimeoutMs("syncNow")).toBe(135_000);
+  expect(getPeerActionTimeoutMs("refresh")).toBe(240_000);
+});
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 import { normalizeCloudflaredDomain } from "../src/presentation/dashboard/settings";
 

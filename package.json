@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.20",
+  "version": "1.2.22",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -81,7 +81,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 15,
-          "markdownDescription": "Automatically refresh all saved account quotas every N minutes. Set to `0` to disable. Values from `1` to `4` are safely normalized to `5` minutes."
+          "markdownDescription": "Automatically refresh all saved account quotas every N minutes. Set to `0` to disable periodic polling; enabled accounts still refresh when a quota reset countdown expires. Values from `1` to `4` are safely normalized to `5` minutes."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",
@@ -89,7 +89,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 1,
-          "markdownDescription": "Automatically refresh only the current active account quota every N minutes. Set to `0` to disable, or choose any interval from `1` to `60` minutes. Cross-PC ownership prevents duplicate background polling of the same account."
+          "markdownDescription": "Automatically refresh only the current active account quota every N minutes. Set to `0` to disable periodic polling, or choose any interval from `1` to `60` minutes. Quota reset countdowns still trigger a refresh. Cross-PC ownership prevents duplicate background polling of the same account."
         },
         "codexManager.usageHistoryRetentionDays": {
           "type": "number",
@@ -129,7 +129,7 @@
         "codexManager.autoSwitchReloadWindowEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Automatically reload the current VS Code window after an automatic account switch when the active runtime account changes."
+          "markdownDescription": "Automatically reload the current VS Code window after an automatic or manual account switch when the active runtime account changes. Applies to both shared and isolated account windows."
         },
         "codexManager.autoResumeEnabled": {
           "type": "boolean",

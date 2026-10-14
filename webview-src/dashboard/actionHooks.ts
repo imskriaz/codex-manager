@@ -15,6 +15,8 @@ export function useDashboardActions(
   const actionTimeoutsRef = useRef<Map<string, number>>(new Map());
   const onActionTimeoutRef = useRef(onActionTimeout);
   onActionTimeoutRef.current = onActionTimeout;
+  const actionFeedbackRef = useRef({ onNotice, accountCount: state.snapshot?.accounts.length ?? 1 });
+  actionFeedbackRef.current = { onNotice, accountCount: state.snapshot?.accounts.length ?? 1 };
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -38,7 +40,7 @@ export function useDashboardActions(
         dispatch({ type: "resolve-action", requestId: request.requestId });
         onNotice(noticeFromActionTimeout(request.action));
         onActionTimeoutRef.current?.(request.action, request.requestId);
-      }, getActionTimeoutMs(request.action));
+      }, request.timeoutMs ?? getActionTimeoutMs(request.action));
 
       actionTimeoutsRef.current.set(request.requestId, timeoutId);
     });
@@ -74,22 +76,28 @@ export function useDashboardActions(
         requestId,
         action,
         accountId,
-        requestedAt: Date.now()
+        requestedAt: Date.now(),
+        timeoutMs: getActionTimeoutMs(action, payload?.accountIds?.length ?? actionFeedbackRef.current.accountCount)
       }
     });
-    postMessageToHost({
-      type: "dashboard:action",
-      action,
-      accountId,
-      requestId,
-      payload: action === "setPrivacyMode" || action === "setCrossPcSyncEnabled"
-        ? payload
-        : payload?.targetDeviceId
-        ? payload
-        : targetDeviceId && targetDeviceId !== "local"
-          ? { ...(payload ?? {}), targetDeviceId }
-          : payload
-    });
+    try {
+      postMessageToHost({
+        type: "dashboard:action",
+        action,
+        accountId,
+        requestId,
+        payload: action === "setPrivacyMode" || action === "setCrossPcSyncEnabled"
+          ? payload
+          : payload?.targetDeviceId
+            ? payload
+            : targetDeviceId && targetDeviceId !== "local"
+              ? { ...(payload ?? {}), targetDeviceId }
+              : payload
+      });
+    } catch (error) {
+      dispatch({ type: "resolve-action", requestId });
+      actionFeedbackRef.current.onNotice({ level: "error", message: `The action could not be sent: ${error instanceof Error ? error.message : String(error)}` });
+    }
     return requestId;
   }, [dispatch, targetDeviceId]);
 

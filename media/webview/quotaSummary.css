@@ -15296,3 +15296,48 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
   .cli-workspace .cli-activity-heading strong, .cli-workspace .cli-composer-unavailable { font-size: 11px; }
   .cli-workspace .cli-conversation-title h1 { font-size: 13px; }
 }
+
+/* The overview metric is a horizontal row now; the old gauge value rule left
+   its percentage absolutely positioned and oversized on narrow panels. */
+.metric-gauge-head .metric-gauge-value {
+  position: static;
+  transform: none;
+  z-index: auto;
+  font-size: 16px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 600px) {
+  .dashboard-density-compact > .section { padding: 6px; }
+  .dashboard-density-compact .overview-shell { gap: 5px; padding: 5px; }
+  .dashboard-density-compact .overview-metrics,
+  .dashboard-density-compact .overview-actions { padding: 5px; }
+  .dashboard-density-compact .metrics { gap: 4px; }
+  .dashboard-density-compact .metric-gauge { gap: 3px; padding: 5px 5px 4px; border-radius: 8px; }
+  .dashboard-density-compact .metric-gauge-head { gap: 3px; }
+  .dashboard-density-compact .metric-gauge-label { font-size: 10px; }
+  .dashboard-density-compact .metric-gauge-reset { font-size: 8px; }
+  .dashboard-density-compact .metric-gauge-head .metric-gauge-value { font-size: 14px; }
+  .dashboard-density-compact .metric-gauge-bar { height: 4px; }
+  .dashboard-density-compact .dashboard-account-toolbar .account-search-control,
+  .dashboard-density-compact .dashboard-account-toolbar .dashboard-select-control,
+  .dashboard-density-compact .dashboard-account-toolbar .dashboard-select-control select { min-height: 34px; height: 34px; }
+  .dashboard-density-compact .dashboard-account-toolbar .account-search-control input,
+  .dashboard-density-compact .dashboard-account-toolbar .dashboard-select-control select { font-size: 14px; }
+  .dashboard-density-compact .dashboard-account-toolbar .account-search-control button { height: 30px; }
+  .dashboard-density-compact .dashboard-account-toolbar .dashboard-view-controls,
+  .dashboard-density-compact .dashboard-account-toolbar .dashboard-view-toggle { width: 34px; min-width: 34px; height: 34px; }
+  .dashboard-density-compact .accounts-grid { gap: 5px; }
+}
+
+@media (max-width: 380px) {
+  .dashboard-density-compact .metric-gauge-reset { display: none; }
+  .dashboard-density-compact .metric-gauge-head { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .dashboard-density-compact .metric-gauge-head .metric-gauge-value { font-size: 13px; }
+  .dashboard-density-compact .saved-card { padding: 5px 6px; }
+  .dashboard-density-compact .saved-progress,
+  .dashboard-density-compact .saved-progress .row { gap: 2px; }
+  .dashboard-density-compact .saved-progress .row-head,
+  .dashboard-density-compact .saved-progress .percent { font-size: 11px; }
+}

@@ -30,6 +30,7 @@ import {
 } from "../../utils/crossWindowOperations";
 import { toAutoQueueOrderValue } from "../../application/accounts/autoQueueOrder";
 import { createAutoQueuePolicy, isAutoQueueCandidateEligible } from "../../domain/autoQueuePolicy";
+import { isUserFacingAdditionalQuotaLimit } from "../../utils/quotaLabels";
 
 const CURRENT_REFRESH_FAILURE_BACKOFF_MULTIPLIER = 5;
 
@@ -75,6 +76,7 @@ export function registerAutoRefreshScheduler(params: {
   let allTimer: NodeJS.Timeout | undefined;
   let currentTimer: NodeJS.Timeout | undefined;
   let quotaResetTimer: NodeJS.Timeout | undefined;
+  let quotaResetTimerAt = 0;
   let allInFlight = false;
   let currentInFlight = false;
   let currentScheduleVersion = 0;
@@ -82,50 +84,94 @@ export function registerAutoRefreshScheduler(params: {
   const handledQuotaResets = new Set<string>();
 
   let quotaResetInFlight = false;
-  let quotaResetScheduleVersion = 0;
+  let quotaResetScheduling = false;
   let quotaResetReadRetryAt = 0;
-  const quotaResetRetries = new Map<string, { attempts: number; retryAt: number }>();
+  const quotaResetRetries = new Map<string, { attempts: number; retryAt: number; unconfirmed?: boolean }>();
 
   const quotaResetTimes = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number]): number[] =>
-    [account.quotaSummary?.hourlyResetTime, account.quotaSummary?.weeklyResetTime]
+    [
+      account.quotaSummary?.hourlyWindowPresent === false ? undefined : account.quotaSummary?.hourlyResetTime,
+      account.quotaSummary?.weeklyWindowPresent === false ? undefined : account.quotaSummary?.weeklyResetTime,
+      account.quotaSummary?.codeReviewWindowPresent ? account.quotaSummary.codeReviewResetTime : undefined,
+      ...(account.quotaSummary?.additionalRateLimits ?? []).filter(isUserFacingAdditionalQuotaLimit).flatMap((limit) => [
+        limit.hourlyWindowPresent ? limit.hourlyResetTime : undefined,
+        limit.weeklyWindowPresent ? limit.weeklyResetTime : undefined
+      ])
+    ]
       .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
       .map((value) => value * 1_000);
 
   const canScheduleQuotaReset = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number]): boolean =>
-    (account.enabled !== false || account.isActive) &&
-    (getAutoRefreshMinutes() > 0 || (account.isActive && getAutoRefreshCurrentMinutes() > 0));
+    account.enabled !== false || account.isActive;
+
+  const hasPeriodicQuotaFallback = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number]): boolean =>
+    getAutoRefreshMinutes() > 0 || (account.isActive && getAutoRefreshCurrentMinutes() > 0);
+
+  const resetStillExhausted = (account: Awaited<ReturnType<AccountsRepository["listAccounts"]>>[number], at: number): boolean => {
+    const quota = account.quotaSummary;
+    return [
+      [quota?.hourlyResetTime, quota?.weeklyWindowPresent && quota.weeklyPercentage === 0 && (quota.weeklyResetTime ?? 0) * 1000 > at ? undefined : quota?.hourlyPercentage],
+      [quota?.weeklyResetTime, quota?.weeklyPercentage],
+      [quota?.codeReviewWindowPresent ? quota.codeReviewResetTime : undefined, quota?.codeReviewPercentage],
+      ...(quota?.additionalRateLimits ?? []).filter(isUserFacingAdditionalQuotaLimit).flatMap(limit => [
+        [limit.hourlyWindowPresent ? limit.hourlyResetTime : undefined, limit.hourlyPercentage],
+        [limit.weeklyWindowPresent ? limit.weeklyResetTime : undefined, limit.weeklyPercentage]
+      ])
+    ].some(([resetAt, percentage]) => typeof resetAt === "number" && resetAt * 1000 === at && percentage === 0);
+  };
 
   const scheduleNextQuotaReset = async (): Promise<void> => {
-    if (disposed || quotaResetInFlight) return;
-    if (quotaResetTimer) clearTimeout(quotaResetTimer);
-    quotaResetTimer = undefined;
-    const scheduleVersion = currentScheduleVersion;
-    const resetScheduleVersion = ++quotaResetScheduleVersion;
-    const accounts = await params.repo.listAccounts();
-    if (disposed || scheduleVersion !== currentScheduleVersion || resetScheduleVersion !== quotaResetScheduleVersion)
+    if (disposed || quotaResetInFlight || quotaResetScheduling) return;
+    if (Date.now() < quotaResetReadRetryAt) {
+      if (!quotaResetTimer) {
+        quotaResetTimerAt = quotaResetReadRetryAt;
+        quotaResetTimer = setTimeout(runDueQuotaResetRefreshes, quotaResetReadRetryAt - Date.now());
+        quotaResetTimer.unref?.();
+      }
       return;
-    const currentKeys = new Set(
-      accounts.flatMap((account) => quotaResetTimes(account).map((at) => `${account.id}:${at}`))
-    );
-    for (const key of handledQuotaResets) if (!currentKeys.has(key)) handledQuotaResets.delete(key);
-    for (const key of quotaResetRetries.keys()) if (!currentKeys.has(key)) quotaResetRetries.delete(key);
-    const now = Date.now();
-    const nextAttempts = accounts.filter(canScheduleQuotaReset).flatMap((account) =>
-      quotaResetTimes(account).flatMap((resetAt) => {
-        const key = `${account.id}:${resetAt}`;
-        if (handledQuotaResets.has(key)) return [];
-        const retry = quotaResetRetries.get(key);
-        // After six failures, normal configured maintenance owns recovery.
-        if (retry && retry.attempts >= 6) return [];
-        return [Math.max(resetAt + 1_000, retry?.retryAt ?? now, quotaResetReadRetryAt)];
-      })
-    );
-    if (!nextAttempts.length) return;
-    quotaResetTimer = setTimeout(
-      runDueQuotaResetRefreshes,
-      Math.min(2_147_000_000, Math.max(0, Math.min(...nextAttempts) - now))
-    );
-    quotaResetTimer.unref?.();
+    }
+    quotaResetScheduling = true;
+    try {
+      const scheduleVersion = currentScheduleVersion;
+      const accounts = await params.repo.listAccounts();
+      if (disposed || quotaResetInFlight || scheduleVersion !== currentScheduleVersion)
+        return;
+      const currentKeys = new Set(
+        accounts.flatMap((account) => quotaResetTimes(account).map((at) => `${account.id}:${at}`))
+      );
+      for (const key of handledQuotaResets) if (!currentKeys.has(key)) handledQuotaResets.delete(key);
+      for (const key of quotaResetRetries.keys()) if (!currentKeys.has(key)) quotaResetRetries.delete(key);
+      const now = Date.now();
+      const nextAttempts = accounts.filter(canScheduleQuotaReset).flatMap((account) =>
+        quotaResetTimes(account).flatMap((resetAt) => {
+          const key = `${account.id}:${resetAt}`;
+          if (handledQuotaResets.has(key) || (!account.quotaError && (account.lastQuotaAt ?? 0) >= resetAt && !resetStillExhausted(account, resetAt))) return [];
+          const retry = quotaResetRetries.get(key);
+          // Leave repeated failures to periodic polling only when it covers this account.
+          if (retry && retry.attempts >= 6 && !retry.unconfirmed && hasPeriodicQuotaFallback(account)) return [];
+          return [Math.max(resetAt, retry?.retryAt ?? now, quotaResetReadRetryAt)];
+        })
+      );
+      const nextAttemptAt = Math.min(...nextAttempts);
+      if (quotaResetTimer && quotaResetTimerAt === nextAttemptAt) return;
+      if (quotaResetTimer) clearTimeout(quotaResetTimer);
+      quotaResetTimer = undefined;
+      if (!nextAttempts.length) return;
+      quotaResetTimerAt = nextAttemptAt;
+      quotaResetTimer = setTimeout(
+        runDueQuotaResetRefreshes,
+        Math.min(2_147_000_000, Math.max(0, nextAttemptAt - now))
+      );
+      quotaResetTimer.unref?.();
+    } catch (error) {
+      if (quotaResetTimer) clearTimeout(quotaResetTimer);
+      quotaResetTimer = undefined;
+      quotaResetReadRetryAt = Date.now() + 60_000;
+      console.warn("[codexManager] unable to schedule quota reset refresh:", error);
+    } finally {
+      quotaResetScheduling = false;
+      if (quotaResetReadRetryAt > Date.now()) void scheduleNextQuotaReset();
+    }
   };
 
   const runDueQuotaResetRefreshes = (): void => {
@@ -144,27 +190,37 @@ export function registerAutoRefreshScheduler(params: {
         const due = quotaResetTimes(account).filter((at) => {
           const key = `${account.id}:${at}`;
           const retry = quotaResetRetries.get(key);
-          return at <= now && !handledQuotaResets.has(key) && (!retry || (retry.attempts < 6 && retry.retryAt <= now));
+          return at <= now && !handledQuotaResets.has(key) &&
+            (account.quotaError || (account.lastQuotaAt ?? 0) < at || resetStillExhausted(account, at)) &&
+            (!retry || ((retry.attempts < 6 || retry.unconfirmed || !hasPeriodicQuotaFallback(account)) && retry.retryAt <= now));
         });
         if (!due.length) continue;
         let refreshed = false;
+        let attempted = false;
         try {
           if (params.canRefreshAccount?.(account.id) ?? true) {
             await runCrossWindowExclusive(
               `background:quota-reset-refresh:${account.id}`,
               "Quota reset refresh",
               async () => {
+                params.repo.invalidateCachedIndex?.();
+                const latest = (await params.repo.listAccounts()).find(candidate => candidate.id === account.id);
                 if (
                   disposed ||
                   scheduleVersion !== currentScheduleVersion ||
-                  !canScheduleQuotaReset(account) ||
+                  !latest || !canScheduleQuotaReset(latest) ||
                   !(params.canRefreshAccount?.(account.id) ?? true)
                 )
                   return;
+                if (!latest.quotaError && due.every(at => (latest.lastQuotaAt ?? 0) >= at && !resetStillExhausted(latest, at))) {
+                  refreshed = true;
+                  return;
+                }
+                attempted = true;
                 refreshed = await refreshSingleQuotaSafely(params.repo, { refresh: params.onRefresh }, account.id, {
                   forceRefresh: true,
                   allowTokenRefresh: true,
-                  skipDisabled: !account.isActive,
+                  skipDisabled: !latest.isActive,
                   announceFailure: false,
                   canUseAccount: params.canRefreshAccount
                 });
@@ -177,16 +233,19 @@ export function registerAutoRefreshScheduler(params: {
           }
         }
         refreshedAny ||= refreshed;
+        const latest = refreshed ? (await params.repo.listAccounts()).find(candidate => candidate.id === account.id) : undefined;
         for (const at of due) {
           const key = `${account.id}:${at}`;
-          if (refreshed) {
+          const unconfirmed = refreshed && latest !== undefined && quotaResetTimes(latest).includes(at) && resetStillExhausted(latest, at);
+          if (refreshed && !unconfirmed) {
             handledQuotaResets.add(key);
             quotaResetRetries.delete(key);
           } else {
-            const attempts = (quotaResetRetries.get(key)?.attempts ?? 0) + 1;
+            const attempts = (quotaResetRetries.get(key)?.attempts ?? 0) + (attempted ? 1 : 0);
             quotaResetRetries.set(key, {
               attempts,
-              retryAt: Date.now() + Math.min(300_000, 60_000 * 2 ** (attempts - 1))
+              unconfirmed,
+              retryAt: Date.now() + Math.min(300_000, 60_000 * 2 ** Math.max(0, attempts - 1))
             });
           }
         }
@@ -382,6 +441,10 @@ export function registerAutoRefreshScheduler(params: {
 
   let sessionWaitInFlight = false;
   const sessionWaitTimer = setInterval(() => {
+    if (!disposed) {
+      // Manual refreshes and newly imported accounts can introduce earlier reset deadlines.
+      void scheduleNextQuotaReset();
+    }
     if (disposed || sessionWaitInFlight || !isAutoSwitchWaitingForSessions()) return;
     sessionWaitInFlight = true;
     void maybeAutoSwitchForActiveQuota(params.repo, { refresh: params.onRefresh }, { canUseAccount: params.canRefreshAccount })

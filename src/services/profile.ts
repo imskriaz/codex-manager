@@ -69,8 +69,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export async function fetchRemoteAccountProfile(
   tokens: CodexTokens,
-  options: { forceRefresh?: boolean; preferredAccountName?: string; preferredAccountStructure?: string } = {}
+  options: { forceRefresh?: boolean; preferredAccountName?: string; preferredAccountStructure?: string; signal?: AbortSignal } = {}
 ): Promise<RemoteAccountProfile | undefined> {
+  options.signal?.throwIfAborted();
   const claims = extractClaims(tokens.idToken, tokens.accessToken);
   const accountId = tokens.accountId ?? claims.accountId;
   const organizationId = claims.organizationId;
@@ -87,7 +88,7 @@ export async function fetchRemoteAccountProfile(
     return cached.profile;
   }
 
-  const primary = await requestAccountProfile(ACCOUNT_CHECK_URL, tokens.accessToken, accountId);
+  const primary = await requestAccountProfile(ACCOUNT_CHECK_URL, tokens.accessToken, accountId, options.signal);
   const shouldRetry =
     accountId &&
     (!primary.ok
@@ -105,7 +106,7 @@ export async function fetchRemoteAccountProfile(
       accountId,
       reason: primary.ok ? "profile_not_matched" : `status_${primary.status}`
     });
-    const fallback = await requestAccountProfile(ACCOUNT_CHECK_URL, tokens.accessToken);
+    const fallback = await requestAccountProfile(ACCOUNT_CHECK_URL, tokens.accessToken, undefined, options.signal);
     if (fallback.ok) {
       const fallbackProfile = parseAccountProfile(
         fallback.payload,
@@ -150,7 +151,8 @@ export async function fetchRemoteAccountProfile(
 async function requestAccountProfile(
   url: string,
   accessToken: string,
-  accountId?: string
+  accountId?: string,
+  signal?: AbortSignal
 ): Promise<{
   ok: boolean;
   status: number;
@@ -172,7 +174,8 @@ async function requestAccountProfile(
         url,
         {
           method: "GET",
-          headers
+          headers,
+          signal
         },
         8000,
         "Account profile request"
@@ -195,8 +198,8 @@ async function requestAccountProfile(
       };
     },
     {
-      shouldRetryError: isRetriableNetworkError,
-      shouldRetryResult: (result) => !result.ok && isRetriableHttpStatus(result.status)
+      shouldRetryError: (error) => !signal?.aborted && isRetriableNetworkError(error),
+      shouldRetryResult: (result) => !signal?.aborted && !result.ok && isRetriableHttpStatus(result.status)
     }
   );
 }

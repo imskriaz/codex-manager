@@ -33,6 +33,20 @@ describe("fetchRemoteAccountProfile", () => {
     fetchWithTimeoutMock.mockReset();
   });
 
+  it("passes caller cancellation through to the provider request", async () => {
+    const controller = new AbortController();
+    const tokens = { idToken: createJwt({ email: "cancel@example.test" }), accessToken: "cancel-profile-access" };
+    fetchWithTimeoutMock.mockImplementation(async (_url: unknown, init: RequestInit) => {
+      expect(init.signal).toBe(controller.signal);
+      controller.abort();
+      throw new DOMException("Aborted", "AbortError");
+    });
+    await expect(fetchRemoteAccountProfile(tokens, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchWithTimeoutMock).toHaveBeenCalledOnce();
+    await expect(fetchRemoteAccountProfile(tokens, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchWithTimeoutMock).toHaveBeenCalledOnce();
+  });
+
   it("repairs a stale Team accountId by selecting the saved Personal structure", async () => {
     const tokens: CodexTokens = {
       idToken: createJwt({

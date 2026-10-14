@@ -839,7 +839,7 @@ function App() {
         if (!sameCliSessionTarget(target, currentSessionTarget())) {
           if (message.status === "completed") {
             if (message.payload?.cliSessions) setCliSessions((current) => reconcileCliSessionStatuses(mergeCachedCliSessions(message.payload!.cliSessions!, current), cliLiveStatesRef.current));
-            void writeCliSessionMessagesCache(target.id, message.payload?.cliSessionMessages ?? [], target.deviceId);
+            if (message.payload?.cliSessionMessages) void writeCliSessionMessagesCache(target.id, message.payload.cliSessionMessages, target.deviceId);
           }
           showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.status === "completed" ? "Codex completed the turn in the original chat." : message.error ?? "The turn in the original chat did not complete. Return to that chat and retry." });
           return;
@@ -848,9 +848,9 @@ function App() {
         if (message.status === "completed") {
           const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? cliSessions, cliSessions);
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
-          setCliSessionMessages(message.payload?.cliSessionMessages ?? []);
+          setCliSessionMessages(message.payload?.cliSessionMessages ?? cliSessionMessages);
           if (message.payload?.cliSession?.id) {
-            void writeCliSessionMessagesCache(message.payload.cliSession.id, message.payload?.cliSessionMessages ?? [], target.deviceId);
+            if (message.payload.cliSessionMessages) void writeCliSessionMessagesCache(message.payload.cliSession.id, message.payload.cliSessionMessages, target.deviceId);
             void writeCliSessionListCache({
               sessions,
               composerConfig: cliComposerConfig
@@ -862,7 +862,7 @@ function App() {
               : selectedCliSession
           );
           setCliSessionMessagesError(undefined);
-          showCliSessionFeedback({ key: Date.now(), level: "info", message: "Codex completed the turn." });
+          showCliSessionFeedback({ key: Date.now(), ...(message.payload?.notice ?? { level: "info" as const, message: "Codex completed the turn." }) });
         } else {
           const level = message.status === "cancelled" ? "warning" : "error";
           showCliSessionFeedback({
@@ -923,13 +923,13 @@ function App() {
         message.type === "dashboard:action-result" &&
         ["getWorkspaceEnvironment", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(message.action)
       ) {
-        if (message.status === "completed" && message.payload?.workspaceEnvironment) {
-          setWorkspaceEnvironment(message.payload.workspaceEnvironment);
+        if (message.status === "completed") {
+          if (message.payload?.workspaceEnvironment) setWorkspaceEnvironment(message.payload.workspaceEnvironment);
           if (message.action !== "getWorkspaceEnvironment") {
             showCliSessionFeedback({
               key: Date.now(),
               level: "info",
-              message: message.payload.notice?.message ?? "Environment action completed."
+              message: message.payload?.notice?.message ?? "Environment action completed."
             });
           }
         } else if (message.status === "failed") {
@@ -1079,7 +1079,7 @@ function App() {
         const applyToCurrentChat = sameCliSessionTarget(target, currentSessionTarget());
         showCliSessionFeedback({
           key: Date.now(),
-          level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error",
+          level: message.status === "completed" ? message.payload?.notice?.level ?? "info" : message.status === "cancelled" ? "warning" : "error",
           message:
             message.status === "completed"
               ? (message.payload?.notice?.message ?? "Session action completed.")
@@ -1089,6 +1089,15 @@ function App() {
           const sessions = mergeCachedCliSessions(message.payload.cliSessions, cliSessions);
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig });
+        }
+        if (message.status === "completed" && !message.payload?.cliSessions && target) {
+          setCliSessions((current) => {
+            if (message.action === "deleteCodexCliSession") return current.filter((session) => !sameCliSessionTarget(session, target));
+            if (message.action === "archiveCodexCliSession" || message.action === "unarchiveCodexCliSession")
+              return current.map((session) => sameCliSessionTarget(session, target) ? { ...session, archived: message.action === "archiveCodexCliSession" } : session);
+            const updated = message.payload?.cliSession;
+            return updated ? [updated, ...current.filter((session) => !sameCliSessionTarget(session, updated))] : current;
+          });
         }
         if (applyToCurrentChat && message.status === "completed" && message.action === "renameCodexCliSession" && message.payload?.cliSession)
           setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current));
@@ -1127,7 +1136,7 @@ function App() {
           setCliSessionMessages([]);
         }
         if (applyToCurrentChat && message.status === "completed" && message.action === "unarchiveCodexCliSession" && selectedCliSession) {
-          const restored = message.payload?.cliSessions?.find((session) => sameCliSessionTarget(session, target));
+          const restored = message.payload?.cliSessions?.find((session) => sameCliSessionTarget(session, target)) ?? { ...selectedCliSession, archived: false };
           if (restored) setSelectedCliSession(reconcileCliSessionStatus(restored, cliLiveStatesRef.current));
         }
       }
@@ -1556,7 +1565,8 @@ function App() {
   const selectedAccountIds = new Set(state.selectedAccountIds);
   const selectedCount = state.selectedAccountIds.length;
   const isAccountBusy = (accountId: string): boolean =>
-    hasGlobalPendingAction || state.pendingActions.some((request) => request.accountId === accountId);
+    hasGlobalPendingAction || state.pendingActions.some((request) => request.accountId === accountId &&
+      !["details", "getDailyUsage", "getResetCredits", "exportAuthFile"].includes(request.action));
   const privacyToggleLabel = state.privacyMode ? snapshot.copy.showSensitive : snapshot.copy.hideSensitive;
   const prepareOAuthPending = isActionPending("prepareOAuthSession");
   const startOAuthAutoPending = isActionPending("startOAuthAutoFlow");

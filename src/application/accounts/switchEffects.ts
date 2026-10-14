@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import { waitWithin } from "../../utils/concurrency";
+import { publishDashboardRealtime } from "../../services/dashboardRealtime";
 import { AutomaticReloadCancelledError, reloadExtensionHostWithSessionCapture } from "../../utils/extensionHostReload";
 
 const reloadExtensionHostWithWindowFallback = (autoResume: boolean, automatic = false): Promise<void> =>
@@ -12,7 +14,6 @@ import {
   queueAccountSwitch
 } from "../../presentation/workbench/windowRuntimeAccount";
 import { getCodexAppRestartCopy, getCodexAppState, getCommandCopy, restartCodexAppIfInstalled } from "../../utils";
-import { isCrossWindowAccountModeEnabled } from "../../services/windowAccountMode";
 import { shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 
 const CODEX_APP_RESTART_MODE = "codexAppRestartMode";
@@ -89,6 +90,16 @@ export function scheduleExtensionHostReload(
 }
 
 export async function handleCodexAppRestartPreference(options?: { allowManualPrompt?: boolean }): Promise<void> {
+  try {
+    await waitWithin(applyCodexAppRestartPreference(options), 500, "Desktop app restart is still pending. Restart the app manually if it keeps using the previous account.");
+  } catch (error) {
+    const message = `The account changed, but desktop app restart could not be confirmed: ${error instanceof Error ? error.message : String(error)}`;
+    publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+    if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
+  }
+}
+
+async function applyCodexAppRestartPreference(options?: { allowManualPrompt?: boolean }): Promise<void> {
   if (!getCodexManagerConfiguration().get<boolean>(CODEX_APP_RESTART_ENABLED, false)) {
     return;
   }
@@ -117,10 +128,12 @@ export async function handleCodexAppRestartPreference(options?: { allowManualPro
   }
 
   const copy = getCodexAppRestartCopy();
-  const manualChoice = await vscode.window.showInformationMessage(copy.manualMessage, copy.restartNow, copy.later);
-  if (manualChoice === copy.restartNow) {
-    await restartCodexAppIfInstalled();
-  }
+  void Promise.resolve(vscode.window.showInformationMessage(copy.manualMessage, copy.restartNow, copy.later))
+    .then(async (manualChoice) => {
+      if (manualChoice === copy.restartNow) await restartCodexAppIfInstalled();
+    }).catch((error: unknown) => {
+      void vscode.window.showErrorMessage(`Desktop app restart failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
 }
 
 export async function promptWindowReloadForAccount(
@@ -133,10 +146,9 @@ export async function promptWindowReloadForAccount(
   }
 
   queueAccountChangeForReload(account.id);
-  if (!isCrossWindowAccountModeEnabled() && isAutomaticWindowReloadEnabled()) {
-    // Shared auth is a unit: the initiating window reloads automatically;
-    // every other window observes the same auth-file change and reloads too.
-    scheduleExtensionHostReload(undefined, 300, "Shared Codex account changed", true, true);
+  if (isAutomaticWindowReloadEnabled()) {
+    // Apply the preference in both shared and isolated account windows.
+    scheduleExtensionHostReload(undefined, 0, "Codex account changed", true, true);
     return true;
   }
 
@@ -164,7 +176,7 @@ export async function promptWindowReloadForAccount(
       return true;
     }
     const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
-    if (currentWindowAccountId && currentWindowAccountId !== account.id) {
+    if (currentWindowAccountId !== account.id) {
       queueAccountSwitch(account.id, currentWindowAccountId);
     } else {
       clearQueuedAccountSwitch();
@@ -177,7 +189,7 @@ export async function promptWindowReloadForAccount(
   return reloadPromptInFlight;
 }
 
-export async function autoReloadWindowForAccount(accountId?: string): Promise<boolean> {
+export async function autoReloadWindowForAccount(accountId?: string, automatic = true): Promise<boolean> {
   if (!needsWindowReloadForAccount(accountId)) {
     clearQueuedAccountSwitch();
     return false;
@@ -189,7 +201,7 @@ export async function autoReloadWindowForAccount(accountId?: string): Promise<bo
   }
 
   try {
-    await reloadExtensionHostWithWindowFallback(true, true);
+    await reloadExtensionHostWithWindowFallback(true, automatic);
     clearQueuedAccountSwitch();
     return true;
   } catch (error) {
@@ -202,8 +214,8 @@ export async function autoReloadWindowForAccount(accountId?: string): Promise<bo
 }
 
 /** Reload the current VS Code window regardless of the queued-account marker. */
-export async function reloadWindowNow(): Promise<boolean> {
-  await reloadExtensionHostWithWindowFallback(true);
+export async function reloadWindowNow(automatic = false): Promise<boolean> {
+  await reloadExtensionHostWithWindowFallback(true, automatic);
   clearQueuedAccountSwitch();
   return true;
 }
@@ -214,18 +226,8 @@ export function deferWindowReloadForAccount(accountId: string): boolean {
     clearQueuedAccountSwitch();
     return false;
   }
-  if (!isCrossWindowAccountModeEnabled() && isAutomaticWindowReloadEnabled()) {
-    queueAccountChangeForReload(accountId);
-    scheduleExtensionHostReload(undefined, 300, "Shared Codex account changed", true, true);
-    return true;
-  }
-  const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
-  if (currentWindowAccountId && currentWindowAccountId !== accountId) {
-    queueAccountSwitch(accountId, currentWindowAccountId);
-    return true;
-  }
-  clearQueuedAccountSwitch();
-  return false;
+  queueAccountChangeForReload(accountId);
+  return true;
 }
 
 function isAutomaticWindowReloadEnabled(): boolean {
@@ -234,7 +236,7 @@ function isAutomaticWindowReloadEnabled(): boolean {
 
 function queueAccountChangeForReload(accountId: string): void {
   const currentWindowAccountId = getCurrentWindowRuntimeAccountId();
-  if (currentWindowAccountId && currentWindowAccountId !== accountId) {
+  if (currentWindowAccountId !== accountId) {
     queueAccountSwitch(accountId, currentWindowAccountId);
   }
 }

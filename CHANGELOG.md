@@ -1,4 +1,23 @@
 # Changelog
+## 1.2.22
+
+- Fix overview quota percentages on compact mobile panels and tighten narrow-screen spacing for controls, metrics, and account cards.
+
+
+## 1.2.21
+
+- Deliver dashboard switch and reload results before restarting, apply automatic reload in isolated windows, and allow reload retries for already-selected accounts.
+- Keep automatic selection moving past unanswered reload prompts. Respect running-session safety when inspection fails, and report cancelled or failed reloads as pending account changes.
+- Save and close the existing dashboard before session capture; reopen one panel after reload or failed recovery, and keep manually closed dashboards closed.
+- Bound optional reload preparation to one 500 ms budget and persist account selection before reload. Refresh known expired credentials before applying them.
+- Refresh expired quota countdowns even when periodic polling is disabled. Retry still-zero provider snapshots with backoff and reuse successful post-reset checks.
+- Replay early browser snapshots when the UI becomes ready, preventing startup from getting stuck on Loading.
+
+- Bound optional profile, initial quota, dashboard snapshot, desktop restart, session discovery, and Git status work so completed manual actions can report promptly.
+- Refresh subscription details and evaluate quota automation without holding manual refresh completion. Keep reset verification and account ownership checks required.
+- Report provider errors accurately in single and batch refreshes; preserve successful chat and Git actions when follow-up reads fail.
+- Keep unrelated dashboard controls usable during sync, exports, and quota batches. Reject offline browser actions immediately and warn about unknown outcomes before retrying timed-out requests.
+- Preserve concurrent account edits during profile refresh and keep Command Palette errors visible during overlapping dashboard requests.
 
 ## 1.2.20
 

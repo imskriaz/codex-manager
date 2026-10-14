@@ -33,7 +33,6 @@ export class AnnouncementService {
   }
 
   async forceRefresh(options: AnnouncementOptions = {}): Promise<CodexAnnouncementState> {
-    await this.removeCache();
     const raw = await this.loadAnnouncementsRaw(true);
     return this.buildState(raw.announcements, options);
   }
@@ -116,7 +115,8 @@ export class AnnouncementService {
       const remote = normalizeAnnouncementResponse(await fetchJson(this.announcementUrl));
       await this.saveCache(remote);
       return remote;
-    } catch {
+    } catch (error) {
+      if (forceRefresh) throw error;
       // 网络失败，回退到缓存（包括过期缓存）
       const fallback = await readJsonSafe(this.cachePath, null);
       if (isCachePayload(fallback)) {
@@ -145,14 +145,6 @@ export class AnnouncementService {
   private async saveCache(payload: unknown): Promise<void> {
     await this.ensureAnnouncementDir();
     await fs.writeFile(this.cachePath, `${JSON.stringify({ time: Date.now(), data: payload }, null, 2)}\n`, "utf8");
-  }
-
-  private async removeCache(): Promise<void> {
-    try {
-      await fs.unlink(this.cachePath);
-    } catch {
-      // Cache misses are expected.
-    }
   }
 
   private async getReadIds(): Promise<string[]> {

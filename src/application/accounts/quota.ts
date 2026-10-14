@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import { waitWithin } from "../../utils/concurrency";
+import { publishDashboardRealtime } from "../../services/dashboardRealtime";
 import { readRunningCodexSessionIds } from "../../services/codexSessionResume";
 import {
   CrossWindowOperationBusyError,
@@ -108,7 +110,7 @@ export async function refreshSingleQuota(
   // (scheduler, safety sweep, and a dashboard click). Share one request for
   // silent callers so token reads, network fetches, and index writes are not
   // duplicated. User-facing calls keep their own notification semantics.
-  if (options.announce === false) {
+  if (options.announce === false && !options.awaitSubscriptionRefresh) {
     const existing = silentQuotaRefreshes.get(accountId);
     if (existing) return existing;
     const task = coordinatedQuotaRefresh(repo, view, accountId, options).finally(() => {
@@ -129,7 +131,7 @@ async function coordinatedQuotaRefresh(
   const run = (): Promise<QuotaRefreshResult> =>
     runAndFlush(repo, () => refreshSingleQuotaInternal(repo, view, accountId, options));
   const key = `network:account-quota:${accountId}`;
-  if (options.announce !== false) return runCrossWindowExclusive(key, "Quota refresh", run);
+  if (options.announce !== false || options.forceRefresh === true) return runCrossWindowExclusive(key, "Quota refresh", run);
   const result = await runSharedMaintenance(key, "Quota refresh", 15_000, run);
   if (result.ran) return result.value!;
   // Another window completed the maintenance request. Re-read its durable
@@ -204,14 +206,6 @@ async function refreshSingleQuotaInternal(
     result.updatedSubscriptionActiveUntil
   );
   recordAccountQuotaCheck(updatedAccount, updatedAccount.lastQuotaAt ?? Date.now());
-  const subscriptionRefresh = repo.refreshSubscriptionState(accountId, forceRefresh).catch(() => undefined);
-  if (awaitSubscriptionRefresh) {
-    // 账号信息同步需要等订阅写入完成后再发布页面状态，避免继续展示旧套餐和旧到期时间。
-    await subscriptionRefresh;
-  } else {
-    // Finish the account-level state write before this action reports success.
-    await subscriptionRefresh;
-  }
   // 后台异步拉取重置次数明细（含最新可用次数与最近到期时间），不阻塞配额刷新
   let resetSnapshotVerified = false;
   if (!result.error && updatedAccount.quotaSummary) {
@@ -266,6 +260,20 @@ async function refreshSingleQuotaInternal(
       void vscode.window.showInformationMessage(copy.quotaRefreshed(label));
     }
   }
+  const subscriptionRefresh = repo.refreshSubscriptionState(accountId, forceRefresh);
+  if (awaitSubscriptionRefresh) {
+    await subscriptionRefresh;
+  } else {
+    // Subscription enrichment persists separately; quota/reset verification is already complete.
+    void subscriptionRefresh.then(async () => {
+      await repo.flush?.();
+      view.refresh();
+    }).catch((error: unknown) => {
+      const message = `Quota refresh finished, but subscription details could not refresh: ${error instanceof Error ? error.message : String(error)}`;
+      publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+      if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
+    });
+  }
   return result;
 }
 
@@ -273,7 +281,17 @@ export async function refreshImportedAccountQuota(
   repo: AccountsRepository,
   accountId: string
 ): Promise<QuotaRefreshResult> {
-  return runAndFlush(repo, () => refreshImportedAccountQuotaInternal(repo, accountId));
+  const work = runAndFlush(repo, () => refreshImportedAccountQuotaInternal(repo, accountId));
+  void work.catch((error: unknown) => {
+    const message = `The account was saved, but initial quota refresh failed: ${error instanceof Error ? error.message : String(error)}. Refresh quota to retry.`;
+    publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+    if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
+  });
+  try {
+    return await waitWithin(work, 500, "Initial quota refresh is still pending. The account is saved; refresh quota later to verify it.");
+  } catch (error) {
+    return { error: { message: error instanceof Error ? error.message : String(error), timestamp: Math.floor(Date.now() / 1000) } };
+  }
 }
 
 async function runAndFlush<T>(repo: AccountsRepository, task: () => Promise<T>): Promise<T> {
@@ -308,7 +326,6 @@ async function refreshImportedAccountQuotaInternal(
     result.updatedPlanType,
     result.updatedSubscriptionActiveUntil
   );
-  await repo.refreshSubscriptionState(accountId, true).catch(() => undefined);
   if (!result.error && updatedAccount.quotaSummary) {
     const credTokens = result.updatedTokens ?? tokens;
     const credAccountId = updatedAccount.accountId ?? account.accountId ?? undefined;
@@ -317,7 +334,13 @@ async function refreshImportedAccountQuotaInternal(
   if (!result.error) {
     clearTokenAutomationError(accountId);
   }
-  await maybeWarnForAccount(repo, accountId);
+  void repo.refreshSubscriptionState(accountId, true).then(async () => {
+    await repo.flush?.();
+  }).catch((error: unknown) => {
+    const message = `The account was saved, but subscription details could not refresh: ${error instanceof Error ? error.message : String(error)}`;
+    publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+    if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
+  });
   return result;
 }
 
@@ -492,10 +515,15 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
     ]);
     if (!manual?.aborted && running.length) { waiting = true; message = `Auto Switch is waiting for ${running.length} running session${running.length === 1 ? "" : "s"} to finish. Manual switching is still available.`; }
   } catch (error) {
-    message = `Running sessions could not be verified. Auto Switch will continue with the account change. ${error instanceof Error ? error.message : String(error)}`;
+    waiting = true;
+    message = `Running sessions could not be verified. Auto Switch is waiting until session state can be verified. Manual switching is still available. ${error instanceof Error ? error.message : String(error)}`;
   } finally {
     if (timer) clearTimeout(timer);
     if (interrupt) manual?.removeEventListener("abort", interrupt);
+  }
+  if (manual?.aborted || !getCodexManagerConfiguration().get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
+    waiting = false;
+    message = undefined;
   }
   deferredForSessions = waiting;
   if (message && message !== sessionWaitNotice) {
@@ -545,7 +573,7 @@ export async function maybeAutoSwitchForActiveQuota(
     return await task;
   } catch (error) {
     if (error instanceof CrossWindowOperationBusyError && !runOptions.userInitiated) return false;
-    showAutoSwitchFailure(error);
+    showAutoSwitchFailure(error, runOptions.userInitiated);
     return false;
   } finally {
     if (autoSwitchInFlight === task) {
@@ -722,7 +750,6 @@ async function evaluateAutoSwitchForActiveQuota(
           const fallbackResult = await executeResetFailureFallbackSwitch(
             repo,
             view,
-            config,
             active,
             fallback,
             active,
@@ -758,7 +785,6 @@ async function evaluateAutoSwitchForActiveQuota(
           const resetResult = await executeResetPlan(
             repo,
             view,
-            config,
             active,
             resetCandidate,
             hourlyThreshold,
@@ -788,7 +814,6 @@ async function evaluateAutoSwitchForActiveQuota(
           const fallbackResult = await executeResetFailureFallbackSwitch(
             repo,
             view,
-            config,
             active,
             fallback,
             resetCandidate,
@@ -904,36 +929,7 @@ async function evaluateAutoSwitchForActiveQuota(
   const decisionReason = getCodexManagerAccountAutoQueueEfficiency(latestNext, autoQueueScoringOptions()).reason;
   const switchMessage = buildAutoSwitchSuccessMessage(latestNext, false, decisionReason);
 
-  if (!needsWindowReloadForAccount(latestNext.id)) {
-    recordAutoSwitchDashboardNotice(switchMessage, "info", {
-      accountId: latestNext.id,
-      switchResult: "switched"
-    });
-    void vscode.window.showInformationMessage(switchMessage);
-    return true;
-  }
-
-  if (config.get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
-    await handleCodexAppRestartPreference({ allowManualPrompt: false });
-    queueAutoSwitchNotice(buildAutoSwitchSuccessMessage(latestNext, true), latestNext.id);
-    try {
-      const reloaded = await autoReloadWindowForAccount(latestNext.id);
-      if (!reloaded) {
-        consumeAutoSwitchNotice();
-        const skippedMessage = `Switched to ${latestNext.email}; reload not needed.`;
-        recordAutoSwitchDashboardNotice(skippedMessage, "warning", { accountId: latestNext.id });
-        void vscode.window.showWarningMessage(skippedMessage);
-      }
-    } catch (error) {
-      consumeAutoSwitchNotice();
-      throw error;
-    }
-    return true;
-  }
-
-  await promptWindowReloadForAccount(latestNext, {
-    message: `${switchMessage} Reload VS Code?`
-  });
+  await finishAutoSwitchReload(latestNext, switchMessage, options.userInitiated);
   return true;
 }
 
@@ -1070,8 +1066,8 @@ async function executeActiveResetPlan(
   // host observes the new quota immediately.
   void vscode.window.showInformationMessage(message);
   if (getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
-    await handleCodexAppRestartPreference({ allowManualPrompt: false });
-    await reloadWindowNow();
+    void handleCodexAppRestartPreference({ allowManualPrompt: false });
+    await reloadWindowNow(!userInitiated);
   }
   return true;
 }
@@ -1079,7 +1075,6 @@ async function executeActiveResetPlan(
 async function executeResetPlan(
   repo: AccountsRepository,
   view: RefreshView,
-  config: vscode.WorkspaceConfiguration,
   active: CodexManagerAccountRecord,
   next: CodexManagerAccountRecord,
   hourlyThreshold: number,
@@ -1133,29 +1128,7 @@ async function executeResetPlan(
   view.markObservedAuthIdentity?.(next.id);
   view.refresh();
   const switchMessage = `Reset quota for ${next.email} and switched to it (weekly threshold ${resetThreshold}%).`;
-  if (!needsWindowReloadForAccount(next.id)) {
-    recordAutoSwitchDashboardNotice(switchMessage, "info", { accountId: next.id, switchResult: "switched" });
-    void vscode.window.showInformationMessage(switchMessage);
-    return true;
-  }
-  if (config.get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
-    await handleCodexAppRestartPreference({ allowManualPrompt: false });
-    queueAutoSwitchNotice(switchMessage, next.id);
-    try {
-      const reloaded = await autoReloadWindowForAccount(next.id);
-      if (!reloaded) {
-        consumeAutoSwitchNotice();
-        const skippedMessage = `Reset quota and switched to ${next.email}; reload not needed.`;
-        recordAutoSwitchDashboardNotice(skippedMessage, "warning", { accountId: next.id });
-        void vscode.window.showWarningMessage(skippedMessage);
-      }
-    } catch (error) {
-      consumeAutoSwitchNotice();
-      throw error;
-    }
-    return true;
-  }
-  await promptWindowReloadForAccount(next, { message: `${switchMessage} Reload VS Code?` });
+  await finishAutoSwitchReload(next, switchMessage, userInitiated);
   return true;
 }
 
@@ -1191,7 +1164,6 @@ function findResetFailureFallback(
 async function executeResetFailureFallbackSwitch(
   repo: AccountsRepository,
   view: RefreshView,
-  config: vscode.WorkspaceConfiguration,
   active: CodexManagerAccountRecord,
   next: CodexManagerAccountRecord,
   resetAccount: CodexManagerAccountRecord,
@@ -1238,29 +1210,40 @@ async function executeResetFailureFallbackSwitch(
   // the account switch also requires a window reload or prompt.
   recordAutoSwitchDashboardNotice(switchMessage, "warning", { accountId: next.id, switchResult: "switched" });
   void vscode.window.showWarningMessage(switchMessage);
-  if (!needsWindowReloadForAccount(next.id)) {
-    return true;
-  }
-
-  if (config.get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
-    await handleCodexAppRestartPreference({ allowManualPrompt: false });
-    try {
-      const reloaded = await autoReloadWindowForAccount(next.id);
-      if (!reloaded) {
-        consumeAutoSwitchNotice();
-        const skippedMessage = `${switchMessage} Reload not needed.`;
-        recordAutoSwitchDashboardNotice(skippedMessage, "warning", { accountId: next.id });
-        void vscode.window.showWarningMessage(skippedMessage);
-      }
-    } catch (error) {
-      consumeAutoSwitchNotice();
-      throw error;
-    }
-    return true;
-  }
-
-  await promptWindowReloadForAccount(next, { message: `${switchMessage} Reload VS Code?` });
+  await finishAutoSwitchReload(next, switchMessage, userInitiated, "warning");
   return true;
+}
+
+async function finishAutoSwitchReload(
+  account: CodexManagerAccountRecord,
+  message: string,
+  userInitiated = false,
+  level: "info" | "warning" = "info"
+): Promise<void> {
+  void handleCodexAppRestartPreference({ allowManualPrompt: false });
+  recordAutoSwitchDashboardNotice(message, level, { accountId: account.id, switchResult: "switched" });
+  if (level === "info") void vscode.window.showInformationMessage(message);
+  if (!needsWindowReloadForAccount(account.id)) return;
+  if (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
+    // A dismissed or unanswered prompt must not hold the automation lock.
+    void promptWindowReloadForAccount(account, { message: `${message} Reload VS Code?` })
+      .catch((error: unknown) => showAutoSwitchFailure(new Error(`${message} Reload failed: ${error instanceof Error ? error.message : String(error)}`), userInitiated));
+    return;
+  }
+  queueAutoSwitchNotice(`${message} Codex reloaded.`, account.id);
+  try {
+    const reloaded = await autoReloadWindowForAccount(account.id, !userInitiated);
+    if (!reloaded) {
+      consumeAutoSwitchNotice();
+      const pending = needsWindowReloadForAccount(account.id);
+      const notice = `${message}${pending ? " Automatic reload was cancelled. Reload VS Code to apply this account." : " Reload not needed."}`;
+      recordAutoSwitchDashboardNotice(notice, pending ? "warning" : level, { accountId: account.id, switchResult: "switched" });
+      if (pending) void vscode.window.showWarningMessage(notice);
+    }
+  } catch (error) {
+    consumeAutoSwitchNotice();
+    throw new Error(`${message} VS Code could not reload: ${error instanceof Error ? error.message : String(error)}. Run Developer: Reload Window to apply this account.`);
+  }
 }
 
 async function isExpectedActiveAccount(repo: AccountsRepository, accountId: string): Promise<boolean> {
@@ -1610,12 +1593,12 @@ function buildAutoSwitchSuccessMessage(
   return `${message} Selected for the best usable quota balance.`;
 }
 
-function showAutoSwitchFailure(error: unknown): void {
+function showAutoSwitchFailure(error: unknown, userInitiated = false): void {
   const detail = error instanceof Error ? error.message : String(error);
   const key = detail.trim().toLowerCase();
   const now = Date.now();
   if (
-    lastAutoSwitchFailure?.key === key &&
+    !userInitiated && lastAutoSwitchFailure?.key === key &&
     now - lastAutoSwitchFailure.shownAt < AUTO_SWITCH_FAILURE_NOTICE_COOLDOWN_MS
   ) {
     return;

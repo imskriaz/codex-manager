@@ -215,6 +215,9 @@ describe("account switch reload effects", () => {
   });
 
   it("falls back to a full window reload when the extension host restart fails", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (_key: string, fallback?: unknown) => fallback
+    } as vscode.WorkspaceConfiguration);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Reload Now" as never);
     vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command: string) => {

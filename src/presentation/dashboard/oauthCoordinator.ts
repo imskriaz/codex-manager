@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { waitWithin } from "../../utils/concurrency";
 import {
   completeOAuthLoginSession,
   listenForPreparedOAuthLoginSession,
@@ -205,9 +206,12 @@ export class DashboardOAuthCoordinator {
       // Reauthorization clears stale auth errors during upsert. Quota, sync,
       // and queued activation are follow-up work; a failure here must not
       // report the already-saved authorization as failed.
-      await refreshImportedAccountQuota(this.repo, accountId);
-      const synced = await this.syncAccountChange?.();
+      const quotaResult = await refreshImportedAccountQuota(this.repo, accountId);
+      const synced = this.syncAccountChange
+        ? await waitWithin(this.syncAccountChange(), 500, "Cross-PC sync is still pending")
+        : undefined;
       const queuedActivation = await activateQueuedAccountIfCurrentMissing(this.repo);
+      if (quotaResult?.error) return { level: "warning", message: `${baseMessage}. ${quotaResult.error.message}` };
       return resolveOAuthCompletion(baseMessage, queuedActivation, synced);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

@@ -22,6 +22,7 @@ import type { DashboardState } from "../domain/dashboard/types";
 import type { DashboardActionPayload } from "../domain/dashboard/types";
 import { ExtensionSettingsStore, getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { executeDashboardActionMessage } from "../presentation/dashboard/actionHandlers";
+import { waitWithin } from "../utils/concurrency";
 import { consumeDashboardActionPrompts, withDashboardNotificationSuppression } from "../utils/notificationPolicy";
 import {
   resolveMirroredNotification,
@@ -81,7 +82,16 @@ const PEER_HTTP_HEARTBEAT_TIMEOUT_MS = 10_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const CLI_SESSION_RECONCILE_MS = 30_000;
 
-export function getPeerActionTimeoutMs(action: DashboardActionName): number {
+export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
+  if (action === "refreshAll" || action === "batchRefresh") return 240_000 * Math.max(1, accountCount);
+  if (action === "batchResyncProfile") return 300_000 * Math.max(1, accountCount);
+  if (action === "refresh") return 240_000;
+  if (action === "resyncProfile") return 300_000;
+  if (action === "syncNow" || action === "configureEncryptedSync") return 135_000;
+  if (action === "commitWorkspaceChanges") return 75_000;
+  if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(action)) return 90_000;
+  if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession"].includes(action)) return 75_000;
+  if (action === "cancelCodexCliSessionTurn") return 40_000;
   if (action === "steerCodexCliSessionTurn") return 40_000;
   if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession") {
     return 15 * 60_000 + 15_000;
@@ -92,11 +102,8 @@ export function getPeerActionTimeoutMs(action: DashboardActionName): number {
   if (
     [
       "switch",
-      "refresh",
-      "refreshAll",
       "refreshToken",
       "reauthorize",
-      "resyncProfile",
       "getDailyUsage",
       "importSharedJson",
       "completeOAuthSession"
@@ -104,7 +111,7 @@ export function getPeerActionTimeoutMs(action: DashboardActionName): number {
   ) {
     return 120_000;
   }
-  if (["restoreFromBackup", "restoreFromAuthJson", "commitWorkspaceChanges"].includes(action)) {
+  if (["restoreFromBackup", "restoreFromAuthJson"].includes(action)) {
     return 60_000;
   }
   return 30_000;
@@ -1006,7 +1013,7 @@ export class WebDashboardServer implements vscode.Disposable {
         (errorMessage) => this.broadcastRealtimeNotice("error", errorMessage),
         150,
         "Codex credentials changed",
-        message.type === "dashboard:action" && message.action === "switch",
+        message.type === "dashboard:action" && message.action !== "unloadAuth",
         message.type === "dashboard:action" && message.action === "switch"
       );
     }
@@ -1196,8 +1203,13 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
+    const snapshot = this.buildState();
     try {
-      messages.push({ type: "dashboard:snapshot", state: await this.buildState() });
+      messages.push({ type: "dashboard:snapshot", state: await waitWithin(
+        snapshot,
+        request.type === "dashboard:action" && request.action !== "refreshView" ? 250 : 5_000,
+        "Dashboard state is still loading"
+      ) });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (request.type === "dashboard:action" && request.action === "refreshView") {
@@ -1205,6 +1217,8 @@ export class WebDashboardServer implements vscode.Disposable {
         if (result?.type === "dashboard:action-result") { result.status = "failed"; result.error = detail; return; }
       }
       messages.push({ type: "dashboard:notice", level: "warning", message: `Dashboard state could not refresh: ${detail}. Refresh the dashboard to try again.` });
+      // Build a fresh state after a late read; never broadcast its older snapshot.
+      void snapshot.then(() => this.publishRealtimeState(), () => undefined);
     }
   }
 
@@ -1242,7 +1256,7 @@ export class WebDashboardServer implements vscode.Disposable {
             error:
               "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
           });
-        }, getPeerActionTimeoutMs(message.action));
+        }, getPeerActionTimeoutMs(message.action, message.payload?.accountIds?.length ?? this.peerSessions.get(targetDeviceId)?.accounts?.length ?? 1));
         this.peerActionWaiters.set(message.requestId, (result) => {
           clearTimeout(timeout);
           resolve(this.decoratePeerActionResult(result, targetDeviceId));
@@ -1288,7 +1302,7 @@ export class WebDashboardServer implements vscode.Disposable {
           error:
             "The selected PC did not respond in time. The operation outcome is unknown; check the target PC before retrying."
         });
-      }, getPeerActionTimeoutMs(message.action));
+      }, getPeerActionTimeoutMs(message.action, message.payload?.accountIds?.length ?? this.peerSessions.get(targetDeviceId)?.accounts?.length ?? 1));
       const onMessage = (data: Buffer): void => {
         try {
           const result = JSON.parse(data.toString()) as PeerActionResultMessage;
@@ -1621,7 +1635,7 @@ export class WebDashboardServer implements vscode.Disposable {
           (errorMessage) => this.broadcastRealtimeNotice("error", errorMessage),
           150,
           "Codex credentials changed",
-          message.type === "dashboard:action" && message.action === "switch",
+          message.type === "dashboard:action" && message.action !== "unloadAuth",
           message.type === "dashboard:action" && message.action === "switch"
         );
       }
@@ -2237,8 +2251,8 @@ export class WebDashboardServer implements vscode.Disposable {
             this.broadcastRealtimeNotice("error", errorMessage);
           },
           150,
-          message.action === "switch" ? "The account switched" : "Codex auth was unloaded",
-          message.action === "switch",
+          message.action === "switch" ? "The account switched" : message.action === "reloadPrompt" ? "Reload was requested" : "Codex auth was unloaded",
+          message.action !== "unloadAuth",
           message.action === "switch"
         );
       }

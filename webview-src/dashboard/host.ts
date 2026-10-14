@@ -17,12 +17,7 @@ const vscodeApi =
 if ("setState" in vscodeApi) vscodeApi.setState?.({ dashboardOpen: true });
 
 export const BLOCKING_GLOBAL_ACTIONS = new Set<DashboardActionName>([
-  "addAccount",
   "importCurrent",
-  "inspectCurrentAuth",
-  "refreshAll",
-  "batchRefresh",
-  "batchResyncProfile",
   "batchRemove",
   "enableAllValid",
   "disableAll",
@@ -30,15 +25,9 @@ export const BLOCKING_GLOBAL_ACTIONS = new Set<DashboardActionName>([
   "restoreFromBackup",
   "restoreFromAuthJson",
   "importSharedJson",
-  "downloadJsonFile",
-  "exportBackup",
-  "configureEncryptedSync",
-  "syncNow",
-  "setEncryptedSyncRegistryOverride",
-  "exportAuthFile"
 ]);
 
-export function getActionTimeoutMs(action: DashboardActionName): number {
+export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
   switch (action) {
     case "refreshView":
       return 8_000;
@@ -50,21 +39,35 @@ export function getActionTimeoutMs(action: DashboardActionName): number {
     case "pushWorkspaceBranch":
       return 135_000;
     case "commitWorkspaceChanges":
-      return 60_000;
+      return 75_000;
     case "cancelWorkspaceTerminalCommand":
       return 10_000;
     case "steerCodexCliSessionTurn":
+    case "cancelCodexCliSessionTurn":
       return 45_000;
+    case "listCodexCliSessions":
+    case "getCodexCliSessionMessages":
+    case "getCodexSubAgentMessages":
+      return 90_000;
+    case "renameCodexCliSession":
+    case "forkCodexCliSession":
+    case "archiveCodexCliSession":
+    case "unarchiveCodexCliSession":
+    case "deleteCodexCliSession":
+    case "openCodexCliSession":
+      return 75_000;
     case "details":
     case "reloadPrompt":
     case "reauthorize":
-    case "resyncProfile":
     case "dismissHealthIssue":
     case "switch":
-    case "refresh":
     case "refreshToken":
     case "getDailyUsage":
       return 120_000;
+    case "refresh":
+      return 240_000;
+    case "resyncProfile":
+      return 300_000;
     case "remove":
     case "toggleAccountEnabled":
     case "enableAllValid":
@@ -75,7 +78,10 @@ export function getActionTimeoutMs(action: DashboardActionName): number {
     case "markAllAnnouncementsRead":
       return 30_000;
     case "refreshAll":
-      return 120_000;
+    case "batchRefresh":
+      return 240_000 * Math.max(1, accountCount);
+    case "batchResyncProfile":
+      return 300_000 * Math.max(1, accountCount);
     case "restoreFromBackup":
     case "restoreFromAuthJson":
       return 60_000;

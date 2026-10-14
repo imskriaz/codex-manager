@@ -15,6 +15,8 @@ import type {
   DashboardWorkspaceTerminalResult
 } from "../domain/dashboard/types";
 import { publishDashboardRealtime } from "./dashboardRealtime";
+import { waitWithin } from "../utils/concurrency";
+import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
 
 const MAX_COMMAND_CHARS = 8_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -421,6 +423,7 @@ function languageForFile(filePath: string): string {
 async function readWorkspaceEnvironmentInternal(cwd: string): Promise<DashboardWorkspaceEnvironment> {
   const projectName = path.basename(cwd) || cwd;
   const status = await runProcess("git", ["status", "--porcelain=v1", "--branch"], cwd, GIT_TIMEOUT_MS);
+  if (status.timedOut) throw new Error("Git status timed out. Refresh the workspace to try again.");
   if (status.exitCode !== 0) {
     return {
       projectPath: cwd,
@@ -706,7 +709,7 @@ export async function commitWorkspaceChanges(
   projectPath: string | undefined,
   commitMessage: string | undefined,
   confirmed: boolean | undefined
-): Promise<DashboardWorkspaceEnvironment> {
+): Promise<DashboardWorkspaceEnvironment | undefined> {
   if (confirmed !== true) throw new Error("Confirm committing all workspace changes, then try again.");
   const message = commitMessage?.trim() ?? "";
   if (!message) throw new Error("Enter a commit message before committing changes.");
@@ -715,18 +718,29 @@ export async function commitWorkspaceChanges(
   await requireSuccessfulGit(["add", "--all"], cwd, "Workspace changes could not be staged.");
   await requireSuccessfulGit(["commit", "-m", message], cwd, "Git could not create the commit.");
   environmentReads.delete(cwd);
-  return readWorkspaceEnvironment(cwd);
+  return readEnvironmentAfterGitMutation(cwd);
 }
 
 export async function pushWorkspaceBranch(
   projectPath: string | undefined,
   confirmed: boolean | undefined
-): Promise<DashboardWorkspaceEnvironment> {
+): Promise<DashboardWorkspaceEnvironment | undefined> {
   if (confirmed !== true) throw new Error("Confirm pushing the current branch, then try again.");
   const cwd = resolveWorkspaceProjectPath(projectPath);
   await requireSuccessfulGit(["push"], cwd, "Git could not push the current branch.", COMMAND_TIMEOUT_MS);
   environmentReads.delete(cwd);
-  return readWorkspaceEnvironment(cwd);
+  return readEnvironmentAfterGitMutation(cwd);
+}
+
+async function readEnvironmentAfterGitMutation(cwd: string): Promise<DashboardWorkspaceEnvironment | undefined> {
+  try {
+    return await waitWithin(readWorkspaceEnvironment(cwd), 500, "Workspace status is still loading");
+  } catch (error) {
+    const message = `The Git action completed, but workspace status could not refresh: ${error instanceof Error ? error.message : String(error)}. Refresh the workspace; do not repeat the Git action.`;
+    publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+    if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
+    return undefined;
+  }
 }
 
 async function requireSuccessfulGit(args: string[], cwd: string, fallback: string, timeoutMs = GIT_TIMEOUT_MS): Promise<void> {

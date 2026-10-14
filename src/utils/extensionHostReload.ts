@@ -79,6 +79,7 @@ export function reloadExtensionHostWithSessionCapture(
   };
   const work = (async () => {
     const deadline = Date.now() + 45_000;
+    const preparationDeadline = Date.now() + 500;
     const capture = new AbortController();
     let captureWarning: string | undefined;
     void vscode.window.showInformationMessage("Preparing to reload Codex Manager.");
@@ -86,7 +87,7 @@ export function reloadExtensionHostWithSessionCapture(
       // Session discovery is recovery work. A stalled Windows lock probe or
       // session store must never prevent the account switch reload itself.
       // Cancellation prevents a late discovery result from replacing recovery.
-      await command("codexManager.prepareDashboardForExtensionHostRestart", automatic ? 5_000 : 500, [
+      await command("codexManager.prepareDashboardForExtensionHostRestart", preparationDeadline - Date.now(), [
         { autoResume: autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false), signal: capture.signal }
       ], false, manual.signal);
     } catch (error) {
@@ -95,9 +96,9 @@ export function reloadExtensionHostWithSessionCapture(
       captureWarning = `Reload will continue, but Codex sessions could not be fully preserved: ${detail}`;
     } finally { capture.abort(new Error("Reload session capture deadline ended.")); }
     verifyAutomaticPreference();
-    if (clearNotifications && !manual.signal.aborted) {
+    if (clearNotifications && !manual.signal.aborted && Date.now() < preparationDeadline) {
       try {
-        await command("notifications.clearAll", inFlightAutomatic ? 2_000 : 500, [], false, manual.signal);
+        await command("notifications.clearAll", preparationDeadline - Date.now(), [], false, manual.signal);
       } catch (error) {
         console.warn("[codexManager] could not clear VS Code notifications before reload", error);
       }
@@ -109,7 +110,7 @@ export function reloadExtensionHostWithSessionCapture(
     let delivered = false;
     try {
       delivered = await Promise.race([
-        manual.signal.aborted ? Promise.resolve(false) : flushNotificationDelivery(Math.max(1, Math.min(inFlightAutomatic ? 8500 : 500, deadline - Date.now() - 2000))),
+        manual.signal.aborted || Date.now() >= preparationDeadline ? Promise.resolve(false) : flushNotificationDelivery(preparationDeadline - Date.now()),
         new Promise<boolean>(resolve => {
           interruptDelivery = () => resolve(false);
           if (manual.signal.aborted) interruptDelivery();
@@ -137,7 +138,16 @@ export function reloadExtensionHostWithSessionCapture(
       console.warn("[codexManager] extension host restart failed; reloading the window", error);
       await command("workbench.action.reloadWindow", deadline - Date.now());
     }
-  })();
+  })().catch(async (error: unknown) => {
+    // Failed or cancelled reloads must not leave the dashboard closed.
+    try {
+      await command("codexManager.restoreDashboardAfterExtensionHostRestart", 500, [], false);
+    } catch (restoreError) {
+      console.warn("[codexManager] dashboard recovery after reload failure did not complete", restoreError);
+      void vscode.window.showWarningMessage("The dashboard could not be reopened. Run Codex Manager: Show Quota Summary to reopen it.");
+    }
+    throw error;
+  });
   inFlight = work;
   void work
     .finally(() => {

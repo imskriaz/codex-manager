@@ -120,6 +120,44 @@ describe("dashboard tab persistence", () => {
     expect(vscode.window.createWebviewPanel).not.toHaveBeenCalled();
   });
 
+  it("keeps a dashboard closed after the user closes it before reload", async () => {
+    const module = await import("../src/presentation/dashboard/panel");
+    const state = context(true);
+    module.openQuotaSummaryPanel(state as never, {} as never);
+    created.dispose();
+    expect(state.workspaceState.get(key)).toBe(false);
+    expect(await module.prepareQuotaSummaryPanelForExtensionHostRestart()).toBe(false);
+    await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
+  });
+
+  it("does not close a panel after a cancelled slow recovery save finishes", async () => {
+    const module = await import("../src/presentation/dashboard/panel");
+    const state = context();
+    module.openQuotaSummaryPanel(state as never, {} as never);
+    let finish!: () => void;
+    state.workspaceState.update.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    const controller = new AbortController();
+    const pending = module.prepareQuotaSummaryPanelForExtensionHostRestart(controller.signal);
+    const checked = expect(pending).rejects.toThrow("cancelled");
+    controller.abort(new Error("cancelled"));
+    finish();
+    await checked;
+    expect(created.dispose).not.toHaveBeenCalled();
+  });
+
+  it("restores only one panel after a managed close, including repeated recovery calls", async () => {
+    const module = await import("../src/presentation/dashboard/panel");
+    const state = context();
+    module.openQuotaSummaryPanel(state as never, {} as never);
+    await module.prepareQuotaSummaryPanelForExtensionHostRestart();
+    expect(created.dispose).toHaveBeenCalledOnce();
+    await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
+    await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
+    expect(state.workspaceState.get(key)).toBe(false);
+  });
+
   it("records only a minimal native dashboard marker without account data", async () => {
     const setState = vi.fn();
     vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage: vi.fn(), setState }));

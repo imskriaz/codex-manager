@@ -5,6 +5,7 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { resolveAccountHealth } from "../../application/accounts/health";
 import { refreshImportedAccountQuota, refreshSingleQuota } from "../../application/accounts/quota";
+import type { QuotaRefreshResult } from "../../services/quota";
 import { redeemAccountResetCredit } from "../../application/accounts/resetCreditRedemption";
 import { fetchResetCredits } from "../../services/quota";
 import { fetchDailyUsageBreakdown } from "../../services/usage";
@@ -55,9 +56,11 @@ import type {
   DashboardActionName,
   DashboardActionPayload,
   DashboardBatchResultFailure,
+  DashboardBatchResult,
   DashboardCliSessionSummary,
   DashboardClientMessage,
-  DashboardHostMessage
+  DashboardHostMessage,
+  DashboardNotice
 } from "../../domain/dashboard/types";
 import type { CodexManagerAccountRecord, CodexManagerBackup } from "../../core/types";
 import type { DashboardLanguage } from "../../localization/languages";
@@ -65,7 +68,7 @@ import { getErrorMessage } from "../../core";
 import type { SwitchAccountCommandResult } from "../../application/accounts/commandService";
 import { AccountsRepository } from "../../storage";
 import { AnnouncementService, type AnnouncementOptions } from "../../services/announcements";
-import { runWithConcurrencyLimit } from "../../utils/concurrency";
+import { runWithConcurrencyLimit, waitWithin } from "../../utils/concurrency";
 import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
 import { clearAutoSwitchLock, setAutoSwitchLock } from "../workbench/autoSwitchState";
@@ -148,11 +151,10 @@ import { handleDashboardSettingUpdate } from "./settings";
 import {
   deferWindowReloadForAccount,
   handleCodexAppRestartPreference,
-  promptWindowReloadForAccount,
-  reloadWindowNow
+  promptWindowReloadForAccount
 } from "../../application/accounts/switchEffects";
 import { refreshTokens } from "../../auth/oauth";
-import { shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
+import { consumeDashboardActionNotice, shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 import { runWithPersistentOperation } from "../../utils/persistentLog";
 import { markOnboardingCompleted } from "../../services/onboarding";
 import {
@@ -310,11 +312,9 @@ async function executeDashboardActionMessageCore(
     }
   }
 
-  return {
-    status,
-    payload,
-    errorMessage
-  };
+  const notice = consumeDashboardActionNotice();
+  if (notice && !payload?.notice && !payload?.batchResult?.failedCount) payload = { ...payload, notice };
+  return { status, payload, errorMessage };
 }
 
 async function runDashboardAction(
@@ -405,8 +405,7 @@ async function runDashboardAction(
         }
       };
     case "refreshAll":
-      await vscode.commands.executeCommand("codexManager.refreshAllQuotas");
-      return undefined;
+      return { batchResult: await vscode.commands.executeCommand<DashboardBatchResult>("codexManager.refreshAllQuotas") };
     case "refreshAnnouncements":
       await ctx.announcements.forceRefresh(ctx.getAnnouncementOptions());
       ctx.schedulePublishState();
@@ -680,12 +679,15 @@ async function runDashboardAction(
           throw new Error("That account no longer exists. Refresh the dashboard and try again.");
         }
         if (currentAccount.isActive) {
+          const reloadNeeded = deferWindowReloadForAccount(currentAccount.id);
+          const reloadScheduled = reloadNeeded && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
           ctx.schedulePublishState();
           return {
             notice: {
               level: "info" as const,
-              message: `${currentAccount.email} is already active.`
-            }
+              message: `${currentAccount.email} is already active.${reloadNeeded ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
+            },
+            reloadScheduled
           };
         }
         await ctx.repo.switchAccount(currentAccount.id, {
@@ -693,15 +695,16 @@ async function runDashboardAction(
             currentAccount.tokenRefreshEnabled === true
         });
         clearTokenAutomationError(currentAccount.id);
-        await handleCodexAppRestartPreference({ allowManualPrompt: false });
+        void handleCodexAppRestartPreference({ allowManualPrompt: false });
         const reloadRequired = deferWindowReloadForAccount(currentAccount.id);
+        const reloadScheduled = reloadRequired && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
         ctx.schedulePublishState();
         return {
           notice: {
             level: "info" as const,
-            message: `Switched to ${currentAccount.email}.${rescueEnabledForSwitch ? " Rescue override is enabled on this PC; automation resumed for enabled accounts." : ""}${reloadRequired ? " Reloading Codex…" : ""}`
+            message: `Switched to ${currentAccount.email}.${rescueEnabledForSwitch ? " Rescue override is enabled on this PC; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
           },
-          reloadScheduled: reloadRequired
+          reloadScheduled
         };
       }
       {
@@ -716,32 +719,24 @@ async function runDashboardAction(
         if (result?.status === "cancelled") {
           return { notice: { level: "warning" as const, message: "Account switch cancelled." } };
         }
-        if (result?.status === "already-active") {
-          return {
-            notice: {
-              level: "info" as const,
-              message: `${result.account?.email ?? "That account"} is already active.`
-            }
-          };
-        }
-        if (result?.status === "switched" && result.account) {
+        if ((result?.status === "switched" || result?.status === "already-active") && result.account) {
           const reloadRequired =
             result.reloadNeeded && !result.reloaded ? deferWindowReloadForAccount(result.account.id) : false;
+          const reloadScheduled = reloadRequired && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
           return {
             notice: {
               level: "info" as const,
-              message: reloadRequired
-                ? `Switched to ${result.account.email}.${rescueEnabledForSwitch ? " Rescue override is enabled; automation resumed for enabled accounts." : ""} Reloading Codex…`
-                : `Switched to ${result.account.email}.${rescueEnabledForSwitch ? " Rescue override is enabled; automation resumed for enabled accounts." : ""}`
+              message: `${result.status === "already-active" ? `${result.account.email} is already active.` : `Switched to ${result.account.email}.`}${rescueEnabledForSwitch ? " Rescue override is enabled; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
             },
-            reloadScheduled: reloadRequired
+            reloadScheduled
           };
         }
       }
       return undefined;
     case "refresh":
       if (account) {
-        await vscode.commands.executeCommand("codexManager.refreshQuota", account);
+        const result = await vscode.commands.executeCommand<QuotaRefreshResult>("codexManager.refreshQuota", account);
+        if (result?.error || result?.skipped) throw new Error(result.error?.message ?? "Quota refresh was skipped.");
       }
       return undefined;
     case "remove":
@@ -1361,7 +1356,7 @@ async function handleBatchRefresh(
   payload: DashboardActionPayload | undefined,
   translate: ReturnType<typeof t>
 ) {
-  const requestedIds = payload?.accountIds ?? [];
+  const requestedIds = [...new Set(payload?.accountIds ?? [])];
   const accountsById = new Map(
     await Promise.all(requestedIds.map(async (id) => [id, await repo.getAccount(id)] as const))
   );
@@ -1374,12 +1369,13 @@ async function handleBatchRefresh(
     CODEX_BATCH_REFRESH_CONCURRENCY,
     async (id) => {
       try {
-        await refreshSingleQuota(repo, { refresh() {} }, id, {
+        const result = await refreshSingleQuota(repo, { refresh() {} }, id, {
           announce: false,
           forceRefresh: true,
           refreshView: false,
           warnQuota: false
         });
+        if (result.error || result.skipped) throw new Error(result.error?.message ?? "Quota refresh was skipped.");
         success += 1;
       } catch (error) {
         failed += 1;
@@ -1419,7 +1415,7 @@ async function handleBatchResync(
   payload: DashboardActionPayload | undefined,
   translate: ReturnType<typeof t>
 ) {
-  const targetIds = payload?.accountIds ?? [];
+  const targetIds = [...new Set(payload?.accountIds ?? [])];
   const accountsById = new Map(
     await Promise.all(targetIds.map(async (id) => [id, await repo.getAccount(id)] as const))
   );
@@ -1467,13 +1463,14 @@ async function handleBatchResync(
 
 async function resyncAccountInfo(repo: AccountsRepository, accountId: string): Promise<void> {
   await repo.refreshAccountProfileMetadata(accountId);
-  await refreshSingleQuota(repo, { refresh() {} }, accountId, {
+  const result = await refreshSingleQuota(repo, { refresh() {} }, accountId, {
     announce: false,
     awaitSubscriptionRefresh: true,
     forceRefresh: true,
     refreshView: false,
     warnQuota: false
   });
+  if (result.error || result.skipped) throw new Error(result.error?.message ?? "Quota refresh was skipped.");
 }
 
 async function handleBatchRemove(
@@ -1644,12 +1641,12 @@ async function handleReloadPrompt(
     throw new Error("Confirm the reload in the browser dashboard, then try again.");
   }
   if (payload?.confirmed === true || payload?.forceReload || !account) {
-    const reloaded = await reloadWindowNow();
-    return reloaded
-      ? { notice: { level: "info" as const, message: "Reloading the VS Code extension host…" } }
-      : { notice: { level: "warning" as const, message: "This VS Code window is already using that account." } };
+    return {
+      reloadScheduled: true,
+      notice: { level: "info" as const, message: "Reloading the VS Code extension host…" }
+    };
   }
-  const reloaded = payload?.forceReload ? await reloadWindowNow() : await promptWindowReloadForAccount(account);
+  const reloaded = await promptWindowReloadForAccount(account);
   return reloaded
     ? { notice: { level: "info" as const, message: "Reloading the VS Code extension host…" } }
     : {
@@ -1825,28 +1822,25 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
     sandboxMode: payload.sandboxMode,
     projectPath: sessionProjectPath
   });
-  const [loadedCliSessions, cliSessionMessages] = await Promise.all([
-    readCodexCliSessions(),
-    readCodexCliSessionMessages(payload.sessionId)
-  ]);
-  let cliSessions = loadedCliSessions;
-  const loadedSession = cliSessions.find((session) => session.id === payload.sessionId);
-  const visibleSession = loadedSession ? {
-    ...loadedSession,
-    projectPath: loadedSession.projectPath ?? sessionProjectPath
-  } : {
-    id: payload.sessionId,
-    title: "Codex session",
+  let cliSessionMessages;
+  let notice: DashboardNotice = { level: "info", message: "Codex completed the turn." };
+  try {
+    cliSessionMessages = await waitWithin(readCodexCliSessionMessages(payload.sessionId), 500, "Conversation history is still loading");
+  } catch (error) {
+    notice = { level: "warning", message: `Codex completed the turn, but conversation history could not refresh: ${toFailureMessage(error)}. Refresh the chat; do not resend the message.` };
+  }
+  const visibleSession = {
+    ...currentSession,
     status: "idle" as const,
-    archived: false,
+    locked: false,
+    canStop: false,
     ...(sessionProjectPath?.trim() ? { projectPath: sessionProjectPath.trim() } : {})
   };
-  cliSessions = upsertCliSessionInList(cliSessions, visibleSession);
   return {
-    cliSessions,
     cliSession: visibleSession,
     cliSessionMessages,
-    notice: { level: "info" as const, message: "Codex completed the turn." }
+    cliSessionLive: getCodexSessionLiveState(payload.sessionId),
+    notice
   };
 }
 
@@ -1904,13 +1898,13 @@ async function handleOpenNewCodexWebview() {
 async function handleRenameCodexCliSession(sessionId: string | undefined, name: string | undefined) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
-  await ensureCliSessionIsActive(sessionId);
+  const session = await ensureCliSessionIsActive(sessionId);
   await renameCodexCliSession(sessionId, name ?? "");
-  const cliSessions = await readCodexCliSessions();
+  const refreshed = await refreshSessionListAfterMutation();
   return {
-    cliSessions,
-    cliSession: cliSessions.find((session) => session.id === sessionId),
-    notice: { level: "info" as const, message: "Session renamed." }
+    ...refreshed,
+    cliSession: refreshed.cliSessions?.find((candidate) => candidate.id === sessionId) ?? { ...session, title: name?.trim() ?? session.title },
+    notice: refreshed.notice ?? { level: "info" as const, message: "Session renamed." }
   };
 }
 
@@ -1919,8 +1913,9 @@ async function handleForkCodexCliSession(sessionId: string | undefined) {
   if (!sessionId) throw new Error("Choose a session first.");
   const sourceSession = await ensureCliSessionIsActive(sessionId);
   const forkedId = await forkCodexCliSession(sessionId);
-  const cliSessions = await readCodexCliSessions();
-  const forkedSession = cliSessions.find((session) => session.id === forkedId) ?? {
+  const refreshed = await refreshSessionListAfterMutation();
+  const cliSessions = refreshed.cliSessions;
+  const forkedSession = cliSessions?.find((session) => session.id === forkedId) ?? {
     id: forkedId,
     title: `${sourceSession.title} (fork)`,
     status: "idle" as const,
@@ -1928,9 +1923,9 @@ async function handleForkCodexCliSession(sessionId: string | undefined) {
     ...(sourceSession.projectPath ? { projectPath: sourceSession.projectPath } : {})
   };
   return {
-    cliSessions: cliSessions.some((session) => session.id === forkedId) ? cliSessions : [forkedSession, ...cliSessions],
+    ...(cliSessions ? { cliSessions: cliSessions.some((session) => session.id === forkedId) ? cliSessions : [forkedSession, ...cliSessions] } : {}),
     cliSession: forkedSession,
-    notice: { level: "info" as const, message: "Session fork created." }
+    notice: refreshed.notice ?? { level: "info" as const, message: "Session fork created." }
   };
 }
 
@@ -1939,9 +1934,10 @@ async function handleArchiveCodexCliSession(sessionId: string | undefined) {
   if (!sessionId) throw new Error("Choose a session first.");
   await ensureCliSessionIsActive(sessionId);
   await archiveCodexCliSession(sessionId);
+  const refreshed = await refreshSessionListAfterMutation();
   return {
-    cliSessions: await readCodexCliSessions(),
-    notice: { level: "info" as const, message: "Codex session archived." }
+    ...refreshed,
+    notice: refreshed.notice ?? { level: "info" as const, message: "Codex session archived." }
   };
 }
 
@@ -1951,9 +1947,10 @@ async function handleUnarchiveCodexCliSession(sessionId: string | undefined) {
   const session = await findCliSession(sessionId);
   if (!session.archived) throw new Error("This session is already active.");
   await unarchiveCodexCliSession(sessionId);
+  const refreshed = await refreshSessionListAfterMutation();
   return {
-    cliSessions: await readCodexCliSessions(),
-    notice: { level: "info" as const, message: "Codex session restored to Active." }
+    ...refreshed,
+    notice: refreshed.notice ?? { level: "info" as const, message: "Codex session restored to Active." }
   };
 }
 
@@ -1962,10 +1959,19 @@ async function handleDeleteCodexCliSession(payload: DashboardActionPayload | und
   if (!payload?.sessionId) throw new Error("Choose a session first.");
   if (payload.confirmed !== true) throw new Error("Confirm permanent deletion, then try again.");
   await deleteCodexCliSession(payload.sessionId);
+  const refreshed = await refreshSessionListAfterMutation();
   return {
-    cliSessions: await readCodexCliSessions(),
-    notice: { level: "info" as const, message: "Codex session permanently deleted." }
+    ...refreshed,
+    notice: refreshed.notice ?? { level: "info" as const, message: "Codex session permanently deleted." }
   };
+}
+
+async function refreshSessionListAfterMutation() {
+  try {
+    return { cliSessions: await waitWithin(readCodexCliSessions(), 500, "Session discovery is still pending") };
+  } catch (error) {
+    return { notice: { level: "warning" as const, message: `The session action completed, but the session list could not refresh: ${toFailureMessage(error)}. Refresh the list before retrying the action.` } };
+  }
 }
 
 async function findCliSession(sessionId: string) {

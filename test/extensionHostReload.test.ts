@@ -98,6 +98,34 @@ describe("bounded shared extension host reload", () => {
     }
   });
 
+  it("uses one 500ms budget across capture, notification clearing and delivery for automatic reload", async () => {
+    vi.useFakeTimers();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
+      key === "autoSwitchReloadWindowEnabled" ? true : fallback } as never);
+    const delivery = subscribeToNotificationDelivery(() => new Promise(() => undefined));
+    vi.mocked(vscode.commands.executeCommand).mockImplementation(name =>
+      name === "codexManager.prepareDashboardForExtensionHostRestart" || name === "notifications.clearAll"
+        ? new Promise(() => undefined) : Promise.resolve(undefined));
+    try {
+      const work = reloadExtensionHostWithSessionCapture(true, true, true);
+      await vi.advanceTimersByTimeAsync(500);
+      await work;
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("could not be fully preserved"));
+    } finally { delivery.dispose(); vi.useRealTimers(); }
+  });
+
+  it("restores the dashboard after both restart commands fail and permits a new retry", async () => {
+    vi.mocked(vscode.commands.executeCommand).mockImplementation(async name => {
+      if (name === "workbench.action.restartExtensionHost" || name === "workbench.action.reloadWindow") throw new Error("unavailable");
+    });
+    await expect(reloadExtensionHostWithSessionCapture(true)).rejects.toThrow("unavailable");
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.restoreDashboardAfterExtensionHostRestart");
+    vi.mocked(vscode.commands.executeCommand).mockReset().mockResolvedValue(undefined);
+    await expect(reloadExtensionHostWithSessionCapture(true)).resolves.toBeUndefined();
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+  });
+
   it("reloads the full window after capture when updated configuration contributions are missing", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined } as never);
     vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);

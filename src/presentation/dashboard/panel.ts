@@ -105,6 +105,7 @@ class DashboardPanelController {
   private cliSessionRealtimeRevision = Date.now();
   private cliSessionPublish: Promise<void> | undefined;
   private lastPublishedStateSignature: string | undefined;
+  private closingForRestart = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -131,7 +132,7 @@ class DashboardPanelController {
       }
     );
     subscribeDashboardRealtime((message) => {
-      if (message.type === "dashboard:terminal-output" || message.type === "dashboard:terminal-complete" || message.type === "dashboard:codex-request" || message.type === "dashboard:codex-request-resolved" || message.type === "dashboard:codex-session-live") {
+      if (message.type === "dashboard:notice" || message.type === "dashboard:terminal-output" || message.type === "dashboard:terminal-complete" || message.type === "dashboard:codex-request" || message.type === "dashboard:codex-request-resolved" || message.type === "dashboard:codex-session-live") {
         void this.panel?.webview.postMessage(message);
       }
     });
@@ -167,6 +168,11 @@ class DashboardPanelController {
       }
 
       this.panel.onDidDispose(() => {
+        if (!this.closingForRestart) {
+          void Promise.resolve(this.context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false)).catch((error: unknown) => {
+            void vscode.window.showWarningMessage(`The dashboard closed, but its reopen state could not be saved: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }
         if (this.publishTimer) {
           clearTimeout(this.publishTimer);
           this.publishTimer = undefined;
@@ -366,8 +372,8 @@ class DashboardPanelController {
           void this.postNotice("error", errorMessage).catch(() => undefined);
         },
         150,
-        message.action === "switch" ? "The account switched" : "Codex auth was unloaded",
-        message.action === "switch",
+        message.action === "switch" ? "The account switched" : message.action === "reloadPrompt" ? "Reload was requested" : "Codex auth was unloaded",
+        message.action !== "unloadAuth",
         message.action === "switch"
       );
     }
@@ -396,12 +402,21 @@ class DashboardPanelController {
     } satisfies DashboardHostMessage);
   }
 
-  async prepareForExtensionHostRestart(): Promise<boolean> {
-    if (!this.panel) {
+  async prepareForExtensionHostRestart(signal?: AbortSignal): Promise<boolean> {
+    const panel = this.panel;
+    if (!panel) {
       return false;
     }
+    signal?.throwIfAborted();
     await this.context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, true);
-    this.panel.dispose();
+    signal?.throwIfAborted();
+    if (this.panel !== panel) {
+      await this.context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
+      return false;
+    }
+    this.closingForRestart = true;
+    try { panel.dispose(); }
+    finally { this.closingForRestart = false; }
     return true;
   }
 
@@ -532,8 +547,8 @@ export function registerDashboardPanelSerializer(
   });
 }
 
-export async function prepareQuotaSummaryPanelForExtensionHostRestart(): Promise<boolean> {
-  return dashboardPanelController?.prepareForExtensionHostRestart() ?? false;
+export async function prepareQuotaSummaryPanelForExtensionHostRestart(signal?: AbortSignal): Promise<boolean> {
+  return dashboardPanelController?.prepareForExtensionHostRestart(signal) ?? false;
 }
 
 export async function restoreQuotaSummaryPanelAfterExtensionHostRestart(

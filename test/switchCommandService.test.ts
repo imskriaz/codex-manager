@@ -107,9 +107,39 @@ describe("manual account switch command", () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.reloadWindow");
   });
 
+  it("uses the manual 500ms preparation budget when a manual switch triggers reload", async () => {
+    vi.useFakeTimers();
+    const account = createAccount();
+    const { service } = createServiceWithRepo([account]);
+    setCurrentWindowRuntimeAccountId("previous");
+    enableAutomaticReload();
+    vi.mocked(vscode.commands.executeCommand).mockImplementation(async (name) => {
+      if (name === "codexManager.prepareDashboardForExtensionHostRestart") await new Promise(() => undefined);
+    });
+    try {
+      const work = service.switchAccount(account);
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(work).resolves.toMatchObject({ status: "switched", reloaded: true });
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("could not be fully preserved"));
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("retries reload for an already-active account without switching credentials again", async () => {
+    const account = { ...createAccount(), isActive: true };
+    const { service, repo } = createServiceWithRepo([account]);
+    setCurrentWindowRuntimeAccountId("previous");
+    enableAutomaticReload();
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+    await expect(service.switchAccount(account)).resolves.toMatchObject({ reloaded: true });
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+  });
+
   it("revalidates a stale selected account before switching", async () => {
     const item = { ...createAccount(), isActive: false };
     const current = { ...item, isActive: true };
+    setCurrentWindowRuntimeAccountId(current.id);
     const { service, repo } = createServiceWithRepo([current]);
     repo.getAccount.mockResolvedValue(current);
 
@@ -154,6 +184,11 @@ function enableAutomaticReload(): void {
 }
 
 describe("refresh all quota eligibility", () => {
+  it("preserves storage failures from native account restoration", async () => {
+    const { service, repo } = createServiceWithRepo([]);
+    Object.assign(repo, { restoreIndexFromLatestBackup: vi.fn(async () => { throw new Error("storage full"); }) });
+    await expect(service.restoreAccountsFromBackup()).rejects.toThrow("storage full");
+  });
   it("skips an account when its foreign claim is enforced with rescue off", () => {
     const canRefreshAccount = vi.fn().mockReturnValue(false);
 
@@ -209,6 +244,13 @@ describe("manual quota reset command", () => {
     } as never);
   });
   afterEach(() => { vi.restoreAllMocks(); });
+
+  it("reports provider errors in manual Refresh All rather than counting them as success", async () => {
+    const { service, account } = createManualResetService();
+    refreshQuotaMock.mockResolvedValue({ error: { message: "API returned 503", timestamp: Date.now() } });
+    const result = await service.refreshAllQuotas();
+    expect(result).toMatchObject({ kind: "batch_refresh", successCount: 0, failedCount: 1, failures: [{ accountId: account.id, message: "API returned 503" }] });
+  });
 
   it("reports verified completion after durable redemption and fresh quota while Auto Reset is off", async () => {
     const { account, repo, service } = createManualResetService();

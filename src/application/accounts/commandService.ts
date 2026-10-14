@@ -7,7 +7,7 @@ import { CodexManagerAccountRecord, SharedCodexManagerAccountJson } from "../../
 import { AccountsRepository } from "../../storage";
 import { buildAccountStorageId } from "../../utils/accountIdentity";
 import { extractClaims } from "../../utils/jwt";
-import { runWithConcurrencyLimit } from "../../utils/concurrency";
+import { runWithConcurrencyLimit, waitWithin } from "../../utils/concurrency";
 import { needsWindowReloadForAccount } from "../../presentation/workbench/windowRuntimeAccount";
 import { getCommandCopy, getLanguage, logNetworkEvent, resolveLongQuotaLabel, t } from "../../utils";
 import { getAutoRefreshMinutes, getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
@@ -33,6 +33,8 @@ import {
 import { activateQueuedAccountIfCurrentMissing } from "./queuedAccountActivation";
 import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../../utils/crossWindowOperations";
 import { shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
+import { publishDashboardRealtime } from "../../services/dashboardRealtime";
+import type { DashboardBatchResult } from "../../domain/dashboard/types";
 const REFRESH_ALL_SILENT_CONCURRENCY = 1;
 const REFRESH_ALL_MANUAL_CONCURRENCY = 2;
 const REFRESH_ALL_SILENT_DELAY_MS = 300;
@@ -140,6 +142,7 @@ export class AccountsCommandService {
     const copy = getCommandCopy();
     const account = item ?? (await this.pickAccount(copy.pickRefreshAccount));
     if (!account) {
+      void vscode.window.showInformationMessage("Reauthorization cancelled.");
       return;
     }
 
@@ -179,7 +182,12 @@ export class AccountsCommandService {
         // cross-PC account-sync setting is enabled.
         let synced: boolean | undefined;
         if (this.syncAccountChange) {
-          synced = await this.syncAccountChange();
+          try {
+            synced = await waitWithin(this.syncAccountChange(), 500, "Cross-PC sync is still pending. Run Sync later to verify it.");
+          } catch (error) {
+            synced = false;
+            console.warn("[codexManager] reauthorization sync did not complete", error);
+          }
         }
 
         if (result.error) {
@@ -228,7 +236,7 @@ export class AccountsCommandService {
       return { status: "cancelled" };
     }
 
-    if (account.isActive) {
+    if (account.isActive && !needsWindowReloadForAccount(account.id)) {
       void vscode.window.showInformationMessage(copy.alreadyActive(formatAccountToastLabel(account)));
       return { status: "already-active", account };
     }
@@ -249,14 +257,16 @@ export class AccountsCommandService {
       }
     }
 
-    await this.withProgress(copy.progressSwitch(account.email), async () => {
-      await this.repo.switchAccount(account.id, {
-        forceTokenRefresh: account.tokenRefreshEnabled === true
+    if (!account.isActive) {
+      await this.withProgress(copy.progressSwitch(account.email), async () => {
+        await this.repo.switchAccount(account.id, {
+          forceTokenRefresh: account.tokenRefreshEnabled === true
+        });
       });
-    });
+    }
     this.view.markObservedAuthIdentity?.(account.id);
 
-    await handleCodexAppRestartPreference({ allowManualPrompt: true });
+    void handleCodexAppRestartPreference({ allowManualPrompt: true });
     const reloadNeeded = needsWindowReloadForAccount(account.id);
     this.view.refresh();
     let reloaded = false;
@@ -273,10 +283,10 @@ export class AccountsCommandService {
             });
           } else {
             void vscode.window.showInformationMessage(`Switched to ${account.email}. Reloading Codex…`);
-            reloaded = await autoReloadWindowForAccount(account.id);
+            reloaded = await autoReloadWindowForAccount(account.id, false);
           }
         } else {
-          reloaded = await autoReloadWindowForAccount(account.id);
+          reloaded = await autoReloadWindowForAccount(account.id, false);
         }
       } catch (error) {
         throw new Error(
@@ -339,13 +349,16 @@ export class AccountsCommandService {
     void vscode.window.showInformationMessage(`Quota reset verified for ${account.email}.`);
   }
 
-  async refreshQuota(item?: CodexManagerAccountRecord): Promise<void> {
+  async refreshQuota(item?: CodexManagerAccountRecord) {
     const copy = getCommandCopy();
     const account = item ?? (await this.pickAccount(copy.pickRefreshAccount));
     if (!account) {
+      void vscode.window.showInformationMessage("Quota refresh cancelled.");
       return;
     }
-    await refreshSingleQuota(this.repo, this.view, account.id);
+    const result = await refreshSingleQuota(this.repo, this.view, account.id, { warnQuota: false });
+    if (!result.error && !result.skipped) this.evaluateQuotaAutomation();
+    return result;
   }
 
   async refreshAllQuotas(options?: {
@@ -353,7 +366,7 @@ export class AccountsCommandService {
     forceRefresh?: boolean;
     excludeCurrent?: boolean;
     respectQuotaCheckGap?: boolean;
-  }): Promise<void> {
+  }): Promise<DashboardBatchResult | undefined> {
     const copy = getCommandCopy();
     const allAccounts = await this.repo.listAccounts();
     const currentId = options?.excludeCurrent ? allAccounts.find((account) => account.isActive)?.id : undefined;
@@ -372,6 +385,7 @@ export class AccountsCommandService {
       );
     let success = 0;
     let failed = 0;
+    const failures: DashboardBatchResult["failures"] = [];
     const refreshAll = async (progress?: vscode.Progress<{ message?: string; increment?: number }>) => {
       let started = 0;
       await runWithConcurrencyLimit(
@@ -398,7 +412,7 @@ export class AccountsCommandService {
             return;
           }
           try {
-            await runCrossWindowExclusive(`quota:refresh:${account.id}`, "Quota refresh", () =>
+            const result = await runCrossWindowExclusive(`quota:refresh:${account.id}`, "Quota refresh", () =>
               refreshSingleQuota(this.repo, this.view, account.id, {
                 announce: false,
                 forceRefresh: options?.forceRefresh ?? true,
@@ -406,9 +420,11 @@ export class AccountsCommandService {
                 warnQuota: false
               })
             );
+            if (result.error || result.skipped) throw new Error(result.error?.message ?? "Quota refresh was skipped.");
             success += 1;
           } catch (error) {
             failed += 1;
+            failures.push({ accountId: account.id, email: account.email, message: getErrorMessage(error) });
             console.warn(`[codexManager] refresh all failed for ${account.email}:`, error);
           }
         },
@@ -423,12 +439,10 @@ export class AccountsCommandService {
     }
 
     this.view.refresh();
-    const switched = await maybeAutoSwitchForActiveQuota(this.repo, this.view, {
-      canUseAccount: options?.silent ? this.canAutomateAccount : undefined
-    });
-    if (!switched) {
-      await maybeWarnForActiveQuota(this.repo);
-    }
+    if (options?.silent) {
+      const switched = await maybeAutoSwitchForActiveQuota(this.repo, this.view, { canUseAccount: this.canAutomateAccount });
+      if (!switched) await maybeWarnForActiveQuota(this.repo);
+    } else this.evaluateQuotaAutomation();
     if (!options?.silent) {
       const message = failed > 0 ? copy.refreshAllSummary(success, failed) : copy.refreshedCount(success);
       if (failed > 0) {
@@ -436,13 +450,26 @@ export class AccountsCommandService {
       } else {
         void vscode.window.showInformationMessage(message);
       }
+      return { kind: "batch_refresh", successCount: success, failedCount: failed, failures };
     }
+    return undefined;
+  }
+
+  private evaluateQuotaAutomation(): void {
+    void maybeAutoSwitchForActiveQuota(this.repo, this.view).then(async (switched) => {
+      if (!switched) await maybeWarnForActiveQuota(this.repo);
+    }).catch((error: unknown) => {
+      const message = `Quota refresh finished, but automatic account selection failed: ${getErrorMessage(error)}`;
+      publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+      if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
+    });
   }
 
   async removeAccount(item?: CodexManagerAccountRecord): Promise<void> {
     const copy = getCommandCopy();
     const account = item ?? (await this.pickAccount(copy.pickRemoveAccount));
     if (!account) {
+      void vscode.window.showInformationMessage("Account removal cancelled.");
       return;
     }
 
@@ -452,6 +479,7 @@ export class AccountsCommandService {
       copy.remove
     );
     if (confirmed !== copy.remove) {
+      void vscode.window.showInformationMessage("Account removal cancelled.");
       return;
     }
 
@@ -464,6 +492,7 @@ export class AccountsCommandService {
     const copy = getCommandCopy();
     const account = item ?? (await this.pickAccount(copy.pickStatusAccount));
     if (!account) {
+      void vscode.window.showInformationMessage("Status bar change cancelled.");
       return;
     }
 
@@ -481,12 +510,14 @@ export class AccountsCommandService {
       );
     } catch (error) {
       void vscode.window.showWarningMessage(getErrorMessage(error));
+      throw error;
     }
   }
 
   async toggleAccountEnabled(item?: CodexManagerAccountRecord): Promise<void> {
     const account = item ?? (await this.pickAccount("Pick an account to enable or disable"));
     if (!account) {
+      void vscode.window.showInformationMessage("Account change cancelled.");
       return;
     }
 
@@ -499,6 +530,7 @@ export class AccountsCommandService {
       );
     } catch (error) {
       void vscode.window.showWarningMessage(getErrorMessage(error));
+      throw error;
     }
   }
 
@@ -506,6 +538,7 @@ export class AccountsCommandService {
     const copy = getCommandCopy();
     const account = item ?? (await this.pickAccount(copy.pickInspectAccount));
     if (!account) {
+      void vscode.window.showInformationMessage("Open account details cancelled.");
       return;
     }
 
@@ -538,6 +571,7 @@ export class AccountsCommandService {
           message: getErrorMessage(error)
         })
       );
+      throw error;
     }
   }
 
@@ -557,6 +591,7 @@ export class AccountsCommandService {
           message: getErrorMessage(error)
         })
       );
+      throw error;
     }
   }
 
@@ -573,6 +608,7 @@ export class AccountsCommandService {
         openLabel: "Select JSON File"
       });
       if (!picked?.[0]) {
+        void vscode.window.showInformationMessage("Restore accounts from JSON cancelled.");
         return;
       }
 
@@ -592,6 +628,7 @@ export class AccountsCommandService {
           message: getErrorMessage(error)
         })
       );
+      throw error;
     }
   }
 

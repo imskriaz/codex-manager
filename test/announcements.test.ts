@@ -7,6 +7,17 @@ import { removeTestDirectory } from "./testFilesystem";
 
 let tempDirs: string[] = [];
 
+it("preserves the announcement cache and rejects an explicit refresh when its source is missing", async () => {
+  const dir = await makeTempDir();
+  const service = new AnnouncementService(dir, dir, `file://${path.join(dir, "missing.json")}`);
+  const cacheDir = path.join(dir, "announcements");
+  await fs.mkdir(cacheDir, { recursive: true });
+  const cache = JSON.stringify({ time: Date.now(), data: { version: "1", announcements: [] } });
+  await fs.writeFile(path.join(cacheDir, "announcement_cache.json"), cache);
+  await expect(service.forceRefresh()).rejects.toThrow();
+  expect(await fs.readFile(path.join(cacheDir, "announcement_cache.json"), "utf8")).toBe(cache);
+});
+
 async function makeTempDir(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-announcements-"));
   tempDirs.push(dir);

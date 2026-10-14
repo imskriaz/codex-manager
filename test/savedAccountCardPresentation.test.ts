@@ -12,6 +12,12 @@ import {
 import { isDashboardMainQuotaExhausted } from "../webview-src/dashboard/accountSorting";
 
 describe("saved account card presentation", () => {
+  it("keeps overview percentages in the compact metric row instead of the retired gauge overlay", () => {
+    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(styles).toMatch(/\.metric-gauge-head \.metric-gauge-value\s*\{[^}]*position:\s*static/s);
+    expect(styles).toMatch(/@media \(max-width: 600px\)[\s\S]*\.metric-gauge-head \.metric-gauge-value\s*\{[^}]*font-size:\s*14px/s);
+  });
+
   it.each([false, true])(
     "offers existing reauthorization for auth and refresh failures (dismissed: %s)",
     (dismissedHealth) => {
