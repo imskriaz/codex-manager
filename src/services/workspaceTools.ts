@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
 import * as crypto from "crypto";
 import { promises as fs } from "fs";
+import * as fsSync from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import mammoth from "mammoth";
@@ -87,6 +88,14 @@ export function resolveWorkspaceProjectPath(projectPath: string | undefined): st
     allowed.some((root) => path.relative(root, requested) === "" || isPathInside(root, requested))
   ) {
     return requested;
+  }
+  // Codex sessions may run in a project that is not opened as a VS Code
+  // folder. Keep the same canonical path and safety checks for that existing
+  // directory so environment, files, and terminals remain usable.
+  try {
+    if (fsSync.statSync(requested).isDirectory()) return requested;
+  } catch {
+    // Fall through to the actionable validation error below.
   }
   throw new Error("The selected project is not an open workspace folder.");
 }

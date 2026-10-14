@@ -2,6 +2,8 @@
 
 ## 1.2.19
 
+- Allow workspace tools to use existing Codex project folders that are not open in VS Code, avoiding repeated dashboard errors while preserving path validation.
+- Polish public read-only share pages with responsive conversation cards, snapshot metadata, and mobile-friendly typography; expand README coverage and refreshed desktop/mobile screenshots for remote use.
 - Permit secure dashboard WebSockets explicitly and reconnect stale mobile connections after network changes, returning from suspension, or manual retry. Tighten mobile session title and metadata spacing.
 - Keep remote PCs visible in the picker when their session catalog arrives before peer presence metadata.
 - Polish browser notification cards, add provider-confirmed test notifications, standardize mobile text, and keep account search/filter/view controls on one row with one clear button.

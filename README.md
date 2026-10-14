@@ -1,18 +1,21 @@
 # Codex Manager
 
-Codex Manager is a local-first Visual Studio Code extension for managing multiple Codex accounts, checking quota, switching the active `auth.json`, and continuing Codex CLI work across VS Code windows.
+Codex Manager is a local-first Visual Studio Code extension and secure browser dashboard for managing Codex accounts, quotas, sessions, automation, and remote VS Code windows from desktop or mobile.
 
 It is an independent, community project. It is not an official OpenAI product.
 
 ## What it provides
 
-- Account vault: add accounts with OAuth, import the current `auth.json`, remove accounts, and restore backups.
-- Quota view: 5-hour, weekly/monthly, and code-review windows with reset times and usage history.
-- Safe switching: choose an account manually or enable threshold-based automatic switching.
-- Dashboard: a VS Code webview plus an optional password-protected browser dashboard.
-- Session tools: inspect local Codex CLI sessions through a read-only transcript viewer, send messages, start/stop Manager-owned turns, and fork sessions when CLI integration is enabled. Opening a session in the official Codex extension remains an explicit action.
-- Encrypted sync: share the account vault and per-device enablement through VS Code Settings Sync using the shared password.
-- Diagnostics: structured, redacted JSONL logs with operation IDs and failure outcomes.
+| Area | What you can do |
+| --- | --- |
+| Accounts and quota | Add OAuth accounts, import `auth.json`, restore backups, compare 5-hour/weekly/review usage, and see reset times and history. |
+| Switching and automation | Switch manually or by quota thresholds, wait for every running session before switching, resume eligible conversations, and keep automatic switching safe when inspection is unavailable. |
+| Sessions and goals | See all running parent sessions across projects and PCs, keep list order stable, inspect transcripts, view native goals above the composer, start/stop/fork turns, and continue from another VS Code window. |
+| Remote dashboard | Open the password-protected dashboard from any desktop or mobile browser through HTTPS and Cloudflare Tunnel. Live WebSocket updates, PC labels, session counts, account claims, and remote actions stay in one interface. |
+| Sync and claims | Authenticate peer connections, sync encrypted account state, reserve only the current account on a PC, and show which PC owns a claim. VS Code Settings Sync remains the durable fallback. |
+| Notifications and PWA | Subscribe per device to major switches, reloads, failures, and completed sessions; send a delivery test; install the dashboard as a PWA; and recover to an offline shell while the host is unavailable. |
+| Sharing and workspace | Create expiring read-only conversation links, browse project files, review Git changes, run project terminals, and keep actions visibly successful, cancelled, or failed. |
+| Privacy and diagnostics | Keep credentials local, redact persistent logs, enforce bounded requests, and expose no account controls through a share link. |
 
 See the complete feature and setting reference in [`docs/FEATURES.md`](docs/FEATURES.md).
 
@@ -20,9 +23,17 @@ See the complete feature and setting reference in [`docs/FEATURES.md`](docs/FEAT
 
 The screenshots below use representative, privacy-safe data so you can preview the main surfaces before installing.
 
-![Codex Manager dashboard showing account cards, quota windows, and actions](media/docs-dashboard.png)
+![Codex Manager desktop dashboard showing PC selector, quota overview, session rail, and account cards](media/docs-dashboard.png)
 
-*Dashboard — compare account health, quota windows, and reset times at a glance.*
+*Desktop dashboard — compare PC status, quota health, account cards, and session access at a glance.*
+
+![Codex Manager mobile dashboard with compact quota and account controls](media/docs-mobile.png)
+
+*Mobile dashboard — use the same account, session, notification, and remote controls in a compact touch layout.*
+
+![Codex Manager mobile session workspace with goal strip and activity timeline](media/docs-session-mobile.png)
+
+*Mobile session workspace — read the conversation, follow activity, review changes, and keep the native goal visible above the composer.*
 
 ![Codex Manager settings control center](media/docs-settings.png)
 
@@ -108,7 +119,17 @@ The browser dashboard is disabled by default and listens on `http://127.0.0.1:39
 
 Follow the complete Windows and named/quick tunnel walkthrough in [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md). Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/), [downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/), [remotely-managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/), and [Quick Tunnels guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) first.
 
-Cloudflare Tunnel exposes the dashboard’s HTTP and WebSocket endpoints. It does **not** expose raw MQTT/TCP; devices that use MQTT still need a separately reachable broker.
+Cloudflare Tunnel exposes the dashboard’s HTTPS and secure WebSocket endpoints. It does **not** expose raw MQTT/TCP; devices that use MQTT still need a separately reachable broker. Install the same stable VSIX on every PC that should appear in the PC picker; the dashboard cannot discover a PC whose extension host is offline or running an older build.
+
+### Remote and mobile workflow
+
+1. Install Codex Manager on each PC and enable CLI integration where sessions should be visible.
+2. Configure the same dashboard password and Cloudflare HTTPS domain on the participating PCs.
+3. Open the dashboard on desktop or mobile. The PC picker shows online devices, their session totals, and the selected device’s account view.
+4. Enable **Browser notifications** on each device if you want switch, reload, failure, completion, or action prompts delivered while the page is closed.
+5. Use **Install app** or **Add to Home Screen** on mobile for a standalone PWA. The offline page preserves the shell and reconnects when the host returns; authenticated data and actions still require a live host.
+
+The dashboard’s session count is based on parent conversations and native runtime state. Child-agent rows and retained idle writer handles are excluded, so the count represents turns that are actually running.
 
 ## Settings
 

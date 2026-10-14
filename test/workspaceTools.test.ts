@@ -370,13 +370,15 @@ describe("workspace tools", () => {
     }
   });
 
-  it("rejects an arbitrary project path when VS Code has no open workspace", () => {
+  it("allows an existing Codex project even when VS Code has no open workspace", async () => {
     const previous = vscode.workspace.workspaceFolders;
+    const projectPath = await mkdtemp(join(tmpdir(), "codex-unopened-project-"));
     Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: undefined });
     try {
-      expect(() => resolveWorkspaceProjectPath(join(tmpdir(), "unopened-project"))).toThrow(/open workspace folder/i);
+      expect(resolveWorkspaceProjectPath(projectPath)).toBe(projectPath);
     } finally {
       Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: previous });
+      await rm(projectPath, { recursive: true, force: true });
     }
   });
 

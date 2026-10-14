@@ -16,6 +16,9 @@ it("publishes only escaped read-only messages and persists across a host restart
   const share = await new ConversationShares(secrets).get(token);
   expect(share!.messages[1]).toEqual({ role: "assistant", text: "Answer\nnext line" });
   const page = sharedConversationPage(share!);
+  expect(page).toContain("Read-only snapshot");
+  expect(page).toContain("message-head");
+  expect(page).toContain("Anyone with this link can view");
   expect(page).toContain("&lt;script&gt;"); expect(page).not.toContain("<script>");
   expect(page).not.toMatch(/<form|<button|api\/|secret|pc:thread/);
   expect(page).toContain("noindex,nofollow,noarchive");
