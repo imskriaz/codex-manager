@@ -48,7 +48,7 @@ describe("durable open conversation recovery", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
   });
 
-  it("captures open parent tabs synchronously before a managed reload", async () => {
+  it("captures running parent tabs and excludes idle tabs before a managed reload", async () => {
     const state = createContext([first]);
     state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
     await prepareCodexSessionsForExtensionHostRestart(
@@ -58,7 +58,7 @@ describe("durable open conversation recovery", () => {
       async () => [second]
     );
     expect(state.read()).toEqual([first]);
-    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([second]);
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
   });
 
   it("records a newly active goal without requiring its open tab to change", async () => {
@@ -117,7 +117,7 @@ describe("durable open conversation recovery", () => {
     expect(state.read()).toBeUndefined();
   });
 
-  it("records idle open tabs and restores them through a fresh host without a managed reload", async () => {
+  it("records selected running tabs and restores them through a fresh host without a managed reload", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "codex-open-restart-"));
     const file = path.join(root, "workspace.json");
     const newHost = async () => {
@@ -467,7 +467,7 @@ describe("Codex session auto resume", () => {
       expect(state.context.workspaceState.update).toHaveBeenCalledOnce();
       settle?.();
       await vi.advanceTimersByTimeAsync(0);
-      expect(await persistRunningCodexSessions(state.context, async () => [])).toEqual([id1, id2]);
+      expect(await persistRunningCodexSessions(state.context, async () => [])).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
@@ -682,12 +682,10 @@ describe("Codex session auto resume", () => {
     expect(state.read()).toEqual(["01a04882-d037-7a42-ad24-9afb61901185"]);
   });
 
-  it("retains interrupted recovery even when no process remains after reboot", async () => {
+  it("replaces stale recovery when a successful inspection confirms no running sessions", async () => {
     const state = createContext(["01a04882-d037-7a42-ad24-9afb61901186"]);
-    await expect(persistRunningCodexSessions(state.context, async () => [])).resolves.toEqual([
-      "01a04882-d037-7a42-ad24-9afb61901186"
-    ]);
-    expect(state.read()).toEqual(["01a04882-d037-7a42-ad24-9afb61901186"]);
+    await expect(persistRunningCodexSessions(state.context, async () => [])).resolves.toEqual([]);
+    expect(state.read()).toBeUndefined();
   });
 
   it("reports storage failure before claiming sessions were preserved", async () => {
@@ -788,7 +786,7 @@ describe("Codex session auto resume", () => {
     expect(state.read()).toEqual(["01a04882-d037-7a42-ad24-9afb61901181", "01a04882-d037-7a42-ad24-9afb61901182"]);
   });
 
-  it("merges pending recovery with a normalized fresh capture", async () => {
+  it("replaces stale pending recovery with a normalized verified capture", async () => {
     const state = createContext(["01a04882-d037-7a42-ad24-9afb61901187"]);
     expect(
       await persistRunningCodexSessions(state.context, async () => [
@@ -796,7 +794,7 @@ describe("Codex session auto resume", () => {
         "",
         "01a04882-d037-7a42-ad24-9afb61901188"
       ])
-    ).toEqual(["01a04882-d037-7a42-ad24-9afb61901187", "01a04882-d037-7a42-ad24-9afb61901188"]);
+    ).toEqual(["01a04882-d037-7a42-ad24-9afb61901188"]);
   });
 
   it("aborts a timed out opener and retains its recovery record", async () => {

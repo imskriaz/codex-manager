@@ -1,8 +1,22 @@
 import * as vscode from "vscode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reloadExtensionHostWithSessionCapture } from "../src/utils/extensionHostReload";
+import { subscribeToNotificationDelivery } from "../src/utils/notificationMirror";
 
 describe("bounded shared extension host reload", () => {
+  it("waits for push attempts before restarting and continues visibly after a delivery timeout", async () => {
+    vi.useFakeTimers();
+    const delivery = subscribeToNotificationDelivery(() => new Promise<void>(() => {}));
+    try {
+      vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+      const work = reloadExtensionHostWithSessionCapture(true);
+      await vi.advanceTimersByTimeAsync(8500);
+      await work;
+      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("Preparing to reload Codex Manager.");
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("browser notification delivery could not be confirmed"));
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+    } finally { delivery.dispose(); vi.useRealTimers(); }
+  });
   beforeEach(() => {
     vi.mocked(vscode.commands.executeCommand).mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -84,6 +98,13 @@ describe("bounded shared extension host reload", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reloads the full window after capture when updated configuration contributions are missing", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined } as never);
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+    await reloadExtensionHostWithSessionCapture(true);
+    expect(vscode.commands.executeCommand.mock.calls.map(call => call[0])).toEqual(["codexManager.prepareDashboardForExtensionHostRestart", "workbench.action.reloadWindow"]);
   });
 
   it("joins automatic and explicit reload callers into one shared workflow", async () => {

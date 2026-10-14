@@ -8,6 +8,7 @@ import {
 } from "../../infrastructure/config/extensionSettings";
 import {
   maybeAutoSwitchForActiveQuota,
+  isAutoSwitchWaitingForSessions,
   maybeWarnForActiveQuota,
   refreshSingleQuotaSafely
 } from "../../application/accounts/quota";
@@ -379,12 +380,29 @@ export function registerAutoRefreshScheduler(params: {
 
   applySchedule();
 
+  let sessionWaitInFlight = false;
+  const sessionWaitTimer = setInterval(() => {
+    if (disposed || sessionWaitInFlight || !isAutoSwitchWaitingForSessions()) return;
+    sessionWaitInFlight = true;
+    void maybeAutoSwitchForActiveQuota(params.repo, { refresh: params.onRefresh }, { canUseAccount: params.canRefreshAccount })
+      .catch((error) => { console.warn("[codexManager] deferred auto switch failed", error); })
+      .finally(() => {
+        sessionWaitInFlight = false;
+        if (!disposed) {
+          try { params.onRefresh(); }
+          catch (error) { console.warn("[codexManager] deferred switch view refresh failed", error); }
+        }
+      });
+  }, 5_000);
+  sessionWaitTimer.unref?.();
+
   const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
     if (
       event.affectsConfiguration("codexManager.autoRefreshMinutes") ||
       event.affectsConfiguration("codexManager.autoRefreshCurrentMinutes") ||
       event.affectsConfiguration("codexManager.autoSwitchRefreshAllBeforeSwitchEnabled") ||
       event.affectsConfiguration("codexManager.autoSwitchEnabled") ||
+      event.affectsConfiguration("codexManager.autoSwitchWaitForSessionsEnabled") ||
       event.affectsConfiguration("codexManager.quotaWarningEnabled") ||
       event.affectsConfiguration("codexManager.autoSwitchHourlyThreshold") ||
       event.affectsConfiguration("codexManager.autoSwitchWeeklyThreshold")
@@ -397,6 +415,7 @@ export function registerAutoRefreshScheduler(params: {
   return {
     dispose(): void {
       disposed = true;
+      clearInterval(sessionWaitTimer);
       configDisposable.dispose();
       if (allTimer) clearInterval(allTimer);
       currentScheduleVersion += 1;

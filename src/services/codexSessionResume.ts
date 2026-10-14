@@ -1,9 +1,11 @@
+import { readCodexSessionGoals } from "./codexSessionGoals";
+import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import { readCodexSessionTransport } from "../infrastructure/config/extensionSettings";
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { createHash } from "crypto";
 import * as readline from "readline";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
@@ -57,7 +59,6 @@ const CLI_AVAILABILITY_CACHE_TTL_MS = 60_000;
 const CLI_UNAVAILABLE_CACHE_TTL_MS = 5_000;
 const CLI_MODEL_LIST_CACHE_TTL_MS = 60_000;
 const CLI_MODEL_LIST_FAILURE_TTL_MS = 5_000;
-const CLI_TRANSCRIPT_PATH_CACHE_TTL_MS = 60_000;
 export const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const editorOpens = new Map<string, Promise<void>>();
 // Codex model IDs may be provider-qualified (for example 9router's
@@ -76,7 +77,6 @@ let cliModelListCache:
   { codexHome: string; models: DashboardCliComposerConfig["models"]; fetchedAt: number } | undefined;
 let cliModelListProbe: Promise<DashboardCliComposerConfig["models"]> | undefined;
 let cliModelListProbeHome: string | undefined;
-const cliTranscriptPathCache = new Map<string, { path?: string; expiresAt: number }>();
 type CliTranscriptMessageCache = {
   size: number;
   mtimeMs: number;
@@ -153,23 +153,26 @@ async function readLocalSessionList(codexHome: string, limit: number): Promise<D
   const records = new Map(state.map((record) => [record.id, record]));
   const entries = new Map(index.map((entry) => [entry.id, entry]));
   for (const record of state) if (!entries.has(record.id)) entries.set(record.id, { id: record.id, thread_name: record.title, updated_at: record.updatedAt });
+  const runningIds = new Set(await readRunningCodexSessionIds(codexHome));
+  for (const id of runningIds) if (!entries.has(id)) entries.set(id, { id });
   if (!entries.size) return [];
   const archivedIds = await readArchivedSessionIds(codexHome);
   for (const record of state) if (record.archived) archivedIds.add(record.id);
   const cappedLimit = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit) || MAX_VISIBLE_CLI_SESSIONS));
-  const ordered = [...entries.values()].sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
+  const ordered = [...entries.values()].sort((a, b) => Number(runningIds.has(b.id)) - Number(runningIds.has(a.id)) || String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
   const child = (entry: CliSessionIndexEntry): boolean => Boolean(readSubAgentMetadata(records.get(entry.id)?.source).subAgent);
-  const visibleEntries = [...ordered.filter((entry) => !child(entry) && !archivedIds.has(entry.id)).slice(0, cappedLimit), ...ordered.filter((entry) => !child(entry) && archivedIds.has(entry.id)).slice(0, cappedLimit), ...ordered.filter(child).slice(0, cappedLimit)];
+  const visibleEntries = [...ordered.filter((entry) => !child(entry) && !archivedIds.has(entry.id)).filter((entry, index) => runningIds.has(entry.id) || index < cappedLimit), ...ordered.filter((entry) => !child(entry) && archivedIds.has(entry.id)).slice(0, cappedLimit), ...ordered.filter(child).filter((entry, index) => runningIds.has(entry.id) || index < cappedLimit)];
   const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(visibleEntries.map((entry) => entry.id)));
+  const goals = await readCodexSessionGoals(codexHome);
   return Promise.all(visibleEntries.map(async (entry) => {
     const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id));
     const record = records.get(entry.id);
-    return { ...summary, ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
+    return { ...summary, ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
   }));
 }
 
-type StateSessionRecord = { id: string; title?: string; updatedAt?: string; archived: boolean; source?: unknown; cwd?: string };
-async function readStateSessionRecords(home: string, id?: string): Promise<StateSessionRecord[]> {
+type StateSessionRecord = { id: string; title?: string; updatedAt?: string; archived: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
+async function readStateSessionRecords(home: string, id?: string, projectRoots?: string[]): Promise<StateSessionRecord[]> {
   let db: { prepare(sql: string): { all(...args: string[]): Record<string, unknown>[] }; close(): void } | undefined;
   try {
     const names = (await fs.readdir(home)).filter((name) => /^state_[0-9]+\.sqlite$/.test(name));
@@ -178,13 +181,24 @@ async function readStateSessionRecords(home: string, id?: string): Promise<State
     const moduleName = "node:sqlite";
     const sqlite = await import(moduleName) as { DatabaseSync: new (file: string, options: { readOnly: boolean }) => NonNullable<typeof db> };
     db = new sqlite.DatabaseSync(path.join(home, names[0]), { readOnly: true });
-    const rows = id ? db.prepare("SELECT id, title, updated_at, archived, source, cwd FROM threads WHERE id = ?").all(id)
-      : db.prepare("SELECT id, title, updated_at, archived, source, cwd FROM threads ORDER BY updated_at DESC LIMIT 2000").all();
+    if (projectRoots) {
+      try {
+        for (const row of db.prepare("SELECT path FROM project_roots ORDER BY project_id, position LIMIT 2000").all())
+          if (typeof row["path"] === "string") projectRoots.push(row["path"]);
+      } catch { /* Older Codex stores projects only in thread metadata. */ }
+    }
+    const available = new Set(db.prepare("PRAGMA table_info(threads)").all().map(row => row["name"]));
+    const columns = ["id", "title", "updated_at", "archived", "source", "cwd", "rollout_path"].filter(column => available.has(column));
+    if (!available.has("id")) return [];
+    const query = `SELECT ${columns.join(", ")} FROM threads`;
+    const rows = id ? db.prepare(`${query} WHERE id = ?`).all(id)
+      : db.prepare(`${query}${available.has("updated_at") ? " ORDER BY updated_at DESC" : ""} LIMIT 2000`).all();
     return rows.flatMap((row) => {
       if (typeof row["id"] !== "string" || !SESSION_ID_PATTERN.test(row["id"])) return [];
       return [{ id: row["id"], title: typeof row["title"] === "string" ? row["title"] : undefined,
         updatedAt: typeof row["updated_at"] === "number" && Number.isFinite(row["updated_at"]) ? new Date(row["updated_at"] * 1000).toISOString() : undefined,
-        archived: row["archived"] === 1, source: row["source"], cwd: typeof row["cwd"] === "string" ? row["cwd"] : undefined }];
+        archived: row["archived"] === 1, source: row["source"], cwd: typeof row["cwd"] === "string" ? row["cwd"] : undefined,
+        rolloutPath: typeof row["rollout_path"] === "string" && row["rollout_path"].length <= 4096 ? row["rollout_path"] : undefined }];
     });
   } catch { return []; } // Optional metadata; old hosts and unavailable databases use JSONL.
   finally { db?.close(); }
@@ -218,7 +232,8 @@ export async function readCodexCliSessionSummary(
     findCliSessionTranscripts(codexHome, new Set([sessionId]))
   ]);
   const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id) || Boolean(state?.archived), transcriptPaths.get(entry.id));
-  return { ...summary, ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
+  const goals = await readCodexSessionGoals(codexHome);
+  return { ...summary, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
@@ -235,15 +250,17 @@ export async function readRunningCodexSessionIds(codexHome = resolveCodexHome())
     .slice(0, MAX_SESSION_SCAN_ENTRIES);
   const activeIds = path.resolve(codexHome) === path.resolve(resolveCodexHome())
     ? [...activeCliTurns.keys(), ...activeAppServerTurns.keys()] : [];
-  const sessionIds = [...new Set([...lockedSessionIds, ...activeIds])];
+  const transcriptPaths = await findCliSessionTranscripts(codexHome);
+  const stateRecords = await readStateSessionRecords(codexHome);
+  const sessionIds = [...new Set([...lockedSessionIds, ...activeIds, ...transcriptPaths.keys()])];
   if (!sessionIds.length) {
     return [];
   }
 
-  const [archivedIds, transcriptPaths] = await Promise.all([
-    readArchivedSessionIds(codexHome),
-    findCliSessionTranscripts(codexHome, new Set(sessionIds))
-  ]);
+  const archivedIds = await readArchivedSessionIds(codexHome);
+  for (const record of stateRecords) if (record.archived) archivedIds.add(record.id);
+  const archiveRoot = path.join(codexHome, "archived_sessions") + path.sep;
+  for (const [id, transcript] of transcriptPaths) if (transcript.startsWith(archiveRoot)) archivedIds.add(id);
   const running: string[] = [];
   for (const sessionId of sessionIds) {
     if (archivedIds.has(sessionId)) {
@@ -341,7 +358,9 @@ export function getCodexSessionReadNotice(): { level: "warning"; message: string
 
 function capSessionList(sessions: DashboardCliSessionSummary[], limit: number): DashboardCliSessionSummary[] {
   const capped = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit) || MAX_VISIBLE_CLI_SESSIONS));
-  return [...sessions.filter((session) => !session.subAgent && !session.archived).slice(0, capped), ...sessions.filter((session) => !session.subAgent && session.archived).slice(0, capped), ...sessions.filter((session) => session.subAgent).slice(0, capped)];
+  const active = sessions.filter((session) => !session.subAgent && !session.archived);
+  const children = sessions.filter((session) => session.subAgent);
+  return [...active.filter((session, index) => session.status === "running" || index < capped), ...sessions.filter((session) => !session.subAgent && session.archived).slice(0, capped), ...children.filter((session, index) => session.status === "running" || index < capped)];
 }
 
 async function readAppServerSessions(limit: number): Promise<DashboardCliSessionSummary[]> {
@@ -374,12 +393,12 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
       }
     }
     const codexHome = resolveCodexHome();
-    const locks = new Set(await fs.readdir(path.join(codexHome, SESSION_LOCK_DIRECTORY))
-      .catch(() => [] as string[]));
-    const lockedIds = new Set(sessions.filter((session) => !session.archived && locks.has(`${session.id}.lock`)).map((session) => session.id));
+    const local = await readLocalSessionList(codexHome, capped);
+    for (const row of local) if (!sessions.some((session) => session.id === row.id)) sessions.push(row);
     const stateRecords = new Map((await readStateSessionRecords(codexHome)).map((record) => [record.id, record]));
     const metadataIds = new Set(sessions.filter((session) => !session.subAgent || !session.parentSessionId || !session.projectPath || !session.sessionSurface).map((session) => session.id));
     const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(sessions.map((session) => session.id)));
+    const goals = await readCodexSessionGoals(codexHome);
     const enriched = await Promise.all(sessions.map(async (session) => {
       const metadata = metadataIds.has(session.id)
         ? await readCliSessionMetadata(codexHome, session.id, transcriptPaths.get(session.id))
@@ -393,12 +412,15 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
         ...(!session.sessionSurface && metadata?.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {})
       };
       if (session.archived) return withMetadata;
-      const locked = lockedIds.has(session.id);
       const canStop = activeCliTurns.has(session.id) || activeAppServerTurns.has(session.id);
-      const transcriptState = await readRecentTranscriptTurnState(transcriptPaths.get(session.id));
-      const running = (session.status === "running" && transcriptState !== "terminal") || canStop || (locked && await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id)));
+      const running = await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id), session.status === "running");
+      const transcriptUpdatedAt = cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.mtimeMs;
+      const updatedAt = transcriptUpdatedAt && transcriptUpdatedAt > (Date.parse(session.updatedAt ?? "") || 0)
+        ? new Date(transcriptUpdatedAt).toISOString() : session.updatedAt;
       return {
         ...withMetadata,
+        ...(goals ? { goal: goals.get(session.id) ?? null } : {}),
+        updatedAt,
         status: running ? "running" as const : "idle" as const,
         locked: running,
         runningBy: running ? (canStop ? "Codex Manager" : "another Codex process") : undefined,
@@ -447,10 +469,13 @@ async function toCliSessionSummary(
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
   const running = !archived && (await isCliSessionRunning(codexHome, entry.id, transcriptPath));
   const canStop = running && (activeCliTurns.has(entry.id) || activeAppServerTurns.has(entry.id));
+  const transcriptUpdatedAt = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath)?.mtimeMs : undefined;
+  const updatedAt = transcriptUpdatedAt && transcriptUpdatedAt > (Date.parse(entry.updated_at ?? "") || 0)
+    ? new Date(transcriptUpdatedAt).toISOString() : normalizeTimestamp(entry.updated_at);
   return {
     id: entry.id,
     title: normalizeSessionTitle(entry.thread_name, entry.id),
-    updatedAt: normalizeTimestamp(entry.updated_at),
+    updatedAt,
     status: running ? "running" : "idle",
     ...(metadata.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
     ...(metadata.projectPath ? { projectPath: metadata.projectPath } : {}),
@@ -548,6 +573,18 @@ function resolveCliSessionSurface(originator: unknown, source: unknown): Dashboa
   return originatorLabel || sourceLabel ? "other" : undefined;
 }
 
+const knownProjectRoots = new Map<string, string[]>();
+async function readKnownProjectRoots(home: string): Promise<string[]> {
+  const roots: string[] = [];
+  for (const record of await readStateSessionRecords(home, undefined, roots)) if (record.cwd) roots.push(record.cwd);
+  const unique = [...new Set(roots.filter(root => root.length <= 4096 && path.isAbsolute(root)).map(root => path.resolve(root)))];
+  const available = (await Promise.all(unique.map(async root => await fs.stat(root).then(stat => stat.isDirectory() ? root : undefined).catch(() => undefined))))
+    .filter((root): root is string => root !== undefined);
+  knownProjectRoots.set(path.resolve(home), available);
+  if (knownProjectRoots.size > 8) knownProjectRoots.delete(knownProjectRoots.keys().next().value!);
+  return available;
+}
+
 export async function readCodexCliComposerConfig(codexHome = resolveCodexHome()): Promise<DashboardCliComposerConfig> {
   const [modelsRaw, configRaw] = await Promise.all([
     readSmallOptionalFile(path.join(codexHome, "models_cache.json"), MAX_MODELS_CACHE_BYTES),
@@ -564,17 +601,14 @@ export async function readCodexCliComposerConfig(codexHome = resolveCodexHome())
   const configuredModel = readTomlString(configRaw, "model");
   const configuredEffort = readTomlString(configRaw, "model_reasoning_effort");
   const configuredSandbox = readTomlString(configRaw, "sandbox_mode");
+  const projects = (vscode.workspace.workspaceFolders ?? []).map(folder => ({ id: folder.uri.fsPath, label: folder.name, path: folder.uri.fsPath }));
+  for (const root of await readKnownProjectRoots(codexHome)) {
+    const same = (value: string) => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+    if (!projects.some(project => same(project.path) === same(root))) projects.push({ id: root, label: path.basename(root), path: root });
+  }
   return {
     models,
-    ...(vscode.workspace.workspaceFolders?.length
-      ? {
-          projects: vscode.workspace.workspaceFolders.map((folder) => ({
-            id: folder.uri.fsPath,
-            label: folder.name,
-            path: folder.uri.fsPath
-          }))
-        }
-      : {}),
+    ...(projects.length ? { projects } : {}),
     defaultModel: models.some((model) => model.id === configuredModel) ? configuredModel : models[0]?.id,
     defaultReasoningEffort: REASONING_EFFORT_PATTERN.test(configuredEffort ?? "")
       ? configuredEffort
@@ -608,6 +642,7 @@ export async function sendCodexCliSessionMessage(options: {
   if (options.sandboxMode && !isCliSandboxMode(options.sandboxMode)) {
     throw new Error("The selected access mode is invalid.");
   }
+  await readKnownProjectRoots(resolveCodexHome());
   if (configuredSessionTransport() !== "cli") {
     await sendAppServerSessionMessage(options);
     return;
@@ -912,6 +947,7 @@ async function runNewCodexCliSession(options: {
   if (options.sandboxMode && !isCliSandboxMode(options.sandboxMode)) {
     throw new Error("The selected access mode is invalid.");
   }
+  await readKnownProjectRoots(resolveCodexHome());
   if (configuredSessionTransport() !== "cli") {
     return startAppServerSession(options, onStarted);
   }
@@ -2054,9 +2090,10 @@ function resolveCliProjectPath(projectPath: string | undefined): string {
   const fallback = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   if (!projectPath) return fallback;
   const requested = path.resolve(projectPath);
-  const allowed = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(folder.uri.fsPath));
+  const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(folder.uri.fsPath));
+  const allowed = [...workspaceRoots, ...(knownProjectRoots.get(path.resolve(resolveCodexHome())) ?? [])];
   if (
-    allowed.length === 0 ||
+    workspaceRoots.length === 0 ||
     allowed.some((root) => {
       const relative = path.relative(root, requested);
       return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
@@ -2753,44 +2790,102 @@ function isProcessAlive(pid: number): boolean {
 async function isCliSessionRunning(
   codexHome: string,
   sessionId: string,
-  knownTranscriptPath?: string
+  knownTranscriptPath?: string,
+  liveRunning = false
 ): Promise<boolean> {
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) &&
       (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId))) return true;
+  const cachedNative = getNativeCodexSessionRunning(codexHome, sessionId);
+  if (cachedNative !== undefined) return cachedNative;
   const lockPath = path.join(codexHome, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
   const stat = await fs.lstat(lockPath).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
-  if (!stat?.isFile() || stat.isSymbolicLink()) return false;
   const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId);
   const turnState = await readRecentTranscriptTurnState(transcript);
   // A loaded conversation can retain its writer lock after its turn finishes.
   if (turnState === "terminal") return false;
-  if (await isWriterLockHeld(lockPath)) return true;
+  const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId);
+  if (nativeRunning !== undefined) return nativeRunning;
+  if (liveRunning) return true;
+  const hasLock = Boolean(stat?.isFile() && !stat.isSymbolicLink());
   // A writer lock can survive an interrupted/stopped Codex process. Treat it
   // as live only for a short lease, then require recent transcript activity
   // as corroboration instead of blocking resume for 15 minutes.
   const lockLeaseWindow = 2 * 60 * 1000;
-  const lockAge = Date.now() - stat.mtimeMs;
-  if (turnState !== "active") return false;
+  const lockAge = stat ? Date.now() - stat.mtimeMs : Infinity;
   const bootTime = Date.now() - os.uptime() * 1_000;
-  if (lockAge >= -60_000 && lockAge < lockLeaseWindow && stat.mtimeMs >= bootTime) {
+  if (turnState === "active" && hasLock && lockAge >= -60_000 && lockAge < lockLeaseWindow && stat!.mtimeMs >= bootTime) {
     return true;
   }
   const activeWindow = 5 * 60 * 1000;
   // Some CLI versions keep the lock mtime fixed while the transcript is
   // actively appended. Use a recent transcript write as a secondary signal.
-  if (!transcript) return false;
-  const transcriptStat = await fs.lstat(transcript).catch((error: NodeJS.ErrnoException) => {
+  const transcriptStat = transcript ? await fs.lstat(transcript).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
-  });
+  }) : undefined;
   const transcriptAge = transcriptStat ? Date.now() - transcriptStat.mtimeMs : Infinity;
-  return Boolean(transcriptStat?.isFile() && !transcriptStat.isSymbolicLink() && transcriptStat.mtimeMs >= bootTime && transcriptAge >= -60_000 && transcriptAge < activeWindow);
+  if (turnState === "active" && transcriptStat?.isFile() && !transcriptStat.isSymbolicLink() && transcriptStat.mtimeMs >= bootTime && transcriptAge >= -60_000 && transcriptAge < activeWindow) return true;
+  return hasLock && await isWriterLockHeld(lockPath);
 }
 
+const writerLockProbes = new Map<string, { expiresAt: number; paths: Promise<Set<string>> }>();
 async function isWriterLockHeld(lockPath: string): Promise<boolean> {
+  if (process.platform === "win32") {
+    const directory = path.dirname(lockPath);
+    let cached = writerLockProbes.get(directory);
+    if (!cached || cached.expiresAt <= Date.now()) {
+      const directoryData = Buffer.from(directory, "utf8").toString("base64");
+      // Node permits shared reads of Windows byte-range locks. FileShare.None detects the live writer handle.
+      const script = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${directoryData}')); $held=@(); foreach($p in [IO.Directory]::EnumerateFiles($d,'*.lock')) { try { $f=[IO.File]::Open($p,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None); $f.Dispose() } catch { $e=$_.Exception; while($e.InnerException) { $e=$e.InnerException }; $code=$e.HResult -band 65535; if($code -eq 32 -or $code -eq 33) { $held+=,$p } elseif($code -ne 2 -and $code -ne 3) { throw } } }; ConvertTo-Json -InputObject @($held) -Compress`;
+      const entry = { expiresAt: Infinity, paths: Promise.resolve(new Set<string>()) };
+      entry.paths = new Promise<Set<string>>((resolve, reject) => {
+        execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
+          { timeout: 15_000, maxBuffer: 256 * 1024, windowsHide: true }, (error, stdout) => {
+            entry.expiresAt = Date.now() + 2000;
+            if (error) { reject(new Error("Windows session writer inspection failed. Retry after the PC responds.")); return; }
+            try {
+              const values: unknown = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim() || "[]");
+              if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("Invalid lock response");
+              resolve(new Set(values.map(value => path.resolve(value).toLowerCase())));
+            } catch { reject(new Error("Windows session writer inspection returned incomplete data. Retry after the PC responds.")); }
+          });
+      });
+      cached = entry;
+      writerLockProbes.set(directory, cached);
+      if (writerLockProbes.size > 8) writerLockProbes.delete(writerLockProbes.keys().next().value!);
+    }
+    if ((await cached.paths).has(path.resolve(lockPath).toLowerCase())) return true;
+  }
+  if (process.platform === "linux") {
+    try {
+      const [stat, raw] = await Promise.all([fs.stat(lockPath, { bigint: true }), fs.readFile("/proc/locks", "utf8")]);
+      const major = ((stat.dev >> 8n) & 0xfffn) | ((stat.dev >> 32n) & 0xfffff000n);
+      const minor = (stat.dev & 0xffn) | ((stat.dev >> 12n) & 0xffffff00n);
+      if (raw.split("\n").some((line) => {
+        const key = /\b([0-9a-f]+):([0-9a-f]+):(\d+)\b/i.exec(line);
+        return key && /\bWRITE\b/.test(line) && BigInt(`0x${key[1]}`) === major && BigInt(`0x${key[2]}`) === minor && BigInt(key[3]!) === stat.ino;
+      })) return true;
+    } catch { /* Restricted procfs and older kernels use the portable probe below. */ }
+  }
+  if (process.platform !== "win32") {
+    const directory = path.dirname(lockPath);
+    let cached = writerLockProbes.get(directory);
+    if (!cached || cached.expiresAt <= Date.now()) {
+      const paths = new Promise<Set<string>>((resolve) => {
+        execFile("lsof", ["-Fn", "+D", directory], { timeout: 1500, maxBuffer: 256 * 1024 }, (_error, stdout) => {
+          resolve(new Set(String(stdout ?? "").split(/\r?\n/).filter((line) => line.startsWith("n")).map((line) => line.slice(1))));
+        });
+      });
+      cached = { paths, expiresAt: Date.now() + 2000 };
+      writerLockProbes.set(directory, cached);
+      if (writerLockProbes.size > 8) writerLockProbes.delete(writerLockProbes.keys().next().value!);
+    }
+    if ((await cached.paths).has(lockPath)) return true;
+  }
+
   try {
     const handle = await fs.open(lockPath, "r");
     await handle.close();
@@ -2823,7 +2918,10 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
         incremental = Boolean(previous && stat.size > previous.size && stat.size - previous.offset <= MAX_SESSION_TRANSCRIPT_READ_BYTES);
         return incremental ? previous!.offset : Math.max(0, stat.size - maxBytes);
       }
-    }).catch(() => undefined);
+    }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
     if (!snapshot) { cliTranscriptTurnStateCache.delete(transcriptPath); return "unknown"; }
     if (previous?.size === snapshot.size && previous.mtimeMs === snapshot.mtimeMs) return previous.state;
     let state: RecentTranscriptTurnState = incremental ? previous!.resumeState : "unknown";
@@ -2865,97 +2963,52 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
  */
 export async function findCliSessionTranscripts(
   codexHome: string,
-  sessionIds: ReadonlySet<string>
+  sessionIds?: ReadonlySet<string>
 ): Promise<Map<string, string>> {
   const found = new Map<string, string>();
-  if (sessionIds.size === 0) return found;
-  const homeKey = path.resolve(codexHome);
-  const missing = new Set(sessionIds);
-  for (const sessionId of sessionIds) {
-    const cached = cliTranscriptPathCache.get(`${homeKey}\u0000${sessionId}`);
-    if (cached?.path && cached.expiresAt > Date.now()) {
-      found.set(sessionId, cached.path);
-      missing.delete(sessionId);
-    }
-  }
-  if (missing.size === 0) return found;
-  // Push archived first so the LIFO walk examines the active session tree
-  // before falling back to archived transcripts, matching the old resolver.
-  const roots = [path.join(codexHome, "archived_sessions"), path.join(codexHome, SESSION_DIRECTORY)];
-  const pending = [...roots];
+  if (sessionIds?.size === 0) return found;
+  const canonical = new Map((await readStateSessionRecords(codexHome)).flatMap((record) =>
+    record.rolloutPath && path.isAbsolute(record.rolloutPath) ? [[record.id, path.resolve(record.rolloutPath)] as const] : []));
+  const selected = new Map<string, { mtimeMs: number; active: boolean; canonical: boolean }>();
+  const activeRoot = path.resolve(codexHome, SESSION_DIRECTORY) + path.sep;
+  const pending = [path.join(codexHome, "archived_sessions"), path.join(codexHome, SESSION_DIRECTORY)];
   let scanned = 0;
-  while (pending.length > 0 && scanned < MAX_SESSION_SCAN_ENTRIES && missing.size > 0) {
+  while (pending.length && scanned < MAX_SESSION_SCAN_ENTRIES) {
     const directory = pending.pop()!;
-    const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
+    const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
     for (const entry of entries) {
-      scanned += 1;
-      if (scanned > MAX_SESSION_SCAN_ENTRIES) break;
+      if (++scanned > MAX_SESSION_SCAN_ENTRIES) break;
       if (entry.isSymbolicLink()) continue;
       const candidate = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        pending.push(candidate);
-        continue;
-      }
+      if (entry.isDirectory()) { pending.push(candidate); continue; }
       if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
-      const match = entry.name.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-      const sessionId = match?.[0];
-      if (sessionId && missing.has(sessionId)) {
-        found.set(sessionId, candidate);
-        missing.delete(sessionId);
-        cliTranscriptPathCache.set(`${homeKey}\u0000${sessionId}`, {
-          path: candidate,
-          expiresAt: Date.now() + CLI_TRANSCRIPT_PATH_CACHE_TTL_MS
-        });
+      const id = entry.name.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]?.toLowerCase();
+      if (!id || (sessionIds && !sessionIds.has(id))) continue;
+      const stat = await fs.lstat(candidate).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (!stat?.isFile() || stat.isSymbolicLink()) continue;
+      const active = path.resolve(candidate).startsWith(activeRoot);
+      const previous = selected.get(id);
+      const isCanonical = canonical.get(id) === path.resolve(candidate);
+      if (!previous || (isCanonical && !previous.canonical) || (!previous.canonical && !isCanonical &&
+          ((active && !previous.active) || (active === previous.active && stat.mtimeMs > previous.mtimeMs)))) {
+        found.set(id, candidate);
+        selected.set(id, { mtimeMs: stat.mtimeMs, active, canonical: isCanonical });
       }
     }
   }
+  if (pending.length || scanned > MAX_SESSION_SCAN_ENTRIES)
+    throw new Error("Session discovery reached its safety limit. Running state could not be fully verified; retry after reducing local session history.");
   return found;
 }
 
 async function findCliSessionTranscript(codexHome: string, sessionId: string): Promise<string | undefined> {
-  const cacheKey = `${path.resolve(codexHome)}\u0000${sessionId}`;
-  const cached = cliTranscriptPathCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    if (
-      !cached.path ||
-      (await fs
-        .stat(cached.path)
-        .then((stat) => stat.isFile())
-        .catch(() => false))
-    )
-      return cached.path;
-    cliTranscriptPathCache.delete(cacheKey);
-  }
-  const root = path.join(codexHome, SESSION_DIRECTORY);
-  const pending = [root];
-  let scanned = 0;
-  while (pending.length > 0 && scanned < MAX_SESSION_SCAN_ENTRIES) {
-    const directory = pending.pop()!;
-    const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      scanned += 1;
-      if (scanned > MAX_SESSION_SCAN_ENTRIES) break;
-      if (entry.isSymbolicLink()) continue;
-      const candidate = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        pending.push(candidate);
-      } else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(sessionId)) {
-        cliTranscriptPathCache.set(cacheKey, {
-          path: candidate,
-          expiresAt: Date.now() + CLI_TRANSCRIPT_PATH_CACHE_TTL_MS
-        });
-        return candidate;
-      }
-    }
-  }
-  const archived = await fs.readdir(path.join(codexHome, "archived_sessions"), { withFileTypes: true }).catch(() => []);
-  const archivedEntry = archived.find(
-    (entry) =>
-      !entry.isSymbolicLink() && entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.includes(sessionId)
-  );
-  const result = archivedEntry ? path.join(codexHome, "archived_sessions", archivedEntry.name) : undefined;
-  cliTranscriptPathCache.set(cacheKey, { path: result, expiresAt: Date.now() + (result ? CLI_TRANSCRIPT_PATH_CACHE_TTL_MS : 2000) });
-  return result;
+  return (await findCliSessionTranscripts(codexHome, new Set([sessionId]))).get(sessionId);
 }
 
 async function readArchivedSessionIds(codexHome: string): Promise<Set<string>> {

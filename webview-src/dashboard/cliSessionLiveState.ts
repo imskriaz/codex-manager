@@ -2,8 +2,12 @@ import type { DashboardCliSessionMessage, DashboardCliSessionSummary, DashboardC
 import { isNewerCodexSessionLiveState } from "../../src/domain/codexSessionLive";
 import { cliSessionTargetKey, sameCliSessionTarget } from "./cliSessionRoute";
 
-export function isCliTurnActive(state: DashboardCodexSessionLiveState | undefined): boolean {
-  return state?.status === "starting" || state?.status === "running";
+import { isCliTurnActive } from "../../src/domain/codexSessionState";
+export { isCliTurnActive } from "../../src/domain/codexSessionState";
+
+export function isCliLiveStateCurrent(session: DashboardCliSessionSummary | undefined, live: DashboardCodexSessionLiveState | undefined): boolean {
+  return Boolean(session && live && sameCliSessionTarget(session, { id: live.sessionId, deviceId: live.deviceId }) &&
+    !(Date.parse(session.updatedAt ?? "") > live.updatedAt));
 }
 
 /** Keep a delayed session-index refresh from reviving a completed live turn. */
@@ -19,9 +23,8 @@ export function reconcileCliSessionStatus(
   liveStates: Record<string, DashboardCodexSessionLiveState>
 ): DashboardCliSessionSummary {
   const live = liveStates[cliSessionTargetKey(session)];
-  if (!live || !sameCliSessionTarget(session, { id: live.sessionId, deviceId: live.deviceId })) return session;
   // A later index update can describe a new turn started outside this host.
-  if (Date.parse(session.updatedAt ?? "") > live.updatedAt) return session;
+  if (!live || !isCliLiveStateCurrent(session, live)) return session;
   if (isCliTurnActive(live)) return { ...session, status: "running" };
   if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", locked: false, canStop: false, runningBy: undefined };
   return session;

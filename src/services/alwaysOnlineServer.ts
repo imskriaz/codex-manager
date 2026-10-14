@@ -15,7 +15,7 @@ const PID_FILE = "always-online-relay.pid";
 const SECRET_KEY = "codexManager.webDashboard.alwaysOnlineAdminToken.v1";
 const STARTUP_FILE = "CodexManagerAlwaysOnline.cmd";
 
-type RelayConfig = { port: number; hostKey: string; adminToken: string; pidPath: string; modulePaths: string[] };
+type RelayConfig = { port: number; hostKey: string; adminToken: string; pidPath: string; modulePaths: string[]; claimRegistryPath?: string };
 type PreparedRelay = RelayConfig & {
   configPath: string;
   scriptTarget: string;
@@ -211,7 +211,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       hostKey: prepared.hostKey,
       adminToken: prepared.adminToken,
       pidPath: prepared.pidPath,
-      modulePaths: prepared.modulePaths
+      modulePaths: prepared.modulePaths,
+      claimRegistryPath: path.join(storage, "account-claim-authority.json")
     };
     await fs.writeFile(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
     await writeStartupLauncher(this.context, configPath, scriptTarget);

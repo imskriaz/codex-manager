@@ -161,7 +161,7 @@ async function clearIds(context: AutoResumeContext, deadline: number): Promise<v
   unrestoredOpenSnapshots.delete(context.workspaceState);
 }
 
-/** Save running parent IDs at a managed reload boundary without losing pending recovery. */
+/** Replace recovery with verified running parent IDs at a managed reload boundary. */
 export function persistRunningCodexSessions(
   context: AutoResumeContext,
   readRunningSessionIds: (signal?: AbortSignal) => Promise<string[]> = (signal) =>
@@ -199,9 +199,7 @@ export function persistRunningCodexSessions(
         await clearIds(context, deadline);
         return [];
       }
-      const ids = await bounded(() => filterAutoResumeGoalSessionIds(normalizeIds([
-        ...readPersistedSessionIds(context), ...normalizeIds(running)
-      ]), undefined, controller.signal), deadline - Date.now(),
+      const ids = await bounded(() => filterAutoResumeGoalSessionIds(normalizeIds(running), undefined, controller.signal), deadline - Date.now(),
         "Auto Resume could not verify goals before saving recovery.", controller.signal);
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Retry after preferences settle.");
       await writeIds(context, ids, deadline);
@@ -216,15 +214,18 @@ export function persistRunningCodexSessions(
   });
 }
 
-/** Capture both running sessions and currently open parent tabs before a managed reload. */
+/** Capture running parents and their open tabs before a managed reload. */
 export async function prepareCodexSessionsForExtensionHostRestart(
   context: AutoResumeContext,
   autoResume: boolean,
   readRunningSessionIds?: (signal?: AbortSignal) => Promise<string[]>,
   readOpenParents?: (signal?: AbortSignal) => Promise<string[]>
 ): Promise<void> {
-  await persistRunningCodexSessions(context, readRunningSessionIds);
-  if (autoResume) await persistOpenCodexSessions(context, readOpenParents);
+  const running = await persistRunningCodexSessions(context, readRunningSessionIds);
+  if (autoResume) await persistOpenCodexSessions(context, async signal => {
+    const open = readOpenParents ? await readOpenParents(signal) : readOpenCodexSessionIds();
+    return open.filter(id => running.includes(id));
+  });
 }
 
 export type AutoResumeResult = {
@@ -237,7 +238,7 @@ export type AutoResumeResult = {
 export function persistOpenCodexSessions(
   context: AutoResumeContext,
   readOpenParents: (signal?: AbortSignal) => Promise<string[]> = (signal) =>
-    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal, "open"),
+    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal, "running"),
   signal?: AbortSignal
 ): Promise<string[]> {
   return serialize(context, "track", async () => {

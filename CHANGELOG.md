@@ -1,28 +1,34 @@
 # Changelog
 
+## 1.2.19
+
+- Hide the desktop overview account-details block on small screens while retaining usage, quotas, and actions.
+- Compact small dashboard headers: remove the empty top spacer, use the logo as the left sidebar button, and omit the unrelated right floating workspace toggle.
+- Add explicit, expiring, revocable read-only conversation snapshot links that work without dashboard sign-in.
+
+- Add **Claim only the current account** with authenticated shared-host ownership checks, serialized switching, fenced releases, and PC labels. Preserve queued claims through conflicting sync updates.
+- Restore only verified running parent conversations across projects, preserve distinct native tabs, and use native runtime state to distinguish idle conversations from retained writer handles.
+- Discover concurrent running sessions from shared local evidence, including duplicate transcripts and sessions without writer locks or complete indexes, and keep browser and VS Code counts consistent.
+- Add the always-visible **Wait for running sessions** setting under Auto Switch. Wait for confirmed active sessions, then switch after completion; continue with a warning when inspection fails or times out.
+- Offer browser notification subscription on page load, mirror major VS Code switches and reloads to subscribed devices in parallel, support mobile notification actions, and automatically recover the installed PWA after offline use.
+- Show native goal objectives, status, and elapsed time above the composer on desktop and mobile. Anchor running spinners on the right without hover movement and hide them while row actions are visible.
+- Keep session order stable across refreshes, remove completion ticks and project plus buttons, group sidebar controls, list all available projects for new chats, and repair delete confirmation sizing and contrast.
+- Refresh newly installed settings contributions through a full VS Code reload when required.
+- Hide the redundant header overflow menu on desktop while retaining mobile actions.
+- Confirm realtime vault delivery only after the receiving PC applies it, and reject stale or conflicting claim updates.
+- Group changelog entries by release and normalize license formatting while preserving the MIT terms and attribution.
+
 ## 1.2.18
 
 - Capture open Codex conversation tabs synchronously before managed reloads so the old tabs can be closed and resumed reliably.
-
-## 1.2.18-pre3
-
 - Drain bounded diagnostic queues through flush() without mutating the active write promise while it settles.
-
-## 1.2.18-pre2
-
 - Correct running-session detection and auto-resume selection for long turns, completed conversations with retained writer locks, and partial or duplicate transcript events.
-
-## 1.2.18-pre1
-
 - Serialize dashboard usage persistence across VS Code and browser surfaces, reject future-dated cache entries, and make history appends linear for large datasets.
 - Keep provider deadlines active through response bodies, bound stalled browser actions and cache transactions, and preserve completed actions when dashboard refresh fails.
 - Recover from storage and refresh failures, reject malformed credentials and preferences, and preserve window account isolation through initialization and disposal.
 - Report relay launch and shutdown failures accurately, handle subprocess stream errors, and stop failed batches after active work settles.
 - Avoid excessive diagnostic-redaction work for long values and serialize overlapping window account lifecycle operations.
 - Bound transcript retention and diagnostic write queues, reduce live-stream serialization, and avoid redundant transcript polling after session-list updates.
-
-## 1.2.18
-
 - Ensure running-session spinners render visibly in compact and mobile lists.
 
 ## 1.2.17
@@ -36,25 +42,17 @@
 - Fix live session reconciliation and writer-lock handling so running state, spinners, and composer locking stay accurate.
 - Keep message actions compact and click-driven, remove the redundant active badge, and add Ctrl/Cmd+mouse-wheel zoom for VS Code webviews.
 
-## 1.2.15-pre2
-
-- Detect an actively held Codex writer lock on Windows, keep the running spinner authoritative, and reject sends while another writer owns the session.
-
-## 1.2.15-pre1
-
-- Keep session titles and project metadata on two stable lines when hover actions appear, center destructive delete confirmations in the workspace, and keep Codex question answers in a focused modal. Message actions now open from a compact click target instead of hover.
-
 ## 1.2.15
 
+- Detect an actively held Codex writer lock on Windows, keep the running spinner authoritative, and reject sends while another writer owns the session.
+- Keep session titles and project metadata on two stable lines when hover actions appear, center destructive delete confirmations in the workspace, and keep Codex question answers in a focused modal. Message actions now open from a compact click target instead of hover.
 - Require active transcript evidence for leftover writer locks, restore the composer after completed live turns, retain renamed session titles, and dismiss approvals when their turn stops or the request expires.
 - Route duplicate terminal names by stable IDs, reject closed selections, and make uncertain status after a host restart explicit. Invalidate cached browser assets when the installed build changes.
 - Keep terminal Stop controls active until execution finishes, recover bounded terminal activity after browser reload or reconnection, and prevent duplicate or delayed output from restarting completed commands. Settle closed, interrupted, timed out, and broken terminal streams visibly.
 - Extend real browser checks to mobile chat creation and disposable file, terminal, session, and Git actions.
 - Make Compare branch fetch the actual Git diff against the upstream or local base, with bounded previews, empty states, and retry. Preserve the turn review view and use an icon for scrolling to the latest terminal output.
-
 - Prevent stale session project paths from being reused by new chats; new sessions now choose only currently open workspace folders.
 - Fit mobile session headers into two compact title/meta rows with status and a single actions menu. Remove the duplicate Sessions button and compact composer, goal, and live status rows while preserving their controls.
-
 - Keep browser session links compact by resolving the project from the session record; legacy project query links are cleaned up when opened.
 - Tighten mobile workspace spacing across the session rail, transcript, composer, tool panels, and tabs while preserving touch targets and horizontal scrolling.
 - Add a direct empty-state new-chat action so compact browser layouts can start a session without opening the hidden sidebar first.
@@ -76,7 +74,6 @@
 - Share account queue ordering across automation, the dashboard, and pickers. Prefer capable starred accounts, retain the current account while usable, balance equal-capacity selection, and verify stale or failed quota before switching.
 - Count only usable, nonexpired reset credits when Auto Switch and Auto Reset are enabled. Persist reset attempts before consumption, prevent duplicate redemption after timeouts or restarts, and verify restored quota.
 - Respect automation setting dependencies and ownership, recheck preferences before switching or reloading, recover bounded scheduler failures, and reject stale or conflicting peer quota.
-
 - Remove the obsolete 5-hour Quota Control setting; 5-hour quota data is always included in automatic quota handling.
 - Auto-resume supports running parent sessions after supported reloads, with an optional goal filter and continued sub-agent exclusion.
 - Redesign the composer with a compact single-line draft that grows while typing and shrinks after clearing, plus a settings popover for model, reasoning, and access.
@@ -84,27 +81,18 @@
 - Keep delayed archive, delete, rename, restore, and fork results scoped to their original chat; invalidate the correct device cache without disrupting another conversation.
 - Show interrupted message/agent loading on connection loss instead of silently clearing its waiting state.
 - Keep the session menu within narrow mobile viewports when toolbar actions wrap, with full-width touch targets and scrollable overflow.
-
 - Honor the machine App Server transport despite legacy workspace overrides and acknowledge accepted new chats without extra list/catalog refreshes.
 - Preserve chat/device identity in routes, requests, agent data, and message caches; ignore late responses after navigation and cache reads superseded by live messages.
 - Recover from unavailable browser storage and aborted cache transactions without leaving background cache operations waiting.
-
 - Keep composer drafts and attachments separate for each chat, device, and new-chat project. Late file reads and send completion update the originating draft.
-
 - Avoid redundant agent-read success toasts covering the mobile composer; retain failure and cancellation feedback.
-
 - Restore code-block copying with visible success/failure feedback, open Markdown links separately, and defer offscreen message images.
-
 - Ignore malformed App Server protocol messages, preserve early turn completions, and report interrupted startup or rejected Stop requests accurately.
 - Show the selected next-turn model, reasoning effort, and access mode while the composer is locked by another process.
-
 - Keep Search full-width, balance sidebar action icons, and replace Active/Archive tabs with one toggle. Add a remembered compact chat-list view alongside collapsed Projects; search shows matching chats immediately. Move connection notices to the bottom-right.
-
 - Open newly created chats as soon as Codex accepts them, stream the first response, allow Stop, and report interrupted transports immediately.
-
 - Reopen eligible running parent sessions after Reload or automatic switching, scoped to the current workspace when project metadata is available. Skip sub-agents.
 - Keep disabled accounts loaded across reloads and restarts. Authentication is unloaded only when the user explicitly chooses Unload.
-
 - Keep session discovery available during slow app-server initialization using bounded local history reads, shared in-flight refreshes, and automatic retry. Launch JavaScript Codex shims correctly inside the VS Code extension host.
 - Recover stalled browser handshakes, replay early connection state to the mounted UI, and catch up after offline/online and visibility changes.
 - Refresh selected chat messages directly from local transcripts, including idle sessions that start running elsewhere, and resume polling after returning online or reopening the page.
@@ -116,7 +104,6 @@
 - Consolidate right-panel tool and terminal creation into one plus menu and keep project expansion controls stable on hover.
 - Keep message actions compact and floating, revealed on hover or keyboard/touch focus without adding message height.
 - Add image and text/code attachments, message and code copying, quoting, edit-and-resend drafts, and retry prompts. Preserve drafts and attachments after failed sends.
-
 - Treat shared-account windows as one unit when parallel accounts are off: switching schedules reloads across affected windows, with auth reconciliation recovering missed file events.
 - Share quota refresh and encrypted sync leases in both window modes; reuse recent background maintenance instead of repeating network calls.
 - Remove the global Background Token Refresh setting. Token refresh follows each account’s own control.
@@ -295,7 +282,7 @@
 
 - Update the extension description to refer to Codex/ChatGPT account management.
 - Safely validate Codex resume working directories before starting resumed sessions.
-- Keep the extension manifest regression coverage synchronized with the current prerelease package metadata.
+- Keep the extension manifest regression coverage synchronized with the release package metadata.
 - Keep the session sidebar and chat workspace on the canonical root dashboard, while `/dash` opens the account overview.
 - Strengthen the blurred backdrop for all dashboard confirmation and input modals.
 - Use centered modal dialogs for password entry in the VS Code dashboard.

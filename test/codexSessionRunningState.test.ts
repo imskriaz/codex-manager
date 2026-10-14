@@ -1,10 +1,11 @@
 import { appendFile, mkdtemp, mkdir, rm, truncate, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import * as vscode from "vscode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ heldLocks: new Set<string>(), lockError: undefined as string | undefined, openRpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ heldLocks: new Set<string>(), nativeHeldLocks: new Set<string>(), nativeProbeError: false, lockError: undefined as string | undefined, openRpc: vi.fn() }));
 vi.mock("fs/promises", async (original) => {
   const fs = await original<typeof import("fs/promises")>();
   return { ...fs, open: (...args: Parameters<typeof fs.open>) => {
@@ -15,9 +16,18 @@ vi.mock("fs/promises", async (original) => {
     return fs.open(...args);
   } };
 });
+vi.mock("child_process", async (original) => {
+  const child = await original<typeof import("child_process")>();
+  return { ...child, execFile: (...args: any[]) => {
+    if (args[0] === "powershell.exe") { args.at(-1)(mocks.nativeProbeError ? new Error("inspection timeout") : null, JSON.stringify([...mocks.nativeHeldLocks])); return {}; }
+    if (args[0] === "lsof") { args.at(-1)(null, [...mocks.heldLocks].map((file) => `n${file}`).join("\n")); return {}; }
+    return (child.execFile as any)(...args);
+  } };
+});
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.openRpc }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { readCodexCliSessions, readCodexCliSessionSummary, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
+import { readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 
 const id = "01a04882-d037-7a42-ad24-9afb61901188";
 let home: string;
@@ -28,6 +38,7 @@ const event = (type: string, turnId = "turn-1") => JSON.stringify({ type: "event
 const select = () => readAutoResumeCodexSessionIds(home, [home], [], undefined, "running", false);
 
 beforeEach(async () => {
+  vi.mocked(readNativeCodexSessionRunning).mockReset().mockResolvedValue(undefined);
   home = await mkdtemp(path.join(os.tmpdir(), "codex-running-state-"));
   previousHome = process.env["CODEX_HOME"];
   process.env["CODEX_HOME"] = home;
@@ -42,12 +53,113 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
-  mocks.heldLocks.clear(); mocks.lockError = undefined; mocks.openRpc.mockReset();
+  mocks.heldLocks.clear(); mocks.nativeHeldLocks.clear(); mocks.nativeProbeError = false; mocks.lockError = undefined; mocks.openRpc.mockReset();
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as vscode.WorkspaceConfiguration);
   await rm(home, { recursive: true, force: true });
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it("excludes a native idle conversation with an unfinished transcript and retained writer handle", async () => {
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+    mocks.heldLocks.add(lock);
+    expect(await readRunningCodexSessionIds(home)).toEqual([]);
+    expect(await select()).toEqual([]);
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", locked: false });
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+    expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+    expect(await select()).toEqual([id]);
+  });
+  it.each(["darwin", "linux"])("keeps a long running writer visible on %s and honors completion", async (platform) => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    try {
+      const old = new Date(Date.now() - 15 * 60_000);
+      await utimes(lock, old, old); await utimes(transcript, old, old);
+      mocks.heldLocks.add(lock);
+      Object.defineProperty(process, "platform", { value: platform });
+      expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+      await appendFile(transcript, event("task_complete"));
+      expect(await readRunningCodexSessionIds(home)).toEqual([]);
+    } finally { Object.defineProperty(process, "platform", descriptor); }
+  });
+
+  it("detects a long Windows writer even when Node can open its shared lock file", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      const old = new Date(Date.now() - 15 * 60_000);
+      await utimes(lock, old, old); await utimes(transcript, old, old);
+      mocks.nativeHeldLocks.add(lock);
+      expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+      await appendFile(transcript, event("task_complete"));
+      expect(await readRunningCodexSessionIds(home)).toEqual([]);
+    } finally { Object.defineProperty(process, "platform", descriptor); }
+  });
+
+  it("surfaces a Windows probe timeout and recovers from fresh transcript evidence", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      const old = new Date(Date.now() - 15 * 60_000);
+      await utimes(lock, old, old); await utimes(transcript, old, old);
+      mocks.nativeProbeError = true;
+      await expect(readRunningCodexSessionIds(home)).rejects.toThrow("Windows session writer inspection failed");
+      await appendFile(transcript, event("task_started", "fresh-turn"));
+      expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+      await appendFile(transcript, event("task_complete", "fresh-turn"));
+      expect(await readRunningCodexSessionIds(home)).toEqual([]);
+    } finally { Object.defineProperty(process, "platform", descriptor); }
+  });
+
+  it("selects the newest transcript when an older duplicate has already completed", async () => {
+    await appendFile(transcript, event("task_complete"));
+    const old = new Date(Date.now() - 10 * 60_000);
+    await utimes(transcript, old, old);
+    const newer = path.join(home, "sessions", `rollout-z-${id}.jsonl`);
+    await writeFile(newer, JSON.stringify({ type: "session_meta", payload: { source: "vscode", cwd: home } }) + "\n" + event("task_started", "new-turn"));
+    expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+    expect(await select()).toEqual([id]);
+    await appendFile(newer, event("task_complete", "new-turn"));
+    expect(await readRunningCodexSessionIds(home)).toEqual([]);
+  });
+
+  it("prefers the canonical state transcript over a newer stale duplicate", async () => {
+    const duplicate = path.join(home, "sessions", `rollout-z-${id}.jsonl`);
+    await writeFile(duplicate, event("task_complete"));
+    const old = new Date(Date.now() - 1000);
+    await utimes(transcript, old, old);
+    const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
+    try {
+      db.exec("CREATE TABLE threads (id TEXT, title TEXT, updated_at INTEGER, archived INTEGER, source TEXT, cwd TEXT, rollout_path TEXT)");
+      db.prepare("INSERT INTO threads VALUES (?, 'Canonical', 0, 0, 'vscode', ?, ?)").run(id, home, transcript);
+      expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+      db.prepare("UPDATE threads SET rollout_path = ?").run(duplicate);
+      expect(await readRunningCodexSessionIds(home)).toEqual([]);
+    } finally { db.close(); }
+  });
+
+  it("finds three concurrent parent sessions even with missing locks and an incomplete index", async () => {
+    const second = "01a04882-d037-7a42-ad24-9afb61901189";
+    const third = "01a04882-d037-7a42-ad24-9afb61901190";
+    for (const extra of [second, third]) {
+      await writeFile(path.join(home, "sessions", `rollout-${extra}.jsonl`), JSON.stringify({ type: "session_meta", payload: { source: "vscode", cwd: home } }) + "\n" + event("task_started", extra));
+    }
+    expect(new Set(await readRunningCodexSessionIds(home))).toEqual(new Set([id, second, third]));
+    const rows = await readCodexCliSessions(home, 1);
+    expect(new Set(rows.filter((row) => row.status === "running").map((row) => row.id))).toEqual(new Set([id, second, third]));
+    expect(new Set(await select())).toEqual(new Set([id, second, third]));
+    await appendFile(path.join(home, "sessions", `rollout-${third}.jsonl`), event("task_complete", third));
+    expect(new Set(await readRunningCodexSessionIds(home))).toEqual(new Set([id, second]));
+  });
+
+  it("does not revive stale or pre-reboot transcripts without locks", async () => {
+    await rm(lock);
+    const old = new Date(Date.now() - 10 * 60_000);
+    await utimes(transcript, old, old);
+    expect(await readRunningCodexSessionIds(home)).toEqual([]);
+    await appendFile(transcript, event("task_started", "new-turn"));
+    expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+  });
+
   it("keeps a long active turn running beyond the old tail window and after unchanged refreshes", async () => {
     await appendFile(transcript, JSON.stringify({ type: "response_item", payload: { type: "message", text: "x".repeat(800_000) } }) + "\n");
     const old = new Date(Date.now() - 10 * 60_000);
@@ -123,10 +235,13 @@ describe("shared running-session detection and auto resume", () => {
   });
 
   it("surfaces lock inspection failures for dashboard and reload callers to report", async () => {
+    const old = new Date(Date.now() - 10 * 60_000);
+    await utimes(lock, old, old); await utimes(transcript, old, old);
     mocks.lockError = "EACCES";
     await expect(readCodexCliSessions(home)).rejects.toThrow("EACCES");
     await expect(select()).rejects.toThrow("EACCES");
     mocks.lockError = undefined;
+    await appendFile(transcript, event("task_started", "recovered-turn"));
     expect(await select()).toEqual([id]);
   });
 

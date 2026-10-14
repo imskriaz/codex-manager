@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import * as vscode from "vscode";
+import * as runningSessions from "../src/services/codexSessionResume";
+import { isAutoSwitchWaitingForSessions } from "../src/application/accounts/quota";
 import type { CodexManagerAccountRecord, CodexTokens } from "../src/core/types";
 import type { AccountsRepository } from "../src/storage";
 import { clearQuotaCheckCoordination, recordPeerQuotaChecks } from "../src/services/quotaCheckCoordination";
@@ -446,6 +448,38 @@ describe("refreshSingleQuota token automation state", () => {
 
     expect(fetchResetCreditsMock).toHaveBeenCalledWith(tokens.accessToken, "acct-2");
     expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 0, undefined, []);
+  });
+
+
+  it("waits for all running sessions, retries after completion, and rechecks before switching", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
+    const active = createAccount("wait-active", true, 0, 0);
+    const next = createAccount("wait-next", false, 90, 90);
+    setCurrentWindowRuntimeAccountId(next.id);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    const read = vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockResolvedValue(["one", "two", "three"]);
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(isAutoSwitchWaitingForSessions()).toBe(true); expect(repo.switchAccount).not.toHaveBeenCalled();
+    read.mockResolvedValueOnce([]).mockResolvedValueOnce(["new turn"]);
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    read.mockResolvedValue([]);
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledWith(next.id);
+    expect(isAutoSwitchWaitingForSessions()).toBe(false);
+  });
+
+  it("continues automatic switching with a warning on inconclusive session inspection", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
+    const active = createAccount("inspection-active", true, 0, 0);
+    const next = createAccount("inspection-next", false, 90, 90);
+    setCurrentWindowRuntimeAccountId(next.id);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockRejectedValue(new Error("Storage unavailable"));
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledWith(next.id);
+    expect(isAutoSwitchWaitingForSessions()).toBe(false);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("will continue"));
   });
 
   it("auto-switches to the candidate with the best usable quota balance", async () => {

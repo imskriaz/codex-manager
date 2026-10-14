@@ -33,6 +33,7 @@ export class ExtensionSettingsStore {
       ),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
+      autoSwitchWaitForSessionsEnabled: config.get<boolean>("autoSwitchWaitForSessionsEnabled", false),
       // The 5-hour quota is always part of automatic quota control. Keep the
       // legacy field in the dashboard model for old snapshots, but do not read
       // the removed user setting anymore.
@@ -57,6 +58,7 @@ export class ExtensionSettingsStore {
       quotaYellowThreshold: thresholds.yellow,
       debugNetwork: config.get<boolean>("debugNetwork", false),
       encryptedSyncEnabled: config.get<boolean>("encryptedSyncEnabled", true),
+      encryptedSyncCurrentAccountOnlyEnabled: config.get<boolean>("encryptedSyncCurrentAccountOnlyEnabled", false),
       fullCrossPcAccountSyncEnabled: config.get<boolean>("fullCrossPcAccountSyncEnabled", false),
       // Runtime-owned and passphrase-gated; buildDashboardState replaces this placeholder.
       encryptedSyncRegistryOverrideEnabled: false,

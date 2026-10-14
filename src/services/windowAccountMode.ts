@@ -1,6 +1,8 @@
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
+import * as os from "os";
+import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import * as vscode from "vscode";
 import type { CodexManagerAccountRecord } from "../core/types";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
@@ -101,6 +103,17 @@ export function getCrossWindowAccountId(): string | undefined {
   return slot?.accountId;
 }
 
+/** Keep another live window's current account reserved when this window switches. */
+export async function readCrossWindowActiveAccountIds(): Promise<string[]> {
+  if (!isCrossWindowAccountModeEnabled()) return [];
+  const snapshot = await readSafeFileSnapshot(path.join(getCodexManagerStorageRoot(), REGISTRY_FILE), { maxBytes: 1024 * 1024, rejectIfLarger: true })
+    .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+  if (!snapshot) return [];
+  const value = JSON.parse(snapshot.buffer.toString("utf8")) as Partial<Registry>;
+  if (!Array.isArray(value.slots) || !value.slots.every(isValidSlot)) throw new Error("Other window account state could not be verified. Its claims were retained; retry after the window registry is available.");
+  return [...new Set(value.slots.filter(isLive).flatMap((candidate) => candidate.accountId ? [candidate.accountId] : []))];
+}
+
 export function canWindowUseAccount(accountId: string): boolean {
   void accountId;
   // Parallel windows isolate CODEX_HOME; they do not reserve accounts. Two
@@ -195,9 +208,11 @@ async function writeRegistry(mutator: (registry: Registry) => void): Promise<voi
 async function readRegistry(file: string): Promise<Registry> {
   try {
     const value = JSON.parse(await fs.readFile(file, "utf8")) as Partial<Registry>;
-    return { slots: Array.isArray(value.slots) ? value.slots.filter(isValidSlot) : [] };
-  } catch {
-    return { slots: [] };
+    if (!Array.isArray(value.slots) || !value.slots.every(isValidSlot)) throw new Error("Parallel window registry is incomplete. Restore its storage before retrying.");
+    return { slots: value.slots };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { slots: [] };
+    throw error;
   }
 }
 
@@ -206,6 +221,7 @@ function isValidSlot(value: unknown): value is WindowSlot {
   const candidate = value as Partial<WindowSlot>;
   return (
     typeof candidate.slotId === "string" &&
+    (candidate.accountId === undefined || (typeof candidate.accountId === "string" && candidate.accountId.length > 0)) &&
     typeof candidate.home === "string" &&
     typeof candidate.pid === "number" && Number.isInteger(candidate.pid) && candidate.pid > 0 &&
     typeof candidate.heartbeatAt === "number" && Number.isFinite(candidate.heartbeatAt)
@@ -214,7 +230,10 @@ function isValidSlot(value: unknown): value is WindowSlot {
 
 function isLive(candidate: WindowSlot): boolean {
   const age = Date.now() - candidate.heartbeatAt;
-  return age >= 0 && age <= STALE_AFTER_MS;
+  if (age < 0 || candidate.heartbeatAt < Date.now() - os.uptime() * 1000) return false;
+  if (age <= STALE_AFTER_MS) return true;
+  try { process.kill(candidate.pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
 function hash(value: string): string {

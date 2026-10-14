@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { readRunningCodexSessionIds } from "../../services/codexSessionResume";
 import {
   CrossWindowOperationBusyError,
   runCrossWindowExclusive,
@@ -450,6 +451,41 @@ export async function maybeWarnForActiveQuota(repo: AccountsRepository): Promise
   await maybeWarnForAccount(repo, active.id);
 }
 
+let deferredForSessions = false;
+let sessionWaitNotice: string | undefined;
+
+export function isAutoSwitchWaitingForSessions(): boolean {
+  return deferredForSessions;
+}
+
+async function deferAutoSwitchForSessions(): Promise<boolean> {
+  const config = getCodexManagerConfiguration();
+  if (!config.get<boolean>(AUTO_SWITCH_ENABLED, false) || !config.get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
+    deferredForSessions = false;
+    sessionWaitNotice = undefined;
+    return false;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  let message: string | undefined;
+  let waiting = false;
+  try {
+    const running = await Promise.race([
+      readRunningCodexSessionIds(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Session inspection timed out")), 5_000); })
+    ]);
+    if (running.length) { waiting = true; message = `Auto Switch is waiting for ${running.length} running session${running.length === 1 ? "" : "s"} to finish. Manual switching is still available.`; }
+  } catch (error) {
+    message = `Running sessions could not be verified. Auto Switch will continue with the account change. ${error instanceof Error ? error.message : String(error)}`;
+  } finally { if (timer) clearTimeout(timer); }
+  deferredForSessions = waiting;
+  if (message && message !== sessionWaitNotice) {
+    recordAutoSwitchDashboardNotice(message, "warning");
+    void vscode.window.showWarningMessage(message);
+  }
+  sessionWaitNotice = message;
+  return deferredForSessions;
+}
+
 export async function maybeAutoSwitchForActiveQuota(
   repo: AccountsRepository,
   view: RefreshView,
@@ -503,6 +539,7 @@ async function evaluateAutoSwitchForActiveQuota(
   const config = getCodexManagerConfiguration();
   if (!options.ignoreEnabled && !config.get<boolean>(AUTO_SWITCH_ENABLED, false)) {
     lastBlockedAutoSwitchKey = undefined;
+    deferredForSessions = false;
     return false;
   }
 
@@ -563,11 +600,15 @@ async function evaluateAutoSwitchForActiveQuota(
   const shouldSwitch = activeHourlyTriggered || activeWeeklyTriggered;
   if (!shouldSwitch) {
     lastBlockedAutoSwitchKey = undefined;
+    deferredForSessions = false;
+    sessionWaitNotice = undefined;
     if (options.userInitiated) {
       void vscode.window.showInformationMessage("No switch needed — active account has enough quota.");
     }
     return false;
   }
+
+  if (await deferAutoSwitchForSessions()) return false;
 
   const candidates = accounts
     .filter(
@@ -791,6 +832,7 @@ async function evaluateAutoSwitchForActiveQuota(
     }
     return false;
   }
+  if (await deferAutoSwitchForSessions()) return false;
   await repo.switchAccount(latestNext.id);
   console.info("[codexManager] auto switch completed", {
     trigger:
@@ -957,6 +999,7 @@ async function executeActiveResetPlan(
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
+  if (await deferAutoSwitchForSessions()) return false;
   const redeemed = await redeemAccountResetCredit(
     repo,
     active.id,
@@ -1007,6 +1050,7 @@ async function executeResetPlan(
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
+  if (await deferAutoSwitchForSessions()) return false;
   const redeemed = await redeemAccountResetCredit(
     repo,
     next.id,
@@ -1031,6 +1075,7 @@ async function executeResetPlan(
     !isAutoQueueCandidateEligible(toAutoQueueOrderValue(latestNext), getAccountAutoQueuePolicy())
   )
     return false;
+  if (await deferAutoSwitchForSessions()) return false;
   await repo.switchAccount(next.id);
   clearAutoSwitchLock(active.id);
   recordAutoSwitchReason({
@@ -1128,6 +1173,7 @@ async function executeResetFailureFallbackSwitch(
   )
     return false;
   const detail = resetError instanceof Error ? resetError.message : String(resetError);
+  if (await deferAutoSwitchForSessions()) return false;
   await repo.switchAccount(next.id);
   lastBlockedAutoSwitchKey = undefined;
   clearAutoSwitchLock(active.id);

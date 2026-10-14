@@ -959,7 +959,7 @@ export class AccountsRepository {
     options: { forceTokenRefresh?: boolean } = {}
   ): Promise<CodexManagerAccountRecord> {
     // 按账号串行化，避免切号与后台续期并发刷新同一账号 token
-    return this.accountMutex.runExclusive(accountId, async () => {
+    return runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, "Account switch", () => this.accountMutex.runExclusive(accountId, async () => {
       const parallelMode = isCrossWindowAccountModeEnabled();
       let previousAccountId: string | undefined;
       if (parallelMode) {
@@ -972,7 +972,8 @@ export class AccountsRepository {
         await this.switchCoordinator?.prepareAccountSwitch(accountId);
         account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true);
       } catch (error) {
-        await this.switchCoordinator?.cancelAccountSwitch(accountId);
+        try { await this.switchCoordinator?.cancelAccountSwitch(accountId); }
+        catch { void vscode.window.showWarningMessage("The switch failed and its account claim could not be released. Reconnect and sync claims before retrying."); }
         if (parallelMode && previousAccountId !== accountId) {
           if (previousAccountId) await claimCrossWindowAccount(previousAccountId);
           else await releaseCrossWindowAccount(accountId);
@@ -984,7 +985,7 @@ export class AccountsRepository {
         await releaseCrossWindowAccount(previousAccountId);
       }
       return account;
-    });
+    }));
   }
 
   private async switchAccountLocked(accountId: string, forceTokenRefresh = false): Promise<CodexManagerAccountRecord> {

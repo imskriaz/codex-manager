@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, open, readFile, readdir, rm, truncate, utimes, writeFil
 import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   parseCodexAppServerThreadItems,
@@ -35,6 +36,49 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it("lists existing native projects without requiring a running session or an open workspace", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "codex-project-picker-")); roots.push(home);
+    const first = path.join(home, "first"), second = path.join(home, "second"), empty = path.join(home, "empty");
+    await Promise.all([first, second, empty].map(directory => mkdir(directory)));
+    const database = new DatabaseSync(path.join(home, "state_5.sqlite"));
+    try {
+      database.exec("CREATE TABLE threads (id TEXT, cwd TEXT); CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT)");
+      database.prepare("INSERT INTO threads VALUES (?, ?)").run(sessionId, second);
+      for (const directory of [empty, first, path.join(home, "missing"), "relative-path"])
+        database.prepare("INSERT INTO project_roots VALUES ('project', 0, ?)").run(directory);
+    } finally { database.close(); }
+    const previousFolders = vscode.workspace.workspaceFolders;
+    Object.assign(vscode.workspace, { workspaceFolders: [{ name: "first", uri: { fsPath: first } }] });
+    try {
+      const config = await readCodexCliComposerConfig(home);
+      expect(config.projects?.map(project => project.path).sort()).toEqual([first, second, empty].sort());
+    } finally { Object.assign(vscode.workspace, { workspaceFolders: previousFolders }); }
+  });
+
+  it("starts a chat in the chosen known project and rejects an unrelated folder", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "codex-project-start-")); roots.push(home);
+    const first = path.join(home, "first"), second = path.join(home, "second");
+    await mkdir(first); await mkdir(second);
+    const createdId = "01a04882-d037-7a42-ad24-9afb61901abc";
+    const database = new DatabaseSync(path.join(home, "state_5.sqlite"));
+    try { database.exec("CREATE TABLE threads (id TEXT, cwd TEXT)"); database.prepare("INSERT INTO threads VALUES (?, ?)").run(sessionId, second); }
+    finally { database.close(); }
+    const script = path.join(home, "codex.js"), marker = path.join(home, "cwd.txt");
+    await writeFile(script, `process.stdin.resume(); process.stdin.on('end',()=>{require('node:fs').writeFileSync(${JSON.stringify(marker)},process.cwd()); console.log(JSON.stringify({type:'thread.started',thread_id:${JSON.stringify(createdId)}})); console.log(JSON.stringify({type:'turn.completed'}));});`);
+    const previousHome = process.env["CODEX_HOME"], previousFolders = vscode.workspace.workspaceFolders;
+    process.env["CODEX_HOME"] = home;
+    Object.assign(vscode.workspace, { workspaceFolders: [{ name: "first", uri: { fsPath: first } }] });
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "codexCliPath" ? script : key === "codexSessionTransport" ? "cli" : fallback } as never);
+    try {
+      await expect(startCodexCliSession({ text: "Hello", projectPath: path.join(home, "unrelated") })).rejects.toThrow("not an open workspace folder");
+      expect(await startCodexCliSession({ text: "Hello", projectPath: second })).toBe(createdId);
+      expect(await readFile(marker, "utf8")).toBe(second);
+      await vi.waitFor(async () => expect((await readCodexCliSessionSummary(createdId, home))?.status).not.toBe("running"));
+    } finally {
+      if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
+      Object.assign(vscode.workspace, { workspaceFolders: previousFolders });
+    }
+  });
   it("keeps a bounded transcript window and unique sequence IDs across large appends", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-bounded-window-"));
     roots.push(root);

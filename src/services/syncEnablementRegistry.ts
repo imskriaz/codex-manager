@@ -15,6 +15,8 @@ export type SyncAccountEnablement = {
   updatedAt: number;
   /** Wall-clock time of the last successful encrypted sync by this PC. */
   lastSyncedAt?: number;
+  currentOnly?: boolean;
+  claimToken?: string;
 };
 
 export function createSyncAccountEnablement(params: {
@@ -78,6 +80,8 @@ export function isValidSyncAccountEnablement(value: unknown): value is SyncAccou
     typeof candidate.updatedAt === "number" &&
     Number.isFinite(candidate.updatedAt) &&
     candidate.updatedAt > 0 &&
+    (candidate.currentOnly === undefined || typeof candidate.currentOnly === "boolean") &&
+    (candidate.claimToken === undefined || isNonEmptyBoundedString(candidate.claimToken, 256)) &&
     (candidate.lastSyncedAt === undefined ||
       (typeof candidate.lastSyncedAt === "number" && Number.isFinite(candidate.lastSyncedAt) && candidate.lastSyncedAt > 0))
   );
@@ -96,7 +100,7 @@ export function isSyncAccountEnablementActive(
   now = Date.now(),
   timeoutMs = SYNC_ACTIVITY_LEASE_TIMEOUT_MS
 ): boolean {
-  return entry.lastSyncedAt !== undefined && entry.lastSyncedAt + timeoutMs > now;
+  return entry.lastSyncedAt !== undefined && entry.lastSyncedAt <= now + 60_000 && entry.lastSyncedAt + timeoutMs > now;
 }
 
 function sanitizeDeviceName(value: string): string {

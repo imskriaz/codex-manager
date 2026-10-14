@@ -16,8 +16,8 @@ const parentId = "01a04882-d037-7a42-ad24-9afb61901188";
 const runningId = "01a04882-d037-7a42-ad24-9afb61901189";
 const agentId = "01a04882-d037-7a42-ad24-9afb61901190";
 const sessions = [
-  { id: parentId, title: "Evaluate stack beyond expectations", status: "idle", projectPath: "D:/demo", updatedAt: new Date().toISOString() },
-  { id: runningId, title: "Running workspace task", status: "running", projectPath: "D:/demo", updatedAt: new Date().toISOString(), runningBy: "another Codex process" },
+  { id: parentId, title: "Evaluate stack beyond expectations", status: "idle", goal: { objective: "Build the compact workspace from native goal metadata", status: "active", elapsedMs: 125000 }, projectPath: "D:/demo", updatedAt: new Date().toISOString() },
+  { id: runningId, title: "Running workspace task", status: "running", projectPath: "D:/demo", updatedAt: new Date().toISOString(), canStop: true, runningBy: "another Codex process" },
   { id: agentId, title: "Evaluate stack beyond expectations", status: "running", projectPath: "D:/demo", parentSessionId: parentId, agentName: "Reviewer" },
   { id: "01a04882-d037-7a42-ad24-9afb61901191", title: "Archived task", status: "idle", projectPath: "D:/demo", archived: true }
 ];
@@ -41,7 +41,7 @@ const mockHost = `(() => {
   const config = ${JSON.stringify(config)};
   let messageReads = 0;
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
-  window.__uiActions = [];
+  window.__uiActions = []; window.__uiSessions = sessions;
   window.acquireVsCodeApi = () => ({postMessage(message) {
     window.__uiActions.push(message);
     setTimeout(() => {
@@ -95,7 +95,7 @@ const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWS
 const results = [];
 try {
   const selectedWidth = Number(process.argv.find((argument) => argument.startsWith("--width="))?.slice(8));
-  for (const [width, height] of (selectedWidth ? [[selectedWidth, selectedWidth <= 760 ? 844 : 1000]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
+  for (const [width, height] of (selectedWidth ? [[selectedWidth, Number(process.argv.find(argument => argument.startsWith("--height="))?.slice(9)) || (selectedWidth <= 760 ? 844 : 1000)]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: width <= 760, serviceWorkers: "block", permissions: ["clipboard-read", "clipboard-write"] });
     if (width === 320) await context.addInitScript(() => {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
@@ -106,6 +106,11 @@ try {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.route("**/api/**", (route) => route.abort());
+    const shareRequests = [];
+    await page.route("**/api/share/*", route => {
+      shareRequests.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+      return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/create") ? { token: "a".repeat(64) } : { ok: true } });
+    });
     await page.route("**/assets/browserHost.js*", (route) => route.fulfill({ contentType: "text/javascript", body: mockHost }));
     for (const [url, file, contentType] of [["dashboard.js", "media/webview/dashboard/dashboard.js", "text/javascript"], ["dashboard.css", "media/webview/quotaSummary.css", "text/css"], ["shared.css", "media/webview/shared.css", "text/css"]]) {
       await page.route(`**/assets/${url}*`, (route) => route.fulfill({ contentType, path: path.resolve(file) }));
@@ -118,6 +123,8 @@ try {
     const footerBounds = await page.locator(".cli-account-footer").boundingBox();
     assert.ok(railBounds && footerBounds && footerBounds.y + footerBounds.height >= railBounds.y + railBounds.height - 16, "Account footer stays at the bottom of the sidebar");
     assert.equal(await page.locator(".cli-session-row-select").count(), 0, "Projects start collapsed");
+    assert.equal(await page.locator(".cli-project-new").count(), 0, "Projects have no extra plus button");
+    assert.equal(await page.locator(".cli-sidebar-actions > button").count(), 4, "All session controls share one toolbar group");
     assert.equal(await page.locator(".cli-project-running").count(), 1, "Collapsed project shows running sessions");
     assert.equal(await page.getByRole("button", { name: "Expand empty-project-with-a-long-name", exact: true }).count(), 0, "Projects without sessions stay hidden");
     const searchBounds = await page.getByRole("searchbox", { name: "Search sessions", exact: true }).boundingBox();
@@ -132,6 +139,12 @@ try {
     await page.locator(".cli-compact-session-list").waitFor();
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Compact view keeps only distinct parents");
     await page.locator(".cli-compact-session-list .cli-session-row-meta").first().waitFor({ state: "visible" });
+    const initialOrder = await page.locator(".cli-session-row-main > strong").allTextContents();
+    await page.evaluate(() => { window.__uiSessions.reverse(); window.__uiSessions.forEach(session => { session.updatedAt = new Date().toISOString(); }); });
+    await page.getByRole("button", { name: "Refresh sessions", exact: true }).click();
+    await page.waitForFunction(() => window.__uiActions.filter(message => message.action === "listCodexCliSessions").length > 1);
+    await page.getByRole("button", { name: "Refresh sessions", exact: true }).waitFor();
+    assert.deepEqual(await page.locator(".cli-session-row-main > strong").allTextContents(), initialOrder, "Refresh does not move existing rows");
     assert.ok((await page.locator(".cli-session-row-meta").first().textContent()).includes("demo - "), "Compact rows show project and PC metadata");
     assert.equal((await page.locator(".cli-session-row-meta").first().textContent()).includes("VS Code"), false, "Session metadata uses the PC name");
     assert.equal(await page.locator(".cli-project-group").count(), 0, "Compact view has no project nesting");
@@ -143,11 +156,37 @@ try {
     await page.getByRole("button", { name: "Show projects and sessions", exact: true }).click();
     await page.getByRole("button", { name: "Expand demo", exact: true }).waitFor();
     await page.getByRole("button", { name: "Show archived sessions (1)", exact: true }).click();
+    await page.getByRole("button", { name: "Expand demo", exact: true }).click();
+    await page.locator(".cli-session-row.is-archived").hover();
+    await page.getByRole("button", { name: "Delete Archived task", exact: true }).click();
+    const deletion = page.getByRole("alertdialog", { name: "Delete Archived task permanently", exact: true });
+    await deletion.waitFor();
+    assert.ok((await deletion.locator("svg").boundingBox()).width <= 24, "Delete icon stays small");
+    assert.ok(await deletion.evaluate(element => getComputedStyle(element).backgroundColor !== "rgba(0, 0, 0, 0)"), "Delete dialog has an opaque surface");
+    assert.ok(await deletion.locator(".cli-delete-confirm-copy > span").evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 13), "Delete text stays readable");
+    assert.ok((await deletion.getByRole("button", { name: "Delete", exact: true }).boundingBox()).height >= 36, "Delete control is usable");
+    await page.screenshot({ path: path.join(output, "delete-confirm-" + width + ".png") });
+    await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.getByText("Session deletion cancelled.", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Dismiss session message", exact: true }).click();
+    await page.getByRole("button", { name: "Collapse demo", exact: true }).click();
+
     await page.getByRole("button", { name: "Show active sessions (2)", exact: true }).waitFor();
     await page.getByRole("button", { name: "Show active sessions (2)", exact: true }).click();
     await page.getByRole("button", { name: "Expand demo", exact: true }).click();
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Only distinct parent sessions should appear");
     assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 1, "Running parent needs an icon");
+    assert.equal(await page.locator(".cli-session-row:not(.is-running) .cli-session-row-status").count(), 0, "Idle rows have no completion ticks");
+    const runningRow = page.locator(".cli-session-row.is-running").first();
+    const status = runningRow.locator(":scope > .cli-session-row-status");
+    const beforeHover = await status.boundingBox();
+    const rowBounds = await runningRow.boundingBox();
+    assert.ok(beforeHover.x > rowBounds.x + rowBounds.width / 2, "Spinner is on the right");
+    await runningRow.hover();
+    const afterHover = await status.boundingBox();
+    assert.ok(Math.abs(beforeHover.x - afterHover.x) < 1, "Spinner does not move on hover");
+    assert.equal(await status.locator(".cli-session-spinner").evaluate(element => getComputedStyle(element).visibility), "hidden", "Visible actions hide the spinner");
+    await page.mouse.move(width - 2, height - 2);
     await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
     await page.getByText("Running elsewhere · wait to send", { exact: true }).waitFor();
     const lockedStatus = page.locator(".cli-conversation > .cli-composer-unavailable.is-running");
@@ -187,6 +226,10 @@ try {
     assert.equal(await page.locator(".cli-completed-file").count(), 4);
     await page.getByRole("button", { name: "Show fewer files", exact: true }).click();
     assert.equal(await page.locator(".cli-goal-strip > summary").count(), 1, "Goal stays above composer");
+    assert.ok((await page.locator(".cli-goal-strip").textContent()).includes("from native goal metadata"), "Native goal wins over older history");
+    const goalBounds = await page.locator(".cli-goal-strip").boundingBox();
+    const composerBounds = await page.locator(".cli-composer").boundingBox();
+    assert.ok(goalBounds.y >= 0 && goalBounds.y + goalBounds.height <= height && goalBounds.y + goalBounds.height <= composerBounds.y + 1, "Goal is visible above composer on every viewport");
     const imageTrigger = page.getByRole("button", { name: "Preview Attachment preview", exact: true });
     await imageTrigger.click();
     await page.getByRole("dialog", { name: "Attachment preview", exact: true }).waitFor().catch(async error => {
@@ -205,8 +248,9 @@ try {
     const tool = page.locator(".cli-activity.is-tool-call").first();
     const toolGroup = page.locator(".cli-activity-group-details").first();
     if (!await toolGroup.evaluate(element => element.open)) await toolGroup.locator(":scope > summary").click();
+    await toolGroup.evaluate(element => ({ open: element.open, text: element.textContent.slice(0,80) })).then(value => console.log("Opened tool group", value));
     await page.waitForFunction(() => document.querySelector(".cli-activity-group-details")?.open).catch(async error => {
-      console.log("Group state");
+      console.log("Group state", await page.locator(".cli-activity-group-details").evaluateAll(elements => elements.map(element => ({ open: element.open, text: element.textContent.slice(0,80) }))));
       await page.screenshot({ path: path.join(output, "group-failure-" + width + ".png") });
       throw error;
     });
@@ -252,6 +296,14 @@ try {
       await page.getByRole("menuitem", { name: "Share", exact: true }).click();
     } else await page.getByRole("button", { name: "Share", exact: true }).click();
     await page.getByRole("dialog", { name: "Share session" }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Create read-only link", exact: true }).count(), 1, "Public sharing is explicit");
+    await page.getByRole("button", { name: "Create read-only link", exact: true }).click();
+    await page.getByRole("textbox", { name: "Session link", exact: true }).waitFor();
+    assert.equal(await page.getByRole("textbox", { name: "Session link", exact: true }).inputValue(), `${origin}/share/${"a".repeat(64)}`);
+    assert.ok(shareRequests[0].body.messages.every(message => ["user", "assistant"].includes(message.role) && Object.keys(message).length === 2), "Sharing excludes tool state and account metadata");
+    await page.getByRole("button", { name: "Revoke shared link", exact: true }).click();
+    await page.getByRole("dialog", { name: "Share session" }).getByRole("status").filter({ hasText: "Shared link revoked" }).waitFor();
+    assert.equal(await page.getByRole("textbox", { name: "Session link", exact: true }).count(), 0);
     await page.keyboard.press("Escape");
     await page.locator(".cli-share-modal").waitFor({ state: "detached" });
     await page.getByRole("button", { name: "Session actions", exact: true }).click();
@@ -347,6 +399,11 @@ try {
     });
     await composer.fill("");
     await page.waitForFunction(height => Math.abs(document.querySelector(".cli-composer").getBoundingClientRect().height - height) <= 2, emptyComposerHeight);
+    const projectSelect = page.getByRole("combobox", { name: "Project", exact: true });
+    assert.equal(await projectSelect.locator("option").count(), 2, "New chat includes projects with no listed sessions");
+    await projectSelect.selectOption("D:/empty-project-with-a-long-name");
+    assert.equal(await projectSelect.inputValue(), "D:/empty-project-with-a-long-name", "Project can be changed");
+    await projectSelect.selectOption("D:/demo");
     await page.getByRole("button", { name: "Message settings", exact: true }).click();
     const optionsBounds = await page.locator(".cli-composer-options").boundingBox();
     assert.ok(optionsBounds && optionsBounds.x >= 0 && optionsBounds.y >= 0 && optionsBounds.x + optionsBounds.width <= width && optionsBounds.y + optionsBounds.height <= height, "Message settings fit the viewport");
@@ -424,6 +481,23 @@ try {
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } })));
     console.log(`Checking ${width}x${height}: dashboard and settings`);
     await page.goto(`${origin}/dash`);
+    await page.locator(".hero").waitFor();
+    console.log(`Checking ${width}: compact overview and floating controls`);
+    const dashboardHero = await page.locator(".hero").boundingBox();
+    const overviewDetails = page.locator(".overview-shell > .overview-account:not(.overview-inline-add-panel)");
+    if (await overviewDetails.count()) assert.equal(await overviewDetails.isVisible(), width > 760, "Small screens omit desktop overview identity details");
+    assert.equal(await page.locator(".overview-main").isVisible(), true, "Usage and quota overview stay visible");
+    assert.equal(await page.locator(".cli-workspace.is-dashboard-mode .cli-context-toggle").count(), 0, "Dashboard has only its relevant left floating button");
+    assert.equal(await page.locator(".cli-workspace.is-dashboard-mode .cli-rail-toggle img").count(), 1, "Sidebar toggle carries the dashboard logo");
+    assert.equal(await page.locator(".hero .brand-logo").isVisible(), false, "No duplicate dashboard logo");
+    if (width <= 760) {
+      assert.ok(await page.locator(".hero").evaluate(element => parseFloat(getComputedStyle(element).paddingTop) <= 4), "Small dashboards have no empty top spacer");
+      assert.ok(dashboardHero.y <= 12, "Header starts near the top edge");
+      const sidebarToggle = await page.locator(".cli-workspace.is-dashboard-mode .cli-rail-toggle").boundingBox();
+      const brandBounds = await page.locator(".hero .brand").boundingBox();
+      assert.ok(brandBounds.x >= sidebarToggle.x + sidebarToggle.width, "Compact header leaves room for the sidebar button");
+    }
+
     if (width <= 760) {
       await page.locator(".dashboard-mobile-actions > summary").click();
       await page.getByRole("menuitem", { name: "Sessions", exact: true }).click();
@@ -432,6 +506,7 @@ try {
     assert.equal(await page.locator(".cli-running-count").first().textContent(), "1", "Badge excludes running child agents");
     await page.getByText("2 sessions · 1 running", { exact: true }).waitFor();
     await page.keyboard.press("Escape");
+    console.log(`Checking ${width}: account filters`);
     for (const name of ["Within quota", "Over quota"]) {
       const filter = page.getByRole("button", { name: new RegExp("^" + name + " \\d+$") });
       if (!await filter.count()) continue;
@@ -447,6 +522,7 @@ try {
       await page.locator(".dashboard-mobile-actions > summary").click();
       await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     } else await page.locator("#settingsOpenButton").click();
+    console.log(`Checking ${width}: settings opened`);
     await page.locator(".overlay.open").waitFor();
     for (const tab of await page.locator(".settings-tab").all()) {
       await tab.click();

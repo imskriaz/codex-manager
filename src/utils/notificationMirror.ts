@@ -16,6 +16,23 @@ type NotificationResolutionListener = (notificationId: string) => void;
 type NotificationMethod = (...args: unknown[]) => Thenable<unknown>;
 
 const listeners = new Set<NotificationListener>();
+const deliveryFlushers = new Set<() => Promise<void>>();
+
+export function subscribeToNotificationDelivery(flush: () => Promise<void>): vscode.Disposable {
+  deliveryFlushers.add(flush);
+  return { dispose: () => { deliveryFlushers.delete(flush); } };
+}
+
+export async function flushNotificationDelivery(timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.allSettled([...deliveryFlushers].map(flush => Promise.resolve().then(flush)))
+        .then(results => results.every(result => result.status === "fulfilled")),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); })
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
+}
 const resolutionListeners = new Set<NotificationResolutionListener>();
 const pendingResponses = new Map<string, (action?: string) => void>();
 const commandNotificationContext = new AsyncLocalStorage<boolean>();

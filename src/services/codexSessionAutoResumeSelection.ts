@@ -1,6 +1,5 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import * as vscode from "vscode";
 import {
   findCliSessionTranscripts,
   readOpenCodexSessionIds,
@@ -67,10 +66,10 @@ async function openMetadataDatabase(home: string, prefix: string): Promise<Sqlit
   }
 }
 
-/** Select running workspace parents or open window parents; sub-agents are excluded. */
+/** Capture all local running parents by default; explicit workspace paths can restrict a caller. */
 export async function readAutoResumeCodexSessionIds(
   home = resolveCodexHome(),
-  workspacePaths = vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [],
+  workspacePaths?: string[],
   openSessionIds = readOpenCodexSessionIds(),
   signal?: AbortSignal,
   selection: "running" | "open" = "running",
@@ -86,7 +85,7 @@ export async function readAutoResumeCodexSessionIds(
     const parents: string[] = [];
     for (const id of running) {
       signal?.throwIfAborted();
-      if (!workspacePaths.length && !openSessionIds.includes(id)) continue;
+      if (workspacePaths && !workspacePaths.length && !openSessionIds.includes(id)) continue;
       let metadata: Record<string, unknown> | undefined;
       try {
         metadata = state?.prepare("SELECT source, cwd, archived FROM threads WHERE id = ?").get(id);
@@ -142,7 +141,7 @@ export async function readAutoResumeCodexSessionIds(
       const cwd = metadata?.["cwd"];
       if (
         !openSessionIds.includes(id) &&
-        workspacePaths.length &&
+        workspacePaths?.length &&
         (!(typeof cwd === "string" && cwd.trim()) ||
           !workspacePaths.some((workspace) => {
             const root = normalizeWorkspacePath(workspace);

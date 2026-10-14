@@ -18,6 +18,7 @@ export type DashboardSettingKey =
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
   | "autoSwitchEnabled"
+  | "autoSwitchWaitForSessionsEnabled"
   | "autoSwitchReloadWindowEnabled"
   | "autoResumeEnabled"
   | "autoResumeGoalOnlyEnabled"
@@ -35,6 +36,7 @@ export type DashboardSettingKey =
   | "quotaYellowThreshold"
   | "debugNetwork"
   | "encryptedSyncEnabled"
+  | "encryptedSyncCurrentAccountOnlyEnabled"
   | "fullCrossPcAccountSyncEnabled"
   | "webDashboardEnabled"
   | "webDashboardAlwaysOnlineEnabled"
@@ -58,6 +60,7 @@ export interface DashboardSettings {
   quotaFreshnessMs?: number;
   usageHistoryRetentionDays: number;
   autoSwitchEnabled: boolean;
+  autoSwitchWaitForSessionsEnabled?: boolean;
   hourlyQuotaControlEnabled: boolean;
   autoSwitchReloadWindowEnabled: boolean;
   /** Restore local parent Codex conversation tabs after VS Code restarts. */
@@ -85,6 +88,7 @@ export interface DashboardSettings {
   quotaYellowThreshold: number;
   debugNetwork: boolean;
   encryptedSyncEnabled: boolean;
+  encryptedSyncCurrentAccountOnlyEnabled?: boolean;
   fullCrossPcAccountSyncEnabled?: boolean;
   encryptedSyncRegistryOverrideEnabled: boolean;
   webDashboardEnabled: boolean;
@@ -644,6 +648,13 @@ export interface DashboardActionPayload {
   targetDeviceId?: string;
 }
 
+export interface DashboardCodexSessionGoal {
+  objective: string;
+  status: string;
+  elapsedMs?: number;
+  detail?: string;
+}
+
 export interface DashboardCliSessionSummary {
   id: string;
   title: string;
@@ -667,6 +678,8 @@ export interface DashboardCliSessionSummary {
   subAgent?: boolean;
   parentSessionId?: string;
   agentName?: string;
+  /** Null means native storage confirms no goal; undefined supports older hosts. */
+  goal?: DashboardCodexSessionGoal | null;
 }
 
 export interface DashboardCliSessionMessage {

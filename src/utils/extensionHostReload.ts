@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
+import { flushNotificationDelivery } from "./notificationMirror";
 
 let inFlight: Promise<void> | undefined;
 let inFlightAutomatic = false;
@@ -63,6 +64,7 @@ export function reloadExtensionHostWithSessionCapture(
   };
   const work = (async () => {
     const deadline = Date.now() + 45_000;
+    void vscode.window.showInformationMessage("Preparing to reload Codex Manager.");
     try {
       await command("codexManager.prepareDashboardForExtensionHostRestart", 35_000, [
         { autoResume: autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false) }
@@ -80,6 +82,15 @@ export function reloadExtensionHostWithSessionCapture(
       }
     }
     verifyAutomaticPreference();
+    const config = getCodexManagerConfiguration();
+    if (!await flushNotificationDelivery(Math.max(1, Math.min(8500, deadline - Date.now() - 2000)))) {
+      void vscode.window.showWarningMessage("Reload will continue, but browser notification delivery could not be confirmed. Review the dashboard once reconnected.");
+    }
+    verifyAutomaticPreference();
+    if (typeof config.inspect === "function" && ["autoSwitchWaitForSessionsEnabled", "encryptedSyncCurrentAccountOnlyEnabled"].some(key => !config.inspect(key))) {
+      await command("workbench.action.reloadWindow", deadline - Date.now());
+      return;
+    }
     try {
       await command("workbench.action.restartExtensionHost", deadline - Date.now());
     } catch (error) {

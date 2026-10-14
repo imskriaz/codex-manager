@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.18",
+  "version": "1.2.19",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -119,6 +119,12 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Automatically switch away from the active account when its quota falls below the configured 5-hour or long-window threshold. The long window is shown as weekly or monthly according to each account."
+        },
+        "codexManager.autoSwitchWaitForSessionsEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Wait until all local Codex sessions finish before automatically switching accounts or resetting quota. Unreadable session state pauses automatic selection until it can be verified. Manual account switching remains available."
         },
         "codexManager.autoSwitchReloadWindowEnabled": {
           "type": "boolean",
@@ -249,6 +255,13 @@
           "ignoreSync": true,
           "markdownDescription": "Enable encrypted cross-PC account claim checks. Only account IDs and PC enablement claims are synchronized unless Full cross-PC account sync is also explicitly enabled."
         },
+        "codexManager.encryptedSyncCurrentAccountOnlyEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "ignoreSync": true,
+          "markdownDescription": "Claim only the currently active account, freeing other saved accounts for other PCs. Requires the same shared HTTPS dashboard domain and password on every PC. The shared host must confirm ownership before a switch; unavailable or conflicting claims stop the switch."
+        },
         "codexManager.fullCrossPcAccountSyncEnabled": {
           "type": "boolean",
           "default": false,
@@ -353,13 +366,14 @@
     "verify": "npm run lint && npm run typecheck:webview && tsc -p ./",
     "format": "prettier --write \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
-    "test:ui": "npm run build:webview && node tools/check-responsive-ui.mjs",
+    "test:ui": "npm run build:webview && node tools/check-responsive-ui.mjs && node tools/check-browser-notifications.mjs",
     "test:ui:live": "node tools/check-live-ui.mjs",
     "test:ui:actions": "node tools/check-live-actions.mjs --mutate"
   },
   "dependencies": {
     "mammoth": "^1.12.2",
     "undici": "6.28.0",
+    "web-push": "^3.6.7",
     "ws": "^8.18.3"
   },
   "overrides": {
@@ -381,6 +395,7 @@
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^20.16.11",
     "@types/vscode": "^1.96.0",
+    "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.61.0",
     "@typescript-eslint/parser": "^8.61.0",

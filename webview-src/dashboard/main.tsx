@@ -1,4 +1,5 @@
 import { render } from "preact";
+import { BrowserNotifications } from "./browserNotifications";
 import { createPortal } from "preact/compat";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
 import packageJson from "../../package.json";
@@ -303,7 +304,6 @@ function App() {
   const noticeControllerRef = useRef<ReturnType<typeof createDashboardToastController>>();
   noticeControllerRef.current ??= createDashboardToastController(setNotice);
   useEffect(() => () => noticeControllerRef.current?.dispose(), []);
-  const browserPushPermissionRef = useRef<Promise<NotificationPermission | undefined>>();
   const lastBrowserPushKeyRef = useRef<string>();
   const browserPushRef = useRef<Notification>();
   const cancelBrowserPushDismissRef = useRef<() => void>();
@@ -325,7 +325,7 @@ function App() {
   const pushBrowserNotification = useCallback(
     (notice: DashboardNotice) => {
       const major = notice.level !== "info" || Boolean(notice.actions?.length);
-      if (!isBrowserDashboard || !major || typeof Notification === "undefined") {
+      if (!isBrowserDashboard || !major || typeof Notification === "undefined" || document.documentElement.dataset["pushSubscribed"] === "true") {
         closeBrowserPush();
         lastBrowserPushKeyRef.current = undefined;
         return;
@@ -359,8 +359,7 @@ function App() {
         return;
       }
       if (Notification.permission === "denied") return;
-      browserPushPermissionRef.current ??= Notification.requestPermission().catch(() => undefined);
-      void browserPushPermissionRef.current.then(show);
+      // Notification permission is requested only by the explicit settings control.
     },
     [closeBrowserPush, isBrowserDashboard]
   );
@@ -2535,6 +2534,7 @@ function App() {
         registryOverridePending={isActionPending("setEncryptedSyncRegistryOverride")}
       />
 
+      {isBrowserDashboard && <BrowserNotifications offerOnLoad />}
       <OnboardingModal
         open={onboardingOpen}
         step={onboardingStep}
@@ -3326,7 +3326,7 @@ function CliSessionsMenu(props: {
         </span>
         {props.runningCount > 0 ? (
           <span class="cli-running-count" aria-label={`${props.runningCount} running sessions`}>
-            {Math.min(99, props.runningCount)}
+            {props.runningCount}
           </span>
         ) : null}
       </button>

@@ -1,5 +1,11 @@
 import { vi } from "vitest";
 
+vi.mock("../src/services/codexNativeSessionStatus", () => ({
+  readNativeCodexSessionRunning: vi.fn(async () => undefined),
+  getNativeCodexSessionRunning: vi.fn(() => undefined),
+  disposeNativeCodexSessionStatus: vi.fn()
+}));
+
 vi.mock("vscode", () => ({
   CancellationTokenSource: class {
     token = { isCancellationRequested: false, onCancellationRequested: vi.fn(() => ({ dispose: vi.fn() })) };

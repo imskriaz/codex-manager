@@ -180,6 +180,38 @@ describe("isWebDashboardPagePath", () => {
 });
 
 describe("browser PWA routes", () => {
+  it("allows a public token to read only its snapshot while protecting creation and dashboard APIs", async () => {
+    const stored = new Map<string, string>();
+    const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() },
+      secrets: { get: async (key: string) => stored.get(key), store: async (key: string, value: string) => { stored.set(key, value); } }
+    } as never, {} as never, { hasDashboardPassphrase: async () => true, setOnlineDeviceIds: vi.fn() } as never);
+    const handle = (server as any).handle.bind(server);
+    const call = async (url: string, method = "GET", input?: unknown, local = false) => {
+      const headers = new Map<string, unknown>(); let body = "";
+      const response = { statusCode: 200, setHeader: (name: string, value: unknown) => headers.set(name.toLowerCase(), value), end: (value?: string) => { body = value ?? ""; } };
+      const request = createRequest();
+      Object.assign(request, { method, url, headers: { host: "127.0.0.1:39875", origin: `${local ? "http" : "https"}://127.0.0.1:39875`, "x-codex-dashboard": "1", ...(local ? {} : { "x-forwarded-proto": "https" }) }, socket: { remoteAddress: "127.0.0.1" } });
+      const pending = handle(request, response);
+      if (input) setTimeout(() => { request.emit("data", JSON.stringify(input)); request.emit("end"); }, 0);
+      await pending; return { ...response, body, headers };
+    };
+    try {
+      const input = { sessionKey: "pc:conversation", title: "Example", messages: [{ role: "user", text: "Shared message" }] };
+      expect((await call("/api/share/create", "POST", input)).statusCode).toBe(401);
+      const created = await call("/api/share/create", "POST", input, true);
+      expect(created.statusCode).toBe(200);
+      const { token } = JSON.parse(created.body);
+      const publicPage = await call(`/share/${token}`);
+      expect(publicPage.statusCode).toBe(200); expect(publicPage.body).toContain("Shared message");
+      expect(publicPage.headers.get("cache-control")).toBe("no-store");
+      expect(publicPage.headers.get("referrer-policy")).toBe("no-referrer");
+      expect((await call(`/api/state?token=${token}`)).statusCode).toBe(401);
+      expect((await call(`/api/share/revoke?token=${token}`, "POST", input)).statusCode).toBe(401);
+      expect((await call("/share/invalid")).statusCode).toBe(404);
+      expect((await call("/api/share/revoke", "POST", input, true)).statusCode).toBe(200);
+      expect((await call(`/share/${token}`)).statusCode).toBe(404);
+    } finally { server.dispose(); }
+  });
   it("serves the public install shell without exposing private state and versions dashboard assets", async () => {
     const server = new WebDashboardServer(
       {
@@ -453,5 +485,54 @@ describe("peer WebSocket failure handling", () => {
     expect(serverSource).not.toContain("39876");
     expect(relaySource).toContain("const port = 39875;");
     expect(relaySource).not.toContain("config.port || 39875");
+  });
+});
+
+
+describe("confirmed peer claim sync", () => {
+  function fixture() {
+    const sync = {
+      getRealtimeEncryptedVault: vi.fn(async () => "encrypted-vault"),
+      signRealtimePeerPayload: vi.fn(async () => "signed"),
+      verifyRealtimePeerPayload: vi.fn(async (_body: string, signature: string) => signature === "signed"),
+      setOnlineDeviceIds: vi.fn(), setRealtimeSyncPublisher: vi.fn()
+    };
+    const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: { get: vi.fn(async () => undefined) } } as never, {} as never, sync as never);
+    const internal = server as unknown as {
+      peerSocket: { readyState: number; send(raw: string): void; close(): void };
+      peerVaultWaiters: Map<string, (applied: boolean) => void>;
+      publishPeerVault(force: boolean): Promise<boolean>;
+      acceptPeerVaultAcknowledgment(message: unknown): Promise<boolean>;
+    };
+    const sent: any[] = [];
+    internal.peerSocket = { readyState: 1, send: (raw: string) => sent.push(JSON.parse(raw)), close: vi.fn() };
+    return { server, internal, sent };
+  }
+
+  it("does not report success until a signed peer confirms application", async () => {
+    const { server, internal, sent } = fixture();
+    try {
+      const task = internal.publishPeerVault(true);
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      const ack = { type: "peer:vault-ack", requestId: sent[0].requestId, deviceId: "other-pc", applied: true, sentAt: Date.now(), signature: "bad" };
+      await internal.acceptPeerVaultAcknowledgment(ack);
+      expect(internal.peerVaultWaiters.size).toBe(1);
+      await internal.acceptPeerVaultAcknowledgment({ ...ack, signature: "signed" });
+      expect(await task).toBe(true);
+      expect(internal.peerVaultWaiters.size).toBe(0);
+    } finally { server.dispose(); }
+  });
+
+  it("settles missing confirmations as failure and clears its bounded queue", async () => {
+    vi.useFakeTimers();
+    const { server, internal, sent } = fixture();
+    try {
+      const task = internal.publishPeerVault(true);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sent).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(await task).toBe(false);
+      expect(internal.peerVaultWaiters.size).toBe(0);
+    } finally { server.dispose(); vi.useRealTimers(); }
   });
 });

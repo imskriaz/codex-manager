@@ -4,17 +4,18 @@ import { describe, expect, it } from "vitest";
 describe("mobile dashboard header", () => {
   it("keeps one row and exposes secondary actions through overflow", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
-    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8").replace(/\r\n/g, "\n");
     expect(source).toContain("function DashboardMobileActions");
     expect(source).toContain('class="dashboard-mobile-actions"');
     expect(source).toContain('aria-label={menuLabel}');
     expect(css).toContain(".dashboard-density-compact .hero");
     expect(css).toContain("flex-direction: row;");
     expect(css).toContain(".dashboard-mobile-actions-menu");
+    expect(css).toMatch(/@media \(min-width: 601px\)\s*\{\s*\.dashboard-mobile-actions\s*\{ display: none;/);
   });
 
   it("keeps session rows two lines while actions overlay on hover", () => {
-    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8").replace(/\r\n/g, "\n");
     expect(css).toContain(".cli-session-spinner { display: inline-block;");
     expect(css).toContain(".cli-workspace .cli-session-row-main { min-height: 27px;");
     expect(css).toContain(".cli-workspace .cli-session-row-actions { top: 50%;");

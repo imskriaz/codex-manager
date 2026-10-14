@@ -297,12 +297,18 @@
     });
   }
 
+  window.addEventListener?.("beforeinstallprompt", (event) => { event.preventDefault(); window.codexInstallPrompt = event; });
+
   if (typeof navigator !== "undefined" && navigator.serviceWorker && typeof document !== "undefined") {
     const currentScriptUrl = document.currentScript?.src;
     const version = currentScriptUrl ? new URL(currentScriptUrl).searchParams.get("v") : undefined;
     const workerUrl = version ? `/service-worker.js?v=${encodeURIComponent(version)}` : "/service-worker.js";
     const register = () => {
       void navigator.serviceWorker.register(workerUrl, { scope: "/", updateViaCache: "none" })
+        .then(async (registration) => {
+          const subscription = await registration.pushManager?.getSubscription();
+          document.documentElement.dataset.pushSubscribed = subscription ? "true" : "false";
+        })
         .catch((error) => console.warn("[codex-manager] offline shell unavailable", error));
     };
     if (document.readyState === "complete") register();

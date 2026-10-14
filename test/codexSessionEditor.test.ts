@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode } from "../src/services/codexSessionResume";
+import { prepareCodexSessionsForExtensionHostRestart, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds } from "../src/services/codexSessionResume";
 
 describe("Codex VS Code session editor", () => {
   let activateExtension: ReturnType<typeof vi.fn>;
@@ -137,6 +138,19 @@ describe("Codex VS Code session editor", () => {
     await firstFailure;
     await second;
     expect(vscode.commands.executeCommand).toHaveBeenCalledOnce();
+  });
+
+  it("captures and restores both running conversations as distinct persistent native tabs", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : key === "autoResumeGoalOnlyEnabled" ? false : fallback
+    } as never);
+    const ids = ["01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3", "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd4"];
+    const saved = new Map<string, unknown>();
+    const context = { workspaceState: { get: (key: string) => saved.get(key), update: async (key: string, value: unknown) => { saved.set(key, value); } } } as never;
+    await prepareCodexSessionsForExtensionHostRestart(context, true, async () => ids, async () => ids);
+    expect(await resumePersistedCodexSessions(context)).toEqual({ attempted: 2, opened: 2, failed: [] });
+    expect(readOpenCodexSessionIds(false)).toEqual(ids);
+    expect(vscode.window.tabGroups.all[0]?.tabs).toHaveLength(2);
   });
 
   it("opens a local session through the official Codex custom editor", async () => {

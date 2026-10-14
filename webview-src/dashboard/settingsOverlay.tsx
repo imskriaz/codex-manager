@@ -19,6 +19,8 @@ import { renderRemoveIcon } from "./icons";
 import { useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
 
+import { BrowserNotifications } from "./browserNotifications";
+
 const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
 const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
 const CURRENT_AUTO_REFRESH_VALUES = Array.from({ length: 60 }, (_, index) => index + 1);
@@ -168,6 +170,7 @@ export function SettingsOverlay(props: {
           >
             <SettingsPanelIntro tab={tabs[0]!} />
             <div class="settings-layout">
+              {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
               <SettingsThemeBlock
                 lang={props.lang}
                 settings={props.settings}
@@ -643,6 +646,13 @@ export function SettingsOverlay(props: {
                 </div>
               </SettingsToggleBlock>
               <SettingsToggleBlock
+                title="Wait for running sessions"
+                sub="When Auto Switch is enabled, keep using the current account until all local sessions finish, then switch automatically. If session inspection fails, Auto Switch continues with a warning."
+                enabled={props.settings.autoSwitchWaitForSessionsEnabled === true}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("autoSwitchWaitForSessionsEnabled", enabled)}
+              />
+              <SettingsToggleBlock
                 title={props.copy.autoSwitchReloadTitle}
                 sub={props.copy.autoSwitchReloadSub}
                 enabled={props.settings.autoSwitchReloadWindowEnabled}
@@ -785,6 +795,14 @@ export function SettingsOverlay(props: {
                   </button>
                 </div>
               </SettingsToggleBlock>
+              <SettingsToggleBlock
+                title="Claim only the current account"
+                sub="Share ownership only for the account this PC is using. Other saved accounts stay available to other PCs. Use the same HTTPS dashboard domain and password everywhere; switches pause if that host cannot confirm ownership. The account card shows the owning PC."
+                enabled={props.settings.encryptedSyncCurrentAccountOnlyEnabled === true}
+                disabled={!props.settings.encryptedSyncEnabled}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("encryptedSyncCurrentAccountOnlyEnabled", enabled)}
+              />
               <SettingsToggleBlock
                 title={resolveFullAccountSyncText("title", props.lang)}
                 sub={resolveFullAccountSyncText("sub", props.lang)}

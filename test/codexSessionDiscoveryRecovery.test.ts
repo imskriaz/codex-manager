@@ -27,6 +27,14 @@ afterEach(async () => {
 });
 
 describe("session discovery recovery", () => {
+  it("merges locally running parents omitted by a successful live discovery", async () => {
+    const second = "01a04882-d037-7a42-ad24-9afb61901189";
+    const third = "01a04882-d037-7a42-ad24-9afb61901190";
+    mocks.open.mockResolvedValue({ request: vi.fn(async (_method: string, params: { archived: boolean; sourceKinds?: string[] }) => ({ data: params.archived || params.sourceKinds ? [] : [{ id, name: "First", source: "vscode", status: { type: "idle" } }, { id: second, name: "Second", source: "vscode", status: { type: "idle" } }] })), close: vi.fn() });
+    for (const sessionId of [id, second, third]) await writeFile(path.join(root, "sessions", `rollout-${sessionId}.jsonl`), JSON.stringify({ type: "session_meta", payload: { source: "vscode", cwd: root } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: sessionId } }) + "\n");
+    expect(new Set((await readCodexCliSessions(root)).filter((row) => row.status === "running").map((row) => row.id))).toEqual(new Set([id, second, third]));
+  });
+
   it("returns local sessions after initialize failure and backs off repeated refreshes", async () => {
     mocks.open.mockRejectedValue(new Error("initialize timed out"));
     expect((await readCodexCliSessions())[0]?.title).toBe("Recovered chat");

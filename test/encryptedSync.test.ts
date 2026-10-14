@@ -1494,8 +1494,8 @@ describe("encrypted account sync", () => {
     expect(getSyncedAccountLeases()).toEqual([
       expect.objectContaining({ accountId: "one", deviceName: "Office PC", online: false })
     ]);
-    await expect(manager.prepareAccountSwitch("one")).resolves.toBeUndefined();
-    await expect(manager.prepareAccountEnablement("one", true)).resolves.toBeUndefined();
+    await expect(manager.prepareAccountSwitch("one")).rejects.toThrow(/Office PC/i);
+    await expect(manager.prepareAccountEnablement("one", true)).rejects.toThrow(/Office PC/i);
     expect(manager.canAutomateAccount("one")).toBe(false);
     manager.setOnlineDeviceIds(["laptop-device", "office-device"]);
     expect(getSyncedAccountLeases()).toEqual([

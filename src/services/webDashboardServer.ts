@@ -1,3 +1,4 @@
+import { normalizeCodexSessionGoal } from "../domain/codexSessionState";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
@@ -26,6 +27,7 @@ import {
   resolveMirroredNotification,
   subscribeToVscodeNotificationResolutions,
   subscribeToVscodeNotifications,
+  subscribeToNotificationDelivery,
   type MirroredNotification
 } from "../utils/notificationMirror";
 import { clearDashboardCodexAppPath, clearDashboardCodexCliPath } from "../presentation/dashboard/messageDispatcher";
@@ -54,6 +56,10 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
+import { BrowserPushService } from "./browserPush";
+import { ConversationShares, sharedConversationPage } from "./conversationShares";
+import { filterCliSessionsBySection, isCodexSessionRunning } from "../domain/codexSessionState";
+import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 
 const WEB_DASHBOARD_PORT = 39875;
@@ -119,20 +125,14 @@ type PeerSessionMessage = {
   type: "peer:sessions";
   deviceId: string;
   deviceName: string;
-  sessions: Array<{
-    id: string;
-    title: string;
-    updatedAt?: string;
-    status: "running" | "idle";
-    archived?: boolean;
-    projectPath?: string;
-  }>;
+  sessions: import("../domain/dashboard/types").DashboardCliSessionSummary[];
   accounts?: import("../domain/dashboard/types").DashboardAccountViewModel[];
   enablementRegistry?: SyncAccountEnablement[];
   sentAt: number;
   signature?: string;
 };
 type PeerVaultMessage = {
+  requestId?: string;
   type: "peer:vault";
   deviceId: string;
   sentAt: number;
@@ -282,7 +282,8 @@ function peerVaultSignaturePayload(message: Omit<PeerVaultMessage, "signature">)
     type: message.type,
     deviceId: message.deviceId,
     sentAt: message.sentAt,
-    vault: message.vault
+    vault: message.vault,
+    ...(message.requestId ? { requestId: message.requestId } : {})
   });
 }
 
@@ -300,6 +301,7 @@ export function isCliSessionWatchPath(filename: string | Buffer | null): boolean
 const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: string }> = {
   "/manifest.webmanifest": { parts: ["media", "webview", "pwaManifest.webmanifest"], contentType: "application/manifest+json; charset=utf-8" },
   "/service-worker.js": { parts: ["media", "webview", "pwaServiceWorker.js"], contentType: "text/javascript; charset=utf-8" },
+  "/assets/pwaRecovery.js": { parts: ["media", "webview", "pwaRecovery.js"], contentType: "text/javascript; charset=utf-8" },
   "/offline.html": { parts: ["media", "webview", "pwaOffline.html"], contentType: "text/html; charset=utf-8" },
   "/assets/icon-192.png": { parts: ["media", "webview", "icon-192.png"], contentType: "image/png" },
   "/assets/icon-512.png": { parts: ["media", "webview", "icon-512.png"], contentType: "image/png" },
@@ -319,7 +321,7 @@ const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: strin
   }
 };
 const WEB_DASHBOARD_PUBLIC_ASSETS = new Set([
-  "/manifest.webmanifest", "/service-worker.js", "/offline.html",
+  "/manifest.webmanifest", "/service-worker.js", "/offline.html", "/assets/pwaRecovery.js",
   "/assets/icon-192.png", "/assets/icon-512.png", "/assets/codex.svg"
 ]);
 
@@ -361,6 +363,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private peerPublishInFlight: Promise<void> | undefined;
   private peerPublishQueued = false;
   private lastPublishedPeerVault = "";
+  private readonly peerVaultWaiters = new Map<string, (applied: boolean) => void>();
   private peerHttpHeartbeatInFlight: Promise<void> | undefined;
   private peerPresenceAuthoritative = false;
   private lastPeerSentAt = 0;
@@ -389,17 +392,23 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly announcements: AnnouncementService;
   private readonly oauth: DashboardOAuthCoordinator;
   private notificationMirrorSubscription: vscode.Disposable | undefined;
+  private notificationDeliverySubscription: vscode.Disposable | undefined;
   private notificationResolutionSubscription: vscode.Disposable | undefined;
   private readonly assetCache = new Map<string, { content: Buffer; gzip: Buffer; etag: string }>();
   private readonly assetVersion: string;
   private readonly dashboardRealtimeSubscription: () => void;
   private readonly remoteSessionLive = new Map<string, DashboardCodexSessionLiveState>();
+  private readonly browserPush: BrowserPushService;
+  private readonly conversationShares: ConversationShares;
+  private readonly claimAuthority = new AccountClaimAuthority(path.join(getCodexManagerStorageRoot(), "account-claim-authority.json"), () => this.encryptedSync?.getRealtimeEnablementRegistry() ?? []);
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly repo: AccountsRepository,
     private readonly encryptedSync?: EncryptedSyncManager
   ) {
+    this.browserPush = new BrowserPushService(context.secrets, () => this.encryptedSync?.getDashboardPassphraseFingerprint() ?? Promise.resolve(undefined));
+    this.conversationShares = new ConversationShares(context.secrets);
     this.assetVersion = getWebDashboardAssetVersion(context.extensionUri.fsPath, String((context.extension?.packageJSON as { version?: string } | undefined)?.version ?? "dev"));
     this.deviceId = context.globalState?.get<string>("codexManager.webDashboard.deviceId") ?? crypto.randomUUID();
     void context.globalState?.update("codexManager.webDashboard.deviceId", this.deviceId);
@@ -530,7 +539,9 @@ export class WebDashboardServer implements vscode.Disposable {
     this.notificationMirrorSubscription ??= subscribeToVscodeNotifications((notification) => {
       this.broadcastRealtimeNotice(notification);
     });
+    this.notificationDeliverySubscription ??= subscribeToNotificationDelivery(() => this.browserPush.flush());
     this.notificationResolutionSubscription ??= subscribeToVscodeNotificationResolutions((notificationId) => {
+      this.browserPush.dismiss(notificationId);
       this.broadcastRealtimeNotificationDismissed(notificationId);
     });
     this.updateOnlineDevicePresence();
@@ -549,6 +560,8 @@ export class WebDashboardServer implements vscode.Disposable {
     this.workspaceViewerLastSeen.clear();
     this.notificationMirrorSubscription?.dispose();
     this.notificationMirrorSubscription = undefined;
+    this.notificationDeliverySubscription?.dispose();
+    this.notificationDeliverySubscription = undefined;
     this.notificationResolutionSubscription?.dispose();
     this.notificationResolutionSubscription = undefined;
     if (this.webSocketHeartbeatTimer) clearInterval(this.webSocketHeartbeatTimer);
@@ -595,6 +608,8 @@ export class WebDashboardServer implements vscode.Disposable {
       });
     }
     this.peerActionWaiters.clear();
+    for (const waiter of this.peerVaultWaiters.values()) waiter(false);
+    this.peerVaultWaiters.clear();
     if (!server) return;
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -687,6 +702,29 @@ export class WebDashboardServer implements vscode.Disposable {
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
+    if (method === "GET" && path.startsWith("/share/")) {
+      const share = await this.conversationShares.get(path.slice(7));
+      if (!share) { response.statusCode = 404; response.end("This shared link is invalid, expired, or revoked. Ask the owner for a new link."); return; }
+      this.sendHtml(response, sharedConversationPage(share));
+      return;
+    }
+    if (method === "POST" && path === "/api/peer-account-claim") {
+      try {
+        const body = JSON.parse(await readDashboardRequestBody(request, 8192)) as { request?: unknown; signature?: unknown };
+        if (!isAccountClaimRequest(body.request) || typeof body.signature !== "string" ||
+            !await this.encryptedSync?.verifyRealtimePeerPayload(JSON.stringify(body.request), body.signature)) {
+          response.statusCode = 403; this.sendJson(response, { error: "Account claim authentication failed." }); return;
+        }
+        const result: AccountClaimResult = await this.claimAuthority.request(body.request);
+        if (result.claim) await this.encryptedSync?.applyRealtimeEnablementRegistry([result.claim]);
+        const signature = await this.encryptedSync?.signRealtimePeerPayload(JSON.stringify(result));
+        this.sendJson(response, { result, signature });
+      } catch (error) {
+        response.statusCode = 503;
+        this.sendJson(response, { error: error instanceof Error ? error.message : "Shared account claim could not be stored. Retry when the host recovers." });
+      }
+      return;
+    }
     if (method === "GET" && path === "/workspace/") {
       response.statusCode = 302;
       response.setHeader("Location", "/workspace");
@@ -740,6 +778,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "POST" && path === "/logout") {
+      await this.browserPush.revokeOwner(fingerprintWebDashboardSession(readDashboardSessionToken(request) ?? "local"));
       await this.forgetSession(readDashboardSessionToken(request));
       response.statusCode = 303;
       response.setHeader("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
@@ -749,6 +788,50 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     if (method === "GET" && path === "/api/state") {
       await this.sendState(response);
+      return;
+    }
+    if (method === "POST" && (path === "/api/share/create" || path === "/api/share/revoke")) {
+      try {
+        if (request.headers["x-codex-dashboard"] !== "1") throw new Error("Invalid share request.");
+        const body = JSON.parse(await readDashboardRequestBody(request, 272 * 1024)) as { sessionKey?: unknown };
+        if (path === "/api/share/create") this.sendJson(response, await this.conversationShares.create(body));
+        else { await this.conversationShares.revoke(body.sessionKey); this.sendJson(response, { ok: true }); }
+      } catch (error) {
+        response.statusCode = error instanceof RequestBodyTooLargeError ? 413 : 400;
+        this.sendJson(response, { error: error instanceof Error ? error.message : "Sharing failed. Retry when connected." });
+      }
+      return;
+    }
+    if (path.startsWith("/api/push/")) {
+      try {
+        if (method === "GET" && path === "/api/push/key") {
+          this.sendJson(response, { publicKey: await this.browserPush.publicKey() });
+          return;
+        }
+        if (method !== "POST" || request.headers["x-codex-dashboard"] !== "1") throw new Error("Invalid notification request.");
+        const body = JSON.parse(await readDashboardRequestBody(request, 8192)) as Record<string, unknown>;
+        const owner = fingerprintWebDashboardSession(readDashboardSessionToken(request) ?? "local");
+        const origin = request.headers.origin ?? this.getUrl();
+        if (path === "/api/push/status" && typeof body["endpoint"] === "string") {
+          this.sendJson(response, { subscribed: await this.browserPush.isSubscribed(body["endpoint"], owner, origin) });
+          return;
+        }
+        if (path === "/api/push/subscribe") {
+          await this.browserPush.subscribe(body["subscription"], owner, origin, isLocalWebDashboardRequest(request) ? undefined : await this.encryptedSync?.getDashboardPassphraseFingerprint());
+        } else if (path === "/api/push/unsubscribe" && typeof body["endpoint"] === "string") {
+          await this.browserPush.unsubscribe(body["endpoint"], owner, origin);
+        } else if (path === "/api/push/action" && typeof body["notificationId"] === "string" && typeof body["action"] === "string") {
+          if (!this.browserPush.takeAction(body["notificationId"], body["action"]) || !resolveMirroredNotification(body["notificationId"], body["action"])) {
+            response.statusCode = 409;
+            this.sendJson(response, { error: "This notification has expired or was already handled. Open the dashboard to review current actions." });
+            return;
+          }
+        } else throw new Error("Unknown notification action.");
+        this.sendJson(response, { ok: true });
+      } catch (error) {
+        response.statusCode = error instanceof RequestBodyTooLargeError ? 413 : 400;
+        this.sendJson(response, { error: error instanceof Error ? error.message : "Notification request failed. Retry from settings." });
+      }
       return;
     }
     if (method === "POST" && path === "/api/message") {
@@ -1315,6 +1398,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private publishSessionLive(state: DashboardCodexSessionLiveState): void {
     if (!isCodexSessionLiveState(state)) return;
+    if (["completed", "failed", "cancelled"].includes(state.status)) this.browserPush.notify({ notificationId: state.streamId, level: state.status === "failed" ? "error" : "info", message: `Session ${state.status}. Open the dashboard to review the turn.` });
     if (state.deviceId) {
       if (state.updatedAt > Date.now() + 30_000 || Date.now() - state.updatedAt >= 5 * 60_000) return;
       this.currentRemoteSessionLive();
@@ -1600,6 +1684,7 @@ export class WebDashboardServer implements vscode.Disposable {
   ): void {
     const payload: MirroredNotification =
       typeof notification === "string" ? { level: notification, message: message ?? "" } : notification;
+    this.browserPush.notify(payload);
     const notice = JSON.stringify({ type: "dashboard:notice", ...payload } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
       if (socket.readyState === WebSocket.OPEN) socket.send(notice);
@@ -1658,7 +1743,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async getConnectedPeers(): Promise<DashboardPeerView[]> {
     const cliEnabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
-    const localSessionCount = cliEnabled && this.hasWorkspaceViewer() ? (await this.readLocalCliSessions()).length : 0;
+    const localSessionCount = cliEnabled && this.hasWorkspaceViewer() ? filterCliSessionsBySection(await this.readLocalCliSessions(), "active").length : 0;
     return [
       {
         id: this.deviceId,
@@ -1670,7 +1755,7 @@ export class WebDashboardServer implements vscode.Disposable {
       ...[...this.peerSessions.values()].map((peer) => ({
         id: peer.deviceId,
         name: peer.deviceName,
-        sessionCount: peer.sessions.length,
+        sessionCount: filterCliSessionsBySection(peer.sessions, "active").length,
         connected: true,
         local: false
       }))
@@ -1766,6 +1851,7 @@ export class WebDashboardServer implements vscode.Disposable {
     ) {
       return false;
     }
+    if (message.sessions.some(session => session?.goal !== undefined && normalizeCodexSessionGoal(session.goal) === undefined)) return false;
     if (Math.abs(Date.now() - message.sentAt) > 2 * 60_000) return false;
     const lastSignedAt = this.peerLastSignedAt.get(message.deviceId) ?? 0;
     if (message.sentAt <= lastSignedAt) return false;
@@ -1788,7 +1874,7 @@ export class WebDashboardServer implements vscode.Disposable {
       deviceId: message.deviceId.slice(0, 256),
       deviceName: message.deviceName.slice(0, 120),
       sessions: message.sessions
-        .slice(0, 100)
+        .slice(0, 1000)
         .filter(
           (session) =>
             session &&
@@ -1844,14 +1930,15 @@ export class WebDashboardServer implements vscode.Disposable {
       type: "peer:vault" as const,
       deviceId: message.deviceId,
       sentAt: message.sentAt,
-      vault: message.vault
+      vault: message.vault,
+      ...(message.requestId ? { requestId: message.requestId } : {})
     };
     if (
       !(await this.encryptedSync?.verifyRealtimePeerPayload(peerVaultSignaturePayload(unsigned), message.signature))
     ) {
       return false;
     }
-    await this.encryptedSync?.applyRealtimeEncryptedVault(message.vault);
+    if (!await this.encryptedSync?.applyRealtimeEncryptedVault(message.vault)) return false;
     // A dashboard host can have several peer PCs connected. Relay the
     // authenticated ciphertext event so one source change reaches the whole
     // connected peer set without another Settings Sync request.
@@ -1867,6 +1954,24 @@ export class WebDashboardServer implements vscode.Disposable {
       socket.send(serialized);
     }
     this.publishRealtimeState();
+    return true;
+  }
+
+  private async acknowledgePeerVault(message: Partial<PeerVaultMessage>, applied: boolean, send: (raw: string) => void): Promise<void> {
+    if (typeof message.requestId !== "string" || message.requestId.length > 128) return;
+    const result = { type: "peer:vault-ack", requestId: message.requestId, deviceId: this.deviceId, applied, sentAt: Date.now() };
+    const signature = await this.encryptedSync?.signRealtimePeerPayload(JSON.stringify(result));
+    if (signature) send(JSON.stringify({ ...result, signature }));
+  }
+
+  private async acceptPeerVaultAcknowledgment(value: unknown): Promise<boolean> {
+    const message = value as { type?: string; requestId?: string; deviceId?: string; applied?: boolean; sentAt?: number; signature?: string };
+    if (message?.type !== "peer:vault-ack") return false;
+    if (typeof message.requestId !== "string" || typeof message.deviceId !== "string" || typeof message.applied !== "boolean" || typeof message.sentAt !== "number" || typeof message.signature !== "string" || Math.abs(Date.now() - message.sentAt) > 120000) return true;
+    const unsigned = { type: message.type, requestId: message.requestId, deviceId: message.deviceId, applied: message.applied, sentAt: message.sentAt };
+    if (await this.encryptedSync?.verifyRealtimePeerPayload(JSON.stringify(unsigned), message.signature)) {
+      if (message.applied) this.peerVaultWaiters.get(message.requestId)?.(true);
+    }
     return true;
   }
 
@@ -1903,8 +2008,10 @@ export class WebDashboardServer implements vscode.Disposable {
         Partial<PeerTerminalCompleteMessage> &
         Partial<PeerCodexRequestMessage> &
         Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionLiveMessage>;
+      if (await this.acceptPeerVaultAcknowledgment(message)) return;
       if (message.type === "peer:vault") {
-        await this.acceptPeerVault(message, sourceSocket);
+        const applied = await this.acceptPeerVault(message, sourceSocket);
+        await this.acknowledgePeerVault(message, applied, (raw) => sourceSocket.send(raw));
         return;
       }
       if (message.type === "peer:action") {
@@ -2049,7 +2156,7 @@ export class WebDashboardServer implements vscode.Disposable {
       type: "peer:sessions",
       deviceId: this.deviceId,
       deviceName: os.hostname(),
-      sessions: state.sessions,
+      sessions: [...state.sessions].sort((a, b) => Number(isCodexSessionRunning(b)) - Number(isCodexSessionRunning(a))),
       accounts: state.accounts,
       enablementRegistry: state.enablementRegistry,
       sentAt: this.lastPeerSentAt
@@ -2160,6 +2267,13 @@ export class WebDashboardServer implements vscode.Disposable {
     socket.addEventListener("message", (event) => {
       void (async () => {
         try {
+          const vault = JSON.parse(String(event.data)) as Partial<PeerVaultMessage>;
+          if (await this.acceptPeerVaultAcknowledgment(vault)) return;
+          if (vault.type === "peer:vault") {
+            const applied = await this.acceptPeerVault(vault);
+            await this.acknowledgePeerVault(vault, applied, (raw) => socket.send(raw));
+            return;
+          }
           const message = JSON.parse(String(event.data)) as Partial<PeerActionMessage> &
             Partial<PeerAggregateMessage> &
             Partial<PeerActionResultMessage> &
@@ -2269,22 +2383,31 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async publishPeerVault(force = false): Promise<boolean> {
     const socket = this.peerSocket;
-    const incoming = [...this.peerSockets.values()].filter(
-      (candidate) => this.authenticatedPeerSockets.has(candidate) && candidate.readyState === WebSocket.OPEN
-    );
+    const incoming = [...this.peerSockets.values()].filter((candidate) => this.authenticatedPeerSockets.has(candidate) && candidate.readyState === WebSocket.OPEN);
     const outgoingOpen = Boolean(socket && socket.readyState === UndiciWebSocket.OPEN);
-    if (!outgoingOpen && incoming.length === 0) return false;
+    if ((!outgoingOpen && incoming.length === 0) || this.peerVaultWaiters.size >= 64) return false;
     const vault = await this.encryptedSync?.getRealtimeEncryptedVault();
     if (!vault) return false;
     if (!force && vault === this.lastPublishedPeerVault) return true;
-    const unsigned = { type: "peer:vault" as const, deviceId: this.deviceId, sentAt: Date.now(), vault };
+    const requestId = force ? crypto.randomUUID() : undefined;
+    const unsigned = { type: "peer:vault" as const, deviceId: this.deviceId, sentAt: Date.now(), vault, ...(requestId ? { requestId } : {}) };
     const signature = await this.encryptedSync?.signRealtimePeerPayload(peerVaultSignaturePayload(unsigned));
     if (!signature) return false;
-    const serialized = JSON.stringify({ ...unsigned, signature } satisfies PeerVaultMessage);
-    if (outgoingOpen) socket!.send(serialized);
-    for (const candidate of incoming) candidate.send(serialized);
-    this.lastPublishedPeerVault = vault;
-    return true;
+    let timer: NodeJS.Timeout | undefined;
+    const confirmation = requestId ? new Promise<boolean>((resolve) => {
+      this.peerVaultWaiters.set(requestId, resolve);
+      timer = setTimeout(() => resolve(false), 10_000);
+      timer.unref?.();
+    }) : Promise.resolve(true);
+    try {
+      const serialized = JSON.stringify({ ...unsigned, signature } satisfies PeerVaultMessage);
+      if (outgoingOpen) socket!.send(serialized);
+      for (const candidate of incoming) candidate.send(serialized);
+      const applied = await confirmation;
+      if (applied) this.lastPublishedPeerVault = vault;
+      return applied;
+    } catch { return false; }
+    finally { if (timer) clearTimeout(timer); if (requestId) this.peerVaultWaiters.delete(requestId); }
   }
 
   private startPeerHttpHeartbeat(): void {

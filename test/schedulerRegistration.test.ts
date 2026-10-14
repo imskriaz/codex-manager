@@ -18,6 +18,7 @@ const {
 vi.mock("../src/application/accounts/quota", () => ({
   refreshSingleQuotaSafely: refreshSingleQuotaSafelyMock,
   maybeAutoSwitchForActiveQuota: maybeAutoSwitchForActiveQuotaMock,
+  isAutoSwitchWaitingForSessions: vi.fn(() => false),
   maybeWarnForActiveQuota: maybeWarnForActiveQuotaMock
 }));
 
@@ -31,6 +32,7 @@ import {
   registerAutoRefreshScheduler,
   registerTokenRefreshScheduler
 } from "../src/presentation/workbench/schedulerRegistration";
+import { isAutoSwitchWaitingForSessions } from "../src/application/accounts/quota";
 import type { AccountsRepository } from "../src/storage";
 
 describe("auto refresh scheduler", () => {
@@ -59,6 +61,18 @@ describe("auto refresh scheduler", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("retries a deferred switch even with quota timers disabled and stops on disposal", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => typeof fallback === "number" ? 0 : fallback } as never);
+    vi.mocked(isAutoSwitchWaitingForSessions).mockReturnValue(true);
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo: { listAccounts: async () => [] } as never, onRefresh: vi.fn() });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledTimes(1);
+    scheduler.dispose();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledTimes(1);
+    vi.mocked(isAutoSwitchWaitingForSessions).mockReturnValue(false);
   });
 
   it("evaluates auto switch immediately after each timed current-account refresh", async () => {

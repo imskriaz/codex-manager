@@ -30,6 +30,7 @@ const MAX_REPLAY_EVENTS = 256;
 const MAX_EVENT_STREAMS = 64;
 let replayBytes = 0;
 let liveContract;
+let claimContract;
 for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
   try {
     liveContract = require(path.join(root, "out", "domain", "codexSessionLive.js"));
@@ -38,6 +39,12 @@ for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
   } catch { /* Other relay events remain available if this dependency is unavailable. */ }
 }
 const startedAt = Date.now();
+for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
+  try { claimContract = require(path.join(root, "out", "services", "accountClaimAuthority.js")); break; }
+  catch { /* Account switching will fail visibly if the shared contract is unavailable. */ }
+}
+const claimAuthority = claimContract && config.claimRegistryPath
+  ? new claimContract.AccountClaimAuthority(config.claimRegistryPath, () => [...peers.values()].flatMap((peer) => peer.message.enablementRegistry || [])) : undefined;
 let WebSocketServer;
 try {
   const wsPackage = require.resolve("ws", { paths: config.modulePaths || [process.cwd()] });
@@ -185,7 +192,7 @@ function acceptVault(message, socket, deviceId) {
   if (peers.get(deviceId)?.lastSeen < Date.now() - 30000 || message.deviceId !== deviceId || !boundedText(message.vault, MAX_EVENT_BYTES) ||
       !Number.isFinite(message.sentAt) || Math.abs(Date.now() - message.sentAt) > 120000 ||
       typeof message.signature !== "string" || !hostKey) return false;
-  const unsigned = { type: "peer:vault", deviceId, sentAt: message.sentAt, vault: message.vault };
+  const unsigned = { type: "peer:vault", deviceId, sentAt: message.sentAt, vault: message.vault, ...(message.requestId ? { requestId: message.requestId } : {}) };
   const expected = crypto.createHmac("sha256", Buffer.from(hostKey, "base64url"))
     .update(JSON.stringify(unsigned), "utf8").digest("base64url");
   const a = Buffer.from(expected), b = Buffer.from(message.signature);
@@ -278,6 +285,39 @@ function acceptRealtimeEvent(message, socket, deviceId) {
 }
 
 const httpServer = http.createServer((request, response) => {
+  if (request.method === "POST" && request.url === "/api/peer-account-claim") {
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    response.setHeader("Cache-Control", "no-store");
+    let bytes = 0;
+    const chunks = [];
+    let settled = false;
+    const timer = setTimeout(() => { settled = true; response.statusCode = 408; response.end(JSON.stringify({ error: "Account claim request timed out." })); }, 10000);
+    timer.unref?.();
+    request.on("data", (chunk) => {
+      if (settled) return;
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > 8192) { settled = true; clearTimeout(timer); response.statusCode = 413; response.end(JSON.stringify({ error: "Account claim request too large." })); return; }
+      chunks.push(Buffer.from(chunk));
+    });
+    request.on("end", async () => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        if (!claimAuthority) throw new Error("Account claim authority is unavailable. Restart the updated host before switching.");
+        if (!hostKey || !claimContract.isAccountClaimRequest(body.request) || typeof body.signature !== "string") throw new Error("Invalid account claim request.");
+        const expected = crypto.createHmac("sha256", Buffer.from(hostKey, "base64url")).update(JSON.stringify(body.request)).digest("base64url");
+        const actual = Buffer.from(body.signature); const expectedBytes = Buffer.from(expected);
+        if (actual.length !== expectedBytes.length || !crypto.timingSafeEqual(actual, expectedBytes)) { response.statusCode = 403; throw new Error("Account claim authentication failed."); }
+        const result = await claimAuthority.request(body.request);
+        const signature = crypto.createHmac("sha256", Buffer.from(hostKey, "base64url")).update(JSON.stringify(result)).digest("base64url");
+        response.end(JSON.stringify({ result, signature }));
+      } catch (error) { response.statusCode = response.statusCode === 403 ? 403 : 503; response.end(JSON.stringify({ error: error.message || "Account claim could not complete." })); }
+    });
+    request.on("aborted", () => { settled = true; clearTimeout(timer); });
+    request.on("error", () => { settled = true; clearTimeout(timer); });
+    return;
+  }
   if (request.method === "GET" && request.url === "/health") {
     response.setHeader("Content-Type", "application/json; charset=utf-8");
     response.end(JSON.stringify({ ok: true, service: "codex-manager-relay", port, peerCount: peers.size, startedAt }));
@@ -370,7 +410,13 @@ wsServer.on("connection", (socket, request) => {
         const origin = takePendingAction(message.requestId, socket);
         if (origin && origin.readyState === 1) send(origin, message);
       } else if (deviceId && peers.get(deviceId)?.socket === socket) {
-        if (message.type === "peer:vault") acceptVault(message, socket, deviceId);
+        if (message.type === "peer:vault-ack") {
+          if (message.deviceId !== deviceId || !boundedId(message.requestId) || typeof message.applied !== "boolean" || !Number.isFinite(message.sentAt) || Math.abs(Date.now() - message.sentAt) > 120000 || typeof message.signature !== "string") return;
+          const unsigned = { type: message.type, requestId: message.requestId, deviceId, applied: message.applied, sentAt: message.sentAt };
+          const expected = crypto.createHmac("sha256", Buffer.from(hostKey, "base64url")).update(JSON.stringify(unsigned)).digest("base64url");
+          const a = Buffer.from(expected), b = Buffer.from(message.signature);
+          if (a.length === b.length && crypto.timingSafeEqual(a, b)) broadcast(message, socket);
+        } else if (message.type === "peer:vault") acceptVault(message, socket, deviceId);
         else acceptRealtimeEvent(message, socket, deviceId);
       }
     } catch { socket.close(); }

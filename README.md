@@ -147,3 +147,26 @@ Important combinations:
 ## License
 
 Codex Manager is available under the [MIT License](LICENSE). The project was originally based on [codex-manager](https://github.com/wannanbigpig/codex-manager).
+
+
+### Session-aware switching and current-account claims
+
+Auto Resume captures all local running parent conversations across projects and restores each as a persistent native Codex tab. The optional active-goals filter still applies.
+
+**Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, Auto Switch continues with a warning. Manual account switching remains available.
+
+**Claim only the current account** under Data reserves the account currently selected on this PC and frees other saved accounts. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC. Keep this setting off to retain claims based on saved-account enablement.
+
+Browser conversations show the saved native Codex goal above the composer, including its objective, state, and elapsed time. This remains available when the goal creation event has scrolled out of the message history.
+
+### Browser notifications and PWA
+
+In the browser dashboard, open General settings and choose **Enable notifications** on each device. Major account changes, warnings, failures, completed sessions, and available notification actions use background Web Push. Delivery requires the dashboard host and network to be available; subscriptions are local to that host and expire after 30 days unless renewed. Logging out revokes that login's subscriptions.
+
+Use **Install app** where available, or your browser's **Add to Home Screen** option. On iPhone and iPad, open the installed Home Screen app before enabling notifications. The offline recovery screen reconnects automatically after a host restart. Account data and actions require a live authenticated connection; notifications never automatically repeat an uncertain action.
+
+Browser notification setup appears when an unsubscribed device opens the HTTPS dashboard. Choose **Enable notifications**, then allow the browser permission prompt. You can also use **Settings → General → Browser notifications & installed app**. Major Codex Manager notices in VS Code, including account switches and reloads, are mirrored to subscribed devices; delivery attempts run in parallel and are drained before managed reloads.
+
+Running counts, Auto Resume capture, and the wait-before-switch preference share session verification. Native runtime status overrides retained writer handles, so loaded idle conversations do not count as running. New chat lists existing local Codex projects, and session positions remain stable through background refreshes.
+
+Browser Share creates an explicit read-only snapshot link. Anyone with its token can view the conversation messages without signing in; it grants no dashboard access. Links expire after 30 days. Create a replacement or use **Revoke shared link** to invalidate the previous link. New messages require a new snapshot.

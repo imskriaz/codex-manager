@@ -26,6 +26,10 @@ export async function handleDashboardSettingUpdate(
   target?: vscode.ConfigurationTarget
 ): Promise<boolean> {
   const config = getCodexManagerConfiguration();
+  if (key === "encryptedSyncCurrentAccountOnlyEnabled" && value === true &&
+      (!config.get<boolean>("encryptedSyncEnabled", true) || !normalizeCloudflaredDomain(config.get<string>("cloudflaredDomain", "")))) {
+    throw new Error("Enable Cross-PC claim checks and configure the shared HTTPS dashboard domain before claiming only the current account.");
+  }
   let updated = false;
 
   switch (key) {
@@ -38,6 +42,7 @@ export async function handleDashboardSettingUpdate(
     case "privacyMode":
     case "codexAppRestartEnabled":
     case "autoSwitchEnabled":
+    case "autoSwitchWaitForSessionsEnabled":
     case "autoSwitchReloadWindowEnabled":
     case "autoResumeEnabled":
     case "autoResumeGoalOnlyEnabled":
@@ -48,6 +53,7 @@ export async function handleDashboardSettingUpdate(
     case "quotaWarningEnabled":
     case "debugNetwork":
     case "encryptedSyncEnabled":
+    case "encryptedSyncCurrentAccountOnlyEnabled":
     case "fullCrossPcAccountSyncEnabled":
     case "webDashboardEnabled":
     case "webDashboardAlwaysOnlineEnabled":
@@ -246,6 +252,8 @@ function resolveConfigurationTarget(
     key === "autoResumeGoalOnlyEnabled" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||
+    key === "encryptedSyncCurrentAccountOnlyEnabled" ||
+    key === "autoSwitchWaitForSessionsEnabled" ||
     key === "fullCrossPcAccountSyncEnabled"
     || key === "crossWindowAccountModeEnabled"
   ) {

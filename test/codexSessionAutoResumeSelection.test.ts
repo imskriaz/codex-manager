@@ -1,8 +1,16 @@
-import { mkdtemp, mkdir, writeFile, rm, utimes } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, appendFile, rm, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+// Selection fixtures own no OS locks; the writer-lock integration suite tests the actual probes.
+vi.mock("child_process", async (original) => {
+  const child = await original<typeof import("child_process")>();
+  return { ...child, execFile: (...args: any[]) => {
+    if (args[0] === "powershell.exe") { args.at(-1)(null, "[]"); return {}; }
+    return (child.execFile as any)(...args);
+  } };
+});
 import { filterAutoResumeGoalSessionIds, readAutoResumeCodexSessionIds as selectSessions } from "../src/services/codexSessionAutoResumeSelection";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
 
@@ -69,8 +77,16 @@ describe("auto resume selection", () => {
   it("records open idle parents without running locks and skips open sub-agents", async () => {
     const home = await fixture();
     await rm(path.join(home, "thread-writer-locks"), { recursive: true });
+    for (const id of ids) {
+      await appendFile(path.join(home, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } }) + "\n");
+    }
     expect(await readAutoResumeCodexSessionIds(home, [], ids, undefined, "open")).toEqual([ids[0], ids[2]]);
     expect(await readAutoResumeCodexSessionIds(home, [home], ids)).toEqual([]);
+  });
+  it("selects every fresh running parent when the writer lock directory is missing", async () => {
+    const home = await fixture();
+    await rm(path.join(home, "thread-writer-locks"), { recursive: true });
+    expect(await readAutoResumeCodexSessionIds(home, [home], ids)).toEqual([ids[0], ids[2]]);
   });
   it("selects all running active-goal parents and excludes a child with its own goal", async () => {
     const home = await fixture();
@@ -98,6 +114,13 @@ describe("auto resume selection", () => {
     db.exec("CREATE TABLE future_schema (id TEXT)");
     db.close();
     expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0], ids[2]]);
+  });
+  it("captures all local running parent windows by default across projects", async () => {
+    const home = await fixture();
+    await writeFile(path.join(home, "sessions", `rollout-${ids[2]}.jsonl`),
+      JSON.stringify({ type: "session_meta", payload: { source: "vscode", cwd: path.join(path.dirname(home), "another-project") } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }) + "\n");
+    expect(await readAutoResumeCodexSessionIds(home, undefined, [])).toEqual([ids[0], ids[2]]);
+    expect(await readAutoResumeCodexSessionIds(home, undefined, [], undefined, "open")).toEqual([]);
   });
   it("does not select sessions belonging to another workspace", async () => {
     const home = await fixture();

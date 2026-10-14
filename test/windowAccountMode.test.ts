@@ -18,6 +18,7 @@ import {
   disposeCrossWindowAccountMode,
   ensureCrossWindowAccountAssignment,
   getCrossWindowAccountId,
+  readCrossWindowActiveAccountIds,
   getCrossWindowHome,
   initializeCrossWindowAccountMode
 } from "../src/services/windowAccountMode";
@@ -111,6 +112,19 @@ describe("parallel window account mode", () => {
     const registry = await fs.readFile(path.join(testState.root, "window-account-slots-v1.json"), "utf8");
     expect(registry).toContain("account-a");
     expect(registry).not.toMatch(/access.?token|refresh.?token|id.?token/i);
+  });
+
+  it("retains a live window through a delayed heartbeat and refuses partial registry reads", async () => {
+    testState.enabled = true;
+    await initializeCrossWindowAccountMode();
+    await claimCrossWindowAccount("account-a");
+    const file = path.join(testState.root, "window-account-slots-v1.json");
+    const registry = JSON.parse(await fs.readFile(file, "utf8"));
+    registry.slots.push({ slotId: "another-live-window", home: testState.root, pid: process.pid, heartbeatAt: Date.now() - 60000, accountId: "account-b" });
+    await fs.writeFile(file, JSON.stringify(registry));
+    expect(new Set(await readCrossWindowActiveAccountIds())).toEqual(new Set(["account-a", "account-b"]));
+    await fs.writeFile(file, "{partial");
+    await expect(readCrossWindowActiveAccountIds()).rejects.toThrow();
   });
 
   it("allows the same account to run in more than one live window", async () => {

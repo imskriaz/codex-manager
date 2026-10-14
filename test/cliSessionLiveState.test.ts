@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../src/domain/dashboard/types";
-import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus } from "../webview-src/dashboard/cliSessionLiveState";
+import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatus } from "../webview-src/dashboard/cliSessionLiveState";
 import { cliSessionTargetKey } from "../webview-src/dashboard/cliSessionRoute";
 
 const message = (id: string, text: string, turnId?: string, role: "user" | "assistant" = "assistant"): DashboardCliSessionMessage => ({ id, text, role, turnId });
 const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): DashboardCodexSessionLiveState => ({ sessionId: "chat", streamId: "stream", sequence: 1, updatedAt: 100, status: "running", turnId: "turn", messages: [], ...changes });
 
 describe("shared browser/native live turn reconciliation", () => {
+  it("uses a newer verified idle row over an old running snapshot for counts, spinners, and steering", () => {
+    const row = { id: "chat", title: "Task", status: "idle" as const, locked: false, updatedAt: new Date(2000).toISOString() };
+    const live = snapshot({ updatedAt: 1000 });
+    expect(isCliLiveStateCurrent(row, live)).toBe(false);
+    expect(reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: live })).toBe(row);
+    expect(isCliLiveStateCurrent(row, snapshot({ updatedAt: 3000 }))).toBe(true);
+    expect(isCliLiveStateCurrent({ ...row, deviceId: "other" }, live)).toBe(false);
+  });
   it("honors terminal state for stale index rows without hiding a newer external turn", () => {
     const row = { id: "chat", title: "Task", status: "running" as const, locked: true };
     const states = { [cliSessionTargetKey(row)]: snapshot({ status: "completed", updatedAt: 1000 }) };

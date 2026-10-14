@@ -1,9 +1,16 @@
 import { readFileSync } from "fs";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import { scheduleAutomaticExtensionHostRefresh } from "../src/utils/extensionHostRecovery";
 
 describe("automatic extension host recovery", () => {
+  beforeEach(() => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (_key: string, fallback: unknown) => fallback,
+      update: vi.fn(),
+      inspect: () => ({ defaultValue: false })
+    } as never);
+  });
   it("does not bypass a failed session capture with a window reload", async () => {
     vi.useFakeTimers();
     try {

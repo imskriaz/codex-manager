@@ -208,4 +208,18 @@ describe("detached relay authenticated realtime and recovery", () => {
     h.advance(120001); h.expire();
     expect(h.relay.replayEvents.size).toBe(0);
   });
+  it("forwards only authenticated vault confirmations and preserves request IDs in signed vaults", () => {
+    const h = harness(), source = h.connect("source"), target = h.connect("target");
+    source.sent = []; target.sent = [];
+    const key = Buffer.from("isolated-relay-test-key");
+    const vault = { type: "peer:vault", deviceId: "source", sentAt: h.now(), vault: "encrypted", requestId: "sync-request" };
+    source.receive({ ...vault, signature: createHmac("sha256", key).update(JSON.stringify(vault)).digest("base64url") });
+    expect(target.sent[0]).toMatchObject({ requestId: "sync-request" });
+    const ack = { type: "peer:vault-ack", requestId: "sync-request", deviceId: "target", applied: true, sentAt: h.now() };
+    target.receive({ ...ack, signature: "forged" });
+    expect(source.sent).toHaveLength(0);
+    target.receive({ ...ack, signature: createHmac("sha256", key).update(JSON.stringify(ack)).digest("base64url") });
+    expect(source.sent[0]).toMatchObject(ack);
+  });
+
 });
