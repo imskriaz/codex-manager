@@ -17,7 +17,7 @@ It is an independent, community project. It is not an official OpenAI product.
 | Sharing and workspace | Create expiring read-only conversation links, browse project files, review Git changes, run project terminals, and keep actions visibly successful, cancelled, or failed. |
 | Privacy and diagnostics | Keep credentials local, redact persistent logs, enforce bounded requests, and expose no account controls through a share link. |
 
-See the complete feature and setting reference in [`docs/FEATURES.md`](docs/FEATURES.md).
+Use the dashboard settings for feature descriptions and configuration defaults.
 
 ## See it in action
 
@@ -117,7 +117,7 @@ The browser dashboard is disabled by default and listens on `http://127.0.0.1:39
 3. If the dashboard must remain available after VS Code closes, turn on **Always-online WebSocket host** on one always-on PC.
 4. For a public HTTPS address, set **Cloudflared domain** to the final URL (for example `https://codex.example.com`) and configure the tunnel to forward to `http://127.0.0.1:39875`.
 
-Follow the complete Windows and named/quick tunnel walkthrough in [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md). Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/), [downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/), [remotely-managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/), and [Quick Tunnels guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) first.
+Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/), [downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/), [remotely-managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/), and [Quick Tunnels guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) first.
 
 Cloudflare Tunnel exposes the dashboard’s HTTPS and secure WebSocket endpoints. It does **not** expose raw MQTT/TCP; devices that use MQTT still need a separately reachable broker. Install the same stable VSIX on every PC that should appear in the PC picker; the dashboard cannot discover a PC whose extension host is offline or running an older build.
 
@@ -133,7 +133,7 @@ The dashboard’s session count is based on parent conversations and native runt
 
 ## Settings
 
-All settings use the `codexManager.*` namespace. The dashboard explains each control; the full table with defaults and safe combinations is in [`docs/FEATURES.md`](docs/FEATURES.md).
+All settings use the `codexManager.*` namespace. The dashboard explains each control and its configuration defaults.
 
 Important combinations:
 
@@ -161,8 +161,6 @@ Important combinations:
 
 ## Documentation map
 
-- [`docs/FEATURES.md`](docs/FEATURES.md) — feature, workflow, and settings reference.
-- [`docs/CLOUDFLARE.md`](docs/CLOUDFLARE.md) — secure local, quick-tunnel, and named-tunnel setup.
 - [`CHANGELOG.md`](CHANGELOG.md) — human-focused notes for the current release.
 
 ## License

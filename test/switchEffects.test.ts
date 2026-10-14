@@ -34,10 +34,11 @@ describe("account switch reload effects", () => {
     ).toHaveLength(1);
   });
 
-  it("does not bypass capture failure through either reload command", async () => {
+  it("continues reload with a visible warning when capture fails", async () => {
     vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("storage full"));
-    await expect(reloadWindowNow()).rejects.toThrow("storage full");
-    expect(vscode.commands.executeCommand).toHaveBeenCalledOnce();
+    await expect(reloadWindowNow()).resolves.toBe(true);
+    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("storage full"));
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
   });
 
   it("upgrades preservation when a later scheduled request needs it", async () => {
@@ -49,7 +50,7 @@ describe("account switch reload effects", () => {
       await vi.advanceTimersByTimeAsync(10);
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
         "codexManager.prepareDashboardForExtensionHostRestart",
-        { autoResume: true }
+        expect.objectContaining({ autoResume: true })
       );
     } finally {
       vi.useRealTimers();
@@ -78,7 +79,7 @@ describe("account switch reload effects", () => {
       await vi.advanceTimersByTimeAsync(300);
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
         "codexManager.prepareDashboardForExtensionHostRestart",
-        { autoResume: true }
+        expect.objectContaining({ autoResume: true })
       );
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
     } finally {
@@ -94,7 +95,7 @@ describe("account switch reload effects", () => {
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(
       1,
       "codexManager.prepareDashboardForExtensionHostRestart",
-      { autoResume: true }
+      expect.objectContaining({ autoResume: true })
     );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
@@ -228,7 +229,7 @@ describe("account switch reload effects", () => {
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(
       1,
       "codexManager.prepareDashboardForExtensionHostRestart",
-      { autoResume: true }
+      expect.objectContaining({ autoResume: true })
     );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
@@ -240,7 +241,7 @@ describe("account switch reload effects", () => {
     await expect(reloadWindowNow()).resolves.toBe(true);
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       "codexManager.prepareDashboardForExtensionHostRestart",
-      { autoResume: true }
+      expect.objectContaining({ autoResume: true })
     );
   });
 
@@ -277,7 +278,7 @@ describe("account switch reload effects", () => {
 
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
       "codexManager.prepareDashboardForExtensionHostRestart",
-      { autoResume: false }
+      expect.objectContaining({ autoResume: false })
     );
     expect(onError).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));
     expect(secondHostError).toHaveBeenCalledWith(expect.stringContaining("Reload unavailable"));

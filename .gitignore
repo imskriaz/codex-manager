@@ -6,7 +6,7 @@ coverage
 *.log
 AGENTS.md
 design-qa.md
-docs/PUBLISHING_PLAN.md
+/docs/
 .claude
 .vscode
 .idea

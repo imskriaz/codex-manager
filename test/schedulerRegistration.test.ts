@@ -110,6 +110,36 @@ describe("auto refresh scheduler", () => {
     disposable.dispose();
   });
 
+  it("re-evaluates cached quota immediately when Auto Switch settings change", async () => {
+    let configurationChanged: ((event: vscode.ConfigurationChangeEvent) => void) | undefined;
+    vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation((listener) => {
+      configurationChanged = listener;
+      return { dispose: vi.fn() };
+    });
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((key: string, fallback?: unknown) => key === "autoSwitchEnabled" ? true : fallback),
+      update: vi.fn(),
+      inspect: vi.fn()
+    } as never);
+    const repo = { listAccounts: vi.fn(async () => []) } as unknown as AccountsRepository;
+    const disposable = registerAutoRefreshScheduler({
+      context: { subscriptions: [] } as never,
+      repo,
+      onRefresh: vi.fn(),
+      canRefreshAccount: () => true
+    });
+
+    configurationChanged?.({
+      affectsConfiguration: (section: string) => section === "codexManager.autoSwitchHourlyThreshold"
+    } as never);
+    await vi.waitFor(() => expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledWith(
+      repo,
+      expect.anything(),
+      { canUseAccount: expect.any(Function) }
+    ));
+    disposable.dispose();
+  });
+
   it("does not poll a current account owned by another PC", async () => {
     const current = { id: "foreign-owned", isActive: true, enabled: true };
     const repo = { listAccounts: vi.fn(async () => [current]) } as unknown as AccountsRepository;

@@ -58,7 +58,7 @@ import {
 } from "../src/application/accounts/quota";
 import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
 import { canWindowUseAccount } from "../src/services/windowAccountMode";
-import { consumeAutoSwitchNotice, getAutoSwitchRuntimeSnapshot } from "../src/presentation/workbench/autoSwitchState";
+import { clearAutoSwitchLock, consumeAutoSwitchNotice, getAutoSwitchRuntimeSnapshot, setAutoSwitchLock } from "../src/presentation/workbench/autoSwitchState";
 
 type QuotaRefreshRepo = Pick<
   AccountsRepository,
@@ -469,6 +469,18 @@ describe("refreshSingleQuota token automation state", () => {
     expect(isAutoSwitchWaitingForSessions()).toBe(false);
   });
 
+  it("applies manual Auto Select immediately while sessions are running", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
+    const active = createAccount("manual-wait-active", true, 0, 0);
+    const next = createAccount("manual-wait-next", false, 90, 90);
+    setCurrentWindowRuntimeAccountId(next.id);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    const read = vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockResolvedValue(["running"]);
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, { userInitiated: true })).toBe(true);
+    expect(repo.switchAccount).toHaveBeenCalledWith(next.id);
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("continues automatic switching with a warning on inconclusive session inspection", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
     const active = createAccount("inspection-active", true, 0, 0);
@@ -480,6 +492,41 @@ describe("refreshSingleQuota token automation state", () => {
     expect(repo.switchAccount).toHaveBeenCalledWith(next.id);
     expect(isAutoSwitchWaitingForSessions()).toBe(false);
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("will continue"));
+  });
+
+  it.each([
+    "manual switch", "automation disabled", "threshold changed", "active locked",
+    "candidate disabled", "candidate quota changed", "candidate ownership changed"
+  ])("revalidates %s after the final session inspection", async (change) => {
+    const settings: Record<string, unknown> = {
+      autoSwitchEnabled: true, autoSwitchWaitForSessionsEnabled: true,
+      autoSwitchHourlyThreshold: 5, autoSwitchWeeklyThreshold: 0
+    };
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+      get: (key: string, fallback: unknown) => settings[key] ?? fallback
+    } as never);
+    const active = createAccount(`race-active-${change}`, true, 5, 80);
+    const next = createAccount(`race-next-${change}`, false, 90, 90);
+    let owned = true;
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    vi.spyOn(runningSessions, "readRunningCodexSessionIds")
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(async () => {
+        if (change === "manual switch") { active.isActive = false; next.isActive = true; }
+        if (change === "automation disabled") settings.autoSwitchEnabled = false;
+        if (change === "threshold changed") settings.autoSwitchHourlyThreshold = 0;
+        if (change === "active locked") setAutoSwitchLock(active.id, 5);
+        if (change === "candidate disabled") next.enabled = false;
+        if (change === "candidate quota changed") next.quotaSummary!.hourlyPercentage = 0;
+        if (change === "candidate ownership changed") owned = false;
+        return [];
+      });
+    try {
+      expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, {
+        canUseAccount: () => owned
+      })).toBe(false);
+      expect(repo.switchAccount).not.toHaveBeenCalled();
+    } finally { clearAutoSwitchLock(); }
   });
 
   it("auto-switches to the candidate with the best usable quota balance", async () => {
@@ -1794,6 +1841,55 @@ describe("shared queue policy revalidation and reset dependencies", () => {
     vi.restoreAllMocks();
     clearQuotaCheckCoordination();
     consumeAutoSwitchNotice();
+    clearAutoSwitchLock();
+  });
+
+  it.each(["active", "candidate"])("cancels %s reset when a manual switch occurs during session inspection", async (resetKind) => {
+    settings.autoSwitchWaitForSessionsEnabled = true;
+    const active = createAccount(`wait-reset-active-${resetKind}`, true, 0, 0);
+    const target = createAccount(`wait-reset-target-${resetKind}`, false, 0, 0);
+    (resetKind === "active" ? active : target).quotaSummary!.resetCreditsAvailable = 1;
+    const repo = createResetRepository([active, target], tokens);
+    prepareResetCreditSnapshot();
+    vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockResolvedValueOnce([]).mockImplementationOnce(async () => {
+      active.isActive = false;
+      target.isActive = true;
+      return [];
+    });
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("cancels an active reset when it is locked during session inspection", async () => {
+    settings.autoSwitchWaitForSessionsEnabled = true;
+    const active = createAccount("wait-locked-reset", true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 1;
+    const repo = createResetRepository([active], tokens);
+    prepareResetCreditSnapshot();
+    vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockResolvedValueOnce([]).mockImplementationOnce(async () => {
+      setAutoSwitchLock(active.id, 5);
+      return [];
+    });
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels a redeemed candidate switch when automation is disabled during final inspection", async () => {
+    settings.autoSwitchWaitForSessionsEnabled = true;
+    const active = createAccount("wait-redeemed-active", true, 0, 0);
+    const target = createAccount("wait-redeemed-target", false, 0, 0);
+    target.quotaSummary!.resetCreditsAvailable = 1;
+    const repo = createResetRepository([active, target], tokens);
+    prepareResetCreditSnapshot();
+    refreshQuotaMock.mockResolvedValue({ quota: createQuotaSummary({ hourly: 90, weekly: 90 }), error: undefined });
+    vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockImplementationOnce(async () => {
+      settings.autoSwitchEnabled = false;
+      return [];
+    });
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(consumeResetCreditMock).toHaveBeenCalledOnce();
+    expect(repo.switchAccount).not.toHaveBeenCalled();
   });
 
   it("keeps a usable current account even when a preferred account has more capacity", async () => {

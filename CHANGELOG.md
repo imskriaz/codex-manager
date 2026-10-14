@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.20
+
+- Keep manual and account-change reloads moving when session preservation fails or times out, with a warning about incomplete recovery. Preserve saved recovery and cancel late capture results.
+- Run manual Auto Select without the automatic running-session wait, and allow dashboard Reload when no account is selected.
+- Recover from Windows PowerShell initialization failures during writer inspection with a bounded hidden-window retry.
+- Revalidate account identity, quota, ownership, and automation settings after session inspection so delayed checks cannot override newer choices.
+- Re-evaluate automatic account switching immediately when its settings or thresholds change, so cached quota state takes effect without waiting for the next refresh interval.
+- Ignore and remove the tracked `docs` folder from the extension repository.
+- Update the MIT copyright attribution to imskriaz.
+
 ## 1.2.19
 
 - Open Auto Resume sessions sequentially with per-window focus and settle time; a slow window no longer blocks or drops later sessions, and failed windows remain queued for retry.

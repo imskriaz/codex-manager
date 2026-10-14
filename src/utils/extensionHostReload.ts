@@ -15,6 +15,9 @@ export class AutomaticReloadCancelledError extends Error {
 
 async function command(name: string, timeoutMs: number, args: unknown[] = [], fence = true): Promise<void> {
   const raw = Promise.resolve(vscode.commands.executeCommand(name, ...args));
+  // A timed-out best-effort command may still settle later. Keep its rejection
+  // observed even when it is intentionally not fenced by the caller.
+  void raw.catch(() => undefined);
   if (fence) {
     uncertainCommand = raw;
     void raw
@@ -64,26 +67,33 @@ export function reloadExtensionHostWithSessionCapture(
   };
   const work = (async () => {
     const deadline = Date.now() + 45_000;
+    const capture = new AbortController();
+    let captureWarning: string | undefined;
     void vscode.window.showInformationMessage("Preparing to reload Codex Manager.");
     try {
-      await command("codexManager.prepareDashboardForExtensionHostRestart", 35_000, [
-        { autoResume: autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false) }
-      ]);
+      // Session discovery is recovery work. A stalled Windows lock probe or
+      // session store must never prevent the account switch reload itself.
+      // Cancellation prevents a late discovery result from replacing recovery.
+      await command("codexManager.prepareDashboardForExtensionHostRestart", automatic ? 5_000 : 500, [
+        { autoResume: autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false), signal: capture.signal }
+      ], false);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`Codex Manager could not preserve sessions before restarting: ${detail}`);
-    }
+      console.warn("[codexManager] session capture did not complete before reload", error);
+      captureWarning = `Reload will continue, but Codex sessions could not be fully preserved: ${detail}`;
+    } finally { capture.abort(new Error("Reload session capture deadline ended.")); }
     verifyAutomaticPreference();
     if (clearNotifications) {
       try {
-        await command("notifications.clearAll", 2_000, [], false);
+        await command("notifications.clearAll", automatic ? 2_000 : 500, [], false);
       } catch (error) {
         console.warn("[codexManager] could not clear VS Code notifications before reload", error);
       }
     }
+    if (captureWarning) void vscode.window.showWarningMessage(captureWarning);
     verifyAutomaticPreference();
     const config = getCodexManagerConfiguration();
-    if (!await flushNotificationDelivery(Math.max(1, Math.min(8500, deadline - Date.now() - 2000)))) {
+    if (!await flushNotificationDelivery(Math.max(1, Math.min(automatic ? 8500 : 500, deadline - Date.now() - 2000)))) {
       void vscode.window.showWarningMessage("Reload will continue, but browser notification delivery could not be confirmed. Review the dashboard once reconnected.");
     }
     verifyAutomaticPreference();

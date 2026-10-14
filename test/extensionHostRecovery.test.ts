@@ -11,7 +11,7 @@ describe("automatic extension host recovery", () => {
       inspect: () => ({ defaultValue: false })
     } as never);
   });
-  it("does not bypass a failed session capture with a window reload", async () => {
+  it("continues recovery after a failed session capture", async () => {
     vi.useFakeTimers();
     try {
       const execute = vi.mocked(vscode.commands.executeCommand);
@@ -20,8 +20,8 @@ describe("automatic extension host recovery", () => {
       const context = { globalState: { get: vi.fn(), update: vi.fn(async () => undefined) } } as never;
       scheduleAutomaticExtensionHostRefresh(context, "capture-failure", 50);
       await vi.advanceTimersByTimeAsync(50);
-      expect(execute).toHaveBeenCalledOnce();
-      expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("could not preserve sessions"));
+      expect(execute).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("could not be fully preserved"));
       execute.mockReset();
     } finally { vi.useRealTimers(); }
   });
@@ -94,7 +94,7 @@ describe("automatic extension host recovery", () => {
     await vi.advanceTimersByTimeAsync(50);
 
     expect(execute).toHaveBeenCalledTimes(2);
-    expect(execute).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+    expect(execute).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart", expect.objectContaining({ autoResume: true }));
     expect(execute).toHaveBeenNthCalledWith(2, "workbench.action.restartExtensionHost");
     vi.useRealTimers();
   });
@@ -133,7 +133,7 @@ describe("automatic extension host recovery", () => {
     scheduleAutomaticExtensionHostRefresh(context, "1.2.8-pre1", 50);
     await vi.advanceTimersByTimeAsync(50);
 
-    expect(execute).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart", { autoResume: true });
+    expect(execute).toHaveBeenNthCalledWith(1, "codexManager.prepareDashboardForExtensionHostRestart", expect.objectContaining({ autoResume: true }));
     expect(execute).toHaveBeenNthCalledWith(2, "workbench.action.restartExtensionHost");
     expect(execute).toHaveBeenNthCalledWith(3, "workbench.action.reloadWindow");
     vi.useRealTimers();

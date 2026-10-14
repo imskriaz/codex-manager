@@ -43,6 +43,26 @@ beforeEach(() => {
 describe("durable open conversation recovery", () => {
   const first = "01a04882-d037-7a42-ad24-9afb61901181";
   const second = "01a04882-d037-7a42-ad24-9afb61901182";
+  it("retains recovery when reload cancels capture and ignores late discovery", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+    const state = createContext([first]);
+    const controller = new AbortController();
+    let finish!: (ids: string[]) => void;
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const work = persistRunningCodexSessions(state.context, async () => {
+      started();
+      return new Promise<string[]>(resolve => { finish = resolve; });
+    }, controller.signal);
+    const failed = expect(work).rejects.toThrow("Reload deadline");
+    await ready;
+    controller.abort(new Error("Reload deadline"));
+    await failed;
+    finish([second]);
+    await Promise.resolve();
+    expect(state.read()).toEqual([first]);
+    expect(state.context.workspaceState.update).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);

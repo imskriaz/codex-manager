@@ -10,7 +10,7 @@ describe("bounded shared extension host reload", () => {
     try {
       vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
       const work = reloadExtensionHostWithSessionCapture(true);
-      await vi.advanceTimersByTimeAsync(8500);
+      await vi.advanceTimersByTimeAsync(500);
       await work;
       expect(vscode.window.showInformationMessage).toHaveBeenCalledWith("Preparing to reload Codex Manager.");
       expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("browser notification delivery could not be confirmed"));
@@ -24,7 +24,7 @@ describe("bounded shared extension host reload", () => {
     } as never);
   });
 
-  it("fences a timed-out capture until its late command settles, then permits retry", async () => {
+  it("continues reload when capture times out and retains a visible warning", async () => {
     vi.useFakeTimers();
     try {
       let finish: (() => void) | undefined;
@@ -36,16 +36,14 @@ describe("bounded shared extension host reload", () => {
           })
       );
       const pending = reloadExtensionHostWithSessionCapture(true);
-      const failed = expect(pending).rejects.toThrow("could not preserve sessions");
-      await vi.advanceTimersByTimeAsync(35_000);
-      await failed;
-      await expect(reloadExtensionHostWithSessionCapture(true)).rejects.toThrow("previous VS Code reload command");
-      expect(execute).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(500);
+      await expect(pending).resolves.toBeUndefined();
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("could not be fully preserved"));
+      expect(execute).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect((execute.mock.calls[0][1] as { signal: AbortSignal }).signal.aborted).toBe(true);
       finish?.();
       await vi.advanceTimersByTimeAsync(0);
-      execute.mockResolvedValue(undefined);
-      await reloadExtensionHostWithSessionCapture(true);
-      expect(execute).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

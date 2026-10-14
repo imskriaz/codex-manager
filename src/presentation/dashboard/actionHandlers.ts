@@ -183,7 +183,6 @@ const CODEX_BATCH_REFRESH_DELAY_MS = 300;
 const ACCOUNT_REQUIRED_ACTIONS = new Set<DashboardActionName>([
   "exportAuthFile",
   "setAutoSwitchLock",
-  "reloadPrompt",
   "reauthorize",
   "resyncProfile",
   "dismissHealthIssue",
@@ -1641,13 +1640,10 @@ async function handleReloadPrompt(
   payload: DashboardActionPayload | undefined,
   browserHost = false
 ) {
-  if (!account) {
-    return undefined;
-  }
   if (browserHost && payload?.confirmed !== true) {
     throw new Error("Confirm the reload in the browser dashboard, then try again.");
   }
-  if (payload?.confirmed === true) {
+  if (payload?.confirmed === true || payload?.forceReload || !account) {
     const reloaded = await reloadWindowNow();
     return reloaded
       ? { notice: { level: "info" as const, message: "Reloading the VS Code extension host…" } }

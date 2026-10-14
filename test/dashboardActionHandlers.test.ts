@@ -639,6 +639,19 @@ describe("executeDashboardActionMessage", () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
   });
 
+  it("reloads manually when no saved account is selected", async () => {
+    vi.mocked(vscode.commands.executeCommand).mockReset().mockResolvedValue(undefined);
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "webview" }, {
+      type: "dashboard:action",
+      action: "reloadPrompt",
+      requestId: "req-reload-no-account",
+      payload: { forceReload: true }
+    });
+    expect(result.status).toBe("completed");
+    expect(result.payload?.notice?.message).toMatch(/reloading/i);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+  });
+
   it("switches directly for the port dashboard and schedules reload after its response", async () => {
     setCurrentWindowRuntimeAccountId("current-window-account");
     vi.mocked(vscode.commands.executeCommand).mockClear();

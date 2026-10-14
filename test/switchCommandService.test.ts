@@ -79,7 +79,7 @@ describe("manual account switch command", () => {
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(
       1,
       "codexManager.prepareDashboardForExtensionHostRestart",
-      { autoResume: true }
+      expect.objectContaining({ autoResume: true })
     );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");

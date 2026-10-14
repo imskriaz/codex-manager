@@ -1248,11 +1248,10 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
     if (focusWindow) {
       await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
       await new Promise<void>((resolve, reject) => {
-        let timer: ReturnType<typeof setTimeout>;
         const cleanup = () => signal?.removeEventListener("abort", abort);
         const done = () => { cleanup(); resolve(); };
-        const abort = () => { clearTimeout(timer); cleanup(); reject(signal?.reason ?? new Error("Auto Resume was cancelled.")); };
-        timer = setTimeout(done, AUTO_RESUME_EDITOR_SETTLE_MS);
+        const abort = () => { clearTimeout(timer); cleanup(); reject(signal?.reason instanceof Error ? signal.reason : new Error("Auto Resume was cancelled.")); };
+        const timer = setTimeout(done, AUTO_RESUME_EDITOR_SETTLE_MS);
         if (signal) {
           if (signal.aborted) abort();
           else signal.addEventListener("abort", abort, { once: true });
@@ -2859,16 +2858,25 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
       const script = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${directoryData}')); $held=@(); foreach($p in [IO.Directory]::EnumerateFiles($d,'*.lock')) { try { $f=[IO.File]::Open($p,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None); $f.Dispose() } catch { $e=$_.Exception; while($e.InnerException) { $e=$e.InnerException }; $code=$e.HResult -band 65535; if($code -eq 32 -or $code -eq 33) { $held+=,$p } elseif($code -ne 2 -and $code -ne 3) { throw } } }; ConvertTo-Json -InputObject @($held) -Compress`;
       const entry = { expiresAt: Infinity, paths: Promise.resolve(new Set<string>()) };
       entry.paths = new Promise<Set<string>>((resolve, reject) => {
-        execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
-          { timeout: 15_000, maxBuffer: 256 * 1024, windowsHide: true }, (error, stdout) => {
-            entry.expiresAt = Date.now() + 2000;
-            if (error) { reject(new Error("Windows session writer inspection failed. Retry after the PC responds.")); return; }
-            try {
-              const values: unknown = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim() || "[]");
-              if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("Invalid lock response");
-              resolve(new Set(values.map(value => path.resolve(value).toLowerCase())));
-            } catch { reject(new Error("Windows session writer inspection returned incomplete data. Retry after the PC responds.")); }
-          });
+        // CREATE_NO_WINDOW can prevent Windows PowerShell's runtime from
+        // initializing on some Windows hosts (STATUS_DLL_INIT_FAILED).
+        // Let PowerShell hide its own window instead on that specific failure.
+        const args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
+        const deadline = Date.now() + 15_000;
+        const inspect = (windowsHide: boolean): void => {
+          execFile("powershell.exe", args,
+            { timeout: Math.max(1, deadline - Date.now()), maxBuffer: 256 * 1024, windowsHide }, (error, stdout) => {
+              if (windowsHide && (Number(error?.code) >>> 0) === 0xc0000142 && Date.now() < deadline) { inspect(false); return; }
+              entry.expiresAt = Date.now() + 2000;
+              if (error) { reject(new Error("Windows session writer inspection failed. Retry after the PC responds.")); return; }
+              try {
+                const values: unknown = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim() || "[]");
+                if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("Invalid lock response");
+                resolve(new Set(values.map(value => path.resolve(value).toLowerCase())));
+              } catch { reject(new Error("Windows session writer inspection returned incomplete data. Retry after the PC responds.")); }
+            });
+          };
+        inspect(true);
       });
       cached = entry;
       writerLockProbes.set(directory, cached);

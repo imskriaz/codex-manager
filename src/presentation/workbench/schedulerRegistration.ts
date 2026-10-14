@@ -397,17 +397,34 @@ export function registerAutoRefreshScheduler(params: {
   sessionWaitTimer.unref?.();
 
   const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
-    if (
+    const refreshScheduleChanged =
       event.affectsConfiguration("codexManager.autoRefreshMinutes") ||
       event.affectsConfiguration("codexManager.autoRefreshCurrentMinutes") ||
-      event.affectsConfiguration("codexManager.autoSwitchRefreshAllBeforeSwitchEnabled") ||
+      event.affectsConfiguration("codexManager.autoSwitchRefreshAllBeforeSwitchEnabled");
+    const autoSwitchChanged =
       event.affectsConfiguration("codexManager.autoSwitchEnabled") ||
       event.affectsConfiguration("codexManager.autoSwitchWaitForSessionsEnabled") ||
-      event.affectsConfiguration("codexManager.quotaWarningEnabled") ||
       event.affectsConfiguration("codexManager.autoSwitchHourlyThreshold") ||
-      event.affectsConfiguration("codexManager.autoSwitchWeeklyThreshold")
+      event.affectsConfiguration("codexManager.autoSwitchWeeklyThreshold");
+    if (
+      refreshScheduleChanged ||
+      autoSwitchChanged ||
+      event.affectsConfiguration("codexManager.quotaWarningEnabled")
     ) {
       applySchedule();
+    }
+    // A settings change can make an already-cached active quota eligible (or
+    // ineligible) without waiting for the next refresh interval. Re-evaluate
+    // immediately so enabling Auto Switch and changing its thresholds have a
+    // deterministic effect.
+    if (autoSwitchChanged && getCodexManagerConfiguration().get<boolean>("autoSwitchEnabled", false)) {
+      void maybeAutoSwitchForActiveQuota(
+        params.repo,
+        { refresh: params.onRefresh },
+        { canUseAccount: params.canRefreshAccount }
+      ).catch((error) => {
+        console.warn("[codexManager] settings-triggered auto switch failed:", error);
+      });
     }
   });
 

@@ -166,9 +166,11 @@ async function clearIds(context: AutoResumeContext, deadline: number): Promise<v
 export function persistRunningCodexSessions(
   context: AutoResumeContext,
   readRunningSessionIds: (signal?: AbortSignal) => Promise<string[]> = (signal) =>
-    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal)
+    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal),
+  signal?: AbortSignal
 ): Promise<string[]> {
   return serialize(context, "capture", async () => {
+    signal?.throwIfAborted();
     const deadline = Date.now() + OPERATION_TIMEOUT_MS;
     if (!isAutoResumeAvailable()) {
       await clearIds(context, deadline);
@@ -176,6 +178,8 @@ export function persistRunningCodexSessions(
     }
     const goalOnly = isAutoResumeGoalOnlyEnabled();
     const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", abort, { once: true });
     const changed = vscode.workspace.onDidChangeConfiguration(() => {
       if (!isAutoResumeAvailable()) controller.abort(new Error("Auto Resume was turned off."));
     });
@@ -189,6 +193,7 @@ export function persistRunningCodexSessions(
           controller.signal
         );
       } catch (error) {
+        if (signal?.aborted) throw error;
         if (!controller.signal.aborted) {
           controller.abort(error);
           throw error;
@@ -196,6 +201,7 @@ export function persistRunningCodexSessions(
         await clearIds(context, deadline);
         return [];
       }
+      signal?.throwIfAborted();
       if (controller.signal.aborted || !isAutoResumeAvailable()) {
         await clearIds(context, deadline);
         return [];
@@ -203,7 +209,9 @@ export function persistRunningCodexSessions(
       const ids = await bounded(() => filterAutoResumeGoalSessionIds(normalizeIds(running), undefined, controller.signal), deadline - Date.now(),
         "Auto Resume could not verify goals before saving recovery.", controller.signal);
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Retry after preferences settle.");
+      controller.signal.throwIfAborted();
       await writeIds(context, ids, deadline);
+      signal?.throwIfAborted();
       if (controller.signal.aborted || !isAutoResumeAvailable()) {
         await clearIds(context, deadline);
         return [];
@@ -211,6 +219,7 @@ export function persistRunningCodexSessions(
       return ids;
     } finally {
       changed?.dispose();
+      signal?.removeEventListener("abort", abort);
     }
   });
 }
@@ -220,13 +229,15 @@ export async function prepareCodexSessionsForExtensionHostRestart(
   context: AutoResumeContext,
   autoResume: boolean,
   readRunningSessionIds?: (signal?: AbortSignal) => Promise<string[]>,
-  readOpenParents?: (signal?: AbortSignal) => Promise<string[]>
+  readOpenParents?: (signal?: AbortSignal) => Promise<string[]>,
+  signal?: AbortSignal
 ): Promise<void> {
-  const running = await persistRunningCodexSessions(context, readRunningSessionIds);
+  const running = await persistRunningCodexSessions(context, readRunningSessionIds, signal);
+  signal?.throwIfAborted();
   if (autoResume) await persistOpenCodexSessions(context, async signal => {
     const open = readOpenParents ? await readOpenParents(signal) : readOpenCodexSessionIds();
     return open.filter(id => running.includes(id));
-  });
+  }, signal);
 }
 
 export type AutoResumeResult = {

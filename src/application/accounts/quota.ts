@@ -458,9 +458,9 @@ export function isAutoSwitchWaitingForSessions(): boolean {
   return deferredForSessions;
 }
 
-async function deferAutoSwitchForSessions(): Promise<boolean> {
+async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolean> {
   const config = getCodexManagerConfiguration();
-  if (!config.get<boolean>(AUTO_SWITCH_ENABLED, false) || !config.get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
+  if (userInitiated || !config.get<boolean>(AUTO_SWITCH_ENABLED, false) || !config.get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
     deferredForSessions = false;
     sessionWaitNotice = undefined;
     return false;
@@ -608,7 +608,7 @@ async function evaluateAutoSwitchForActiveQuota(
     return false;
   }
 
-  if (await deferAutoSwitchForSessions()) return false;
+  if (await deferAutoSwitchForSessions(options.userInitiated)) return false;
 
   const candidates = accounts
     .filter(
@@ -667,7 +667,8 @@ async function evaluateAutoSwitchForActiveQuota(
             hourlyThreshold,
             weeklyThreshold,
             resetThreshold,
-            options.canUseAccount
+            options.canUseAccount,
+            options.userInitiated
           );
           if (!resetResult && options.userInitiated) {
             void vscode.window.showWarningMessage(
@@ -697,7 +698,8 @@ async function evaluateAutoSwitchForActiveQuota(
             error,
             hourlyThreshold,
             weeklyThreshold,
-            options.canUseAccount
+            options.canUseAccount,
+            options.userInitiated
           );
           if (!fallbackResult && options.userInitiated) {
             void vscode.window.showWarningMessage(
@@ -731,7 +733,8 @@ async function evaluateAutoSwitchForActiveQuota(
             hourlyThreshold,
             weeklyThreshold,
             resetThreshold,
-            options.canUseAccount
+            options.canUseAccount,
+            options.userInitiated
           );
           if (!resetResult && options.userInitiated) {
             void vscode.window.showWarningMessage(
@@ -761,7 +764,8 @@ async function evaluateAutoSwitchForActiveQuota(
             error,
             hourlyThreshold,
             weeklyThreshold,
-            options.canUseAccount
+            options.canUseAccount,
+            options.userInitiated
           );
           if (!fallbackResult && options.userInitiated) {
             void vscode.window.showWarningMessage(
@@ -803,6 +807,10 @@ async function evaluateAutoSwitchForActiveQuota(
 
   lastBlockedAutoSwitchKey = undefined;
   const matchedRules = buildMatchedRules();
+  // Session inspection can await native process checks. Complete it before
+  // reading the state used to authorize the switch, since the user can switch
+  // accounts or change automation settings while that inspection is pending.
+  if (await deferAutoSwitchForSessions(options.userInitiated)) return false;
   // Revalidate the active identity immediately before mutating auth state. A
   // manual/dashboard switch may have won a race while candidate selection was
   // running; never switch based on that stale list snapshot.
@@ -832,7 +840,6 @@ async function evaluateAutoSwitchForActiveQuota(
     }
     return false;
   }
-  if (await deferAutoSwitchForSessions()) return false;
   await repo.switchAccount(latestNext.id);
   console.info("[codexManager] auto switch completed", {
     trigger:
@@ -994,16 +1001,18 @@ async function executeActiveResetPlan(
   hourlyThreshold: number,
   weeklyThreshold: number,
   resetThreshold: number,
-  canUseAccount?: (accountId: string) => boolean
+  canUseAccount?: (accountId: string) => boolean,
+  userInitiated = false
 ): Promise<boolean> {
+  if (await deferAutoSwitchForSessions(userInitiated)) return false;
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
-  if (await deferAutoSwitchForSessions()) return false;
   const redeemed = await redeemAccountResetCredit(
     repo,
     active.id,
-    (account) => account.isActive && (canUseAccount?.(account.id) ?? true) && isAutomaticResetAllowed(account),
+    (account) => account.isActive && (canUseAccount?.(account.id) ?? true) &&
+      isAutoSelectionStillNeeded(account) && isAutomaticResetAllowed(account),
     () => refreshResetQuota(repo, view, active.id)
   );
   if (!redeemed) return false;
@@ -1045,12 +1054,13 @@ async function executeResetPlan(
   hourlyThreshold: number,
   weeklyThreshold: number,
   resetThreshold: number,
-  canUseAccount?: (accountId: string) => boolean
+  canUseAccount?: (accountId: string) => boolean,
+  userInitiated = false
 ): Promise<boolean> {
+  if (await deferAutoSwitchForSessions(userInitiated)) return false;
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
-  if (await deferAutoSwitchForSessions()) return false;
   const redeemed = await redeemAccountResetCredit(
     repo,
     next.id,
@@ -1062,6 +1072,7 @@ async function executeResetPlan(
     () => refreshResetQuota(repo, view, next.id)
   );
   if (!redeemed) return false;
+  if (await deferAutoSwitchForSessions(userInitiated)) return false;
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
@@ -1075,7 +1086,6 @@ async function executeResetPlan(
     !isAutoQueueCandidateEligible(toAutoQueueOrderValue(latestNext), getAccountAutoQueuePolicy())
   )
     return false;
-  if (await deferAutoSwitchForSessions()) return false;
   await repo.switchAccount(next.id);
   clearAutoSwitchLock(active.id);
   recordAutoSwitchReason({
@@ -1157,8 +1167,10 @@ async function executeResetFailureFallbackSwitch(
   resetError: unknown,
   hourlyThreshold: number,
   weeklyThreshold: number,
-  canUseAccount?: (accountId: string) => boolean
+  canUseAccount?: (accountId: string) => boolean,
+  userInitiated = false
 ): Promise<boolean> {
+  if (await deferAutoSwitchForSessions(userInitiated)) return false;
   if (!(await isExpectedActiveAccount(repo, active.id))) {
     return false;
   }
@@ -1173,7 +1185,6 @@ async function executeResetFailureFallbackSwitch(
   )
     return false;
   const detail = resetError instanceof Error ? resetError.message : String(resetError);
-  if (await deferAutoSwitchForSessions()) return false;
   await repo.switchAccount(next.id);
   lastBlockedAutoSwitchKey = undefined;
   clearAutoSwitchLock(active.id);
@@ -1536,6 +1547,7 @@ export { getAccountAutoQueuePolicy } from "./autoQueueOrder";
 
 function isAutoSelectionStillNeeded(active: CodexManagerAccountRecord, ignoreEnabled = false): boolean {
   const policy = getAccountAutoQueuePolicy();
+  if (!active.isActive || isAutoSwitchLocked(active.id)) return false;
   if (
     !ignoreEnabled &&
     (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, false) || active.enabled === false)

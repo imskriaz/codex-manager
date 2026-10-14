@@ -1,38 +1,12 @@
-# UI debugging rule
+# Project instructions
 
-- Canonical local UI test surface: `http://127.0.0.1:39875`. Use it for read-only browser smoke checks, responsive screenshots, console-error checks, and performance timing after dashboard changes.
-
-# Work Recap Rule
-
-- Before taking action on any user request, provide a detailed recap of the intended changes, verification, and release/commit implications so scope is explicit.
-
-# User-Initiated Action Feedback Rule
-
-- Every user-initiated action must reach a visible terminal state: success, warning, cancellation, or failure.
-- Never clear a spinner, swallow an exception, or leave a waiting state without telling the user what happened and what they can do next.
-- Background work may log quietly, but the same operation run explicitly by a user must surface failures and inconclusive outcomes in the UI that initiated it.
-- Dashboard action failures must be returned to the dashboard host and rendered in both the VS Code webview and browser dashboard. Command Palette failures must show a VS Code notification.
-- Add or update regression coverage whenever an action's completion, timeout, or error behavior changes.
-
-# Packaging and Push Rule
-
-- After every completed change to tracked project files, run the relevant verification, build a VSIX, commit the complete intended change set, and push the current branch.
-- Do not create or publish a GitHub Release, tag, Marketplace release, or other deployment unless the user explicitly asks for that release in the current request.
-- A version bump and verified local VSIX package do not authorize release publication.
-- Treat VSIX packaging, committing, and pushing as part of the normal change workflow; do not wait for a separate request.
-- If verification, packaging, committing, or pushing fails, report the concrete failure and do not claim the change was delivered.
-- Do not install or deploy the project unless the user explicitly asks for it in the current request.
-
-# Versioning Rule
-
-- Every change that modifies tracked project files must increment the extension prerelease number by exactly one (`preN` to `preN+1`) in `package.json` and keep the root `package-lock.json` version fields synchronized.
-- Do not reuse a prerelease number across changes, skip a prerelease number, or leave version metadata unchanged.
-- Exception: when the user explicitly requests a specific version or explicitly asks to override this rule, follow the requested version and keep all version metadata synchronized.
-
-# Public Documentation Privacy
-
-- Do not include developer-specific domains, hostnames, personal URLs, or other identifying deployment details in public-facing documentation, changelogs, README files, or extension manifest descriptions. Use generic wording or placeholders instead.
-
-# GitHub Release Rule
-
-- When the user explicitly requests a release, publish a GitHub Release for the requested version and attach the verified VSIX artifact. Pushing commits alone is not sufficient; if GitHub authentication or tooling is unavailable, report that concrete blocker.
+- Recap intended changes, verification, and commit/release implications before acting.
+- Use `http://127.0.0.1:39875` for read-only local UI smoke checks, responsive screenshots, console checks, and performance timing after dashboard changes.
+- User initiated actions must surface success, warning, cancellation, or failure in the initiating UI. Preserve errors and add regression coverage when completion or timeout behavior changes.
+- Start manual actions immediately. Optional background work, session discovery, recovery capture, and automation waits must not block them; use bounded waits and visible fallback warnings. Retain required authorization, ownership, and data integrity checks, and report conflicts promptly.
+- Render dashboard failures in both the VS Code webview and browser dashboard; show Command Palette failures in VS Code notifications. Background work may log quietly; explicit actions must report failures and inconclusive outcomes.
+- For tracked changes, run relevant verification, build a VSIX, commit all intended files, and push the branch. Report any verification, packaging, commit, or push failure. Do not install or deploy unless requested.
+- Increment the extension prerelease number exactly one step per change and synchronize `package.json` with root `package-lock.json`, unless the user explicitly requests a version.
+- Keep developer specific domains, hostnames, personal URLs, and identifying deployment details out of public documentation and manifest descriptions.
+- When the user explicitly requests a release, publish the requested GitHub Release with the verified VSIX attached. If GitHub authentication or tooling is unavailable, report that blocker.
+- Publish tags, releases, Marketplace updates, or deployments only when explicitly requested; a version bump or local VSIX alone does not authorize publication. Never claim delivery after a failed required step.

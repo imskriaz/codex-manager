@@ -100,10 +100,11 @@ export class AccountsWorkbench {
       ),
       vscode.commands.registerCommand(
         "codexManager.prepareDashboardForExtensionHostRestart",
-        async (options?: { autoResume?: boolean }) => {
+        async (options?: { autoResume?: boolean; signal?: AbortSignal }) => {
           // Also clear pending recovery when the setting was turned off before
           // this reload; stale IDs must not return if it is enabled afterward.
-          await prepareCodexSessionsForExtensionHostRestart(this.context, options?.autoResume === true);
+          await prepareCodexSessionsForExtensionHostRestart(this.context, options?.autoResume === true, undefined, undefined, options?.signal);
+          options?.signal?.throwIfAborted();
           return prepareQuotaSummaryPanelForExtensionHostRestart();
         }
       )
