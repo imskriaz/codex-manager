@@ -1211,7 +1211,9 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
 }
 
 /** Open a local Codex session in the official VS Code conversation editor. */
-export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal): Promise<void> {
+const AUTO_RESUME_EDITOR_SETTLE_MS = 350;
+
+export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal, focusWindow = false): Promise<void> {
   validateSessionId(sessionId);
   signal?.throwIfAborted();
   sessionId = sessionId.toLowerCase();
@@ -1242,6 +1244,21 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
       throw new Error(
         "VS Code did not create a Codex conversation tab. Enable the official Codex extension and retry."
       );
+    }
+    if (focusWindow) {
+      await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
+      await new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const cleanup = () => signal?.removeEventListener("abort", abort);
+        const done = () => { cleanup(); resolve(); };
+        const abort = () => { clearTimeout(timer); cleanup(); reject(signal?.reason ?? new Error("Auto Resume was cancelled.")); };
+        timer = setTimeout(done, AUTO_RESUME_EDITOR_SETTLE_MS);
+        if (signal) {
+          if (signal.aborted) abort();
+          else signal.addEventListener("abort", abort, { once: true });
+        }
+      });
+      signal?.throwIfAborted();
     }
   })();
   editorOpens.set(sessionId, opening);

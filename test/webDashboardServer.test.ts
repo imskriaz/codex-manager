@@ -215,6 +215,9 @@ describe("browser PWA routes", () => {
       const { token } = JSON.parse(created.body);
       const publicPage = await call(`/share/${token}`);
       expect(publicPage.statusCode).toBe(200); expect(publicPage.body).toContain("Shared message");
+      const liveShare = await call(`/api/share/${token}`);
+      expect(liveShare.statusCode).toBe(200);
+      expect(liveShare.body).toContain("Shared message");
       expect(publicPage.headers.get("cache-control")).toBe("no-store");
       expect(publicPage.headers.get("referrer-policy")).toBe("no-referrer");
       expect((await call(`/api/state?token=${token}`)).statusCode).toBe(401);

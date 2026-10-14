@@ -151,6 +151,7 @@ describe("Codex VS Code session editor", () => {
     expect(await resumePersistedCodexSessions(context)).toEqual({ attempted: 2, opened: 2, failed: [] });
     expect(readOpenCodexSessionIds(false)).toEqual(ids);
     expect(vscode.window.tabGroups.all[0]?.tabs).toHaveLength(2);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.focusActiveEditorGroup");
   });
 
   it("opens a local session through the official Codex custom editor", async () => {

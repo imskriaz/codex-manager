@@ -362,7 +362,8 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
 /** Acknowledge each successful tab; leave failed/uncertain opens durable for retry. */
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
-  openSession: (sessionId: string, signal?: AbortSignal) => Promise<void> = openCodexSessionInVsCode,
+  openSession: (sessionId: string, signal?: AbortSignal) => Promise<void> = (sessionId, signal) =>
+    openCodexSessionInVsCode(sessionId, signal, true),
   closeSessions: (signal?: AbortSignal) => Promise<void> = closeOpenCodexSessionTabs
 ): Promise<AutoResumeResult> {
   return serialize(context, "restore", async () => {

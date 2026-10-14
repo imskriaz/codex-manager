@@ -44,7 +44,7 @@ import { AccountsRepository } from "../storage";
 import { AnnouncementService, type AnnouncementOptions } from "./announcements";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { isValidSyncAccountEnablement, type SyncAccountEnablement } from "./syncEnablementRegistry";
-import { readCodexCliSessions, resolveCodexHome } from "./codexSessionResume";
+import { readCodexCliSessionMessages, readCodexCliSessions, resolveCodexHome } from "./codexSessionResume";
 import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
 import {
   appendDashboardUsageSnapshot,
@@ -319,10 +319,11 @@ const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: strin
     parts: ["media", "product-icons", "codex-openai.svg"],
     contentType: "image/svg+xml"
   }
+  ,"/assets/sharedConversation.js": { parts: ["media", "webview", "sharedConversation.js"], contentType: "text/javascript; charset=utf-8" }
 };
 const WEB_DASHBOARD_PUBLIC_ASSETS = new Set([
   "/manifest.webmanifest", "/service-worker.js", "/offline.html", "/assets/pwaRecovery.js",
-  "/assets/icon-192.png", "/assets/icon-512.png", "/assets/codex.svg"
+  "/assets/icon-192.png", "/assets/icon-512.png", "/assets/codex.svg", "/assets/sharedConversation.js"
 ]);
 
 export function getWebDashboardAssetVersion(extensionPath: string, version: string): string {
@@ -708,7 +709,22 @@ export class WebDashboardServer implements vscode.Disposable {
     if (method === "GET" && path.startsWith("/share/")) {
       const share = await this.conversationShares.get(path.slice(7));
       if (!share) { response.statusCode = 404; response.end("This shared link is invalid, expired, or revoked. Ask the owner for a new link."); return; }
-      this.sendHtml(response, sharedConversationPage(share));
+      this.sendHtml(response, sharedConversationPage(share, path.slice(7)));
+      return;
+    }
+    if (method === "GET" && path.startsWith("/api/share/")) {
+      const token = path.slice("/api/share/".length);
+      const share = await this.conversationShares.get(token);
+      if (!share) { response.statusCode = 404; this.sendJson(response, { error: "This shared link is invalid, expired, or revoked." }); return; }
+      try {
+        const target = JSON.parse(share.sessionKey) as unknown;
+        const sessionId = Array.isArray(target) && target[0] === "local" && typeof target[1] === "string" ? target[1] : undefined;
+        const current = sessionId ? await readCodexCliSessionMessages(sessionId).catch(() => undefined) : undefined;
+        const updated = current ? await this.conversationShares.refresh(token, current) : share;
+        this.sendJson(response, { title: updated?.title ?? share.title, expiresAt: updated?.expiresAt ?? share.expiresAt, messages: updated?.messages ?? share.messages });
+      } catch {
+        this.sendJson(response, { title: share.title, expiresAt: share.expiresAt, messages: share.messages });
+      }
       return;
     }
     if (method === "POST" && path === "/api/peer-account-claim") {
