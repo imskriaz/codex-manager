@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Prioritize manual Auto Select when it overlaps a background session wait, without duplicating account mutations.
+- Let manual Reload interrupt optional preparation and notification waits already started by automatic reload.
+
 ## 1.2.20
 
 - Keep manual and account-change reloads moving when session preservation fails or times out, with a warning about incomplete recovery. Preserve saved recovery and cancel late capture results.

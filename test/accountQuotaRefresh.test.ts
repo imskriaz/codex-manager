@@ -481,6 +481,51 @@ describe("refreshSingleQuota token automation state", () => {
     expect(read).not.toHaveBeenCalled();
   });
 
+  it("promotes a background session wait when manual Auto Select joins it", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
+    const active = createAccount("joined-wait-active", true, 0, 0);
+    const next = createAccount("joined-wait-next", false, 90, 90);
+    setCurrentWindowRuntimeAccountId(next.id);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    let release!: (ids: string[]) => void;
+    const read = vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const background = maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() });
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const manual = maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, { userInitiated: true });
+    try {
+      await vi.waitFor(() => expect(repo.switchAccount).toHaveBeenCalledWith(next.id), { timeout: 250 });
+      await expect(Promise.all([background, manual])).resolves.toEqual([true, true]);
+      expect(repo.switchAccount).toHaveBeenCalledTimes(1);
+      release(["running"]);
+      await Promise.resolve();
+      expect(isAutoSwitchWaitingForSessions()).toBe(false);
+    } finally {
+      release(["running"]);
+      await Promise.all([background, manual]);
+    }
+  });
+
+  it.each(["background", "manual"])("retains the %s ownership guard when manual selection joins a session wait", async (deniedBy) => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
+    const active = createAccount(`joined-guard-active-${deniedBy}`, true, 0, 0);
+    const next = createAccount(`joined-guard-next-${deniedBy}`, false, 90, 90);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    let release!: (ids: string[]) => void;
+    const read = vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const originalOptions = { canUseAccount: (id: string) => deniedBy !== "background" || id !== next.id };
+    const background = maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, originalOptions);
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const manual = maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, {
+      userInitiated: true, canUseAccount: id => deniedBy !== "manual" || id !== next.id
+    });
+    try {
+      await expect(Promise.all([background, manual])).resolves.toEqual([false, false]);
+      expect(repo.switchAccount).not.toHaveBeenCalled();
+      expect(originalOptions).not.toHaveProperty("userInitiated");
+      expect(read).toHaveBeenCalledTimes(1);
+    } finally { release(["running"]); }
+  });
+
   it("continues automatic switching with a warning on inconclusive session inspection", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
     const active = createAccount("inspection-active", true, 0, 0);

@@ -124,4 +124,37 @@ describe("bounded shared extension host reload", () => {
       1
     );
   });
+
+  it.each(["capture", "clear", "delivery"])("a manual reload interrupts an automatic optional %s wait", async (phase) => {
+    vi.useFakeTimers();
+    let finish!: () => void;
+    let delivery: { dispose(): void } | undefined;
+    const execute = vi.mocked(vscode.commands.executeCommand);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback: unknown) => key === "autoSwitchReloadWindowEnabled" ? true : fallback
+    } as never);
+    execute.mockImplementation(name => {
+      if ((phase === "capture" && name === "codexManager.prepareDashboardForExtensionHostRestart") ||
+          (phase === "clear" && name === "notifications.clearAll"))
+        return new Promise<void>(resolve => { finish = resolve; });
+      return Promise.resolve(undefined);
+    });
+    if (phase === "delivery") delivery = subscribeToNotificationDelivery(() => new Promise<void>(resolve => { finish = resolve; }));
+    try {
+      const background = reloadExtensionHostWithSessionCapture(true, true, true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(execute).not.toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+      const manual = reloadExtensionHostWithSessionCapture(true);
+      expect(manual).toBe(background);
+      await vi.advanceTimersByTimeAsync(0);
+      await manual;
+      expect(execute.mock.calls.filter(([name]) => name === "workbench.action.restartExtensionHost")).toHaveLength(1);
+      finish?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      delivery?.dispose();
+      vi.useRealTimers();
+    }
+  });
 });

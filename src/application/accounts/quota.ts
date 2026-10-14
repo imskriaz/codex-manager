@@ -64,6 +64,16 @@ const QUOTA_WARNING_ENABLED = "quotaWarningEnabled";
 const MAX_WARNINGS_PER_CYCLE = 1;
 const quotaWarningCounts = new Map<string, number>();
 let autoSwitchInFlight: Promise<boolean> | undefined;
+type AutoSwitchOptions = {
+  ignoreEnabled?: boolean;
+  userInitiated?: boolean;
+  canUseAccount?: (accountId: string) => boolean;
+};
+let autoSwitchManualOverride: {
+  controller: AbortController;
+  options: AutoSwitchOptions;
+  guards: Array<(accountId: string) => boolean>;
+} | undefined;
 let lastBlockedAutoSwitchKey: string | undefined;
 let lastAutoSwitchFailure: { key: string; shownAt: number } | undefined;
 let lastAutoSwitchSafetyRefreshAt = 0;
@@ -460,7 +470,8 @@ export function isAutoSwitchWaitingForSessions(): boolean {
 
 async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolean> {
   const config = getCodexManagerConfiguration();
-  if (userInitiated || !config.get<boolean>(AUTO_SWITCH_ENABLED, false) || !config.get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
+  const manual = autoSwitchManualOverride?.controller.signal;
+  if (userInitiated || manual?.aborted || !config.get<boolean>(AUTO_SWITCH_ENABLED, false) || !config.get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
     deferredForSessions = false;
     sessionWaitNotice = undefined;
     return false;
@@ -468,15 +479,24 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
   let timer: NodeJS.Timeout | undefined;
   let message: string | undefined;
   let waiting = false;
+  let interrupt: (() => void) | undefined;
   try {
     const running = await Promise.race([
       readRunningCodexSessionIds(),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Session inspection timed out")), 5_000); })
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Session inspection timed out")), 5_000); }),
+      new Promise<string[]>(resolve => {
+        interrupt = () => resolve([]);
+        if (manual?.aborted) interrupt();
+        else manual?.addEventListener("abort", interrupt, { once: true });
+      })
     ]);
-    if (running.length) { waiting = true; message = `Auto Switch is waiting for ${running.length} running session${running.length === 1 ? "" : "s"} to finish. Manual switching is still available.`; }
+    if (!manual?.aborted && running.length) { waiting = true; message = `Auto Switch is waiting for ${running.length} running session${running.length === 1 ? "" : "s"} to finish. Manual switching is still available.`; }
   } catch (error) {
     message = `Running sessions could not be verified. Auto Switch will continue with the account change. ${error instanceof Error ? error.message : String(error)}`;
-  } finally { if (timer) clearTimeout(timer); }
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (interrupt) manual?.removeEventListener("abort", interrupt);
+  }
   deferredForSessions = waiting;
   if (message && message !== sessionWaitNotice) {
     recordAutoSwitchDashboardNotice(message, "warning");
@@ -489,15 +509,25 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
 export async function maybeAutoSwitchForActiveQuota(
   repo: AccountsRepository,
   view: RefreshView,
-  options: {
-    ignoreEnabled?: boolean;
-    userInitiated?: boolean;
-    canUseAccount?: (accountId: string) => boolean;
-  } = {}
+  options: AutoSwitchOptions = {}
 ): Promise<boolean> {
   if (autoSwitchInFlight) {
+    if (options.userInitiated && autoSwitchManualOverride) {
+      // Promote the serialized operation rather than queueing a second auth
+      // mutation. A click interrupts only optional session inspection; all
+      // existing and newly supplied ownership guards still apply.
+      autoSwitchManualOverride.options.userInitiated = true;
+      autoSwitchManualOverride.options.ignoreEnabled ||= options.ignoreEnabled;
+      if (options.canUseAccount) autoSwitchManualOverride.guards.push(options.canUseAccount);
+      autoSwitchManualOverride.controller.abort();
+    }
     return autoSwitchInFlight;
   }
+
+  const guards = options.canUseAccount ? [options.canUseAccount] : [];
+  const runOptions = { ...options, canUseAccount: (accountId: string) => guards.every(guard => guard(accountId)) };
+  const override = { controller: new AbortController(), options: runOptions, guards };
+  autoSwitchManualOverride = override;
 
   // Rescue override is a local, passphrase-gated escape hatch for the shared
   // enablement registry. While it is active, automatic switching must be
@@ -507,19 +537,20 @@ export async function maybeAutoSwitchForActiveQuota(
     "Automatic account selection",
     async () => {
       repo.invalidateCachedIndex?.();
-      return evaluateAutoSwitchForActiveQuota(repo, view, options);
+      return evaluateAutoSwitchForActiveQuota(repo, view, runOptions);
     }
   );
   autoSwitchInFlight = task;
   try {
     return await task;
   } catch (error) {
-    if (error instanceof CrossWindowOperationBusyError && !options.userInitiated) return false;
+    if (error instanceof CrossWindowOperationBusyError && !runOptions.userInitiated) return false;
     showAutoSwitchFailure(error);
     return false;
   } finally {
     if (autoSwitchInFlight === task) {
       autoSwitchInFlight = undefined;
+      if (autoSwitchManualOverride === override) autoSwitchManualOverride = undefined;
     }
   }
 }
