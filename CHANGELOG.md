@@ -1,20 +1,16 @@
 # Changelog
-## 1.2.25 (Unreleased)
-
-- Share on-demand Codex session checks between Auto Resume, Wait for running sessions, indicators, and explicit session actions. Account switching now joins duplicate requests, recovers abandoned locks, and cancels optional startup recovery and renewal before manual actions.
-
-- Close cross-PC peer sockets and settle unconfirmed work when the shared domain changes; ignore stale responses and resend encrypted state after relay reconnection.
-- Use the configured Cloudflared HTTPS origin for cross-PC WebSockets, disable peer connections without a valid domain, and retain local dashboard WebSockets independently.
-- Simplify Auto Sync settings, claim only the current account by default, and release stale saved-account claims. Keep WebSocket changes real time and batch VS Code Settings Sync writes with a configurable gap.
-
-## 1.2.24
-
-- Save eligible open Codex tabs without scanning unrelated running sessions. Keep automatic save failures in diagnostics and retry quietly without desktop or browser push notifications.
 
 ## 1.2.22
 
+- Share on-demand Codex session checks between Auto Resume, Wait for running sessions, indicators, and explicit session actions. Account switching now joins duplicate requests, recovers abandoned locks, and cancels optional startup recovery and renewal before manual actions.
+- Close cross-PC peer sockets and settle unconfirmed work when the shared domain changes; ignore stale responses and resend encrypted state after relay reconnection.
+- Use the configured Cloudflared HTTPS origin for cross-PC WebSockets, disable peer connections without a valid domain, and retain local dashboard WebSockets independently.
+- Simplify Auto Sync settings, claim only the current account by default, and release stale saved-account claims. Keep WebSocket changes real time and batch VS Code Settings Sync writes with a configurable gap.
+- Save eligible open Codex tabs without scanning unrelated running sessions. Keep automatic save failures in diagnostics and retry quietly without desktop or browser push notifications.
+- Keep refresh-all work parallel with manual actions and retain bounded network request handling.
+- Add Xoom donation instructions to the About and onboarding flows.
+- Keep account card metadata on one line and prevent mobile search inputs from zooming on focus.
 - Fix overview quota percentages on compact mobile panels and tighten narrow-screen spacing for controls, metrics, and account cards.
-
 
 ## 1.2.21
 

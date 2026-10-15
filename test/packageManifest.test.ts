@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.2.25-pre4");
+    expect(manifest.version).toBe("1.2.22");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });
@@ -29,8 +29,10 @@ describe("extension manifest configuration", () => {
   it("ships a Marketplace changelog", () => {
     const root = path.resolve(__dirname, "..");
     const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
     expect(changelog).toContain("# Changelog");
+    expect(changelog.match(/^## (.+)$/m)?.[1]).toBe(manifest.version);
     expect(changelog).not.toMatch(/^## .*pre\d+/m);
     const releases = changelog.match(/^## \d+\.\d+\.\d+$/gm) ?? [];
     expect(new Set(releases).size).toBe(releases.length);
