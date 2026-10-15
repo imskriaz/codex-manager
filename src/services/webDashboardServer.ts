@@ -365,6 +365,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly peerActionWaiters = new Map<string, (result: PeerActionResultMessage) => void>();
   private readonly remoteCodexPrompts = new Map<string, import("../domain/dashboard/types").DashboardCodexServerRequest>();
   private peerSocket: UndiciWebSocket | undefined;
+  private peerConnectionRevision = 0;
   private peerReconnectTimer: NodeJS.Timeout | undefined;
   private peerPublishTimer: NodeJS.Timeout | undefined;
   private peerHttpHeartbeatTimer: NodeJS.Timeout | undefined;
@@ -558,6 +559,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   async stop(): Promise<void> {
     this.peerStopped = true;
+    this.peerConnectionRevision += 1;
     this.sessions.clear();
     this.loginAttempts.clear();
     const server = this.server;
@@ -633,8 +635,23 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private restartPeerSocket(): void {
     this.peerStopped = true;
-    this.peerSocket?.close();
+    this.peerConnectionRevision += 1;
+    const previous = this.peerSocket;
     this.peerSocket = undefined;
+    previous?.close();
+    for (const socket of this.webSocketServer.clients) {
+      if (!this.webSocketClients.has(socket)) socket.close();
+    }
+    this.peerSockets.clear();
+    this.lastPublishedPeerVault = "";
+    this.remoteSessionLive.clear();
+    this.remoteCodexPrompts.clear();
+    for (const [requestId, waiter] of this.peerActionWaiters) {
+      waiter({ type: "peer:action-result", requestId, status: "failed", error: "The cross-PC connection settings changed before this action was confirmed. Its outcome is unknown; verify before retrying." });
+    }
+    this.peerActionWaiters.clear();
+    for (const waiter of this.peerVaultWaiters.values()) waiter(false);
+    this.peerVaultWaiters.clear();
     if (this.peerReconnectTimer) clearTimeout(this.peerReconnectTimer);
     this.peerReconnectTimer = undefined;
     if (this.peerPublishTimer) clearInterval(this.peerPublishTimer);
@@ -1226,6 +1243,9 @@ export class WebDashboardServer implements vscode.Disposable {
     message: Extract<DashboardClientMessage, { type: "dashboard:action" }>,
     targetDeviceId: string
   ): Promise<PeerActionResultMessage> {
+    if (this.peerActionWaiters.has(message.requestId)) {
+      return { type: "peer:action-result", requestId: message.requestId, status: "failed", error: "A dashboard action with this request ID is already pending. Try the action again." };
+    }
     const socket = this.peerSockets.get(targetDeviceId);
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       const hub = this.peerSocket;
@@ -1238,15 +1258,6 @@ export class WebDashboardServer implements vscode.Disposable {
         };
       }
       return new Promise((resolve) => {
-        if (this.peerActionWaiters.has(message.requestId)) {
-          resolve({
-            type: "peer:action-result",
-            requestId: message.requestId,
-            status: "failed",
-            error: "A dashboard action with this request ID is already pending. Try the action again."
-          });
-          return;
-        }
         const timeout = setTimeout(() => {
           this.peerActionWaiters.delete(message.requestId);
           resolve({
@@ -1314,6 +1325,7 @@ export class WebDashboardServer implements vscode.Disposable {
       };
       const cleanup = (): void => {
         clearTimeout(timeout);
+        this.peerActionWaiters.delete(message.requestId);
         socket.off("message", onMessage);
         socket.off("close", onDisconnect);
         socket.off("error", onDisconnect);
@@ -1323,8 +1335,9 @@ export class WebDashboardServer implements vscode.Disposable {
           type: "peer:action-result",
           requestId: message.requestId,
           status: "failed",
-          error: "The selected PC disconnected before the action completed."
+          error: "The selected PC disconnected before the action completed. Its outcome is unknown; verify before retrying."
         });
+      this.peerActionWaiters.set(message.requestId, finish);
       socket.on("message", onMessage);
       socket.once("close", onDisconnect);
       socket.once("error", onDisconnect);
@@ -1873,6 +1886,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async acceptPeerSession(message: Partial<PeerSessionMessage>): Promise<boolean> {
+    const revision = this.peerConnectionRevision;
     if (
       message.type !== "peer:sessions" ||
       typeof message.deviceId !== "string" ||
@@ -1903,6 +1917,7 @@ export class WebDashboardServer implements vscode.Disposable {
     ) {
       return false;
     }
+    if (revision !== this.peerConnectionRevision) return false;
     const normalized: PeerSessionMessage = {
       type: "peer:sessions",
       deviceId: message.deviceId.slice(0, 256),
@@ -1948,6 +1963,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async acceptPeerVault(message: Partial<PeerVaultMessage>, sourceSocket?: WebSocket): Promise<boolean> {
+    const revision = this.peerConnectionRevision;
     if (
       message.type !== "peer:vault" ||
       typeof message.deviceId !== "string" ||
@@ -1972,7 +1988,9 @@ export class WebDashboardServer implements vscode.Disposable {
     ) {
       return false;
     }
+    if (revision !== this.peerConnectionRevision) return false;
     if (!await this.encryptedSync?.applyRealtimeEncryptedVault(message.vault)) return false;
+    if (revision !== this.peerConnectionRevision) return false;
     // A dashboard host can have several peer PCs connected. Relay the
     // authenticated ciphertext event so one source change reaches the whole
     // connected peer set without another Settings Sync request.
@@ -2035,6 +2053,8 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async handlePeerMessage(raw: string, sourceSocket: WebSocket): Promise<void> {
     try {
+      const revision = this.peerConnectionRevision;
+      if (sourceSocket.readyState !== WebSocket.OPEN) return;
       const message = JSON.parse(raw) as Partial<PeerSessionMessage> &
         Partial<PeerVaultMessage> &
         Partial<PeerActionMessage> &
@@ -2043,6 +2063,7 @@ export class WebDashboardServer implements vscode.Disposable {
         Partial<PeerCodexRequestMessage> &
         Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionLiveMessage>;
       if (await this.acceptPeerVaultAcknowledgment(message)) return;
+      if (revision !== this.peerConnectionRevision || sourceSocket.readyState !== WebSocket.OPEN) return;
       if (message.type === "peer:vault") {
         const applied = await this.acceptPeerVault(message, sourceSocket);
         await this.acknowledgePeerVault(message, applied, (raw) => sourceSocket.send(raw));
@@ -2100,6 +2121,7 @@ export class WebDashboardServer implements vscode.Disposable {
         return;
       }
       if (!(await this.acceptPeerSession(message))) return;
+      if (revision !== this.peerConnectionRevision || sourceSocket.readyState !== WebSocket.OPEN) return;
       this.authenticatedPeerSockets.add(sourceSocket);
       this.peerSockets.set(message.deviceId!, sourceSocket);
       await this.sendPeerAggregate(sourceSocket);
@@ -2114,6 +2136,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private async sendPeerAggregate(socket: WebSocket): Promise<void> {
     if (socket.readyState !== WebSocket.OPEN) return;
     const local = await this.readLocalPeerSessions();
+    if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(
       JSON.stringify({
         type: "peer:aggregate",
@@ -2285,14 +2308,16 @@ export class WebDashboardServer implements vscode.Disposable {
     this.startPeerHttpHeartbeat();
     socket.addEventListener("open", () => {
       if (this.peerSocket !== socket) return;
+      this.lastPublishedPeerVault = "";
       void (async () => {
         await this.publishPeerSessions();
+        if (this.peerSocket !== socket || socket.readyState !== UndiciWebSocket.OPEN) return;
         for (const state of listCodexSessionLiveStates()) {
           if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, "Live updates need to reconnect"); break; }
           socket.send(JSON.stringify({ type: "peer:codex-session-live", deviceId: this.deviceId, state } satisfies PeerCodexSessionLiveMessage));
         }
         await this.publishPeerVault();
-      })();
+      })().catch((error) => console.warn("[codexManager] peer reconnect publish failed", error));
       if (this.peerHttpHeartbeatTimer) clearInterval(this.peerHttpHeartbeatTimer);
       this.peerHttpHeartbeatTimer = undefined;
       this.peerPublishTimer = setInterval(() => void this.publishPeerSessions(), PEER_HEARTBEAT_INTERVAL_MS);
@@ -2303,6 +2328,7 @@ export class WebDashboardServer implements vscode.Disposable {
         try {
           const vault = JSON.parse(String(event.data)) as Partial<PeerVaultMessage>;
           if (await this.acceptPeerVaultAcknowledgment(vault)) return;
+          if (this.peerSocket !== socket) return;
           if (vault.type === "peer:vault") {
             const applied = await this.acceptPeerVault(vault);
             await this.acknowledgePeerVault(vault, applied, (raw) => socket.send(raw));
@@ -2348,8 +2374,10 @@ export class WebDashboardServer implements vscode.Disposable {
             this.peerLastSeenAt.clear();
             this.peerLastSignedAt.clear();
             for (const peer of message.peers) {
+              if (this.peerSocket !== socket) return;
               await this.acceptPeerSession(peer);
             }
+            if (this.peerSocket !== socket) return;
             this.markPeerPresenceHealthy();
             this.publishRealtimeState();
           }
@@ -2418,6 +2446,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async publishPeerVault(force = false): Promise<boolean> {
+    const revision = this.peerConnectionRevision;
     const socket = this.peerSocket;
     const incoming = [...this.peerSockets.values()].filter((candidate) => this.authenticatedPeerSockets.has(candidate) && candidate.readyState === WebSocket.OPEN);
     const outgoingOpen = Boolean(socket && socket.readyState === UndiciWebSocket.OPEN);
@@ -2428,7 +2457,7 @@ export class WebDashboardServer implements vscode.Disposable {
     const requestId = force ? crypto.randomUUID() : undefined;
     const unsigned = { type: "peer:vault" as const, deviceId: this.deviceId, sentAt: Date.now(), vault, ...(requestId ? { requestId } : {}) };
     const signature = await this.encryptedSync?.signRealtimePeerPayload(peerVaultSignaturePayload(unsigned));
-    if (!signature) return false;
+    if (!signature || revision !== this.peerConnectionRevision) return false;
     let timer: NodeJS.Timeout | undefined;
     const confirmation = requestId ? new Promise<boolean>((resolve) => {
       this.peerVaultWaiters.set(requestId, resolve);
@@ -2440,8 +2469,8 @@ export class WebDashboardServer implements vscode.Disposable {
       if (outgoingOpen) socket!.send(serialized);
       for (const candidate of incoming) candidate.send(serialized);
       const applied = await confirmation;
-      if (applied) this.lastPublishedPeerVault = vault;
-      return applied;
+      if (applied && revision === this.peerConnectionRevision) this.lastPublishedPeerVault = vault;
+      return applied && revision === this.peerConnectionRevision;
     } catch { return false; }
     finally { if (timer) clearTimeout(timer); if (requestId) this.peerVaultWaiters.delete(requestId); }
   }
@@ -2465,6 +2494,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async publishPeerHeartbeatHttpCore(): Promise<void> {
+    const revision = this.peerConnectionRevision;
     if (this.peerSocket?.readyState === UndiciWebSocket.OPEN) return;
     const domain = normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "");
     if (!domain) {
@@ -2488,15 +2518,19 @@ export class WebDashboardServer implements vscode.Disposable {
       if (aggregate.type !== "peer:aggregate" || !Array.isArray(aggregate.peers)) {
         throw new Error("Peer heartbeat returned an invalid response.");
       }
-      if (this.peerStopped || domain !== normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "")) return;
+      if (this.peerStopped || revision !== this.peerConnectionRevision || domain !== normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "")) return;
       this.peerSessions.clear();
       this.peerLastSeenAt.clear();
       this.peerLastSignedAt.clear();
-      for (const peer of aggregate.peers) await this.acceptPeerSession(peer);
+      for (const peer of aggregate.peers) {
+        if (revision !== this.peerConnectionRevision) return;
+        await this.acceptPeerSession(peer);
+      }
+      if (revision !== this.peerConnectionRevision) return;
       this.markPeerPresenceHealthy();
       this.publishRealtimeState();
     } catch (error) {
-      if (this.peerStopped || domain !== normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "")) return;
+      if (this.peerStopped || revision !== this.peerConnectionRevision || domain !== normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "")) return;
       this.markPeerPresenceUnknown(error instanceof Error ? error.message : "HTTP heartbeat unavailable");
     } finally {
       clearTimeout(timeout);

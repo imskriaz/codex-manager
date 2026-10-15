@@ -1,10 +1,8 @@
 # Changelog
 ## 1.2.25 (Unreleased)
 
+- Close cross-PC peer sockets and settle unconfirmed work when the shared domain changes; ignore stale responses and resend encrypted state after relay reconnection.
 - Use the configured Cloudflared HTTPS origin for cross-PC WebSockets, disable peer connections without a valid domain, and retain local dashboard WebSockets independently.
-
-## 1.2.25 (Unreleased)
-
 - Simplify Auto Sync settings, claim only the current account by default, and release stale saved-account claims. Keep WebSocket changes real time and batch VS Code Settings Sync writes with a configurable gap.
 
 ## 1.2.24

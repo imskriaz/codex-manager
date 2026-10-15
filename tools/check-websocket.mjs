@@ -9,11 +9,15 @@ const open = async (url, origin) => {
   const socket = new WebSocket(url, { origin, handshakeTimeout: 10_000 });
   const messages = [];
   socket.on("message", raw => messages.push(JSON.parse(String(raw))));
+  socket.on("error", () => undefined);
   sockets.push(socket);
   await once(socket, "open", { signal: AbortSignal.timeout(15_000) });
   return { socket, messages };
 };
 const message = (client, predicate, label) => new Promise((resolve, reject) => {
+  const existing = client.messages.find(predicate);
+  if (existing) { resolve(existing); return; }
+  if (client.socket.readyState !== WebSocket.OPEN) { reject(new Error(`${label}: socket closed`)); return; }
   const timer = setTimeout(() => finish(new Error(`${label}: no response within 30 seconds`)), 30_000);
   const finish = (error, value) => { clearTimeout(timer); client.socket.off("message", onMessage); client.socket.off("close", onClose); client.socket.off("error", onError); error ? reject(error) : resolve(value); };
   const onMessage = raw => { const value = JSON.parse(String(raw)); if (predicate(value)) finish(undefined, value); };
@@ -46,7 +50,19 @@ try {
   await heartbeat(recovered.socket);
   const configured = String(snapshot.state.settings.cloudflaredDomain || "").trim();
   if (!configured) await assert.rejects(open("ws://127.0.0.1:39875/ws?peer=1", localOrigin));
-  console.log(JSON.stringify({ transport: "websocket only", local: { snapshot: "passed", concurrentRequests: responseMs.length, responseMs, heartbeat: "passed", invalidFrameRecovery: "passed", reconnect: "passed" }, crossPc: configured ? "configured" : "disabled without Cloudflared domain" }));
+  let crossPc = "disabled without Cloudflared domain";
+  if (configured) {
+    const origin = new URL(/^https?:\/\//i.test(configured) ? configured : `https://${configured}`);
+    assert.ok(origin.protocol === "https:" && !origin.username && !origin.password && origin.pathname === "/" && !origin.search && !origin.hash, "Cloudflared must be a valid HTTPS origin");
+    const endpoint = new URL("/ws", origin);
+    endpoint.protocol = "wss:";
+    endpoint.searchParams.set("peer", "1");
+    endpoint.searchParams.set("deviceId", `socket-check-${randomUUID()}`);
+    const remote = await open(endpoint, origin.origin);
+    await heartbeat(remote.socket);
+    crossPc = "configured domain: secure handshake and heartbeat passed; signed peer authentication not checked";
+  }
+  console.log(JSON.stringify({ transport: "websocket only", local: { snapshot: "passed", concurrentRequests: responseMs.length, responseMs, heartbeat: "passed", invalidFrameRecovery: "passed", reconnect: "passed" }, crossPc }));
 } finally {
   for (const socket of sockets) { socket.on("error", () => undefined); socket.readyState === WebSocket.OPEN ? socket.close() : socket.terminate(); }
 }
