@@ -1,6 +1,10 @@
 # Changelog
 ## 1.2.25 (Unreleased)
 
+- Use the configured Cloudflared HTTPS origin for cross-PC WebSockets, disable peer connections without a valid domain, and retain local dashboard WebSockets independently.
+
+## 1.2.25 (Unreleased)
+
 - Simplify Auto Sync settings, claim only the current account by default, and release stale saved-account claims. Keep WebSocket changes real time and batch VS Code Settings Sync writes with a configurable gap.
 
 ## 1.2.24

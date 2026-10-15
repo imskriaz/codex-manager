@@ -485,10 +485,10 @@ describe("peer WebSocket failure handling", () => {
     expect(source).toContain("const PEER_RECONNECT_DELAY_MS = 1_000;");
   });
 
-  it("uses ws for a local relay and wss for an HTTPS peer hub", () => {
+  it("uses the configured HTTPS origin exclusively for cross-PC WebSockets", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
-    expect(source).toContain('endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";');
-    expect(source).not.toContain('endpoint.protocol = "wss:";');
+    expect(source).toContain('endpoint.protocol = "wss:";');
+    expect(source).not.toContain('configuredDomain || (alwaysOnline ?');
   });
 
   it("publishes CLI session file changes after a short settling debounce", () => {

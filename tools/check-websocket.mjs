@@ -1,50 +1,52 @@
 import assert from "node:assert/strict";
-import { chromium } from "playwright";
+import { once } from "node:events";
+import { randomUUID } from "node:crypto";
+import { WebSocket } from "ws";
 
-// Read-only actions on the canonical host; never retry a submitted mutation.
-const origin = "http://127.0.0.1:39875";
-const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWSER || "msedge", headless: true });
+const localOrigin = "http://127.0.0.1:39875";
+const sockets = [];
+const open = async (url, origin) => {
+  const socket = new WebSocket(url, { origin, handshakeTimeout: 10_000 });
+  const messages = [];
+  socket.on("message", raw => messages.push(JSON.parse(String(raw))));
+  sockets.push(socket);
+  await once(socket, "open", { signal: AbortSignal.timeout(15_000) });
+  return { socket, messages };
+};
+const message = (client, predicate, label) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => finish(new Error(`${label}: no response within 30 seconds`)), 30_000);
+  const finish = (error, value) => { clearTimeout(timer); client.socket.off("message", onMessage); client.socket.off("close", onClose); client.socket.off("error", onError); error ? reject(error) : resolve(value); };
+  const onMessage = raw => { const value = JSON.parse(String(raw)); if (predicate(value)) finish(undefined, value); };
+  const onClose = () => finish(new Error(`${label}: socket closed`));
+  const onError = error => finish(error);
+  client.socket.on("message", onMessage).once("close", onClose).once("error", onError);
+});
+const request = async (client, action) => {
+  const requestId = randomUUID();
+  const started = performance.now();
+  client.socket.send(JSON.stringify({ type: "dashboard:action", action, requestId }));
+  const result = await message(client, value => value.type === "dashboard:action-result" && value.requestId === requestId, action);
+  assert.equal(result.status, "completed", result.error);
+  return Math.round(performance.now() - started);
+};
+const heartbeat = async socket => { const token = randomUUID(); const pong = once(socket, "pong", { signal: AbortSignal.timeout(10_000) }); socket.ping(token); assert.equal(String((await pong)[0]), token); };
+
 try {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
-  const page = await context.newPage();
-  const errors = [], sockets = [];
-  page.on("pageerror", error => errors.push(error.message));
-  page.on("websocket", socket => sockets.push(socket.url()));
-  await page.addInitScript(() => {
-    window.__socketCheck = [];
-    window.addEventListener("message", event => {
-      if (event.data?.type?.startsWith("dashboard:")) window.__socketCheck.push(event.data);
-    });
-  });
-  await page.goto(`${origin}/dash`);
-  const waitLive = () => page.waitForFunction(() => window.__socketCheck.some(message => message.type === "dashboard:connection" && message.connected), null, { timeout: 20000 });
-  await waitLive();
-  const readSessions = async label => {
-    const requestId = `socket-read-${label}-${Date.now()}`;
-    await page.evaluate(requestId => window.acquireVsCodeApi().postMessage({ type: "dashboard:action", action: "listCodexCliSessions", requestId }), requestId);
-    await page.waitForFunction(requestId => window.__socketCheck.some(message => message.requestId === requestId && message.type === "dashboard:action-result"), requestId, { timeout: 30000 });
-    const result = await page.evaluate(requestId => window.__socketCheck.find(message => message.requestId === requestId && message.type === "dashboard:action-result"), requestId);
-    assert.equal(result.status, "completed", result.error);
-    const sessions = result.payload?.cliSessions;
-    assert.ok(Array.isArray(sessions), "Socket returns the session catalog");
-    return sessions.filter(session => !session.parentSessionId && !session.archived && session.status === "running").length;
-  };
-  const initialRunning = await readSessions("initial");
-  await page.evaluate(() => { window.__socketCheck = []; });
-  await context.setOffline(true);
-  await page.waitForFunction(() => window.__socketCheck.some(message => message.type === "dashboard:host-status" && message.stage === "offline"));
-  await context.setOffline(false);
-  await waitLive();
-  const recoveredRunning = await readSessions("network-recovery");
-  const beforeRetry = sockets.length;
-  await page.evaluate(() => { window.__socketCheck = []; return window.acquireVsCodeApi().postMessage({ type: "dashboard:retry-connection" }); });
-  await waitLive();
-  assert.ok(sockets.length > beforeRetry, "Manual retry replaces an already-open socket");
-  await page.waitForFunction(() => window.__socketCheck.some(message => message.type === "dashboard:notice"));
-  const retryRunning = await readSessions("manual-retry");
-  assert.ok(sockets.every(url => url === "ws://127.0.0.1:39875/ws"));
-  assert.deepEqual(errors, [], "Browser runtime errors");
-  const csp = await fetch(`${origin}/dash`).then(response => response.headers.get("content-security-policy"));
-  assert.ok(csp.includes("ws://127.0.0.1:39875"), "Installed host explicitly permits WebSocket traffic");
-  console.log(JSON.stringify({ connected: true, sockets: sockets.length, initialRunning, recoveredRunning, retryRunning, browserErrors: errors.length }));
-} finally { await browser.close(); }
+  const first = await open("ws://127.0.0.1:39875/ws", localOrigin);
+  const snapshot = await message(first, value => value.type === "dashboard:snapshot", "snapshot");
+  assert.ok(Array.isArray(snapshot.state.accounts));
+  const responseMs = await Promise.all(Array.from({ length: 6 }, () => request(first, "refreshView")));
+  await heartbeat(first.socket);
+  first.socket.send("{");
+  await message(first, value => value.type === "dashboard:notice" && value.level === "error", "invalid frame");
+  first.socket.terminate();
+  const recovered = await open("ws://127.0.0.1:39875/ws", localOrigin);
+  await message(recovered, value => value.type === "dashboard:snapshot", "reconnect snapshot");
+  await request(recovered, "refreshView");
+  await heartbeat(recovered.socket);
+  const configured = String(snapshot.state.settings.cloudflaredDomain || "").trim();
+  if (!configured) await assert.rejects(open("ws://127.0.0.1:39875/ws?peer=1", localOrigin));
+  console.log(JSON.stringify({ transport: "websocket only", local: { snapshot: "passed", concurrentRequests: responseMs.length, responseMs, heartbeat: "passed", invalidFrameRecovery: "passed", reconnect: "passed" }, crossPc: configured ? "configured" : "disabled without Cloudflared domain" }));
+} finally {
+  for (const socket of sockets) { socket.on("error", () => undefined); socket.readyState === WebSocket.OPEN ? socket.close() : socket.terminate(); }
+}

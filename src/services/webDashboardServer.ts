@@ -758,7 +758,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "POST" && path === "/api/peer-heartbeat") {
-      const domainConfigured = Boolean(this.settingsStore.getDashboardSettings().cloudflaredDomain?.trim());
+      const domainConfigured = Boolean(configuredCloudflaredOrigin);
       if (!domainConfigured || request.headers["x-codex-peer"] !== "1") {
         response.statusCode = 404;
         response.end("Not found");
@@ -1382,7 +1382,7 @@ export class WebDashboardServer implements vscode.Disposable {
   ): Promise<void> {
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const isPeer = requestUrl.searchParams.get("peer") === "1";
-    const domainConfigured = Boolean(this.settingsStore.getDashboardSettings().cloudflaredDomain?.trim());
+    const domainConfigured = Boolean(normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""));
     const localBrowser = !isPeer && isLocalWebDashboardRequest(request);
     const browserAuthorized = isPeer ? domainConfigured : await this.isAuthorized(request);
     const browserPassphraseFingerprint =
@@ -2269,14 +2269,12 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private connectPeerSocket(): void {
-    const configuredDomain = this.settingsStore.getDashboardSettings().cloudflaredDomain?.trim();
-    const alwaysOnline = getCodexManagerConfiguration().get<boolean>("webDashboardAlwaysOnlineEnabled", false);
-    const domain = configuredDomain || (alwaysOnline ? `http://127.0.0.1:${WEB_DASHBOARD_PORT}` : "");
+    const domain = normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "");
     if (this.peerStopped || !domain || this.peerSocket) return;
     let endpoint: URL;
     try {
       endpoint = new URL(domain);
-      endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
+      endpoint.protocol = "wss:";
       endpoint.pathname = "/ws";
       endpoint.search = new URLSearchParams({ peer: "1", deviceId: this.deviceId }).toString();
     } catch {
@@ -2286,6 +2284,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.peerSocket = socket;
     this.startPeerHttpHeartbeat();
     socket.addEventListener("open", () => {
+      if (this.peerSocket !== socket) return;
       void (async () => {
         await this.publishPeerSessions();
         for (const state of listCodexSessionLiveStates()) {
@@ -2299,6 +2298,7 @@ export class WebDashboardServer implements vscode.Disposable {
       this.peerPublishTimer = setInterval(() => void this.publishPeerSessions(), PEER_HEARTBEAT_INTERVAL_MS);
     });
     socket.addEventListener("message", (event) => {
+      if (this.peerSocket !== socket) return;
       void (async () => {
         try {
           const vault = JSON.parse(String(event.data)) as Partial<PeerVaultMessage>;
@@ -2359,7 +2359,8 @@ export class WebDashboardServer implements vscode.Disposable {
       })();
     });
     socket.addEventListener("close", () => {
-      if (this.peerSocket === socket) this.peerSocket = undefined;
+      if (this.peerSocket !== socket) return;
+      this.peerSocket = undefined;
       if (this.peerPublishTimer) clearInterval(this.peerPublishTimer);
       this.peerPublishTimer = undefined;
       this.markPeerPresenceUnknown("WebSocket heartbeat disconnected");
@@ -2412,7 +2413,8 @@ export class WebDashboardServer implements vscode.Disposable {
   private async publishPeerSessionsCore(): Promise<void> {
     const socket = this.peerSocket;
     if (!socket || socket.readyState !== UndiciWebSocket.OPEN) return;
-    socket.send(JSON.stringify((await this.readLocalPeerSessions()) satisfies PeerSessionMessage));
+    const sessions = await this.readLocalPeerSessions();
+    if (this.peerSocket === socket && socket.readyState === UndiciWebSocket.OPEN) socket.send(JSON.stringify(sessions));
   }
 
   private async publishPeerVault(force = false): Promise<boolean> {
@@ -2464,9 +2466,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async publishPeerHeartbeatHttpCore(): Promise<void> {
     if (this.peerSocket?.readyState === UndiciWebSocket.OPEN) return;
-    const configuredDomain = this.settingsStore.getDashboardSettings().cloudflaredDomain?.trim();
-    const alwaysOnline = getCodexManagerConfiguration().get<boolean>("webDashboardAlwaysOnlineEnabled", false);
-    const domain = configuredDomain || (alwaysOnline ? `http://127.0.0.1:${WEB_DASHBOARD_PORT}` : "");
+    const domain = normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "");
     if (!domain) {
       this.peerPresenceAuthoritative = false;
       this.encryptedSync?.setOnlineDeviceIds(undefined);
@@ -2488,6 +2488,7 @@ export class WebDashboardServer implements vscode.Disposable {
       if (aggregate.type !== "peer:aggregate" || !Array.isArray(aggregate.peers)) {
         throw new Error("Peer heartbeat returned an invalid response.");
       }
+      if (this.peerStopped || domain !== normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "")) return;
       this.peerSessions.clear();
       this.peerLastSeenAt.clear();
       this.peerLastSignedAt.clear();
@@ -2495,6 +2496,7 @@ export class WebDashboardServer implements vscode.Disposable {
       this.markPeerPresenceHealthy();
       this.publishRealtimeState();
     } catch (error) {
+      if (this.peerStopped || domain !== normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "")) return;
       this.markPeerPresenceUnknown(error instanceof Error ? error.message : "HTTP heartbeat unavailable");
     } finally {
       clearTimeout(timeout);

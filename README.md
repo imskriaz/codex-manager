@@ -145,7 +145,7 @@ Important combinations:
 - **Encrypted sync** uses authenticated peer WebSockets when available and VS Code Settings Sync as its durable cross-PC fallback. Use the same password value on each machine; the password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
 - **Always-online host** is optional and requires cross-PC claim checks before it can relay signed peer state.
-- **Cloudflared domain** points current-account ownership checks at the shared HTTPS dashboard host. Configure the same domain and password on each PC. The `cloudflared` process and DNS route are managed by you.
+- **Cloudflared domain** is the canonical HTTPS origin for cross-PC WebSocket connections. Cross-PC connections require a valid domain; local dashboard WebSockets work without one. The `cloudflared` process and DNS route are managed by you.
 
 ## Privacy and security
 
