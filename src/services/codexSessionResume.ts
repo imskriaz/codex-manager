@@ -24,7 +24,7 @@ import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
-import { createSharedInspection, runWithConcurrencyLimit } from "../utils/concurrency";
+import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -1265,9 +1265,18 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
     );
     signal?.throwIfAborted();
     if (!readOpenCodexSessionIds(false).includes(sessionId)) {
-      throw new Error(
-        "VS Code did not create a Codex conversation tab. Enable the official Codex extension and retry."
-      );
+      // VS Code can resolve openWith before the custom editor tab is published.
+      let changed: vscode.Disposable | undefined;
+      try {
+        await waitWithin(new Promise<void>((resolve) => {
+          const check = () => { if (readOpenCodexSessionIds(false).includes(sessionId)) resolve(); };
+          changed = vscode.window.tabGroups?.onDidChangeTabs?.(check);
+          check();
+        }), 5_000, "VS Code did not create a Codex conversation tab. Enable the official Codex extension and retry.", signal);
+      } finally {
+        changed?.dispose();
+      }
+      signal?.throwIfAborted();
     }
     if (focusWindow) {
       await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");

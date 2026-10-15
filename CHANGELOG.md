@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.24
+
+- Wait for VS Code to publish conversation tabs after `openWith`, with bounded timeout and cancellation, so Auto Resume can restore sessions during early window activation.
+
 ## 1.2.23
 
 - Suppress the generic cross-PC sync notice when no sync transport is available.

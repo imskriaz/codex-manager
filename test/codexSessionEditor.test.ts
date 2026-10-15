@@ -90,8 +90,70 @@ describe("Codex VS Code session editor", () => {
   });
 
   it("retains recovery when the command resolves without creating a tab", async () => {
+    vi.useFakeTimers();
+    const dispose = vi.fn();
+    Object.assign(vscode.window.tabGroups, { onDidChangeTabs: () => ({ dispose }) });
     vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
-    await expect(openCodexSessionInVsCode("01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3")).rejects.toThrow("did not create");
+    try {
+      const opening = expect(openCodexSessionInVsCode("01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3")).rejects.toThrow("did not create");
+      await vi.advanceTimersByTimeAsync(5_000);
+      await opening;
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits for a native tab published after openWith resolves", async () => {
+    vi.useFakeTimers();
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    const tabs = vscode.window.tabGroups.all[0]!.tabs as Array<{ input: unknown; isPreview?: boolean }>;
+    let changed: (() => void) | undefined;
+    const dispose = vi.fn();
+    Object.assign(vscode.window.tabGroups, { onDidChangeTabs: (listener: () => void) => { changed = listener; return { dispose }; } });
+    vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command, uri, viewType) => {
+      if (command === "vscode.openWith") {
+        setTimeout(() => { tabs.push({ input: { uri, viewType }, isPreview: false }); changed?.(); }, 1_000);
+      }
+      return undefined;
+    });
+    try {
+      const opening = openCodexSessionInVsCode(id, new AbortController().signal);
+      const duplicate = openCodexSessionInVsCode(id, new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(0);
+      changed?.();
+      expect(readOpenCodexSessionIds(false)).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(Promise.all([opening, duplicate])).resolves.toEqual([undefined, undefined]);
+      expect(vscode.commands.executeCommand).toHaveBeenCalledOnce();
+      expect(readOpenCodexSessionIds(false)).toEqual([id]);
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending tab registration and allows an immediate retry", async () => {
+    vi.useFakeTimers();
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    const dispose = vi.fn();
+    Object.assign(vscode.window.tabGroups, { onDidChangeTabs: () => ({ dispose }) });
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValueOnce(undefined);
+    const controller = new AbortController();
+    try {
+      const opening = expect(openCodexSessionInVsCode(id, controller.signal)).rejects.toThrow("account changed");
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort(new Error("account changed"));
+      await opening;
+      expect(dispose).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(openCodexSessionInVsCode(id)).resolves.toBeUndefined();
+      expect(readOpenCodexSessionIds(false)).toEqual([id]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not reopen an already restored native tab during automatic replay", async () => {
