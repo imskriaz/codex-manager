@@ -128,6 +128,7 @@ import { cancelCodexSessionAutoResume } from "../services/codexSessionAutoResume
 const CACHE_TTL_MS = 5000;
 /** 防抖延迟 (毫秒) */
 const DEBOUNCE_DELAY_MS = 100;
+const ACCOUNT_SWITCH_TOKEN_REFRESH_WAIT_MS = 1500;
 
 const INDEX_FILE = "accounts-index.json";
 const INDEX_TEMP_SUFFIX = ".tmp";
@@ -531,7 +532,6 @@ export class AccountsRepository {
         code: ErrorCode.AUTH_TOKEN_MISSING
       });
     }
-
     const remoteProfile = await fetchRemoteAccountProfile(tokens, {
       forceRefresh: true,
       preferredAccountName: account.accountName,
@@ -1028,6 +1028,7 @@ export class AccountsRepository {
         code: ErrorCode.AUTH_TOKEN_MISSING
       });
     }
+    const accountSnapshot = account;
 
     // 切号前按需刷新 token，避免写入过期 token 导致 codex 登录失败（对齐 cockpit switch_account_managed）
     let effectiveTokens = {
@@ -1038,7 +1039,34 @@ export class AccountsRepository {
     let backgroundRotation: (() => Promise<void>) | undefined;
     if (needsTokenRefresh(tokens, 0)) {
       if (!tokens.refreshToken) throw new Error(`The saved credentials for ${account.email} have expired. Reauthorize the account before switching.`);
-      const refreshed = await refreshTokens(tokens.refreshToken, tokens.idToken);
+      const refreshTask = refreshTokens(tokens.refreshToken, tokens.idToken);
+      let refreshed: CodexTokens;
+      try {
+        refreshed = await waitWithin(
+          refreshTask,
+          ACCOUNT_SWITCH_TOKEN_REFRESH_WAIT_MS,
+          "Account credentials are still refreshing."
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === "Account credentials are still refreshing.") {
+          void refreshTask
+            .then((lateTokens) =>
+              this.updateTokens(accountId, {
+                ...lateTokens,
+                accountId: lateTokens.accountId ?? accountSnapshot.accountId ?? tokens.accountId
+              })
+            )
+            .catch((lateError) => {
+              const message = `The credentials for ${accountSnapshot.email} could not be refreshed in the background: ${lateError instanceof Error ? lateError.message : String(lateError)}.`;
+              publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+              if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
+            });
+          throw new Error(
+            `The credentials for ${accountSnapshot.email} are still refreshing. The account was not switched; retry in a moment.`
+          );
+        }
+        throw error;
+      }
       effectiveTokens = { ...refreshed, accountId: refreshed.accountId ?? account.accountId ?? tokens.accountId };
       index = await this.readIndex();
       assertWriteAllowed(this.state);

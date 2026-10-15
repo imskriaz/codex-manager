@@ -4,7 +4,6 @@ import { promises as fs } from "fs";
 import * as fsSync from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
-import mammoth from "mammoth";
 import { readSafeFileSnapshot, SafeFileReadTimeoutError } from "../utils/safeFileReads";
 import type {
   DashboardWorkspaceEnvironment,
@@ -192,7 +191,8 @@ export async function readWorkspaceFile(
     const buffer = snapshot.buffer;
     const revision = workspaceFileRevision(buffer);
     if (preview.kind === "document") {
-      const converted = await mammoth.convertToHtml({ buffer });
+      const { default: converter } = await import("mammoth");
+      const converted = await converter.convertToHtml({ buffer });
       return { path: relative, content: converted.value, language: "html", kind: "document", mimeType: preview.mimeType, size: snapshot.size, revision };
     }
     return { path: relative, content: "", language: preview.kind, kind: preview.kind, mimeType: preview.mimeType, size: snapshot.size, revision, dataUrl: `data:${preview.mimeType};base64,${buffer.toString("base64")}` };

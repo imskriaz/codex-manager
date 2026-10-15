@@ -70,6 +70,16 @@ it("preserves the previous auth when required token refresh is offline", async (
   expect((await repo.getAccount(saved.id))?.isActive).toBe(false);
 });
 
+it("bounds a slow required refresh and leaves the account inactive", async () => {
+  const saved = await repo.upsertFromTokens(tokens(true));
+  refresh.mockReturnValue(new Promise(() => undefined));
+  const startedAt = Date.now();
+  await expect(repo.switchAccount(saved.id)).rejects.toThrow("still refreshing");
+  expect(Date.now() - startedAt).toBeLessThan(3_000);
+  expect(writeAuth).not.toHaveBeenCalled();
+  expect((await repo.getAccount(saved.id))?.isActive).toBe(false);
+});
+
 it("rejects expired credentials without a refresh token before writing auth", async () => {
   const expired = tokens(true);
   const saved = await repo.upsertFromTokens({ ...expired, refreshToken: undefined });

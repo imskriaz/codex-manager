@@ -11,7 +11,9 @@ describe("activation performance safeguards", () => {
     expect(startBody).not.toContain("workbench.userDataSync.actions.syncNow");
     expect(startBody).not.toContain("await this.syncNow");
     expect(workbench).toContain("encrypted sync startup failed; continuing locally");
-    expect(workbench).toContain("await Promise.all([encryptedSyncStartup, relayHandoff]);");
+    expect(workbench).toContain("void encryptedSyncStartup.catch(() => undefined);");
+    expect(workbench).toContain("new Promise<boolean>((resolve) => {");
+    expect(workbench).not.toContain("await Promise.all([encryptedSyncStartup, relayHandoff]);");
     expect(workbench).toContain("this.scheduleAlwaysOnlinePreparation();");
     expect(workbench).not.toContain('measureStep("alwaysOnlineServer.start"');
     expect(scheduler).not.toContain("allTimer = setInterval(runAllRefresh, allMinutes * 60 * 1000);\n      runAllRefresh();");

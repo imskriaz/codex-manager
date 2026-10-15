@@ -1,4 +1,4 @@
-import webPush from "web-push";
+import type webPush from "web-push";
 import type * as vscode from "vscode";
 import type { MirroredNotification } from "../utils/notificationMirror";
 
@@ -7,6 +7,14 @@ const MAX_SUBSCRIPTIONS = 64;
 const SUBSCRIPTION_TTL = 30 * 24 * 60 * 60_000;
 type Subscription = webPush.PushSubscription & { owner: string; origin: string; password?: string; expiresAt: number };
 type PushState = { keys: { publicKey: string; privateKey: string }; subscriptions: Subscription[] };
+
+let webPushModule: Promise<typeof import("web-push")> | undefined;
+function loadWebPush(): Promise<typeof import("web-push")> {
+  return (webPushModule ??= import("web-push").then((module) => {
+    const runtime = module as unknown as { default?: typeof import("web-push") };
+    return runtime.default ?? (module as unknown as typeof import("web-push"));
+  }));
+}
 
 /** Restrict outbound requests to browser push services, never arbitrary dashboard-supplied URLs. */
 export function validateBrowserPushSubscription(value: unknown): webPush.PushSubscription {
@@ -54,7 +62,7 @@ export class BrowserPushService {
 
   private async read(): Promise<PushState> {
     const raw = await this.secrets.get(STORAGE_KEY);
-    if (!raw) return { keys: webPush.generateVAPIDKeys(), subscriptions: [] };
+    if (!raw) return { keys: (await loadWebPush()).generateVAPIDKeys(), subscriptions: [] };
     const state = JSON.parse(raw) as PushState;
     if (!state.keys?.publicKey || !state.keys.privateKey || !Array.isArray(state.subscriptions))
       throw new Error("Push notification storage could not be read. Retry after Secret Storage is available.");
@@ -152,6 +160,7 @@ export class BrowserPushService {
         await this.mutations.catch(() => undefined);
         const state = await this.read();
         const password = await this.password();
+        const webPush = await loadWebPush();
         const expired = new Set<string>();
         const payload = JSON.stringify({
           title: "Codex Manager",
@@ -209,6 +218,7 @@ export class BrowserPushService {
       await this.mutations.catch(() => undefined);
       const state = await this.read();
       const password = await this.password();
+      const webPush = await loadWebPush();
       const subscriptions = state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).filter(subscription =>
         subscription.expiresAt > Date.now() && (subscription.password === undefined || subscription.password === password));
       const result = { subscriptions: subscriptions.length, accepted: 0, failed: 0 };

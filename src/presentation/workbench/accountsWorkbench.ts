@@ -165,19 +165,35 @@ export class AccountsWorkbench {
     const relayHandoff = measureStep("alwaysOnlineServer.prepare", async () => {
       await this.alwaysOnlineServer.prepareForVscodeSession();
     });
-    // Vault recovery and the previous relay's shutdown use independent state.
-    // Start both promptly, but finish the handoff before binding the dashboard.
-    await Promise.all([encryptedSyncStartup, relayHandoff]);
-    await measureStep("webDashboard.start", async () => {
-      try {
-        await this.webDashboard.start();
-      } catch (error) {
-        console.warn("[codexManager] Web Dashboard startup failed", error);
-        void vscode.window.showWarningMessage(
-          `Web Dashboard could not start on port 39875: ${error instanceof Error ? error.message : String(error)}`
-        );
+    // Encrypted vault recovery is optional for local startup. The dashboard
+    // can serve the local index while it finishes in the background.
+    void encryptedSyncStartup.catch(() => undefined);
+
+    // A detached relay may still own the dashboard port. Give its handoff a
+    // short head start, then let the normal dashboard come up and retry after
+    // the handoff settles instead of holding extension activation for seconds.
+    let relayWaitTimer: NodeJS.Timeout | undefined;
+    const relayCompleted = relayHandoff.then(
+      () => true,
+      (error) => {
+        console.warn("[codexManager] previous relay handoff failed", error);
+        return true;
       }
-    });
+    );
+    const relayReady = await Promise.race([
+      relayCompleted,
+      new Promise<boolean>((resolve) => {
+        relayWaitTimer = setTimeout(() => resolve(false), 500);
+        relayWaitTimer.unref?.();
+      })
+    ]);
+    if (relayWaitTimer) clearTimeout(relayWaitTimer);
+    await measureStep("webDashboard.start", () => this.startWebDashboard());
+    if (!relayReady) {
+      void relayCompleted.then(() => this.startWebDashboard()).catch((error) => {
+        console.warn("[codexManager] delayed Web Dashboard startup failed", error);
+      });
+    }
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("codexManager.privacyMode")) {
@@ -308,6 +324,17 @@ export class AccountsWorkbench {
 
   showActivationFailure(error: unknown): void {
     this.statusBar.showActivationFailure(error instanceof Error ? error.message : String(error));
+  }
+
+  private async startWebDashboard(): Promise<void> {
+    try {
+      await this.webDashboard.start();
+    } catch (error) {
+      console.warn("[codexManager] Web Dashboard startup failed", error);
+      void vscode.window.showWarningMessage(
+        `Web Dashboard could not start on port 39875: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   shutdown(): void {

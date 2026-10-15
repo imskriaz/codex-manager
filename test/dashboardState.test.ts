@@ -39,6 +39,33 @@ describe("sortDashboardAccounts", () => {
 });
 
 describe("buildDashboardState token recovery", () => {
+  it("does not hold the first dashboard snapshot on a slow token refresh", async () => {
+    needsTokenRefreshMock.mockReturnValue(true);
+    let finish!: (value: { idToken: string; accessToken: string; refreshToken: string }) => void;
+    refreshTokensMock.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const account = { id: "slow-refresh", email: "slow@example.com", createdAt: 1, updatedAt: 1 };
+    const repo = {
+      getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }),
+      listAccounts: vi.fn().mockResolvedValue([account]),
+      getTokens: vi.fn().mockResolvedValue({ idToken: "id", accessToken: "expired", refreshToken: "refresh" }),
+      updateTokens: vi.fn().mockResolvedValue(account)
+    };
+    const settingsStore = {
+      resolveLanguage: () => "en",
+      getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" })
+    };
+
+    const snapshot = buildDashboardState(repo as never, settingsStore as never, "logo", {
+      announcements: [],
+      unreadIds: []
+    });
+    await expect(snapshot).resolves.toMatchObject({ accounts: [{ id: "slow-refresh" }] });
+    expect(refreshTokensMock).toHaveBeenCalledOnce();
+
+    finish({ idToken: "id-2", accessToken: "access-2", refreshToken: "refresh-2" });
+    await vi.waitFor(() => expect(repo.updateTokens).toHaveBeenCalledOnce());
+  });
+
   it("isolates a credential read failure and recovers that account on the next snapshot", async () => {
     const accounts = ["storage-unavailable", "storage-healthy"].map((id) => ({ id, email: `${id}@example.com`, createdAt: 1, updatedAt: 1 }));
     const tokens = { idToken: "id", accessToken: "valid", refreshToken: "refresh" };

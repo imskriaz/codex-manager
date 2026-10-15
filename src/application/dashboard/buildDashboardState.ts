@@ -45,11 +45,13 @@ import {
   getSyncedAccountLeases,
   isEncryptedSyncRegistryOverrideEnabled
 } from "../../services/encryptedSync";
+import { waitWithin } from "../../utils/concurrency";
 
 // A dashboard snapshot can be rebuilt several times while an expired account
 // remains on screen. Suppress duplicate attempts briefly, but do not let a
 // transient provider failure permanently disable recovery.
 const DASHBOARD_REFRESH_RETRY_COOLDOWN_MS = 60_000;
+const DASHBOARD_TOKEN_REFRESH_WAIT_MS = 500;
 const dashboardRefreshAttempts = new Map<string, { refreshToken: string; attemptedAt: number }>();
 
 export async function buildDashboardState(
@@ -83,20 +85,23 @@ export async function buildDashboardState(
     accounts.map(async (account) => {
       let tokens: CodexTokens | undefined;
       try {
-        tokens = await repo.getTokens(account.id, { bypassCache: true });
+        // Dashboard rendering is read-heavy. The scheduler and explicit token
+        // actions invalidate this cache when credentials actually change; do
+        // not make every snapshot wait on Secret Storage.
+        tokens = await repo.getTokens(account.id);
       } catch (error) {
         markTokenAutomationRefreshFailure(account.id, `Stored credentials could not be read: ${toDashboardRefreshFailureMessage(error)}`);
         return [account.id, undefined] as const;
       }
       const tokenNeedsRefresh = Boolean(tokens && needsTokenRefresh(tokens, 0));
-      const refreshToken = tokens?.refreshToken?.trim();
       if (!tokenNeedsRefresh) {
         // A successful refresh can happen in another window or through the
         // manual action. Clear local failure state once the access token is
         // valid again so stale "Refresh failed" health cannot linger.
         dashboardRefreshAttempts.delete(account.id);
         clearTokenAutomationError(account.id);
-      } else if (tokens && refreshToken) {
+      } else if (tokens?.refreshToken?.trim()) {
+        const refreshToken = tokens.refreshToken.trim();
         const previousAttempt = dashboardRefreshAttempts.get(account.id);
         const canAttempt =
           !previousAttempt ||
@@ -104,18 +109,16 @@ export async function buildDashboardState(
           Date.now() - previousAttempt.attemptedAt >= DASHBOARD_REFRESH_RETRY_COOLDOWN_MS;
         if (canAttempt) {
           dashboardRefreshAttempts.set(account.id, { refreshToken, attemptedAt: Date.now() });
+          const refreshTask = refreshDashboardAccountToken(repo, account, refreshToken, tokens.idToken, tokens.accountId);
+          void refreshTask.catch(() => undefined);
           try {
-            const refreshed = await refreshTokens(refreshToken, tokens.idToken);
-            tokens = {
-              ...refreshed,
-              accountId: refreshed.accountId ?? account.accountId ?? tokens.accountId
-            };
-            const updatedAccount = await repo.updateTokens(account.id, tokens);
-            Object.assign(account, updatedAccount);
-            dashboardRefreshAttempts.delete(account.id);
-            markTokenAutomationRefreshSuccess(account.id);
+            // Keep the first render responsive. The refresh promise continues
+            // in the background and invalidates the repository cache on success.
+            tokens = await waitWithin(refreshTask, DASHBOARD_TOKEN_REFRESH_WAIT_MS, "Token refresh is still loading");
           } catch (error) {
-            markTokenAutomationRefreshFailure(account.id, toDashboardRefreshFailureMessage(error));
+            if (error instanceof Error && error.message === "Token refresh is still loading") {
+              markTokenAutomationRefreshFailure(account.id, error.message);
+            }
           }
         }
       }
@@ -181,6 +184,30 @@ export async function buildDashboardState(
     ),
     connectedPeers
   };
+}
+
+async function refreshDashboardAccountToken(
+  repo: AccountsRepository,
+  account: CodexManagerAccountRecord,
+  refreshToken: string,
+  idToken?: string,
+  existingAccountId?: string
+): Promise<CodexTokens> {
+  try {
+    const refreshed = await refreshTokens(refreshToken, idToken);
+    const tokens = {
+      ...refreshed,
+      accountId: refreshed.accountId ?? account.accountId ?? existingAccountId
+    };
+    const updatedAccount = await repo.updateTokens(account.id, tokens);
+    Object.assign(account, updatedAccount);
+    dashboardRefreshAttempts.delete(account.id);
+    markTokenAutomationRefreshSuccess(account.id);
+    return tokens;
+  } catch (error) {
+    markTokenAutomationRefreshFailure(account.id, toDashboardRefreshFailureMessage(error));
+    throw error;
+  }
 }
 
 function toDashboardRefreshFailureMessage(error: unknown): string {
