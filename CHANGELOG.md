@@ -1,4 +1,8 @@
 # Changelog
+## 1.2.24
+
+- Save eligible open Codex tabs without scanning unrelated running sessions. Keep automatic save failures in diagnostics and retry quietly without desktop or browser push notifications.
+
 ## 1.2.22
 
 - Fix overview quota percentages on compact mobile panels and tighten narrow-screen spacing for controls, metrics, and account cards.

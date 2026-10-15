@@ -13,6 +13,7 @@ vi.mock("child_process", async (original) => {
 });
 import { filterAutoResumeGoalSessionIds, readAutoResumeCodexSessionIds as selectSessions } from "../src/services/codexSessionAutoResumeSelection";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
+import * as sessionEditor from "../src/services/codexSessionResume";
 
 const roots: string[] = [];
 const readAutoResumeCodexSessionIds = (...args: Parameters<typeof selectSessions>) =>
@@ -49,6 +50,17 @@ function goals(home: string, statuses: Array<string | null>) {
   db.close();
 }
 describe("auto resume selection", () => {
+  it("saves only eligible open parents when running-session discovery is unavailable", async () => {
+    const home = await fixture();
+    goals(home, ["active", "active", "complete"]);
+    const running = vi.spyOn(sessionEditor, "readRunningCodexSessionIds")
+      .mockRejectedValue(new Error("Running session discovery unavailable"));
+    try {
+      expect(await selectSessions(home, undefined, ids, undefined, "open", true)).toEqual([ids[0]]);
+      expect(running).not.toHaveBeenCalled();
+    } finally { running.mockRestore(); }
+  });
+
   it("goal-only filters capture and open tabs to active parent goals", async () => {
     const home = await fixture();
     goals(home, ["active", "active", "complete"]);

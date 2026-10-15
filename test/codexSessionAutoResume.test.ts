@@ -101,6 +101,67 @@ describe("durable open conversation recovery", () => {
     } finally { tracker.dispose(); vi.useRealTimers(); }
   });
 
+  it("captures open parents without discovering unrelated running sessions", async () => {
+    const state = createContext();
+    const selection = vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds")
+      .mockImplementation(async (_home, _workspaces, _open, _signal, mode) => {
+        if (mode !== "open") throw new Error("Running session discovery unavailable");
+        return [first];
+      });
+    try {
+      await expect(persistOpenCodexSessions(state.context)).resolves.toEqual([first]);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+      expect(selection).toHaveBeenCalledWith(undefined, undefined, undefined, expect.any(AbortSignal), "open");
+    } finally { selection.mockRestore(); }
+  });
+
+  it.each(["metadata", "goals", "storage", "timeout"])(
+    "quietly retains saved tabs and automatically retries a background %s failure", async (failure) => {
+      vi.useFakeTimers();
+      const state = createContext();
+      state.set([first], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+      const detail = new Error(`${failure} unavailable`);
+      const selection = vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds").mockResolvedValue([second]);
+      const open = vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([second]);
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const filter = vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds);
+      if (failure === "metadata") selection.mockRejectedValueOnce(detail);
+      if (failure === "goals") filter.mockRejectedValueOnce(detail);
+      if (failure === "storage") state.context.workspaceState.update.mockRejectedValueOnce(detail);
+      let captureSignal: AbortSignal | undefined;
+      let finish: ((ids: string[]) => void) | undefined;
+      if (failure === "timeout") selection.mockImplementationOnce((_home, _workspaces, _open, signal) => {
+        captureSignal = signal;
+        return new Promise(resolve => { finish = resolve; });
+      });
+      vi.mocked(vscode.window.showWarningMessage).mockClear();
+      vi.mocked(vscode.window.showErrorMessage).mockClear();
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+      const tracker = registerCodexSessionAutoResumeTracking(state.context);
+      try {
+        await vi.advanceTimersByTimeAsync(failure === "timeout" ? 30_000 : 0);
+        expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+        expect(warning).toHaveBeenCalledWith("[codexManager] open Codex tabs could not be saved for auto resume", expect.any(Error));
+        if (failure === "timeout") {
+          expect(captureSignal?.aborted).toBe(true);
+          finish?.([first]);
+          await vi.advanceTimersByTimeAsync(0);
+        }
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([second]);
+        expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+        expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+        expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+      } finally {
+        tracker.dispose();
+        selection.mockRestore();
+        open.mockRestore();
+        warning.mockRestore();
+        vi.useRealTimers();
+      }
+    }
+  );
+
   it("filters saved recovery before closing and never closes when no active goal remains", async () => {
     vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds).mockImplementation(async (ids) => ids.filter((id) => id === first));
     const state = createContext([first, second]);

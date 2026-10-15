@@ -250,7 +250,7 @@ export type AutoResumeResult = {
 export function persistOpenCodexSessions(
   context: AutoResumeContext,
   readOpenParents: (signal?: AbortSignal) => Promise<string[]> = (signal) =>
-    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal, "running"),
+    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal, "open"),
   signal?: AbortSignal
 ): Promise<string[]> {
   return serialize(context, "track", async () => {
@@ -314,7 +314,6 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   let dirty = false;
   let running = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let reported = false;
   let savedSignature: string | undefined;
   const capture = () => {
     if (controller.signal.aborted) return;
@@ -335,16 +334,9 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
               await persistOpenCodexSessions(context, undefined, controller.signal);
               savedSignature = signature;
             }
-            reported = false;
           } catch (error) {
             if (controller.signal.aborted) break;
             console.warn("[codexManager] open Codex tabs could not be saved for auto resume", error);
-            if (!reported) {
-              reported = true;
-              void vscode.window.showWarningMessage(
-                `Auto Resume could not save open Codex tabs: ${error instanceof Error ? error.message : String(error)}. It will retry automatically.`
-              );
-            }
             // One bounded retry timer also handles metadata arriving after the tab event.
             dirty = false;
             break;
