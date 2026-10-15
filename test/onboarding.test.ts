@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
+import { buildXoomDonationUrl } from "../webview-src/dashboard/donationDetails";
 
 describe("first-run onboarding", () => {
   it("keeps agreement, sync, import, and Cloudflare in one modal sequence", () => {
@@ -15,8 +16,17 @@ describe("first-run onboarding", () => {
     expect(modal).toContain('type="password"');
     expect(modal).toContain('password: "Password"');
     expect(modal).not.toContain("Passphrase");
-    expect(modal).toContain("PayPal or Wise");
-    expect(modal).toContain("skriaz@live.com");
+    expect(modal).not.toContain("PayPal or Wise");
+    expect(modal).not.toContain("skriaz@live.com");
+    const donation = readFileSync("webview-src/dashboard/donationDetails.tsx", "utf8");
+    expect(donation).toContain("Donation amount (USD)");
+    expect(donation).toContain("countryCode=BD&destinationCurrencyCode=BDT");
+    expect(donation).toContain("Use your PayPal account to sign in to Xoom");
+    expect(donation).toContain("Riaz");
+    expect(donation).toContain("01628301525");
+    const about = readFileSync("webview-src/dashboard/aboutModal.tsx", "utf8");
+    expect(about).toContain('title: "Donate"');
+    expect(about).toContain("DonationDetails");
   });
 
   it("checks the current auth identity before offering Import email", () => {
@@ -27,6 +37,14 @@ describe("first-run onboarding", () => {
     expect(modalSource()).toContain("${copy.import} ${props.currentAuthEmail}");
     expect(actionHandlers).toContain('case "inspectCurrentAuth"');
     expect(repository).toContain("alreadyAdded: accounts.some");
+  });
+
+  it("adds a valid USD amount to the Xoom transfer link", () => {
+    const url = new URL(buildXoomDonationUrl("12.50"));
+    expect(url.searchParams.get("countryCode")).toBe("BD");
+    expect(url.searchParams.get("destinationCurrencyCode")).toBe("BDT");
+    expect(url.searchParams.get("sendAmount")).toBe("12.50");
+    expect(new URL(buildXoomDonationUrl("0")).searchParams.get("sendAmount")).toBeNull();
   });
 
   it("persists completion in extension state and does not wait for initial sync", () => {

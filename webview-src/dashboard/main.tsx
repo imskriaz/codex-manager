@@ -2122,18 +2122,15 @@ function App() {
                 </span>
               </button>
               <button
-                id="syncNowButton"
+                id="donateButton"
                 class="settings-btn refresh-view-btn action-btn icon-only"
                 type="button"
-                title="Sync now"
-                aria-label="Sync now"
-                disabled={hasGlobalPendingAction || syncPending}
-                aria-busy={syncPending}
-                onClick={handleSyncNow}
+                title="Donate"
+                aria-label="Donate"
+                onClick={() => setAboutOpen(true)}
               >
                 <span class="button-face">
-                  {syncPending ? <span class="button-spinner" aria-hidden="true"></span> : null}
-                  <span class="button-label">↻</span>
+                  <span class="button-label">♡</span>
                 </span>
               </button>
               <button
@@ -2567,6 +2564,7 @@ function App() {
           setOnboardingStep("cloudflare");
         }}
         onContinueCloudflare={continueOnboardingCloudflare}
+        onOpenExternal={(url) => sendAction("openExternalUrl", undefined, { url })}
         onFinish={finishOnboarding}
       />
 

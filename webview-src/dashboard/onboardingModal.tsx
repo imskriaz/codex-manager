@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { DashboardSettings, DashboardState } from "../../src/domain/dashboard/types";
 import { ModalShell } from "./components";
+import { DonationDetails } from "./donationDetails";
 
 export type OnboardingStep = "agreement" | "setup" | "import" | "cloudflare" | "donation";
 
@@ -20,6 +21,7 @@ export function OnboardingModal(props: {
   onImportCurrent: () => void;
   onContinueImport: () => void;
   onContinueCloudflare: (values: { cloudflaredDomain: string; dashboardEnabled: boolean }) => void;
+  onOpenExternal: (url: string) => void;
   onFinish: () => void;
 }) {
   const [syncEnabled, setSyncEnabled] = useState(props.settings.encryptedSyncEnabled);
@@ -352,12 +354,7 @@ export function OnboardingModal(props: {
             If this project helps your work, a donation is deeply appreciated and helps keep development and maintenance
             going.
           </p>
-          <div class="onboarding-donation-card">
-            <div>
-              <span>PayPal or Wise</span>
-              <strong class="is-mono">skriaz@live.com</strong>
-            </div>
-          </div>
+          <DonationDetails onOpenExternal={props.onOpenExternal} />
           <div class="modal-actions">
             <button class="modal-primary-btn" type="button" disabled={props.busy} onClick={props.onFinish}>
               {props.busy ? "Saving…" : "Finish setup"} <span aria-hidden="true">✓</span>

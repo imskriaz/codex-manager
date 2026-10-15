@@ -19,6 +19,10 @@ It is an independent, community project. It is not an official OpenAI product.
 
 Use the dashboard settings for feature descriptions and configuration defaults.
 
+## Support development
+
+To donate, open [Xoom for Bangladesh (BDT)](https://www.xoom.com/en-us/usd/send-money/transfer?countryCode=BD&destinationCurrencyCode=BDT), sign in with your PayPal account, enter your donation amount, choose **Mobile Wallet → bKash**, and send to **Riaz** at `01628301525`. Review Xoom’s fee and exchange rate before confirming.
+
 ## See it in action
 
 The screenshots below use representative, privacy-safe data so you can preview the main surfaces before installing.
