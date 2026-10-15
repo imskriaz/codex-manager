@@ -18,8 +18,16 @@ import {
 import { reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
+import { isCodexSessionRunning } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
+  it("blocks unverified session actions and labels the status without claiming readiness", () => {
+    expect(isCodexSessionRunning({ status: "unknown" })).toBe(true);
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain('"Status unavailable"');
+    expect(source).toContain("Running state unavailable.");
+    expect(source).toContain("Your draft is saved; refresh before sending.");
+  });
   it("keeps a completed live turn idle across a stale session-list refresh", () => {
     const sessions = [{ id: "s", title: "Task", status: "running" as const }];
     const live = { [JSON.stringify(["local", "s"])]: { sessionId: "s", streamId: "stream", sequence: 4, updatedAt: 4, status: "completed" as const, messages: [] } };

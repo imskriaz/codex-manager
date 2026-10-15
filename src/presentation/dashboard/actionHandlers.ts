@@ -992,6 +992,8 @@ async function handleExportBackup(repo: AccountsRepository) {
     Object.entries(currentSettings).filter(
       ([key, value]) =>
         key !== "resolvedCodexAppPath" &&
+        key !== "persistentLoggingEnabled" &&
+        key !== "persistentLogRetentionDays" &&
         key !== "encryptedSyncEnabled" &&
         key !== "encryptedSyncClaimAllAccountsEnabled" &&
         key !== "encryptedSyncVsCodeHeartbeatMinutes" &&
@@ -1743,7 +1745,7 @@ async function handleListCodexCliSessions(
       String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? ""))
     ),
     cliComposerConfig,
-    notice: getCodexSessionReadNotice()
+    notice: getCodexSessionReadNotice(localSessions)
   };
 }
 
@@ -1799,7 +1801,7 @@ async function handleGetCodexCliSessionMessages(sessionId: string | undefined, r
   }
   if (cliSession.archived) throw new Error("Archived sessions cannot be opened. Restore the session first.");
   const cliSessionMessages = await readCodexCliSessionMessages(sessionId);
-  return { cliSession, cliSessionMessages, cliSessionLive: getCodexSessionLiveState(sessionId) };
+  return { cliSession, cliSessionMessages, cliSessionLive: getCodexSessionLiveState(sessionId), notice: getCodexSessionReadNotice([cliSession]) };
 }
 
 async function canonicalProjectPath(projectPath: string): Promise<string> {
@@ -1990,6 +1992,7 @@ async function findCliSession(sessionId: string) {
 async function ensureCliSessionIsActive(sessionId: string) {
   const session = await findCliSession(sessionId);
   if (session.archived) throw new Error("Restore this archived session before opening or continuing it.");
+  if (session.status === "unknown") throw new Error(`Session running state could not be verified. Refresh before retrying. ${session.statusError ?? ""}`.trim());
   return session;
 }
 

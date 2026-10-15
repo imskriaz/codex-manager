@@ -98,6 +98,15 @@ describe("manual action scheduling", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("reports a full inspection queue and frees capacity after cancellation", async () => {
+    const controller = new AbortController();
+    const pending = Array.from({ length: 256 }, (_, index) => createSharedInspection(`queue-${index}`, () => new Promise(() => undefined), controller.signal).catch(error => error));
+    await expect(createSharedInspection("queue-overflow", async () => "unused")).rejects.toThrow("Session inspection is busy");
+    controller.abort(new Error("queue cancelled"));
+    expect((await Promise.all(pending)).every(error => error.message === "queue cancelled")).toBe(true);
+    await expect(createSharedInspection("queue-overflow", async () => "ready")).resolves.toBe("ready");
+  });
+
   it("preserves Command Palette failures during overlapping dashboard requests and restores notifications", async () => {
     const original = vscode.window.showErrorMessage;
     vi.mocked(original).mockClear();

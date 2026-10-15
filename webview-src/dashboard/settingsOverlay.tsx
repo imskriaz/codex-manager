@@ -40,7 +40,7 @@ type SettingsTabId = "general" | "automation" | "data";
 
 export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingKey): boolean {
   // CLI discovery starts after the host commits the setting.
-  return key !== "cliIntegrationEnabled";
+  return key !== "cliIntegrationEnabled" && key !== "persistentLoggingEnabled" && key !== "persistentLogRetentionDays";
 }
 
 export function SettingsOverlay(props: {
@@ -94,6 +94,7 @@ export function SettingsOverlay(props: {
   const passwordCopy = resolvePasswordCopy(props.lang, !props.encryptedSyncNeedsConfiguration);
   const navigationCopy = resolveSettingsNavigationCopy(props.lang);
   const tabs = navigationCopy.tabs;
+  const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
 
   return (
     <div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open} onClick={props.onClose}>
@@ -813,6 +814,24 @@ export function SettingsOverlay(props: {
                   <div class="settings-note">{transferCopy.note}</div>
                 </div>
               </div>
+              <SettingsToggleBlock
+                title="Enable file logging"
+                sub="Save diagnostic logs on this PC. Off by default. Sensitive account details are redacted."
+                enabled={props.settings.persistentLoggingEnabled === true}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("persistentLoggingEnabled", enabled)}
+              >
+                <SettingsDiscreteSlider
+                  value={logRetentionPreview ?? props.settings.persistentLogRetentionDays ?? 3}
+                  values={Array.from({ length: 30 }, (_, index) => index + 1)}
+                  accent="violet"
+                  scaleValues={[1, 7, 14, 21, 30]}
+                  valueLabel={(days) => `${days} day${days === 1 ? "" : "s"}`}
+                  description={() => "Keep diagnostic log files"}
+                  onPreview={setLogRetentionPreview}
+                  onCommit={(days) => { setLogRetentionPreview(undefined); patchAndSend("persistentLogRetentionDays", days); }}
+                />
+              </SettingsToggleBlock>
             </div>
           </div>
         </div>

@@ -26,12 +26,13 @@ import { readDashboardDailyUsageCache, saveDashboardUsageHistory } from "../../s
 import { handleDashboardSettingUpdate, pickDashboardCodexAppPath, pickDashboardCodexCliPath } from "./settings";
 import { scheduleExtensionHostReload } from "../../application/accounts/switchEffects";
 import { resolveOnboardingCompleted } from "../../services/onboarding";
-import { readCodexCliSessions, resolveCodexHome } from "../../services/codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessions, resolveCodexHome } from "../../services/codexSessionResume";
 import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindings";
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "../../services/dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
 import { listPendingCodexAppServerPrompts } from "../../services/codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "../../services/codexSessionLive";
+import { recordPersistentEvent } from "../../utils/persistentLog";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
 const REOPEN_AFTER_HOST_RESTART_KEY = "codexManager.reopenDashboardAfterHostRestart";
@@ -104,6 +105,7 @@ class DashboardPanelController {
   private cliSessionReconcileTimer: NodeJS.Timeout | undefined;
   private cliSessionRealtimeRevision = Date.now();
   private cliSessionPublish: Promise<void> | undefined;
+  private cliSessionRefreshAfter = 0;
   private lastPublishedStateSignature: string | undefined;
   private closingForRestart = false;
 
@@ -489,30 +491,33 @@ class DashboardPanelController {
     this.cliSessionChangeTimer = undefined;
     if (this.cliSessionReconcileTimer) clearInterval(this.cliSessionReconcileTimer);
     this.cliSessionReconcileTimer = undefined;
-    this.cliSessionPublish = undefined;
   }
 
   private publishCliSessionsRealtime(): Promise<void> {
     if (this.cliSessionPublish) return this.cliSessionPublish;
+    const panel = this.panel;
+    if (Date.now() < this.cliSessionRefreshAfter || !panel || panel.visible === false || !this.webviewReady ||
+      !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return Promise.resolve();
+    let delayMs = 2_000;
     this.cliSessionPublish = (async () => {
-      if (
-        !this.panel || this.panel.visible === false ||
-        !this.webviewReady ||
-        !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)
-      )
-        return;
       const sessions = await readCodexCliSessions();
+      if (sessions.some(session => session.status === "unknown")) delayMs = 30_000;
       const stabilized = await stabilizeSessionProjectPaths(this.context, sessions);
+      if (this.panel !== panel || panel.visible === false || !this.webviewReady ||
+        !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
       await this.postActionResult(`realtime-cli-${Date.now()}`, "listCodexCliSessions", "completed", undefined, {
         cliSessions: stabilized,
-        realtimeRevision: ++this.cliSessionRealtimeRevision
+        realtimeRevision: ++this.cliSessionRealtimeRevision,
+        notice: getCodexSessionReadNotice(stabilized)
       });
     })()
       .catch((error: unknown) => {
+        delayMs = 30_000;
         const detail = error instanceof Error ? error.message : String(error);
-        return this.postNotice("warning", `Realtime sessions could not refresh: ${detail}`);
+        recordPersistentEvent("warning", "session-list", "Background session refresh delayed; retrying quietly", { reason: detail });
       })
       .finally(() => {
+        this.cliSessionRefreshAfter = Date.now() + delayMs;
         this.cliSessionPublish = undefined;
       });
     return this.cliSessionPublish;

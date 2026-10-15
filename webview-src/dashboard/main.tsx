@@ -705,7 +705,8 @@ function App() {
             // not disappear while sessions update in the background.
             setCliComposerConfig(message.payload?.cliComposerConfig ?? cliComposerConfig);
             void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig });
-            setCliSessionsError(undefined);
+            if (explicitRefresh || !message.payload?.cliSessions?.some(session => session.status === "unknown"))
+              setCliSessionsError(message.payload?.cliSessions?.some(session => session.status === "unknown") ? message.payload?.notice?.message ?? "Session running state could not be verified. Refresh before sending." : undefined);
             const routeId = getCliSessionIdFromPath(window.location.pathname);
             if (routeId) {
               const routeDevice = new URLSearchParams(window.location.search).get("device");

@@ -24,7 +24,7 @@ import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
-import { createSharedInspection } from "../utils/concurrency";
+import { createSharedInspection, runWithConcurrencyLimit } from "../utils/concurrency";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -154,7 +154,12 @@ async function readLocalSessionList(codexHome: string, limit: number): Promise<D
   const records = new Map(state.map((record) => [record.id, record]));
   const entries = new Map(index.map((entry) => [entry.id, entry]));
   for (const record of state) if (!entries.has(record.id)) entries.set(record.id, { id: record.id, thread_name: record.title, updated_at: record.updatedAt });
-  const runningIds = new Set(await readRunningCodexSessionIds(codexHome));
+  let statusError: string | undefined;
+  const runningIds = new Set(await readRunningCodexSessionIds(codexHome).catch((error: unknown) => {
+    statusError = (error instanceof Error ? error.message : String(error)) || "Session inspection failed.";
+    recordPersistentEvent("warning", "session-list", "Running state unavailable; showing local history", { reason: statusError });
+    return [];
+  }));
   for (const id of runningIds) if (!entries.has(id)) entries.set(id, { id });
   if (!entries.size) return [];
   const archivedIds = await readArchivedSessionIds(codexHome);
@@ -165,11 +170,14 @@ async function readLocalSessionList(codexHome: string, limit: number): Promise<D
   const visibleEntries = [...ordered.filter((entry) => !child(entry) && !archivedIds.has(entry.id)).filter((entry, index) => runningIds.has(entry.id) || index < cappedLimit), ...ordered.filter((entry) => !child(entry) && archivedIds.has(entry.id)).slice(0, cappedLimit), ...ordered.filter(child).filter((entry, index) => runningIds.has(entry.id) || index < cappedLimit)];
   const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(visibleEntries.map((entry) => entry.id)));
   const goals = await readCodexSessionGoals(codexHome);
-  return Promise.all(visibleEntries.map(async (entry) => {
-    const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id));
+  const summaries: DashboardCliSessionSummary[] = [];
+  await runWithConcurrencyLimit(visibleEntries, 32, async (entry, index) => {
+    const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id),
+      statusError ? { status: "unknown", statusError } : transcriptPaths.has(entry.id) || runningIds.has(entry.id) ? { status: runningIds.has(entry.id) ? "running" : "idle" } : undefined);
     const record = records.get(entry.id);
-    return { ...summary, ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
-  }));
+    summaries[index] = { ...summary, ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
+  });
+  return summaries;
 }
 
 type StateSessionRecord = { id: string; title?: string; updatedAt?: string; archived: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
@@ -268,17 +276,19 @@ async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSi
   for (const record of stateRecords) if (record.archived) archivedIds.add(record.id);
   const archiveRoot = path.join(codexHome, "archived_sessions") + path.sep;
   for (const [id, transcript] of transcriptPaths) if (transcript.startsWith(archiveRoot)) archivedIds.add(id);
-  const running: string[] = [];
-  for (const sessionId of sessionIds) {
+  const running = new Set<string>();
+  // Native IPC may wait three seconds for an unloaded thread. Overlap bounded
+  // reads so historical sessions cannot each consume the scan's deadline.
+  await runWithConcurrencyLimit(sessionIds, 32, async (sessionId) => {
     signal?.throwIfAborted();
     if (archivedIds.has(sessionId)) {
-      continue;
+      return;
     }
     if (await isCliSessionRunning(codexHome, sessionId, transcriptPaths.get(sessionId), false, signal)) {
-      running.push(sessionId);
+      running.add(sessionId);
     }
-  }
-  return running;
+  });
+  return sessionIds.filter(id => running.has(id));
 }
 
 async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIndexEntry[]> {
@@ -359,7 +369,9 @@ async function readResilientSessionList(codexHome: string, limit: number): Promi
     }
   } finally { if (timer) clearTimeout(timer); }
 }
-export function getCodexSessionReadNotice(): { level: "warning"; message: string } | undefined {
+export function getCodexSessionReadNotice(sessions: DashboardCliSessionSummary[] = []): { level: "warning"; message: string } | undefined {
+  const unknown = sessions.find(session => session.status === "unknown");
+  if (unknown) return { level: "warning", message: `Session history is available, but running state could not be verified. Refresh before sending. ${unknown.statusError ?? "Session inspection is unavailable."}` };
   const key = JSON.stringify([path.resolve(resolveCodexHome()), process.env["CODEX_CLI_PATH"], vscode.workspace.getConfiguration("codexManager").get("codexCliPath")]);
   return sessionListReads.get(key)?.local ? { level: "warning", message: "Sessions refreshed from local history. Live discovery is reconnecting; local messages still update automatically." } : undefined;
 }
@@ -407,7 +419,8 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
     const metadataIds = new Set(sessions.filter((session) => !session.subAgent || !session.parentSessionId || !session.projectPath || !session.sessionSurface).map((session) => session.id));
     const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(sessions.map((session) => session.id)));
     const goals = await readCodexSessionGoals(codexHome);
-    const enriched = await Promise.all(sessions.map(async (session) => {
+    const enriched: DashboardCliSessionSummary[] = [];
+    await runWithConcurrencyLimit(sessions, 32, async (session, index) => {
       const metadata = metadataIds.has(session.id)
         ? await readCliSessionMetadata(codexHome, session.id, transcriptPaths.get(session.id))
         : undefined;
@@ -419,22 +432,23 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
         ...(!session.projectPath && metadata?.projectPath ? { projectPath: metadata.projectPath } : {}),
         ...(!session.sessionSurface && metadata?.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {})
       };
-      if (session.archived) return withMetadata;
+      if (session.archived) { enriched[index] = withMetadata; return; }
       const canStop = activeCliTurns.has(session.id) || activeAppServerTurns.has(session.id);
-      const running = await isCliSessionRunning(codexHome, session.id, transcriptPaths.get(session.id), session.status === "running");
+      const state = await readCliSessionStatus(codexHome, session.id, transcriptPaths.get(session.id), session.status === "running");
+      const running = state.status === "running";
       const transcriptUpdatedAt = cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.mtimeMs;
       const updatedAt = transcriptUpdatedAt && transcriptUpdatedAt > (Date.parse(session.updatedAt ?? "") || 0)
         ? new Date(transcriptUpdatedAt).toISOString() : session.updatedAt;
-      return {
+      enriched[index] = {
         ...withMetadata,
         ...(goals ? { goal: goals.get(session.id) ?? null } : {}),
         updatedAt,
-        status: running ? "running" as const : "idle" as const,
-        locked: running,
+        ...state,
+        locked: running || state.status === "unknown",
         runningBy: running ? (canStop ? "Codex Manager" : "another Codex process") : undefined,
         canStop: running && canStop
       };
-    }));
+    });
     return enriched.sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
   } finally {
     rpc.close();
@@ -472,10 +486,12 @@ async function toCliSessionSummary(
   codexHome: string,
   entry: CliSessionIndexEntry,
   archived: boolean,
-  transcriptPath?: string
+  transcriptPath?: string,
+  knownStatus?: Pick<DashboardCliSessionSummary, "status" | "statusError">
 ): Promise<DashboardCliSessionSummary> {
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
-  const running = !archived && (await isCliSessionRunning(codexHome, entry.id, transcriptPath));
+  const state = archived ? { status: "idle" as const } : knownStatus ?? await readCliSessionStatus(codexHome, entry.id, transcriptPath);
+  const running = state.status === "running";
   const canStop = running && (activeCliTurns.has(entry.id) || activeAppServerTurns.has(entry.id));
   const transcriptUpdatedAt = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath)?.mtimeMs : undefined;
   const updatedAt = transcriptUpdatedAt && transcriptUpdatedAt > (Date.parse(entry.updated_at ?? "") || 0)
@@ -484,11 +500,11 @@ async function toCliSessionSummary(
     id: entry.id,
     title: normalizeSessionTitle(entry.thread_name, entry.id),
     updatedAt,
-    status: running ? "running" : "idle",
+    ...state,
     ...(metadata.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
     ...(metadata.projectPath ? { projectPath: metadata.projectPath } : {}),
     ...(metadata.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {}),
-    locked: running,
+    locked: running || state.status === "unknown",
     ...(running ? { runningBy: canStop ? "Codex Manager" : "another Codex process", canStop } : {}),
     archived
   };
@@ -2811,6 +2827,19 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+async function readCliSessionStatus(
+  codexHome: string,
+  sessionId: string,
+  transcriptPath?: string,
+  liveRunning = false
+): Promise<Pick<DashboardCliSessionSummary, "status" | "statusError">> {
+  try {
+    return { status: await isCliSessionRunning(codexHome, sessionId, transcriptPath, liveRunning) ? "running" : "idle" };
+  } catch (error) {
+    return { status: "unknown", statusError: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function isCliSessionRunning(
   codexHome: string,
   sessionId: string,
@@ -2822,7 +2851,8 @@ async function isCliSessionRunning(
     `codex-session-status:${path.resolve(codexHome)}:${sessionId}:${liveRunning ? "live" : "disk"}`,
     (inspectionSignal) => inspectCliSessionRunning(codexHome, sessionId, knownTranscriptPath, liveRunning, inspectionSignal),
     signal,
-    5_000
+    // Allow the bounded file reads, native IPC, and Windows probe to finish.
+    25_000
   );
 }
 

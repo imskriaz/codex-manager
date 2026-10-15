@@ -7,6 +7,7 @@ import type {
 import { DashboardLanguage, DashboardLanguageOption, resolveDashboardLanguage } from "../../localization/languages";
 import { normalizeQuotaColorThresholds } from "../../utils";
 import { getAutoQueueQuotaFreshnessMs, normalizeAutoQueueThreshold } from "../../domain/autoQueuePolicy";
+import { getPersistentLogRetentionDays, isPersistentLoggingEnabled } from "../../utils/persistentLog";
 
 const CODEX_ACCOUNTS_SECTION = "codexManager";
 
@@ -22,6 +23,8 @@ export class ExtensionSettingsStore {
     return {
       dashboardTheme: normalizeDashboardTheme(config.get<string>("dashboardTheme", "auto")),
       privacyMode: config.get<boolean>("privacyMode", false),
+      persistentLoggingEnabled: isPersistentLoggingEnabled(),
+      persistentLogRetentionDays: getPersistentLogRetentionDays(),
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "manual",
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),

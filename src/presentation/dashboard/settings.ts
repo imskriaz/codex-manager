@@ -18,6 +18,7 @@ import {
 } from "../../infrastructure/config/extensionSettings";
 import { isDashboardLanguageOption } from "../../localization/languages";
 import { normalizeQuotaColorThresholds } from "../../utils";
+import { setPersistentLoggingEnabled, setPersistentLogRetentionDays } from "../../utils/persistentLog";
 
 export type DashboardConfigurationKey = DashboardSettingKey | "codexAppPath" | "codexCliPath";
 
@@ -30,6 +31,18 @@ export async function handleDashboardSettingUpdate(
   let updated = false;
 
   switch (key) {
+    case "persistentLogRetentionDays":
+      if (typeof value === "number") {
+        await setPersistentLogRetentionDays(value);
+        updated = true;
+      }
+      break;
+    case "persistentLoggingEnabled":
+      if (typeof value === "boolean") {
+        await setPersistentLoggingEnabled(value);
+        updated = true;
+      }
+      break;
     case "dashboardTheme":
       if (typeof value === "string") {
         await updateDashboardConfiguration(config, key, normalizeDashboardTheme(value), target);

@@ -45,8 +45,9 @@ import { AccountsRepository } from "../storage";
 import { AnnouncementService, type AnnouncementOptions } from "./announcements";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { isValidSyncAccountEnablement, type SyncAccountEnablement } from "./syncEnablementRegistry";
-import { readCodexCliSessionMessages, readCodexCliSessions, resolveCodexHome } from "./codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessions, resolveCodexHome } from "./codexSessionResume";
 import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
+import { recordPersistentEvent } from "../utils/persistentLog";
 import {
   appendDashboardUsageSnapshot,
   readDashboardDailyUsageCache,
@@ -383,8 +384,10 @@ export class WebDashboardServer implements vscode.Disposable {
   private cliSessionReconcileTimer: NodeJS.Timeout | undefined;
   private cliSessionRealtimeRevision = Date.now();
   private cliSessionPublish: Promise<void> | undefined;
+  private cliSessionRefreshAfter = 0;
   private localCliSessions: import("../domain/dashboard/types").DashboardCliSessionSummary[] | undefined;
   private localCliSessionsReadAt = 0;
+  private localCliSessionsRetryAt = 0;
   private localCliSessionsRead: Promise<import("../domain/dashboard/types").DashboardCliSessionSummary[]> | undefined;
   private localPeerState: LocalPeerState | undefined;
   private localPeerStateRevision = 0;
@@ -1507,7 +1510,6 @@ export class WebDashboardServer implements vscode.Disposable {
           }
           // File changes are the trigger; the browser remains idle between
           // events and receives the bounded session list over WebSocket.
-          this.localCliSessions = undefined;
           this.localCliSessionsReadAt = 0;
           void this.publishCliSessionsRealtime();
           this.publishLocalStateChange();
@@ -1553,7 +1555,6 @@ export class WebDashboardServer implements vscode.Disposable {
     this.cliSessionChangeTimer = undefined;
     if (this.cliSessionReconcileTimer) clearInterval(this.cliSessionReconcileTimer);
     this.cliSessionReconcileTimer = undefined;
-    this.cliSessionPublish = undefined;
   }
 
   private hasWorkspaceViewer(): boolean {
@@ -1574,9 +1575,15 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async publishCliSessionsRealtime(): Promise<void> {
     if (this.cliSessionPublish) return this.cliSessionPublish;
-    this.cliSessionPublish = this.publishCliSessionsRealtimeCore().finally(() => {
-      this.cliSessionPublish = undefined;
-    });
+    if (Date.now() < this.cliSessionRefreshAfter) return;
+    this.cliSessionPublish = this.publishCliSessionsRealtimeCore()
+      .catch((error: unknown) => {
+        this.localCliSessionsRetryAt = Date.now() + 30_000;
+        recordPersistentEvent("warning", "session-list", "Background session refresh delayed; retrying quietly", { reason: error instanceof Error ? error.message : String(error) });
+      }).finally(() => {
+        this.cliSessionRefreshAfter = Math.max(Date.now() + 2_000, this.localCliSessionsRetryAt);
+        this.cliSessionPublish = undefined;
+      });
     return this.cliSessionPublish;
   }
 
@@ -1584,6 +1591,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false))
       return;
     const sessions = await this.readLocalCliSessions(true);
+    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
     // Keep revisions monotonic across extension-host restarts. An already-open
     // browser page may otherwise reject a fresh revision that restarted at 1.
     const revision = (this.cliSessionRealtimeRevision = Math.max(this.cliSessionRealtimeRevision + 1, Date.now()));
@@ -1592,7 +1600,7 @@ export class WebDashboardServer implements vscode.Disposable {
       requestId: `realtime-cli-${Date.now()}`,
       action: "listCodexCliSessions",
       status: "completed",
-      payload: { cliSessions: sessions, realtimeRevision: revision }
+      payload: { cliSessions: sessions, realtimeRevision: revision, notice: getCodexSessionReadNotice(sessions) }
     } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
       if (socket.readyState === WebSocket.OPEN) socket.send(message);
@@ -1767,6 +1775,7 @@ export class WebDashboardServer implements vscode.Disposable {
   ): Promise<import("../domain/dashboard/types").DashboardCliSessionSummary[]> {
     if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return [];
     const now = Date.now();
+    if (now < this.localCliSessionsRetryAt) return this.localCliSessions ?? [];
     if (!force && this.localCliSessions && now - this.localCliSessionsReadAt < LOCAL_CLI_SESSION_CACHE_MS) {
       return this.localCliSessions;
     }
@@ -1776,11 +1785,17 @@ export class WebDashboardServer implements vscode.Disposable {
     // cold and belongs to the explicit composer-config action instead.
     this.localCliSessionsRead = readCodexCliSessions()
       .then((sessions) => stabilizeSessionProjectPaths(this.context, sessions))
-      .catch(() => [])
       .then((sessions) => {
         this.localCliSessions = sessions;
         this.localCliSessionsReadAt = Date.now();
+        this.localCliSessionsRetryAt = sessions.some(session => session.status === "unknown") ? Date.now() + 30_000 : 0;
         return sessions;
+      })
+      .catch((error: unknown) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.localCliSessionsRetryAt = Date.now() + 30_000;
+        recordPersistentEvent("warning", "session-list", "Background session refresh delayed; retrying quietly", { reason });
+        return this.localCliSessions = this.localCliSessions?.map(session => session.archived ? session : { ...session, status: "unknown", statusError: reason, locked: true, canStop: false }) ?? [];
       })
       .finally(() => {
         this.localCliSessionsRead = undefined;
@@ -1929,7 +1944,7 @@ export class WebDashboardServer implements vscode.Disposable {
             session &&
             typeof session.id === "string" &&
             typeof session.title === "string" &&
-            (session.status === "running" || session.status === "idle")
+            (session.status === "running" || session.status === "idle" || session.status === "unknown")
         ),
       accounts: Array.isArray(message.accounts)
         ? message.accounts

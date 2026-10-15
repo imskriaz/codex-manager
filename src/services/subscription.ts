@@ -165,7 +165,7 @@ async function fetchAccountCheck(
     });
   }
 
-  const payload = JSON.parse(raw) as Record<string, unknown>;
+  const payload = parseSubscriptionJson(raw, response.status, "Account check");
   return parseAccountCheckSnapshot(payload, accountId, organizationId, accountName, accountStructure);
 }
 
@@ -191,12 +191,25 @@ async function fetchSubscriptions(accessToken: string, accountId: string): Promi
     });
   }
 
-  const payload = JSON.parse(raw) as Record<string, unknown>;
+  const payload = parseSubscriptionJson(raw, response.status, "Subscriptions query");
   return {
     accountId,
     planType: readOptionalScalar(payload, ["subscription_plan", "plan_type"]),
     subscriptionActiveUntil: readOptionalScalar(payload, ["active_until", "expires_at"])
   };
+}
+
+function parseSubscriptionJson(raw: string, status: number, operation: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {
+    // A proxy or captive portal can return HTML while the provider request is otherwise successful.
+  }
+  throw new APIError(`${operation} returned an invalid response (HTTP ${status}). Check the network or proxy and retry.`, {
+    statusCode: status,
+    responseBody: summarizeNetworkBody(raw)
+  });
 }
 
 // ── accounts/check 响应解析 ──

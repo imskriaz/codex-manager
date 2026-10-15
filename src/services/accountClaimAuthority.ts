@@ -88,7 +88,7 @@ export class AccountClaimAuthority {
             if (
               current?.enabled &&
               current.deviceId !== request.deviceId &&
-              (current.currentOnly || current.lastSyncedAt === undefined || isSyncAccountEnablementActive(current))
+              (current.lastSyncedAt === undefined || isSyncAccountEnablementActive(current))
             ) {
               return {
                 requestId: request.requestId,

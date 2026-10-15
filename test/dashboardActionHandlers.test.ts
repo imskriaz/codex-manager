@@ -117,6 +117,20 @@ describe("CLI session list freshness", () => {
 });
 
 describe("executeDashboardActionMessage", () => {
+  it.each(["browser", "webview"] as const)("keeps %s history readable and reports why an unverified session cannot send", async (hostKind) => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+    const session = { id: "01a04882-d037-7a42-ad24-9afb61901188", title: "Chat", status: "unknown", statusError: "Session inspection timed out.", archived: false };
+    const context = { ...createContext(), hostKind };
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
+    readCodexCliSessionMessagesMock.mockResolvedValueOnce([{ id: "message", role: "assistant", text: "Saved answer" }]);
+    const history = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "getCodexCliSessionMessages", requestId: "unknown-history", payload: { sessionId: session.id } });
+    expect(history).toMatchObject({ status: "completed", payload: { cliSession: session, cliSessionMessages: [{ text: "Saved answer" }], notice: { level: "warning", message: expect.stringContaining(session.statusError) } } });
+    readCodexCliSessionSummaryMock.mockResolvedValueOnce(session);
+    const sent = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "sendCodexCliSessionMessage", requestId: "unknown-send", payload: { sessionId: session.id, text: "Follow up" } });
+    expect(sent).toMatchObject({ status: "failed", errorMessage: expect.stringContaining(session.statusError) });
+    expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
+  });
+
   it("preserves session mutation success when discovery fails afterward", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
     const session = { id: "01a04882-d037-7a42-ad24-9afb61901188", title: "Chat", status: "idle", archived: false };

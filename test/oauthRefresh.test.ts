@@ -65,6 +65,13 @@ describe("OAuth token refresh reliability", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("turns an HTML proxy response into a readable auth error", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => "<!doctype html><html>login</html>" });
+    await expect(refreshTokens("html-response-refresh", "id-1")).rejects.toThrow(
+      "Token refresh returned an invalid response (HTTP 200). Check the network or proxy and retry."
+    );
+  });
+
   it("redacts credentials from provider error diagnostics", async () => {
     fetchMock.mockResolvedValue(
       tokenResponse({ error: "invalid_grant", access_token: "provider-secret-access", code: "secret-code" }, 400)

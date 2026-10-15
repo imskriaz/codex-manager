@@ -1,9 +1,18 @@
 # Changelog
 
+## 1.2.25
+
+- Release cross-PC account claims after 30 minutes without a sync heartbeat when the owning PC is offline, while connected peers remain authoritative.
+
 ## 1.2.24
 
 - Nest workspace controls under Web Dashboard with dependent visibility, pair the host and domain cards and the CLI path and desktop restart cards, and give parallel window accounts a full-width row.
 - Group reset, session waiting, auto resume, and refresh-before-switch settings in a responsive two-column grid inside Automatic Account Switching.
+
+## 1.2.23
+
+- Prevent session inspection timeouts caused by sequential native status checks and premature Windows lock-probe deadlines.
+- Keep session history readable when running state cannot be verified, show the inspection error, and require a successful retry before sending or changing the session.
 
 ## 1.2.22
 

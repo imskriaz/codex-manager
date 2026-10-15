@@ -116,7 +116,7 @@ async function refreshTokensWithRetry(refreshToken: string, currentIdToken?: str
         });
       }
 
-      const payload = JSON.parse(raw) as Record<string, unknown>;
+      const payload = parseOAuthJsonResponse(raw, response.status, "Token refresh");
       // OpenAI refresh 端点偶尔不返回新的 id_token，此时复用本地旧值（对齐 cockpit refresh_access_token_with_fallback）。
       const idToken = readOptionalString(payload, "id_token") ?? (currentIdToken?.trim() ? currentIdToken : undefined);
       if (!idToken) {
@@ -416,7 +416,7 @@ async function exchangeCodeForTokens(code: string, verifier: string, redirectUri
     });
   }
 
-  const payload = JSON.parse(raw) as Record<string, unknown>;
+  const payload = parseOAuthJsonResponse(raw, response.status, "OAuth token exchange");
   return {
     idToken: readString(payload, "id_token"),
     accessToken: readString(payload, "access_token"),
@@ -439,6 +439,19 @@ function summarizeOAuthResponse(raw: string): string {
     return "(empty response)";
   }
   return compact.length > 240 ? `${compact.slice(0, 240)}…` : compact;
+}
+
+function parseOAuthJsonResponse(raw: string, status: number, operation: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {
+    // Proxies and captive portals sometimes return HTML with a successful status.
+  }
+  throw new APIError(`${operation} returned an invalid response (HTTP ${status}). Check the network or proxy and retry.`, {
+    statusCode: status,
+    responseBody: summarizeOAuthResponse(raw)
+  });
 }
 
 function redactOAuthDiagnostic(value: unknown): unknown {

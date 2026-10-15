@@ -92,6 +92,13 @@ describe("quota cache invalidation", () => {
     expect(result.quota?.hourlyPercentage).toBe(90);
   });
 
+  it("returns a readable quota error when a proxy sends HTML instead of JSON", async () => {
+    fetchWithTimeoutMock.mockResolvedValue(new Response("<!doctype html><html>login</html>", { status: 200 }));
+    const result = await refreshQuota(account, tokens, true);
+    expect(result.error?.message).toContain("Quota API returned an invalid response (HTTP 200)");
+    expect(result.error?.message).not.toContain("Unexpected token");
+  });
+
   it("rotates tokens during quota refresh when explicitly enabled", async () => {
     const refreshableTokens = { ...tokens, refreshToken: "refresh-token" };
     const refreshedTokens = { ...refreshableTokens, accessToken: "new-access-token" };

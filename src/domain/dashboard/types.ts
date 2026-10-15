@@ -10,6 +10,8 @@ import type {
 export type DashboardSettingKey =
   | "dashboardTheme"
   | "privacyMode"
+  | "persistentLoggingEnabled"
+  | "persistentLogRetentionDays"
   | "codexAppRestartEnabled"
   | "codexAppRestartMode"
   | "cliIntegrationEnabled"
@@ -47,6 +49,9 @@ export interface DashboardSettings {
   dashboardTheme: DashboardThemeOption;
   /** Shared privacy preference used by every dashboard and details surface. */
   privacyMode?: boolean;
+  /** Local file-backed diagnostic preference, disabled by default. */
+  persistentLoggingEnabled?: boolean;
+  persistentLogRetentionDays?: number;
   codexAppRestartEnabled: boolean;
   codexAppRestartMode: "auto" | "manual";
   /** Master gate for local Codex session access. */
@@ -652,7 +657,9 @@ export interface DashboardCliSessionSummary {
   id: string;
   title: string;
   updatedAt?: string;
-  status: "running" | "idle";
+  status: "running" | "idle" | "unknown";
+  /** Inspection failure retained while read-only history remains available. */
+  statusError?: string;
   archived?: boolean;
   /** The PC that owns this session. Local sessions omit this metadata. */
   deviceId?: string;

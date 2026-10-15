@@ -25,7 +25,7 @@ vi.mock("child_process", async (original) => {
   } };
 });
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.openRpc }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { readCodexCliSessions, readCodexCliSessionSummary, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessions, readCodexCliSessionSummary, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
 import { readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 
@@ -52,6 +52,7 @@ beforeEach(async () => {
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "codexSessionTransport" ? "cli" : fallback } as vscode.WorkspaceConfiguration);
 });
 afterEach(async () => {
+  vi.useRealTimers();
   if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
   mocks.heldLocks.clear(); mocks.nativeHeldLocks.clear(); mocks.nativeProbeError = false; mocks.lockError = undefined; mocks.openRpc.mockReset();
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as vscode.WorkspaceConfiguration);
@@ -59,6 +60,41 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it("returns unknown history on a hung inspection and recovers on the next refresh", async () => {
+    vi.useFakeTimers();
+    vi.mocked(readNativeCodexSessionRunning).mockImplementation(() => new Promise(() => undefined));
+    const pending = readCodexCliSessions(home);
+    await vi.waitFor(() => expect(readNativeCodexSessionRunning).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(30_000);
+    const sessions = await pending;
+    expect(sessions[0]).toMatchObject({ status: "unknown", locked: true, statusError: "Session inspection timed out." });
+    expect(getCodexSessionReadNotice(sessions)?.message).toContain("timed out");
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+    expect((await readCodexCliSessions(home))[0]).toMatchObject({ status: "idle", locked: false });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds concurrent native reads and reuses the scan when listing historical sessions", async () => {
+    const ids = Array.from({ length: 300 }, (_, index) => `01a04882-d037-7a42-ad24-${String(index).padStart(12, "0")}`);
+    await rm(transcript);
+    await rm(lock);
+    await writeFile(path.join(home, "session_index.jsonl"), ids.map(id => JSON.stringify({ id })).join("\n"));
+    await Promise.all(ids.map(id => writeFile(path.join(home, "sessions", `rollout-${id}.jsonl`), event("task_started", id))));
+    let pending = 0, peak = 0;
+    vi.mocked(readNativeCodexSessionRunning).mockImplementation(async () => {
+      peak = Math.max(peak, ++pending);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      pending--;
+      return false;
+    });
+    const sessions = await readCodexCliSessions(home);
+    expect(sessions).toHaveLength(200);
+    expect(sessions.every(session => session.status === "idle")).toBe(true);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(32);
+    expect(readNativeCodexSessionRunning).toHaveBeenCalledTimes(ids.length);
+  });
+
   it("shares concurrent running-session scans and keeps the remaining consumer alive after cancellation", async () => {
     let finish!: (running: boolean) => void;
     vi.mocked(readNativeCodexSessionRunning).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
@@ -248,15 +284,22 @@ describe("shared running-session detection and auto resume", () => {
     expect(await readRunningCodexSessionIds(home)).toEqual([id]);
   });
 
-  it("surfaces lock inspection failures for dashboard and reload callers to report", async () => {
+  it("keeps history readable with an explicit unknown status while safety callers reject unreadable locks", async () => {
     const old = new Date(Date.now() - 10 * 60_000);
     await utimes(lock, old, old); await utimes(transcript, old, old);
     mocks.lockError = "EACCES";
-    await expect(readCodexCliSessions(home)).rejects.toThrow("EACCES");
+    const sessions = await readCodexCliSessions(home);
+    expect(sessions[0]).toMatchObject({ status: "unknown", locked: true, statusError: "EACCES" });
+    expect(getCodexSessionReadNotice(sessions)).toMatchObject({ level: "warning", message: expect.stringContaining("EACCES") });
+    await expect(readCodexCliSessionSummary(id, home)).resolves.toMatchObject({ status: "unknown", locked: true, statusError: "EACCES" });
+    await expect(readRunningCodexSessionIds(home)).rejects.toThrow("EACCES");
     await expect(select()).rejects.toThrow("EACCES");
     mocks.lockError = undefined;
     await appendFile(transcript, event("task_started", "recovered-turn"));
     expect(await select()).toEqual([id]);
+    const recovered = await readCodexCliSessions(home);
+    expect(recovered[0]).toMatchObject({ status: "running", locked: true });
+    expect(getCodexSessionReadNotice(recovered)).toBeUndefined();
   });
 
   it.each([true, false])("clears stale app-server running fields after completion (writer lock: %s)", async (held) => {

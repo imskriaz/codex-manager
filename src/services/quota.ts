@@ -135,6 +135,13 @@ export async function refreshQuota(
       };
     }
 
+    if (!usageResult.payload) {
+      return {
+        requestStartedAt,
+        error: buildError(`Quota API returned an invalid response (HTTP ${usageResult.status}). Check the network or proxy and retry.`),
+        updatedTokens: tokensUpdated ? effectiveTokens : undefined
+      };
+    }
     const usage = usageResult.payload;
     const quotaSummary = parseUsage(usage);
 
@@ -171,7 +178,7 @@ async function requestQuotaUsage(
   ok: boolean;
   status: number;
   raw: string;
-  payload: CodexUsageResponse;
+  payload?: CodexUsageResponse;
 }> {
   return retryWithBackoff(
     async () => {
@@ -216,11 +223,12 @@ async function requestQuotaUsage(
   );
 }
 
-function parseUsagePayload(raw: string): CodexUsageResponse {
+function parseUsagePayload(raw: string): CodexUsageResponse | undefined {
   try {
-    return JSON.parse(raw) as CodexUsageResponse;
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as CodexUsageResponse : undefined;
   } catch {
-    return {};
+    return undefined;
   }
 }
 
@@ -715,7 +723,16 @@ export async function fetchResetCredits(
     });
   }
 
-  return parseResetCreditsSnapshot(JSON.parse(raw) as Record<string, unknown>, excludedIds);
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+    return parseResetCreditsSnapshot(parsed as Record<string, unknown>, excludedIds);
+  } catch {
+    throw new APIError(`Reset credits API returned an invalid response (HTTP ${response.status}). Check the network or proxy and retry.`, {
+      statusCode: response.status,
+      responseBody: summarizeNetworkBody(raw)
+    });
+  }
 }
 
 /** Returns true when the provider says this particular reset credit cannot be redeemed. */

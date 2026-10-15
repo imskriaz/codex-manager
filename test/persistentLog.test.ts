@@ -113,6 +113,7 @@ describe("persistent diagnostics", () => {
 
   it("records operation start, failure, duration, and correlation IDs", async () => {
     const root = await makeTemporaryDirectory();
+    await fs.writeFile(path.join(root, "logging-settings.json"), JSON.stringify({ enabled: true, retentionDays: 3 }), "utf8");
     const subscriptions: Array<{ dispose(): unknown }> = [];
     (vscode.commands as unknown as { registerCommand: unknown }).registerCommand = vi.fn(() => ({ dispose: vi.fn() }));
     await registerPersistentLogging(
@@ -147,8 +148,25 @@ describe("persistent diagnostics", () => {
     expect(failed?.error).toMatchObject({ message: "network unavailable" });
   });
 
+  it("keeps file logging disabled until explicitly enabled and persists a bounded retention", async () => {
+    const root = await makeTemporaryDirectory();
+    const subscriptions: Array<{ dispose(): unknown }> = [];
+    (vscode.commands as unknown as { registerCommand: unknown }).registerCommand = vi.fn(() => ({ dispose: vi.fn() }));
+    await registerPersistentLogging({ globalStorageUri: { fsPath: root }, extensionPath: root, subscriptions } as never, root);
+    expect((await fs.readdir(root)).some(name => name === "logs")).toBe(false);
+    const { getPersistentLogRetentionDays, isPersistentLoggingEnabled, setPersistentLogRetentionDays, setPersistentLoggingEnabled } = await import("../src/utils/persistentLog");
+    expect(isPersistentLoggingEnabled()).toBe(false);
+    await setPersistentLogRetentionDays(30);
+    await setPersistentLoggingEnabled(true);
+    expect(isPersistentLoggingEnabled()).toBe(true);
+    expect(getPersistentLogRetentionDays()).toBe(30);
+    expect(JSON.parse(await fs.readFile(path.join(root, "logging-settings.json"), "utf8"))).toMatchObject({ enabled: true, retentionDays: 30 });
+    await expect(setPersistentLogRetentionDays(31)).rejects.toThrow("1 to 30 days");
+  });
+
   it("correlates nested operations into one trace", async () => {
     const root = await makeTemporaryDirectory();
+    await fs.writeFile(path.join(root, "logging-settings.json"), JSON.stringify({ enabled: true, retentionDays: 3 }), "utf8");
     (vscode.commands as unknown as { registerCommand: unknown }).registerCommand = vi.fn(() => ({ dispose: vi.fn() }));
     await registerPersistentLogging(
       {

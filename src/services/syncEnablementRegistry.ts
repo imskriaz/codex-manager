@@ -1,6 +1,7 @@
 const MAX_DEVICE_LABEL_LENGTH = 120;
 const MAX_IDENTIFIER_LENGTH = 4096;
-export const SYNC_ACTIVITY_LEASE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+/** An offline PC releases its claim after thirty minutes without a sync heartbeat. */
+export const SYNC_ACTIVITY_LEASE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * One durable enablement record per account. An enabled record identifies the

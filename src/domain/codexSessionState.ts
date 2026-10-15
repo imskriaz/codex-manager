@@ -18,7 +18,7 @@ export function normalizeCodexSessionGoal(value: unknown): DashboardCodexSession
 export function isCodexSessionRunning(
   session: Pick<DashboardCliSessionSummary, "status" | "locked" | "archived"> | undefined
 ): boolean {
-  return Boolean(session && !session.archived && (session.status === "running" || session.locked));
+  return Boolean(session && !session.archived && (session.status === "running" || session.status === "unknown" || session.locked));
 }
 
 export function filterCliSessionsBySection(

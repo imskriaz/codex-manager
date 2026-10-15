@@ -32,15 +32,11 @@ describe("shared current-account claim authority", () => {
     expect(results[1]?.error).toContain("PC A");
     expect(await new AccountClaimAuthority(file).request(acquire("PC B"))).toMatchObject({ ok: false });
     const saved = JSON.parse(await (await import("node:fs/promises")).readFile(file, "utf8"));
-    saved[0].lastSyncedAt = Date.now() - 3 * 60 * 60_000;
+    saved[0].lastSyncedAt = Date.now() - 31 * 60_000;
     await writeFile(file, JSON.stringify(saved));
-    expect(await new AccountClaimAuthority(file).request(acquire("PC B"))).toMatchObject({ ok: false });
+    expect(await new AccountClaimAuthority(file).request(acquire("PC B"))).toMatchObject({ ok: true });
 
-    expect(await authority.request(acquire("PC A", "retry"))).toMatchObject({
-      ok: true,
-      acquired: false,
-      claim: { claimToken: "PC A-token" }
-    });
+    expect(await authority.request(acquire("PC A", "retry"))).toMatchObject({ ok: false });
   });
 
   it("fences foreign, duplicate, and delayed releases before granting the next PC", async () => {

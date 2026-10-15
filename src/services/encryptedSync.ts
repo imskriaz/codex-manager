@@ -38,7 +38,7 @@ const LOCAL_ENABLEMENT_PENDING_KEY = "codexManager.encryptedSync.localEnablement
 const LOCAL_VAULT_DIRTY_KEY = "codexManager.encryptedSync.vaultDirty.v1";
 // Realtime peers carry immediate changes. Batch durable Settings Sync writes
 // so account activity cannot exhaust VS Code's device-wide request budget.
-const SYNC_ACTIVITY_RENEWAL_INTERVAL_MS = 30 * 60 * 1000;
+const SYNC_ACTIVITY_RENEWAL_INTERVAL_MS = 10 * 60 * 1000;
 const VAULT_SYNC_MAX_RETRY_DELAY_MS = 30 * 60 * 1000;
 const STARTUP_VAULT_MERGE_DELAY_MS = 30 * 1000;
 // Settings Sync updates extension globalState asynchronously and does not
@@ -216,17 +216,17 @@ export class EncryptedSyncManager implements vscode.Disposable {
     } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
   }
 
-  private queueCurrentAccountReconciliation(): void {
+  private queueCurrentAccountReconciliation(delayMs = 100): void {
     if (this.disposed || this.currentClaimRetryTimer) return;
     this.currentClaimRetryTimer = setTimeout(() => {
       this.currentClaimRetryTimer = undefined;
       void this.reconcileCurrentAccountClaim().catch((error) => {
-        if (error instanceof CrossWindowOperationBusyError) { this.queueCurrentAccountReconciliation(); return; }
+        if (error instanceof CrossWindowOperationBusyError) { this.queueCurrentAccountReconciliation(5_000); return; }
         const message = `Account ownership cleanup is pending. Claims remain reserved and will retry automatically. ${error instanceof Error ? error.message : String(error)}`;
-        publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
-        void vscode.window.showWarningMessage(message);
+        console.warn("[codexManager]", message);
+        this.queueCurrentAccountReconciliation(30_000);
       });
-    }, 100);
+    }, delayMs);
     this.currentClaimRetryTimer.unref?.();
   }
 
@@ -1777,14 +1777,18 @@ export class EncryptedSyncManager implements vscode.Disposable {
         entry.enabled &&
         entry.deviceId !== visibleEnablementDeviceId &&
         // Signed realtime presence is authoritative while the peer transport
-        // is healthy. The durable two-hour lease is only the offline fallback.
-        (entry.currentOnly || (preserveRecentOfflineClaim
+        // is healthy. The durable thirty-minute lease is the offline fallback.
+        ((entry.currentOnly
           ? visibleOnlineDeviceIds?.has(entry.deviceId) === true ||
             entry.lastSyncedAt === undefined ||
             isSyncAccountEnablementActive(entry)
-          : visibleOnlineDeviceIds !== undefined
-            ? visibleOnlineDeviceIds.has(entry.deviceId)
-            : entry.lastSyncedAt === undefined || isSyncAccountEnablementActive(entry)))
+          : preserveRecentOfflineClaim
+            ? visibleOnlineDeviceIds?.has(entry.deviceId) === true ||
+              entry.lastSyncedAt === undefined ||
+              isSyncAccountEnablementActive(entry)
+            : visibleOnlineDeviceIds !== undefined
+              ? visibleOnlineDeviceIds.has(entry.deviceId)
+              : entry.lastSyncedAt === undefined || isSyncAccountEnablementActive(entry)))
     );
   }
 

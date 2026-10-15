@@ -10,6 +10,8 @@ vi.mock("child_process", async (importOriginal) => {
   return { ...actual, execFile: (...args: any[]) => {
     if (args[0] === "powershell.exe" && probe.nativeMode) {
       probe.calls.push({ args: args[1], options: args[2] });
+      if (probe.nativeMode === "slow") { setTimeout(() => args.at(-1)(null, "[]"), 5200); return {}; }
+      if (probe.nativeMode === "incomplete") { args.at(-1)(null, "{}"); return {}; }
       if (probe.nativeMode === "spawn-denied") throw Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
       const startupFailure = probe.calls.length === 1 || probe.nativeMode === "always-fail";
       args.at(-1)(startupFailure ? Object.assign(new Error("runtime startup failed"), { code: 0xc0000142 }) : null, "[]");
@@ -40,6 +42,20 @@ async function fixture() {
 }
 
 describe("writer lock evidence", () => {
+  it.skipIf(process.platform !== "win32")("lets a Windows probe finish after the old five-second deadline", async () => {
+    const root = await fixture();
+    probe.nativeMode = "slow";
+    await expect(readRunningCodexSessionIds(root)).resolves.toEqual([]);
+    expect(probe.calls).toHaveLength(1);
+  });
+  it.skipIf(process.platform !== "win32")("keeps incomplete native output inconclusive and retries after recovery", async () => {
+    const root = await fixture();
+    probe.nativeMode = "incomplete";
+    await expect(readRunningCodexSessionIds(root)).rejects.toThrow("incomplete data");
+    probe.nativeMode = "recover";
+    await expect(readRunningCodexSessionIds(root)).resolves.toEqual([]);
+    expect(probe.calls).toHaveLength(2);
+  });
   it.skipIf(process.platform !== "win32")("discards a failed spawn so the same session can recover after permissions return", async () => {
     const root = await fixture();
     probe.nativeMode = "spawn-denied";

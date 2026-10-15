@@ -82,6 +82,8 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.autoRefreshCurrentMinutes,
     state.settings.quotaFreshnessMs ?? "",
     state.settings.usageHistoryRetentionDays,
+    state.settings.persistentLoggingEnabled ? "1" : "0",
+    state.settings.persistentLogRetentionDays ?? 3,
     state.settings.encryptedSyncEnabled ? "1" : "0",
     state.settings.encryptedSyncClaimAllAccountsEnabled ? "1" : "0",
     state.settings.fullCrossPcAccountSyncEnabled ? "1" : "0",
