@@ -48,6 +48,7 @@ const MAX_CONFIG_BYTES = 1024 * 1024;
 const MAX_CLI_PROMPT_CHARS = 64_000;
 const MAX_CLI_OUTPUT_BYTES = 2 * 1024 * 1024;
 const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
+export const SESSION_DISCOVERY_RETRY_GAP_MS = 30_000;
 const MAX_TRACKED_TURN_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_TRACKED_CLI_TURNS = 30;
 const MAX_RUNNING_TURNS_BYTES = 256 * 1024;
@@ -344,7 +345,7 @@ async function readResilientSessionList(codexHome: string, limit: number): Promi
       current.retryAt = 0;
       return sessions;
     }).catch((error: unknown) => {
-      current.retryAt = Date.now() + 30_000;
+      current.retryAt = Date.now() + SESSION_DISCOVERY_RETRY_GAP_MS;
       recordPersistentEvent("warning", "session-list", "Live discovery delayed; using local history", { reason: error instanceof Error ? error.message : String(error) });
       throw error;
     }).finally(() => { current.pending = undefined; });
@@ -372,8 +373,7 @@ async function readResilientSessionList(codexHome: string, limit: number): Promi
 export function getCodexSessionReadNotice(sessions: DashboardCliSessionSummary[] = []): { level: "warning"; message: string } | undefined {
   const unknown = sessions.find(session => session.status === "unknown");
   if (unknown) return { level: "warning", message: `Session history is available, but running state could not be verified. Refresh before sending. ${unknown.statusError ?? "Session inspection is unavailable."}` };
-  const key = JSON.stringify([path.resolve(resolveCodexHome()), process.env["CODEX_CLI_PATH"], vscode.workspace.getConfiguration("codexManager").get("codexCliPath")]);
-  return sessionListReads.get(key)?.local ? { level: "warning", message: "Sessions refreshed from local history. Live discovery is reconnecting; local messages still update automatically." } : undefined;
+  return undefined;
 }
 
 function capSessionList(sessions: DashboardCliSessionSummary[], limit: number): DashboardCliSessionSummary[] {

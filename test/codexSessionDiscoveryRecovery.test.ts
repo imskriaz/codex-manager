@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { readCodexCliSessions, readCodexCliSessionMessages } from "../src/services/codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessions, readCodexCliSessionMessages, SESSION_DISCOVERY_RETRY_GAP_MS } from "../src/services/codexSessionResume";
 
 const id = "01a04882-d037-7a42-ad24-9afb61901188";
 let root: string;
@@ -27,6 +27,10 @@ afterEach(async () => {
 });
 
 describe("session discovery recovery", () => {
+  it("keeps live discovery retries at least 30 seconds apart", () => {
+    expect(SESSION_DISCOVERY_RETRY_GAP_MS).toBeGreaterThanOrEqual(30_000);
+  });
+
   it("merges locally running parents omitted by a successful live discovery", async () => {
     const second = "01a04882-d037-7a42-ad24-9afb61901189";
     const third = "01a04882-d037-7a42-ad24-9afb61901190";
@@ -37,8 +41,10 @@ describe("session discovery recovery", () => {
 
   it("returns local sessions after initialize failure and backs off repeated refreshes", async () => {
     mocks.open.mockRejectedValue(new Error("initialize timed out"));
-    expect((await readCodexCliSessions())[0]?.title).toBe("Recovered chat");
+    const sessions = await readCodexCliSessions();
+    expect(sessions[0]?.title).toBe("Recovered chat");
     expect((await readCodexCliSessions())[0]?.id).toBe(id);
+    expect(getCodexSessionReadNotice(sessions)).toBeUndefined();
     expect(mocks.open).toHaveBeenCalledTimes(1);
   });
   it("coalesces slow startup while local history stays accessible", async () => {

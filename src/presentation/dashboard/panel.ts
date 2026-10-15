@@ -26,7 +26,7 @@ import { readDashboardDailyUsageCache, saveDashboardUsageHistory } from "../../s
 import { handleDashboardSettingUpdate, pickDashboardCodexAppPath, pickDashboardCodexCliPath } from "./settings";
 import { scheduleExtensionHostReload } from "../../application/accounts/switchEffects";
 import { resolveOnboardingCompleted } from "../../services/onboarding";
-import { getCodexSessionReadNotice, readCodexCliSessions, resolveCodexHome } from "../../services/codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessions, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "../../services/codexSessionResume";
 import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindings";
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "../../services/dashboardRealtime";
 import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
@@ -501,7 +501,7 @@ class DashboardPanelController {
     let delayMs = 2_000;
     this.cliSessionPublish = (async () => {
       const sessions = await readCodexCliSessions();
-      if (sessions.some(session => session.status === "unknown")) delayMs = 30_000;
+      if (sessions.some(session => session.status === "unknown")) delayMs = SESSION_DISCOVERY_RETRY_GAP_MS;
       const stabilized = await stabilizeSessionProjectPaths(this.context, sessions);
       if (this.panel !== panel || panel.visible === false || !this.webviewReady ||
         !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;

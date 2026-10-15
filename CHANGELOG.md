@@ -1,16 +1,26 @@
 # Changelog
 
-## 1.2.23
+## 1.2.27
 
-- Keep dashboard snapshots responsive while cached credentials refresh in the background, bound slow expired-token account switches, and move optional vault, relay, document, and push startup work off the critical path.
-- Prevent session inspection timeouts caused by sequential native status checks and premature Windows lock-probe deadlines.
-- Keep session history readable when running state cannot be verified, show the inspection error, and require a successful retry before sending or changing the session.
+- Suppress the generic cross-PC sync notice when no sync transport is available.
+
+## 1.2.26
+
+- Suppress the routine local-history reconnect notice, keep session discovery retries at a shared 30-second minimum, and retain warnings when running state cannot be verified.
 
 ## 1.2.25
 
 - Release cross-PC account claims after 30 minutes without a sync heartbeat when the owning PC is offline, while connected peers remain authoritative.
 
 ## 1.2.24
+
+- Suppress the routine local-history reconnect notice while retaining warnings when session running state cannot be verified.
+
+## 1.2.23
+
+- Keep dashboard snapshots responsive while cached credentials refresh in the background, bound slow expired-token account switches, and move optional vault, relay, document, and push startup work off the critical path.
+- Prevent session inspection timeouts caused by sequential native status checks and premature Windows lock-probe deadlines.
+- Keep session history readable when running state cannot be verified, show the inspection error, and require a successful retry before sending or changing the session.
 
 - Nest workspace controls under Web Dashboard with dependent visibility, pair the host and domain cards and the CLI path and desktop restart cards, and give parallel window accounts a full-width row.
 - Group reset, session waiting, auto resume, and refresh-before-switch settings in a responsive two-column grid inside Automatic Account Switching.

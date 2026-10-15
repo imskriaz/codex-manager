@@ -11,6 +11,12 @@ export function noticeFromActionResult(
   }
   if (message.status === "failed") {
     let errorMessage = message.error?.trim();
+    if (
+      message.action === "syncNow" &&
+      errorMessage?.startsWith("Cross-PC claim sync did not complete.")
+    ) {
+      return undefined;
+    }
     if (!errorMessage) {
       errorMessage = `The ${formatActionName(message.action)} action failed. Please try again.`;
     }

@@ -45,7 +45,7 @@ import { AccountsRepository } from "../storage";
 import { AnnouncementService, type AnnouncementOptions } from "./announcements";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { isValidSyncAccountEnablement, type SyncAccountEnablement } from "./syncEnablementRegistry";
-import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessions, resolveCodexHome } from "./codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessions, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "./codexSessionResume";
 import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import {
@@ -81,7 +81,7 @@ const PEER_OFFLINE_AFTER_MS = 15_000;
 const PEER_RECONNECT_DELAY_MS = 1_000;
 const PEER_HTTP_HEARTBEAT_TIMEOUT_MS = 10_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
-const CLI_SESSION_RECONCILE_MS = 30_000;
+const CLI_SESSION_RECONCILE_MS = SESSION_DISCOVERY_RETRY_GAP_MS;
 
 export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
   if (action === "refreshAll" || action === "batchRefresh") return 240_000 * Math.max(1, accountCount);
@@ -1788,12 +1788,12 @@ export class WebDashboardServer implements vscode.Disposable {
       .then((sessions) => {
         this.localCliSessions = sessions;
         this.localCliSessionsReadAt = Date.now();
-        this.localCliSessionsRetryAt = sessions.some(session => session.status === "unknown") ? Date.now() + 30_000 : 0;
+        this.localCliSessionsRetryAt = sessions.some(session => session.status === "unknown") ? Date.now() + SESSION_DISCOVERY_RETRY_GAP_MS : 0;
         return sessions;
       })
       .catch((error: unknown) => {
         const reason = error instanceof Error ? error.message : String(error);
-        this.localCliSessionsRetryAt = Date.now() + 30_000;
+        this.localCliSessionsRetryAt = Date.now() + SESSION_DISCOVERY_RETRY_GAP_MS;
         recordPersistentEvent("warning", "session-list", "Background session refresh delayed; retrying quietly", { reason });
         return this.localCliSessions = this.localCliSessions?.map(session => session.archived ? session : { ...session, status: "unknown", statusError: reason, locked: true, canStop: false }) ?? [];
       })

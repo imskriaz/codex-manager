@@ -32,6 +32,18 @@ describe("dashboard action feedback", () => {
     });
   });
 
+  it("suppresses the generic no-transport sync fallback", () => {
+    expect(
+      noticeFromActionResult({
+        type: "dashboard:action-result",
+        requestId: "request-sync-unavailable",
+        action: "syncNow",
+        status: "failed",
+        error: "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
+      })
+    ).toBeUndefined();
+  });
+
   it("provides fallback feedback when a failed result has no message", () => {
     expect(
       noticeFromActionResult({
