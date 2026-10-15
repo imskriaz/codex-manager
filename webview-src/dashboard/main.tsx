@@ -742,8 +742,15 @@ function App() {
               } else if (sameCliSessionTarget(selectedCliSession, currentSessionTarget())) {
                 // A newly forked session can take a moment to appear in Codex's local index.
               } else {
+                // The refreshed index is authoritative. Do not request a route
+                // that is already gone; that only turns a stale link into a
+                // noisy “session not found” error.
+                navigateDashboardPath("/", setBrowserPath);
+                messageViewRevision.current++;
+                selectedCliSessionRef.current = undefined;
+                setSelectedCliSession(undefined);
+                setCliSessionMessages([]);
                 setCliSessionMessagesError(undefined);
-                requestCliSessionMessages(routeId, routeDevice ?? undefined);
               }
             }
           }

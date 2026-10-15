@@ -1236,7 +1236,9 @@ export class WebDashboardServer implements vscode.Disposable {
         const result = messages.find((message) => message.type === "dashboard:action-result" && message.requestId === request.requestId);
         if (result?.type === "dashboard:action-result") { result.status = "failed"; result.error = detail; return; }
       }
-      messages.push({ type: "dashboard:notice", level: "warning", message: `Dashboard state could not refresh: ${detail}. Refresh the dashboard to try again.` });
+      if (detail !== "Dashboard state is still loading") {
+        messages.push({ type: "dashboard:notice", level: "warning", message: `Dashboard state could not refresh: ${detail}. Refresh the dashboard to try again.` });
+      }
       // Build a fresh state after a late read; never broadcast its older snapshot.
       void snapshot.then(() => this.publishRealtimeState(), () => undefined);
     }

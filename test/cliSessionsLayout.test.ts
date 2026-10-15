@@ -57,6 +57,20 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("white-space: nowrap; text-overflow: ellipsis");
   });
 
+  it("keeps one browser workspace logo and drops stale missing-session requests", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const brandStart = source.indexOf('class="cli-rail-brand"');
+    const brand = source.slice(brandStart, source.indexOf("</button>", brandStart));
+    const missingRouteStart = main.indexOf("// The refreshed index is authoritative.");
+    const missingRoute = main.slice(missingRouteStart, missingRouteStart + 500);
+
+    expect(brand).toContain("!props.dashboardMode");
+    expect(brand).toContain("<strong>Codex</strong>");
+    expect(missingRoute).toContain('navigateDashboardPath("/", setBrowserPath)');
+    expect(missingRoute).not.toContain("requestCliSessionMessages(routeId");
+  });
+
   it("shows Latest only for hidden content below the viewport and avoids threshold flicker", () => {
     expect(shouldShowLatestButton(500, 600, 0)).toBe(false);
     expect(shouldShowLatestButton(601, 600, 0)).toBe(false);
@@ -216,26 +230,25 @@ describe("sessions sidebar layout", () => {
     expect(workbench).not.toContain("Open Sessions and retry");
   });
 
-  it("keeps reload independent and shows resume only while Auto Switch is on", () => {
+  it("keeps reload under Automatic Account Switching and shows resume only while it is on", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const switchStart = settings.indexOf("title={props.copy.autoSwitchTitle}");
     const reloadStart = settings.indexOf("title={props.copy.autoSwitchReloadTitle}");
     const switchEnd = settings.lastIndexOf("</SettingsToggleBlock>", reloadStart);
     const resumeStart = settings.indexOf("title={props.copy.autoResumeTitle}");
+    const outerSwitchEnd = settings.indexOf("</SettingsToggleBlock>", reloadStart);
     expect(switchEnd).toBeGreaterThan(switchStart);
-    expect(reloadStart).toBeGreaterThan(switchEnd);
+    expect(outerSwitchEnd).toBeGreaterThan(reloadStart);
     expect(resumeStart).toBeGreaterThan(switchStart);
     expect(resumeStart).toBeLessThan(switchEnd);
-    const switchContent = settings.slice(switchStart, switchEnd);
+    const switchContent = settings.slice(switchStart, outerSwitchEnd);
     expect(switchContent).toContain('enabled={props.settings.autoSwitchEnabled}');
     expect(switchContent).toContain('class="settings-integration-grid"');
     for (const title of ["autoResetTitle", "autoResumeTitle", "autoSwitchRefreshAllTitle"]) {
       expect(switchContent).toContain(`props.copy.${title}`);
     }
     expect(switchContent).toContain('title="Wait for running sessions"');
-    expect(settings.slice(reloadStart, settings.indexOf("/>", reloadStart))).toContain(
-      'className="settings-block-wide"'
-    );
+    expect(switchContent).toContain("autoSwitchReloadTitle");
     expect(settings.slice(resumeStart, settings.indexOf("/>", resumeStart))).not.toContain(
       'className="settings-block-wide"'
     );

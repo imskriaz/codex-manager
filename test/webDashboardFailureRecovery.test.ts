@@ -31,7 +31,7 @@ describe("browser action completion during state failure", () => {
       const result = await work;
       expect(result.reloadAfterResponse).toBe(true);
       expect(result.messages).toContainEqual(expect.objectContaining({ requestId: "slow-snapshot", status: "completed" }));
-      expect(result.messages).toContainEqual(expect.objectContaining({ type: "dashboard:notice", level: "warning", message: expect.stringContaining("still loading") }));
+      expect(result.messages).not.toContainEqual(expect.objectContaining({ type: "dashboard:notice", message: expect.stringContaining("still loading") }));
     } finally { server.dispose(); vi.useRealTimers(); }
   });
 

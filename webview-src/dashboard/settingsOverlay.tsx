@@ -658,17 +658,16 @@ export function SettingsOverlay(props: {
                       enabled={props.settings.autoSwitchRefreshAllBeforeSwitchEnabled === true}
                       onToggle={(enabled) => patchAndSend("autoSwitchRefreshAllBeforeSwitchEnabled", enabled)}
                     />
+                    <SettingsToggleBlock
+                      title={props.copy.autoSwitchReloadTitle}
+                      sub={props.copy.autoSwitchReloadSub}
+                      enabled={props.settings.autoSwitchReloadWindowEnabled}
+                      onToggle={(enabled) => patchAndSend("autoSwitchReloadWindowEnabled", enabled)}
+                    />
                   </div>
                   <div class="settings-note">{props.copy.autoSwitchAnyNote}</div>
                 </div>
               </SettingsToggleBlock>
-              <SettingsToggleBlock
-                title={props.copy.autoSwitchReloadTitle}
-                sub={props.copy.autoSwitchReloadSub}
-                enabled={props.settings.autoSwitchReloadWindowEnabled}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("autoSwitchReloadWindowEnabled", enabled)}
-              />
               <SettingsToggleBlock
                 title={props.copy.warningTitle}
                 sub={props.copy.warningSub}
