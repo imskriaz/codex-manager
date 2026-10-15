@@ -214,37 +214,96 @@ export function SettingsOverlay(props: {
                         : "Configure browser access, the online host, and public domain."}
                   </div>
                 </div>
-                <div class="settings-integration-grid">
-                  <SettingsToggleBlock
-                    title={
-                      props.lang === "zh" ? "浏览器面板" : props.lang === "zh-hant" ? "瀏覽器面板" : "Web Dashboard"
-                    }
-                    sub={
-                      <>
-                        {props.lang === "zh"
-                          ? "在 127.0.0.1:39875 启动浏览器面板。本机访问无需密码；远程登录使用加密同步密码短语。"
-                          : props.lang === "zh-hant"
-                            ? "在 127.0.0.1:39875 啟動瀏覽器面板。本機存取無需密碼；遠端登入使用加密同步密碼。"
-                            : "Run the browser dashboard at 127.0.0.1:39875. Local access needs no login; remote access uses the shared password."}
-                      </>
-                    }
-                    enabled={props.settings.webDashboardEnabled}
-                    onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)}
-                  >
-                    <div class="settings-note">
-                      {props.settings.webDashboardEnabled
-                        ? props.lang === "zh"
-                          ? "已启用。点击顶部面板按钮可在浏览器中打开。"
-                          : props.lang === "zh-hant"
-                            ? "已啟用。點擊頂部面板按鈕可在瀏覽器中開啟。"
-                            : "Enabled. Use the dashboard button at the top to open it in your browser."
-                        : props.lang === "zh"
+                <SettingsToggleBlock
+                  title={
+                    props.lang === "zh" ? "浏览器面板" : props.lang === "zh-hant" ? "瀏覽器面板" : "Web Dashboard"
+                  }
+                  sub={
+                    <>
+                      {props.lang === "zh"
+                        ? "在 127.0.0.1:39875 启动浏览器面板。本机访问无需密码；远程登录使用加密同步密码短语。"
+                        : props.lang === "zh-hant"
+                          ? "在 127.0.0.1:39875 啟動瀏覽器面板。本機存取無需密碼；遠端登入使用加密同步密碼。"
+                          : "Run the browser dashboard at 127.0.0.1:39875. Local access needs no login; remote access uses the shared password."}
+                    </>
+                  }
+                  enabled={props.settings.webDashboardEnabled}
+                  onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)}
+                >
+                  <div class="settings-note">
+                    {props.settings.webDashboardEnabled
+                      ? props.lang === "zh"
+                        ? "已启用。点击顶部面板按钮可在浏览器中打开。"
+                        : props.lang === "zh-hant"
+                          ? "已啟用。點擊頂部面板按鈕可在瀏覽器中開啟。"
+                          : "Enabled. Use the dashboard button at the top to open it in your browser."
+                      : props.lang === "zh"
+                        ? "已停用。"
+                        : props.lang === "zh-hant"
                           ? "已停用。"
+                          : "Disabled."}
+                  </div>
+                  <div class="settings-integration-grid">
+                    <SettingsToggleBlock
+                      title={
+                        props.lang === "zh"
+                          ? "启用工作区（实验性）"
                           : props.lang === "zh-hant"
-                            ? "已停用。"
-                            : "Disabled."}
-                    </div>
-                  </SettingsToggleBlock>
+                            ? "啟用工作區（實驗性）"
+                            : "Enable workspace (Experimental)"
+                      }
+                      sub={
+                        props.lang === "zh"
+                          ? "默认停用。启用后可在面板中打开工作区、会话和终端工具。"
+                          : props.lang === "zh-hant"
+                            ? "預設停用。啟用後可在面板中開啟工作區、工作階段與終端工具。"
+                            : "Disabled by default and stored only on this PC. Enable the workspace view, sessions, and terminal tools in the dashboard."
+                      }
+                      enabled={props.settings.cliIntegrationEnabled === true}
+                      onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)}
+                    >
+                      <div class="settings-note">
+                        {props.settings.cliIntegrationEnabled
+                          ? props.lang === "zh"
+                            ? "已启用。面板顶部会显示工作区入口。"
+                            : props.lang === "zh-hant"
+                              ? "已啟用。面板頂部會顯示工作區入口。"
+                              : "Enabled. The workspace entry is available at the top of the dashboard."
+                          : props.lang === "zh"
+                            ? "已停用。工作区入口和会话读取均关闭。"
+                            : props.lang === "zh-hant"
+                              ? "已停用。工作區入口與工作階段讀取均關閉。"
+                              : "Disabled. The workspace entry and session access are off."}
+                      </div>
+                    </SettingsToggleBlock>
+                    {props.settings.cliIntegrationEnabled && (
+                      <SettingsSegmentBlock
+                        title="Workspace session transport"
+                        sub="Choose how the workspace runs Codex sessions."
+                        className="settings-block-wide settings-session-transport"
+                        options={[
+                          {
+                            key: "app-server-stdio",
+                            title: "App server",
+                            description: "Threads and turns (recommended)",
+                            active: (props.settings.codexSessionTransport ?? "app-server-stdio") === "app-server-stdio",
+                            onClick: () => patchAndSend("codexSessionTransport", "app-server-stdio")
+                          },
+                          {
+                            key: "cli",
+                            title: "CLI compatibility",
+                            description: "Exec and transcripts",
+                            active: props.settings.codexSessionTransport === "cli",
+                            onClick: () => patchAndSend("codexSessionTransport", "cli")
+                          }
+                        ]}
+                      >
+                        <div class="settings-note">Uses your selection directly—no automatic fallback.</div>
+                      </SettingsSegmentBlock>
+                    )}
+                  </div>
+                </SettingsToggleBlock>
+                <div class="settings-integration-grid">
                   <SettingsToggleBlock
                     title={
                       props.lang === "zh"
@@ -326,141 +385,52 @@ export function SettingsOverlay(props: {
                   </div>
                 </div>
               </div>
-              <div class="settings-block settings-block-wide settings-integration-group">
-                <div class="settings-block-head settings-integration-head">
-                  <div class="settings-block-title">
-                    {props.lang === "zh" ? "工作区" : props.lang === "zh-hant" ? "工作區" : "Workspace"}
-                  </div>
-                  <div class="settings-block-sub">
-                    {props.lang === "zh"
-                      ? "控制工作区功能；CLI 路径仍可单独配置。"
-                      : props.lang === "zh-hant"
-                        ? "控制工作區功能；CLI 路徑仍可單獨設定。"
-                        : "Control workspace features on this PC; configure the CLI path separately when needed."}
-                  </div>
-                </div>
-                <div class="settings-integration-grid">
-                  <SettingsToggleBlock
-                    title={
-                      props.lang === "zh"
-                        ? "启用工作区（实验性）"
-                        : props.lang === "zh-hant"
-                          ? "啟用工作區（實驗性）"
-                          : "Enable workspace (Experimental)"
-                    }
-                    sub={
-                      props.lang === "zh"
-                        ? "默认停用。启用后可在面板中打开工作区、会话和终端工具。"
-                        : props.lang === "zh-hant"
-                          ? "預設停用。啟用後可在面板中開啟工作區、工作階段與終端工具。"
-                          : "Disabled by default and stored only on this PC. Enable the workspace view, sessions, and terminal tools in the dashboard."
-                    }
-                    enabled={props.settings.cliIntegrationEnabled === true}
-                    onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)}
-                  >
-                    <div class="settings-note">
-                      {props.settings.cliIntegrationEnabled
-                        ? props.lang === "zh"
-                          ? "已启用。面板顶部会显示工作区入口。"
-                          : props.lang === "zh-hant"
-                            ? "已啟用。面板頂部會顯示工作區入口。"
-                            : "Enabled. The workspace entry is available at the top of the dashboard."
-                        : props.lang === "zh"
-                          ? "已停用。工作区入口和会话读取均关闭。"
-                          : props.lang === "zh-hant"
-                            ? "已停用。工作區入口與工作階段讀取均關閉。"
-                            : "Disabled. The workspace entry and session access are off."}
-                    </div>
-                  </SettingsToggleBlock>
-                  <SettingsSegmentBlock
-                    title="Workspace session transport"
-                    sub="Choose how the workspace runs Codex sessions."
-                    className="settings-block-wide settings-session-transport"
-                    options={[
-                      {
-                        key: "app-server-stdio",
-                        title: "App server",
-                        description: "Threads and turns (recommended)",
-                        active: (props.settings.codexSessionTransport ?? "app-server-stdio") === "app-server-stdio",
-                        onClick: () => patchAndSend("codexSessionTransport", "app-server-stdio")
-                      },
-                      {
-                        key: "cli",
-                        title: "CLI compatibility",
-                        description: "Exec and transcripts",
-                        active: props.settings.codexSessionTransport === "cli",
-                        onClick: () => patchAndSend("codexSessionTransport", "cli")
-                      }
-                    ]}
-                  >
-                    <div class="settings-note">Uses your selection directly—no automatic fallback.</div>
-                  </SettingsSegmentBlock>
-                  <SettingsPathBlock
-                    copy={props.copy}
-                    pathValue={props.settings.codexCliPath ?? ""}
-                    hasCustomPath={Boolean(props.settings.codexCliPath)}
-                    compact
-                    title={
-                      props.lang === "zh"
-                        ? "Codex CLI 路径"
-                        : props.lang === "zh-hant"
-                          ? "Codex CLI 路徑"
-                          : "Codex CLI path"
-                    }
-                    sub={
-                      props.lang === "zh"
-                        ? "可选。指定 Codex CLI 可执行文件或启动脚本；留空则自动检测。"
-                        : props.lang === "zh-hant"
-                          ? "可選。指定 Codex CLI 可執行檔或啟動腳本；留空則自動偵測。"
-                          : "Optional. Set the Codex CLI executable or launcher script; leave empty for auto-detection."
-                    }
-                    emptyLabel={
-                      props.lang === "zh"
-                        ? "未设置 CLI 路径，将使用自动检测。"
-                        : props.lang === "zh-hant"
-                          ? "未設定 CLI 路徑，將使用自動偵測。"
-                          : "No custom CLI path. Automatic detection will be used."
-                    }
-                    pickLabel={
-                      props.lang === "zh"
-                        ? "选择 CLI 路径"
-                        : props.lang === "zh-hant"
-                          ? "選擇 CLI 路徑"
-                          : "Choose CLI path"
-                    }
-                    clearLabel={
-                      props.lang === "zh"
-                        ? "自动检测 CLI"
-                        : props.lang === "zh-hant"
-                          ? "自動偵測 CLI"
-                          : "Auto-detect CLI"
-                    }
-                    onPick={props.onPickCodexCliPath}
-                    onClear={props.onClearCodexCliPath}
-                  />
-                  <SettingsToggleBlock
-                    title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
-                    sub={
-                      props.copy.crossWindowAccountModeSub ??
-                      "Give each VS Code window an isolated Codex home. When off, windows share one account and reload together after switching. Sync and quota refresh are coordinated in both modes."
-                    }
-                    enabled={props.settings.crossWindowAccountModeEnabled === true}
-                    className="settings-block-wide"
-                    onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
-                  >
-                    <div class="settings-note">
-                      {props.settings.crossWindowAccountModeEnabled
-                        ? "Enabled. New and reloaded windows load accounts independently."
-                        : "Disabled. Windows share the active account and reload together when it changes."}
-                    </div>
-                  </SettingsToggleBlock>
-                </div>
-              </div>
+              <SettingsPathBlock
+                copy={props.copy}
+                pathValue={props.settings.codexCliPath ?? ""}
+                hasCustomPath={Boolean(props.settings.codexCliPath)}
+                title={
+                  props.lang === "zh"
+                    ? "Codex CLI 路径"
+                    : props.lang === "zh-hant"
+                      ? "Codex CLI 路徑"
+                      : "Codex CLI path"
+                }
+                sub={
+                  props.lang === "zh"
+                    ? "可选。指定 Codex CLI 可执行文件或启动脚本；留空则自动检测。"
+                    : props.lang === "zh-hant"
+                      ? "可選。指定 Codex CLI 可執行檔或啟動腳本；留空則自動偵測。"
+                      : "Optional. Set the Codex CLI executable or launcher script; leave empty for auto-detection."
+                }
+                emptyLabel={
+                  props.lang === "zh"
+                    ? "未设置 CLI 路径，将使用自动检测。"
+                    : props.lang === "zh-hant"
+                      ? "未設定 CLI 路徑，將使用自動偵測。"
+                      : "No custom CLI path. Automatic detection will be used."
+                }
+                pickLabel={
+                  props.lang === "zh"
+                    ? "选择 CLI 路径"
+                    : props.lang === "zh-hant"
+                      ? "選擇 CLI 路徑"
+                      : "Choose CLI path"
+                }
+                clearLabel={
+                  props.lang === "zh"
+                    ? "自动检测 CLI"
+                    : props.lang === "zh-hant"
+                      ? "自動偵測 CLI"
+                      : "Auto-detect CLI"
+                }
+                onPick={props.onPickCodexCliPath}
+                onClear={props.onClearCodexCliPath}
+              />
               <SettingsToggleBlock
                 title={props.copy.codexAppRestartTitle}
                 sub={props.copy.codexAppRestartSub}
                 enabled={props.settings.codexAppRestartEnabled}
-                className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("codexAppRestartEnabled", enabled)}
               >
                 <div class={`settings-stack ${props.settings.codexAppRestartEnabled ? "" : "is-hidden"}`}>
@@ -487,10 +457,25 @@ export function SettingsOverlay(props: {
                     copy={props.copy}
                     pathValue={props.settings.resolvedCodexAppPath}
                     hasCustomPath={Boolean(props.settings.codexAppPath)}
-                    compact
                     onPick={props.onPickCodexAppPath}
                     onClear={props.onClearCodexAppPath}
                   />
+                </div>
+              </SettingsToggleBlock>
+              <SettingsToggleBlock
+                title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
+                sub={
+                  props.copy.crossWindowAccountModeSub ??
+                  "Give each VS Code window an isolated Codex home. When off, windows share one account and reload together after switching. Sync and quota refresh are coordinated in both modes."
+                }
+                enabled={props.settings.crossWindowAccountModeEnabled === true}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
+              >
+                <div class="settings-note">
+                  {props.settings.crossWindowAccountModeEnabled
+                    ? "Enabled. New and reloaded windows load accounts independently."
+                    : "Disabled. Windows share the active account and reload together when it changes."}
                 </div>
               </SettingsToggleBlock>
             </div>
@@ -613,44 +598,69 @@ export function SettingsOverlay(props: {
                     onPreview={(value) => props.onPatchSettings({ autoSwitchWeeklyThreshold: value })}
                     onCommit={(value) => patchAndSend("autoSwitchWeeklyThreshold", value)}
                   />
-                  <SettingsToggleBlock
-                    title={props.copy.autoResetTitle ?? "Automatic quota reset plan"}
-                    sub={
-                      props.copy.autoResetSub ??
-                      "Use an available reset credit when every enabled account is out of quota."
-                    }
-                    enabled={props.settings.autoResetEnabled === true}
-                    onToggle={(enabled) => patchAndSend("autoResetEnabled", enabled)}
-                  >
-                    <div class={`settings-stack ${props.settings.autoResetEnabled ? "" : "is-hidden"}`}>
-                      <SettingsDiscreteSlider
-                        value={props.settings.autoResetWeeklyThreshold ?? 0}
-                        values={AUTO_RESET_VALUES}
-                        accent="amber"
-                        sparseScale
-                        valueLabel={(value) => `${value}%`}
-                        description={(value) =>
-                          formatTemplate(
-                            props.copy.autoResetThresholdDescTemplate ??
-                              "Reset a candidate when its weekly or monthly quota is {value}% or lower.",
-                            value
-                          )
-                        }
-                        onPreview={(value) => props.onPatchSettings({ autoResetWeeklyThreshold: value })}
-                        onCommit={(value) => patchAndSend("autoResetWeeklyThreshold", value)}
-                      />
-                    </div>
-                  </SettingsToggleBlock>
+                  <div class="settings-integration-grid">
+                    <SettingsToggleBlock
+                      title={props.copy.autoResetTitle ?? "Automatic quota reset plan"}
+                      sub={
+                        props.copy.autoResetSub ??
+                        "Use an available reset credit when every enabled account is out of quota."
+                      }
+                      enabled={props.settings.autoResetEnabled === true}
+                      onToggle={(enabled) => patchAndSend("autoResetEnabled", enabled)}
+                    >
+                      <div class={`settings-stack ${props.settings.autoResetEnabled ? "" : "is-hidden"}`}>
+                        <SettingsDiscreteSlider
+                          value={props.settings.autoResetWeeklyThreshold ?? 0}
+                          values={AUTO_RESET_VALUES}
+                          accent="amber"
+                          sparseScale
+                          valueLabel={(value) => `${value}%`}
+                          description={(value) =>
+                            formatTemplate(
+                              props.copy.autoResetThresholdDescTemplate ??
+                                "Reset a candidate when its weekly or monthly quota is {value}% or lower.",
+                              value
+                            )
+                          }
+                          onPreview={(value) => props.onPatchSettings({ autoResetWeeklyThreshold: value })}
+                          onCommit={(value) => patchAndSend("autoResetWeeklyThreshold", value)}
+                        />
+                      </div>
+                    </SettingsToggleBlock>
+                    <SettingsToggleBlock
+                      title="Wait for running sessions"
+                      sub="When Auto Switch is enabled, keep using the current account until all local sessions finish, then switch automatically. If session inspection fails, Auto Switch continues with a warning."
+                      enabled={props.settings.autoSwitchWaitForSessionsEnabled === true}
+                      onToggle={(enabled) => patchAndSend("autoSwitchWaitForSessionsEnabled", enabled)}
+                    />
+                    <SettingsToggleBlock
+                      title={props.copy.autoResumeTitle}
+                      sub={props.copy.autoResumeSub}
+                      enabled={props.settings.autoResumeEnabled === true}
+                      onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
+                    >
+                      {props.settings.autoResumeEnabled && (
+                        <SettingsToggleBlock
+                          title={props.copy.autoResumeGoalOnlyTitle}
+                          sub={props.copy.autoResumeGoalOnlySub}
+                          enabled={props.settings.autoResumeGoalOnlyEnabled !== false}
+                          onToggle={(enabled) => patchAndSend("autoResumeGoalOnlyEnabled", enabled)}
+                        />
+                      )}
+                    </SettingsToggleBlock>
+                    <SettingsToggleBlock
+                      title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh all quotas before warning switch"}
+                      sub={
+                        props.copy.autoSwitchRefreshAllSub ??
+                        "When the warning limit is reached, refresh enabled accounts before showing the notification so the recommended account is current. If every account is below the automatic-switch threshold, the all-account timer also refreshes the current account until one becomes capable."
+                      }
+                      enabled={props.settings.autoSwitchRefreshAllBeforeSwitchEnabled === true}
+                      onToggle={(enabled) => patchAndSend("autoSwitchRefreshAllBeforeSwitchEnabled", enabled)}
+                    />
+                  </div>
                   <div class="settings-note">{props.copy.autoSwitchAnyNote}</div>
                 </div>
               </SettingsToggleBlock>
-              <SettingsToggleBlock
-                title="Wait for running sessions"
-                sub="When Auto Switch is enabled, keep using the current account until all local sessions finish, then switch automatically. If session inspection fails, Auto Switch continues with a warning."
-                enabled={props.settings.autoSwitchWaitForSessionsEnabled === true}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("autoSwitchWaitForSessionsEnabled", enabled)}
-              />
               <SettingsToggleBlock
                 title={props.copy.autoSwitchReloadTitle}
                 sub={props.copy.autoSwitchReloadSub}
@@ -658,36 +668,6 @@ export function SettingsOverlay(props: {
                 className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("autoSwitchReloadWindowEnabled", enabled)}
               />
-              {props.settings.autoSwitchEnabled && (
-                <SettingsToggleBlock
-                  title={props.copy.autoResumeTitle}
-                  sub={props.copy.autoResumeSub}
-                  enabled={props.settings.autoResumeEnabled === true}
-                  className="settings-block-wide"
-                  onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
-                />
-              )}
-              {props.settings.autoSwitchEnabled && props.settings.autoResumeEnabled && (
-                <SettingsToggleBlock
-                  title={props.copy.autoResumeGoalOnlyTitle}
-                  sub={props.copy.autoResumeGoalOnlySub}
-                  enabled={props.settings.autoResumeGoalOnlyEnabled !== false}
-                  className="settings-block-wide"
-                  onToggle={(enabled) => patchAndSend("autoResumeGoalOnlyEnabled", enabled)}
-                />
-              )}
-              {(props.settings.autoSwitchEnabled || props.settings.quotaWarningEnabled) && (
-                <SettingsToggleBlock
-                  title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh all quotas before warning switch"}
-                  sub={
-                    props.copy.autoSwitchRefreshAllSub ??
-                    "When the warning limit is reached, refresh enabled accounts before showing the notification so the recommended account is current. If every account is below the automatic-switch threshold, the all-account timer also refreshes the current account until one becomes capable."
-                  }
-                  className="settings-block-wide"
-                  enabled={props.settings.autoSwitchRefreshAllBeforeSwitchEnabled === true}
-                  onToggle={(enabled) => patchAndSend("autoSwitchRefreshAllBeforeSwitchEnabled", enabled)}
-                />
-              )}
               <SettingsToggleBlock
                 title={props.copy.warningTitle}
                 sub={props.copy.warningSub}

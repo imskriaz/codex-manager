@@ -11,6 +11,12 @@ const response = await fetch(`${origin}/api/state`);
 if (!response.ok) throw new Error(`Local dashboard snapshot returned ${response.status}.`);
 const snapshot = await response.json();
 snapshot.settings.cliIntegrationEnabled = true;
+snapshot.settings.webDashboardEnabled = true;
+snapshot.settings.codexAppRestartEnabled = true;
+snapshot.settings.codexCliPath = "";
+snapshot.settings.autoSwitchEnabled = true;
+snapshot.settings.autoResetEnabled = true;
+snapshot.settings.autoResumeEnabled = true;
 snapshot.settings.privacyMode = true;
 const parentId = "01a04882-d037-7a42-ad24-9afb61901188";
 const runningId = "01a04882-d037-7a42-ad24-9afb61901189";
@@ -48,6 +54,9 @@ const mockHost = `(() => {
       if(message.type === 'dashboard:ready') {
         dispatch({type:'dashboard:snapshot',state});
         dispatch({type:'dashboard:connection',connected:true});
+      } else if(message.type === 'dashboard:setting') {
+        state.settings[message.key] = message.value;
+        dispatch({type:'dashboard:snapshot',state});
       } else if(message.type === 'dashboard:action') {
         let payload = {}, error;
         if(message.action === 'listCodexCliSessions') payload = {cliSessions:sessions,cliComposerConfig:config};
@@ -544,6 +553,81 @@ try {
     for (const tab of await page.locator(".settings-tab").all()) {
       await tab.click();
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 2), "Settings overflow");
+      if (await tab.getAttribute("id") === "settings-tab-general") {
+        const domain = page.locator('input[name="cloudflared-domain"]');
+        const domainCard = domain.locator("..");
+        const domainBounds = await domainCard.boundingBox();
+        const hostCard = domainCard.locator("..").locator(":scope > .settings-block").first();
+        const hostBounds = await hostCard.boundingBox();
+        assert.ok(Math.abs(domainBounds.width - hostBounds.width) <= 2, "Host and Cloudflared use equal-width cards");
+        if (width > 560) assert.ok(Math.abs(domainBounds.y - hostBounds.y) <= 2 && domainBounds.x > hostBounds.x, "Cloudflared follows the host in the same row");
+        const inputBounds = await domain.boundingBox();
+        assert.ok(inputBounds.width >= domainBounds.width - 28 && inputBounds.x + inputBounds.width <= domainBounds.x + domainBounds.width, "Cloudflared input fills its card without overflow");
+        const general = page.locator("#settings-panel-general > .settings-layout");
+        const cliCard = general.locator(":scope > .settings-block").filter({ has: page.getByText("Codex CLI path", { exact: true }) });
+        const pathBounds = await cliCard.locator(".settings-path-note").boundingBox();
+        const actionsBounds = await cliCard.locator(".settings-inline-actions").boundingBox();
+        assert.ok(actionsBounds.y >= pathBounds.y + pathBounds.height, "CLI path actions sit below the path");
+        assert.ok(await cliCard.evaluate(element => element.scrollWidth <= element.clientWidth), "CLI path card has no horizontal overflow");
+        const restart = general.locator(":scope > .settings-block").filter({ has: page.getByRole("button", { name: snapshot.copy.codexAppRestartTitle, exact: true }) });
+        const cliBounds = await cliCard.boundingBox();
+        const restartBounds = await restart.boundingBox();
+        assert.ok(Math.abs(cliBounds.width - restartBounds.width) <= 2, "CLI path and desktop restart have equal widths");
+        if (width > 560) assert.ok(Math.abs(cliBounds.y - restartBounds.y) <= 2, "CLI path and desktop restart share a row");
+        assert.ok(await restart.evaluate(element => element.scrollWidth <= element.clientWidth), "Expanded desktop restart fits its card");
+        const parallel = general.locator(":scope > .settings-block").filter({ has: page.getByRole("button", { name: snapshot.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)", exact: true }) });
+        assert.ok(Math.abs((await parallel.boundingBox()).width - (await general.boundingBox()).width) <= 2, "Parallel window accounts spans the settings width");
+        const dashboardToggle = page.getByRole("button", { name: "Web Dashboard", exact: true });
+        const workspaceToggle = page.getByRole("button", { name: "Enable workspace (Experimental)", exact: true });
+        const dashboardCard = dashboardToggle.locator("../..");
+        assert.equal(await dashboardCard.locator(".settings-session-transport").count(), 1, "Workspace transport is nested under Web Dashboard");
+        await workspaceToggle.click();
+        await page.locator(".settings-session-transport").waitFor({ state: "hidden" });
+        await workspaceToggle.click();
+        await page.locator(".settings-session-transport").waitFor({ state: "visible" });
+        await dashboardToggle.click();
+        await workspaceToggle.waitFor({ state: "hidden" });
+        assert.equal(await page.locator(".settings-session-transport").count(), 0, "Dashboard off hides both workspace controls");
+        assert.equal(await cliCard.isVisible(), true, "CLI configuration remains independent of Web Dashboard");
+        await dashboardToggle.click();
+        await workspaceToggle.waitFor({ state: "visible" });
+        assert.equal(await workspaceToggle.getAttribute("aria-pressed"), "true", "Hiding workspace controls preserves their settings");
+        assert.equal(await cliCard.getByRole("button", { name: "Auto-detect CLI", exact: true }).isDisabled(), true, "An empty CLI path already uses auto-detection");
+        const customPath = "C:/" + "long-cli-directory/".repeat(20) + "codex.exe";
+        await page.evaluate(({ state, customPath }) => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: { ...state, settings: { ...state.settings, codexCliPath: customPath, codexAppPath: customPath, resolvedCodexAppPath: customPath } } } })), { state: snapshot, customPath });
+        await page.waitForFunction(path => document.querySelector("#settings-panel-general > .settings-layout > .settings-block > .settings-path-note")?.textContent === path, customPath);
+        assert.equal(await cliCard.getByRole("button", { name: "Auto-detect CLI", exact: true }).isEnabled(), true, "A custom CLI path can return to auto-detection");
+        assert.ok(await cliCard.evaluate(element => element.scrollWidth <= element.clientWidth), "Long CLI paths stay inside their card");
+        assert.ok(await restart.evaluate(element => element.scrollWidth <= element.clientWidth), "Long desktop paths stay inside their card");
+        await domain.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(output, `settings-domain-${width}x${height}.png`) });
+        await cliCard.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(output, `settings-cli-path-${width}x${height}.png`) });
+      }
+      if (await tab.getAttribute("id") === "settings-tab-automation") {
+        const switchToggle = page.getByRole("button", { name: snapshot.copy.autoSwitchTitle, exact: true });
+        const switchCard = switchToggle.locator("../..");
+        const options = switchCard.locator(".settings-integration-grid > .settings-block");
+        assert.equal(await options.count(), 4, "Switching contains reset, wait, resume, and refresh options");
+        const bounds = await options.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
+        assert.ok(bounds.every(rect => Math.abs(rect.width - bounds[0].width) <= 2), "Switching options use equal-width cards");
+        if (width > 560) assert.ok(Math.abs(bounds[0].y - bounds[1].y) <= 2 && Math.abs(bounds[2].y - bounds[3].y) <= 2, "Switching options form two rows of two");
+        const resumeToggle = page.getByRole("button", { name: snapshot.copy.autoResumeTitle, exact: true });
+        const goalOnly = page.getByRole("button", { name: snapshot.copy.autoResumeGoalOnlyTitle, exact: true });
+        await resumeToggle.click();
+        await goalOnly.waitFor({ state: "hidden" });
+        await resumeToggle.click();
+        await goalOnly.waitFor({ state: "visible" });
+        await switchToggle.click();
+        await options.first().waitFor({ state: "hidden" });
+        assert.equal(await options.count(), 0, "Switching off hides all four dependent controls");
+        assert.equal(await page.getByRole("button", { name: snapshot.copy.autoSwitchReloadTitle, exact: true }).isVisible(), true, "Reload remains independent of automatic switching");
+        await switchToggle.click();
+        await options.first().waitFor({ state: "visible" });
+        assert.equal(await resumeToggle.getAttribute("aria-pressed"), "true", "Hiding switching options preserves auto resume");
+        await switchCard.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: path.join(output, `settings-switching-${width}x${height}.png`) });
+      }
     }
     assert.equal(await page.locator('[data-setting-key="backgroundTokenRefreshEnabled"]').count(), 0);
     await page.keyboard.press("Escape");

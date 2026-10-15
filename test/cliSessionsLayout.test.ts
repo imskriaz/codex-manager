@@ -216,17 +216,19 @@ describe("sessions sidebar layout", () => {
     const resumeStart = settings.indexOf("title={props.copy.autoResumeTitle}");
     expect(switchEnd).toBeGreaterThan(switchStart);
     expect(reloadStart).toBeGreaterThan(switchEnd);
-    expect(resumeStart).toBeGreaterThan(reloadStart);
-    const dependencyStart = settings.lastIndexOf("{props.settings.autoSwitchEnabled && (", resumeStart);
-    expect(dependencyStart).toBeGreaterThan(reloadStart);
-    expect(dependencyStart).toBeLessThan(resumeStart);
-    expect(settings.indexOf(")}", resumeStart)).toBeLessThan(
-      settings.indexOf("props.settings.quotaWarningEnabled) &&", resumeStart)
-    );
+    expect(resumeStart).toBeGreaterThan(switchStart);
+    expect(resumeStart).toBeLessThan(switchEnd);
+    const switchContent = settings.slice(switchStart, switchEnd);
+    expect(switchContent).toContain('enabled={props.settings.autoSwitchEnabled}');
+    expect(switchContent).toContain('class="settings-integration-grid"');
+    for (const title of ["autoResetTitle", "autoResumeTitle", "autoSwitchRefreshAllTitle"]) {
+      expect(switchContent).toContain(`props.copy.${title}`);
+    }
+    expect(switchContent).toContain('title="Wait for running sessions"');
     expect(settings.slice(reloadStart, settings.indexOf("/>", reloadStart))).toContain(
       'className="settings-block-wide"'
     );
-    expect(settings.slice(resumeStart, settings.indexOf("/>", resumeStart))).toContain(
+    expect(settings.slice(resumeStart, settings.indexOf("/>", resumeStart))).not.toContain(
       'className="settings-block-wide"'
     );
   });
@@ -513,7 +515,7 @@ describe("sessions sidebar layout", () => {
     expect(settings).toContain("Uses your selection directly—no automatic fallback.");
     const transportSettings = settings.slice(
       settings.indexOf('title="Workspace session transport"'),
-      settings.indexOf("<SettingsPathBlock", settings.indexOf('title="Workspace session transport"'))
+      settings.indexOf("</SettingsSegmentBlock>", settings.indexOf('title="Workspace session transport"'))
     );
     expect(transportSettings.match(/key: \"(?:app-server-stdio|cli)\"/g)).toHaveLength(2);
     expect(transportSettings).not.toContain("WebSocket");

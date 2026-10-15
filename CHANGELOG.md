@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.24
+
+- Nest workspace controls under Web Dashboard with dependent visibility, pair the host and domain cards and the CLI path and desktop restart cards, and give parallel window accounts a full-width row.
+- Group reset, session waiting, auto resume, and refresh-before-switch settings in a responsive two-column grid inside Automatic Account Switching.
+
 ## 1.2.22
 
 - Share on-demand Codex session checks between Auto Resume, Wait for running sessions, indicators, and explicit session actions. Account switching now joins duplicate requests, recovers abandoned locks, and cancels optional startup recovery and renewal before manual actions.

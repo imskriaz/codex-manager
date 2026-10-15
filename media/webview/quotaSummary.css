@@ -4020,7 +4020,8 @@ html[data-theme="auto"] body.vscode-light .overlay {
   word-break: break-all;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
-.settings-select {
+.settings-select,
+.settings-text-input {
   width: 100%;
   border-radius: 12px;
   border: 1px solid var(--border-default);
@@ -4036,15 +4037,21 @@ html[data-theme="auto"] body.vscode-light .overlay {
     box-shadow 160ms ease,
     background 160ms ease;
 }
-.settings-select:hover {
+.settings-select:hover,
+.settings-text-input:hover {
   background: var(--bg-elevated);
 }
-.settings-select:focus {
+.settings-select:focus,
+.settings-text-input:focus {
   border-color: var(--border-accent);
   box-shadow: 0 0 0 1px rgba(56, 139, 253, 0.16) inset;
 }
 .settings-select option {
   color: #111827;
+}
+.settings-text-input {
+  min-width: 0;
+  box-sizing: border-box;
 }
 html[data-theme="light"] .settings-modal,
 html[data-theme="auto"] body.vscode-light .settings-modal {
@@ -10379,7 +10386,8 @@ html[data-theme="dark"] .cli-terminal-panel {
   white-space: nowrap;
 }
 
-.settings-layout .settings-select {
+.settings-layout .settings-select,
+.settings-layout .settings-text-input {
   min-height: 30px;
   padding: 5px 8px;
   border-radius: 7px;
@@ -10547,6 +10555,12 @@ html[data-theme="dark"] .cli-terminal-panel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.settings-layout > .settings-block > .settings-note.settings-path-note {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .settings-layout .threshold-dual {
