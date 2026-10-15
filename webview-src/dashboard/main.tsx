@@ -739,8 +739,6 @@ function App() {
                 if (typeof realtimeRevision !== "number" || sessionChanged || routeSession.status === "running") {
                   requestCliSessionMessages(routeId, routeSession.deviceId, typeof realtimeRevision !== "number");
                 }
-              } else if (sameCliSessionTarget(selectedCliSession, currentSessionTarget())) {
-                // A newly forked session can take a moment to appear in Codex's local index.
               } else {
                 // The refreshed index is authoritative. Do not request a route
                 // that is already gone; that only turns a stale link into a
