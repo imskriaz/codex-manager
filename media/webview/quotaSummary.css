@@ -14645,8 +14645,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .overview-metrics, .overview-actions { width: 100%; box-sizing: border-box; }
   .overview-actions .toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-actions .toolbar-btn { width: 100%; min-width: 0; }
-  .saved-card-footer { flex-wrap: wrap; row-gap: 8px; }
-  .saved-credit-summary { flex-wrap: wrap; white-space: normal; }
+  .saved-card-footer { flex-wrap: nowrap; }
+  .saved-credit-summary { flex-wrap: nowrap; white-space: nowrap; }
   .dashboard-account-toolbar select { width: 100%; }
   .settings-tab { grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; }
   .settings-tab-icon { display: none; }

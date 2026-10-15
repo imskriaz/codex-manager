@@ -120,6 +120,8 @@ describe("saved account card presentation", () => {
     expect(styles).toMatch(/\.saved-credit-summary\s*{[^}]*overflow:\s*hidden/s);
     expect(styles).toMatch(/\.saved-credit-summary \.saved-running-device\s*{[^}]*flex:\s*1 1 auto/s);
     expect(styles).toMatch(/\.saved-credit-summary \.saved-credits-line\s*{[^}]*text-overflow:\s*ellipsis/s);
+    expect(styles).toMatch(/@media \(max-width: 520px\)[\s\S]*\.saved-card-footer\s*{[^}]*flex-wrap:\s*nowrap/s);
+    expect(styles).toMatch(/@media \(max-width: 520px\)[\s\S]*\.saved-credit-summary\s*{[^}]*white-space:\s*nowrap/s);
   });
 
   it("keeps compact card metadata regular-weight with tight padding", () => {
