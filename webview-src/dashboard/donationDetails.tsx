@@ -44,7 +44,7 @@ export function DonationDetails(props: { onOpenExternal: (url: string) => void }
         </div>
         <div>
           <span>Mobile wallet</span>
-          <strong>Select Mobile Wallet → bKash, then enter Riaz · {BKASH_NUMBER}.</strong>
+          <strong>Select Mobile Wallet → bKash, then enter Codex Manager · {BKASH_NUMBER}.</strong>
         </div>
       </div>
     </div>

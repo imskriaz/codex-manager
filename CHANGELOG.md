@@ -8,7 +8,7 @@
 - Simplify Auto Sync settings, claim only the current account by default, and release stale saved-account claims. Keep WebSocket changes real time and batch VS Code Settings Sync writes with a configurable gap.
 - Save eligible open Codex tabs without scanning unrelated running sessions. Keep automatic save failures in diagnostics and retry quietly without desktop or browser push notifications.
 - Keep refresh-all work parallel with manual actions and retain bounded network request handling.
-- Add Xoom donation instructions to the About and onboarding flows.
+- Add Xoom donation instructions to onboarding and a dedicated donation modal opened directly from the dashboard header, using Codex Manager as the recipient name.
 - Keep account card metadata on one line and prevent mobile search inputs from zooming on focus.
 - Fix overview quota percentages on compact mobile panels and tighten narrow-screen spacing for controls, metrics, and account cards.
 

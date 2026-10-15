@@ -1,8 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
 import type { DashboardState } from "../../src/domain/dashboard/types";
 import { GitHubIcon } from "./icons";
-import { DonationDetails } from "./donationDetails";
 import { ModalShell } from "./primitives";
 
 const PROJECT_GITHUB_URL = "https://github.com/imskriaz/codex-manager";
@@ -131,7 +129,6 @@ export function AboutModal(props: {
   onClose: () => void;
   onOpenExternal: (url: string) => void;
 }) {
-  const [donationOpen, setDonationOpen] = useState(false);
   const text = getAboutText(props.lang);
   const entries = [
     {
@@ -157,14 +154,6 @@ export function AboutModal(props: {
       icon: <AboutLicenseIcon />,
       className: "is-license",
       url: PROJECT_LICENSE_URL
-    },
-    {
-      key: "donate",
-      title: "Donate",
-      desc: "Open Xoom and choose an amount",
-      icon: <span aria-hidden="true">♡</span>,
-      className: "is-donate",
-      url: ""
     }
   ];
 
@@ -196,7 +185,7 @@ export function AboutModal(props: {
                 key={entry.key}
                 class={`about-entry-card ${entry.className}`}
                 type="button"
-                onClick={() => (entry.key === "donate" ? setDonationOpen(true) : props.onOpenExternal(entry.url))}
+                onClick={() => props.onOpenExternal(entry.url)}
               >
                 <span class="about-entry-icon" aria-hidden="true">
                   {entry.icon}
@@ -207,13 +196,6 @@ export function AboutModal(props: {
             ))}
           </div>
         </section>
-        {donationOpen ? (
-          <section class="about-section about-donation-section">
-            <div class="about-section-title">Donate to Codex Manager</div>
-            <DonationDetails onOpenExternal={props.onOpenExternal} />
-          </section>
-        ) : null}
-
         <AboutSection title={text.purposeTitle} items={text.purposeItems} />
         <AboutSection title={text.riskTitle} items={text.riskItems} />
         <section class="about-section about-section-warning">

@@ -73,6 +73,8 @@ import { resolveDashboardThemeFromMedia } from "./theme";
 import { createDashboardToastController, scheduleDashboardToastDismiss, type DashboardToast } from "./toast";
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
+import { DonationDetails } from "./donationDetails";
+import { ModalShell } from "./primitives";
 import { onboardingFailureMessage } from "./onboardingFeedback";
 import { classifyCliSessionListResult } from "./cliSessionListResult";
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
@@ -199,6 +201,7 @@ function App() {
   }, [isBrowserDashboard]);
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [donationOpen, setDonationOpen] = useState(false);
   const [announcementsOpen, setAnnouncementsOpen] = useState(false);
   const [accountSort, setAccountSort] = useState<AccountSort>(() => {
     try {
@@ -2127,7 +2130,7 @@ function App() {
                 type="button"
                 title="Donate"
                 aria-label="Donate"
-                onClick={() => setAboutOpen(true)}
+                onClick={() => setDonationOpen(true)}
               >
                 <span class="button-face">
                   <span class="button-label">♡</span>
@@ -2576,6 +2579,16 @@ function App() {
         onClose={() => setAnnouncementsOpen(false)}
         onAction={sendAction}
       />
+
+      <ModalShell
+        open={donationOpen}
+        title="Donate to Codex Manager"
+        closeLabel={snapshot.copy.closeModal}
+        className="dashboard-modal-compact"
+        onClose={() => setDonationOpen(false)}
+      >
+        <DonationDetails onOpenExternal={(url) => sendAction("openExternalUrl", undefined, { url })} />
+      </ModalShell>
 
       <AboutModal
         open={aboutOpen}

@@ -2,6 +2,12 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 
 describe("dashboard modal layout", () => {
+  it("opens header donations in a dedicated compact modal", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(main).toMatch(/id="donateButton"[^>]*onClick=\{\(\) => setDonationOpen\(true\)\}/);
+    expect(main).toMatch(/<ModalShell\s+open=\{donationOpen\}\s+title="Donate to Codex Manager"[\s\S]*?className="dashboard-modal-compact"[\s\S]*?onClose=\{\(\) => setDonationOpen\(false\)\}[\s\S]*?<DonationDetails/);
+  });
+
   it("keeps action confirmations compact after the settings modal skin", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const settingsSkin = css.lastIndexOf("/* Settings control center:");

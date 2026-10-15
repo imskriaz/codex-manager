@@ -22,11 +22,13 @@ describe("first-run onboarding", () => {
     expect(donation).toContain("Donation amount (USD)");
     expect(donation).toContain("countryCode=BD&destinationCurrencyCode=BDT");
     expect(donation).toContain("Use your PayPal account to sign in to Xoom");
-    expect(donation).toContain("Riaz");
+    expect(donation).toContain("then enter Codex Manager ·");
+    expect(donation).not.toContain("Riaz");
+    expect(readFileSync("README.md", "utf8")).toContain("send to **Codex Manager**");
     expect(donation).toContain("01628301525");
     const about = readFileSync("webview-src/dashboard/aboutModal.tsx", "utf8");
-    expect(about).toContain('title: "Donate"');
-    expect(about).toContain("DonationDetails");
+    expect(about).not.toContain('title: "Donate"');
+    expect(about).not.toContain("DonationDetails");
   });
 
   it("checks the current auth identity before offering Import email", () => {
