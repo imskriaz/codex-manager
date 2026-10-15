@@ -83,7 +83,7 @@ async function activateQueuedAccount(
         !isAutoQueueCandidateEligible(toAutoQueueOrderValue(latest), getAccountAutoQueuePolicy())
       )
         continue;
-      const activated = await repo.switchAccount(account.id);
+      const activated = await repo.switchAccount(account.id, { expectedActiveAccountId: null });
       await repo.flush?.();
       return { status: "activated", account: activated };
     } catch (error) {

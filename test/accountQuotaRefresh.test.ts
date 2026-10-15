@@ -497,6 +497,35 @@ describe("refreshSingleQuota token automation state", () => {
   });
 
 
+  it("does not discover sessions when Wait for running sessions is disabled", async () => {
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => key === "autoSwitchEnabled" ? true : key === "autoSwitchWaitForSessionsEnabled" ? false : fallback } as never);
+    const active = createAccount("wait-off-active", true, 0, 0);
+    const next = createAccount("wait-off-next", false, 90, 90);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    const read = vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockResolvedValue(["running"]);
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(read).not.toHaveBeenCalled();
+    expect(isAutoSwitchWaitingForSessions()).toBe(false);
+  });
+
+  it("interrupts pending discovery immediately when Wait for running sessions is disabled", async () => {
+    let enabled = true;
+    let changed!: (event: vscode.ConfigurationChangeEvent) => unknown;
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => key === "autoSwitchEnabled" ? true : key === "autoSwitchWaitForSessionsEnabled" ? enabled : fallback } as never);
+    vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation(listener => { changed = listener; return { dispose() {} }; });
+    const active = createAccount("wait-toggle-active", true, 0, 0);
+    const next = createAccount("wait-toggle-next", false, 90, 90);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
+    const read = vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockImplementation(() => new Promise(() => undefined));
+    const work = maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() });
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+    enabled = false;
+    changed({ affectsConfiguration: () => true } as never);
+    expect(await work).toBe(true);
+    expect((read.mock.calls[0]?.[1] as AbortSignal).aborted).toBe(true);
+    expect(isAutoSwitchWaitingForSessions()).toBe(false);
+  });
+
   it("waits for all running sessions, retries after completion, and rechecks before switching", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
     const active = createAccount("wait-active", true, 0, 0);
@@ -511,7 +540,7 @@ describe("refreshSingleQuota token automation state", () => {
     expect(repo.switchAccount).not.toHaveBeenCalled();
     read.mockResolvedValue([]);
     expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(next.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(next.id, { expectedActiveAccountId: expect.any(String) });
     expect(isAutoSwitchWaitingForSessions()).toBe(false);
   });
 
@@ -523,7 +552,7 @@ describe("refreshSingleQuota token automation state", () => {
     const repo = { listAccounts: vi.fn(async () => [active, next]), switchAccount: vi.fn(async () => undefined) };
     const read = vi.spyOn(runningSessions, "readRunningCodexSessionIds").mockResolvedValue(["running"]);
     expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, { userInitiated: true })).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(next.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(next.id, { expectedActiveAccountId: expect.any(String) });
     expect(read).not.toHaveBeenCalled();
   });
 
@@ -539,7 +568,7 @@ describe("refreshSingleQuota token automation state", () => {
     await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
     const manual = maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, { userInitiated: true });
     try {
-      await vi.waitFor(() => expect(repo.switchAccount).toHaveBeenCalledWith(next.id), { timeout: 250 });
+      await vi.waitFor(() => expect(repo.switchAccount).toHaveBeenCalledWith(next.id, { expectedActiveAccountId: expect.any(String) }), { timeout: 250 });
       await expect(Promise.all([background, manual])).resolves.toEqual([true, true]);
       expect(repo.switchAccount).toHaveBeenCalledTimes(1);
       release(["running"]);
@@ -701,7 +730,7 @@ describe("refreshSingleQuota token automation state", () => {
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, view);
 
     expect(switched).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(bestQuota.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(bestQuota.id, { expectedActiveAccountId: expect.any(String) });
     expect(repo.switchAccount).not.toHaveBeenCalledWith(sameEmailButLowerQuota.id);
   });
 
@@ -757,7 +786,7 @@ describe("refreshSingleQuota token automation state", () => {
       )
     ).resolves.toBe(true);
 
-    expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id, { expectedActiveAccountId: expect.any(String) });
   });
 
   it("excludes foreign-owned accounts from background auto switching", async () => {
@@ -818,7 +847,7 @@ describe("refreshSingleQuota token automation state", () => {
       )
     ).resolves.toBe(true);
 
-    expect(repo.switchAccount).toHaveBeenCalledWith(sharedCandidate.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(sharedCandidate.id, { expectedActiveAccountId: expect.any(String) });
     expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(
       "No account to switch — no capable account has enough quota remaining."
     );
@@ -849,7 +878,7 @@ describe("refreshSingleQuota token automation state", () => {
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
 
     expect(switched).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(higherWeekly.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(higherWeekly.id, { expectedActiveAccountId: expect.any(String) });
   });
 
   it("uses weekly quota before expiry when 5-hour quota is tied", async () => {
@@ -879,7 +908,7 @@ describe("refreshSingleQuota token automation state", () => {
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
 
     expect(switched).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(laterHighWeekly.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(laterHighWeekly.id, { expectedActiveAccountId: expect.any(String) });
   });
 
   it("uses monthly quota before expiry for plans without 5-hour or weekly windows", async () => {
@@ -915,7 +944,7 @@ describe("refreshSingleQuota token automation state", () => {
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
 
     expect(switched).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(higherMonthly.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(higherMonthly.id, { expectedActiveAccountId: expect.any(String) });
   });
 
   it("ignores the removed hourly quota toggle and auto-switches for a low hourly window", async () => {
@@ -942,7 +971,7 @@ describe("refreshSingleQuota token automation state", () => {
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
 
     expect(switched).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith("candidate");
+    expect(repo.switchAccount).toHaveBeenCalledWith("candidate", { expectedActiveAccountId: expect.any(String) });
   });
 
   it("auto-switches for a valid hourly threshold when hourly quota control is enabled", async () => {
@@ -969,7 +998,7 @@ describe("refreshSingleQuota token automation state", () => {
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
 
     expect(switched).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id, { expectedActiveAccountId: expect.any(String) });
   });
 
   it("prefers a starred candidate before comparing quota balances", async () => {
@@ -998,7 +1027,7 @@ describe("refreshSingleQuota token automation state", () => {
     const switched = await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
 
     expect(switched).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(starred.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(starred.id, { expectedActiveAccountId: expect.any(String) });
   });
 
   it("excludes claim-disabled accounts from automatic switching", async () => {
@@ -1185,7 +1214,7 @@ describe("refreshSingleQuota token automation state", () => {
     ).resolves.toBe(true);
 
     expect(repo.getTokens).toHaveBeenCalledWith(candidate.id, { bypassCache: true });
-    expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(candidate.id, { expectedActiveAccountId: expect.any(String) });
     expect(getAutoSwitchRuntimeSnapshot().dashboardNotice).toMatchObject({ level: "info" });
   });
 
@@ -1311,7 +1340,7 @@ describe("refreshSingleQuota token automation state", () => {
     ).resolves.toBe(true);
 
     expect(consumeResetCreditMock).toHaveBeenCalledWith("access", undefined, expect.stringMatching(/^cr-/));
-    expect(repo.switchAccount).toHaveBeenCalledWith(resetTarget.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(resetTarget.id, { expectedActiveAccountId: expect.any(String) });
     expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
       expect.stringContaining("Reset quota for reset-target@example.com")
     );
@@ -2261,7 +2290,7 @@ describe("shared queue policy revalidation and reset dependencies", () => {
     const repo = createResetRepository([active, target], tokens);
     setCurrentWindowRuntimeAccountId(target.id);
     expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(target.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(target.id, { expectedActiveAccountId: expect.any(String) });
     expect(refreshQuotaMock).not.toHaveBeenCalled();
     setCurrentWindowRuntimeAccountId(undefined);
   });
@@ -2316,7 +2345,7 @@ describe("shared queue policy revalidation and reset dependencies", () => {
     const repo = createResetRepository([active, target], tokens);
     setCurrentWindowRuntimeAccountId(target.id);
     expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(true);
-    expect(repo.switchAccount).toHaveBeenCalledWith(target.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(target.id, { expectedActiveAccountId: expect.any(String) });
     setCurrentWindowRuntimeAccountId(undefined);
   });
 });

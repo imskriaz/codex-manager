@@ -111,3 +111,26 @@ it("preserves metadata edits made while the atomic auth write is pending", async
   await work;
   expect(await repo.getAccount(saved.id)).toMatchObject({ isActive: true, queuePriority: true });
 });
+
+it("joins duplicate switches and retries after a failed attempt", async () => {
+  const saved = await repo.upsertFromTokens(tokens());
+  let finish!: () => void;
+  writeAuth.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve; }));
+  const first = repo.switchAccount(saved.id);
+  await vi.waitFor(() => expect(writeAuth).toHaveBeenCalledOnce());
+  const duplicate = repo.switchAccount(saved.id, { forceTokenRefresh: true });
+  finish();
+  expect((await Promise.all([first, duplicate])).map(account => account.id)).toEqual([saved.id, saved.id]);
+  expect(writeAuth).toHaveBeenCalledOnce();
+  writeAuth.mockRejectedValueOnce(new Error("storage full"));
+  await expect(repo.switchAccount(saved.id)).rejects.toThrow("storage full");
+  await expect(repo.switchAccount(saved.id)).resolves.toMatchObject({ id: saved.id });
+});
+
+it("rejects an automatic switch if the active account changed before the lease was acquired", async () => {
+  const saved = await repo.upsertFromTokens(tokens());
+  await repo.switchAccount(saved.id);
+  writeAuth.mockClear();
+  await expect(repo.switchAccount(saved.id, { expectedActiveAccountId: null })).rejects.toThrow("active account changed");
+  expect(writeAuth).not.toHaveBeenCalled();
+});

@@ -488,7 +488,9 @@ let deferredForSessions = false;
 let sessionWaitNotice: string | undefined;
 
 export function isAutoSwitchWaitingForSessions(): boolean {
-  return deferredForSessions;
+  const config = getCodexManagerConfiguration();
+  return deferredForSessions && config.get<boolean | undefined>(AUTO_SWITCH_ENABLED, undefined) !== false &&
+    config.get<boolean | undefined>("autoSwitchWaitForSessionsEnabled", undefined) !== false;
 }
 
 async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolean> {
@@ -499,14 +501,18 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
     sessionWaitNotice = undefined;
     return false;
   }
-  let timer: NodeJS.Timeout | undefined;
   let message: string | undefined;
   let waiting = false;
   let interrupt: (() => void) | undefined;
+  const inspection = new AbortController();
+  const configuration = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration(`codexManager.${AUTO_SWITCH_ENABLED}`) || event.affectsConfiguration("codexManager.autoSwitchWaitForSessionsEnabled")) {
+      if (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, false) || !getCodexManagerConfiguration().get<boolean>("autoSwitchWaitForSessionsEnabled", false)) inspection.abort(new Error("Session waiting is disabled."));
+    }
+  });
   try {
     const running = await Promise.race([
-      readRunningCodexSessionIds(),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Session inspection timed out")), 5_000); }),
+      waitWithin(readRunningCodexSessionIds(undefined, inspection.signal), 5_000, "Session inspection timed out", inspection.signal),
       new Promise<string[]>(resolve => {
         interrupt = () => resolve([]);
         if (manual?.aborted) interrupt();
@@ -518,10 +524,12 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
     waiting = true;
     message = `Running sessions could not be verified. Auto Switch is waiting until session state can be verified. Manual switching is still available. ${error instanceof Error ? error.message : String(error)}`;
   } finally {
-    if (timer) clearTimeout(timer);
     if (interrupt) manual?.removeEventListener("abort", interrupt);
+    configuration?.dispose();
+    inspection.abort();
   }
-  if (manual?.aborted || !getCodexManagerConfiguration().get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
+  if (manual?.aborted || !getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, false) ||
+      !getCodexManagerConfiguration().get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
     waiting = false;
     message = undefined;
   }
@@ -896,7 +904,7 @@ async function evaluateAutoSwitchForActiveQuota(
     }
     return false;
   }
-  await repo.switchAccount(latestNext.id);
+  await repo.switchAccount(latestNext.id, { expectedActiveAccountId: active.id });
   console.info("[codexManager] auto switch completed", {
     trigger:
       activeHourlyTriggered && activeWeeklyTriggered
@@ -1112,7 +1120,7 @@ async function executeResetPlan(
     !isAutoQueueCandidateEligible(toAutoQueueOrderValue(latestNext), getAccountAutoQueuePolicy())
   )
     return false;
-  await repo.switchAccount(next.id);
+  await repo.switchAccount(next.id, { expectedActiveAccountId: active.id });
   clearAutoSwitchLock(active.id);
   recordAutoSwitchReason({
     fromAccountId: active.id,
@@ -1188,7 +1196,7 @@ async function executeResetFailureFallbackSwitch(
   )
     return false;
   const detail = resetError instanceof Error ? resetError.message : String(resetError);
-  await repo.switchAccount(next.id);
+  await repo.switchAccount(next.id, { expectedActiveAccountId: active.id });
   lastBlockedAutoSwitchKey = undefined;
   clearAutoSwitchLock(active.id);
   recordAutoSwitchReason({

@@ -21,6 +21,7 @@ import {
   canWindowUseAccount
 } from "../../services/windowAccountMode";
 import {
+  cancelCodexSessionAutoResume,
   formatAutoResumeResult,
   prepareCodexSessionsForExtensionHostRestart,
   registerCodexSessionAutoResumeTracking,
@@ -39,6 +40,7 @@ export class AccountsWorkbench {
   private readonly alwaysOnlineServer: AlwaysOnlineServer;
   private alwaysOnlinePreparationTimer: NodeJS.Timeout | undefined;
   private autoResumeTracking: vscode.Disposable | undefined;
+  private disposed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.repo = new AccountsRepository(context);
@@ -121,7 +123,7 @@ export class AccountsWorkbench {
     if (completedAutoSwitchNotice) {
       void vscode.window.showInformationMessage(completedAutoSwitchNotice);
     }
-    await measureStep("autoResumeCodexSessions", async () => {
+    void measureStep("autoResumeCodexSessions", async () => {
       try {
         const result = await resumePersistedCodexSessions(this.context);
         const message = formatAutoResumeResult(result);
@@ -140,9 +142,11 @@ export class AccountsWorkbench {
           `Auto resume could not restore running Codex sessions: ${detail}. Open Codex conversation history to retry.`
         );
       }
-    });
-    this.autoResumeTracking = registerCodexSessionAutoResumeTracking(this.context);
-    this.context.subscriptions.push(this.autoResumeTracking);
+    }).finally(() => {
+      if (this.disposed) return;
+      this.autoResumeTracking = registerCodexSessionAutoResumeTracking(this.context);
+      this.context.subscriptions.push(this.autoResumeTracking);
+    }).catch((error) => console.warn("[codexManager] auto resume startup task failed", error));
     const repoInit = await measureStep("repo.init", async () => this.repo.init());
     const encryptedSyncStartup = measureStep("encryptedSync.start", async () => {
       // Settings Sync is an optional transport. A broken provider, stale
@@ -290,6 +294,9 @@ export class AccountsWorkbench {
   }
 
   dispose(): void {
+    this.disposed = true;
+    cancelCodexSessionAutoResume();
+    this.autoResumeTracking?.dispose();
     if (this.alwaysOnlinePreparationTimer) {
       clearTimeout(this.alwaysOnlinePreparationTimer);
       this.alwaysOnlinePreparationTimer = undefined;

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
-import { runWithConcurrencyLimit, waitWithin } from "../src/utils/concurrency";
+import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../src/utils/concurrency";
 import { consumeDashboardActionNotice, withDashboardNotificationSuppression } from "../src/utils/notificationPolicy";
 import { runRegisteredCommand } from "../src/commands";
 
@@ -40,6 +40,61 @@ describe("manual action scheduling", () => {
     fail(new Error("late failure"));
     await Promise.resolve();
     await expect(waitWithin(Promise.resolve("ready"), 500, "unused")).resolves.toBe("ready");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("shares one inspection while keeping cancellation local to each consumer", async () => {
+    let inspectCount = 0;
+    let release!: (value: string) => void;
+    const inspect = () => { inspectCount += 1; return new Promise<string>(resolve => { release = resolve; }); };
+    const firstController = new AbortController();
+    const first = createSharedInspection("test-session-snapshot", inspect, firstController.signal);
+    const second = createSharedInspection("test-session-snapshot", inspect);
+    firstController.abort(new Error("first consumer stopped"));
+    await expect(first).rejects.toThrow("first consumer stopped");
+    expect(inspectCount).toBe(1);
+    release("shared");
+    await expect(second).resolves.toBe("shared");
+  });
+
+  it("does no work for a cancelled caller and stops the scan after the last consumer leaves", async () => {
+    vi.useFakeTimers();
+    const cancelled = new AbortController();
+    cancelled.abort(new Error("disabled"));
+    const unused = vi.fn(async () => "unused");
+    await expect(createSharedInspection("disabled-check", unused, cancelled.signal)).rejects.toThrow("disabled");
+    expect(unused).not.toHaveBeenCalled();
+    let inspectionSignal!: AbortSignal;
+    let finish!: (value: string) => void;
+    const controller = new AbortController();
+    const work = createSharedInspection("cancelled-check", signal => {
+      inspectionSignal = signal;
+      return new Promise<string>(resolve => { finish = resolve; });
+    }, controller.signal);
+    const checked = expect(work).rejects.toThrow("stopped");
+    await Promise.resolve();
+    controller.abort(new Error("stopped"));
+    await checked;
+    expect(inspectionSignal.aborted).toBe(true);
+    await expect(createSharedInspection("cancelled-check", async () => "fresh")).resolves.toBe("fresh");
+    finish("stale");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("retries failed and timed out inspections without keeping the old scan", async () => {
+    vi.useFakeTimers();
+    await expect(createSharedInspection("retry-check", async () => { throw new Error("offline"); })).rejects.toThrow("offline");
+    let signal!: AbortSignal;
+    const work = createSharedInspection("retry-check", current => {
+      signal = current;
+      return new Promise<string>(() => undefined);
+    }, undefined, 100);
+    const checked = expect(work).rejects.toThrow("timed out");
+    await vi.advanceTimersByTimeAsync(100);
+    await checked;
+    expect(signal.aborted).toBe(true);
+    await expect(createSharedInspection("retry-check", async () => "reconnected")).resolves.toBe("reconnected");
     expect(vi.getTimerCount()).toBe(0);
   });
 

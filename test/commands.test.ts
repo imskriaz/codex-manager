@@ -22,7 +22,7 @@ describe("runRegisteredCommand", () => {
     const error = new CrossWindowOperationBusyError("Refresh quota");
     await expect(runRegisteredCommand("Refresh quota", async () => Promise.reject(error))).rejects.toBe(error);
     expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-      "Refresh quota is already running in another VS Code window. Wait for it to finish, then try again."
+      "Refresh quota is still in progress. The new request was not started; retry after the current operation finishes."
     );
   });
 

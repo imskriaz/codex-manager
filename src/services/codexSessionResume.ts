@@ -24,6 +24,7 @@ import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
+import { createSharedInspection } from "../utils/concurrency";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -237,7 +238,13 @@ export async function readCodexCliSessionSummary(
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
-export async function readRunningCodexSessionIds(codexHome = resolveCodexHome()): Promise<string[]> {
+export function readRunningCodexSessionIds(codexHome = resolveCodexHome(), signal?: AbortSignal): Promise<string[]> {
+  const key = path.resolve(codexHome);
+  return createSharedInspection(`codex-running:${key}`, (inspectionSignal) => inspectRunningCodexSessionIds(codexHome, inspectionSignal), signal);
+}
+
+async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSignal): Promise<string[]> {
+  signal?.throwIfAborted();
   const lockDirectory = path.join(codexHome, SESSION_LOCK_DIRECTORY);
   const lockEntries = await fs.readdir(lockDirectory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return [];
@@ -250,23 +257,24 @@ export async function readRunningCodexSessionIds(codexHome = resolveCodexHome())
     .slice(0, MAX_SESSION_SCAN_ENTRIES);
   const activeIds = path.resolve(codexHome) === path.resolve(resolveCodexHome())
     ? [...activeCliTurns.keys(), ...activeAppServerTurns.keys()] : [];
-  const transcriptPaths = await findCliSessionTranscripts(codexHome);
+  const transcriptPaths = await findCliSessionTranscripts(codexHome, undefined, signal);
   const stateRecords = await readStateSessionRecords(codexHome);
   const sessionIds = [...new Set([...lockedSessionIds, ...activeIds, ...transcriptPaths.keys()])];
   if (!sessionIds.length) {
     return [];
   }
 
-  const archivedIds = await readArchivedSessionIds(codexHome);
+  const archivedIds = await readArchivedSessionIds(codexHome, signal);
   for (const record of stateRecords) if (record.archived) archivedIds.add(record.id);
   const archiveRoot = path.join(codexHome, "archived_sessions") + path.sep;
   for (const [id, transcript] of transcriptPaths) if (transcript.startsWith(archiveRoot)) archivedIds.add(id);
   const running: string[] = [];
   for (const sessionId of sessionIds) {
+    signal?.throwIfAborted();
     if (archivedIds.has(sessionId)) {
       continue;
     }
-    if (await isCliSessionRunning(codexHome, sessionId, transcriptPaths.get(sessionId))) {
+    if (await isCliSessionRunning(codexHome, sessionId, transcriptPaths.get(sessionId), false, signal)) {
       running.push(sessionId);
     }
   }
@@ -2807,8 +2815,25 @@ async function isCliSessionRunning(
   codexHome: string,
   sessionId: string,
   knownTranscriptPath?: string,
-  liveRunning = false
+  liveRunning = false,
+  signal?: AbortSignal
 ): Promise<boolean> {
+  return createSharedInspection(
+    `codex-session-status:${path.resolve(codexHome)}:${sessionId}:${liveRunning ? "live" : "disk"}`,
+    (inspectionSignal) => inspectCliSessionRunning(codexHome, sessionId, knownTranscriptPath, liveRunning, inspectionSignal),
+    signal,
+    5_000
+  );
+}
+
+async function inspectCliSessionRunning(
+  codexHome: string,
+  sessionId: string,
+  knownTranscriptPath?: string,
+  liveRunning = false,
+  signal?: AbortSignal
+): Promise<boolean> {
+  signal?.throwIfAborted();
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) &&
       (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId))) return true;
   const cachedNative = getNativeCodexSessionRunning(codexHome, sessionId);
@@ -2818,11 +2843,12 @@ async function isCliSessionRunning(
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
-  const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId);
+  const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId, signal);
   const turnState = await readRecentTranscriptTurnState(transcript);
   // A loaded conversation can retain its writer lock after its turn finishes.
   if (turnState === "terminal") return false;
-  const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId);
+  const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId, signal);
+  signal?.throwIfAborted();
   if (nativeRunning !== undefined) return nativeRunning;
   if (liveRunning) return true;
   const hasLock = Boolean(stat?.isFile() && !stat.isSymbolicLink());
@@ -2864,18 +2890,25 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
         const args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")];
         const deadline = Date.now() + 15_000;
         const inspect = (windowsHide: boolean): void => {
-          execFile("powershell.exe", args,
-            { timeout: Math.max(1, deadline - Date.now()), maxBuffer: 256 * 1024, windowsHide }, (error, stdout) => {
-              if (windowsHide && (Number(error?.code) >>> 0) === 0xc0000142 && Date.now() < deadline) { inspect(false); return; }
-              entry.expiresAt = Date.now() + 2000;
-              if (error) { reject(new Error("Windows session writer inspection failed. Retry after the PC responds.")); return; }
-              try {
-                const values: unknown = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim() || "[]");
-                if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("Invalid lock response");
-                resolve(new Set(values.map(value => path.resolve(value).toLowerCase())));
-              } catch { reject(new Error("Windows session writer inspection returned incomplete data. Retry after the PC responds.")); }
-            });
+          const completed = (error: unknown, stdout?: string | Buffer): void => {
+            const code = (error as NodeJS.ErrnoException | undefined)?.code;
+            if (windowsHide && (code === "EPERM" || code === "EAGAIN" || (Number(code) >>> 0) === 0xc0000142) && Date.now() < deadline) {
+              inspect(false);
+              return;
+            }
+            entry.expiresAt = error ? 0 : Date.now() + 2000;
+            if (error) { reject(new Error(`Windows session writer inspection failed. Retry after the PC responds. ${error instanceof Error ? error.message : code ?? "Unknown process failure"}`)); return; }
+            try {
+              const values: unknown = JSON.parse(String(stdout).replace(/^\uFEFF/, "").trim() || "[]");
+              if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("Invalid lock response");
+              resolve(new Set(values.map(value => path.resolve(value).toLowerCase())));
+            } catch { entry.expiresAt = 0; reject(new Error("Windows session writer inspection returned incomplete data. Retry after the PC responds.")); }
           };
+          try {
+            execFile("powershell.exe", args,
+              { timeout: Math.max(1, deadline - Date.now()), maxBuffer: 256 * 1024, windowsHide }, completed);
+          } catch (error) { completed(error); }
+        };
         inspect(true);
       });
       cached = entry;
@@ -2988,7 +3021,8 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
  */
 export async function findCliSessionTranscripts(
   codexHome: string,
-  sessionIds?: ReadonlySet<string>
+  sessionIds?: ReadonlySet<string>,
+  signal?: AbortSignal
 ): Promise<Map<string, string>> {
   const found = new Map<string, string>();
   if (sessionIds?.size === 0) return found;
@@ -2999,12 +3033,14 @@ export async function findCliSessionTranscripts(
   const pending = [path.join(codexHome, "archived_sessions"), path.join(codexHome, SESSION_DIRECTORY)];
   let scanned = 0;
   while (pending.length && scanned < MAX_SESSION_SCAN_ENTRIES) {
+    signal?.throwIfAborted();
     const directory = pending.pop()!;
     const entries = await fs.readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
       throw error;
     });
     for (const entry of entries) {
+      signal?.throwIfAborted();
       if (++scanned > MAX_SESSION_SCAN_ENTRIES) break;
       if (entry.isSymbolicLink()) continue;
       const candidate = path.join(directory, entry.name);
@@ -3032,15 +3068,16 @@ export async function findCliSessionTranscripts(
   return found;
 }
 
-async function findCliSessionTranscript(codexHome: string, sessionId: string): Promise<string | undefined> {
-  return (await findCliSessionTranscripts(codexHome, new Set([sessionId]))).get(sessionId);
+async function findCliSessionTranscript(codexHome: string, sessionId: string, signal?: AbortSignal): Promise<string | undefined> {
+  return (await findCliSessionTranscripts(codexHome, new Set([sessionId]), signal)).get(sessionId);
 }
 
-async function readArchivedSessionIds(codexHome: string): Promise<Set<string>> {
+async function readArchivedSessionIds(codexHome: string, signal?: AbortSignal): Promise<Set<string>> {
   const ids = new Set<string>();
   const pending = [path.join(codexHome, "archived_sessions")];
   let scanned = 0;
   while (pending.length && scanned < MAX_SESSION_SCAN_ENTRIES) {
+    signal?.throwIfAborted();
     const directory = pending.pop()!;
     const entries = await fs.readdir(directory, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {

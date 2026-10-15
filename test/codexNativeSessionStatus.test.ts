@@ -61,6 +61,21 @@ it("decodes split headers and UTF-8 frames, and coalesces reads", async () => {
   const data = frame(snapshot("idle")); for (let offset = 0; offset < data.length; offset += 3) socket.emit("data", data.subarray(offset, offset + 3));
   expect(await Promise.all([first, second])).toEqual([false, false]); expect(mocks.connect).toHaveBeenCalledOnce();
 });
+it("cancels one waiter without unfollowing the remaining consumer, then retries after last cancellation", async () => {
+  const first = new AbortController(), second = new AbortController();
+  const one = readNativeCodexSessionRunning(home, id, first.signal);
+  const two = readNativeCodexSessionRunning(home, id, second.signal);
+  await initialize();
+  first.abort();
+  expect(await one).toBeUndefined();
+  expect(socket.sent.some(value => value.params?.following === false)).toBe(false);
+  second.abort();
+  expect(await two).toBeUndefined();
+  expect(socket.sent.some(value => value.params?.following === false)).toBe(true);
+  const retry = readNativeCodexSessionRunning(home, id);
+  message(snapshot("idle"));
+  expect(await retry).toBe(false);
+});
 it("applies ordered runtime patches and ignores duplicate or stale snapshots", async () => {
   const pending = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active", 4)); expect(await pending).toBe(true);
   message({ ...snapshot("active"), params: { hostId: "local", conversationId: id, change: { type: "patches", baseRevision: 4, revision: 5, patches: [{ op: "replace", path: ["threadRuntimeStatus"], value: { type: "idle" } }] } } });

@@ -176,27 +176,36 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private readonly preparedCurrentClaims = new Map<string, { claim: SyncAccountEnablement; acquired: boolean }>();
   private currentClaimTimer: NodeJS.Timeout | undefined;
   private currentClaimRefreshInFlight = false;
+  private currentClaimTask: Promise<void> | undefined;
+  private cancelCurrentClaim: (() => void) | undefined;
   private currentClaimRetryTimer: NodeJS.Timeout | undefined;
 
   private isCurrentAccountOnly(): boolean {
     return this.isEnabled() && getCodexManagerConfiguration().get<boolean>("encryptedSyncClaimAllAccountsEnabled", false) !== true;
   }
 
-  private async requestCurrentClaim(action: "acquire" | "release", accountId: string, token: string = crypto.randomUUID()): Promise<AccountClaimResult> {
+  private async requestCurrentClaim(action: "acquire" | "release", accountId: string, token: string = crypto.randomUUID(), signal?: AbortSignal): Promise<AccountClaimResult> {
+    signal?.throwIfAborted();
     const domain = getCodexManagerConfiguration().get<string>("cloudflaredDomain", "").trim();
     if (!domain) throw new Error("Current-account-only claims need a shared HTTPS dashboard domain. Configure the same domain on every PC before switching.");
     const origin = new URL(domain);
     if (origin.protocol !== "https:" || origin.username || origin.password) throw new Error("Use a shared HTTPS dashboard domain for current-account-only claims.");
-    const request: AccountClaimRequest = { action, accountId, token, deviceId: await this.getDeviceId(), deviceName: resolveDeviceName(), requestId: crypto.randomUUID(), sentAt: Date.now() };
-    const signature = await this.signRealtimePeerPayload(JSON.stringify(request));
+    const deviceId = await waitWithin(this.getDeviceId(), 10_000, "Device identity storage is still busy.", signal);
+    const request: AccountClaimRequest = { action, accountId, token, deviceId, deviceName: resolveDeviceName(), requestId: crypto.randomUUID(), sentAt: Date.now() };
+    const signature = await waitWithin(this.signRealtimePeerPayload(JSON.stringify(request)), 10_000, "Shared password storage is still busy.", signal);
     if (!signature) throw new Error("Configure the shared dashboard password before claiming an account.");
+    signal?.throwIfAborted();
     const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => controller.abort(), 10_000);
     try {
       const response = await undiciFetch(new URL("/api/peer-account-claim", origin), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request, signature }), signal: controller.signal, redirect: "error" });
       const payload = await response.json() as { result?: AccountClaimResult; signature?: string; error?: string };
+      signal?.throwIfAborted();
       if (!response.ok || !payload.result || typeof payload.signature !== "string" || payload.result.requestId !== request.requestId ||
-          !await this.verifyRealtimePeerPayload(JSON.stringify(payload.result), payload.signature)) throw new Error(payload.error ?? "The shared dashboard could not confirm the account claim. Retry after reconnecting.");
+          !await waitWithin(this.verifyRealtimePeerPayload(JSON.stringify(payload.result), payload.signature), 10_000, "Shared claim verification is still pending.", signal)) throw new Error(payload.error ?? "The shared dashboard could not confirm the account claim. Retry after reconnecting.");
+      signal?.throwIfAborted();
       if (!payload.result.ok || !payload.result.claim || !isValidSyncAccountEnablement(payload.result.claim) || payload.result.claim.accountId !== accountId || payload.result.claim.deviceId !== request.deviceId) throw new Error(payload.result.error ?? "The shared account claim was rejected.");
       if (payload.result.claim.enabled !== (action === "acquire")) throw new Error("The shared host returned an inconsistent account claim. Refresh claims and retry.");
       const before = syncEnablementFingerprint(this.readLocalEnablement());
@@ -204,7 +213,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       catch { throw new Error("The shared host updated ownership, but local claim storage failed. Restore storage and retry before using this account."); }
       if (before !== syncEnablementFingerprint(this.readLocalEnablement())) this.markVaultDirty("enablement-changed", this.getVaultSyncDebounceDelayMs());
       return payload.result;
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
   }
 
   private queueCurrentAccountReconciliation(): void {
@@ -223,28 +232,47 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private reconcileCurrentAccountClaim(): Promise<void> {
     if (this.disposed || !this.isEnabled()) return Promise.resolve();
-    return runCrossWindowExclusive(`account:switch:${getCodexHomeStateKey()}`, "Current account ownership", () => this.reconcileCurrentAccountClaimLocked());
+    if (this.currentClaimTask) return this.currentClaimTask;
+    const task = runCrossWindowExclusive(`account:switch:${getCodexHomeStateKey()}`, "Current account ownership", async (signal) => {
+      const controller = new AbortController();
+      const cancel = () => controller.abort(signal.reason ?? new Error("Ownership renewal stopped."));
+      this.cancelCurrentClaim = cancel;
+      signal.addEventListener("abort", cancel, { once: true });
+      if (signal.aborted || this.disposed) cancel();
+      try { await this.reconcileCurrentAccountClaimLocked(controller.signal); }
+      catch (error) {
+        if (!controller.signal.aborted) throw error;
+        this.queueCurrentAccountReconciliation();
+      } finally {
+        signal.removeEventListener("abort", cancel);
+        if (this.cancelCurrentClaim === cancel) this.cancelCurrentClaim = undefined;
+      }
+    }, { background: true });
+    this.currentClaimTask = task;
+    void task.finally(() => { if (this.currentClaimTask === task) this.currentClaimTask = undefined; }).catch(() => undefined);
+    return task;
   }
 
-  private async reconcileCurrentAccountClaimLocked(): Promise<void> {
+  private async reconcileCurrentAccountClaimLocked(signal?: AbortSignal): Promise<void> {
     if (this.disposed || !this.isEnabled() || this.currentClaimRefreshInFlight) return;
     this.currentClaimRefreshInFlight = true;
     try {
-      await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account claim storage is still busy; maintenance will retry.");
-      const records = await waitWithin(this.repo.listAccounts(), 500, "Current account discovery is still pending.");
+      await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account claim storage is still busy; maintenance will retry.", signal);
+      const records = await waitWithin(this.repo.listAccounts(), 500, "Current account discovery is still pending.", signal);
       const active = records.find((account) => account.isActive);
-      const activeAccountIds = new Set(await waitWithin(readCrossWindowActiveAccountIds(), 500, "Other window account discovery is still pending."));
+      const activeAccountIds = new Set(await waitWithin(readCrossWindowActiveAccountIds(), 500, "Other window account discovery is still pending.", signal));
       if (this.isCurrentAccountOnly()) {
         if (active) activeAccountIds.add(active.id);
       } else {
         for (const account of records) if (account.enabled !== false) activeAccountIds.add(account.id);
       }
-      const deviceId = await this.getDeviceId();
+      const deviceId = await waitWithin(this.getDeviceId(), 500, "Device identity storage is still busy.", signal);
       for (const claim of this.readLocalEnablement()) {
+        signal?.throwIfAborted();
         if (this.disposed) return;
-        if (claim.enabled && claim.deviceId === deviceId && !activeAccountIds.has(claim.accountId) && !this.preparedCurrentClaims.has(claim.accountId)) await this.requestCurrentClaim("release", claim.accountId, claim.claimToken);
+        if (claim.enabled && claim.deviceId === deviceId && !activeAccountIds.has(claim.accountId) && !this.preparedCurrentClaims.has(claim.accountId)) await this.requestCurrentClaim("release", claim.accountId, claim.claimToken, signal);
       }
-      if (active && !this.disposed && this.isCurrentAccountOnly()) await this.requestCurrentClaim("acquire", active.id);
+      if (active && !this.disposed && this.isCurrentAccountOnly()) await this.requestCurrentClaim("acquire", active.id, undefined, signal);
     } finally { this.currentClaimRefreshInFlight = false; }
   }
 
@@ -395,6 +423,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   dispose(): void {
     this.disposed = true;
+    this.cancelCurrentClaim?.();
     if (this.currentClaimTimer) clearInterval(this.currentClaimTimer);
     this.currentClaimTimer = undefined;
     if (this.currentClaimRetryTimer) clearTimeout(this.currentClaimRetryTimer);

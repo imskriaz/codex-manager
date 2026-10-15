@@ -122,6 +122,7 @@ import {
   isCrossWindowAccountModeEnabled,
   releaseCrossWindowAccount
 } from "../services/windowAccountMode";
+import { cancelCodexSessionAutoResume } from "../services/codexSessionAutoResume";
 
 /** 缓存失效时间 (毫秒) */
 const CACHE_TTL_MS = 5000;
@@ -168,6 +169,7 @@ export class AccountsRepository {
   private indexReadInFlight: Promise<CodexManagerIndex> | undefined;
   /** 按账号串行化切号/刷新，避免并发刷新同一账号 token */
   private readonly accountMutex = createKeyedMutex();
+  private readonly switchInFlight = new Map<string, Promise<CodexManagerAccountRecord>>();
   /** getTokens 内存缓存，减少 SecretStore/Keychain 重复读取 */
   private readonly tokenCache = new Map<string, TokenCacheEntry>();
   private switchCoordinator: AccountSwitchCoordinator | undefined;
@@ -960,10 +962,20 @@ export class AccountsRepository {
    */
   async switchAccount(
     accountId: string,
-    options: { forceTokenRefresh?: boolean } = {}
+    options: { forceTokenRefresh?: boolean; expectedActiveAccountId?: string | null } = {}
   ): Promise<CodexManagerAccountRecord> {
+    const key = JSON.stringify([accountId, options.expectedActiveAccountId]);
+    const existing = this.switchInFlight.get(key);
+    if (existing) return existing;
+    cancelCodexSessionAutoResume();
     // 按账号串行化，避免切号与后台续期并发刷新同一账号 token
-    return runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, "Account switch", () => this.accountMutex.runExclusive(accountId, async () => {
+    const operation = runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, "Account switch", () => this.accountMutex.runExclusive(accountId, async () => {
+      this.state.cache = null;
+      this.invalidateTokenCache();
+      if (options.expectedActiveAccountId !== undefined) {
+        const active = (await this.listAccounts()).find((candidate) => candidate.isActive)?.id ?? null;
+        if (active !== options.expectedActiveAccountId) throw new Error("The active account changed. Automatic switching was cancelled; refresh and retry.");
+      }
       const parallelMode = isCrossWindowAccountModeEnabled();
       let previousAccountId: string | undefined;
       if (parallelMode) {
@@ -994,7 +1006,11 @@ export class AccountsRepository {
         await releaseCrossWindowAccount(previousAccountId);
       }
       return account;
-    }));
+    }), { waitMs: 2_000 });
+    this.switchInFlight.set(key, operation);
+    return operation.finally(() => {
+      if (this.switchInFlight.get(key) === operation) this.switchInFlight.delete(key);
+    });
   }
 
   private async switchAccountLocked(accountId: string, forceTokenRefresh: boolean, onAuthWritten: () => void): Promise<CodexManagerAccountRecord> {

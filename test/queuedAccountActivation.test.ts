@@ -34,7 +34,7 @@ describe("queued account activation", () => {
       status: "activated",
       account: { ...higherQuota, isActive: true }
     });
-    expect(repo.switchAccount).toHaveBeenCalledWith(higherQuota.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(higherQuota.id, { expectedActiveAccountId: null });
   });
 
   it("skips disabled or credential-less queued accounts", async () => {
@@ -46,7 +46,7 @@ describe("queued account activation", () => {
     const result = await activateQueuedAccountIfCurrentMissing(repo);
 
     expect(result.status).toBe("activated");
-    expect(repo.switchAccount).toHaveBeenCalledWith(usable.id);
+    expect(repo.switchAccount).toHaveBeenCalledWith(usable.id, { expectedActiveAccountId: null });
   });
 
   it("does not activate stale, missing, exhausted, failed or pending-reset snapshots", async () => {

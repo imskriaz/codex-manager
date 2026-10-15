@@ -14,6 +14,53 @@ import {
 } from "../src/utils/crossWindowOperations";
 
 describe("CrossWindowOperationCoordinator", () => {
+  it("lets a manual switch interrupt optional renewal before taking the same lease", async () => {
+    const directory = await createTestDirectory("switch-yield");
+    const background = new CrossWindowOperationCoordinator(directory);
+    const manual = new CrossWindowOperationCoordinator(directory);
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const renewal = background.runExclusive("account:switch:home", "Renewal", async signal => {
+      started();
+      await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+      expect(signal.aborted).toBe(true);
+    }, { background: true });
+    await ready;
+    await expect(manual.runExclusive("account:switch:home", "Account switch", async () => "switched", { waitMs: 2_000 })).resolves.toBe("switched");
+    await renewal;
+    expect(await fs.readdir(path.join(directory, "cross-window-operations-v1"))).toEqual([]);
+    await removeTestDirectory(directory);
+  });
+
+  it("recovers a dead owner immediately even when its heartbeat is fresh", async () => {
+    const directory = await createTestDirectory("switch-dead-owner");
+    const key = "account:switch:dead";
+    const digest = (await import("crypto")).createHash("sha256").update(key).digest("hex");
+    const lockPath = path.join(directory, "cross-window-operations-v1", digest);
+    await fs.mkdir(lockPath, { recursive: true });
+    await fs.writeFile(path.join(lockPath, "owner.json"), JSON.stringify({ instanceId: "dead", pid: 999999999, startedAt: Date.now(), heartbeatAt: Date.now() }));
+    await expect(new CrossWindowOperationCoordinator(directory).runExclusive(key, "Account switch", async () => "recovered")).resolves.toBe("recovered");
+    await removeTestDirectory(directory);
+  });
+
+  it("reports a bounded conflict while a real mutation retains its lease", async () => {
+    const directory = await createTestDirectory("switch-live-owner");
+    const first = new CrossWindowOperationCoordinator(directory, 100_000, 1);
+    const second = new CrossWindowOperationCoordinator(directory, 100_000, 1);
+    let finish!: () => void;
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const mutation = first.runExclusive("switch", "Switch", async () => {
+      started();
+      await new Promise<void>(resolve => { finish = resolve; });
+    });
+    await ready;
+    const task = vi.fn(async () => undefined);
+    try {
+      await expect(second.runExclusive("switch", "Switch", task, { waitMs: 100 })).rejects.toThrow("still in progress");
+      expect(task).not.toHaveBeenCalled();
+    } finally { finish(); await mutation; await removeTestDirectory(directory); }
+  });
   it("retries initialization after unavailable storage recovers", async () => {
     const directory = await createTestDirectory("cross-window-init-retry");
     const lockRoot = path.join(directory, "cross-window-operations-v1");

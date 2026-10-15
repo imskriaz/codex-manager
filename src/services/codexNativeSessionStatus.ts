@@ -146,7 +146,8 @@ async function connect(home: string): Promise<void> {
 }
 
 /** Read native runtime state across windows; retained writer handles are not running turns. */
-export async function readNativeCodexSessionRunning(home: string, id: string): Promise<boolean | undefined> {
+export async function readNativeCodexSessionRunning(home: string, id: string, signal?: AbortSignal): Promise<boolean | undefined> {
+  signal?.throwIfAborted();
   const key = `${path.resolve(home)}:${id}`;
   let entry = observations.get(key);
   if (!entry) {
@@ -163,10 +164,27 @@ export async function readNativeCodexSessionRunning(home: string, id: string): P
   idleTimer = setTimeout(disposeNativeCodexSessionStatus, 30_000); idleTimer.unref();
   await connect(home);
   if (!socket) { observations.delete(key); return undefined; }
+  if (signal?.aborted) {
+    if (!entry.waiters.size && entry.running === undefined) { follow(entry, false); observations.delete(key); }
+    return undefined;
+  }
   if (entry.running !== undefined) return entry.running;
   return new Promise(resolve => {
-    const timer = setTimeout(() => { entry!.waiters.delete(finish); resolve(undefined); }, 3000);
-    const finish = (running: boolean | undefined) => { clearTimeout(timer); resolve(running); };
+    let settled = false;
+    const cleanup = (drop = false) => {
+      if (settled) return;
+      settled = true;
+      entry!.waiters.delete(finish);
+      if (drop && !entry!.waiters.size && entry!.running === undefined) {
+        follow(entry!, false);
+        if (observations.get(key) === entry) observations.delete(key);
+      }
+      signal?.removeEventListener("abort", abort);
+    };
+    const finish = (running: boolean | undefined) => { clearTimeout(timer); cleanup(); resolve(running); };
+    const abort = () => { clearTimeout(timer); cleanup(true); resolve(undefined); };
+    const timer = setTimeout(abort, 3000);
     entry!.waiters.add(finish);
+    signal?.addEventListener("abort", abort, { once: true });
   });
 }

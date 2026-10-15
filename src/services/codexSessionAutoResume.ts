@@ -17,6 +17,12 @@ const pendingWrites = new WeakMap<object, Promise<void>>();
 const recoveryIds = new WeakMap<object, string[]>();
 const openRecoveryIds = new WeakMap<object, string[]>();
 const unrestoredOpenSnapshots = new WeakSet<object>();
+const restoreControllers = new Set<AbortController>();
+
+/** Stop optional startup restoration before a manual account switch changes auth state. */
+export function cancelCodexSessionAutoResume(): void {
+  for (const controller of restoreControllers) controller.abort(new Error("Auto Resume was cancelled because the account is changing."));
+}
 
 // At most one capture and one restore: repeated requests join the original.
 function serialize<T>(context: AutoResumeContext, kind: OperationKind, operation: () => Promise<T>): Promise<T> {
@@ -127,6 +133,9 @@ async function writeIds(context: AutoResumeContext, ids: string[], deadline: num
 }
 
 async function clearIds(context: AutoResumeContext, deadline: number): Promise<void> {
+  if (!recoveryIds.has(context.workspaceState) && !openRecoveryIds.has(context.workspaceState) &&
+      context.workspaceState.get(AUTO_RESUME_SESSION_IDS_KEY) === undefined &&
+      context.workspaceState.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY) === undefined) return;
   // Explicit disable also clears malformed records; no parsing is required.
   try {
     recoveryIds.set(context.workspaceState, readPersistedSessionIds(context));
@@ -316,7 +325,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   let timer: ReturnType<typeof setTimeout> | undefined;
   let savedSignature: string | undefined;
   const capture = () => {
-    if (controller.signal.aborted) return;
+    if (controller.signal.aborted || !isAutoResumeAvailable()) return;
     dirty = true;
     if (running) return;
     if (timer) clearTimeout(timer);
@@ -328,7 +337,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
           dirty = false;
           try {
             const goalOnly = isAutoResumeGoalOnlyEnabled();
-            const signature = `${isAutoResumeAvailable()}:${goalOnly}:${readOpenCodexSessionIds().sort().join(",")}`;
+            const signature = isAutoResumeAvailable() ? `${goalOnly}:${readOpenCodexSessionIds().sort().join(",")}` : "disabled";
             // A goal may become active while the same tabs remain open.
             if (signature !== savedSignature || (isAutoResumeAvailable() && goalOnly)) {
               await persistOpenCodexSessions(context, undefined, controller.signal);
@@ -348,12 +357,28 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
       }
     })();
   };
-  const tabs = vscode.window.tabGroups?.onDidChangeTabs?.(capture);
+  let tabs: vscode.Disposable | undefined;
+  const refreshSubscription = () => {
+    if (isAutoResumeAvailable()) {
+      tabs ??= vscode.window.tabGroups?.onDidChangeTabs?.(capture);
+      savedSignature = undefined;
+      capture();
+    } else {
+      tabs?.dispose();
+      tabs = undefined;
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+      dirty = false;
+      void serialize(context, "track", () => clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2)).catch((error) =>
+        console.warn("[codexManager] disabled Auto Resume recovery could not be cleared", error)
+      );
+    }
+  };
   const configuration = vscode.workspace.onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled") || event.affectsConfiguration("codexManager.autoResumeEnabled") ||
-        event.affectsConfiguration("codexManager.autoSwitchEnabled")) capture();
+        event.affectsConfiguration("codexManager.autoSwitchEnabled")) refreshSubscription();
   });
-  capture();
+  refreshSubscription();
   return { dispose: () => {
     if (controller.signal.aborted) return;
     controller.abort(new Error("Codex Manager is shutting down."));
@@ -370,35 +395,14 @@ export function resumePersistedCodexSessions(
     openCodexSessionInVsCode(sessionId, signal, true),
   closeSessions: (signal?: AbortSignal) => Promise<void> = closeOpenCodexSessionTabs
 ): Promise<AutoResumeResult> {
+  const controller = new AbortController();
+  restoreControllers.add(controller);
   return serialize(context, "restore", async () => {
     const deadline = Date.now() + OPERATION_TIMEOUT_MS;
     if (!isAutoResumeAvailable()) {
       await clearIds(context, deadline);
       return { attempted: 0, opened: 0, failed: [] };
     }
-    unrestoredOpenSnapshots.add(context.workspaceState);
-    const goalOnly = isAutoResumeGoalOnlyEnabled();
-    const savedIds = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
-    const ids = await bounded(() => filterAutoResumeGoalSessionIds(savedIds), deadline - Date.now(),
-      "Auto Resume could not verify goals within 30 seconds. Saved recovery was retained.");
-    if (!isAutoResumeAvailable()) {
-      await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
-      return { attempted: 0, opened: 0, failed: [] };
-    }
-    if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during discovery. Retry to verify the saved sessions.");
-    if (savedIds.length && ids.length !== savedIds.length) {
-      await writeIds(context, ids, deadline);
-      await writeIds(context, ids, deadline, true);
-    }
-    if (!ids.length) {
-      unrestoredOpenSnapshots.delete(context.workspaceState);
-      return { attempted: 0, opened: 0, failed: [] };
-    }
-    await writeIds(context, ids, deadline);
-    unrestoredOpenSnapshots.delete(context.workspaceState);
-    let remaining = [...ids];
-    const result: AutoResumeResult = { attempted: ids.length, opened: 0, failed: [] };
-    const controller = new AbortController();
     const changed = vscode.workspace.onDidChangeConfiguration((event) => {
       if (!isAutoResumeAvailable())
         controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
@@ -406,6 +410,29 @@ export function resumePersistedCodexSessions(
         controller.abort(new Error("The goal-only preference changed. Remaining sessions will be checked again on the next activation."));
     });
     try {
+      controller.signal.throwIfAborted();
+      unrestoredOpenSnapshots.add(context.workspaceState);
+      const goalOnly = isAutoResumeGoalOnlyEnabled();
+      const savedIds = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
+      const ids = await bounded(() => filterAutoResumeGoalSessionIds(savedIds, undefined, controller.signal), deadline - Date.now(),
+        "Auto Resume could not verify goals within 30 seconds. Saved recovery was retained.", controller.signal);
+      if (!isAutoResumeAvailable()) {
+        await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
+        return { attempted: 0, opened: 0, failed: [] };
+      }
+      if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during discovery. Retry to verify the saved sessions.");
+      if (savedIds.length && ids.length !== savedIds.length) {
+        await writeIds(context, ids, deadline);
+        await writeIds(context, ids, deadline, true);
+      }
+      if (!ids.length) {
+        unrestoredOpenSnapshots.delete(context.workspaceState);
+        return { attempted: 0, opened: 0, failed: [] };
+      }
+      await writeIds(context, ids, deadline);
+      unrestoredOpenSnapshots.delete(context.workspaceState);
+      let remaining = [...ids];
+      const result: AutoResumeResult = { attempted: ids.length, opened: 0, failed: [] };
       try {
         if (!isAutoResumeAvailable() || goalOnly !== isAutoResumeGoalOnlyEnabled())
           controller.abort(new Error("Auto Resume preferences changed before closing previous tabs. Saved sessions were retained."));
@@ -467,10 +494,17 @@ export function resumePersistedCodexSessions(
       }
       if (!isAutoResumeAvailable()) await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS);
       return result;
+    } catch (error) {
+      if (!isAutoResumeAvailable()) {
+        await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
+        return { attempted: 0, opened: 0, failed: [] };
+      }
+      throw error;
     } finally {
+      controller.abort();
       changed?.dispose();
     }
-  });
+  }).finally(() => restoreControllers.delete(controller));
 }
 
 function isAutoResumeAvailable(): boolean {

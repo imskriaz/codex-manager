@@ -9,6 +9,7 @@ import {
   AUTO_RESUME_SESSION_IDS_KEY,
   AUTO_RESUME_OPEN_SESSION_IDS_KEY,
   MAX_AUTO_RESUME_SESSIONS,
+  cancelCodexSessionAutoResume,
   formatAutoResumeResult,
   prepareCodexSessionsForExtensionHostRestart,
   persistRunningCodexSessions,
@@ -43,6 +44,46 @@ beforeEach(() => {
 describe("durable open conversation recovery", () => {
   const first = "01a04882-d037-7a42-ad24-9afb61901181";
   const second = "01a04882-d037-7a42-ad24-9afb61901182";
+  it("leaves disabled Auto Resume idle with no tab subscription, timer, discovery, or empty storage writes", async () => {
+    vi.useFakeTimers();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => false } as never);
+    const previousTabs = vscode.window.tabGroups;
+    const subscribe = vi.fn(() => ({ dispose() {} }));
+    Object.assign(vscode.window, { tabGroups: { all: [], onDidChangeTabs: subscribe } });
+    const readTabs = vi.spyOn(sessionEditor, "readOpenCodexSessionIds");
+    const discover = vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds");
+    const state = createContext();
+    const tracker = registerCodexSessionAutoResumeTracking(state.context);
+    try {
+      await resumePersistedCodexSessions(state.context);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(subscribe).not.toHaveBeenCalled();
+      expect(readTabs).not.toHaveBeenCalled();
+      expect(discover).not.toHaveBeenCalled();
+      expect(state.context.workspaceState.update).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      tracker.dispose();
+      Object.assign(vscode.window, { tabGroups: previousTabs });
+      readTabs.mockRestore(); discover.mockRestore(); vi.useRealTimers();
+    }
+  });
+
+  it("cancels restoration during initial goal discovery and retains recovery for retry", async () => {
+    const state = createContext([first]);
+    const open = vi.fn();
+    let finish!: (ids: string[]) => void;
+    vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const work = resumePersistedCodexSessions(state.context, open);
+    const checked = expect(work).rejects.toThrow("account is changing");
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    cancelCodexSessionAutoResume();
+    await checked;
+    finish([first]);
+    await Promise.resolve();
+    expect(open).not.toHaveBeenCalled();
+    expect(state.read()).toEqual([first]);
+  });
   it("retains recovery when reload cancels capture and ignores late discovery", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
     const state = createContext([first]);

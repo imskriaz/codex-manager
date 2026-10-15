@@ -185,6 +185,10 @@ class DashboardPanelController {
         this.webviewReady = false;
         this.stopCliSessionRealtime();
       });
+      this.panel.onDidChangeViewState?.(() => {
+        if (this.panel?.visible) this.startCliSessionRealtime();
+        else this.stopCliSessionRealtime();
+      });
 
       this.panel.webview.onDidReceiveMessage((message: DashboardClientMessage) => {
         void dispatchDashboardClientMessage(message, {
@@ -451,9 +455,9 @@ class DashboardPanelController {
   }
 
   private startCliSessionRealtime(): void {
-    if (this.cliSessionWatcher || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
+    if (this.cliSessionWatcher || !this.panel || this.panel.visible === false || !this.webviewReady || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
     this.cliSessionReconcileTimer ??= setInterval(() => {
-      if (!this.panel || !this.webviewReady) return;
+      if (this.panel?.visible === false || !this.webviewReady) return;
       if (!this.cliSessionWatcher) this.startCliSessionRealtime();
       void this.publishCliSessionsRealtime();
     }, 30_000);
@@ -492,7 +496,7 @@ class DashboardPanelController {
     if (this.cliSessionPublish) return this.cliSessionPublish;
     this.cliSessionPublish = (async () => {
       if (
-        !this.panel ||
+        !this.panel || this.panel.visible === false ||
         !this.webviewReady ||
         !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)
       )

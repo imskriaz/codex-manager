@@ -176,7 +176,7 @@ Codex Manager is available under the [MIT License](LICENSE). The project was ori
 
 Auto Resume captures all local running parent conversations across projects and restores each as a persistent native Codex tab. The optional active-goals filter still applies.
 
-**Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, Auto Switch continues with a warning. Manual account switching remains available.
+**Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, automatic switching waits with a warning and retries. Manual account switching remains available immediately.
 
 **Claim all accounts** under Data & sync is off by default, so Auto Sync reserves only the account currently selected on this PC and frees every other saved account. Turn it on to claim every enabled saved account. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC.
 
@@ -193,5 +193,20 @@ Browser notification setup appears when an unsubscribed device opens the HTTPS d
 Choose **Send test notification** in those settings to test all subscribed devices. The result reports push-service acceptance and failures; confirm receipt on your phone, since the browser and OS control notification display.
 
 Running counts, Auto Resume capture, and the wait-before-switch preference share session verification. Native runtime status overrides retained writer handles, so loaded idle conversations do not count as running. New chat lists existing local Codex projects, and session positions remain stable through background refreshes.
+
+### Shared session checks
+
+Session inspection is demand-driven. Overlapping consumers share bounded running-session snapshots and matching per-session status reads; cancelling one consumer does not cancel the others, while the last cancellation stops the scan.
+
+| Consumer | Required condition | Check |
+| --- | --- | --- |
+| Wait for running sessions | Auto Switch and Wait for running sessions enabled | All local running session IDs |
+| Auto Resume at managed reload | Auto Switch and Auto Resume enabled | Running IDs, then goal filter |
+| Auto Resume tab autosave | Auto Switch and Auto Resume enabled | Open parent tabs and optional active-goal filter |
+| Auto Resume restore | Saved recovery exists and both toggles enabled | Saved IDs and goal filter |
+| Running indicators and workspace lists | Dashboard/session view requests status | Per-session native/transcript status |
+| Explicit session actions | A session command needs ownership | Per-session status |
+
+Manual account switching and ownership renewal do not request session inspection. Turning Auto Resume off clears saved recovery once and stops future checks.
 
 Browser Share creates an explicit read-only snapshot link. Anyone with its token can view the conversation messages without signing in; it grants no dashboard access. Links expire after 30 days. Create a replacement or use **Revoke shared link** to invalidate the previous link. New messages require a new snapshot.

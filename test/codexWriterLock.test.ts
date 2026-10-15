@@ -10,6 +10,7 @@ vi.mock("child_process", async (importOriginal) => {
   return { ...actual, execFile: (...args: any[]) => {
     if (args[0] === "powershell.exe" && probe.nativeMode) {
       probe.calls.push({ args: args[1], options: args[2] });
+      if (probe.nativeMode === "spawn-denied") throw Object.assign(new Error("spawn EPERM"), { code: "EPERM" });
       const startupFailure = probe.calls.length === 1 || probe.nativeMode === "always-fail";
       args.at(-1)(startupFailure ? Object.assign(new Error("runtime startup failed"), { code: 0xc0000142 }) : null, "[]");
       return {};
@@ -39,6 +40,15 @@ async function fixture() {
 }
 
 describe("writer lock evidence", () => {
+  it.skipIf(process.platform !== "win32")("discards a failed spawn so the same session can recover after permissions return", async () => {
+    const root = await fixture();
+    probe.nativeMode = "spawn-denied";
+    await expect(readRunningCodexSessionIds(root)).rejects.toThrow("Windows session writer inspection failed");
+    expect(probe.calls).toHaveLength(2);
+    probe.nativeMode = "recover";
+    await expect(readRunningCodexSessionIds(root)).resolves.toEqual([]);
+    expect(probe.calls).toHaveLength(3);
+  });
   it.skipIf(process.platform !== "win32")("retries a Windows runtime startup failure with PowerShell hiding its own window", async () => {
     const root = await fixture();
     probe.nativeMode = "recover";

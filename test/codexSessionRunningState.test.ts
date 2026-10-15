@@ -59,6 +59,20 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it("shares concurrent running-session scans and keeps the remaining consumer alive after cancellation", async () => {
+    let finish!: (running: boolean) => void;
+    vi.mocked(readNativeCodexSessionRunning).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const controller = new AbortController();
+    const first = readRunningCodexSessionIds(home, controller.signal);
+    const checked = expect(first).rejects.toThrow("disabled");
+    const second = readRunningCodexSessionIds(home);
+    await vi.waitFor(() => expect(readNativeCodexSessionRunning).toHaveBeenCalledOnce());
+    controller.abort(new Error("disabled"));
+    await checked;
+    finish(false);
+    await expect(second).resolves.toEqual([]);
+    expect(readNativeCodexSessionRunning).toHaveBeenCalledOnce();
+  });
   it("excludes a native idle conversation with an unfinished transcript and retained writer handle", async () => {
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
     mocks.heldLocks.add(lock);

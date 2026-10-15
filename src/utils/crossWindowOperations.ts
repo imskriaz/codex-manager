@@ -2,13 +2,16 @@ import { AsyncLocalStorage } from "async_hooks";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
+import * as os from "os";
 
 const LOCK_DIRECTORY_NAME = "cross-window-operations-v1";
 const OWNER_FILE_NAME = "owner.json";
 const CLEANUP_LOCK_NAME = ".cleanup.lock";
+const YIELD_FILE_NAME = "yield";
 const DEFAULT_HEARTBEAT_MS = 5_000;
 const DEFAULT_STALE_AFTER_MS = 30_000;
-const MAX_OPERATION_LIFETIME_MS = 6 * 60 * 60 * 1000;
+const activeOwners = new Map<string, { instanceId: string; controller: AbortController; background: boolean }>();
+type OperationOptions = { waitMs?: number; background?: boolean };
 const STARTUP_COOLDOWN_FILE = "startup-sync-cooldown.json";
 export const CENTRAL_ACCOUNT_OPERATION_KEY = "accounts:central-operation";
 /**
@@ -23,13 +26,14 @@ type LockOwner = {
   pid: number;
   startedAt: number;
   heartbeatAt: number;
+  background?: boolean;
 };
 
 type OperationLease = { active: boolean };
 
 export class CrossWindowOperationBusyError extends Error {
   constructor(public readonly operationLabel: string) {
-    super(`${operationLabel} is already running in another VS Code window. Wait for it to finish, then try again.`);
+    super(`${operationLabel} is still in progress. The new request was not started; retry after the current operation finishes.`);
     this.name = "CrossWindowOperationBusyError";
   }
 }
@@ -42,6 +46,7 @@ export class CrossWindowOperationCoordinator {
   private readonly lockRoot: string;
   private readonly instanceId = crypto.randomUUID();
   private readonly operationContext = new AsyncLocalStorage<ReadonlyMap<string, OperationLease>>();
+  private pendingRequests = 0;
   private initializeTask: Promise<void> | undefined;
 
   constructor(
@@ -64,7 +69,7 @@ export class CrossWindowOperationCoordinator {
     return this.initializeTask;
   }
 
-  async runExclusive<T>(operationKey: string, operationLabel: string, task: () => Promise<T>): Promise<T> {
+  async runExclusive<T>(operationKey: string, operationLabel: string, task: (signal: AbortSignal) => Promise<T>, options: OperationOptions = {}): Promise<T> {
     const normalizedKey = operationKey.trim();
     if (!normalizedKey) {
       throw new Error("A cross-window operation key is required.");
@@ -72,12 +77,25 @@ export class CrossWindowOperationCoordinator {
 
     const inherited = this.operationContext.getStore();
     if (inherited?.get(normalizedKey)?.active) {
-      return task();
+      return task(new AbortController().signal);
     }
 
     await this.initialize();
     const lockPath = this.resolveLockPath(normalizedKey);
-    const acquired = await this.tryAcquire(lockPath);
+    if (this.pendingRequests >= 32) throw new CrossWindowOperationBusyError(operationLabel);
+    const deadline = Date.now() + Math.min(2_000, Math.max(0, options.waitMs ?? 0));
+    let acquired = false;
+    this.pendingRequests += 1;
+    try {
+      do {
+        acquired = await this.tryAcquire(lockPath);
+        if (acquired || Date.now() >= deadline) break;
+        if (!options.background) await this.requestBackgroundYield(lockPath);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+    } finally {
+      this.pendingRequests -= 1;
+    }
     if (!acquired) {
       throw new CrossWindowOperationBusyError(operationLabel);
     }
@@ -86,12 +104,16 @@ export class CrossWindowOperationCoordinator {
       instanceId: this.instanceId,
       pid: process.pid,
       startedAt: Date.now(),
-      heartbeatAt: Date.now()
+      heartbeatAt: Date.now(),
+      background: options.background === true
     };
+    const controller = new AbortController();
+    activeOwners.set(lockPath, { instanceId: this.instanceId, controller, background: options.background === true });
     try {
       await this.writeOwner(lockPath, owner);
     } catch (error) {
-      await fs.rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
+      await fs.rm(lockPath, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 }).catch(() => undefined);
+      activeOwners.delete(lockPath);
       throw error;
     }
     let heartbeatInFlight = false;
@@ -109,17 +131,28 @@ export class CrossWindowOperationCoordinator {
         });
     }, this.heartbeatMs);
     heartbeat.unref?.();
+    let yieldReadInFlight = false;
+    const yieldTimer = options.background ? setInterval(() => {
+      if (yieldReadInFlight || controller.signal.aborted) return;
+      yieldReadInFlight = true;
+      void fs.stat(path.join(lockPath, YIELD_FILE_NAME)).then(() => {
+        controller.abort(new Error("Background ownership renewal yielded to an account switch."));
+      }, () => undefined).finally(() => { yieldReadInFlight = false; });
+    }, 50) : undefined;
+    yieldTimer?.unref?.();
 
     const lease: OperationLease = { active: true };
     const nextContext = new Map(inherited ?? []);
     nextContext.set(normalizedKey, lease);
     try {
-      return await this.operationContext.run(nextContext, task);
+      return await this.operationContext.run(nextContext, () => task(controller.signal));
     } finally {
       lease.active = false;
       clearInterval(heartbeat);
+      if (yieldTimer) clearInterval(yieldTimer);
       await heartbeatTask;
       await this.release(lockPath, owner);
+      activeOwners.delete(lockPath);
     }
   }
 
@@ -129,6 +162,7 @@ export class CrossWindowOperationCoordinator {
   }
 
   private async tryAcquire(lockPath: string): Promise<boolean> {
+    if (activeOwners.has(lockPath)) return false;
     try {
       await fs.mkdir(lockPath);
       return true;
@@ -151,7 +185,7 @@ export class CrossWindowOperationCoordinator {
       }
       return false;
     }
-    await fs.rm(abandonedPath, { recursive: true, force: true });
+    await fs.rm(abandonedPath, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 });
     return this.tryAcquire(lockPath);
   }
 
@@ -159,23 +193,23 @@ export class CrossWindowOperationCoordinator {
     try {
       const owner = JSON.parse(await fs.readFile(path.join(lockPath, OWNER_FILE_NAME), "utf8")) as Partial<LockOwner>;
       if (
-        typeof owner.pid !== "number" ||
-        typeof owner.heartbeatAt !== "number" ||
+        !Number.isSafeInteger(owner.pid) || (owner.pid ?? 0) <= 0 ||
+        typeof owner.heartbeatAt !== "number" || !Number.isFinite(owner.heartbeatAt) ||
         typeof owner.instanceId !== "string" ||
-        typeof owner.startedAt !== "number"
+        typeof owner.startedAt !== "number" || !Number.isFinite(owner.startedAt)
       ) {
         throw new Error("Invalid cross-window lock owner metadata");
       }
-      if (Date.now() - owner.startedAt > MAX_OPERATION_LIFETIME_MS) {
-        return true;
-      }
+      if (!isProcessAlive(owner.pid!)) return true;
+      if (owner.startedAt < Date.now() - os.uptime() * 1_000 - 60_000) return true;
+      if (activeOwners.has(lockPath)) return false;
       if (Date.now() - owner.heartbeatAt <= this.staleAfterMs) {
         return false;
       }
       // Multiple extension instances can briefly coexist in one VS Code
       // process during reload. A stale lock from that process is abandoned,
       // even though the PID itself is still alive.
-      return owner.pid === process.pid || !isProcessAlive(owner.pid);
+      return owner.pid === process.pid;
     } catch {
       // A freshly-created lock can briefly exist before owner.json is written.
       try {
@@ -185,6 +219,15 @@ export class CrossWindowOperationCoordinator {
         return false;
       }
     }
+  }
+
+  private async requestBackgroundYield(lockPath: string): Promise<void> {
+    const local = activeOwners.get(lockPath);
+    if (local?.background) local.controller.abort(new Error("Background ownership renewal yielded to an account switch."));
+    try {
+      const owner = JSON.parse(await fs.readFile(path.join(lockPath, OWNER_FILE_NAME), "utf8")) as Partial<LockOwner>;
+      if (owner.background) await fs.writeFile(path.join(lockPath, YIELD_FILE_NAME), "", { flag: "wx" });
+    } catch { /* The owner may have finished; retry atomic acquisition. */ }
   }
 
   private async writeOwner(lockPath: string, owner: LockOwner): Promise<void> {
@@ -197,7 +240,7 @@ export class CrossWindowOperationCoordinator {
       if (current.instanceId !== owner.instanceId || current.startedAt !== owner.startedAt) {
         return;
       }
-      await fs.rm(lockPath, { recursive: true, force: true });
+      await fs.rm(lockPath, { recursive: true, force: true, maxRetries: 6, retryDelay: 50 });
     } catch (error) {
       if (!isNotFoundError(error)) {
         console.warn("[codexManager] failed to release a cross-window operation lock:", error);
@@ -314,9 +357,10 @@ export async function configureCrossWindowOperationCoordinator(storageRootPath: 
 export function runCrossWindowExclusive<T>(
   operationKey: string,
   operationLabel: string,
-  task: () => Promise<T>
+  task: (signal: AbortSignal) => Promise<T>,
+  options: OperationOptions = {}
 ): Promise<T> {
-  return sharedCoordinator ? sharedCoordinator.runExclusive(operationKey, operationLabel, task) : task();
+  return sharedCoordinator ? sharedCoordinator.runExclusive(operationKey, operationLabel, task, options) : task(new AbortController().signal);
 }
 
 export function runCentralAccountOperation<T>(operationLabel: string, task: () => Promise<T>): Promise<T> {

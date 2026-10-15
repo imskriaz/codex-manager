@@ -9,7 +9,8 @@ vi.mock("undici", async (original) => ({ ...(await original<typeof import("undic
 import { EncryptedSyncManager } from "../src/services/encryptedSync";
 import { AccountClaimAuthority } from "../src/services/accountClaimAuthority";
 import { createSyncAccountEnablement } from "../src/services/syncEnablementRegistry";
-import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
+import { configureCrossWindowOperationCoordinator, runCrossWindowExclusive } from "../src/utils/crossWindowOperations";
+import { getCodexHomeStateKey } from "../src/codex/authFile";
 
 let folder: string;
 let manager: EncryptedSyncManager;
@@ -69,6 +70,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   manager.dispose();
+  await (manager as unknown as { currentClaimTask?: Promise<void> }).currentClaimTask?.catch(() => undefined);
   await vi.waitFor(() => expect((manager as unknown as { currentClaimRefreshInFlight: boolean }).currentClaimRefreshInFlight).toBe(false));
   vi.restoreAllMocks();
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
@@ -78,6 +80,15 @@ afterEach(async () => {
 });
 
 describe("current account only sync", () => {
+  it("yields stalled background claim renewal to a manual account switch", async () => {
+    fetchMock.mockImplementationOnce((_url: unknown, options: { signal: AbortSignal }) =>
+      new Promise((_, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true }))
+    );
+    const background = (manager as unknown as { reconcileCurrentAccountClaim(): Promise<void> }).reconcileCurrentAccountClaim();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await expect(runCrossWindowExclusive(`account:switch:${getCodexHomeStateKey()}`, "Account switch", async () => "switched", { waitMs: 2_000 })).resolves.toBe("switched");
+    await background;
+  });
   it("releases all local claims with no active account and preserves foreign ownership", async () => {
     active = "";
     const foreign = createSyncAccountEnablement({ accountId: "remote", deviceId: "remote-pc", deviceName: "Remote PC", enabled: true });

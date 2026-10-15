@@ -43,17 +43,79 @@ export async function runWithConcurrencyLimit<T>(
 }
 
 /** Bound optional reads without cancelling or releasing an in-flight mutation. */
-export async function waitWithin<T>(work: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+export async function waitWithin<T>(work: Promise<T>, timeoutMs: number, message: string, signal?: AbortSignal): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
   try {
     return await Promise.race([
       work,
       new Promise<never>((_, reject) => {
+        abort = () => reject(signal?.reason instanceof Error ? signal.reason : new Error("Operation cancelled."));
+        if (signal?.aborted) { abort(); return; }
+        signal?.addEventListener("abort", abort, { once: true });
         timer = setTimeout(() => reject(new Error(message)), timeoutMs);
       })
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (abort) signal?.removeEventListener("abort", abort);
+  }
+}
+
+type SharedInspection<T> = {
+  controller: AbortController;
+  task: Promise<T>;
+  users: number;
+};
+
+const sharedInspections = new Map<string, SharedInspection<unknown>>();
+
+/** Share bounded read-only inspections while keeping cancellation local to each caller. */
+export async function createSharedInspection<T>(
+  key: string,
+  inspect: (signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal,
+  timeoutMs = 30_000
+): Promise<T> {
+  signal?.throwIfAborted();
+  let shared = sharedInspections.get(key) as SharedInspection<T> | undefined;
+  if (!shared) {
+    if (sharedInspections.size >= 256) throw new Error("Session inspection is busy. Retry shortly.");
+    const controller = new AbortController();
+    const cancelled = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener("abort", () => reject(new Error("Session inspection cancelled.")), { once: true });
+    });
+    const task = waitWithin(Promise.race([cancelled, Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return inspect(controller.signal);
+    })]), 30_000, "Session inspection timed out.").finally(() => {
+      controller.abort();
+      if (sharedInspections.get(key)?.task === task) sharedInspections.delete(key);
+    });
+    shared = { controller, task, users: 0 };
+    sharedInspections.set(key, shared);
+  }
+  shared.users += 1;
+  const current = shared;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      current.task,
+      new Promise<never>((_, reject) => {
+        abort = () => reject(signal?.reason instanceof Error ? signal.reason : new Error("Session inspection cancelled."));
+        signal?.addEventListener("abort", abort, { once: true });
+        timer = setTimeout(() => reject(new Error("Session inspection timed out.")), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (abort) signal?.removeEventListener("abort", abort);
+    current.users -= 1;
+    if (current.users <= 0) {
+      current.controller.abort(new Error("No session inspection consumers remain."));
+      if (sharedInspections.get(key) === current) sharedInspections.delete(key);
+    }
   }
 }
 

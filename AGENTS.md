@@ -10,3 +10,4 @@
 - Keep developer specific domains, hostnames, personal URLs, and identifying deployment details out of public documentation and manifest descriptions.
 - When the user explicitly requests a release, publish the requested GitHub Release with the verified VSIX attached. If GitHub authentication or tooling is unavailable, report that blocker.
 - Publish tags, releases, Marketplace updates, or deployments only when explicitly requested; a version bump or local VSIX alone does not authorize publication. Never claim delivery after a failed required step.
+- Work directly on `main`; do not create, switch to, or deliver changes from another branch unless the user explicitly asks.
