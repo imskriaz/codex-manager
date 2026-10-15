@@ -7,6 +7,7 @@ import {
   isHourlyQuotaControlEnabled,
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
+  normalizeSyncHeartbeatMinutes,
   normalizeAutoResetWeeklyThreshold,
   isAutoResumeEnabled,
   isAutoSwitchRefreshAllBeforeSwitchEnabled
@@ -67,18 +68,32 @@ describe("5-hour quota control defaults", () => {
     } as never);
     expect(new ExtensionSettingsStore().getDashboardSettings().quotaFreshnessMs).toBe(125 * 60_000);
   });
+  it("validates the VS Code batch gap and removes obsolete network and WebSocket controls", () => {
+    expect([Number.NaN, -1, 0, 1, 2.6, 60, 100].map(normalizeSyncHeartbeatMinutes)).toEqual([5, 1, 1, 1, 3, 60, 60]);
+    const properties = JSON.parse(readFileSync("package.json", "utf8")).contributes.configuration.properties;
+    expect(properties["codexManager.debugNetwork"]).toBeUndefined();
+    expect(properties["codexManager.encryptedSyncWebSocketHeartbeatSeconds"]).toBeUndefined();
+    expect(properties["codexManager.encryptedSyncCurrentAccountOnlyEnabled"]).toBeUndefined();
+    const overlay = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    expect(overlay).not.toContain("debugNetwork");
+    expect(overlay).not.toContain("WebSocket heartbeat gap");
+  });
+
   it("keeps claim checks on while full cross-PC account sync defaults off", () => {
     const manifest = JSON.parse(readFileSync("package.json", "utf8"));
     expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncEnabled"].default).toBe(true);
+    expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncClaimAllAccountsEnabled"].default).toBe(false);
     expect(manifest.contributes.configuration.properties["codexManager.fullCrossPcAccountSyncEnabled"].default).toBe(
       false
     );
+    expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncVsCodeHeartbeatMinutes"].default).toBe(5);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (_key: string, fallback?: unknown) => fallback,
       inspect: vi.fn(),
       update: vi.fn()
     } as never);
     expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncEnabled).toBe(true);
+    expect(new ExtensionSettingsStore().getDashboardSettings().encryptedSyncClaimAllAccountsEnabled).toBe(false);
     expect(new ExtensionSettingsStore().getDashboardSettings().fullCrossPcAccountSyncEnabled).toBe(false);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? false : fallback),

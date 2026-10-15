@@ -1,4 +1,8 @@
 # Changelog
+## 1.2.25 (Unreleased)
+
+- Simplify Auto Sync settings, claim only the current account by default, and release stale saved-account claims. Keep WebSocket changes real time and batch VS Code Settings Sync writes with a configurable gap.
+
 ## 1.2.24
 
 - Save eligible open Codex tabs without scanning unrelated running sessions. Keep automatic save failures in diagnostics and retry quietly without desktop or browser push notifications.

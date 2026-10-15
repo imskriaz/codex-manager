@@ -34,10 +34,10 @@ export type DashboardSettingKey =
   | "quotaWarningWeeklyThreshold"
   | "quotaGreenThreshold"
   | "quotaYellowThreshold"
-  | "debugNetwork"
   | "encryptedSyncEnabled"
-  | "encryptedSyncCurrentAccountOnlyEnabled"
+  | "encryptedSyncClaimAllAccountsEnabled"
   | "fullCrossPcAccountSyncEnabled"
+  | "encryptedSyncVsCodeHeartbeatMinutes"
   | "webDashboardEnabled"
   | "webDashboardAlwaysOnlineEnabled"
   | "cloudflaredDomain"
@@ -86,10 +86,10 @@ export interface DashboardSettings {
   quotaWarningWeeklyThreshold: number;
   quotaGreenThreshold: number;
   quotaYellowThreshold: number;
-  debugNetwork: boolean;
   encryptedSyncEnabled: boolean;
-  encryptedSyncCurrentAccountOnlyEnabled?: boolean;
+  encryptedSyncClaimAllAccountsEnabled?: boolean;
   fullCrossPcAccountSyncEnabled?: boolean;
+  encryptedSyncVsCodeHeartbeatMinutes?: number;
   encryptedSyncRegistryOverrideEnabled: boolean;
   webDashboardEnabled: boolean;
   /** Keep a detached Node relay alive after VS Code closes. */
@@ -329,13 +329,6 @@ export interface DashboardCopy {
   colorThresholdGreenDescTemplate: string;
   colorThresholdYellowDescTemplate: string;
   colorThresholdRedNoteTemplate: string;
-  debugTitle: string;
-  debugSub: string;
-  debugOn: string;
-  debugOnDesc: string;
-  debugOff: string;
-  debugOffDesc: string;
-  debugNote: string;
   languageTitle: string;
   languageSub: string;
   languageAuto: string;

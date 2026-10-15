@@ -56,10 +56,10 @@ export class ExtensionSettingsStore {
       quotaWarningWeeklyThreshold: warningThresholds.weekly,
       quotaGreenThreshold: thresholds.green,
       quotaYellowThreshold: thresholds.yellow,
-      debugNetwork: config.get<boolean>("debugNetwork", false),
       encryptedSyncEnabled: config.get<boolean>("encryptedSyncEnabled", true),
-      encryptedSyncCurrentAccountOnlyEnabled: config.get<boolean>("encryptedSyncCurrentAccountOnlyEnabled", false),
+      encryptedSyncClaimAllAccountsEnabled: config.get<boolean>("encryptedSyncClaimAllAccountsEnabled", false) === true,
       fullCrossPcAccountSyncEnabled: config.get<boolean>("fullCrossPcAccountSyncEnabled", false),
+      encryptedSyncVsCodeHeartbeatMinutes: normalizeSyncHeartbeatMinutes(config.get<number>("encryptedSyncVsCodeHeartbeatMinutes", 5)),
       // Runtime-owned and passphrase-gated; buildDashboardState replaces this placeholder.
       encryptedSyncRegistryOverrideEnabled: false,
       webDashboardEnabled: config.get<boolean>("webDashboardEnabled", false),
@@ -99,6 +99,15 @@ export function readCodexSessionTransport(
   return normalizeCodexSessionTransport(
     inspected ? (inspected.globalValue ?? inspected.defaultValue) : config.get<string>("codexSessionTransport")
   );
+}
+
+export function normalizeSyncHeartbeatMinutes(value: number): number {
+  if (!Number.isFinite(value)) return 5;
+  return Math.max(1, Math.min(60, Math.round(value)));
+}
+
+export function getSyncHeartbeatMinutes(): number {
+  return normalizeSyncHeartbeatMinutes(getCodexManagerConfiguration().get<number>("encryptedSyncVsCodeHeartbeatMinutes", 5));
 }
 
 export function normalizeAutoRefreshMinutes(value: number): number {

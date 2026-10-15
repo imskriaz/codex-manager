@@ -5,13 +5,15 @@ import * as path from "path";
 import * as zlib from "zlib";
 import * as vscode from "vscode";
 import { fetch as undiciFetch } from "undici";
+import { waitWithin } from "../utils/concurrency";
+import { publishDashboardRealtime } from "./dashboardRealtime";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { readCrossWindowActiveAccountIds } from "./windowAccountMode";
 import type { AccountClaimRequest, AccountClaimResult } from "./accountClaimAuthority";
 import type { SharedCodexManagerAccountJson } from "../core/types";
 import { AccountsRepository } from "../storage";
 import { CrossWindowOperationBusyError, runCrossWindowExclusive, runEncryptedSyncOperation, runSharedMaintenance } from "../utils/crossWindowOperations";
-import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
+import { getCodexManagerConfiguration, getSyncHeartbeatMinutes } from "../infrastructure/config/extensionSettings";
 import { clearTokenAutomationError } from "../presentation/workbench/tokenAutomationState";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { canonicalizeSyncAccountLeases, isValidSyncAccountLease, type SyncAccountLease } from "./syncLeases";
@@ -36,8 +38,6 @@ const LOCAL_ENABLEMENT_PENDING_KEY = "codexManager.encryptedSync.localEnablement
 const LOCAL_VAULT_DIRTY_KEY = "codexManager.encryptedSync.vaultDirty.v1";
 // Realtime peers carry immediate changes. Batch durable Settings Sync writes
 // so account activity cannot exhaust VS Code's device-wide request budget.
-const ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS = 5 * 60 * 1000;
-const VAULT_SYNC_DEBOUNCE_DELAY_MS = 5 * 60 * 1000;
 const SYNC_ACTIVITY_RENEWAL_INTERVAL_MS = 30 * 60 * 1000;
 const VAULT_SYNC_MAX_RETRY_DELAY_MS = 30 * 60 * 1000;
 const STARTUP_VAULT_MERGE_DELAY_MS = 30 * 1000;
@@ -159,7 +159,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private downloadedVaultPollTimer: NodeJS.Timeout | undefined;
   private configurationSubscription: vscode.Disposable | undefined;
   private realtimeVaultCache: { mutationVersion: number; encrypted: string } | undefined;
-  private backgroundSyncRetryDelayMs = VAULT_SYNC_DEBOUNCE_DELAY_MS;
+  private backgroundSyncRetryDelayMs = this.getVaultSyncDebounceDelayMs();
   private readonly pendingVaultMutationReasons = new Set<string>();
   private vaultDirtyPersistence: Promise<void> = Promise.resolve();
   private durableVaultWriteChain: Promise<void> = Promise.resolve();
@@ -176,9 +176,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private readonly preparedCurrentClaims = new Map<string, { claim: SyncAccountEnablement; acquired: boolean }>();
   private currentClaimTimer: NodeJS.Timeout | undefined;
   private currentClaimRefreshInFlight = false;
+  private currentClaimRetryTimer: NodeJS.Timeout | undefined;
 
   private isCurrentAccountOnly(): boolean {
-    return this.isEnabled() && getCodexManagerConfiguration().get<boolean>("encryptedSyncCurrentAccountOnlyEnabled", false);
+    return this.isEnabled() && getCodexManagerConfiguration().get<boolean>("encryptedSyncClaimAllAccountsEnabled", false) !== true;
   }
 
   private async requestCurrentClaim(action: "acquire" | "release", accountId: string, token: string = crypto.randomUUID()): Promise<AccountClaimResult> {
@@ -197,32 +198,53 @@ export class EncryptedSyncManager implements vscode.Disposable {
       if (!response.ok || !payload.result || typeof payload.signature !== "string" || payload.result.requestId !== request.requestId ||
           !await this.verifyRealtimePeerPayload(JSON.stringify(payload.result), payload.signature)) throw new Error(payload.error ?? "The shared dashboard could not confirm the account claim. Retry after reconnecting.");
       if (!payload.result.ok || !payload.result.claim || !isValidSyncAccountEnablement(payload.result.claim) || payload.result.claim.accountId !== accountId || payload.result.claim.deviceId !== request.deviceId) throw new Error(payload.result.error ?? "The shared account claim was rejected.");
+      if (payload.result.claim.enabled !== (action === "acquire")) throw new Error("The shared host returned an inconsistent account claim. Refresh claims and retry.");
+      const before = syncEnablementFingerprint(this.readLocalEnablement());
       try { await this.applyRealtimeEnablementRegistry([payload.result.claim]); }
-      catch { throw new Error("The shared host reserved ownership, but local claim storage failed. Restore storage and retry before using this account."); }
+      catch { throw new Error("The shared host updated ownership, but local claim storage failed. Restore storage and retry before using this account."); }
+      if (before !== syncEnablementFingerprint(this.readLocalEnablement())) this.markVaultDirty("enablement-changed", this.getVaultSyncDebounceDelayMs());
       return payload.result;
     } finally { clearTimeout(timer); }
   }
 
+  private queueCurrentAccountReconciliation(): void {
+    if (this.disposed || this.currentClaimRetryTimer) return;
+    this.currentClaimRetryTimer = setTimeout(() => {
+      this.currentClaimRetryTimer = undefined;
+      void this.reconcileCurrentAccountClaim().catch((error) => {
+        if (error instanceof CrossWindowOperationBusyError) { this.queueCurrentAccountReconciliation(); return; }
+        const message = `Account ownership cleanup is pending. Claims remain reserved and will retry automatically. ${error instanceof Error ? error.message : String(error)}`;
+        publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+        void vscode.window.showWarningMessage(message);
+      });
+    }, 100);
+    this.currentClaimRetryTimer.unref?.();
+  }
+
   private reconcileCurrentAccountClaim(): Promise<void> {
-    if (this.disposed || !this.isCurrentAccountOnly()) return Promise.resolve();
+    if (this.disposed || !this.isEnabled()) return Promise.resolve();
     return runCrossWindowExclusive(`account:switch:${getCodexHomeStateKey()}`, "Current account ownership", () => this.reconcileCurrentAccountClaimLocked());
   }
 
   private async reconcileCurrentAccountClaimLocked(): Promise<void> {
-    if (this.disposed || !this.isCurrentAccountOnly() || this.currentClaimRefreshInFlight) return;
+    if (this.disposed || !this.isEnabled() || this.currentClaimRefreshInFlight) return;
     this.currentClaimRefreshInFlight = true;
     try {
-      await this.mutationChain;
-      const active = (await this.repo.listAccounts()).find((account) => account.isActive);
-      if (!active) return;
-      await this.requestCurrentClaim("acquire", active.id);
-      if (this.disposed || !this.isCurrentAccountOnly()) return;
-      const current = (await this.repo.listAccounts()).find((account) => account.isActive);
-      if (current?.id !== active.id) return;
-      const activeAccountIds = new Set([active.id, ...await readCrossWindowActiveAccountIds()]);
-      for (const claim of this.readLocalEnablement()) {
-        if (claim.enabled && claim.deviceId === await this.getDeviceId() && !activeAccountIds.has(claim.accountId) && !this.preparedCurrentClaims.has(claim.accountId)) await this.requestCurrentClaim("release", claim.accountId, claim.claimToken);
+      await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account claim storage is still busy; maintenance will retry.");
+      const records = await waitWithin(this.repo.listAccounts(), 500, "Current account discovery is still pending.");
+      const active = records.find((account) => account.isActive);
+      const activeAccountIds = new Set(await waitWithin(readCrossWindowActiveAccountIds(), 500, "Other window account discovery is still pending."));
+      if (this.isCurrentAccountOnly()) {
+        if (active) activeAccountIds.add(active.id);
+      } else {
+        for (const account of records) if (account.enabled !== false) activeAccountIds.add(account.id);
       }
+      const deviceId = await this.getDeviceId();
+      for (const claim of this.readLocalEnablement()) {
+        if (this.disposed) return;
+        if (claim.enabled && claim.deviceId === deviceId && !activeAccountIds.has(claim.accountId) && !this.preparedCurrentClaims.has(claim.accountId)) await this.requestCurrentClaim("release", claim.accountId, claim.claimToken);
+      }
+      if (active && !this.disposed && this.isCurrentAccountOnly()) await this.requestCurrentClaim("acquire", active.id);
     } finally { this.currentClaimRefreshInFlight = false; }
   }
 
@@ -258,15 +280,25 @@ export class EncryptedSyncManager implements vscode.Disposable {
     this.configurationSubscription = vscode.workspace.onDidChangeConfiguration((event) => {
       const claimSyncChanged = event.affectsConfiguration("codexManager.encryptedSyncEnabled");
       const fullAccountSyncChanged = event.affectsConfiguration("codexManager.fullCrossPcAccountSyncEnabled");
-      if (event.affectsConfiguration("codexManager.encryptedSyncCurrentAccountOnlyEnabled")) {
+      if (event.affectsConfiguration("codexManager.encryptedSyncVsCodeHeartbeatMinutes")) {
+        this.backgroundSyncRetryDelayMs = this.getVaultSyncDebounceDelayMs();
+        if (this.backgroundSyncTimer) clearTimeout(this.backgroundSyncTimer);
+        this.backgroundSyncTimer = undefined;
+        if (this.pendingVaultMutationReasons.size) this.queueBackgroundSync(this.getVaultSyncDebounceDelayMs());
+      }
+      if (event.affectsConfiguration("codexManager.encryptedSyncClaimAllAccountsEnabled")) {
         this.onVaultMutation("sync-configured");
         const rebuild = async () => {
-          if (this.isCurrentAccountOnly()) { await this.reconcileCurrentAccountClaim(); return; }
+          if (this.isCurrentAccountOnly()) { this.queueCurrentAccountReconciliation(); return; }
           for (const account of await this.repo.listAccounts()) {
             if (!this.findForeignEnablement(account.id, true)) await this.completeAccountEnablement(account.id, account.enabled !== false);
           }
         };
-        void rebuild().catch((error) => { void vscode.window.showWarningMessage(`Account claim mode could not be confirmed. ${error instanceof Error ? error.message : String(error)}`); });
+        void rebuild().catch((error) => {
+          const message = `Account claim mode could not be confirmed. ${error instanceof Error ? error.message : String(error)}`;
+          publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+          void vscode.window.showWarningMessage(message);
+        });
       }
       if (!claimSyncChanged && !fullAccountSyncChanged) return;
 
@@ -292,8 +324,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
         return;
       }
       this.startDownloadedVaultPolling();
+      if (this.isCurrentAccountOnly()) this.queueCurrentAccountReconciliation();
       if (this.pendingVaultMutationReasons.size > 0) {
-        this.queueBackgroundSync(VAULT_SYNC_DEBOUNCE_DELAY_MS);
+        this.queueBackgroundSync(this.getVaultSyncDebounceDelayMs());
       } else if (this.context.globalState.get<string>(SYNC_KEY)) {
         this.queueStartupVaultMerge(1_000);
       }
@@ -353,12 +386,19 @@ export class EncryptedSyncManager implements vscode.Disposable {
         this.queueStartupVaultMerge();
       }
     }
+    if (this.isCurrentAccountOnly()) {
+      void this.reconcileCurrentAccountClaim().catch((error) =>
+        console.warn("[codexManager] current account claim could not be reconciled at startup", error instanceof Error ? error.message : error)
+      );
+    }
   }
 
   dispose(): void {
     this.disposed = true;
     if (this.currentClaimTimer) clearInterval(this.currentClaimTimer);
     this.currentClaimTimer = undefined;
+    if (this.currentClaimRetryTimer) clearTimeout(this.currentClaimRetryTimer);
+    this.currentClaimRetryTimer = undefined;
     this.pendingDeletionAccountIds.clear();
     if (this.backgroundSyncTimer) {
       clearTimeout(this.backgroundSyncTimer);
@@ -376,6 +416,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
     this.realtimeSyncPublisher = undefined;
   }
 
+  private getVaultSyncDebounceDelayMs(): number {
+    return getSyncHeartbeatMinutes() * 60_000;
+  }
+
   /** Queue pending local mutations without surfacing background lock contention. */
   queueBackgroundSync(delayMs = 1_000): void {
     if (this.disposed || this.backgroundSyncTimer) return;
@@ -384,12 +428,12 @@ export class EncryptedSyncManager implements vscode.Disposable {
       void this.syncNow(false, false, false)
         .then((synced) => {
           if (synced || this.pendingVaultMutationReasons.size === 0) {
-            this.backgroundSyncRetryDelayMs = VAULT_SYNC_DEBOUNCE_DELAY_MS;
+            this.backgroundSyncRetryDelayMs = this.getVaultSyncDebounceDelayMs();
             return;
           }
           this.backgroundSyncRetryDelayMs = Math.min(
-            Math.max(this.backgroundSyncRetryDelayMs * 2, VAULT_SYNC_DEBOUNCE_DELAY_MS),
-            VAULT_SYNC_MAX_RETRY_DELAY_MS
+            Math.max(this.backgroundSyncRetryDelayMs * 2, this.getVaultSyncDebounceDelayMs()),
+            Math.max(VAULT_SYNC_MAX_RETRY_DELAY_MS, this.getVaultSyncDebounceDelayMs())
           );
           this.queueBackgroundSync(this.backgroundSyncRetryDelayMs);
         })
@@ -401,8 +445,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
           console.warn("[codexManager] queued encrypted sync failed:", error);
           if (this.pendingVaultMutationReasons.size > 0) {
             this.backgroundSyncRetryDelayMs = Math.min(
-              Math.max(this.backgroundSyncRetryDelayMs * 2, VAULT_SYNC_DEBOUNCE_DELAY_MS),
-              VAULT_SYNC_MAX_RETRY_DELAY_MS
+              Math.max(this.backgroundSyncRetryDelayMs * 2, this.getVaultSyncDebounceDelayMs()),
+              Math.max(VAULT_SYNC_MAX_RETRY_DELAY_MS, this.getVaultSyncDebounceDelayMs())
             );
             this.queueBackgroundSync(this.backgroundSyncRetryDelayMs);
           }
@@ -441,6 +485,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         const enablement = new Map(this.readLocalEnablement().map((entry) => [entry.accountId, entry]));
         const updatedAt = Date.now();
         for (const accountId of change.addedAccountIds) {
+          if (this.isCurrentAccountOnly()) continue;
           const currentEntry = enablement.get(accountId);
           if (currentEntry?.enabled && currentEntry.deviceId !== deviceId) continue;
           enablement.set(
@@ -449,7 +494,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
               accountId,
               deviceId,
               deviceName,
-              enabled: this.isCurrentAccountOnly() ? (await this.repo.listAccounts()).some((account) => account.id === accountId && account.isActive) : true,
+              enabled: true,
               revision: (currentEntry?.revision ?? 0) + 1,
               now: updatedAt
             })
@@ -457,6 +502,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         }
         for (const accountId of change.removedAccountIds) {
           const currentEntry = enablement.get(accountId);
+          if (this.isCurrentAccountOnly() || currentEntry?.currentOnly) continue;
           if (currentEntry?.enabled && currentEntry.deviceId !== deviceId) continue;
           enablement.set(
             accountId,
@@ -471,10 +517,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
           );
         }
         await this.storeLocalEnablement([...enablement.values()], deviceId);
-        await this.markEnablementPending([...change.addedAccountIds, ...change.removedAccountIds]);
-        if (change.addedAccountIds.length > 0) this.markVaultDirty("account-added", VAULT_SYNC_DEBOUNCE_DELAY_MS);
-        if (change.removedAccountIds.length > 0) {
-          this.markVaultDirty("account-removed", VAULT_SYNC_DEBOUNCE_DELAY_MS);
+        this.queueCurrentAccountReconciliation();
+        if (!this.isCurrentAccountOnly()) await this.markEnablementPending([...change.addedAccountIds, ...change.removedAccountIds]);
+        if (this.isFullAccountSyncEnabled() || !this.isCurrentAccountOnly()) {
+          if (change.addedAccountIds.length > 0) this.markVaultDirty("account-added", this.getVaultSyncDebounceDelayMs());
+          if (change.removedAccountIds.length > 0) this.markVaultDirty("account-removed", this.getVaultSyncDebounceDelayMs());
         }
       })
       .catch((error) => {
@@ -532,7 +579,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       return;
     this.mutationVersion += 1;
     this.realtimeVaultCache = undefined;
-    this.markVaultDirty(reason, VAULT_SYNC_DEBOUNCE_DELAY_MS);
+    this.markVaultDirty(reason, this.getVaultSyncDebounceDelayMs());
   }
 
   private markVaultDirty(reason: string, delayMs: number): void {
@@ -776,13 +823,13 @@ export class EncryptedSyncManager implements vscode.Disposable {
     }
   }
 
-  async completeAccountSwitch(accountId: string): Promise<void> {
-    if (!this.isCurrentAccountOnly()) return;
+  completeAccountSwitch(accountId: string): Promise<void> {
+    if (!this.isCurrentAccountOnly()) return Promise.resolve();
     this.preparedCurrentClaims.delete(accountId);
-    await this.reconcileCurrentAccountClaim().catch((error) => {
-      void vscode.window.showWarningMessage(`The account switched, but its previous PC claim could not be released. Ownership remains reserved; automatic retry will run when the host reconnects. ${error instanceof Error ? error.message : String(error)}`);
-    });
-    this.markVaultDirty("enablement-changed", ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS);
+    // The target claim was confirmed before auth changed. Cleanup belongs to maintenance.
+    this.queueCurrentAccountReconciliation();
+    this.markVaultDirty("enablement-changed", this.getVaultSyncDebounceDelayMs());
+    return Promise.resolve();
   }
 
   async cancelAccountSwitch(accountId: string): Promise<void> {
@@ -805,11 +852,19 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   async completeAccountEnablement(accountId: string, enabled: boolean): Promise<void> {
-    if (this.isCurrentAccountOnly()) { await this.reconcileCurrentAccountClaim(); return; }
+    if (this.isCurrentAccountOnly()) { this.queueCurrentAccountReconciliation(); return; }
     if (encryptedSyncRegistryOverrideEnabled) {
       void vscode.window.showWarningMessage(
         "The account changed locally under rescue override; the shared enable/disable registry was not changed."
       );
+      return;
+    }
+    await this.mutationChain.catch(() => undefined);
+    const owned = this.readLocalEnablement().find(entry => entry.accountId === accountId && entry.deviceId === visibleEnablementDeviceId);
+    if (owned?.currentOnly) {
+      // Keep the host's fencing token when changing from current-only to all-account claims.
+      if (enabled && !owned.enabled) await this.requestCurrentClaim("acquire", accountId);
+      else if (!enabled && owned.enabled) await this.requestCurrentClaim("release", accountId, owned.claimToken);
       return;
     }
     this.mutationVersion += 1;
@@ -838,7 +893,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         await this.markEnablementPending([accountId]);
       });
     await this.mutationChain;
-    this.markVaultDirty("enablement-changed", ENABLEMENT_SYNC_CONSOLIDATION_DELAY_MS);
+    this.markVaultDirty("enablement-changed", this.getVaultSyncDebounceDelayMs());
   }
 
   async setRegistryOverrideEnabled(enabled: boolean, options?: { passphrase?: string }): Promise<boolean> {
@@ -1005,9 +1060,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
       return true;
     }
     this.startDownloadedVaultPolling();
-    this.markVaultDirty("sync-configured", VAULT_SYNC_DEBOUNCE_DELAY_MS);
+    this.markVaultDirty("sync-configured", this.getVaultSyncDebounceDelayMs());
     if (options?.deferSync) {
-      this.queueBackgroundSync(VAULT_SYNC_DEBOUNCE_DELAY_MS);
+      this.queueBackgroundSync(this.getVaultSyncDebounceDelayMs());
       return true;
     }
     return this.syncing ? true : this.syncNow(true);
@@ -1063,7 +1118,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   ): Promise<boolean> {
     if (!this.isEnabled()) {
       if (interactive) {
-        void vscode.window.showWarningMessage("Enable Cross-PC claim checks before syncing claims.");
+        void vscode.window.showWarningMessage("Enable Auto Sync before syncing claims.");
       }
       return false;
     }
@@ -1114,7 +1169,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       // Settings Sync may activate the extension before it has downloaded the
       // synchronized globalState value. Never replace that not-yet-arrived
       // vault with an empty local account list on a new PC.
-      if (!rawRemote && (local.enablementRegistry?.length ?? 0) === 0 && this.localEnablementDefaults.size === 0) {
+      if (!rawRemote && local.accounts.length === 0 && (local.enablementRegistry?.length ?? 0) === 0 && this.localEnablementDefaults.size === 0) {
         encryptedSyncNeedsConfiguration = false;
         if (interactive) {
           void vscode.window.showWarningMessage(
@@ -1140,7 +1195,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       const localDeviceId = await this.getDeviceId();
       const byAccount = new Map(mergedEnablement.map((entry) => [entry.accountId, entry]));
       const initializedAt = Date.now();
-      if (fullAccountSync) {
+      if (fullAccountSync && !this.isCurrentAccountOnly()) {
         const localAccountIds = new Set(local.accounts.map(getSyncAccountId));
         for (const account of mergedAccounts) {
           const accountId = getSyncAccountId(account);
@@ -1162,7 +1217,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
             })
           );
         }
-      } else {
+      } else if (!this.isCurrentAccountOnly()) {
         for (const [accountId, enabled] of this.localEnablementDefaults) {
           if (byAccount.has(accountId)) continue;
           byAccount.set(
@@ -1389,7 +1444,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private async buildLocalPayload(): Promise<SyncPayload> {
     const records = await this.repo.listAccounts();
-    this.localEnablementDefaults = new Map(records.map((account) => [account.id, this.isCurrentAccountOnly() ? account.isActive === true : account.enabled !== false]));
+    this.localEnablementDefaults = new Map(this.isCurrentAccountOnly() ? [] : records.map((account) => [account.id, account.enabled !== false]));
     if (this.isFullAccountSyncEnabled()) {
       const shared = await this.repo.exportSharedAccounts(records.map((account) => account.id));
       return this.createPayload(shared.map(createSyncEntry), this.readLocalDeletions(), this.readLocalEnablement());

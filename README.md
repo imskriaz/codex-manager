@@ -145,12 +145,12 @@ Important combinations:
 - **Encrypted sync** uses authenticated peer WebSockets when available and VS Code Settings Sync as its durable cross-PC fallback. Use the same password value on each machine; the password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
 - **Always-online host** is optional and requires cross-PC claim checks before it can relay signed peer state.
-- **Cloudflared domain** is only a display/configuration value; the `cloudflared` process and DNS route are managed by you.
+- **Cloudflared domain** points current-account ownership checks at the shared HTTPS dashboard host. Configure the same domain and password on each PC. The `cloudflared` process and DNS route are managed by you.
 
 ## Privacy and security
 
 - Account tokens remain in local VS Code SecretStorage, the Codex credential file, and separate password-encrypted, email-named recovery files under `~/.codex-manager/accounts`. They are not sent to a Codex Manager server.
-- Cross-PC claim checks synchronize encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Full cross-PC account sync** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
+- Auto Sync synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Full cross-PC account sync** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
 - Review the [MIT License](LICENSE) and only manage accounts you own or are authorized to use.
@@ -178,7 +178,7 @@ Auto Resume captures all local running parent conversations across projects and 
 
 **Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, Auto Switch continues with a warning. Manual account switching remains available.
 
-**Claim only the current account** under Data reserves the account currently selected on this PC and frees other saved accounts. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC. Keep this setting off to retain claims based on saved-account enablement.
+**Claim all accounts** under Data & sync is off by default, so Auto Sync reserves only the account currently selected on this PC and frees every other saved account. Turn it on to claim every enabled saved account. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC.
 
 Browser conversations show the saved native Codex goal above the composer, including its objective, state, and elapsed time. This remains available when the goal creation event has scrolled out of the message history.
 

@@ -124,7 +124,7 @@ export function reloadExtensionHostWithSessionCapture(
       void vscode.window.showWarningMessage("Reload will continue, but browser notification delivery could not be confirmed. Review the dashboard once reconnected.");
     }
     verifyAutomaticPreference();
-    if (typeof config.inspect === "function" && ["autoSwitchWaitForSessionsEnabled", "encryptedSyncCurrentAccountOnlyEnabled"].some(key => !config.inspect(key))) {
+    if (typeof config.inspect === "function" && ["autoSwitchWaitForSessionsEnabled", "encryptedSyncClaimAllAccountsEnabled"].some(key => !config.inspect(key))) {
       await command("workbench.action.reloadWindow", deadline - Date.now());
       return;
     }

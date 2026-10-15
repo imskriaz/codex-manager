@@ -337,8 +337,8 @@ async function runDashboardAction(
         notice: {
           level: "info",
           message: payload.enabled
-            ? "Cross-PC claim checks enabled. Full account and token sync remains controlled by its separate setting."
-            : "Cross-PC claim checks disabled. Cross-PC account and token sync is inactive on this PC."
+            ? "Auto Sync enabled. Full account and token sync remains controlled by its separate setting."
+            : "Auto Sync disabled. Cross-PC account and token sync is inactive on this PC."
         }
       };
     }
@@ -993,6 +993,8 @@ async function handleExportBackup(repo: AccountsRepository) {
       ([key, value]) =>
         key !== "resolvedCodexAppPath" &&
         key !== "encryptedSyncEnabled" &&
+        key !== "encryptedSyncClaimAllAccountsEnabled" &&
+        key !== "encryptedSyncVsCodeHeartbeatMinutes" &&
         key !== "fullCrossPcAccountSyncEnabled" &&
         key !== "crossWindowAccountModeEnabled" &&
         key !== "encryptedSyncRegistryOverrideEnabled" &&
@@ -1289,7 +1291,6 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "quotaWarningWeeklyThreshold",
     "quotaGreenThreshold",
     "quotaYellowThreshold",
-    "debugNetwork",
     "displayLanguage",
     "codexAppPath",
     "codexCliPath"

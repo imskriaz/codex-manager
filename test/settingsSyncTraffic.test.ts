@@ -166,6 +166,25 @@ describe("Settings Sync request budget", () => {
     expect(state.get(LOCAL_KEY)).toEqual([{ ...claim, lastSyncedAt: now + 31 * 60 * 1000 }]);
   });
 
+  it("accumulates events for the configured VS Code gap without periodic sync when idle", async () => {
+    vi.useFakeTimers();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncVsCodeHeartbeatMinutes" ? 2 : fallback
+    } as never);
+    const { manager, state } = fixture();
+    const sync = vi.spyOn(manager, "syncNow").mockResolvedValue(true);
+    manager.onVaultMutation("sync-configured");
+    await vi.advanceTimersByTimeAsync(60_000);
+    manager.onVaultMutation("enablement-changed");
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(sync).not.toHaveBeenCalled();
+    expect(state.get("codexManager.encryptedSync.vaultDirty.v1")).toEqual(["enablement-changed", "sync-configured"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sync).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(sync).toHaveBeenCalledOnce();
+  });
+
   it("preserves pending changes across restart and retries storage failure after batching", async () => {
     vi.useFakeTimers();
     const { manager, state } = fixture();

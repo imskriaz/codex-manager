@@ -13,7 +13,8 @@ import {
   normalizeDashboardTheme,
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
-  normalizeUsageHistoryRetentionDays
+  normalizeUsageHistoryRetentionDays,
+  normalizeSyncHeartbeatMinutes
 } from "../../infrastructure/config/extensionSettings";
 import { isDashboardLanguageOption } from "../../localization/languages";
 import { normalizeQuotaColorThresholds } from "../../utils";
@@ -26,10 +27,6 @@ export async function handleDashboardSettingUpdate(
   target?: vscode.ConfigurationTarget
 ): Promise<boolean> {
   const config = getCodexManagerConfiguration();
-  if (key === "encryptedSyncCurrentAccountOnlyEnabled" && value === true &&
-      (!config.get<boolean>("encryptedSyncEnabled", true) || !normalizeCloudflaredDomain(config.get<string>("cloudflaredDomain", "")))) {
-    throw new Error("Enable Cross-PC claim checks and configure the shared HTTPS dashboard domain before claiming only the current account.");
-  }
   let updated = false;
 
   switch (key) {
@@ -51,14 +48,19 @@ export async function handleDashboardSettingUpdate(
     case "autoResetEnabled":
     case "cliIntegrationEnabled":
     case "quotaWarningEnabled":
-    case "debugNetwork":
     case "encryptedSyncEnabled":
-    case "encryptedSyncCurrentAccountOnlyEnabled":
+    case "encryptedSyncClaimAllAccountsEnabled":
     case "fullCrossPcAccountSyncEnabled":
     case "webDashboardEnabled":
     case "webDashboardAlwaysOnlineEnabled":
       if (typeof value === "boolean") {
         await updateDashboardConfiguration(config, key, value, target);
+        updated = true;
+      }
+      break;
+    case "encryptedSyncVsCodeHeartbeatMinutes":
+      if (typeof value === "number") {
+        await updateDashboardConfiguration(config, key, normalizeSyncHeartbeatMinutes(value), target);
         updated = true;
       }
       break;
@@ -252,10 +254,11 @@ function resolveConfigurationTarget(
     key === "autoResumeGoalOnlyEnabled" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||
-    key === "encryptedSyncCurrentAccountOnlyEnabled" ||
+    key === "encryptedSyncClaimAllAccountsEnabled" ||
     key === "autoSwitchWaitForSessionsEnabled" ||
-    key === "fullCrossPcAccountSyncEnabled"
-    || key === "crossWindowAccountModeEnabled"
+    key === "fullCrossPcAccountSyncEnabled" ||
+    key === "encryptedSyncVsCodeHeartbeatMinutes" ||
+    key === "crossWindowAccountModeEnabled"
   ) {
     return vscode.ConfigurationTarget.Global;
   }

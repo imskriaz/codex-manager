@@ -58,7 +58,7 @@ describe("first-run onboarding", () => {
     expect(main).toContain('onboardingPendingRef.current.add("configureEncryptedSync")');
     expect(main).not.toContain('onboardingPendingRef.current.add("syncNow")');
     expect(actions).toContain("markOnboardingCompleted(ctx.context)");
-    expect(sync).toContain("this.queueBackgroundSync(VAULT_SYNC_DEBOUNCE_DELAY_MS)");
+    expect(sync).toContain("this.queueBackgroundSync(this.getVaultSyncDebounceDelayMs())");
   });
 });
 

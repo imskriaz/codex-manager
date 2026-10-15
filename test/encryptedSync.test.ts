@@ -182,7 +182,7 @@ describe("encrypted account sync", () => {
 
   it("uses an authenticated realtime publisher when VS Code Settings Sync is signed out", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -634,7 +634,7 @@ describe("encrypted account sync", () => {
 
   it("queues background sync after a local account removal so its tombstone is published", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -700,7 +700,7 @@ describe("encrypted account sync", () => {
 
   it("queues claim changes without queuing credential or token-setting changes", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -736,7 +736,7 @@ describe("encrypted account sync", () => {
   it("retries a failed durable background sync without losing pending work", async () => {
     vi.useFakeTimers();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -784,7 +784,7 @@ describe("encrypted account sync", () => {
   it("builds and applies encrypted real-time peer vault updates", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) =>
-        key === "encryptedSyncEnabled" || key === "fullCrossPcAccountSyncEnabled" ? true : fallback,
+        key === "encryptedSyncEnabled" || key === "fullCrossPcAccountSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback,
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -863,7 +863,7 @@ describe("encrypted account sync", () => {
   it("round-trips account add and credential update across two isolated PCs without enabling the receiving account", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) =>
-        key === "encryptedSyncEnabled" || key === "fullCrossPcAccountSyncEnabled" ? true : fallback,
+        key === "encryptedSyncEnabled" || key === "fullCrossPcAccountSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback,
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1090,9 +1090,8 @@ describe("encrypted account sync", () => {
     expect(secretGet).toHaveBeenCalledTimes(2);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.userDataSync.actions.syncNow");
 
-    await manager.prepareAccountSwitch("account-one");
-    await manager.completeAccountSwitch();
-    await manager.cancelAccountSwitch();
+    await expect(manager.prepareAccountSwitch("account-one")).rejects.toThrow("shared HTTPS dashboard domain");
+    await manager.cancelAccountSwitch("account-one");
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
 
     expect(secretGet).toHaveBeenCalledTimes(2);
@@ -1151,7 +1150,7 @@ describe("encrypted account sync", () => {
 
   it("does not show a VS Code notification when startup sync only needs its passphrase", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1181,7 +1180,7 @@ describe("encrypted account sync", () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1211,7 +1210,7 @@ describe("encrypted account sync", () => {
   it("merges a vault downloaded after startup without requiring another command", async () => {
     vi.useFakeTimers();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1252,7 +1251,7 @@ describe("encrypted account sync", () => {
 
   it("requires the encrypted sync passphrase before enabling local rescue override", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1313,7 +1312,7 @@ describe("encrypted account sync", () => {
 
   it("purges legacy synchronized sessions without importing their credentials", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1365,7 +1364,7 @@ describe("encrypted account sync", () => {
 
   it("authenticates real-time peer heartbeats with the encrypted sync passphrase", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1392,7 +1391,7 @@ describe("encrypted account sync", () => {
 
   it("preserves explicit local enablement after peer heartbeat authority is lost", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1436,7 +1435,7 @@ describe("encrypted account sync", () => {
 
   it("automatically disables a locally enabled foreign claim when rescue is turned off", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1529,7 +1528,7 @@ describe("encrypted account sync", () => {
   it("removes legacy account-use leases from the next meaningful vault write", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);
@@ -1612,7 +1611,7 @@ describe("encrypted account sync", () => {
 
   it("does not import remote credentials or alter local token automation errors", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" ? true : fallback),
+      get: (key: string, fallback?: unknown) => (key === "encryptedSyncEnabled" || key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback),
       update: vi.fn(),
       inspect: vi.fn()
     } as unknown as vscode.WorkspaceConfiguration);

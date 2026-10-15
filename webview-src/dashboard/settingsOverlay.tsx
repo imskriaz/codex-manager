@@ -66,7 +66,6 @@ export function SettingsOverlay(props: {
   onPickCodexCliPath: () => void;
   onClearCodexCliPath: () => void;
   onClearUsageHistory: () => void;
-  onOpenNetworkLogs: () => void;
   onExportBackup: () => void;
   onImportBackup: () => void;
   onConfigureSync: () => void;
@@ -740,36 +739,8 @@ export function SettingsOverlay(props: {
           >
             <SettingsPanelIntro tab={tabs[2]!} />
             <div class="settings-layout">
-              <SettingsSegmentBlock
-                title={props.copy.debugTitle}
-                sub={props.copy.debugSub}
-                note={props.copy.debugNote}
-                className="settings-block-wide"
-                options={[
-                  {
-                    key: "debug-on",
-                    title: props.copy.debugOn,
-                    description: props.copy.debugOnDesc,
-                    active: props.settings.debugNetwork,
-                    onClick: () => patchAndSend("debugNetwork", true)
-                  },
-                  {
-                    key: "debug-off",
-                    title: props.copy.debugOff,
-                    description: props.copy.debugOffDesc,
-                    active: !props.settings.debugNetwork,
-                    onClick: () => patchAndSend("debugNetwork", false)
-                  }
-                ]}
-              >
-                <div class="settings-actions">
-                  <button class="settings-action-btn" type="button" onClick={props.onOpenNetworkLogs}>
-                    {resolveOpenLogsLabel(props.lang)}
-                  </button>
-                </div>
-              </SettingsSegmentBlock>
               <SettingsToggleBlock
-                title={transferCopy.syncTitle}
+                title="Auto Sync"
                 sub={transferCopy.syncSub}
                 enabled={props.settings.encryptedSyncEnabled}
                 disabled={props.crossPcSyncPending}
@@ -782,56 +753,67 @@ export function SettingsOverlay(props: {
                 {props.encryptedSyncNeedsSettingsSync ? (
                   <div class="settings-note settings-notice-warning">{transferCopy.syncNeedsSettingsSync}</div>
                 ) : null}
+                {!props.settings.encryptedSyncClaimAllAccountsEnabled && !props.settings.cloudflaredDomain ? (
+                  <div class="settings-note settings-notice-warning">Set the shared HTTPS dashboard domain in General before switching accounts with Auto Sync on.</div>
+                ) : null}
                 <div class="settings-note">{transferCopy.syncNote}</div>
                 <div class="settings-actions">
                   <button
                     class="settings-action-btn"
                     type="button"
                     onClick={props.onSyncNow}
-                    disabled={!props.settings.encryptedSyncEnabled || props.crossPcSyncPending || props.syncPending}
+                    disabled={props.crossPcSyncPending || props.syncPending}
                     aria-busy={props.syncPending}
                   >
                     {props.syncPending ? `${transferCopy.syncNow}…` : transferCopy.syncNow}
                   </button>
                 </div>
-              </SettingsToggleBlock>
-              <SettingsToggleBlock
-                title="Claim only the current account"
-                sub="Share ownership only for the account this PC is using. Other saved accounts stay available to other PCs. Use the same HTTPS dashboard domain and password everywhere; switches pause if that host cannot confirm ownership. The account card shows the owning PC."
-                enabled={props.settings.encryptedSyncCurrentAccountOnlyEnabled === true}
-                disabled={!props.settings.encryptedSyncEnabled}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("encryptedSyncCurrentAccountOnlyEnabled", enabled)}
-              />
-              <SettingsToggleBlock
-                title={resolveFullAccountSyncText("title", props.lang)}
-                sub={resolveFullAccountSyncText("sub", props.lang)}
-                enabled={Boolean(props.settings.fullCrossPcAccountSyncEnabled)}
-                disabled={!props.settings.encryptedSyncEnabled}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("fullCrossPcAccountSyncEnabled", enabled)}
-              >
-                <div class="settings-note settings-notice-warning">
-                  {resolveFullAccountSyncText(
-                    props.settings.fullCrossPcAccountSyncEnabled ? "enabled" : "disabled",
-                    props.lang
-                  )}
-                </div>
-              </SettingsToggleBlock>
-              <SettingsToggleBlock
-                title={resolveRegistryOverrideText("title", props.lang)}
-                sub={resolveRegistryOverrideText("sub", props.lang)}
-                enabled={props.settings.encryptedSyncRegistryOverrideEnabled}
-                disabled={props.registryOverridePending}
-                className="settings-block-wide"
-                onToggle={props.onSetRegistryOverride}
-              >
-                <div class="settings-note settings-notice-warning">
-                  {props.registryOverridePending
-                    ? resolveRegistryOverrideText("pending", props.lang)
-                    : props.settings.encryptedSyncRegistryOverrideEnabled
-                      ? resolveRegistryOverrideText("enabled", props.lang)
-                      : resolveRegistryOverrideText("disabled", props.lang)}
+                <SettingsToggleBlock
+                  title="Claim all accounts"
+                  sub="Reserve enabled saved accounts on this PC. Turn this off to claim only the currently active account; other saved accounts stay free."
+                  enabled={props.settings.encryptedSyncClaimAllAccountsEnabled === true}
+                  onToggle={(enabled) => patchAndSend("encryptedSyncClaimAllAccountsEnabled", enabled)}
+                />
+                <SettingsToggleBlock
+                  title={resolveFullAccountSyncText("title", props.lang)}
+                  sub={resolveFullAccountSyncText("sub", props.lang)}
+                  enabled={Boolean(props.settings.fullCrossPcAccountSyncEnabled)}
+                  onToggle={(enabled) => patchAndSend("fullCrossPcAccountSyncEnabled", enabled)}
+                >
+                  <div class="settings-note settings-notice-warning">
+                    {resolveFullAccountSyncText(props.settings.fullCrossPcAccountSyncEnabled ? "enabled" : "disabled", props.lang)}
+                  </div>
+                </SettingsToggleBlock>
+                <SettingsToggleBlock
+                  title={resolveRegistryOverrideText("title", props.lang)}
+                  sub={resolveRegistryOverrideText("sub", props.lang)}
+                  enabled={props.settings.encryptedSyncRegistryOverrideEnabled}
+                  disabled={props.registryOverridePending}
+                  onToggle={props.onSetRegistryOverride}
+                >
+                  <div class="settings-note settings-notice-warning">
+                    {props.registryOverridePending
+                      ? resolveRegistryOverrideText("pending", props.lang)
+                      : props.settings.encryptedSyncRegistryOverrideEnabled
+                        ? resolveRegistryOverrideText("enabled", props.lang)
+                        : resolveRegistryOverrideText("disabled", props.lang)}
+                  </div>
+                </SettingsToggleBlock>
+                <div class="settings-block settings-block-wide">
+                  <div class="settings-block-head">
+                    <div class="settings-block-title">Heartbeat gap</div>
+                    <div class="settings-block-sub">Batch changes between VS Code Settings Sync writes. WebSocket changes are sent immediately.</div>
+                  </div>
+                  <SettingsDiscreteSlider
+                    value={props.settings.encryptedSyncVsCodeHeartbeatMinutes ?? 5}
+                    values={Array.from({ length: 60 }, (_, index) => index + 1)}
+                    accent="violet"
+                    scaleValues={[1, 15, 30, 45, 60]}
+                    valueLabel={(value) => `${value} min`}
+                    description={() => "Visual Studio Code sync gap"}
+                    onPreview={(value) => props.onPatchSettings({ encryptedSyncVsCodeHeartbeatMinutes: value })}
+                    onCommit={(value) => patchAndSend("encryptedSyncVsCodeHeartbeatMinutes", value)}
+                  />
                 </div>
               </SettingsToggleBlock>
               <div class="settings-block settings-block-wide">
@@ -966,8 +948,8 @@ function resolveSettingsNavigationCopy(lang: DashboardState["lang"]): {
       {
         id: "data",
         label: "Data & sync",
-        heading: "Data, sync & diagnostics",
-        description: "Backups, encrypted sync, recovery controls, and network logs."
+        heading: "Data & sync",
+        description: "Backups, automatic sync, recovery controls, and account claims."
       }
     ]
   };
@@ -1002,10 +984,6 @@ function resolveRegistryOverrideText(
   } as const;
   const locale = lang === "zh" || lang === "zh-hant" ? lang : "en";
   return values[locale][key];
-}
-
-function resolveOpenLogsLabel(lang: DashboardState["lang"]): string {
-  return lang === "zh" ? "打开网络日志" : lang === "zh-hant" ? "開啟網路日誌" : "Open network logs";
 }
 
 function resolveUsageHistoryCopy(
@@ -1092,7 +1070,7 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
       exportLabel: "导出全部会话",
       importLabel: "导入全部会话",
       note: "导出文件包含登录令牌，请使用安全方式传输并在完成后删除。",
-      syncTitle: "跨电脑账号占用检查",
+      syncTitle: "自动同步",
       syncSub: "同步账号 ID 和电脑占用声明，以防多台电脑同时执行后台操作。",
       syncNote: "通过 VS Code Settings Sync 和实时电脑连接同步加密声明。请在“常规”中设置相同的共享密码。",
       syncNeedsSettingsSync:
@@ -1107,7 +1085,7 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
       exportLabel: "匯出全部工作階段",
       importLabel: "匯入全部工作階段",
       note: "匯出檔案包含登入權杖，請使用安全方式傳輸並在完成後刪除。",
-      syncTitle: "跨電腦帳號占用檢查",
+      syncTitle: "自動同步",
       syncSub: "同步帳號 ID 和電腦占用聲明，避免多台電腦同時執行背景操作。",
       syncNote: "透過 VS Code Settings Sync 和即時電腦連線同步加密聲明。請在「一般」中設定相同的共用密碼。",
       syncNeedsSettingsSync:
@@ -1121,10 +1099,10 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
     exportLabel: "Export all sessions",
     importLabel: "Import all sessions",
     note: "The export contains login tokens. Transfer it securely and delete it when finished.",
-    syncTitle: "Cross-PC claim checks",
-    syncSub: "Share account IDs and PC ownership claims to prevent duplicate background work across PCs.",
+    syncTitle: "Auto Sync",
+    syncSub: "Reserve the current account so the same account cannot run on multiple PCs. Other saved accounts stay free.",
     syncNote:
-      "Uses VS Code Settings Sync and realtime PC connections for encrypted claims. Set the same shared Password in General on each PC.",
+      "Sends changes immediately over WebSocket and batches VS Code Settings Sync writes. Use the same shared HTTPS dashboard domain and Password on each PC.",
     syncNeedsSettingsSync:
       "VS Code Settings Sync is not active on this PC. Sign in to VS Code and turn on Settings Sync, then try again.",
     syncNow: "Sync now"

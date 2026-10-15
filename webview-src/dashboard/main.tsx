@@ -2534,7 +2534,6 @@ function App() {
             /* optional */
           }
         }}
-        onOpenNetworkLogs={() => sendAction("openNetworkLogs")}
         onExportBackup={handleExportBackup}
         onImportBackup={modals.openImportModal}
         onConfigureSync={handleConfigureEncryptedSync}

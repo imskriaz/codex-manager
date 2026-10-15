@@ -9,6 +9,7 @@ vi.mock("undici", async (original) => ({ ...(await original<typeof import("undic
 import { EncryptedSyncManager } from "../src/services/encryptedSync";
 import { AccountClaimAuthority } from "../src/services/accountClaimAuthority";
 import { createSyncAccountEnablement } from "../src/services/syncEnablementRegistry";
+import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
 
 let folder: string;
 let manager: EncryptedSyncManager;
@@ -18,6 +19,7 @@ const registryKey = "codexManager.encryptedSync.localEnablement.v1";
 
 beforeEach(async () => {
   folder = await mkdtemp(path.join(os.tmpdir(), "current-account-sync-"));
+  await configureCrossWindowOperationCoordinator(folder);
   active = "previous";
   state = new Map([
     [
@@ -29,8 +31,8 @@ beforeEach(async () => {
   ]);
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
     get: (key: string, fallback?: unknown) =>
-      key === "encryptedSyncCurrentAccountOnlyEnabled"
-        ? true
+      key === "encryptedSyncClaimAllAccountsEnabled"
+        ? false
         : key === "cloudflaredDomain"
           ? "https://dashboard.example"
           : fallback
@@ -67,14 +69,52 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   manager.dispose();
+  await vi.waitFor(() => expect((manager as unknown as { currentClaimRefreshInFlight: boolean }).currentClaimRefreshInFlight).toBe(false));
   vi.restoreAllMocks();
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-    get: (_key: string, fallback?: unknown) => fallback
+    get: (key: string, fallback?: unknown) => key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback
   } as never);
-  await rm(folder, { recursive: true, force: true });
+  await rm(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 describe("current account only sync", () => {
+  it("releases all local claims with no active account and preserves foreign ownership", async () => {
+    active = "";
+    const foreign = createSyncAccountEnablement({ accountId: "remote", deviceId: "remote-pc", deviceName: "Remote PC", enabled: true });
+    state.set(registryKey, [...manager.getRealtimeEnablementRegistry(), foreign]);
+    await (manager as unknown as { reconcileCurrentAccountClaim(): Promise<void> }).reconcileCurrentAccountClaim();
+    expect(manager.getRealtimeEnablementRegistry().filter(entry => entry.enabled)).toEqual([foreign]);
+  });
+
+  it("releases stale saved-account claims even when the current claim conflicts", async () => {
+    const foreign = createSyncAccountEnablement({ accountId: active, deviceId: "remote-pc", deviceName: "Remote PC", enabled: true });
+    state.set(registryKey, [...manager.getRealtimeEnablementRegistry().filter(entry => entry.accountId !== active), foreign]);
+    await expect((manager as unknown as { reconcileCurrentAccountClaim(): Promise<void> }).reconcileCurrentAccountClaim()).rejects.toThrow("Remote PC");
+    expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === "next")?.enabled).toBe(false);
+    expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === active)).toEqual(foreign);
+  });
+
+  it("preserves host fencing when toggling all-account claims and releases through the host", async () => {
+    await manager.prepareAccountSwitch(active);
+    const claim = manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === active)!;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncClaimAllAccountsEnabled" ? true : key === "cloudflaredDomain" ? "https://dashboard.example" : fallback
+    } as never);
+    await manager.completeAccountEnablement(active, true);
+    expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === active)).toEqual(claim);
+    await manager.completeAccountEnablement(active, false);
+    expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === active)).toMatchObject({ enabled: false, claimToken: claim.claimToken });
+    await manager.completeAccountEnablement(active, true);
+    expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === active)).toMatchObject({ enabled: true, currentOnly: true });
+  });
+
+  it("never manufactures saved-account claims while building a lightweight vault", async () => {
+    state.set(registryKey, []);
+    const raw = await manager.getRealtimeEncryptedVault();
+    const { decryptSyncPayload } = await import("../src/services/encryptedSync");
+    expect(await decryptSyncPayload(raw!, "shared-password")).toMatchObject({ accounts: [], enablementRegistry: [] });
+  });
+
   it("claims before switching and releases previous ownership after successful auth change", async () => {
     await manager.prepareAccountSwitch("next");
     expect(manager.getRealtimeEnablementRegistry().find((entry) => entry.accountId === "next")).toMatchObject({
@@ -84,6 +124,7 @@ describe("current account only sync", () => {
     });
     active = "next";
     await manager.completeAccountSwitch("next");
+    await vi.waitFor(() => expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === "previous")?.enabled).toBe(false));
     expect(
       manager
         .getRealtimeEnablementRegistry()
@@ -132,7 +173,7 @@ describe("current account only sync", () => {
   });
   it("never releases another PC's claim when that account is disabled locally", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (_key: string, fallback?: unknown) => fallback
+      get: (key: string, fallback?: unknown) => key === "encryptedSyncClaimAllAccountsEnabled" ? true : fallback
     } as never);
     const foreign = createSyncAccountEnablement({
       accountId: "next",

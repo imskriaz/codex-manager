@@ -221,7 +221,7 @@ describe("executeDashboardActionMessage", () => {
     expect(update).toHaveBeenCalledWith("encryptedSyncEnabled", enabled, vscode.ConfigurationTarget.Global);
     expect(context.schedulePublishState).toHaveBeenCalledOnce();
     expect(result.status).toBe("completed");
-    expect(result.payload?.notice?.message).toContain(`Cross-PC claim checks ${enabled ? "enabled" : "disabled"}`);
+    expect(result.payload?.notice?.message).toContain(`Auto Sync ${enabled ? "enabled" : "disabled"}`);
   });
 
   it("returns cross-PC sync save failures to the initiating dashboard", async () => {

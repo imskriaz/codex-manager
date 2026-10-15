@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.2.24",
+  "version": "1.2.25-pre1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -243,31 +243,19 @@
           "default": 20,
           "markdownDescription": "Quota percentage at or above this value is shown in yellow. Values below this threshold are shown in red."
         },
-        "codexManager.debugNetwork": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Enable sanitized network debug logs for Codex Manager requests in the `Codex Manager Network` output channel."
-        },
         "codexManager.encryptedSyncEnabled": {
           "type": "boolean",
           "default": true,
           "scope": "machine",
           "ignoreSync": true,
-          "markdownDescription": "Enable encrypted cross-PC account claim checks. Only account IDs and PC enablement claims are synchronized unless Full cross-PC account sync is also explicitly enabled."
-        },
-        "codexManager.encryptedSyncCurrentAccountOnlyEnabled": {
-          "type": "boolean",
-          "default": false,
-          "scope": "machine",
-          "ignoreSync": true,
-          "markdownDescription": "Claim only the currently active account, freeing other saved accounts for other PCs. Requires the same shared HTTPS dashboard domain and password on every PC. The shared host must confirm ownership before a switch; unavailable or conflicting claims stop the switch."
+          "markdownDescription": "Auto Sync: share encrypted account ownership claims to prevent the same account running on multiple PCs. Claim all accounts, Full cross-PC account sync, and Rescue override are nested options in the dashboard."
         },
         "codexManager.fullCrossPcAccountSyncEnabled": {
           "type": "boolean",
           "default": false,
           "scope": "machine",
           "ignoreSync": true,
-          "markdownDescription": "Explicitly synchronize encrypted account sessions and tokens across PCs. Disabled by default so every session and token credential remains local; cross-PC claim checks continue independently."
+          "markdownDescription": "Explicitly synchronize encrypted account sessions and tokens across PCs. Disabled by default; Auto Sync claim checks continue independently."
         },
         "codexManager.webDashboardEnabled": {
           "type": "boolean",
@@ -285,6 +273,23 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Optional HTTPS Cloudflared domain for the dashboard, for example https://codex.example.com. Point the tunnel to http://127.0.0.1:39875 and set the shared Password in General before sharing it. Leave empty to use local access only."
+        },
+        "codexManager.encryptedSyncClaimAllAccountsEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "ignoreSync": true,
+          "markdownDescription": "Auto Sync: claim all enabled saved accounts on this PC. Off by default: only the currently active account is reserved, leaving other accounts free. Use the same shared HTTPS dashboard domain and password on every PC."
+        },
+        "codexManager.encryptedSyncVsCodeHeartbeatMinutes": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 60,
+          "multipleOf": 1,
+          "default": 5,
+          "scope": "machine",
+          "ignoreSync": true,
+          "markdownDescription": "Minimum gap in minutes between accumulated VS Code Settings Sync writes."
         }
       }
     },

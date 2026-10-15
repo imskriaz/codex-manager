@@ -221,7 +221,6 @@ describe("workbench refresh signature helpers", () => {
         quotaWarningWeeklyThreshold: 20,
         quotaGreenThreshold: 60,
         quotaYellowThreshold: 20,
-        debugNetwork: false,
         displayLanguage: "auto"
       },
       copy: {
@@ -285,7 +284,6 @@ describe("workbench refresh signature helpers", () => {
         quotaWarningWeeklyThreshold: 20,
         quotaGreenThreshold: 60,
         quotaYellowThreshold: 20,
-        debugNetwork: false,
         displayLanguage: "auto"
       },
       copy: {
