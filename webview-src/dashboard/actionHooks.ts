@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "preact/hooks";
 import type { DashboardActionName, DashboardNotice, DashboardSettingKey, DashboardSettings } from "../../src/domain/dashboard/types";
 import { noticeFromActionTimeout } from "./actionFeedback";
-import { BLOCKING_GLOBAL_ACTIONS, createActionRequestId, getActionTimeoutMs, postMessageToHost } from "./host";
+import { createActionRequestId, getActionTimeoutMs, postMessageToHost } from "./host";
 import type { AppDispatch, SendAction } from "./hookTypes";
 import type { AppState } from "./state";
 
@@ -114,15 +114,10 @@ export function useDashboardActions(
   const isActionPending = (action: DashboardActionName, accountId?: string): boolean =>
     state.pendingActions.some((request) => request.action === action && request.accountId === accountId);
 
-  const hasGlobalPendingAction = state.pendingActions.some(
-    (request) => request.accountId == null && BLOCKING_GLOBAL_ACTIONS.has(request.action)
-  );
-
   return {
     patchSettings,
     sendAction,
     sendSetting,
     isActionPending,
-    hasGlobalPendingAction
   };
 }

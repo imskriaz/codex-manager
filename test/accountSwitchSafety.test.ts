@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountsRepository } from "../src/storage";
 import { removeTestDirectory } from "./testFilesystem";
+import { EncryptedSyncManager } from "../src/services/encryptedSync";
 
 const { writeAuth, refresh } = vi.hoisted(() => ({ writeAuth: vi.fn(), refresh: vi.fn() }));
 vi.mock("../src/codex", async importOriginal => ({
@@ -45,6 +46,26 @@ it("persists selection before switch completion while optional rotation is pendi
   expect(JSON.parse(await readFile(repo.accountsIndexPath, "utf8")).accounts[0].isActive).toBe(true);
   expect(writeAuth).toHaveBeenCalledOnce();
   expect(refresh).toHaveBeenCalledOnce();
+});
+
+it("writes auth and durably selects an account without awaiting shared claim confirmation", async () => {
+  const saved = await repo.upsertFromTokens(tokens());
+  const state = new Map<string, unknown>();
+  const manager = new EncryptedSyncManager({
+    subscriptions: [],
+    globalState: { get: (key: string, fallback?: unknown) => state.get(key) ?? fallback,
+      update: async (key: string, value: unknown) => { state.set(key, value); } },
+    secrets: { get: async () => "local-device", store: vi.fn() }
+  } as never, repo);
+  const confirm = vi.spyOn(manager as unknown as { requestCurrentClaim(): Promise<unknown> }, "requestCurrentClaim")
+    .mockImplementation(() => new Promise(() => undefined));
+  repo.setAccountSwitchCoordinator(manager);
+  try {
+    await repo.switchAccount(saved.id);
+    expect(writeAuth).toHaveBeenCalledOnce();
+    expect(JSON.parse(await readFile(repo.accountsIndexPath, "utf8")).accounts[0].isActive).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+  } finally { manager.dispose(); }
 });
 
 it("refreshes known expired credentials before writing auth and preserves edits during that wait", async () => {

@@ -81,7 +81,8 @@ describe("browser dashboard bridge", () => {
     await post({ type: "dashboard:retry-connection" });
     expect(sockets[0]!.close).toHaveBeenCalledOnce();
     expect(events.filter(event => event.requestId === "unconfirmed")).toEqual([expect.objectContaining({ status: "failed", error: expect.stringContaining("outcome is unknown") })]);
-    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:notice", level: "warning" }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:notice", level: "info", message: "Dashboard refreshed." }));
+    expect(events.filter(event => event.type === "dashboard:notice").some(event => event.level === "warning")).toBe(false);
     sockets[0]!.listeners.get("message")!({ data: JSON.stringify({ type: "dashboard:snapshot", state: { stale: true } }) });
     expect(events).not.toContainEqual(expect.objectContaining({ state: { stale: true } }));
     sockets[1]!.open();

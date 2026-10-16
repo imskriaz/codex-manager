@@ -1,0 +1,60 @@
+# Operation behavior in 1.3.2
+
+Local work does not require an available shared dashboard host. Manual and automatic account switching read committed local ownership records, write local credentials, and persist the selection. Shared claim confirmation and cleanup run afterward. Unconfirmed ownership produces a warning; HTTP 401, an incompatible endpoint, an offline host, or slow confirmation cannot prevent the local switch. Known foreign ownership still reports a conflict, and required local credential and storage checks still apply.
+
+No pending action disables the entire dashboard or all controls on an account. Only the action already running is disabled. Backend locks reject conflicting mutations promptly; duplicate session requests reuse their result. Optional discovery, recovery, profile enrichment, quota checks after import, and sync follow-up use existing bounded waits or background work. A failed service cannot make an operation requiring that service succeed: its initiating UI reports failure, cancellation, or an unknown outcome, while unrelated controls remain available.
+
+## Dashboard operation inventory
+
+Every action in `DashboardActionName` is listed below. “Required work” describes what must actually finish before success can be reported; none of these actions globally blocks the dashboard.
+
+| Operations | Required work and failure behavior |
+| --- | --- |
+| `switch`, automatic selection | Local identity, known ownership, current selection, valid credentials, auth write and durable selection. Remote confirmation is background work with warnings. Expired credentials still require successful renewal or reauthorization. |
+| `unloadAuth`, `reloadPrompt` | Local auth removal or the requested VS Code reload. Recovery preparation is bounded; reload failure retains queued state and reports the outcome. |
+| `addAccount`, `reauthorize`, `prepareOAuthSession`, `cancelOAuthSession`, `startOAuthAutoFlow`, `completeOAuthSession` | Requested OAuth flow and credential storage. Consent, cancellation and provider errors remain visible. Optional quota/profile/sync follow-up cannot keep a saved account pending indefinitely. |
+| `importCurrent`, `inspectCurrentAuth`, `completeOnboarding` | Read/validate local auth, save imported data or onboarding preference. Optional network enrichment is bounded. |
+| `remove`, `batchRemove` | Confirmation and local durable removal. Missing accounts and partial batches report their actual results. |
+| `toggleAccountEnabled`, `enableAllValid`, `disableAll`, `setAccountQueuePriority`, `setAccountTokenRefreshEnabled`, `setAutoSwitchLock`, `dismissHealthIssue` | Local metadata and required ownership/storage checks. Remote cleanup of current-only claims is deferred. Conflicts and failed writes report immediately. |
+| `refresh`, `refreshAll`, `batchRefresh`, `refreshToken`, `resyncProfile`, `batchResyncProfile`, `getResetCredits`, `getDailyUsage` | Requested provider data or token renewal. Offline/timeouts report failures; batches preserve per-account failures. Other local work remains available. |
+| `consumeResetCredit` | Provider redemption and verification with a durable intent fence. Uncertain results require reconciliation before another redemption. |
+| `getUsageGraph` | Local saved history query. Missing history is empty; failed reads remain errors. |
+| `details`, `openDashboard`, `openWebDashboard`, `openNetworkLogs`, `openExternalUrl` | Open the requested view, log or validated URL. Local navigation does not require sync. |
+| `shareTokens`, `exportBackup`, `exportAuthFile`, `downloadJsonFile`, `copyText` | Local serialization, credential access, file/clipboard write or download. Write failure remains visible; no remote claim is required. |
+| `restoreFromBackup`, `restoreFromAuthJson`, `previewImportSharedJson`, `importSharedJson` | Validate local input and durably save requested imports/restores. Corruption and storage errors cannot be reported as success. |
+| `setPrivacyMode`, `setCrossPcSyncEnabled` | Persist the requested preference. Other controls remain available during settings propagation. |
+| `configureEncryptedSync`, `syncNow`, `setEncryptedSyncRegistryOverride` | Validate the password/override and complete the explicitly requested sync work. Sync failure affects this action, not local switching or unrelated operations. |
+| `refreshView` | Read-only state refresh with an existing deadline and visible failure/fallback. Reconnect never replays mutations. |
+| `openNewCodexWebview`, `openCodexCliSession` | Open the requested local session/view, retaining required session checks. |
+| `listCodexCliSessions`, `getCodexCliSessionMessages`, `getCodexSubAgentMessages` | Requested local session/history reads with bounded discovery and visible unavailable state. |
+| `startCodexCliSession`, `sendCodexCliSessionMessage`, `steerCodexCliSessionTurn`, `cancelCodexCliSessionTurn`, `respondCodexServerRequest` | Requested runtime turn, steering, cancellation or approval response. Stream progress; preserve request deduplication, turn/ownership checks and real terminal results. Other actions remain available. |
+| `renameCodexCliSession`, `forkCodexCliSession`, `archiveCodexCliSession`, `unarchiveCodexCliSession`, `deleteCodexCliSession` | Required session mutation; optional post-mutation discovery is bounded and warns without turning a completed mutation into a failure. |
+| `getWorkspaceEnvironment`, `listWorkspaceFiles`, `readWorkspaceFile`, `listWorkspaceTerminals` | Requested local inspection/read. Missing paths, permissions and timeouts report their actual outcome. |
+| `saveWorkspaceFile`, `deleteWorkspaceFile` | Validated path, revision/confirmation and local write/delete. Preserve original data on failed atomic saves. |
+| `createWorkspaceTerminal`, `focusWorkspaceTerminal`, `runWorkspaceTerminalCommand`, `cancelWorkspaceTerminalCommand` | Requested terminal action, streamed output and cancellation result. An unavailable runtime affects this action only. |
+| `commitWorkspaceChanges`, `pushWorkspaceBranch` | Requested Git operation. Push requires its remote; commit requires local Git. Optional later inspection cannot turn a successful operation into a failed result. |
+
+Dashboard setting updates and executable path pick/clear messages persist the requested setting and report errors in their initiating dashboard. `dashboard:ready` and saved usage-history messages refresh/persist their own state; they do not queue manual actions behind discovery.
+
+Optional WebSocket reconnects remain automatic and silent. No live-channel warning banner or reconnect notice is shown. HTTP action fallback remains available; explicit action failures, uncertain outcomes, session expiry and an unavailable HTTP host still report their actual result.
+
+## VS Code commands and background work
+
+Registered commands use the same services and native notifications for explicit failures:
+
+- Accounts: `addAccount`, `importCurrentAuth`, `reauthorizeAccount`, `switchAccount`, `autoSelectAccount`, `consumeResetCredit`, `refreshQuota`, `refreshAllQuotas`, `restoreAccountsFromBackup`, `restoreAccountsFromAuthJson`, `restoreAccountsFromSharedJson`, `removeAccount`, `toggleStatusBarAccount`, `toggleAccountEnabled`.
+- Navigation: `openDetails`, `openCodexHome`, `showQuotaSummary`, `showShortcuts`.
+- Sync: `configureEncryptedSync`, `syncNow`, `setEncryptedSyncRegistryOverride`.
+
+Command names above have the `codexManager.` prefix. Internal reload/recovery commands retain their existing cancellation and bounded preparation. Automatic quota/token/history refresh, Settings Sync, peer presence, claim renewal/cleanup and session recovery run independently; manual account changes can interrupt background ownership renewal.
+
+## Failure and recovery limits
+
+- Offline, HTTP/authentication failure, missing configuration and slow shared hosts: switch locally, warn about unconfirmed ownership, retry confirmation in the background. Never fabricate a successful shared claim.
+- Reconnect, retry and reboot: reconcile the persisted active account, preserve other live local windows' accounts, and do not replay browser mutations. Claim failure does not undo a completed local switch.
+- Stale, missing and partial data: retain saved state where possible; revalidate identity, ownership and revisions before destructive writes. Known foreign ownership reports a conflict.
+- Duplicate and queue-full requests: reuse supported pending requests or report the conflict/capacity failure, without disabling unrelated UI.
+- Storage-full and failed writes: preserve errors and data-integrity checks. A local credential or account-selection write failure cannot be skipped safely.
+- One failed background claim operation does not skip the remaining independent claim confirmations/releases. Signed responses and fencing tokens remain validated.
+
+Without shared confirmation, another PC may acquire the same account before its ownership reaches this PC. This is the tradeoff of allowing local work during shared-host outages. Real cross-PC outages, disk exhaustion and reboot are covered through automated failure simulation where available; live UI checks are read-only.

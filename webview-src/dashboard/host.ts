@@ -16,17 +16,6 @@ const vscodeApi =
 
 if ("setState" in vscodeApi) vscodeApi.setState?.({ dashboardOpen: true });
 
-export const BLOCKING_GLOBAL_ACTIONS = new Set<DashboardActionName>([
-  "importCurrent",
-  "batchRemove",
-  "enableAllValid",
-  "disableAll",
-  "unloadAuth",
-  "restoreFromBackup",
-  "restoreFromAuthJson",
-  "importSharedJson",
-]);
-
 export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
   switch (action) {
     case "refreshView":

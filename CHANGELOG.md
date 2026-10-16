@@ -2,6 +2,9 @@
 
 ## 1.3.2
 
+- Switch accounts locally without waiting for the shared claim host, and show a warning while ownership confirmation retries in the background. Retain known ownership conflicts and local storage checks. Continue independent claim cleanup after a failed confirmation, and distinguish HTTP 401 authentication rejection from an unsupported endpoint.
+- Keep unrelated dashboard and account-card controls available during pending operations; disable only the action already running. Document the complete operation inventory and its required dependencies in OPERATIONS.md.
+- Retry optional WebSocket connections quietly, without live-channel warning banners or reconnect notices. Preserve explicit action failures and host-unavailable recovery.
 - Keep compact chart menus within the viewport, show account quota usage and last check times, and add per-account and bulk token-history refresh with bounded concurrency and visible results. Enable automatic token history by default while preserving explicit choices, and move quota and token retention controls into Data & Sync.
 - Close the VS Code dashboard tab before reload recovery storage can stall, preserve its reopen state where available, and restore it after cancelled or failed reloads.
 - Return expired browser sessions to sign-in with a terminal result for pending actions and no automatic replay. Distinguish incompatible shared claim hosts from browser login failures during account switching.

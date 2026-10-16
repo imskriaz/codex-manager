@@ -429,7 +429,7 @@ function App() {
     },
     [onboardingBusy, onboardingOpen, onboardingStep]
   );
-  const { patchSettings, sendAction, sendSetting, isActionPending, hasGlobalPendingAction } = useDashboardActions(
+  const { patchSettings, sendAction, sendSetting, isActionPending } = useDashboardActions(
     state,
     dispatch,
     showNotice,
@@ -1352,7 +1352,7 @@ function App() {
       if (typing || event.ctrlKey || event.metaKey || event.altKey) {
         return;
       }
-      if (event.key.toLowerCase() === "r" && snapshot && !hasGlobalPendingAction) {
+      if (event.key.toLowerCase() === "r" && snapshot && !isActionPending("refreshAll")) {
         event.preventDefault();
         sendAction("refreshAll");
       } else if (event.key.toLowerCase() === "a" && snapshot) {
@@ -1365,7 +1365,7 @@ function App() {
     };
     window.addEventListener("keydown", handleKeyboardShortcut);
     return () => window.removeEventListener("keydown", handleKeyboardShortcut);
-  }, [snapshot, hasGlobalPendingAction, sendAction, modals]);
+  }, [snapshot, isActionPending, sendAction, modals]);
 
   const usageAccounts = selectedPeerId === "local" || snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && peer.local)
     ? snapshot?.accounts : snapshot?.peerAccounts?.[selectedPeerId];
@@ -1544,9 +1544,6 @@ function App() {
 
   const selectedAccountIds = new Set(state.selectedAccountIds);
   const selectedCount = state.selectedAccountIds.length;
-  const isAccountBusy = (accountId: string): boolean =>
-    hasGlobalPendingAction || state.pendingActions.some((request) => request.accountId === accountId &&
-      !["details", "getDailyUsage", "getResetCredits", "exportAuthFile"].includes(request.action));
   const privacyToggleLabel = state.privacyMode ? snapshot.copy.showSensitive : snapshot.copy.hideSensitive;
   const prepareOAuthPending = isActionPending("prepareOAuthSession");
   const startOAuthAutoPending = isActionPending("startOAuthAutoFlow");
@@ -1694,7 +1691,7 @@ function App() {
           !account.switchQueued &&
           account.enabled &&
           hasDashboardAutoQueueCapability(account, capabilityThresholds) &&
-          canRunAccountOnThisPc(account, hasGlobalPendingAction, snapshot.settings.encryptedSyncRegistryOverrideEnabled)
+          canRunAccountOnThisPc(account, isActionPending("switch", account.id), snapshot.settings.encryptedSyncRegistryOverrideEnabled)
       )
       .sort((left, right) => compareDashboardAutoQueueAccounts(left, right, capabilityThresholds))
       .map((account) => account.id);
@@ -1941,7 +1938,7 @@ function App() {
       <a class="skip-link" href="#dashboard-main">
         Skip to main content
       </a>
-      {isBrowserDashboard && !isCliSessionsPath(browserPath) && browserHostStage !== "live" && browserHostStage !== "connecting"
+      {isBrowserDashboard && !isCliSessionsPath(browserPath) && (browserHostStage === "unreachable" || browserHostStage === "offline")
         ? createPortal(<BrowserConnectionBanner stage={browserHostStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
         : null}
       {notice && !(isBrowserDashboard && isCliSessionsPath(browserPath) && cliSessionFeedback?.message === notice.message)
@@ -2040,7 +2037,7 @@ function App() {
             </div>
             <div class="hero-settings">
               {isBrowserDashboard && realtimeConnected ? (
-                <span class="dashboard-live-status" role="status" title="WebSocket real-time updates are active">
+                <span class="dashboard-live-status" role="status" title="Live updates are active">
                   <span aria-hidden="true"></span>
                   Live
                 </span>
@@ -2172,7 +2169,7 @@ function App() {
             settings={snapshot.settings}
             now={state.now}
             privacyMode={state.privacyMode}
-            disabled={hasGlobalPendingAction || snapshot.indexHealth.status === "corrupted_unrecoverable"}
+            disabled={snapshot.indexHealth.status === "corrupted_unrecoverable"}
             addPending={prepareOAuthPending}
             refreshAllPending={isActionPending("refreshAll")}
             consumeResetCreditPending={Boolean(
@@ -2458,7 +2455,8 @@ function App() {
                   settings={snapshot.settings}
                   now={state.now}
                   privacyMode={state.privacyMode}
-                  busy={isAccountBusy(account.id)}
+                  busy={state.pendingActions.some(request => request.accountId === account.id)}
+                  unloadAuthPending={isActionPending("unloadAuth")}
                   reloadPromptPending={isActionPending("reloadPrompt", account.id)}
                   switchPending={isActionPending("switch", account.id)}
                   reauthorizePending={isActionPending("reauthorize", account.id)}
@@ -2888,16 +2886,14 @@ function DashboardMobileActions(props: {
   );
 }
 
-type BrowserConnectionIssue = "degraded" | "reconnecting" | "unreachable" | "offline";
+type BrowserConnectionIssue = "unreachable" | "offline";
 
 function BrowserConnectionBanner(props: { stage: BrowserConnectionIssue; lastSyncAt?: number; onRetry: () => void }) {
   const copy = {
-    degraded: ["Live updates paused", "The host responds, but the live channel is reconnecting."],
-    reconnecting: ["Reconnecting to dashboard", "Checking the live channel; current data may be delayed."],
     unreachable: ["Dashboard host unavailable", "Displayed data may be stale. Check that VS Code is running."],
     offline: ["Browser reports offline", "The local dashboard may still work; check VS Code and retry."]
   }[props.stage];
-  return <aside class={`dashboard-connection-banner is-${props.stage}`} role={props.stage === "unreachable" || props.stage === "offline" ? "alert" : "status"} aria-live="polite">
+  return <aside class={`dashboard-connection-banner is-${props.stage}`} role="alert" aria-live="polite">
     <span class="dashboard-connection-indicator" aria-hidden="true" />
     <span class="dashboard-connection-copy"><strong>{copy[0]}</strong><small>{copy[1]}{props.lastSyncAt ? ` Last update ${new Date(props.lastSyncAt).toLocaleTimeString()}.` : ""}</small></span>
     <button type="button" onClick={props.onRetry}>Retry now</button>

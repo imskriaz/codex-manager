@@ -1107,7 +1107,7 @@ describe("encrypted account sync", () => {
     expect(secretGet).toHaveBeenCalledTimes(2);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.userDataSync.actions.syncNow");
 
-    await expect(manager.prepareAccountSwitch("account-one")).rejects.toThrow("shared HTTPS dashboard domain");
+    await expect(manager.prepareAccountSwitch("account-one")).resolves.toBeUndefined();
     await manager.cancelAccountSwitch("account-one");
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
 

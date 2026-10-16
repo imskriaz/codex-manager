@@ -179,7 +179,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private readonly pendingDeletionAccountIds = new Set<string>();
   private deviceIdPromise: Promise<string> | undefined;
   private settingsSyncSuspended = false;
-  private readonly preparedCurrentClaims = new Map<string, { claim: SyncAccountEnablement; acquired: boolean }>();
+  private readonly preparedCurrentClaims = new Set<string>();
   private currentClaimTimer: NodeJS.Timeout | undefined;
   private currentClaimRefreshInFlight = false;
   private currentClaimTask: Promise<void> | undefined;
@@ -207,7 +207,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
     const timer = setTimeout(() => controller.abort(), 10_000);
     try {
       const response = await undiciFetch(new URL("/api/peer-account-claim", origin), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request, signature }), signal: controller.signal, redirect: "error" });
-      if ([401, 404, 405, 501].includes(response.status)) {
+      if (response.status === 401) {
+        void response.body?.cancel().catch(() => undefined);
+        throw new Error("Shared account-claim authentication was rejected (HTTP 401). Check the shared host and proxy configuration. Local operations remain available.");
+      }
+      if ([404, 405, 501].includes(response.status)) {
         void response.body?.cancel().catch(() => undefined);
         throw new Error(`The shared dashboard host does not support signed account claims (HTTP ${response.status}). Update and reload Codex Manager on the PC hosting the shared dashboard, then retry. Account switching does not use a browser login session.`);
       }
@@ -235,9 +239,12 @@ export class EncryptedSyncManager implements vscode.Disposable {
     this.currentClaimRetryTimer = setTimeout(() => {
       this.currentClaimRetryTimer = undefined;
       void this.reconcileCurrentAccountClaim().catch((error) => {
+        if (this.disposed) return;
         if (error instanceof CrossWindowOperationBusyError) { this.queueCurrentAccountReconciliation(5_000); return; }
-        const message = `Account ownership cleanup is pending. Claims remain reserved and will retry automatically. ${error instanceof Error ? error.message : String(error)}`;
+        const message = `Shared account ownership could not be confirmed. Local operations remain available; confirmation and cleanup will retry in the background. ${error instanceof Error ? error.message : String(error)}`;
         console.warn("[codexManager]", message);
+        publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+        void vscode.window.showWarningMessage(message);
         this.queueCurrentAccountReconciliation(30_000);
       });
     }, delayMs);
@@ -281,12 +288,24 @@ export class EncryptedSyncManager implements vscode.Disposable {
         for (const account of records) if (account.enabled !== false) activeAccountIds.add(account.id);
       }
       const deviceId = await waitWithin(this.getDeviceId(), 500, "Device identity storage is still busy.", signal);
+      const failures: string[] = [];
+      const requestClaim = async (action: "acquire" | "release", accountId: string, token?: string): Promise<void> => {
+        signal?.throwIfAborted();
+        try { await this.requestCurrentClaim(action, accountId, token, signal); }
+        catch (error) {
+          signal?.throwIfAborted();
+          failures.push(error instanceof Error ? error.message : String(error));
+        }
+      };
+      if (active && !this.disposed && this.isCurrentAccountOnly()) await requestClaim("acquire", active.id);
       for (const claim of this.readLocalEnablement()) {
         signal?.throwIfAborted();
         if (this.disposed) return;
-        if (claim.enabled && claim.deviceId === deviceId && !activeAccountIds.has(claim.accountId) && !this.preparedCurrentClaims.has(claim.accountId)) await this.requestCurrentClaim("release", claim.accountId, claim.claimToken, signal);
+        if (claim.deviceId !== deviceId || this.preparedCurrentClaims.has(claim.accountId)) continue;
+        if (claim.enabled && !activeAccountIds.has(claim.accountId)) await requestClaim("release", claim.accountId, claim.claimToken);
+        else if (claim.currentOnly && !this.isCurrentAccountOnly() && activeAccountIds.has(claim.accountId)) await requestClaim("acquire", claim.accountId);
       }
-      if (active && !this.disposed && this.isCurrentAccountOnly()) await this.requestCurrentClaim("acquire", active.id, undefined, signal);
+      if (failures.length) throw new Error([...new Set(failures)].join(" "));
     } finally { this.currentClaimRefreshInFlight = false; }
   }
 
@@ -862,12 +881,14 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   async prepareAccountSwitch(accountId: string): Promise<void> {
     if (encryptedSyncRegistryOverrideEnabled) return;
-    await waitWithin(this.mutationChain, 500, "Account storage is still committing. Retry after the pending write finishes.");
     if (this.isCurrentAccountOnly()) {
-      const result = await this.requestCurrentClaim("acquire", accountId);
-      this.preparedCurrentClaims.set(accountId, { claim: result.claim!, acquired: result.acquired === true });
+      this.updateVisibleEnablement(this.readLocalEnablement(), await waitWithin(this.getDeviceId(), 500, "Device identity storage is still busy."));
+      const foreign = this.findForeignEnablement(accountId, true);
+      if (foreign) throw new Error(`This account is running on ${foreign.deviceName}. Switch that PC to another account first.`);
+      this.preparedCurrentClaims.add(accountId);
       return;
     }
+    await waitWithin(this.mutationChain, 500, "Account storage is still committing. Retry after the pending write finishes.");
     await this.refreshEnablementFromDownloadedVault();
     const enabledElsewhere = this.findForeignEnablement(accountId, true);
     if (enabledElsewhere) {
@@ -878,18 +899,22 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   completeAccountSwitch(accountId: string): Promise<void> {
-    if (!this.isCurrentAccountOnly()) return Promise.resolve();
     this.preparedCurrentClaims.delete(accountId);
-    // The target claim was confirmed before auth changed. Cleanup belongs to maintenance.
+    if (!this.isCurrentAccountOnly()) return Promise.resolve();
+    const owned = this.readLocalEnablement().find(entry => entry.accountId === accountId && entry.deviceId === visibleEnablementDeviceId);
+    if (!owned?.enabled || !owned.currentOnly || !isSyncAccountEnablementActive(owned)) {
+      const message = "Account switched locally. Shared ownership is unconfirmed; another PC may be using this account. Confirmation will retry in the background.";
+      publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
+      void vscode.window.showWarningMessage(message);
+    }
+    // Remote ownership never holds local auth changes or their completion open.
     this.queueCurrentAccountReconciliation();
-    this.markVaultDirty("enablement-changed", this.getVaultSyncDebounceDelayMs());
     return Promise.resolve();
   }
 
-  async cancelAccountSwitch(accountId: string): Promise<void> {
-    const prepared = this.preparedCurrentClaims.get(accountId);
+  cancelAccountSwitch(accountId: string): Promise<void> {
     this.preparedCurrentClaims.delete(accountId);
-    if (prepared?.acquired) await this.requestCurrentClaim("release", accountId, prepared.claim.claimToken);
+    return Promise.resolve();
   }
 
   async prepareAccountEnablement(accountId: string, enabled: boolean): Promise<void> {
@@ -916,9 +941,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     await this.mutationChain.catch(() => undefined);
     const owned = this.readLocalEnablement().find(entry => entry.accountId === accountId && entry.deviceId === visibleEnablementDeviceId);
     if (owned?.currentOnly) {
-      // Keep the host's fencing token when changing from current-only to all-account claims.
-      if (enabled && !owned.enabled) await this.requestCurrentClaim("acquire", accountId);
-      else if (!enabled && owned.enabled) await this.requestCurrentClaim("release", accountId, owned.claimToken);
+      this.queueCurrentAccountReconciliation();
       return;
     }
     this.mutationVersion += 1;

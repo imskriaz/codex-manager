@@ -238,8 +238,8 @@
         const loaded = await loadSnapshot();
         if (manual && loaded) dispatch({
           type: "dashboard:notice",
-          level: isRealtimeOpen() ? "info" : "warning",
-          message: isRealtimeOpen() ? "Dashboard reconnected and live updates resumed." : "Dashboard responded. Live updates are still reconnecting."
+          level: "info",
+          message: "Dashboard refreshed."
         });
       } catch (error) {
         console.error("[codex-manager] dashboard refresh", error);

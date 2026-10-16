@@ -12,6 +12,15 @@ import {
 import { isDashboardMainQuotaExhausted } from "../webview-src/dashboard/accountSorting";
 
 describe("saved account card presentation", () => {
+  it("keeps unrelated card actions enabled while one action is pending", () => {
+    const source = readFileSync("webview-src/dashboard/savedAccountCard.tsx", "utf8");
+    expect(source).not.toContain("disabled={props.busy");
+    expect(source).toContain("disabled={props.enabledPending}");
+    expect(source).toContain("disabled={props.consumeResetCreditPending}");
+    expect(source).toContain("disabled={props.removePending}");
+    expect(source).toContain("account, accessActionPending, registryOverrideEnabled");
+  });
+
   it("keeps overview percentages in the compact metric row instead of the retired gauge overlay", () => {
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(styles).toMatch(/\.metric-gauge-head \.metric-gauge-value\s*\{[^}]*position:\s*static/s);

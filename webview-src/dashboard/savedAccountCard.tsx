@@ -109,6 +109,7 @@ export function SavedAccountCard(props: {
   now: number;
   privacyMode: boolean;
   busy: boolean;
+  unloadAuthPending: boolean;
   reloadPromptPending: boolean;
   switchPending: boolean;
   reauthorizePending: boolean;
@@ -335,9 +336,9 @@ export function SavedAccountCard(props: {
       ? props.switchPending
       : accessAction === "reloadPrompt"
         ? props.reloadPromptPending
-        : false;
+        : props.unloadAuthPending;
   const accessActionDisabled =
-    accessAction === "switch" ? !canRunAccountOnThisPc(account, props.busy, registryOverrideEnabled) : props.busy;
+    accessAction === "switch" ? !canRunAccountOnThisPc(account, accessActionPending, registryOverrideEnabled) : accessActionPending;
   const runAccessAction = (): void => {
     onAction(accessAction, accessAction === "unloadAuth" ? undefined : account.id);
   };
@@ -434,7 +435,6 @@ export function SavedAccountCard(props: {
               <button
                 class="claim-popover-action is-primary"
                 type="button"
-                disabled={props.busy}
                 onClick={() => {
                   setClaimPopoverOpen(false);
                   onAction("setEncryptedSyncRegistryOverride", undefined, { enabled: !registryOverrideEnabled });
@@ -445,7 +445,6 @@ export function SavedAccountCard(props: {
               <button
                 class="claim-popover-action is-secondary"
                 type="button"
-                disabled={props.busy}
                 onClick={() => {
                   setClaimPopoverOpen(false);
                   onAction("syncNow");
@@ -466,7 +465,7 @@ export function SavedAccountCard(props: {
         iconOnly
         label={copy.reauthorizeBtn}
         pending={props.reauthorizePending}
-        disabled={props.busy}
+        disabled={props.reauthorizePending}
         onClick={() => onAction("reauthorize", account.id)}
       />
     ) : (
@@ -479,7 +478,7 @@ export function SavedAccountCard(props: {
           aria-pressed={account.enabled}
           aria-haspopup={claimIsLocked ? "dialog" : undefined}
           aria-expanded={claimIsLocked ? claimPopoverOpen : undefined}
-          disabled={props.busy}
+          disabled={props.enabledPending}
           onClick={handleEnablementToggle}
         >
           {props.enabledPending ? (
@@ -529,7 +528,7 @@ export function SavedAccountCard(props: {
                       type="button"
                       title={copy.reloadBtn}
                       aria-label={`${queuedLabel}: ${copy.reloadBtn}`}
-                      disabled={props.busy}
+                      disabled={props.reloadPromptPending}
                       onClick={(event) => {
                         stopFlip(event);
                         onAction("reloadPrompt", account.id);
@@ -569,7 +568,7 @@ export function SavedAccountCard(props: {
                         props.lang
                       )}
                       aria-label={`${resetLabel}: ${account.resetCreditsAvailable}`}
-                      disabled={props.busy}
+                      disabled={props.consumeResetCreditPending}
                       onClick={() => onAction("consumeResetCredit", account.id)}
                     >
                       {props.consumeResetCreditPending ? (
@@ -597,7 +596,7 @@ export function SavedAccountCard(props: {
               title={queuePriorityLabel}
               aria-label={queuePriorityLabel}
               aria-pressed={account.queuePriority}
-              disabled={props.busy}
+              disabled={props.queuePriorityPending}
               onClick={() => onAction("setAccountQueuePriority", account.id, { queuePriority: !account.queuePriority })}
             >
               {props.queuePriorityPending ? (
@@ -620,7 +619,7 @@ export function SavedAccountCard(props: {
               iconOnly
               label={copy.refreshBtn}
               pending={props.refreshPending}
-              disabled={props.busy}
+              disabled={props.refreshPending}
               onClick={() => onAction("refresh", account.id)}
             />
             <div class="saved-overflow-wrap" ref={actionsMenuRef}>
@@ -647,7 +646,7 @@ export function SavedAccountCard(props: {
                     >
                       <button
                         type="button"
-                        disabled={props.busy || props.exportPending}
+                        disabled={props.exportPending}
                         onClick={() => {
                           setActionsOpen(false);
                           props.onExportAuth();
@@ -658,7 +657,7 @@ export function SavedAccountCard(props: {
                       {showResyncButton ? (
                         <button
                           type="button"
-                          disabled={props.busy}
+                          disabled={props.resyncProfilePending}
                           onClick={() => {
                             setActionsOpen(false);
                             onAction("resyncProfile", account.id);
@@ -670,7 +669,7 @@ export function SavedAccountCard(props: {
                       {account.canRefreshToken ? (
                         <button
                           type="button"
-                          disabled={props.busy}
+                          disabled={props.manualTokenRefreshPending}
                           onClick={() => {
                             setActionsOpen(false);
                             onAction("refreshToken", account.id);
@@ -686,7 +685,7 @@ export function SavedAccountCard(props: {
                       ) : null}
                       <button
                         type="button"
-                        disabled={props.busy}
+                        disabled={props.tokenRefreshPending}
                         onClick={() => {
                           setActionsOpen(false);
                           onAction("setAccountTokenRefreshEnabled", account.id, {
@@ -708,7 +707,7 @@ export function SavedAccountCard(props: {
                       </button>
                       <button
                         type="button"
-                        disabled={props.busy || props.detailsPending}
+                        disabled={props.detailsPending}
                         onClick={() => {
                           setActionsOpen(false);
                           onAction("details", account.id);
@@ -724,7 +723,7 @@ export function SavedAccountCard(props: {
                       <button
                         class="danger"
                         type="button"
-                        disabled={props.busy}
+                        disabled={props.removePending}
                         onClick={() => {
                           setActionsOpen(false);
                           onAction("remove", account.id);
@@ -779,7 +778,7 @@ export function SavedAccountCard(props: {
                         type="button"
                         title={copy.reloadBtn}
                         aria-label={`${queuedLabel}: ${copy.reloadBtn}`}
-                        disabled={props.busy}
+                        disabled={props.reloadPromptPending}
                         onClick={(event) => {
                           stopFlip(event);
                           onAction("reloadPrompt", account.id);
@@ -802,7 +801,7 @@ export function SavedAccountCard(props: {
                   title={queuePriorityLabel}
                   aria-label={queuePriorityLabel}
                   aria-pressed={account.queuePriority}
-                  disabled={props.busy}
+                  disabled={props.queuePriorityPending}
                   onClick={() =>
                     onAction("setAccountQueuePriority", account.id, { queuePriority: !account.queuePriority })
                   }
@@ -873,7 +872,7 @@ export function SavedAccountCard(props: {
                         props.lang
                       )}
                       aria-label={`${resetLabel}: ${account.resetCreditsAvailable}`}
-                      disabled={props.busy}
+                      disabled={props.consumeResetCreditPending}
                       onClick={() => onAction("consumeResetCredit", account.id)}
                     >
                       {props.consumeResetCreditPending ? (
@@ -899,7 +898,7 @@ export function SavedAccountCard(props: {
                   iconOnly
                   label={copy.refreshBtn}
                   pending={props.refreshPending}
-                  disabled={props.busy}
+                  disabled={props.refreshPending}
                   onClick={() => onAction("refresh", account.id)}
                 />
                 <div class="saved-overflow-wrap" ref={actionsMenuRef}>
@@ -926,7 +925,7 @@ export function SavedAccountCard(props: {
                         >
                           <button
                             type="button"
-                            disabled={props.busy || props.exportPending}
+                            disabled={props.exportPending}
                             onClick={() => {
                               setActionsOpen(false);
                               props.onExportAuth();
@@ -937,7 +936,7 @@ export function SavedAccountCard(props: {
                           {showResyncButton ? (
                             <button
                               type="button"
-                              disabled={props.busy}
+                              disabled={props.resyncProfilePending}
                               onClick={() => {
                                 setActionsOpen(false);
                                 onAction("resyncProfile", account.id);
@@ -949,7 +948,7 @@ export function SavedAccountCard(props: {
                           {account.canRefreshToken ? (
                             <button
                               type="button"
-                              disabled={props.busy}
+                              disabled={props.manualTokenRefreshPending}
                               onClick={() => {
                                 setActionsOpen(false);
                                 onAction("refreshToken", account.id);
@@ -965,7 +964,7 @@ export function SavedAccountCard(props: {
                           ) : null}
                           <button
                             type="button"
-                            disabled={props.busy}
+                            disabled={props.tokenRefreshPending}
                             onClick={() => {
                               setActionsOpen(false);
                               onAction("setAccountTokenRefreshEnabled", account.id, {
@@ -987,7 +986,7 @@ export function SavedAccountCard(props: {
                           </button>
                           <button
                             type="button"
-                            disabled={props.busy || props.detailsPending}
+                            disabled={props.detailsPending}
                             onClick={() => {
                               setActionsOpen(false);
                               onAction("details", account.id);
@@ -1003,7 +1002,7 @@ export function SavedAccountCard(props: {
                           <button
                             class="danger"
                             type="button"
-                            disabled={props.busy}
+                            disabled={props.removePending}
                             onClick={() => {
                               setActionsOpen(false);
                               onAction("remove", account.id);

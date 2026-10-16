@@ -44,7 +44,7 @@ export function isAccountClaimRequest(value: unknown): value is AccountClaimRequ
   );
 }
 
-/** The shared dashboard host serializes ownership before any PC changes auth.json. */
+/** The shared dashboard host serializes ownership confirmations across PCs. */
 export class AccountClaimAuthority {
   private pending: Promise<unknown> = Promise.resolve();
   private queued = 0;

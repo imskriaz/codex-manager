@@ -96,7 +96,7 @@ describe("dashboard accessibility and interaction flow", () => {
   it("shows a live indicator only for an active WebSocket and sorts by email address", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).toContain("isBrowserDashboard && realtimeConnected");
-    expect(source).toContain("WebSocket real-time updates are active");
+    expect(source).toContain("Live updates are active");
     expect(source).toContain('if (sort === "email")');
     expect(source).toContain('"Email Address"');
   });

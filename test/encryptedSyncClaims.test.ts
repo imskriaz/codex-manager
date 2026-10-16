@@ -59,7 +59,7 @@ describe("claim recovery and manual sync priority", () => {
     expect(state.get("codexManager.encryptedSync.vaultDirty.v1")).toEqual(["local-change"]);
   });
 
-  it.each([401, 404, 405, 501])("identifies incompatible shared hosts without treating HTTP %s as browser expiry", async status => {
+  it.each([404, 405, 501])("identifies incompatible shared hosts without treating HTTP %s as browser expiry", async status => {
     const { manager, internal } = fixture();
     vi.spyOn(manager, "signRealtimePeerPayload").mockResolvedValue("signed");
     const cancel = vi.fn(async () => undefined);
@@ -67,6 +67,15 @@ describe("claim recovery and manual sync priority", () => {
     await expect(internal.requestCurrentClaim("acquire", "one")).rejects.toThrow("Update and reload Codex Manager on the PC hosting");
     expect(cancel).toHaveBeenCalledOnce();
     expect(vi.mocked(claimFetch).mock.lastCall?.[1]?.headers).not.toHaveProperty("Cookie");
+  });
+
+  it("reports HTTP 401 as claim authentication failure without requiring browser login or an update", async () => {
+    const { manager, internal } = fixture();
+    vi.spyOn(manager, "signRealtimePeerPayload").mockResolvedValue("signed");
+    const cancel = vi.fn(async () => undefined);
+    vi.mocked(claimFetch).mockResolvedValueOnce({ status: 401, body: { cancel } } as never);
+    await expect(internal.requestCurrentClaim("acquire", "one")).rejects.toThrow("authentication was rejected (HTTP 401)");
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   it("does not accept a signed response granting another device's claim", async () => {
