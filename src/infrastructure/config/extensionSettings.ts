@@ -8,7 +8,7 @@ import type {
 import { DashboardLanguage, DashboardLanguageOption, resolveDashboardLanguage } from "../../localization/languages";
 import { normalizeQuotaColorThresholds } from "../../utils";
 import { getAutoQueueQuotaFreshnessMs, normalizeAutoQueueThreshold } from "../../domain/autoQueuePolicy";
-import { getPersistentLogRetentionDays, isPersistentLoggingEnabled } from "../../utils/persistentLog";
+import { getPersistentLogLevel, getPersistentLogRetentionDays, isPersistentLoggingEnabled } from "../../utils/persistentLog";
 import { sqliteConfiguration } from "../../storage/sqliteContext";
 
 const CODEX_ACCOUNTS_SECTION = "codexManager";
@@ -27,6 +27,7 @@ export class ExtensionSettingsStore {
       privacyMode: config.get<boolean>("privacyMode", false),
       persistentLoggingEnabled: isPersistentLoggingEnabled(),
       persistentLogRetentionDays: getPersistentLogRetentionDays(),
+      persistentLogLevel: getPersistentLogLevel(),
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
       codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "manual",
       cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),

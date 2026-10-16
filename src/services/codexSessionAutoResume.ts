@@ -1,9 +1,10 @@
+import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import * as path from "path";
-import { filterAutoResumeGoalSessionIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
+import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexHomeStateKey } from "../codex/authFile";
@@ -258,6 +259,8 @@ export function persistRunningCodexSessions(
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Retry after preferences settle.");
       controller.signal.throwIfAborted();
       await writeIds(context, ids, deadline);
+      recordPersistentEvent("info", "auto-resume", "Reload recovery saved", { discovered: running.length, saved: ids.length });
+      recordPersistentEvent("debug", "auto-resume", "Reload recovery session IDs", { ids });
       signal?.throwIfAborted();
       if (controller.signal.aborted || !isAutoResumeAvailable()) {
         await clearIds(context, deadline);
@@ -298,8 +301,12 @@ export function persistOpenCodexSessions(
   context: AutoResumeContext,
   readOpenParents: (signal?: AbortSignal) => Promise<string[]> = async (signal) => {
     const open = readOpenCodexSessionIds();
-    if (!open.length) return [];
-    return readAutoResumeCodexSessionIds(undefined, [], open, signal, "running", undefined, readRecentRunningCodexSessionIds(undefined, open), open);
+    const goalOnly = isAutoResumeGoalOnlyEnabled();
+    const candidates = [...new Set([...open, ...(goalOnly ? await readAutoResumeGoalCandidateIds(undefined, signal) : [])])];
+    if (!candidates.length) return [];
+    recordPersistentEvent("debug", "auto-resume", "Recovery tracking inspected tabs and sidebar goals", { open, candidates, goalOnly });
+    return readAutoResumeCodexSessionIds(undefined, goalOnly ? undefined : [], open, signal, "running", goalOnly,
+      readRecentRunningCodexSessionIds(undefined, candidates), candidates);
   },
   signal?: AbortSignal
 ): Promise<string[]> {
@@ -337,8 +344,11 @@ export function persistOpenCodexSessions(
       }
       controller.signal.throwIfAborted();
       const previous = readPersistedSessionIds(context, true);
-      if (openRecoveryIds.has(context.workspaceState) || previous.length !== ids.length || previous.some((id, index) => id !== ids[index]))
+      if (openRecoveryIds.has(context.workspaceState) || previous.length !== ids.length || previous.some((id, index) => id !== ids[index])) {
         await writeIds(context, ids, deadline, true);
+        recordPersistentEvent("info", "auto-resume", "Background recovery snapshot updated", { previousCount: previous.length, savedCount: ids.length });
+        recordPersistentEvent("debug", "auto-resume", "Background recovery session IDs", { ids });
+      }
       if (!isAutoResumeAvailable()) {
         await clearIds(context, deadline);
         return [];
@@ -449,6 +459,7 @@ export function resumePersistedCodexSessions(
   const restore = async (): Promise<AutoResumeResult> => {
     const deadline = Date.now() + OPERATION_TIMEOUT_MS;
     if (!isAutoResumeAvailable()) {
+      recordPersistentEvent("info", "auto-resume", "Startup recovery disabled; saved recovery cleared");
       await clearIds(context, deadline);
       return { attempted: 0, opened: 0, failed: [] };
     }
@@ -463,6 +474,8 @@ export function resumePersistedCodexSessions(
       unrestoredOpenSnapshots.add(context.workspaceState);
       const goalOnly = isAutoResumeGoalOnlyEnabled();
       const savedIds = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
+      recordPersistentEvent("info", "auto-resume", "Startup recovery loaded", { savedCount: savedIds.length, goalOnly });
+      recordPersistentEvent("debug", "auto-resume", "Startup recovery session IDs", { ids: savedIds });
       const ids = await bounded(() => filterAutoResumeGoalSessionIds(savedIds, undefined, controller.signal), deadline - Date.now(),
         "Auto Resume could not verify goals within 30 seconds. Saved recovery was retained.", controller.signal);
       if (!isAutoResumeAvailable()) {
@@ -470,6 +483,7 @@ export function resumePersistedCodexSessions(
         return { attempted: 0, opened: 0, failed: [] };
       }
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during discovery. Retry to verify the saved sessions.");
+      recordPersistentEvent("info", "auto-resume", "Startup goal filtering completed", { savedCount: savedIds.length, eligibleCount: ids.length });
       if (savedIds.length) await writeIds(context, ids, deadline, false, { remove: savedIds, consumeOpen: savedIds });
       if (!ids.length) {
         unrestoredOpenSnapshots.delete(context.workspaceState);
@@ -489,6 +503,7 @@ export function resumePersistedCodexSessions(
       } catch (error) {
         controller.abort(error);
         result.failed = ids.map((sessionId) => ({ sessionId, message: error instanceof Error ? error.message : String(error) }));
+        recordPersistentEvent("warning", "auto-resume", "Previous tabs could not close; recovery retained", { count: ids.length }, error);
         if (!isAutoResumeAvailable()) await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
         return result;
       }
@@ -505,10 +520,12 @@ export function resumePersistedCodexSessions(
           controller.signal.throwIfAborted();
           if (!(await bounded(() => filterAutoResumeGoalSessionIds([id], undefined, controller.signal), deadline - Date.now(),
             "Auto Resume could not verify this session's goal before its deadline.", controller.signal)).length) {
+            recordPersistentEvent("info", "auto-resume", "Session skipped because goal is no longer eligible", { sessionId: id });
             remaining = remaining.filter((candidate) => candidate !== id);
             await writeIds(context, remaining, deadline, false, { remove: [id] });
             continue;
           }
+          recordPersistentEvent("debug", "auto-resume", "Opening saved conversation", { sessionId: id });
           const sessionController = new AbortController();
           const stopSession = () => sessionController.abort(controller.signal.reason);
           controller.signal.addEventListener("abort", stopSession, { once: true });
@@ -530,14 +547,17 @@ export function resumePersistedCodexSessions(
           // before activation can dispatch it, and retain uncertain IDs for replay.
           // A single slow editor must not cancel the restore of other sessions.
           // Keep the ID durable so the failed window is retried next activation.
+          recordPersistentEvent("warning", "auto-resume", "Conversation open failed; recovery retained", { sessionId: id }, error);
           result.failed.push({ sessionId: id, message: error instanceof Error ? error.message : String(error) });
           continue;
         }
+        recordPersistentEvent("info", "auto-resume", "Conversation reopened", { sessionId: id });
         result.opened += 1;
         remaining = remaining.filter((candidate) => candidate !== id);
         await writeIds(context, remaining, deadline, false, { remove: [id] });
       }
       if (!isAutoResumeAvailable()) await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS);
+      recordPersistentEvent("info", "auto-resume", "Startup recovery finished", { attempted: result.attempted, opened: result.opened, failed: result.failed.length, remaining: remaining.length });
       return result;
     } catch (error) {
       if (!isAutoResumeAvailable()) {

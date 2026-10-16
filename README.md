@@ -119,8 +119,8 @@ The browser dashboard is disabled by default and listens on `http://127.0.0.1:39
 
 1. Turn on **Web dashboard**.
 2. Set the shared **Password** in General; remote dashboard login and optional cross-PC claim checks use that same password.
-3. If the dashboard must remain available after VS Code closes, turn on **Always-online WebSocket host** on one always-on PC.
-4. For a public HTTPS address, set **Cloudflared domain** to the final URL (for example `https://codex.example.com`) and configure the tunnel to forward to `http://127.0.0.1:39875`.
+3. If the dashboard must remain available after VS Code closes, turn on **Keep connections online** on one always-on PC.
+4. For a public HTTPS address, set **Shared dashboard address** to the final URL (for example `https://codex.example.com`) and configure the tunnel to forward to `http://127.0.0.1:39875`.
 
 Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/), [downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/), [remotely-managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/), and [Quick Tunnels guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) first.
 
@@ -146,13 +146,13 @@ Important combinations:
 - **Encrypted sync** uses authenticated peer WebSockets when available and VS Code Settings Sync as its durable cross-PC fallback. Use the same password value on each machine; the password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
 - **Always-online host** is optional and requires cross-PC claim checks before it can relay signed peer state.
-- **Cloudflared domain** is the canonical HTTPS origin for cross-PC WebSocket connections. Cross-PC connections require a valid domain; local dashboard WebSockets work without one. The `cloudflared` process and DNS route are managed by you.
+- **Shared dashboard address** is the canonical HTTPS origin for cross-PC WebSocket connections. Cross-PC connections require a valid domain; local dashboard WebSockets work without one. The `cloudflared` process and DNS route are managed by you.
 
 ## Privacy and security
 
 - Account tokens remain in local VS Code SecretStorage and the Codex credential file. Password-encrypted recovery records are stored in `~/.codex/manager.sqlite`. They are not sent to a Codex Manager server.
 - Account metadata, settings, session recovery, usage history, and other extension state share that SQLite database, using WAL and full synchronous commits. Existing state is migrated without deleting its source files. VS Code Settings remains the editing interface and stays synchronized with SQLite. Process locks, diagnostic logs, Codex-owned files, and browser offline caches keep their platform formats.
-- Auto Sync synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Full cross-PC account sync** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
+- Auto Sync synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Sync account logins** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
 - Review the [MIT License](LICENSE) and only manage accounts you own or are authorized to use.
@@ -180,7 +180,7 @@ Auto Resume captures local running and quota-interrupted parent conversations ac
 
 **Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, automatic switching waits with a warning and retries. Manual account switching remains available immediately.
 
-**Claim all accounts** under Data & sync is off by default, so Auto Sync reserves only the account currently selected on this PC and frees every other saved account. Turn it on to claim every enabled saved account. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC.
+**Reserve all accounts** under Data & sync is off by default, so Auto Sync reserves only the account currently selected on this PC and frees every other saved account. Turn it on to claim every enabled saved account. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC.
 
 Browser conversations show the saved native Codex goal above the composer, including its objective, state, and elapsed time. This remains available when the goal creation event has scrolled out of the message history.
 
@@ -190,7 +190,7 @@ In the browser dashboard, open General settings and choose **Enable notification
 
 Use **Install app** where available, or your browser's **Add to Home Screen** option. On iPhone and iPad, open the installed Home Screen app before enabling notifications. The offline recovery screen reconnects automatically after a host restart. Account data and actions require a live authenticated connection; notifications never automatically repeat an uncertain action.
 
-Browser notification setup appears when an unsubscribed device opens the HTTPS dashboard. Choose **Enable notifications**, then allow the browser permission prompt. You can also use **Settings → General → Browser notifications & installed app**. Major Codex Manager notices in VS Code, including account switches and reloads, are mirrored to subscribed devices; delivery attempts run in parallel and are drained before managed reloads.
+Browser notification setup appears when an unsubscribed device opens the HTTPS dashboard. Choose **Enable notifications**, then allow the browser permission prompt. You can also use **Settings → General → Browser notifications**. Major Codex Manager notices in VS Code, including account switches and reloads, are mirrored to subscribed devices; delivery attempts run in parallel and are drained before managed reloads.
 
 Choose **Send test notification** in those settings to test all subscribed devices. The result reports push-service acceptance and failures; confirm receipt on your phone, since the browser and OS control notification display.
 
@@ -204,7 +204,7 @@ Session inspection is demand-driven. Overlapping consumers share bounded running
 | --- | --- | --- |
 | Wait for running sessions | Auto Switch and Wait for running sessions enabled | All local running session IDs |
 | Auto Resume at managed reload | Auto Switch and Auto Resume enabled | Recent verified running IDs (up to 30 seconds old), otherwise a fresh check; then goal filter |
-| Auto Resume tab autosave | Auto Switch and Auto Resume enabled | Running or quota-interrupted open parent tabs, saved to SQLite on committed status changes; optional active/usage-limited goal filter |
+| Auto Resume background save | Auto Switch and Auto Resume enabled | Running or quota-interrupted parent tabs plus running sidebar goals in goal-only mode; saved on status changes and every 30 seconds |
 | Auto Resume restore | Saved recovery exists and both toggles enabled | Saved IDs and goal filter |
 | Running indicators and workspace lists | Dashboard/session view requests status | Per-session native/transcript status |
 | Explicit session actions | A session command needs ownership | Per-session status |
@@ -212,3 +212,10 @@ Session inspection is demand-driven. Overlapping consumers share bounded running
 Manual account switching and ownership renewal do not request session inspection. Turning Auto Resume off clears saved recovery once and stops future checks.
 
 Browser Share creates an explicit read-only snapshot link. Anyone with its token can view the conversation messages without signing in; it grants no dashboard access. Links expire after 30 days. Create a replacement or use **Revoke shared link** to invalidate the previous link. New messages require a new snapshot.
+
+
+### Diagnostic logs
+
+In **Settings → Data & sync**, enable **Save diagnostic logs** and choose **Log level**: Debug includes detailed decisions, Info records normal operations, Warnings records warnings and errors, and Errors records failures only. The level applies immediately and is shared across local windows. Logging stays off until enabled, and retention remains adjustable from 1 to 30 days.
+
+**Download logs** exports recent redacted JSON in the browser or opens a save dialog in VS Code, including when logging has been turned off. Each download includes at most 1,000 recent records and 512 KiB of record data; a warning and `limited` field identify a partial export. Secret fields and emails are redacted. Operation and trace IDs, host-run IDs, timestamps, durations, recovery counts, and Debug session decisions help connect events across windows and reloads. Slow or unavailable log storage reports a failure without blocking unrelated actions; logging queues remain bounded and report skipped records.

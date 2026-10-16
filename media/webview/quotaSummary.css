@@ -10027,7 +10027,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 .settings-layout > .settings-block {
   min-width: 0;
-  height: 100%;
+  height: auto;
 }
 
 .settings-layout > .settings-block-wide {
@@ -10357,7 +10357,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 .settings-layout .settings-refresh-group > .settings-block {
   min-width: 0;
-  height: 100%;
+  height: auto;
 }
 
 .settings-layout .settings-integration-group {
@@ -10377,7 +10377,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 .settings-layout .settings-integration-grid > .settings-block {
   min-width: 0;
-  height: 100%;
+  height: auto;
 }
 
 @media (max-width: 560px) {
@@ -12277,12 +12277,13 @@ select:focus-visible,
 }
 
 .settings-layout {
-  gap: 9px;
+  gap: 6px;
 }
 
 .settings-layout .settings-block {
-  gap: 7px;
-  padding: 11px 12px;
+  align-content: start;
+  gap: 5px;
+  padding: 8px 10px;
   border-color: var(--border-muted);
   border-radius: 10px;
   background:
@@ -12299,12 +12300,17 @@ select:focus-visible,
   letter-spacing: -0.005em;
 }
 
+.settings-layout .settings-block-head {
+  min-width: 0;
+}
+
 .settings-layout .settings-block-sub {
   display: block;
-  overflow: visible;
-  font-size: 10.5px;
-  line-height: 1.38;
-  -webkit-line-clamp: unset;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-layout .settings-integration-group,
@@ -12325,16 +12331,18 @@ select:focus-visible,
 
 .settings-layout .settings-integration-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
+  align-items: start;
+  gap: 6px;
 }
 
 .settings-layout .settings-refresh-group {
-  gap: 9px;
+  align-items: start;
+  gap: 6px;
 }
 
 .settings-layout .settings-integration-grid > .settings-block,
 .settings-layout .settings-refresh-group > .settings-block {
-  padding: 11px 12px;
+  padding: 8px 10px;
   border-color: var(--border-muted);
   background: var(--bg-elevated);
 }

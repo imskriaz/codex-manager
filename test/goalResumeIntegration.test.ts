@@ -6,7 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
 import { readCodexSessionGoals } from "../src/services/codexSessionGoals";
-import { AUTO_RESUME_SESSION_IDS_KEY, persistRunningCodexSessions, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
+import * as sessionEditor from "../src/services/codexSessionResume";
+import * as diagnostics from "../src/utils/persistentLog";
+import { readAutoResumeGoalCandidateIds } from "../src/services/codexSessionAutoResumeSelection";
+import { AUTO_RESUME_OPEN_SESSION_IDS_KEY, persistOpenCodexSessions, AUTO_RESUME_SESSION_IDS_KEY, persistRunningCodexSessions, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
 
 let home: string, db: DatabaseSync;
 let goalOnly: boolean;
@@ -83,4 +86,41 @@ it("includes eligible parents without active goals when goal-only is turned off"
   expect((await persistRunningCodexSessions(state.context, select)).sort()).toEqual(ids.slice(0, 5));
   const result = await resumePersistedCodexSessions(state.context, async () => undefined, async () => undefined);
   expect(result).toEqual({ attempted: 5, opened: 5, failed: [] });
+});
+
+it("captures a running sidebar goal without any conversation tab, then restores it after reload", async () => {
+  const state = context();
+  vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([]);
+  vi.spyOn(sessionEditor, "readRecentRunningCodexSessionIds").mockReturnValue([ids[0]!]);
+  expect(await persistOpenCodexSessions(state.context)).toEqual(ids.slice(0, 2));
+  expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual(ids.slice(0, 2));
+  const open = vi.fn(async (_sessionId: string) => undefined);
+  const events = vi.spyOn(diagnostics, "recordPersistentEvent");
+  expect(await resumePersistedCodexSessions(state.context, open, async () => undefined)).toMatchObject({ opened: 2, failed: [] });
+  expect(open.mock.calls.map(call => call[0])).toEqual(ids.slice(0, 2));
+  expect(events).toHaveBeenCalledWith("info", "auto-resume", "Startup recovery loaded", { savedCount: 2, goalOnly: true });
+});
+
+it("excludes idle active goals, child goals, and archived goals from the background snapshot", async () => {
+  const state = context();
+  vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([]);
+  vi.spyOn(sessionEditor, "readRecentRunningCodexSessionIds").mockReturnValue([ids[5]!, ids[6]!]);
+  expect(await persistOpenCodexSessions(state.context)).toEqual([ids[1]]);
+});
+
+it("retains the previous snapshot when sidebar goal storage is partial or corrupt", async () => {
+  const state = context(); state.saved.set(AUTO_RESUME_OPEN_SESSION_IDS_KEY, [ids[0]]);
+  vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([]);
+  db.exec("ALTER TABLE thread_goals RENAME TO incompatible_schema");
+  await expect(persistOpenCodexSessions(state.context)).rejects.toThrow();
+  expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([ids[0]]);
+});
+
+it("bounds goal discovery and rejects oversized native goal results", async () => {
+  expect(await readAutoResumeGoalCandidateIds(home)).toEqual([ids[0], ids[1], ids[5], ids[6]]);
+  const put = db.prepare("INSERT INTO thread_goals VALUES (?, 'task', 'active', 0)");
+  db.exec("BEGIN");
+  for (let i = 0; i < 10001; i++) put.run(`bbbbbbbb-bbbb-bbbb-bbbb-${String(i).padStart(12, "0")}`);
+  db.exec("COMMIT");
+  await expect(readAutoResumeGoalCandidateIds(home)).rejects.toThrow("safe discovery limit");
 });

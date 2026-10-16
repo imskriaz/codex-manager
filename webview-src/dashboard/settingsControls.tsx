@@ -23,7 +23,7 @@ export function SettingsLanguageBlock(props: {
     <div class="settings-block">
       <div class="settings-block-head">
         <div class="settings-block-title">{props.copy.languageTitle}</div>
-        <div class="settings-block-sub">{props.copy.languageSub}</div>
+        <div class="settings-block-sub" title={props.copy.languageSub}>{props.copy.languageSub}</div>
       </div>
       <select
         class="settings-select"
@@ -77,7 +77,7 @@ export function SettingsThemeBlock(props: {
     <div class="settings-block settings-theme-block">
       <div class="settings-block-head">
         <div class="settings-block-title">{copy.title}</div>
-        <div class="settings-block-sub">{copy.sub}</div>
+        <div class="settings-block-sub" title={copy.sub}>{copy.sub}</div>
       </div>
       <div class="settings-theme-options" role="group" aria-label={copy.title}>
         {options.map((option) => (
@@ -113,7 +113,7 @@ export function SettingsSegmentBlock(props: {
     <div class={`settings-block ${props.className ?? ""}`}>
       <div class="settings-block-head">
         <div class="settings-block-title">{props.title}</div>
-        <div class="settings-block-sub">{props.sub}</div>
+        <div class="settings-block-sub" title={props.sub}>{props.sub}</div>
       </div>
       <div class="settings-segment">
         {props.options.map((option) => (
@@ -148,12 +148,13 @@ export function SettingsToggleBlock(props: {
       <div class="settings-toggle-head">
         <div class="settings-block-head">
           <div class="settings-block-title">{props.title}</div>
-          <div class="settings-block-sub">{props.sub}</div>
+          <div class="settings-block-sub" title={typeof props.sub === "string" ? props.sub : undefined}>{props.sub}</div>
         </div>
         <button
           class={`settings-inline-toggle ${props.enabled ? "active" : ""}`}
           type="button"
           aria-label={props.title}
+          aria-description={typeof props.sub === "string" ? props.sub : undefined}
           aria-pressed={props.enabled}
           disabled={props.disabled}
           onClick={() => props.onToggle(!props.enabled)}
@@ -185,7 +186,7 @@ export function SettingsPathBlock(props: {
     <>
       <div class="settings-block-head">
         <div class="settings-block-title">{props.title ?? props.copy.appPathTitle}</div>
-        <div class="settings-block-sub">{props.sub ?? props.copy.appPathSub}</div>
+        <div class="settings-block-sub" title={props.sub ?? props.copy.appPathSub}>{props.sub ?? props.copy.appPathSub}</div>
       </div>
       <div class="settings-note settings-path-note">{props.pathValue || props.emptyLabel || props.copy.appPathEmpty}</div>
       <div class="saved-actions settings-inline-actions">
@@ -222,7 +223,7 @@ export function SettingsThresholdBlock(props: {
     <div class="settings-block settings-block-wide settings-threshold-block">
       <div class="settings-block-head">
         <div class="settings-block-title">{props.copy.colorThresholdTitle}</div>
-        <div class="settings-block-sub">{props.copy.colorThresholdSub}</div>
+        <div class="settings-block-sub" title={props.copy.colorThresholdSub}>{props.copy.colorThresholdSub}</div>
       </div>
       <div class="settings-note">{formatTemplate(props.copy.colorThresholdRedNoteTemplate, yellow)}</div>
       <div class="threshold-dual">
@@ -300,7 +301,7 @@ export function SettingsDiscreteSlider(props: {
   return (
     <div class={`step-slider step-slider-${props.accent}`}>
       <div class="step-slider-head">
-        <div class="step-slider-copy">{props.description(currentValue)}</div>
+        <div class="step-slider-copy" title={props.description(currentValue)}>{props.description(currentValue)}</div>
         <div class="step-slider-value">{props.valueLabel(currentValue)}</div>
       </div>
       <div class="step-slider-stack">

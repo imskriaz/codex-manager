@@ -44,6 +44,7 @@ beforeEach(() => {
   } })) }] } });
   vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockImplementation(readNativeTabs);
   vi.spyOn(sessionEditor, "readRunningCodexSessionIds").mockImplementation(async (_home, _signal, open) => open ?? []).mockClear();
+  vi.spyOn(autoResumeSelection, "readAutoResumeGoalCandidateIds").mockResolvedValue([]);
   vi.spyOn(autoResumeSelection, "filterAutoResumeGoalSessionIds").mockImplementation(async (ids) => ids);
   vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
 });
@@ -161,7 +162,7 @@ describe("durable open conversation recovery", () => {
     try {
       await expect(persistOpenCodexSessions(state.context)).resolves.toEqual([first]);
       expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
-      expect(selection).toHaveBeenCalledWith(undefined, [], [first], expect.any(AbortSignal), "running", undefined, [first], [first]);
+      expect(selection).toHaveBeenCalledWith(undefined, undefined, [first], expect.any(AbortSignal), "running", true, [first], [first]);
       expect(sessionEditor.readRunningCodexSessionIds).not.toHaveBeenCalled();
     } finally { selection.mockRestore(); recent.mockRestore(); }
   });

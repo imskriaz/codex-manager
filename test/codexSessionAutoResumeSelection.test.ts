@@ -267,10 +267,10 @@ describe("auto resume selection", () => {
     }
     expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([]);
   });
-  it("explains that all running parents resume and sub-agents are skipped", () => {
+  it("explains session recovery without storage details", () => {
     const copy = getDashboardCopy("en").autoResumeSub;
-    expect(copy).toContain("quota-interrupted parent sessions");
+    expect(copy).toContain("unfinished chats");
     expect(copy).toContain("VS Code restart");
-    expect(copy).toContain("sub-agents are skipped");
+    expect(copy).not.toContain("SQLite");
   });
 });

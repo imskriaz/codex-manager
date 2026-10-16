@@ -150,10 +150,9 @@ describe("extension manifest configuration", () => {
     const property = manifest.contributes?.configuration?.properties?.["codexManager.autoResumeEnabled"];
     expect(property).toMatchObject({ type: "boolean", scope: "machine", default: false });
     expect(property?.markdownDescription).toContain("Experimental");
-    expect(property?.markdownDescription).toContain("Works without enabling Session Integration");
-    expect(property?.markdownDescription).toContain("reopen them after a VS Code restart");
-    expect(property?.markdownDescription).toContain("save running and quota-interrupted parent conversation tabs to SQLite");
-    expect(property?.markdownDescription).toContain("while Auto Switch is enabled");
+    expect(property?.markdownDescription).toContain("Auto Switch on");
+    expect(property?.markdownDescription).toContain("unfinished parent chats");
+    expect(property?.markdownDescription).toContain("VS Code restart");
     expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeGoalOnlyEnabled"])
       .toMatchObject({ type: "boolean", scope: "machine", default: true });
   });
@@ -183,7 +182,7 @@ describe("extension manifest configuration", () => {
     };
     const property = manifest.contributes?.configuration?.properties?.["codexManager.webDashboardAlwaysOnlineEnabled"];
     expect(property).toMatchObject({ type: "boolean", default: false });
-    expect(property?.markdownDescription).toContain("detached Node.js");
+    expect(property?.markdownDescription).toContain("after VS Code closes");
     expect(fs.existsSync(path.resolve(path.dirname(manifestPath), "tools", "always-online-server.js"))).toBe(true);
   });
 
@@ -239,7 +238,7 @@ describe("extension manifest configuration", () => {
       ignoreSync: true
     });
     expect(properties?.["codexManager.fullCrossPcAccountSyncEnabled"]?.markdownDescription).toContain(
-      "Disabled by default"
+      "off keeps logins local"
     );
     expect(properties?.["codexManager.fullCrossPcAccountSyncEnabled"]?.markdownDescription).toContain("tokens");
     expect(properties?.["codexManager.encryptedSyncScheduleMinutes"]).toBeUndefined();

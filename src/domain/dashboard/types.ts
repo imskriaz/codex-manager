@@ -11,6 +11,7 @@ export type DashboardSettingKey =
   | "privacyMode"
   | "persistentLoggingEnabled"
   | "persistentLogRetentionDays"
+  | "persistentLogLevel"
   | "codexAppRestartEnabled"
   | "codexAppRestartMode"
   | "cliIntegrationEnabled"
@@ -53,6 +54,7 @@ export interface DashboardSettings {
   /** Local file-backed diagnostic preference, disabled by default. */
   persistentLoggingEnabled?: boolean;
   persistentLogRetentionDays?: number;
+  persistentLogLevel?: "debug" | "info" | "warning" | "error";
   codexAppRestartEnabled: boolean;
   codexAppRestartMode: "auto" | "manual";
   /** Master gate for local Codex session access. */
@@ -520,6 +522,7 @@ export type DashboardActionName =
   | "refreshAll"
   | "shareTokens"
   | "exportBackup"
+  | "downloadLogs"
   | "configureEncryptedSync"
   | "syncNow"
   | "setEncryptedSyncRegistryOverride"
@@ -866,6 +869,7 @@ export interface DashboardActionResultPayload {
   notice?: DashboardNotice;
   /** Choice prompts raised while a dashboard action was running. */
   actionPrompts?: DashboardActionPrompt[];
+  logDownload?: { filename: string; text: string };
   sharedJson?: string;
   authJson?: string;
   oauthSession?: DashboardOAuthSessionDescriptor;

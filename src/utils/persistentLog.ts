@@ -1,3 +1,5 @@
+import * as fs from "fs/promises";
+import { waitWithin } from "./concurrency";
 import { fireSqliteConfigurationChanges } from "../storage/configurationEvents";
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
@@ -14,7 +16,7 @@ const MAX_PERSISTENT_LOG_RECORD_BYTES = 64 * 1024;
 const MAX_PENDING_LOG_RECORDS = 128;
 const MAX_PENDING_LOG_BYTES = 2 * 1024 * 1024;
 
-type PersistentLogLevel = "debug" | "info" | "warning" | "error";
+export type PersistentLogLevel = "debug" | "info" | "warning" | "error";
 type OperationStatus = "completed" | "cancelled" | "failed";
 type OperationResult = { status: OperationStatus; errorMessage?: string };
 
@@ -25,6 +27,8 @@ type OperationContext = {
 
 type PersistentLogRecord = {
   timestamp: string;
+  hostRunId?: string;
+  sequence?: number;
   level: PersistentLogLevel;
   scope: string;
   message: string;
@@ -35,6 +39,14 @@ type PersistentLogRecord = {
   details?: unknown;
   error?: unknown;
 };
+
+const LOG_LEVELS: Record<PersistentLogLevel, number> = { debug: 0, info: 1, warning: 2, error: 3 };
+const hostRunId = randomUUID();
+let persistentLogLevel: PersistentLogLevel = "info";
+
+export function isPersistentLogLevel(value: unknown): value is PersistentLogLevel {
+  return typeof value === "string" && Object.hasOwn(LOG_LEVELS, value);
+}
 
 const operationContext = new AsyncLocalStorage<OperationContext>();
 let persistentLogger: PersistentSqliteLogger | undefined;
@@ -55,6 +67,8 @@ export class PersistentSqliteLogger {
   private pendingWrites = 0;
   private pendingBytes = 0;
   private droppedRecords = 0;
+  private minimumLevel: PersistentLogLevel = "info";
+  private sequence = 0;
   private store: SqliteStateStore | undefined;
   private opening: Promise<SqliteStateStore> | undefined;
 
@@ -71,6 +85,8 @@ export class PersistentSqliteLogger {
     this.opening ??= SqliteStateStore.open(this.databasePath).then(store => { this.store = store; return store; }).finally(() => { this.opening = undefined; });
     return this.opening;
   }
+
+  setLevel(level: PersistentLogLevel): void { this.minimumLevel = level; }
 
   setRetentionDays(days: number): void {
     this.retentionDays = days;
@@ -103,6 +119,7 @@ export class PersistentSqliteLogger {
     error?: unknown,
     correlation?: Partial<Pick<PersistentLogRecord, "operationId" | "traceId" | "parentOperationId" | "durationMs">>
   ): void {
+    if (LOG_LEVELS[level] < LOG_LEVELS[this.minimumLevel]) return;
     if (this.pendingWrites >= MAX_PENDING_LOG_RECORDS || this.pendingBytes >= MAX_PENDING_LOG_BYTES) {
       this.droppedRecords += 1;
       return;
@@ -113,6 +130,8 @@ export class PersistentSqliteLogger {
     try {
       const record: PersistentLogRecord = {
         timestamp: recordTime.toISOString(),
+        hostRunId,
+        sequence: ++this.sequence,
         level,
         scope: redactDebugText(scope),
         message: redactDebugText(message),
@@ -194,8 +213,21 @@ export class PersistentSqliteLogger {
   }
 
   async readRecent(): Promise<string> {
+    return (await this.readExport()).records.map(record => JSON.stringify(record)).join("\n");
+  }
+
+  async readExport(): Promise<{ records: unknown[]; limited: boolean }> {
     await this.flush();
-    return (await this.database()).recent<unknown>("logs", 1000).map(record => JSON.stringify(sanitizeLogValue(record))).join("\n");
+    const rows = (await this.database()).recent<unknown>("logs", 1001);
+    const records: unknown[] = [];
+    let bytes = 0;
+    for (const row of rows.slice(0, 1000)) {
+      const record = sanitizeLogValue(row);
+      bytes += Buffer.byteLength(JSON.stringify(record));
+      if (bytes > 512 * 1024) break;
+      records.push(record);
+    }
+    return { records, limited: records.length < rows.length };
   }
 
   async close(): Promise<void> {
@@ -212,10 +244,12 @@ export async function registerPersistentLogging(
   const epoch = loggingEpoch;
   loggingRegistration = { context, storageRoot };
   persistentLogRetentionDays = PERSISTENT_LOG_RETENTION_DAYS;
+  persistentLogLevel = "info";
   try {
     const settings = await readLoggingSettings(storageRoot);
     if (epoch !== loggingEpoch) return;
     persistentLogRetentionDays = settings.retentionDays;
+    persistentLogLevel = settings.level;
     if (settings.enabled) {
       const candidate = await createPersistentLogger(storageRoot, settings.retentionDays);
       if (epoch !== loggingEpoch) { await candidate.close(); return; }
@@ -233,7 +267,7 @@ export async function registerPersistentLogging(
     if (cancelled || registration !== loggingRegistration) return;
     void readLoggingSettings(storageRoot).then(settings => {
       if (cancelled || registration !== loggingRegistration ||
-          (!needsRetry && settings.enabled === isPersistentLoggingEnabled() && settings.retentionDays === persistentLogRetentionDays)) return;
+          (!needsRetry && settings.enabled === isPersistentLoggingEnabled() && settings.retentionDays === persistentLogRetentionDays && settings.level === persistentLogLevel)) return;
       needsRetry = false;
       return updatePersistentLoggingSettings({});
     }).catch(error => {
@@ -277,6 +311,36 @@ export function isPersistentLoggingEnabled(): boolean {
   return persistentLogger !== undefined;
 }
 
+export function getPersistentLogLevel(): PersistentLogLevel { return persistentLogLevel; }
+
+export function setPersistentLogLevel(level: string): Promise<void> {
+  if (!isPersistentLogLevel(level)) return Promise.reject(new Error("Choose Debug, Info, Warnings, or Errors."));
+  return updatePersistentLoggingSettings({ level });
+}
+
+/** Recent redacted records only; a slow log store never blocks other actions. */
+export async function exportPersistentLogs(): Promise<{ filename: string; text: string; limited: boolean }> {
+  if (!loggingRegistration) throw new Error("Logging is still initializing. Retry shortly.");
+  const file = path.join(loggingRegistration.storageRoot, "manager_logs.sqlite");
+  await fs.access(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") throw new Error("No saved logs yet. Enable logging in Data & sync, then retry.");
+    throw error;
+  });
+  const active = persistentLogger;
+  const reading = (async () => {
+    await active?.flush();
+    const reader = new PersistentSqliteLogger(file, persistentLogRetentionDays);
+    try { return await reader.readExport(); } finally { await reader.close(); }
+  })();
+  const result = await waitWithin(reading, 5_000, "Logs did not respond within 5 seconds. Retry after storage responds.");
+  return {
+    filename: `codex-manager-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+    text: JSON.stringify({ format: "codex-manager-logs", version: 1, exportedAt: new Date().toISOString(),
+      level: persistentLogLevel, retentionDays: persistentLogRetentionDays, ...result }),
+    limited: result.limited
+  };
+}
+
 export function getPersistentLogRetentionDays(): number {
   return persistentLogRetentionDays;
 }
@@ -291,14 +355,14 @@ export function setPersistentLoggingEnabled(enabled: boolean): Promise<void> {
   return updatePersistentLoggingSettings({ enabled });
 }
 
-type LoggingSettings = { enabled: boolean; retentionDays: number };
+type LoggingSettings = { enabled: boolean; retentionDays: number; level: PersistentLogLevel };
 
 async function readLoggingSettings(storageRoot: string): Promise<LoggingSettings> {
   const text = await withLoggingSettingsStore(storageRoot, store => store.get<{ text: string | null }>("files", "logging-settings.json")?.text);
   let value: Partial<LoggingSettings> | undefined;
   try { value = text ? JSON.parse(text) as Partial<LoggingSettings> : undefined; }
   catch { /* An explicit settings update can repair a partial preference file. */ }
-  return { enabled: value?.enabled === true, retentionDays: Number.isInteger(value?.retentionDays) && value!.retentionDays! >= 1 && value!.retentionDays! <= 30 ? value!.retentionDays! : PERSISTENT_LOG_RETENTION_DAYS };
+  return { enabled: value?.enabled === true, level: isPersistentLogLevel(value?.level) ? value.level : "info", retentionDays: Number.isInteger(value?.retentionDays) && value!.retentionDays! >= 1 && value!.retentionDays! <= 30 ? value!.retentionDays! : PERSISTENT_LOG_RETENTION_DAYS };
 }
 
 async function withLoggingSettingsStore<T>(storageRoot: string, task: (store: SqliteStateStore) => T): Promise<T> {
@@ -336,10 +400,12 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
       restoreGlobalCapture = installGlobalFailureCapture(candidate, context.extensionPath);
     }
     persistentLogRetentionDays = settings.retentionDays;
+    persistentLogLevel = settings.level;
+    persistentLogger?.setLevel(settings.level);
     persistentLogger?.setRetentionDays(settings.retentionDays);
     if ((patch.retentionDays || retentionChanged || Object.keys(patch).length === 0) && persistentLogger)
       await persistentLogger.pruneExpiredLogs();
-    fireSqliteConfigurationChanges(["persistentLoggingEnabled","persistentLogRetentionDays"]);
+    fireSqliteConfigurationChanges(["persistentLoggingEnabled","persistentLogRetentionDays","persistentLogLevel"]);
   }).finally(() => { if (loggingUpdate === update) { loggingUpdate = undefined; loggingUpdateRequest = ""; } });
   loggingUpdate = update;
   return update;
@@ -348,6 +414,7 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
 async function createPersistentLogger(storageRoot: string, retentionDays: number): Promise<PersistentSqliteLogger> {
   const logger = new PersistentSqliteLogger(path.join(storageRoot, "manager_logs.sqlite"), retentionDays, () => new Date(),
     error => console.warn("[codexManager] diagnostic log write failed; retrying on the next event", toErrorMessage(error)));
+  logger.setLevel(persistentLogLevel);
   try { await logger.initialize(); } catch (error) { await logger.close().catch(() => undefined); throw error; }
   return logger;
 }
@@ -586,6 +653,8 @@ function serializeLogRecord(record: PersistentLogRecord): string {
   }
   return `${JSON.stringify({
     timestamp: record.timestamp,
+    hostRunId: record.hostRunId,
+    sequence: record.sequence,
     level: record.level,
     scope: record.scope.slice(0, 512),
     message: record.message.slice(0, 4096),

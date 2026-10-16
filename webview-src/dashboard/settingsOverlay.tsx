@@ -40,7 +40,7 @@ type SettingsTabId = "general" | "automation" | "data";
 
 export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingKey): boolean {
   // CLI discovery starts after the host commits the setting.
-  return key !== "cliIntegrationEnabled" && key !== "persistentLoggingEnabled" && key !== "persistentLogRetentionDays";
+  return key !== "cliIntegrationEnabled" && key !== "persistentLoggingEnabled" && key !== "persistentLogRetentionDays" && key !== "persistentLogLevel";
 }
 
 export function SettingsOverlay(props: {
@@ -67,6 +67,8 @@ export function SettingsOverlay(props: {
   onClearCodexCliPath: () => void;
   onClearUsageHistory: () => void;
   onExportBackup: () => void;
+  onDownloadLogs: () => void;
+  downloadLogsPending: boolean;
   onImportBackup: () => void;
   onConfigureSync: () => void;
   onSyncNow: () => void;
@@ -190,7 +192,7 @@ export function SettingsOverlay(props: {
               <div class="settings-block settings-block-wide" data-setting="shared-password">
                 <div class="settings-block-head">
                   <div class="settings-block-title">{passwordCopy.title}</div>
-                  <div class="settings-block-sub">{passwordCopy.sub}</div>
+                  <div class="settings-block-sub" title={passwordCopy.sub}>{passwordCopy.sub}</div>
                 </div>
                 {props.encryptedSyncNeedsConfiguration ? (
                   <div class="settings-note settings-notice-warning">{passwordCopy.needsConfiguration}</div>
@@ -212,7 +214,7 @@ export function SettingsOverlay(props: {
                       ? "配置浏览器访问、在线主机和公共域名。"
                       : props.lang === "zh-hant"
                         ? "設定瀏覽器存取、線上主機與公開網域。"
-                        : "Configure browser access, the online host, and public domain."}
+                        : "Browser access and connections."}
                   </div>
                 </div>
                 <SettingsToggleBlock
@@ -220,13 +222,11 @@ export function SettingsOverlay(props: {
                     props.lang === "zh" ? "浏览器面板" : props.lang === "zh-hant" ? "瀏覽器面板" : "Web Dashboard"
                   }
                   sub={
-                    <>
-                      {props.lang === "zh"
+                      props.lang === "zh"
                         ? "在 127.0.0.1:39875 启动浏览器面板。本机访问无需密码；远程登录使用加密同步密码短语。"
                         : props.lang === "zh-hant"
                           ? "在 127.0.0.1:39875 啟動瀏覽器面板。本機存取無需密碼；遠端登入使用加密同步密碼。"
-                          : "Run the browser dashboard at 127.0.0.1:39875. Local access needs no login; remote access uses the shared password."}
-                    </>
+                          : "Open in a browser; remote access needs a password."
                   }
                   enabled={props.settings.webDashboardEnabled}
                   onToggle={(enabled) => patchAndSend("webDashboardEnabled", enabled)}
@@ -237,7 +237,7 @@ export function SettingsOverlay(props: {
                         ? "已启用。点击顶部面板按钮可在浏览器中打开。"
                         : props.lang === "zh-hant"
                           ? "已啟用。點擊頂部面板按鈕可在瀏覽器中開啟。"
-                          : "Enabled. Use the dashboard button at the top to open it in your browser."
+                          : "Open it with the dashboard button above."
                       : props.lang === "zh"
                         ? "已停用。"
                         : props.lang === "zh-hant"
@@ -258,7 +258,7 @@ export function SettingsOverlay(props: {
                           ? "默认停用。启用后可在面板中打开工作区、会话和终端工具。"
                           : props.lang === "zh-hant"
                             ? "預設停用。啟用後可在面板中開啟工作區、工作階段與終端工具。"
-                            : "Disabled by default and stored only on this PC. Enable the workspace view, sessions, and terminal tools in the dashboard."
+                            : "Add chats and terminals to this dashboard."
                       }
                       enabled={props.settings.cliIntegrationEnabled === true}
                       onToggle={(enabled) => patchAndSend("cliIntegrationEnabled", enabled)}
@@ -269,37 +269,37 @@ export function SettingsOverlay(props: {
                             ? "已启用。面板顶部会显示工作区入口。"
                             : props.lang === "zh-hant"
                               ? "已啟用。面板頂部會顯示工作區入口。"
-                              : "Enabled. The workspace entry is available at the top of the dashboard."
+                              : "Workspace is available above."
                           : props.lang === "zh"
                             ? "已停用。工作区入口和会话读取均关闭。"
                             : props.lang === "zh-hant"
                               ? "已停用。工作區入口與工作階段讀取均關閉。"
-                              : "Disabled. The workspace entry and session access are off."}
+                              : "Workspace is off."}
                       </div>
                     </SettingsToggleBlock>
                     {props.settings.cliIntegrationEnabled && (
                       <SettingsSegmentBlock
-                        title="Workspace session transport"
-                        sub="Choose how the workspace runs Codex sessions."
+                        title="Workspace connection"
+                        sub="Choose how chats connect to Codex."
                         className="settings-block-wide settings-session-transport"
                         options={[
                           {
                             key: "app-server-stdio",
                             title: "App server",
-                            description: "Threads and turns (recommended)",
+                            description: "Recommended",
                             active: (props.settings.codexSessionTransport ?? "app-server-stdio") === "app-server-stdio",
                             onClick: () => patchAndSend("codexSessionTransport", "app-server-stdio")
                           },
                           {
                             key: "cli",
                             title: "CLI compatibility",
-                            description: "Exec and transcripts",
+                            description: "Compatibility mode",
                             active: props.settings.codexSessionTransport === "cli",
                             onClick: () => patchAndSend("codexSessionTransport", "cli")
                           }
                         ]}
                       >
-                        <div class="settings-note">Uses your selection directly—no automatic fallback.</div>
+                        <div class="settings-note">Uses the selected connection only.</div>
                       </SettingsSegmentBlock>
                     )}
                   </div>
@@ -311,14 +311,14 @@ export function SettingsOverlay(props: {
                         ? "始终在线 WebSocket 主机"
                         : props.lang === "zh-hant"
                           ? "始終在線 WebSocket 主機"
-                          : "Always-online WebSocket host"
+                          : "Keep connections online"
                     }
                     sub={
                       props.lang === "zh"
                         ? "在此电脑启动独立 Node.js 中继，即使 VS Code 关闭也保持多电脑 WebSocket 在线。建议只在一台常开电脑启用。"
                         : props.lang === "zh-hant"
                           ? "在此電腦啟動獨立 Node.js 中繼，即使 VS Code 關閉也保持多電腦 WebSocket 在線。建議只在一台常開電腦啟用。"
-                          : "Run a detached Node.js relay on this PC so multi-PC WebSockets stay available after VS Code closes. Enable it on one always-on PC."
+                          : "Keep PC connections available after VS Code closes."
                     }
                     enabled={props.settings.webDashboardAlwaysOnlineEnabled === true}
                     onToggle={(enabled) => patchAndSend("webDashboardAlwaysOnlineEnabled", enabled)}
@@ -330,17 +330,17 @@ export function SettingsOverlay(props: {
                             ? "正在等待。请启用加密同步并保存共享密码以启动此主机。"
                             : props.lang === "zh-hant"
                               ? "正在等待。請啟用加密同步並儲存共用密碼以啟動此主機。"
-                              : "Waiting. Enable Encrypted Sync and save the shared password to arm this host."
+                              : "Set a password and enable Auto Sync to start."
                           : props.lang === "zh"
                             ? "已启用。VS Code 关闭后中继会接管 127.0.0.1:39875；Cloudflared 端口无需改变。"
                             : props.lang === "zh-hant"
                               ? "已啟用。VS Code 關閉後中繼會接管 127.0.0.1:39875；Cloudflared 連接埠無需改變。"
-                              : "Enabled. The relay takes over 127.0.0.1:39875 after VS Code closes; Cloudflared needs no port change."
+                              : "Connections stay online while this PC is on."
                         : props.lang === "zh"
                           ? "已停用。VS Code 关闭后不会运行独立中继。"
                           : props.lang === "zh-hant"
                             ? "已停用。VS Code 關閉後不會執行獨立中繼。"
-                            : "Disabled. No detached relay runs after VS Code closes."}
+                            : "Connections close with VS Code."}
                     </div>
                   </SettingsToggleBlock>
                   <div class="settings-block settings-block-wide">
@@ -350,14 +350,14 @@ export function SettingsOverlay(props: {
                           ? "Cloudflared 域名"
                           : props.lang === "zh-hant"
                             ? "Cloudflared 網域"
-                            : "Cloudflared domain"}
+                            : "Shared dashboard address"}
                       </div>
                       <div class="settings-block-sub">
                         {props.lang === "zh"
                           ? "可选：输入 Cloudflared 的 HTTPS 域名以便从其他电脑访问。"
                           : props.lang === "zh-hant"
                             ? "可選：輸入 Cloudflared 的 HTTPS 網域，從其他電腦存取。"
-                            : "Optional: enter the Cloudflared hostname that reaches this dashboard (for example, codex.example.com)."}
+                            : "Optional address for access from other PCs."}
                       </div>
                     </div>
                     <input
@@ -381,7 +381,7 @@ export function SettingsOverlay(props: {
                         ? "简要设置：cloudflared tunnel --url http://127.0.0.1:39875；先设置面板密码，再把此 HTTPS 域名分享给其他电脑。"
                         : props.lang === "zh-hant"
                           ? "簡要設定：cloudflared tunnel --url http://127.0.0.1:39875；先設定面板密碼，再將此 HTTPS 網域分享給其他電腦。"
-                          : "Quick setup: set the Password in General, run cloudflared tunnel --url http://127.0.0.1:39875, then sign in remotely with it."}
+                          : "Set a password before sharing this dashboard."}
                     </div>
                   </div>
                 </div>
@@ -402,14 +402,14 @@ export function SettingsOverlay(props: {
                     ? "可选。指定 Codex CLI 可执行文件或启动脚本；留空则自动检测。"
                     : props.lang === "zh-hant"
                       ? "可選。指定 Codex CLI 可執行檔或啟動腳本；留空則自動偵測。"
-                      : "Optional. Set the Codex CLI executable or launcher script; leave empty for auto-detection."
+                      : "Choose Codex or use auto-detect."
                 }
                 emptyLabel={
                   props.lang === "zh"
                     ? "未设置 CLI 路径，将使用自动检测。"
                     : props.lang === "zh-hant"
                       ? "未設定 CLI 路徑，將使用自動偵測。"
-                      : "No custom CLI path. Automatic detection will be used."
+                      : "Using auto-detect."
                 }
                 pickLabel={
                   props.lang === "zh"
@@ -467,7 +467,7 @@ export function SettingsOverlay(props: {
                 title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
                 sub={
                   props.copy.crossWindowAccountModeSub ??
-                  "Give each VS Code window an isolated Codex home. When off, windows share one account and reload together after switching. Sync and quota refresh are coordinated in both modes."
+                  "Use a separate account in each VS Code window."
                 }
                 enabled={props.settings.crossWindowAccountModeEnabled === true}
                 className="settings-block-wide"
@@ -475,8 +475,8 @@ export function SettingsOverlay(props: {
               >
                 <div class="settings-note">
                   {props.settings.crossWindowAccountModeEnabled
-                    ? "Enabled. New and reloaded windows load accounts independently."
-                    : "Disabled. Windows share the active account and reload together when it changes."}
+                    ? "Windows choose accounts independently."
+                    : "Windows share the current account."}
                 </div>
               </SettingsToggleBlock>
             </div>
@@ -573,7 +573,7 @@ export function SettingsOverlay(props: {
                       title={props.copy.autoResetTitle ?? "Automatic quota reset plan"}
                       sub={
                         props.copy.autoResetSub ??
-                        "Use an available reset credit when every enabled account is out of quota."
+                        "Use a reset credit when all accounts run out."
                       }
                       enabled={props.settings.autoResetEnabled === true}
                       onToggle={(enabled) => patchAndSend("autoResetEnabled", enabled)}
@@ -588,7 +588,7 @@ export function SettingsOverlay(props: {
                           description={(value) =>
                             formatTemplate(
                               props.copy.autoResetThresholdDescTemplate ??
-                                "Reset a candidate when its weekly or monthly quota is {value}% or lower.",
+                                "Use a reset at {value}% long-term quota or less.",
                               value
                             )
                           }
@@ -599,7 +599,7 @@ export function SettingsOverlay(props: {
                     </SettingsToggleBlock>
                     <SettingsToggleBlock
                       title="Wait for running sessions"
-                      sub="When Auto Switch is enabled, keep using the current account until all local sessions finish, then switch automatically. If session inspection fails, Auto Switch continues with a warning."
+                      sub="Switch automatically after running chats finish."
                       enabled={props.settings.autoSwitchWaitForSessionsEnabled === true}
                       onToggle={(enabled) => patchAndSend("autoSwitchWaitForSessionsEnabled", enabled)}
                     />
@@ -619,10 +619,10 @@ export function SettingsOverlay(props: {
                       )}
                     </SettingsToggleBlock>
                     <SettingsToggleBlock
-                      title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh all quotas before warning switch"}
+                      title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh quotas before switching"}
                       sub={
                         props.copy.autoSwitchRefreshAllSub ??
-                        "When the warning limit is reached, refresh enabled accounts before showing the notification so the recommended account is current. If every account is below the automatic-switch threshold, the all-account timer also refreshes the current account until one becomes capable."
+                        "Check available quota before alerts or switches."
                       }
                       enabled={props.settings.autoSwitchRefreshAllBeforeSwitchEnabled === true}
                       onToggle={(enabled) => patchAndSend("autoSwitchRefreshAllBeforeSwitchEnabled", enabled)}
@@ -690,7 +690,7 @@ export function SettingsOverlay(props: {
             <div class="settings-layout">
               <SettingsToggleBlock
                 title="Automatic token history"
-                sub="On account load, collect daily token usage for the current account at most once every hour. Missing account history is collected when the token chart loads. Saved history remains available when off."
+                sub="Save daily usage; existing history stays when off."
                 enabled={props.settings.dailyTokenUsageEnabled !== false}
                 className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}
@@ -702,7 +702,7 @@ export function SettingsOverlay(props: {
                       {usageHistoryCopy.title}
                       <span class="settings-count-badge">{usageHistoryCopy.count}</span>
                     </div>
-                    <div class="settings-block-sub">{usageHistoryCopy.sub}</div>
+                    <div class="settings-block-sub" title={usageHistoryCopy.sub}>{usageHistoryCopy.sub}</div>
                   </div>
                   <button
                     class="settings-history-clear"
@@ -727,7 +727,7 @@ export function SettingsOverlay(props: {
                 />
               </div>
               <div class="settings-block settings-block-wide settings-history-block">
-                <div class="settings-block-head"><div class="settings-block-title">Token history retention</div><div class="settings-block-sub">Keep saved daily token totals across accounts. Longer histories accumulate over future checks; each provider response covers up to 30 days.</div></div>
+                <div class="settings-block-head"><div class="settings-block-title">Token history retention</div><div class="settings-block-sub" title="Choose how long to keep daily token usage.">Choose how long to keep daily token usage.</div></div>
                 <SettingsDiscreteSlider
                   value={props.settings.tokenHistoryRetentionDays ?? 30}
                   values={USAGE_HISTORY_RETENTION_VALUES}
@@ -754,7 +754,7 @@ export function SettingsOverlay(props: {
                   <div class="settings-note settings-notice-warning">{transferCopy.syncNeedsSettingsSync}</div>
                 ) : null}
                 {!props.settings.encryptedSyncClaimAllAccountsEnabled && !props.settings.cloudflaredDomain ? (
-                  <div class="settings-note settings-notice-warning">Set the shared HTTPS dashboard domain in General before switching accounts with Auto Sync on.</div>
+                  <div class="settings-note settings-notice-warning">Set the shared dashboard address in General.</div>
                 ) : null}
                 <div class="settings-note">{transferCopy.syncNote}</div>
                 <div class="settings-actions">
@@ -769,8 +769,8 @@ export function SettingsOverlay(props: {
                   </button>
                 </div>
                 <SettingsToggleBlock
-                  title="Claim all accounts"
-                  sub="Reserve enabled saved accounts on this PC. Turn this off to claim only the currently active account; other saved accounts stay free."
+                  title="Reserve all accounts"
+                  sub="Reserve every enabled account for this PC."
                   enabled={props.settings.encryptedSyncClaimAllAccountsEnabled === true}
                   onToggle={(enabled) => patchAndSend("encryptedSyncClaimAllAccountsEnabled", enabled)}
                 />
@@ -801,8 +801,8 @@ export function SettingsOverlay(props: {
                 </SettingsToggleBlock>
                 <div class="settings-block settings-block-wide">
                   <div class="settings-block-head">
-                    <div class="settings-block-title">Heartbeat gap</div>
-                    <div class="settings-block-sub">Batch changes between VS Code Settings Sync writes. WebSocket changes are sent immediately.</div>
+                    <div class="settings-block-title">Sync interval</div>
+                    <div class="settings-block-sub" title="How often to save changes with VS Code Sync.">How often to save changes with VS Code Sync.</div>
                   </div>
                   <SettingsDiscreteSlider
                     value={props.settings.encryptedSyncVsCodeHeartbeatMinutes ?? 5}
@@ -810,7 +810,7 @@ export function SettingsOverlay(props: {
                     accent="violet"
                     scaleValues={[1, 15, 30, 45, 60]}
                     valueLabel={(value) => `${value} min`}
-                    description={() => "Visual Studio Code sync gap"}
+                    description={() => "VS Code Sync interval"}
                     onPreview={(value) => props.onPatchSettings({ encryptedSyncVsCodeHeartbeatMinutes: value })}
                     onCommit={(value) => patchAndSend("encryptedSyncVsCodeHeartbeatMinutes", value)}
                   />
@@ -819,7 +819,7 @@ export function SettingsOverlay(props: {
               <div class="settings-block settings-block-wide">
                 <div class="settings-block-head">
                   <div class="settings-block-title">{transferCopy.title}</div>
-                  <div class="settings-block-sub">{transferCopy.sub}</div>
+                  <div class="settings-block-sub" title={transferCopy.sub}>{transferCopy.sub}</div>
                 </div>
                 <div class="settings-stack">
                   <div class="settings-actions">
@@ -834,23 +834,44 @@ export function SettingsOverlay(props: {
                 </div>
               </div>
               <SettingsToggleBlock
-                title="Enable SQLite logging"
-                sub="Save diagnostic logs on this PC. Off by default. Sensitive account details are redacted."
+                title="Save diagnostic logs"
+                sub="Save local logs with account secrets hidden."
                 enabled={props.settings.persistentLoggingEnabled === true}
                 className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("persistentLoggingEnabled", enabled)}
               >
+                <label class="settings-block-head">
+                  <span class="settings-block-title">Log level</span>
+                  <select class="settings-select" aria-label="Log level" value={props.settings.persistentLogLevel ?? "info"}
+                    onChange={(event) => patchAndSend("persistentLogLevel", event.currentTarget.value)}>
+                    <option value="debug">Debug — all details</option>
+                    <option value="info">Info — normal activity</option>
+                    <option value="warning">Warnings and errors</option>
+                    <option value="error">Errors only</option>
+                  </select>
+                </label>
                 <SettingsDiscreteSlider
                   value={logRetentionPreview ?? props.settings.persistentLogRetentionDays ?? 3}
                   values={Array.from({ length: 30 }, (_, index) => index + 1)}
                   accent="violet"
                   scaleValues={[1, 7, 14, 21, 30]}
                   valueLabel={(days) => `${days} day${days === 1 ? "" : "s"}`}
-                  description={() => "Keep diagnostic log files"}
+                  description={() => "Keep diagnostic logs"}
                   onPreview={setLogRetentionPreview}
                   onCommit={(days) => { setLogRetentionPreview(undefined); patchAndSend("persistentLogRetentionDays", days); }}
                 />
               </SettingsToggleBlock>
+              <div class="settings-block settings-block-wide">
+                <div class="settings-block-head">
+                  <div class="settings-block-title">Download logs</div>
+                  <div class="settings-block-sub" title="Download recent logs with account secrets hidden.">Download recent logs with account secrets hidden.</div>
+                </div>
+                <div class="settings-actions">
+                  <button class="settings-action-btn" type="button" disabled={props.downloadLogsPending} aria-busy={props.downloadLogsPending} onClick={props.onDownloadLogs}>
+                    {props.downloadLogsPending ? "Preparing logs…" : "Download logs"}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -979,10 +1000,10 @@ function resolveRegistryOverrideText(
 ): string {
   const values = {
     en: {
-      title: "Rescue override",
-      sub: "Unlock a foreign-PC enablement locally without changing the shared registry.",
-      enabled: "Rescue is active on this PC. The shared enable/disable registry is unchanged.",
-      disabled: "Off. Turning this on requires the shared password.",
+      title: "Use reserved accounts",
+      sub: "Use an account reserved by another PC.",
+      enabled: "Active here; another PC may use the same account.",
+      disabled: "Requires the shared password.",
       pending: "Waiting for password verification…"
     },
     zh: {
@@ -1026,7 +1047,7 @@ function resolveUsageHistoryCopy(
   }
   return {
     title: "Quota graph history",
-    sub: "Choose when old graph samples are automatically removed.",
+    sub: "Choose how long to keep quota history.",
     count: `${count} samples`,
     clear: "Clear quota graph history"
   };
@@ -1062,9 +1083,9 @@ function resolvePasswordCopy(
   }
   return {
     title: "Password",
-    sub: "Set one shared password for Codex Manager's protected features.",
-    note: "The same password protects cross-PC claim checks, optional full account sync, remote dashboard login, multi-PC connections, and recovery controls.",
-    needsConfiguration: "Set the password again before protected features can continue.",
+    sub: "Protect remote access, sync, and recovery.",
+    note: "Use the same password on each PC.",
+    needsConfiguration: "Set the shared password to continue.",
     configure: configured ? "Change Password" : "Set Password"
   };
 }
@@ -1113,16 +1134,16 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
   }
   return {
     title: "Manual transfer",
-    sub: "Transfer all account sessions, extension settings, and diagnostic logs.",
+    sub: "Move accounts, settings, and logs between PCs.",
     exportLabel: "Export all sessions",
     importLabel: "Import all sessions",
-    note: "The export contains login tokens. Transfer it securely and delete it when finished.",
+    note: "Contains login tokens; share securely, then delete.",
     syncTitle: "Auto Sync",
-    syncSub: "Reserve the current account so the same account cannot run on multiple PCs. Other saved accounts stay free.",
+    syncSub: "Share account reservations between PCs.",
     syncNote:
-      "Sends changes immediately over WebSocket and batches VS Code Settings Sync writes. Use the same shared HTTPS dashboard domain and Password on each PC.",
+      "Use the same dashboard address and password on each PC.",
     syncNeedsSettingsSync:
-      "VS Code Settings Sync is not active on this PC. Sign in to VS Code and turn on Settings Sync, then try again.",
+      "Sign in to VS Code and enable Settings Sync.",
     syncNow: "Sync now"
   };
 }
@@ -1136,10 +1157,10 @@ function resolveFullAccountSyncText(
   lang: DashboardState["lang"]
 ): string {
   const english = {
-    title: "Full cross-PC account sync",
-    sub: "Share encrypted account sessions and tokens between PCs. Off by default; claim checks work without it.",
-    enabled: "Enabled: sessions and tokens can synchronize to other PCs using the shared password.",
-    disabled: "Disabled: every session and token stays local to this PC. Only ownership claims are shared."
+    title: "Sync account logins",
+    sub: "Share encrypted logins between PCs.",
+    enabled: "Login tokens can sync to PCs with the password.",
+    disabled: "Login tokens stay on this PC."
   };
   const simplified = {
     title: "完整跨电脑账号同步",
@@ -1161,5 +1182,5 @@ function resolveRetentionDescription(value: number, lang: DashboardState["lang"]
     ? `自动删除超过 ${value} 天的记录。`
     : lang === "zh-hant"
       ? `自動刪除超過 ${value} 天的記錄。`
-      : `Automatically remove samples older than ${value} days.`;
+      : `Delete history older than ${value} days.`;
 }

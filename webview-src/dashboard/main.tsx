@@ -517,6 +517,7 @@ function App() {
     sendAction("listWorkspaceTerminals", undefined, { targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
   }, [sendAction, selectedPeerId]);
   const lastAutomaticWorkspaceLoadRef = useRef<string>();
+  const logDownloadRequestRef = useRef<string>();
   const modals = useDashboardModals({
     dispatch,
     sendAction,
@@ -683,6 +684,22 @@ function App() {
           setUsageGraphData(message.payload.usageGraph);
           setUsageGraphError(undefined);
         } else setUsageGraphError(message.error ?? "Saved graph data could not be loaded. Retry to query the database again.");
+      }
+      if (message.type === "dashboard:action-result" && message.action === "downloadLogs" && message.requestId === logDownloadRequestRef.current) {
+        logDownloadRequestRef.current = undefined;
+        if (message.status === "completed" && message.payload?.logDownload) {
+          try {
+            const { filename, text } = message.payload.logDownload;
+            const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+            const link = document.createElement("a");
+            link.href = url; link.download = filename; link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          } catch {
+            showNotice({ level: "error", message: "Log download could not start. Retry in this browser." });
+          }
+        } else if (message.status === "completed" && isBrowserDashboard) {
+          showNotice({ level: "warning", message: "The host returned no log download. Update the host and retry." });
+        }
       }
       if (message.type === "dashboard:action-result" && message.action === "getDailyUsage" && message.accountId) {
         tokenHistoryRefresh.finish(message.requestId, message.status === "completed" && Boolean(message.payload?.dailyUsage), message.error ?? (message.status === "cancelled" ? "Refresh cancelled. Saved history was kept." : "No token history was returned. Saved history was kept."));
@@ -2519,6 +2536,8 @@ function App() {
           }
         }}
         onExportBackup={handleExportBackup}
+        onDownloadLogs={() => { logDownloadRequestRef.current = sendAction("downloadLogs"); }}
+        downloadLogsPending={isActionPending("downloadLogs")}
         onImportBackup={modals.openImportModal}
         onConfigureSync={handleConfigureEncryptedSync}
         onSyncNow={handleSyncNow}

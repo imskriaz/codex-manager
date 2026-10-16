@@ -13,7 +13,7 @@ describe("experimental workspace setting", () => {
     expect(property).toMatchObject({ default: false, scope: "machine" });
     expect(property?.markdownDescription).toContain("Experimental Workspace");
     expect(settings).toContain('"Enable workspace (Experimental)"');
-    expect(settings).toContain("stored only on this PC");
+    expect(settings).toContain("Add chats and terminals to this dashboard.");
     expect(settings).not.toContain("codexSessionDefault");
   });
 });

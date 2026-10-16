@@ -191,14 +191,14 @@ describe("sessions sidebar layout", () => {
     expect(main).not.toContain('"PCs and CLI sessions"');
     expect(main).toContain("mergeCachedCliSessions");
     expect(settings).toContain('"Enable workspace (Experimental)"');
-    expect(settings).toContain("stored only on this PC");
+    expect(settings).toContain("Add chats and terminals to this dashboard.");
   });
 
   it("keeps parallel window accounts with workspace settings instead of automation", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const generalStart = settings.indexOf('id="settings-panel-general"');
     const automationStart = settings.indexOf('id="settings-panel-automation"');
-    const workspaceStart = settings.indexOf('title="Workspace session transport"');
+    const workspaceStart = settings.indexOf('title="Workspace connection"');
     const parallelStart = settings.indexOf("crossWindowAccountModeTitle");
 
     expect(generalStart).toBeGreaterThan(-1);
@@ -531,12 +531,12 @@ describe("sessions sidebar layout", () => {
     expect(packageJson).not.toContain('"app-server-websocket"');
     expect(settings).not.toContain("app-server-websocket");
     expect(settings).toContain('className="settings-block-wide settings-session-transport"');
-    expect(settings).toContain('description: "Threads and turns (recommended)"');
-    expect(settings).toContain('description: "Exec and transcripts"');
-    expect(settings).toContain("Uses your selection directly—no automatic fallback.");
+    expect(settings).toContain('description: "Recommended"');
+    expect(settings).toContain('description: "Compatibility mode"');
+    expect(settings).toContain("Uses the selected connection only.");
     const transportSettings = settings.slice(
-      settings.indexOf('title="Workspace session transport"'),
-      settings.indexOf("</SettingsSegmentBlock>", settings.indexOf('title="Workspace session transport"'))
+      settings.indexOf('title="Workspace connection"'),
+      settings.indexOf("</SettingsSegmentBlock>", settings.indexOf('title="Workspace connection"'))
     );
     expect(transportSettings.match(/key: \"(?:app-server-stdio|cli)\"/g)).toHaveLength(2);
     expect(transportSettings).not.toContain("WebSocket");

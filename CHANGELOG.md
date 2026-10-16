@@ -2,6 +2,10 @@
 
 ## 1.3.2
 
+- Capture running sidebar goals even without a conversation tab. Add shared log levels, redacted recent-log downloads, host-run correlation, and detailed capture/filter/restore decisions.
+
+- Make all dashboard settings compact with short, plain descriptions and remove stretched cards with empty space. Keep warnings and action results readable.
+
 - Look up goals for visible sessions directly so large goal histories cannot hide their status. Verify goal-only capture and restore with native goal storage, including quota-limited parents, paused goals, archived sessions, sub-agents, and failed storage.
 - Keep pending shared-account confirmation and background retry failures out of desktop, dashboard, and push notifications. Preserve background retries, diagnostics, known ownership conflicts, and explicit sync failures.
 - Build 1.3.2 as a stable VSIX without prerelease or preview metadata.

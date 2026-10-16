@@ -31,7 +31,7 @@ describe("always-online WebSocket relay handoff", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
 
     expect(settings).toContain("!props.settings.encryptedSyncEnabled || props.encryptedSyncNeedsConfiguration");
-    expect(settings).toContain("Waiting. Enable Encrypted Sync and save the shared password to arm this host.");
+    expect(settings).toContain("Set a password and enable Auto Sync to start.");
   });
 
   it("generates an unpredictable admin token without host details", () => {

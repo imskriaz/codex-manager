@@ -4,6 +4,7 @@ import * as path from "path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import type { DashboardActionContext } from "../src/presentation/dashboard/actionHandlers";
+import * as diagnostics from "../src/utils/persistentLog";
 import * as encryptedSync from "../src/services/encryptedSync";
 import type { CodexManagerAccountRecord } from "../src/core/types";
 
@@ -1995,3 +1996,28 @@ function createResetContext() {
   context.repo = repo as unknown as DashboardActionContext["repo"];
   return { context, repo, account };
 }
+
+describe("diagnostic downloads", () => {
+  it("returns a browser download directly and keeps independent account mutations available", async () => {
+    vi.spyOn(diagnostics, "exportPersistentLogs").mockResolvedValue({ filename: "logs.json", text: '{"records":[]}', limited: false });
+    const ctx = { ...createContext(), hostKind: "browser" as const };
+    const result = await executeDashboardActionMessage(ctx, { type: "dashboard:action", action: "downloadLogs", requestId: "logs-browser" });
+    expect(result).toMatchObject({ status: "completed", payload: { logDownload: { filename: "logs.json", text: '{"records":[]}' }, notice: { level: "info" } } });
+  });
+  it("surfaces incomplete exports, storage failures, cancellation, and save errors in the initiating UI", async () => {
+    vi.spyOn(diagnostics, "exportPersistentLogs").mockResolvedValue({ filename: "logs.json", text: '{"records":[]}', limited: true });
+    const message = { type: "dashboard:action" as const, action: "downloadLogs" as const, requestId: "logs-result" };
+    expect(await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, message)).toMatchObject({ payload: { notice: { level: "warning" } } });
+    Object.assign(vscode.window, { showSaveDialog: vi.fn().mockResolvedValue(undefined) });
+    expect(await executeDashboardActionMessage(createContext(), message)).toMatchObject({ status: "completed", payload: { notice: { message: "Download cancelled." } } });
+    const save = vi.fn().mockResolvedValue(undefined);
+    Object.assign(vscode.workspace, { fs: { writeFile: save } });
+    vi.mocked(vscode.window.showSaveDialog).mockResolvedValue({ fsPath: "/logs.json" } as never);
+    expect(await executeDashboardActionMessage(createContext(), message)).toMatchObject({ status: "completed", payload: { notice: { level: "warning", message: expect.stringContaining("saved") } } });
+    expect(save).toHaveBeenCalledOnce();
+    save.mockRejectedValueOnce(new Error("disk full"));
+    expect(await executeDashboardActionMessage(createContext(), message)).toMatchObject({ status: "failed", errorMessage: "disk full" });
+    vi.mocked(diagnostics.exportPersistentLogs).mockRejectedValueOnce(new Error("log store locked"));
+    expect(await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, message)).toMatchObject({ status: "failed", errorMessage: "log store locked" });
+  });
+});

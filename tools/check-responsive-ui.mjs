@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { dashboardCopyResources } from "../out/localization/resources/dashboard.js";
 
 // Only GET the canonical local snapshot. All browser actions are intercepted
 // in memory, so this check cannot send a turn or change a real account.
@@ -10,6 +11,7 @@ const origin = process.env.CODEX_MANAGER_UI_URL || "http://127.0.0.1:39875";
 const response = await fetch(`${origin}/api/state`);
 if (!response.ok) throw new Error(`Local dashboard snapshot returned ${response.status}.`);
 const snapshot = await response.json();
+Object.assign(snapshot.copy, dashboardCopyResources.en);
 snapshot.settings.cliIntegrationEnabled = true;
 snapshot.settings.webDashboardEnabled = true;
 snapshot.settings.codexAppRestartEnabled = true;
@@ -19,6 +21,8 @@ snapshot.settings.autoResetEnabled = true;
 snapshot.settings.autoResumeEnabled = true;
 snapshot.settings.privacyMode = true;
 snapshot.settings.dailyTokenUsageEnabled = false;
+snapshot.settings.persistentLoggingEnabled = true;
+snapshot.settings.persistentLogLevel = "info";
 const parentId = "01a04882-d037-7a42-ad24-9afb61901188";
 const runningId = "01a04882-d037-7a42-ad24-9afb61901189";
 const agentId = "01a04882-d037-7a42-ad24-9afb61901190";
@@ -64,7 +68,8 @@ const mockHost = `(() => {
         dispatch({type:'dashboard:snapshot',state});
       } else if(message.type === 'dashboard:action') {
         let payload = {}, error;
-        if(message.action === 'getUsageGraph') payload = {usageGraph:{...message.payload.usageGraph,history:[],dailyUsageCache:[],truncated:false}};
+        if(message.action === 'downloadLogs') payload = {logDownload:{filename:'codex-manager-logs-fixture.json',text:JSON.stringify({format:'codex-manager-logs',records:[]})},notice:{level:'info',message:'Logs prepared for download.'}};
+        else if(message.action === 'getUsageGraph') payload = {usageGraph:{...message.payload.usageGraph,history:[],dailyUsageCache:[],truncated:false}};
         else if(message.action === 'listCodexCliSessions') payload = {cliSessions:sessions,cliComposerConfig:config};
         else if(message.action === 'startCodexCliSession') {
           const session = {id:'01a04882-d037-7a42-ad24-9afb61901198',title:'New smoke chat',status:'idle',projectPath:message.payload.projectPath};
@@ -572,10 +577,12 @@ try {
       await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     } else await page.locator("#settingsOpenButton").click();
     console.log(`Checking ${width}: settings opened`);
+    const settingsStarted = performance.now();
     await page.locator(".overlay.open").waitFor();
     for (const tab of await page.locator(".settings-tab").all()) {
       await tab.click();
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 2), "Settings overflow");
+      assert.deepEqual(await page.locator(".settings-tab-panel:not([hidden]) .settings-block-sub").evaluateAll(elements => elements.filter(element => element.getBoundingClientRect().height > 0).filter(element => element.getBoundingClientRect().height > parseFloat(getComputedStyle(element).lineHeight) + 1).map(element => element.textContent)), [], "Every setting description occupies at most one line");
       if (await tab.getAttribute("id") === "settings-tab-general") {
         const domain = page.locator('input[name="cloudflared-domain"]');
         const domainCard = domain.locator("..");
@@ -628,6 +635,12 @@ try {
         await page.screenshot({ path: path.join(output, `settings-cli-path-${width}x${height}.png`) });
       }
       if (await tab.getAttribute("id") === "settings-tab-data") {
+        const level = page.getByRole("combobox", { name: "Log level", exact: true });
+        await level.selectOption("debug");
+        assert.equal(await level.inputValue(), "debug", "Log level can be changed");
+        await level.selectOption("info");
+        const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download logs", exact: true }).click()]);
+        assert.equal(download.suggestedFilename(), "codex-manager-logs-fixture.json", "Redacted logs can be downloaded in the browser");
         const tokenToggle = page.getByRole("button", { name: "Automatic token history", exact: true });
         const block = tokenToggle.locator("../..");
         const layout = page.locator("#settings-panel-data > .settings-layout");
@@ -643,6 +656,10 @@ try {
         const bounds = await options.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
         assert.ok(bounds.every(rect => Math.abs(rect.width - bounds[0].width) <= 2), "Switching options use equal-width cards");
         if (width > 560) assert.ok(Math.abs(bounds[0].y - bounds[1].y) <= 2 && Math.abs(bounds[2].y - bounds[3].y) <= 2, "Switching options form two rows of two");
+        const refreshCard = page.getByRole("button", { name: snapshot.copy.autoSwitchRefreshAllTitle, exact: true }).locator("../..");
+        const refreshBounds = await refreshCard.boundingBox();
+        const refreshHead = await refreshCard.locator(":scope > .settings-toggle-head").boundingBox();
+        assert.ok(refreshBounds.height <= refreshHead.height + 24, "Quota refresh card has no stretched empty space");
         const resumeToggle = page.getByRole("button", { name: snapshot.copy.autoResumeTitle, exact: true });
         const goalOnly = page.getByRole("button", { name: snapshot.copy.autoResumeGoalOnlyTitle, exact: true });
         await resumeToggle.click();
@@ -655,7 +672,7 @@ try {
         await goalOnly.click();
         assert.equal(await goalOnly.getAttribute("aria-pressed"), previousGoalOnly, "Goal-only preference can be restored");
         await switchToggle.click();
-        await options.first().waitFor({ state: "hidden" });
+        await page.waitForFunction(() => document.querySelectorAll("#settings-panel-automation .settings-integration-grid > .settings-block").length === 0);
         assert.equal(await options.count(), 0, "Switching off hides all dependent controls");
         assert.equal(await page.getByRole("button", { name: snapshot.copy.autoSwitchReloadTitle, exact: true }).isVisible(), false, "Reload settings follow their switching parent");
         await switchToggle.click();
@@ -664,7 +681,9 @@ try {
         await switchCard.scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(output, `settings-switching-${width}x${height}.png`) });
       }
+      await page.screenshot({ path: path.join(output, `settings-${await tab.getAttribute("id")}-${width}x${height}.png`) });
     }
+    console.log(`Settings checks ${width}x${height}: ${Math.round(performance.now() - settingsStarted)}ms`);
     assert.equal(await page.locator('[data-setting-key="backgroundTokenRefreshEnabled"]').count(), 0);
     await page.keyboard.press("Escape");
     assert.equal(await page.locator(".overlay.open").count(), 0, "Escape closes Settings");

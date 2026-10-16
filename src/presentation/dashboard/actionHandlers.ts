@@ -1,3 +1,4 @@
+import { exportPersistentLogs } from "../../utils/persistentLog";
 import { runAccountBatch } from "../../application/accounts/batch";
 import * as vscode from "vscode";
 import { readWorkspaceTerminalActivity } from "../../services/dashboardRealtime";
@@ -106,6 +107,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   // command's narrower operation lock instead of taking a second one here.
   "shareTokens",
   "exportBackup",
+  "downloadLogs",
   "openNetworkLogs",
   "exportAuthFile",
   "copyText",
@@ -404,6 +406,14 @@ async function runDashboardAction(
       return { batchResult: await vscode.commands.executeCommand<DashboardBatchResult>("codexManager.refreshAllQuotas") };
     case "shareTokens":
       return handleShareTokens(ctx.repo, payload, translate);
+    case "downloadLogs": {
+      const logs = await exportPersistentLogs();
+      const notice = { level: logs.limited ? "warning" as const : "info" as const,
+        message: logs.limited ? "Recent logs prepared; older records exceeded the download limit." : "Logs prepared for download." };
+      if (ctx.hostKind === "browser") return { logDownload: { filename: logs.filename, text: logs.text }, notice };
+      const saved = await handleDownloadJsonFile({ filename: logs.filename, text: logs.text });
+      return saved?.notice ? saved : { notice: { ...notice, message: logs.limited ? "Recent logs saved; older records exceeded the download limit." : "Logs saved." } };
+    }
     case "exportBackup":
       return handleExportBackup(ctx.repo);
     case "configureEncryptedSync":
@@ -980,6 +990,7 @@ async function handleExportBackup(repo: AccountsRepository) {
         key !== "resolvedCodexAppPath" &&
         key !== "persistentLoggingEnabled" &&
         key !== "persistentLogRetentionDays" &&
+        key !== "persistentLogLevel" &&
         key !== "encryptedSyncEnabled" &&
         key !== "encryptedSyncClaimAllAccountsEnabled" &&
         key !== "encryptedSyncVsCodeHeartbeatMinutes" &&

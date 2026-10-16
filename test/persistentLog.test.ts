@@ -44,11 +44,11 @@ describe("SQLite persistent diagnostics", () => {
   it("applies logging preferences committed by another window",async()=>{
     const directory=await root(),store=await SqliteStateStore.open(path.join(directory,"manager.sqlite"));
     const peer=await SqliteStateStore.open(store.file);configureSqliteStateStore(store);
-    const {isPersistentLoggingEnabled,getPersistentLogRetentionDays}=await import("../src/utils/persistentLog");
+    const {isPersistentLoggingEnabled,getPersistentLogRetentionDays,getPersistentLogLevel}=await import("../src/utils/persistentLog");
     try {
       await register(directory);
-      peer.set("files","logging-settings.json",{text:JSON.stringify({enabled:true,retentionDays:7})});
-      await vi.waitFor(()=>{expect(isPersistentLoggingEnabled()).toBe(true);expect(getPersistentLogRetentionDays()).toBe(7);});
+      peer.set("files","logging-settings.json",{text:JSON.stringify({enabled:true,retentionDays:7,level:"debug"})});
+      await vi.waitFor(()=>{expect(isPersistentLoggingEnabled()).toBe(true);expect(getPersistentLogRetentionDays()).toBe(7);expect(getPersistentLogLevel()).toBe("debug");});
       peer.set("files","logging-settings.json",{text:JSON.stringify({enabled:false,retentionDays:3})});
       await vi.waitFor(()=>expect(isPersistentLoggingEnabled()).toBe(false));
     } finally {await disposePersistentLogging(true);configureSqliteStateStore(undefined);peer.close();store.close();}
@@ -159,7 +159,7 @@ describe("SQLite persistent diagnostics", () => {
     expect(isPersistentLoggingEnabled()).toBe(true);
     expect(getPersistentLogRetentionDays()).toBe(30);
     const store = await SqliteStateStore.open(path.join(directory, "manager.sqlite"));
-    expect(JSON.parse(store.get<{ text: string }>("files", "logging-settings.json")!.text)).toEqual({ enabled: true, retentionDays: 30 });
+    expect(JSON.parse(store.get<{ text: string }>("files", "logging-settings.json")!.text)).toEqual({ enabled: true, retentionDays: 30, level: "info" });
     expect(store.keys("logs")).toEqual([]);
     store.close();
     await expect(setPersistentLogRetentionDays(31)).rejects.toThrow("1 to 30 days");
@@ -242,4 +242,82 @@ describe("SQLite persistent diagnostics", () => {
     expect(content).toContain('"truncated":true');
     expect(content).toContain("[bigint:9007199254740993]");
   });
+});
+
+it("filters before reading details and changes levels immediately without losing existing records", async () => {
+  const directory = await root(); const log = logger(directory);
+  await log.initialize();
+  const detail = vi.fn(() => "expensive");
+  log.write("debug", "test", "hidden debug", { get detail() { return detail(); } });
+  expect(detail).not.toHaveBeenCalled();
+  log.setLevel("debug"); log.write("debug", "test", "visible debug");
+  log.setLevel("warning"); log.write("info", "test", "hidden info");
+  log.write("warning", "test", "visible warning");
+  log.setLevel("error"); log.write("warning", "test", "hidden warning");
+  log.write("error", "test", "visible error");
+  const saved = await log.readRecent();
+  for (const value of ["hidden debug", "hidden info", "hidden warning"]) expect(saved).not.toContain(value);
+  for (const value of ["visible debug", "visible warning", "visible error", "hostRunId", "sequence"]) expect(saved).toContain(value);
+});
+
+it("persists a validated log level, retains it across disable and restart, and supports dashboard updates", async () => {
+  const directory = await root(); await register(directory);
+  const { getPersistentLogLevel, setPersistentLogLevel, setPersistentLoggingEnabled } = await import("../src/utils/persistentLog");
+  const { handleDashboardSettingUpdate } = await import("../src/presentation/dashboard/settings");
+  expect(getPersistentLogLevel()).toBe("info");
+  await expect(setPersistentLogLevel("verbose")).rejects.toThrow("Choose");
+  await expect(handleDashboardSettingUpdate("persistentLogLevel", true)).resolves.toBe(false);
+  await expect(handleDashboardSettingUpdate("persistentLogLevel", "debug")).resolves.toBe(true);
+  await setPersistentLoggingEnabled(true); await setPersistentLoggingEnabled(false);
+  await disposePersistentLogging(true); await register(directory);
+  expect(getPersistentLogLevel()).toBe("debug");
+});
+
+it("downloads redacted retained logs even after logging is disabled and bounds export size", async () => {
+  const directory = await root(); await register(directory);
+  const { exportPersistentLogs, setPersistentLoggingEnabled, recordPersistentEvent } = await import("../src/utils/persistentLog");
+  await expect(exportPersistentLogs()).rejects.toThrow("No saved logs");
+  await setPersistentLoggingEnabled(true);
+  recordPersistentEvent("error", "test", "failure for dev@example.com", { accessToken: "secret-value" });
+  await setPersistentLoggingEnabled(false);
+  const exported = await exportPersistentLogs();
+  expect(exported.filename).toMatch(/^codex-manager-logs-.*\.json$/);
+  expect(exported.text).not.toContain("secret-value"); expect(exported.text).not.toContain("dev@example.com");
+  expect(JSON.parse(exported.text)).toMatchObject({ format: "codex-manager-logs", level: "info", limited: false });
+  const log = logger(directory);
+  for (let i = 0; i < 1050; i++) { log.write("info", "test", `event-${i}`); if (i % 100 === 0) await log.flush(); }
+  const result = await log.readExport();
+  expect(result.limited).toBe(true); expect(result.records).toHaveLength(1000);
+  for (let i = 0; i < 20; i++) log.write("info", "test", "x".repeat(60000));
+  const large = await log.readExport();
+  expect(large.limited).toBe(true); expect(Buffer.byteLength(JSON.stringify(large))).toBeLessThan(600000);
+});
+
+it("reports export storage errors and bounds an unresponsive flush", async () => {
+  const directory = await root(); await enable(directory); await register(directory);
+  const { exportPersistentLogs } = await import("../src/utils/persistentLog");
+  const read = vi.spyOn(PersistentSqliteLogger.prototype, "readExport").mockRejectedValueOnce(new Error("locked logs"));
+  await expect(exportPersistentLogs()).rejects.toThrow("locked logs");
+  vi.useFakeTimers();
+  try {
+    read.mockImplementationOnce(() => new Promise(() => {}));
+    const result = expect(exportPersistentLogs()).rejects.toThrow("5 seconds");
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(5001); await result;
+  } finally { vi.useRealTimers(); read.mockRestore(); }
+});
+
+it("finishes a download if logging is disabled while the export is reading", async () => {
+  const directory = await root(); await enable(directory); await register(directory);
+  const { exportPersistentLogs, setPersistentLoggingEnabled } = await import("../src/utils/persistentLog");
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const original = PersistentSqliteLogger.prototype.readExport;
+  const read = vi.spyOn(PersistentSqliteLogger.prototype, "readExport").mockImplementationOnce(async function() {
+    await gate; return original.call(this);
+  });
+  const download = exportPersistentLogs();
+  await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+  await setPersistentLoggingEnabled(false); release();
+  expect(JSON.parse((await download).text).records.length).toBeGreaterThan(0);
 });

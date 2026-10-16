@@ -45,13 +45,13 @@
             "manual"
           ],
           "default": "manual",
-          "markdownDescription": "How to handle the Codex desktop experience restart when switching accounts. Supports both the merged ChatGPT app and legacy Codex app. `auto` restarts it automatically, `manual` asks you to click restart each time."
+          "markdownDescription": "Restart the running desktop app automatically or ask each time."
         },
         "codexManager.codexAppRestartEnabled": {
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Whether Codex Manager should manage the ChatGPT/Codex desktop app when switching accounts. Turn this off to skip restart prompts and app handling entirely."
+          "markdownDescription": "Manage desktop app restarts after account switches."
         },
         "codexManager.dashboardTheme": {
           "type": "string",
@@ -61,12 +61,12 @@
             "light"
           ],
           "default": "auto",
-          "markdownDescription": "Theme used by the Codex Manager dashboard. `auto` follows the current VS Code color theme."
+          "markdownDescription": "Choose a dashboard theme; `auto` follows VS Code."
         },
         "codexManager.privacyMode": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Hide sensitive account identity values across every Codex Manager dashboard and account details surface. This user setting is shared by all open views."
+          "markdownDescription": "Hide account identities in all dashboards and account details."
         },
         "codexManager.displayLanguage": {
           "type": "string",
@@ -74,7 +74,7 @@
             "en"
           ],
           "default": "en",
-          "markdownDescription": "Language used by Codex Manager. Version 1.0.0 uses English throughout the extension."
+          "markdownDescription": "Choose the language for Codex Manager."
         },
         "codexManager.autoRefreshMinutes": {
           "type": "number",
@@ -82,7 +82,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 15,
-          "markdownDescription": "Automatically refresh all saved account quotas every N minutes. Set to `0` to disable periodic polling; enabled accounts still refresh when a quota reset countdown expires. Values from `1` to `4` are safely normalized to `5` minutes."
+          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`–`4` use `5`."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",
@@ -90,7 +90,7 @@
           "maximum": 60,
           "multipleOf": 1,
           "default": 1,
-          "markdownDescription": "Automatically refresh only the current active account quota every N minutes. Set to `0` to disable periodic polling, or choose any interval from `1` to `60` minutes. Quota reset countdowns still trigger a refresh. Cross-PC ownership prevents duplicate background polling of the same account."
+          "markdownDescription": "Check current account quota every N minutes; `0` turns polling off."
         },
         "codexManager.tokenHistoryRetentionDays": {
           "type": "number",
@@ -98,12 +98,12 @@
           "maximum": 90,
           "multipleOf": 1,
           "default": 30,
-          "markdownDescription": "Keep saved daily token history for this many days. Longer histories accumulate as accounts are checked; the provider supplies up to 30 days per check."
+          "markdownDescription": "Choose how many days of daily token usage to keep."
         },
         "codexManager.dailyTokenUsageEnabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Collect daily token usage when the current account loads, at most once every hour per account. Missing account history is collected when the token chart loads. Saved usage remains available when disabled."
+          "markdownDescription": "Save daily usage hourly and fill missing chart history; saved usage stays when off."
         },
         "codexManager.usageHistoryRetentionDays": {
           "type": "number",
@@ -111,13 +111,13 @@
           "maximum": 90,
           "multipleOf": 1,
           "default": 7,
-          "markdownDescription": "How long quota graph history is retained. Choose a retention period from `1` to `90` days."
+          "markdownDescription": "Choose how many days of quota history to keep."
         },
         "codexManager.cliIntegrationEnabled": {
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "markdownDescription": "Experimental Workspace: enable the dashboard workspace, local Codex CLI sessions, and terminal tools. Disabled by default. Auto Resume can read running session metadata independently when enabled."
+          "markdownDescription": "Experimental Workspace: add chats and terminals to the dashboard."
         },
         "codexManager.codexSessionTransport": {
           "type": "string",
@@ -127,111 +127,111 @@
             "cli"
           ],
           "default": "app-server-stdio",
-          "markdownDescription": "Transport for embedded local Codex sessions. App-server stdio uses the supported thread/turn protocol; CLI uses the compatibility path. The selected transport is used directly and is never silently changed."
+          "markdownDescription": "Choose the workspace connection: app server (recommended) or CLI compatibility."
         },
         "codexManager.autoSwitchEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Automatically switch away from the active account when its quota falls below the configured 5-hour or long-window threshold. The long window is shown as weekly or monthly according to each account."
+          "markdownDescription": "Switch accounts when current quota reaches either configured limit."
         },
         "codexManager.autoSwitchWaitForSessionsEnabled": {
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "markdownDescription": "Wait until all local Codex sessions finish before automatically switching accounts or resetting quota. Unreadable session state pauses automatic selection until it can be verified. Manual account switching remains available."
+          "markdownDescription": "Wait for running chats before automatic switches or resets; manual switching stays available."
         },
         "codexManager.autoSwitchReloadWindowEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Automatically reload the current VS Code window after an automatic or manual account switch when the active runtime account changes. Applies to both shared and isolated account windows."
+          "markdownDescription": "Automatically reload VS Code after an account switch changes the active account."
         },
         "codexManager.autoResumeEnabled": {
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Experimental: while Auto Switch is enabled, save running and quota-interrupted parent conversation tabs to SQLite and reopen them after a VS Code restart. Managed Reload reuses running-session checks verified within the last 30 seconds. Turning Auto Switch off disables Auto Resume and clears saved recovery; the Auto Resume preference is retained. Skip completed, cancelled, and unrelated idle tabs and sub-agents. Works without enabling Session Integration."
+          "markdownDescription": "Experimental: with Auto Switch on, reopen unfinished parent chats after a VS Code restart."
         },
         "codexManager.autoResumeGoalOnlyEnabled": {
           "type": "boolean",
           "scope": "machine",
           "default": true,
-          "markdownDescription": "While Auto Switch and Auto Resume are on, reopen only parent sessions with an active or usage-limited goal. Quota exhaustion keeps a goal eligible for recovery. Turn this off to resume all eligible parent sessions."
+          "markdownDescription": "Resume only chats with active or quota-paused goals; off includes other unfinished parent chats."
         },
         "codexManager.crossWindowAccountModeEnabled": {
           "type": "boolean",
           "scope": "machine",
           "default": false,
           "ignoreSync": true,
-          "markdownDescription": "Experimental: give each VS Code window an isolated CODEX_HOME so windows can run the same or different saved accounts independently. Disabled by default; when off, account behavior stays unchanged."
+          "markdownDescription": "Experimental: use a separate account in each VS Code window."
         },
         "codexManager.autoSwitchHourlyThreshold": {
           "type": "number",
           "minimum": 0,
           "maximum": 20,
           "default": 5,
-          "markdownDescription": "Automatic account switching threshold for the 5-hour quota. Switching is triggered when the active account drops to or below this percentage."
+          "markdownDescription": "Switch when remaining 5-hour quota reaches this percentage or less."
         },
         "codexManager.autoSwitchWeeklyThreshold": {
           "type": "number",
           "minimum": 0,
           "maximum": 20,
           "default": 0,
-          "markdownDescription": "Automatic account switching threshold for the account's long-window quota (weekly or monthly). Switching is triggered when the account drops to or below this percentage."
+          "markdownDescription": "Switch when remaining weekly or monthly quota reaches this percentage or less."
         },
         "codexManager.autoSwitchRefreshAllBeforeSwitchEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "When the warning threshold is reached, refresh enabled account quotas before showing the notification so the recommended switch account is current. If every account is below the automatic-switch threshold, the configured all-account timer resumes and includes the current account until one becomes capable."
+          "markdownDescription": "Check enabled account quotas before alerts or automatic switches."
         },
         "codexManager.autoResetEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "When all enabled accounts are out of quota, automatically consume an available reset credit on an eligible account, refresh it, and switch to it."
+          "markdownDescription": "Use an available reset credit when every enabled account is out of quota."
         },
         "codexManager.autoResetWeeklyThreshold": {
           "type": "number",
           "minimum": 0,
           "maximum": 100,
           "default": 0,
-          "markdownDescription": "Long-window quota percentage (weekly or monthly) at or below which the reset plan may consume a reset credit."
+          "markdownDescription": "Use a reset credit when weekly or monthly quota reaches this percentage or less."
         },
         "codexManager.autoSwitchLockMinutes": {
           "type": "number",
           "minimum": 0,
           "maximum": 120,
           "default": 0,
-          "markdownDescription": "Default lock duration in minutes when temporarily locking the current account against automatic account switching. Set to `0` to disable locking by default."
+          "markdownDescription": "Keep the current account for this many minutes; `0` disables the default lock."
         },
         "codexManager.codexAppPath": {
           "type": "string",
           "scope": "machine",
           "default": "",
-          "markdownDescription": "Optional custom path to the Codex desktop app. If empty, the extension uses built-in platform-specific detection."
+          "markdownDescription": "Choose the desktop app location or leave empty for auto-detect."
         },
         "codexManager.codexCliPath": {
           "type": "string",
           "scope": "machine",
           "default": "",
-          "markdownDescription": "Optional custom path to the Codex CLI executable or launcher script. If empty, the extension uses CODEX_CLI_PATH, the bundled CLI, or the codex command on PATH."
+          "markdownDescription": "Choose the Codex program or leave empty for auto-detect."
         },
         "codexManager.quotaWarningEnabled": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show a warning notification when the active account's 5-hour or long-window remaining quota drops below the configured threshold."
+          "markdownDescription": "Warn when current account quota falls below either configured limit."
         },
         "codexManager.quotaWarningThreshold": {
           "type": "number",
           "minimum": 0,
           "maximum": 90,
           "default": 10,
-          "markdownDescription": "Warning threshold percentage for the active account's 5-hour remaining quota."
+          "markdownDescription": "Warn below this percentage of remaining 5-hour quota."
         },
         "codexManager.quotaWarningWeeklyThreshold": {
           "type": "number",
           "minimum": 0,
           "maximum": 90,
           "default": 1,
-          "markdownDescription": "Warning threshold percentage for the active account's long-window remaining quota (weekly or monthly)."
+          "markdownDescription": "Warn below this percentage of remaining weekly or monthly quota."
         },
         "codexManager.quotaGreenThreshold": {
           "type": "number",
@@ -243,7 +243,7 @@
             90
           ],
           "default": 60,
-          "markdownDescription": "Quota percentage at or above this value is shown in green."
+          "markdownDescription": "Show green from this percentage of remaining quota."
         },
         "codexManager.quotaYellowThreshold": {
           "type": "number",
@@ -255,45 +255,45 @@
             50
           ],
           "default": 20,
-          "markdownDescription": "Quota percentage at or above this value is shown in yellow. Values below this threshold are shown in red."
+          "markdownDescription": "Show yellow from this percentage until green; lower values appear red."
         },
         "codexManager.encryptedSyncEnabled": {
           "type": "boolean",
           "default": true,
           "scope": "machine",
           "ignoreSync": true,
-          "markdownDescription": "Auto Sync: share encrypted account ownership claims to prevent the same account running on multiple PCs. Claim all accounts, Full cross-PC account sync, and Rescue override are nested options in the dashboard."
+          "markdownDescription": "Share encrypted account reservations between PCs."
         },
         "codexManager.fullCrossPcAccountSyncEnabled": {
           "type": "boolean",
           "default": false,
           "scope": "machine",
           "ignoreSync": true,
-          "markdownDescription": "Explicitly synchronize encrypted account sessions and tokens across PCs. Disabled by default; Auto Sync claim checks continue independently."
+          "markdownDescription": "Share encrypted account sessions and tokens between PCs; off keeps logins local."
         },
         "codexManager.webDashboardEnabled": {
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "markdownDescription": "Run the local browser dashboard on 127.0.0.1:39875. Local access does not require a password. Set the shared Password in General before exposing the port through Cloudflared or another tunnel."
+          "markdownDescription": "Open a browser dashboard on this PC; set a shared password before allowing remote access."
         },
         "codexManager.webDashboardAlwaysOnlineEnabled": {
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Keep a detached Node.js WebSocket relay running after VS Code closes. Enable this on one always-on PC; it takes over port 39875 after VS Code exits. The normal VS Code dashboard remains available while VS Code is running."
+          "markdownDescription": "Keep PC connections online after VS Code closes; enable on one always-on PC."
         },
         "codexManager.cloudflaredDomain": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional HTTPS Cloudflared domain for the dashboard, for example https://codex.example.com. Point the tunnel to http://127.0.0.1:39875 and set the shared Password in General before sharing it. Leave empty to use local access only."
+          "markdownDescription": "Optional HTTPS dashboard address for other PCs; set a shared password before sharing."
         },
         "codexManager.encryptedSyncClaimAllAccountsEnabled": {
           "type": "boolean",
           "default": false,
           "scope": "machine",
           "ignoreSync": true,
-          "markdownDescription": "Auto Sync: claim all enabled saved accounts on this PC. Off by default: only the currently active account is reserved, leaving other accounts free. Use the same shared HTTPS dashboard domain and password on every PC."
+          "markdownDescription": "Reserve every enabled account for this PC; off reserves only the current account."
         },
         "codexManager.encryptedSyncVsCodeHeartbeatMinutes": {
           "type": "number",
@@ -303,7 +303,7 @@
           "default": 5,
           "scope": "machine",
           "ignoreSync": true,
-          "markdownDescription": "Minimum gap in minutes between accumulated VS Code Settings Sync writes."
+          "markdownDescription": "Choose the minimum interval between VS Code Settings Sync saves."
         }
       }
     },
@@ -385,7 +385,7 @@
     "verify": "npm run lint && npm run typecheck:webview && tsc -p ./",
     "format": "prettier --write \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
-    "test:ui": "npm run build:webview && node tools/check-responsive-ui.mjs && node tools/check-browser-notifications.mjs",
+    "test:ui": "npm run compile && node tools/check-responsive-ui.mjs && node tools/check-browser-notifications.mjs",
     "test:ui:live": "node tools/check-live-ui.mjs",
     "test:ui:actions": "node tools/check-live-actions.mjs --mutate"
   },

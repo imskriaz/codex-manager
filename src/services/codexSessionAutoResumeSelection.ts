@@ -1,3 +1,4 @@
+import { recordPersistentEvent } from "../utils/persistentLog";
 import * as fs from "fs/promises";
 import * as path from "path";
 import {
@@ -5,7 +6,8 @@ import {
   readOpenCodexSessionIds,
   readRunningCodexSessionIds,
   readQuotaInterruptedCodexSessionIds,
-  resolveCodexHome
+  resolveCodexHome,
+  SESSION_ID_PATTERN
 } from "./codexSessionResume";
 import { readSubAgentMetadata } from "../domain/sessionSource";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
@@ -29,26 +31,50 @@ export async function filterAutoResumeGoalSessionIds(
   if (!goalOnly || !ids.length) return ids;
   let db: SqliteDatabase | undefined;
   try {
-    const names = await fs.readdir(home).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return [];
-      throw error;
-    });
-    const candidates = names.filter((name) => /^goals_[0-9]+\.sqlite$/.test(name));
-    candidates.sort((a, b) => Number(b.split("_")[1]?.split(".")[0]) - Number(a.split("_")[1]?.split(".")[0]));
-    if (!candidates[0]) return [];
-    const moduleName = "node:sqlite";
-    const sqlite = await import(moduleName) as SqliteModule;
-    db = new sqlite.DatabaseSync(path.join(home, candidates[0]), { readOnly: true });
+    db = await openGoalDatabase(home);
+    if (!db) {
+      recordPersistentEvent("debug", "auto-resume", "Goal filter found no native goal database", { count: ids.length });
+      return [];
+    }
     const statement = db.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
     return ids.filter((id) => {
       signal?.throwIfAborted();
       const status = statement.get(id)?.["status"];
-      return status === "active" || status === "usage_limited";
+      const eligible = status === "active" || status === "usage_limited";
+      recordPersistentEvent("debug", "auto-resume", "Goal eligibility checked", { sessionId: id, status: status ?? "missing", eligible });
+      return eligible;
     });
   } catch (error) {
     signal?.throwIfAborted();
+    recordPersistentEvent("warning", "auto-resume", "Goal verification failed; recovery retained", { count: ids.length }, error);
     throw new Error(`Auto Resume could not verify active goals. Saved recovery was retained; retry after goal storage is available. ${error instanceof Error ? error.message : String(error)}`);
   } finally { db?.close(); }
+}
+
+async function openGoalDatabase(home: string): Promise<SqliteDatabase | undefined> {
+  const names = await fs.readdir(home).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  const candidates = names.filter(name => /^goals_[0-9]+\.sqlite$/.test(name));
+  candidates.sort((a, b) => Number(b.split("_")[1]?.split(".")[0]) - Number(a.split("_")[1]?.split(".")[0]));
+  if (!candidates[0]) return undefined;
+  const moduleName = "node:sqlite";
+  const sqlite = await import(moduleName) as SqliteModule;
+  return new sqlite.DatabaseSync(path.join(home, candidates[0]), { readOnly: true });
+}
+
+/** Sidebar goals have no conversation tab; inspect only these bounded candidates. */
+export async function readAutoResumeGoalCandidateIds(home = resolveCodexHome(), signal?: AbortSignal): Promise<string[]> {
+  signal?.throwIfAborted();
+  const db = await openGoalDatabase(home);
+  if (!db) return [];
+  try {
+    const rows = db.prepare("SELECT thread_id FROM thread_goals WHERE status IN ('active','usage_limited') LIMIT 10001").all();
+    signal?.throwIfAborted();
+    if (rows.length > 10000) throw new Error("Goal recovery exceeded its safe discovery limit. Saved recovery was retained.");
+    return rows.map(row => row["thread_id"]).filter((id): id is string => typeof id === "string" && SESSION_ID_PATTERN.test(id));
+  } finally { db.close(); }
 }
 
 /** Optional runtime capability: never create or migrate Codex's databases. */
@@ -94,6 +120,7 @@ export async function readAutoResumeCodexSessionIds(
     const inspect = candidateSessionIds?.filter(id => !interrupted.includes(id));
     const live = runningSessionIds ?? (inspect?.length === 0 ? [] : await readRunningCodexSessionIds(home, signal, inspect));
     running = [...new Set([...live, ...interrupted])];
+    recordPersistentEvent("debug", "auto-resume", "Running and quota-interrupted candidates discovered", { live, interrupted, requestedCount: candidateSessionIds?.length });
   }
   signal?.throwIfAborted();
   if (!running.length) return [];
@@ -115,7 +142,10 @@ export async function readAutoResumeCodexSessionIds(
         }
       }
       const transcript = transcripts.get(id);
-      if (metadata?.["archived"] === 1 || transcript?.startsWith(path.join(home,"archived_sessions")+path.sep)) continue;
+      if (metadata?.["archived"] === 1 || transcript?.startsWith(path.join(home,"archived_sessions")+path.sep)) {
+        recordPersistentEvent("debug", "auto-resume", "Session skipped", { sessionId: id, reason: "archived" });
+        continue;
+      }
       if ((typeof metadata?.["source"] !== "string" || !metadata?.["source"] || !metadata?.["cwd"]) && transcript) {
         let parsedMetadata = false;
         const raw = await readSafeFileSnapshot(transcript, { maxBytes: 1024 * 1024 })
@@ -150,7 +180,10 @@ export async function readAutoResumeCodexSessionIds(
         )
           continue;
       }
-      if (readSubAgentMetadata(metadata?.["source"]).subAgent) continue;
+      if (readSubAgentMetadata(metadata?.["source"]).subAgent) {
+        recordPersistentEvent("debug", "auto-resume", "Session skipped", { sessionId: id, reason: "sub-agent" });
+        continue;
+      }
       if (typeof metadata?.["source"] !== "string" || !metadata["source"].trim()) {
         throw new Error(
           "Running Codex session metadata is missing or incomplete. Retry Reload after Codex finishes writing it."
@@ -174,6 +207,7 @@ export async function readAutoResumeCodexSessionIds(
         continue;
       parents.push(id);
     }
+    recordPersistentEvent("debug", "auto-resume", "Parent session selection completed", { candidates: running, parents, goalOnly });
     return filterAutoResumeGoalSessionIds(parents, home, signal, goalOnly);
   } finally {
     state?.close();
