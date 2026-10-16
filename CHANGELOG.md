@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.6
+## 1.3.1
 
 - Share committed SQLite change notifications, prepared queries, discovery results, and credential reads; batch session/status commits and dispose subscriptions with their owners. Keep failed batches retryable and discard stale cache completions.
 - Remove verified duplicate migration records and retired storage without discarding unknown account recovery data.

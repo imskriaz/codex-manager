@@ -17,11 +17,11 @@ describe("extension manifest configuration", () => {
     expect(manifest).toMatchObject({
       name: "codex-manager",
       displayName: "Codex Manager",
-      preview: false,
+      preview: true,
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.2.6");
+    expect(manifest.version).toBe("1.3.1");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });
