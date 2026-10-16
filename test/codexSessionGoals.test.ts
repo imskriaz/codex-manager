@@ -11,6 +11,27 @@ beforeEach(async () => { home = await mkdtemp(path.join(os.tmpdir(), "codex-goal
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
 describe("native browser goal state", () => {
+  it("finds selected goals beyond the history limit and handles multiple query batches", async () => {
+    const db = new DatabaseSync(path.join(home, "goals_1.sqlite"));
+    try {
+      db.exec("CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY, objective TEXT, status TEXT, time_used_seconds INTEGER)");
+      const insert = db.prepare("INSERT INTO thread_goals VALUES (?, 'Saved goal', 'active', 1)");
+      db.exec("BEGIN");
+      for (let index = 0; index < 2600; index++) insert.run(`session-${index}`);
+      db.exec("COMMIT");
+      expect((await readCodexSessionGoals(home))?.size).toBe(2000);
+      const ids = Array.from({ length: 600 }, (_, index) => `session-${index + 2000}`);
+      const selected = await readCodexSessionGoals(home, [...ids, ids[0]!, "missing"]);
+      expect(selected?.size).toBe(600);
+      expect(selected?.get("session-2599")).toMatchObject({ status: "active", elapsedMs: 1000 });
+      db.exec("UPDATE thread_goals SET status='usage_limited' WHERE thread_id='session-2599'");
+      expect((await readCodexSessionGoals(home, ["session-2599"]))?.get("session-2599")?.status).toBe("usage_limited");
+      db.exec("DELETE FROM thread_goals WHERE thread_id='session-2599'");
+      expect((await readCodexSessionGoals(home, ["session-2599"]))?.size).toBe(0);
+      expect((await readCodexSessionGoals(home, []))?.size).toBe(0);
+    } finally { db.close(); }
+  });
+
   it("shows an existing goal without message history and reflects pause and deletion", async () => {
     const db = new DatabaseSync(path.join(home, "goals_1.sqlite"));
     try {

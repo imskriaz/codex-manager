@@ -2,6 +2,7 @@
 
 ## 1.3.2
 
+- Look up goals for visible sessions directly so large goal histories cannot hide their status. Verify goal-only capture and restore with native goal storage, including quota-limited parents, paused goals, archived sessions, sub-agents, and failed storage.
 - Keep pending shared-account confirmation and background retry failures out of desktop, dashboard, and push notifications. Preserve background retries, diagnostics, known ownership conflicts, and explicit sync failures.
 - Build 1.3.2 as a stable VSIX without prerelease or preview metadata.
 - Coordinate account credentials, token renewal, provider request budgets, browser sessions, OAuth completion, file edits, and Git mutations across local windows through shared SQLite leases. Share compatible quota, credit, profile, subscription, and local-session reads; use one batch runner. Preserve newer credentials and metadata, reject stale reset-credit snapshots, and retain completed reads when their optional result cache cannot be saved.

@@ -176,8 +176,8 @@ const en: DashboardCopy = {
   autoSwitchReloadSub:
     "Automatically reload VS Code after quota-triggered switching, and restart Codex App too when your restart policy allows it.",
   autoResumeTitle: "Auto resume sessions (Experimental)",
-  autoResumeGoalOnlyTitle: "Resume goal sessions only",
-  autoResumeGoalOnlySub: "Reopen only parent sessions with an active or usage-limited goal, including work stopped by exhausted quota. Enabled by default. Turn off to include eligible parent sessions without goals.",
+  autoResumeGoalOnlyTitle: "Resume sessions with running goals only",
+  autoResumeGoalOnlySub: "Reopen eligible parent sessions with an active goal or one stopped by exhausted quota. Paused and completed goals are excluded. Enabled by default. Turn off to include eligible parent sessions without goals.",
   autoResumeSub:
     "While Auto Switch is on, running and quota-interrupted parent sessions are saved to SQLite and reopen after Reload or a VS Code restart. Goal-only mode includes active and usage-limited goals. Completed, cancelled, unrelated idle tabs and sub-agents are skipped. Works without Session Integration.",
   autoSwitchLockMinutesTitle: "Temporary Lock Duration",

@@ -180,7 +180,7 @@ async function readLocalSessionListInternal(codexHome: string, limit: number): P
   const child = (entry: CliSessionIndexEntry): boolean => Boolean(readSubAgentMetadata(records.get(entry.id)?.source).subAgent);
   const visibleEntries = [...ordered.filter((entry) => !child(entry) && !archivedIds.has(entry.id)).filter((entry, index) => runningIds.has(entry.id) || index < cappedLimit), ...ordered.filter((entry) => !child(entry) && archivedIds.has(entry.id)).slice(0, cappedLimit), ...ordered.filter(child).filter((entry, index) => runningIds.has(entry.id) || index < cappedLimit)];
   const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(visibleEntries.map((entry) => entry.id)));
-  const goals = await readCodexSessionGoals(codexHome);
+  const goals = await readCodexSessionGoals(codexHome, visibleEntries.map(entry => entry.id));
   const summaries: DashboardCliSessionSummary[] = [];
   await runWithConcurrencyLimit(visibleEntries, 32, async (entry, index) => {
     const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id),
@@ -252,7 +252,7 @@ export async function readCodexCliSessionSummary(
     findCliSessionTranscripts(codexHome, new Set([sessionId]))
   ]);
   const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id) || Boolean(state?.archived), transcriptPaths.get(entry.id));
-  const goals = await readCodexSessionGoals(codexHome);
+  const goals = await readCodexSessionGoals(codexHome, [sessionId]);
   return { ...summary, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
 }
 
@@ -482,7 +482,7 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
     const stateRecords = new Map((await readStateSessionRecords(codexHome)).map((record) => [record.id, record]));
     const metadataIds = new Set(sessions.filter((session) => !session.subAgent || !session.parentSessionId || !session.projectPath || !session.sessionSurface).map((session) => session.id));
     const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(sessions.map((session) => session.id)));
-    const goals = await readCodexSessionGoals(codexHome);
+    const goals = await readCodexSessionGoals(codexHome, sessions.map(session => session.id));
     const enriched: DashboardCliSessionSummary[] = [];
     await runWithConcurrencyLimit(sessions, 32, async (session, index) => {
       const metadata = metadataIds.has(session.id)
@@ -490,6 +490,7 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
         : undefined;
       const withMetadata = {
         ...session,
+        ...(goals ? { goal: goals.get(session.id) ?? null } : {}),
         ...readSubAgentMetadata(session),
         ...readSubAgentMetadata(stateRecords.get(session.id)?.source),
         ...(metadata?.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
@@ -505,7 +506,6 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
         ? new Date(transcriptUpdatedAt).toISOString() : session.updatedAt;
       enriched[index] = {
         ...withMetadata,
-        ...(goals ? { goal: goals.get(session.id) ?? null } : {}),
         updatedAt,
         ...state,
         locked: running || state.status === "unknown",

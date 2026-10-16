@@ -649,6 +649,11 @@ try {
         await goalOnly.waitFor({ state: "hidden" });
         await resumeToggle.click();
         await goalOnly.waitFor({ state: "visible" });
+        const previousGoalOnly = await goalOnly.getAttribute("aria-pressed");
+        await goalOnly.click();
+        assert.equal(await goalOnly.getAttribute("aria-pressed"), previousGoalOnly === "true" ? "false" : "true", "Goal-only preference can be changed");
+        await goalOnly.click();
+        assert.equal(await goalOnly.getAttribute("aria-pressed"), previousGoalOnly, "Goal-only preference can be restored");
         await switchToggle.click();
         await options.first().waitFor({ state: "hidden" });
         assert.equal(await options.count(), 0, "Switching off hides all dependent controls");
