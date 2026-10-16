@@ -12,7 +12,7 @@ export function buildXoomDonationUrl(amount: string): string {
 }
 
 export function DonationDetails(props: { onOpenExternal: (url: string) => void }) {
-  const [amount, setAmount] = useState("5");
+  const [amount, setAmount] = useState("12");
 
   return (
     <div class="donation-details">

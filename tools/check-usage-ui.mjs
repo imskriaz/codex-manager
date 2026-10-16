@@ -59,7 +59,7 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: "msedge", headless: true });
 const results = [];
 try {
-  for (const width of [1440, 390, 320]) {
+  for (const width of [1440, 1024, 768, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: "block" });
     const page = await context.newPage();
     const errors = [];
@@ -81,7 +81,19 @@ try {
     assert.equal(await page.evaluate(() => window.__usageActions.filter(action => ["getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(action.action)).length), 0, "The dashboard does not inspect an inactive workspace");
     const chart = page.locator(".usage-graph-card");
     const quotaHeight = (await chart.boundingBox()).height;
-    assert.ok(quotaHeight <= 130, "The chart keeps its compact height on every screen");
+    if (width <= 760) assert.ok(quotaHeight <= 130, "Stacked charts keep their compact height");
+    else {
+      const left = page.locator(".overview-shell > .overview-account").first();
+      const right = page.locator(".overview-main");
+      const leftBounds = await left.boundingBox();
+      const rightBounds = await right.boundingBox();
+      assert.ok(Math.abs(leftBounds.y - rightBounds.y) <= 1 && Math.abs(leftBounds.height - rightBounds.height) <= 1, "Desktop overview columns align at top and bottom");
+      const plotHeight = (await page.locator(".usage-graph").boundingBox()).height;
+      await left.evaluate(element => { element.style.minHeight = `${element.getBoundingClientRect().height + 80}px`; });
+      assert.ok(Math.abs((await chart.boundingBox()).height - quotaHeight - 80) <= 1, "Chart fills a taller account column");
+      assert.ok(Math.abs((await page.locator(".usage-graph").boundingBox()).height - plotHeight - 80) <= 1, "Only the plot grows to fill available height");
+      await left.evaluate(element => { element.style.minHeight = ""; });
+    }
     await page.locator(".usage-graph-bar-hitarea").first().focus();
     await page.getByRole("tooltip").waitFor();
     assert.match(await page.getByRole("tooltip").innerText(), /quota used/);

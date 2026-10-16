@@ -1,42 +1,18 @@
 # Changelog
 
-## 1.3.3
-
-- Redesign quota and token charts with matching compact heights, linear scales, clear units, and grouped account bars. Add keyboard and touch tooltips with exact values, daily totals, and history freshness. Keep stale data visible during loading or failure and remove continuous chart animations.
-
-## 1.3.2
-
-- Consolidate saved daily token usage across accounts with an opt-in check on account load, limited to one attempt per account every 24 hours. Preserve history and report failed or incomplete checks.
-- Query quota and token graph ranges from SQLite instead of copying full histories into dashboards. Write changed usage rows incrementally and keep only the visible graph result in memory.
-- Reduce account validation copies, stream legacy-state migration, skip unnecessary cleanup reads, and query recent session state without loading historical turns. Avoid rebuilding account snapshots after read-only graph, conversation, or workspace queries. Pause automatic workspace inspection and viewer heartbeats while viewing the dashboard. Preserve runtime caches and recovery records.
-
 ## 1.3.1
 
-- Recover quota-interrupted parents even after native running status stops, including usage-limited goals. Atomically transfer Auto Resume snapshots into SQLite recovery, preserve peer captures during acknowledgement, and react to committed status changes. Retain recovery when the Codex home changes or storage fails.
-- Bound shared-conversation refresh storage, retain revocation during refresh, and serialize writes across hosts. Save session/project bindings in one SQLite transaction.
-- Reject account claims before isolated-window startup completes; remove redundant eligibility and import wrappers. Update runtime and packaging dependencies.
-- Keep account card plan, reset credit, device, and subscription expiry on one line; shorten long device names with an ellipsis.
-- Place accounts claimed by another online PC after all other accounts in every dashboard sort, including the automatic queue.
-- Share committed SQLite change notifications, prepared queries, discovery results, and credential reads; batch session/status commits and dispose subscriptions with their owners. Keep failed batches retryable and discard stale cache completions.
-- Remove verified duplicate migration records and retired storage without discarding unknown account recovery data.
-- Remove the retired announcements service, remote feed, cache writes, UI component, and bundled announcement data.
-- Store account metadata, quota history, daily usage, running-turn recovery, and live session statistics in indexed SQLite rows with safe cross-window updates. Capture the account when a turn starts and preserve committed records across restarts.
-- Store manager state in `~/.codex/manager.sqlite` and redacted diagnostics in a separate `manager_logs.sqlite`. Open recent logs without creating a JSONL file.
-- Automatically migrate existing databases, legacy JSON, logs, and recovery snapshots; verify committed copies before removing `~/.codex-manager`, and retain sources when older hosts or storage errors prevent a safe move.
-- Use SQLite for cross-window operation leases, relay PID tracking, and dashboard preference writes. Run the packaged relay script directly and use the Windows startup registry instead of generated launcher files.
-
-## 1.2.26
-
-- Fix activation with VS Code's frozen settings object so SQLite-backed preferences no longer prevent dashboard commands from registering. Package local builds as pre-releases.
-
-## 1.2.25
-
-- Migrate extension state, settings, account metadata, encrypted account backups, and session recovery to a shared SQLite database with WAL, full synchronous commits, bounded write waits, and preserved migration sources. Keep VS Code Settings and Settings Sync compatible; require VS Code 1.101 or newer.
-- Save running parent conversation tabs as session checks complete. Reuse recent verified checks during managed reload capture, preserve unacknowledged recovery as in 1.2.17, and skip idle tabs and sub-agents.
-
-## 1.2.24
-
-- Wait for VS Code to publish conversation tabs after `openWith`, with bounded timeout and cancellation, so Auto Resume can restore sessions during early window activation.
+- Store account metadata, quota and token history, recovery snapshots, session statistics, and cross-window coordination in indexed SQLite rows. Keep only visible graph ranges and required runtime data in memory, write changed rows incrementally, and share committed changes between hosts.
+- Migrate legacy databases, JSON, logs, and recovery snapshots into `~/.codex/manager.sqlite` and `manager_logs.sqlite`. Verify committed copies before removing retired storage, preserve unknown recovery data, and retain sources when storage errors or older hosts prevent a safe move.
+- Consolidate saved daily token usage across accounts. Add optional collection when the current account loads, limited to one attempt per account every 24 hours, with saved history retained after failed or incomplete checks.
+- Redesign quota and token charts with matching heights, linear scales, grouped account bars, and keyboard and touch tooltips showing exact values, daily totals, and history freshness. Let the desktop chart fill the account column height and keep stacked charts compact. Keep saved data visible during loading or failure and remove continuous chart animations.
+- Reduce account validation copies, stream legacy migration, and query recent session state without loading historical turns. Avoid rebuilding snapshots after read-only queries, pause workspace inspection and viewer heartbeats on the dashboard, and retain runtime caches and recovery records.
+- Recover quota-interrupted parents and usage-limited goals after native running status stops. Transfer Auto Resume snapshots atomically into SQLite, preserve peer captures and recovery during storage or Codex home changes, and save eligible open tabs without scanning unrelated sessions.
+- Wait for restored conversation tabs with bounded cancellation and timeout handling. Preserve unacknowledged captures during reload and retry incomplete recovery safely.
+- Bound shared-conversation refresh storage, preserve revocation, serialize writes across hosts, and save session/project bindings in one transaction. Retain retryable failed batches and discard stale cache completions.
+- Reject account claims before isolated-window startup completes. Place accounts claimed by another online PC after other accounts in dashboard sorts and the automatic queue.
+- Keep account card plan, reset credit, device, and subscription expiry on one line, with long device names shortened. Remove the retired announcements feature and redundant eligibility and import wrappers.
+- Fix activation with VS Code's frozen settings object, update runtime and packaging dependencies, run the packaged relay script directly, and use the Windows startup registry instead of generated launchers. Package VSIX builds as extension pre-releases.
 
 ## 1.2.23
 
@@ -58,7 +34,6 @@
 - Simplify Auto Sync settings, claim only the current account by default, and release stale saved-account claims. Keep WebSocket changes real time and batch VS Code Settings Sync writes with a configurable gap.
 - Save eligible open Codex tabs without scanning unrelated running sessions. Keep automatic save failures in diagnostics and retry quietly without desktop or browser push notifications.
 - Keep refresh-all work parallel with manual actions and retain bounded network request handling.
-- Add Xoom donation instructions to onboarding and a dedicated donation modal opened directly from the dashboard header, using Codex Manager as the recipient name.
 - Keep account card metadata on one line and prevent mobile search inputs from zooming on focus.
 - Fix overview quota percentages on compact mobile panels and tighten narrow-screen spacing for controls, metrics, and account cards.
 

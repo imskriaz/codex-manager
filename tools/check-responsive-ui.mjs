@@ -499,11 +499,28 @@ try {
     console.log(`Checking ${width}x${height}: dashboard and settings`);
     await page.goto(`${origin}/dash`);
     await page.locator(".hero").waitFor();
+    if (width > 760) {
+      await page.locator("#donateButton").click();
+      const donation = page.getByRole("dialog", { name: "Donate to Codex Manager", exact: true });
+      const amount = donation.getByRole("spinbutton", { name: "Donation amount (USD)", exact: true });
+      assert.equal(await amount.inputValue(), "12", "Donation starts at USD 12");
+      await donation.getByRole("button", { name: "Open Xoom", exact: true }).click();
+      await page.waitForFunction(() => window.__uiActions.some(action => action.action === "openExternalUrl" && new URL(action.payload.url).searchParams.get("sendAmount") === "12.00"));
+      await amount.fill("17.50");
+      await donation.getByRole("button", { name: "Open Xoom", exact: true }).click();
+      await page.waitForFunction(() => window.__uiActions.some(action => action.action === "openExternalUrl" && new URL(action.payload.url).searchParams.get("sendAmount") === "17.50"));
+      await page.keyboard.press("Escape");
+    }
     console.log(`Checking ${width}: compact overview and floating controls`);
     const dashboardHero = await page.locator(".hero").boundingBox();
     const overviewDetails = page.locator(".overview-shell > .overview-account:not(.overview-inline-add-panel)");
     if (await overviewDetails.count()) assert.equal(await overviewDetails.isVisible(), width > 760, "Small screens omit desktop overview identity details");
     assert.equal(await page.locator(".overview-main").isVisible(), true, "Usage and quota overview stay visible");
+    if (width > 760 && await overviewDetails.count()) {
+      const left = await overviewDetails.boundingBox();
+      const right = await page.locator(".overview-main").boundingBox();
+      assert.ok(Math.abs(left.y - right.y) <= 1 && Math.abs(left.height - right.height) <= 1, "Overview columns have matching heights");
+    }
     assert.equal(await page.locator(".cli-workspace.is-dashboard-mode .cli-context-toggle").count(), 0, "Dashboard has only its relevant left floating button");
     assert.equal(await page.locator(".cli-workspace.is-dashboard-mode .cli-rail-toggle img").count(), 1, "Sidebar toggle carries the dashboard logo");
     assert.equal(await page.locator(".hero .brand-logo").isVisible(), false, "No duplicate dashboard logo");

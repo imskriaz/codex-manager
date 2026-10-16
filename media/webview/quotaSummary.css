@@ -8759,10 +8759,9 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 .usage-graph-scroll {
+  position: absolute;
+  inset: 0 0 0 32px;
   min-width: 0;
-  width: calc(100% - 32px);
-  margin-left: 32px;
-  height: 100%;
   overflow: hidden;
 }
 
@@ -9137,8 +9136,8 @@ html[data-theme="dark"] .cli-terminal-panel {
 
 .usage-graph-card {
   position: relative;
-  display: grid;
-  grid-template-rows: 20px 82px;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   min-width: 0;
   padding: 7px 9px 6px;
@@ -9148,6 +9147,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 .usage-graph-head {
+  flex: 0 0 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -10868,6 +10868,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 
 .usage-graph-stage {
+  flex: 1 0 82px;
   position: relative;
   min-width: 0;
 }
@@ -14012,25 +14013,26 @@ body.is-dashboard-workspace-route #dashboard-main {
 .overview-account,
 .overview-main {
   align-self: stretch;
-  height: 100%;
+  height: auto;
   min-height: 0;
   box-sizing: border-box;
 }
 
 .overview-main {
-  display: grid;
-  grid-template-rows: auto auto;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
 }
 
 .overview-main > .usage-graph-card {
+  flex: 1 0 auto;
+  align-self: stretch;
   min-height: 0;
   height: auto;
 }
 
 .overview-bottom-row {
-  align-self: end;
+  flex: 0 0 auto;
 }
 
 .overview-account-main {
@@ -14368,7 +14370,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .overview-shell > .overview-account:not(.overview-inline-add-panel) { display: none; }
   .overview-account, .overview-main, .overview-account-main { height: auto; min-width: 0; }
   .overview-account .overview-meta { grid-template-rows: auto; }
-  .overview-main > .usage-graph-card { height: auto; }
+  .overview-main > .usage-graph-card { flex: none; height: auto; }
   .overview-main, .overview-bottom-row, .overview-metrics, .overview-actions { min-width: 0; max-width: 100%; }
   .overview-actions .toolbar { flex-wrap: wrap; }
   .hero { padding-top: 0; }
