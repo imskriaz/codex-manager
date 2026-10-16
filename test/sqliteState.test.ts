@@ -10,12 +10,11 @@ import {
 } from "../src/storage/sqliteState";
 import { readIndexSnapshot } from "../src/storage/accountsPersistence";
 import { persistIndexWithBackups } from "../src/storage/accountsWriteCoordinator";
-import { flushPendingSave, markPendingSave } from "../src/storage/accountsWriteCoordinator";
+import { disposeWriteCoordinator, flushPendingSave, markPendingSave } from "../src/storage/accountsWriteCoordinator";
 import * as persistence from "../src/storage/accountsPersistence";
 import { cloneIndex, mergeAccountsIndexChanges } from "../src/storage/accountsIndex";
 import { configureCrossWindowOperationCoordinator, runCrossWindowExclusive } from "../src/utils/crossWindowOperations";
 import { readDashboardDailyUsageCache, upsertDashboardDailyUsageCache } from "../src/services/dashboardUsageHistory";
-import { AnnouncementService } from "../src/services/announcements";
 import { createAccountsRepositoryState } from "../src/storage/accountsRepositoryState";
 import { readSafeFileSnapshot } from "../src/utils/safeFileReads";
 import { AUTO_RESUME_OPEN_SESSION_IDS_KEY, persistOpenCodexSessions, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
@@ -52,6 +51,25 @@ afterEach(async () => {
 });
 
 describe("SQLite WAL state", () => {
+  it("prevents a queued save from writing after its repository is disposed", async () => {
+    const store = await open(); configureSqliteStateStore(store);
+    const file = path.join(root,"accounts-index.json"), original = { accounts:[{id:"a",email:"a@example.com",createdAt:1,updatedAt:1}] };
+    writeSqliteStateFile(file,JSON.stringify(original));
+    const state = createAccountsRepositoryState(); state.persistedIndex = cloneIndex(original);
+    let release!:()=>void; const gate = new Promise<void>(resolve=>{release=resolve;});
+    const read = persistence.readIndexSnapshot;
+    const paused = vi.spyOn(persistence,"readIndexSnapshot").mockImplementationOnce(async (...args)=>{const result=await read(...args);await gate;return result;});
+    const changed = cloneIndex(original); changed.accounts[0]!.enabled=false;
+    markPendingSave(state,changed,60_000,()=>undefined);clearTimeout(state.saveDebounceTimer!);
+    vi.spyOn(console,"error").mockImplementation(()=>undefined);
+    const saving = flushPendingSave(state,index=>persistIndexWithBackups({state,index,indexPath:file,tempSuffix:".tmp",backupCount:3}));
+    await vi.waitFor(()=>expect(paused).toHaveBeenCalledOnce());
+    disposeWriteCoordinator(state);release();await saving;
+    await expect(state.persistChain).rejects.toThrow();
+    expect((await readIndexSnapshot(file)).accounts[0]?.enabled).not.toBe(false);
+    expect(await fs.stat(file).catch(()=>undefined)).toBeUndefined();
+  });
+
   it("merges simultaneous account edits, additions, deletions and separate home selections", () => {
     const account = (id: string) => ({ id, email: `${id}@example.com`, createdAt: 1, updatedAt: 1 });
     const base = { accounts: [account("a"), account("b"), account("removed")], activeAccountStateVersion: 1 as const, activeAccountIdsByCodexHome: { first: "a", second: "b" } };
@@ -124,15 +142,6 @@ describe("SQLite WAL state", () => {
     expect(readDashboardDailyUsageCache({ globalState: secondState } as never).map(item => item.accountId).sort()).toEqual(["a", "b"]);
   });
 
-  it("does not clear announcement read history after a managed storage read fails", async () => {
-    const store = await open();
-    configureSqliteStateStore(store);
-    const file = path.join(root, "announcements", "announcement_read_ids.json");
-    writeSqliteStateFile(file, "invalid JSON");
-    const service = new AnnouncementService(root, root);
-    await expect(service.markAsRead("new")).rejects.toThrow();
-    expect(readSqliteStateFile(file)).toBe("invalid JSON");
-  });
   it("uses WAL and full commits, exposes updates across connections, and rolls back incomplete transactions", async () => {
     const store = await open();
     const peer = await open();

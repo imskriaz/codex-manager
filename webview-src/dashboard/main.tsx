@@ -24,7 +24,6 @@ import type {
 } from "../../src/domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../../src/core/types";
 import { createAutoQueuePolicy, type AutoQueuePolicy } from "../../src/domain/autoQueuePolicy";
-import { AnnouncementCenter } from "./announcementCenter";
 import { BatchSelectionBar, OverviewSection, RecoveryPanel } from "./components";
 import { postMessageToHost } from "./host";
 import {
@@ -202,7 +201,6 @@ function App() {
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [donationOpen, setDonationOpen] = useState(false);
-  const [announcementsOpen, setAnnouncementsOpen] = useState(false);
   const [accountSort, setAccountSort] = useState<AccountSort>(() => {
     try {
       const stored = window.localStorage.getItem(ACCOUNT_SORT_STORAGE_KEY);
@@ -2574,16 +2572,6 @@ function App() {
         onContinueCloudflare={continueOnboardingCloudflare}
         onOpenExternal={(url) => sendAction("openExternalUrl", undefined, { url })}
         onFinish={finishOnboarding}
-      />
-
-      <AnnouncementCenter
-        open={announcementsOpen}
-        copy={snapshot.copy}
-        state={snapshot.announcements}
-        refreshPending={isActionPending("refreshAnnouncements")}
-        markAllPending={isActionPending("markAllAnnouncementsRead")}
-        onClose={() => setAnnouncementsOpen(false)}
-        onAction={sendAction}
       />
 
       <ModalShell

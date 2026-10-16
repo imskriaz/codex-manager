@@ -230,11 +230,6 @@ describe("workbench refresh signature helpers", () => {
       tokenAutomation: {
         enabled: false
       },
-      announcements: {
-        announcements: [],
-        unreadIds: [],
-        popupAnnouncement: null
-      },
       indexHealth: {
         status: "healthy",
         availableBackups: 1
@@ -292,11 +287,6 @@ describe("workbench refresh signature helpers", () => {
       } as never,
       tokenAutomation: {
         enabled: false
-      },
-      announcements: {
-        announcements: [],
-        unreadIds: [],
-        popupAnnouncement: null
       },
       indexHealth: {
         status: "healthy",

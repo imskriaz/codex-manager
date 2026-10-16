@@ -2,6 +2,9 @@
 
 ## 1.2.6
 
+- Share committed SQLite change notifications, prepared queries, discovery results, and credential reads; batch session/status commits and dispose subscriptions with their owners. Keep failed batches retryable and discard stale cache completions.
+- Remove verified duplicate migration records and retired storage without discarding unknown account recovery data.
+- Remove the retired announcements service, remote feed, cache writes, UI component, and bundled announcement data.
 - Store account metadata, quota history, daily usage, running-turn recovery, and live session statistics in indexed SQLite rows with safe cross-window updates. Capture the account when a turn starts and preserve committed records across restarts.
 - Store manager state in `~/.codex/manager.sqlite` and redacted diagnostics in a separate `manager_logs.sqlite`. Open recent logs without creating a JSONL file.
 - Automatically migrate existing databases, legacy JSON, logs, and recovery snapshots; verify committed copies before removing `~/.codex-manager`, and retain sources when older hosts or storage errors prevent a safe move.

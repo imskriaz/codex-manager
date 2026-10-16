@@ -24,6 +24,16 @@ async function oldStore() { return SqliteStateStore.open(path.join(source, "code
 async function state(database = "manager.sqlite") { return SqliteStateStore.open(path.join(target, database)); }
 
 describe("existing-user storage migration", () => {
+  it("serializes file-only migration across windows and rechecks whether cleanup already finished",async()=>{
+    await write("logging-settings.json",'{"enabled":false}');
+    let release!:()=>void,entered!:()=>void;
+    const ready=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+    const first=migrateManagerStorage(target,()=>{entered();return gate;});await ready;
+    const second=migrateManagerStorage(target);await new Promise(resolve=>setTimeout(resolve,30));release();
+    expect((await Promise.all([first,second])).map(result=>result.migrated)).toEqual([true,false]);
+    const store=await state();try{expect(store.get("files","logging-settings.json")).toEqual({text:'{"enabled":false}'});}finally{store.close();}
+  });
+
   it("does nothing for a fresh install without creating legacy folders", async () => {
     expect(await migrateManagerStorage(target)).toEqual({ migrated: false, archivedFiles: 0 });
     expect(await fs.readdir(home)).toEqual([]);

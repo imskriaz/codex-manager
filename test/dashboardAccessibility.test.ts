@@ -13,10 +13,9 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(primitives).toContain("previouslyFocused.focus({ preventScroll: true })");
   });
 
-  it("gives custom settings and announcement dialogs names and keyboard handling", () => {
+  it("gives custom settings dialogs names and keyboard handling", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
-    const announcements = readFileSync("webview-src/dashboard/announcementCenter.tsx", "utf8");
-    for (const source of [settings, announcements]) {
+    for (const source of [settings]) {
       expect(source).toContain('role="dialog"');
       expect(source).toContain('aria-modal="true"');
       expect(source).toContain("onKeyDown={");

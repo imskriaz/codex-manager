@@ -73,10 +73,6 @@ export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1
     case "enableAllValid":
     case "disableAll":
       return 30_000;
-    case "refreshAnnouncements":
-    case "markAnnouncementRead":
-    case "markAllAnnouncementsRead":
-      return 30_000;
     case "refreshAll":
     case "batchRefresh":
       return 240_000 * Math.max(1, accountCount);

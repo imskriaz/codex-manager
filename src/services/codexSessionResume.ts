@@ -16,7 +16,7 @@ import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDi
 import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { reserveCodexSessionLive } from "./codexSessionLive";
 import { recordNativeSessionStatus } from "./sessionRecording";
-import { readRunningTurnRows, saveRunningTurnRows } from "../storage/sqliteSessions";
+import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery } from "../storage/sqliteSessions";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -28,7 +28,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
-import { hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile } from "../storage/sqliteState";
+import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile } from "../storage/sqliteState";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -259,8 +259,14 @@ export function readRunningCodexSessionIds(codexHome = resolveCodexHome(), signa
   const key = path.resolve(codexHome);
   const snapshotKey = runningSessionSnapshotKey(codexHome, sessionIds);
   return createSharedInspection(`codex-running:${snapshotKey}`, async inspectionSignal => {
+    const startedAt = Date.now();
     const ids = await inspectRunningCodexSessionIds(codexHome, inspectionSignal, sessionIds);
     inspectionSignal.throwIfAborted();
+    const store = getSqliteStateStore();
+    if (store && !sessionIds) {
+      try { saveSessionDiscovery(store,codexHome,ids,startedAt); }
+      catch (error) { console.warn("[codexManager] shared session discovery cache could not be saved",error); }
+    }
     recentRunningSessions.set(snapshotKey, { ids: [...ids], checkedAt: Date.now() });
     if (recentRunningSessions.size > 8) recentRunningSessions.delete(recentRunningSessions.keys().next().value!);
     for (const listener of runningSessionListeners) {
@@ -276,7 +282,14 @@ function runningSessionSnapshotKey(home: string, ids?: string[]): string {
 
 /** Reload recovery can reuse checks completed before quota exhaustion; safety checks stay fresh. */
 export function readRecentRunningCodexSessionIds(codexHome = resolveCodexHome(), sessionIds?: string[]): string[] | undefined {
-  const full = recentRunningSessions.get(runningSessionSnapshotKey(codexHome));
+  let full = recentRunningSessions.get(runningSessionSnapshotKey(codexHome));
+  const store = getSqliteStateStore();
+  if (store) {
+    try {
+      const shared = readSessionDiscovery(store,codexHome);
+      full = shared;
+    } catch (error) { console.warn("[codexManager] shared session discovery cache could not be read",error); full = undefined; }
+  }
   const scoped = sessionIds ? recentRunningSessions.get(runningSessionSnapshotKey(codexHome, sessionIds)) : undefined;
   const snapshot = scoped && (!full || scoped.checkedAt >= full.checkedAt) ? scoped : full;
   const age = snapshot ? Date.now() - snapshot.checkedAt : Infinity;

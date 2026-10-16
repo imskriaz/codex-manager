@@ -22,9 +22,12 @@ describe("CrossWindowOperationCoordinator", () => {
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
     const renewal = background.runExclusive("account:switch:home", "Renewal", async signal => {
-      started();
-      await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
-      expect(signal.aborted).toBe(true);
+      await background.runExclusive("account:switch:home", "Nested renewal", async nestedSignal => {
+        expect(nestedSignal).toBe(signal);
+        started();
+        await new Promise<void>(resolve => nestedSignal.addEventListener("abort", () => resolve(), { once: true }));
+        expect(nestedSignal.aborted).toBe(true);
+      });
     }, { background: true });
     await ready;
     await expect(manual.runExclusive("account:switch:home", "Account switch", async () => "switched", { waitMs: 2_000 })).resolves.toBe("switched");

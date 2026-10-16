@@ -17,11 +17,13 @@ function panel() {
   };
 }
 
+const subscriptions:Array<{dispose():void}>=[];
 const key = "codexManager.reopenDashboardAfterHostRestart";
 function context(initial = false) {
   let pending = initial;
   return {
     extensionUri: { fsPath: "/fixture" },
+    subscriptions,
     workspaceState: {
       get: vi.fn((_key: string) => pending),
       update: vi.fn(async (_key: string, next: boolean) => { pending = next; })
@@ -47,7 +49,7 @@ describe("dashboard tab persistence", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
     vi.mocked(vscode.workspace.onDidChangeConfiguration).mockReturnValue({ dispose: vi.fn() });
   });
-  afterEach(() => { vi.unstubAllGlobals(); });
+  afterEach(() => { for(const item of subscriptions.splice(0))item.dispose();vi.unstubAllGlobals(); });
 
   it("adopts and rebuilds the native restored panel without creating another dashboard", async () => {
     const module = await import("../src/presentation/dashboard/panel");

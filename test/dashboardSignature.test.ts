@@ -42,10 +42,6 @@ function createState(overrides?: {
     tokenAutomation: {
       enabled: true
     },
-    announcements: {
-      announcements: [],
-      unreadIds: []
-    },
     indexHealth: {
       status: "healthy",
       availableBackups: 0

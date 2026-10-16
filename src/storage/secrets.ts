@@ -6,6 +6,12 @@ const SECRET_PREFIX = "codex.account.";
 export class SecretStore {
   constructor(private readonly secrets: vscode.SecretStorage) {}
 
+  onDidChange(listener: (accountId: string) => void): vscode.Disposable | undefined {
+    return this.secrets.onDidChange?.(event => {
+      if (event.key.startsWith(SECRET_PREFIX)) listener(event.key.slice(SECRET_PREFIX.length));
+    });
+  }
+
   async getTokens(accountId: string): Promise<CodexTokens | undefined> {
     const raw = await this.secrets.get(`${SECRET_PREFIX}${accountId}`);
     if (!raw) {

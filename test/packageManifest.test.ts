@@ -84,13 +84,10 @@ describe("extension manifest configuration", () => {
     });
   });
 
-  it("does not bundle promotional announcement popups", () => {
-    const announcementPath = path.resolve(__dirname, "../announcements.json");
-    const raw = fs.readFileSync(announcementPath, "utf8");
-    const response = JSON.parse(raw) as { announcements?: Array<{ popup?: boolean }> };
-
-    expect(raw).not.toMatch(/aideck|wannanbigpig/i);
-    expect(response.announcements?.every((announcement) => announcement.popup !== true)).toBe(true);
+  it("does not bundle the retired announcements feature", () => {
+    const root = path.resolve(__dirname, "..");
+    for (const file of ["announcements.json", "src/services/announcements.ts", "webview-src/dashboard/announcementCenter.tsx"])
+      expect(fs.existsSync(path.join(root, file))).toBe(false);
   });
 
   it("uses the Codex branding asset for the extension icon", () => {

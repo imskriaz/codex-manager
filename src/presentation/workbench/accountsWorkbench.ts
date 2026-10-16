@@ -197,7 +197,7 @@ export class AccountsWorkbench {
     }
     this.context.subscriptions.push(
       onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration("codexManager.privacyMode")) {
+        if (event.affectsConfiguration("codexManager")) {
           this.webDashboard.publishRealtimeState();
         }
         if (event.affectsConfiguration("codexManager.encryptedSyncEnabled") && getAlwaysOnlineEnabled()) {

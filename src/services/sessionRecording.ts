@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { getCodexHome } from "../codex/authFile";
 import { getSqliteStateStore } from "../storage/sqliteState";
-import { currentSessionAccountId, saveSessionLive, saveSessionStatus } from "../storage/sqliteSessions";
+import { currentSessionAccountId, initializeSessionStorage, listStoredSessionLive, saveSessionLive, saveSessionStatus } from "../storage/sqliteSessions";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import { publishDashboardRealtime } from "./dashboardRealtime";
@@ -11,7 +11,8 @@ import { getCodexHomeStateKey } from "../codex/authFile";
 const pending = new Map<string,{ home:string; state:DashboardCodexSessionLiveState; accountId?:string }>();
 let timer: NodeJS.Timeout | undefined;
 let warned = false;
-let retryStatusAt = 0;
+const pendingStatus = new Map<string,{home:string;id:string;status:"running"|"idle"|"unknown";at:number}>();
+const observed = new Map<string,DashboardCodexSessionLiveState>();
 
 function warn(error: unknown): void {
   console.warn("[codexManager] session recording delayed",error);
@@ -40,6 +41,10 @@ export function recordSessionLive(state:DashboardCodexSessionLiveState,accountId
   if (previous && !isNewerCodexSessionLiveState(state,previous.state)) return;
   if (!previous && pending.size >= 128) { warn(new Error("The session recording queue is full; an update could not be retained.")); return; }
   pending.set(key,{home,state,accountId:previous?.accountId ?? accountId});
+  if (!state.deviceId) {
+    observed.set(state.sessionId,state);
+    if (observed.size > 30) observed.delete(observed.keys().next().value!);
+  }
   if (!timer) schedule(250);
 }
 
@@ -50,17 +55,24 @@ function schedule(delay:number): void {
 
 export function flushSessionRecording(limit = 8): boolean {
   const store = getSqliteStateStore();
-  if (!store) return pending.size === 0;
-  let count = 0, failed = false;
-  for (const [key,entry] of pending) {
-    try { saveSessionLive(store,entry.home,entry.state,entry.accountId); }
-    catch (error) { warn(error); failed = true; break; }
-    pending.delete(key);
-    if (++count >= limit) break;
+  if (!store) return pending.size === 0 && pendingStatus.size === 0;
+  const states = [...pending].slice(0,limit), statuses = [...pendingStatus].slice(0,limit >= 128 ? 1024 : 64);
+  let failed = false;
+  if (states.length || statuses.length) {
+    try {
+      initializeSessionStorage(store);
+      store.transaction(() => {
+        for (const [,entry] of states) saveSessionLive(store,entry.home,entry.state,entry.accountId);
+        for (const [,entry] of statuses) saveSessionStatus(store,entry.home,entry.id,entry.status,entry.at);
+      });
+      for (const [key,entry] of states) if (pending.get(key) === entry) pending.delete(key);
+      for (const [key,entry] of statuses) if (pendingStatus.get(key) === entry) pendingStatus.delete(key);
+    } catch (error) { warn(error); failed = true; }
   }
-  if (!failed && !pending.size) warned = false;
-  if (pending.size && !timer) schedule(failed ? 1_000 : 0);
-  return pending.size === 0;
+  const empty = pending.size === 0 && pendingStatus.size === 0;
+  if (!failed && empty) warned = false;
+  if (!empty && !timer) schedule(failed ? 1_000 : 0);
+  return empty;
 }
 
 export function disposeSessionRecording(): void {
@@ -71,20 +83,31 @@ export function disposeSessionRecording(): void {
   timer = undefined;
   pending.clear();
   warned = false;
-  retryStatusAt = 0;
+  pendingStatus.clear();
+  observed.clear();
 }
 
 /** Native running checks are authoritative; their persistence must never delay a manual action. */
 export function recordNativeSessionStatus(home:string,id:string,running:boolean|undefined): void {
-  const store = getSqliteStateStore();
-  if (!store || Date.now() < retryStatusAt) return;
-  try { saveSessionStatus(store,home,id,running === undefined ? "unknown" : running ? "running" : "idle"); retryStatusAt = 0; }
-  catch (error) { retryStatusAt = Date.now()+2_000; console.warn("[codexManager] session status recording delayed",error); }
+  if (!getSqliteStateStore()) return;
+  const key = JSON.stringify([getCodexHomeStateKey(home),id.toLowerCase()]);
+  if (!pendingStatus.has(key) && pendingStatus.size >= 1024) { warn(new Error("The session status recording queue is full.")); return; }
+  pendingStatus.set(key,{home,id:id.toLowerCase(),status:running === undefined ? "unknown" : running ? "running" : "idle",at:Date.now()});
+  if (!timer) schedule(250);
 }
 
-/** Discovery is optional background work; native status events persist immediately once followed. */
+/** Discovery is optional background work; native status events share the same bounded writer. */
 export function registerSessionRecording(context:vscode.ExtensionContext): void {
-  if (!getSqliteStateStore()) return;
+  const store = getSqliteStateStore();
+  if (!store) return;
+  const stopStorage = store.subscribe(["sessions"], () => {
+    for (const state of listStoredSessionLive(store,getCodexHome())) {
+      if (!isNewerCodexSessionLiveState(state,observed.get(state.sessionId))) continue;
+      observed.set(state.sessionId,state);
+      if (observed.size > 30) observed.delete(observed.keys().next().value!);
+      publishDashboardRealtime({type:"dashboard:codex-session-live",state});
+    }
+  });
   const controller = new AbortController();
   let inFlight = false, warnedScan = false;
   const scan = async ():Promise<void> => {
@@ -95,7 +118,10 @@ export function registerSessionRecording(context:vscode.ExtensionContext): void 
       const home = getCodexHome();
       if (!sessions.readRecentRunningCodexSessionIds(home))
         await runCrossWindowExclusive(`background:session-recording:${getCodexHomeStateKey(home)}`,"Session recording discovery",
-          async signal => { await sessions.readRunningCodexSessionIds(home,AbortSignal.any([controller.signal,signal])); },{background:true});
+          async signal => {
+            if (!sessions.readRecentRunningCodexSessionIds(home))
+              await sessions.readRunningCodexSessionIds(home,AbortSignal.any([controller.signal,signal]));
+          },{background:true});
       warnedScan = false;
     } catch (error) {
       if (!controller.signal.aborted && !(error instanceof CrossWindowOperationBusyError) && !warnedScan) console.warn("[codexManager] session discovery recording delayed",error);
@@ -105,5 +131,5 @@ export function registerSessionRecording(context:vscode.ExtensionContext): void 
   const start = setTimeout(() => { void scan(); },1_000);
   const interval = setInterval(() => { void scan(); },10_000);
   start.unref?.(); interval.unref?.();
-  context.subscriptions.push({dispose:()=>{ controller.abort(); clearTimeout(start); clearInterval(interval); }});
+  context.subscriptions.push({dispose:()=>{ controller.abort(); clearTimeout(start); clearInterval(interval); stopStorage(); observed.clear(); }});
 }

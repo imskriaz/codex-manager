@@ -1130,11 +1130,6 @@ describe("executeDashboardActionMessage", () => {
         schedulePublishState: vi.fn(),
         publishState,
         oauth: {} as DashboardActionContext["oauth"],
-        announcements: {} as DashboardActionContext["announcements"],
-        getAnnouncementOptions: () => ({
-          version: "0.1.15",
-          locale: "en"
-        })
       },
       {
         type: "dashboard:action",
@@ -1923,11 +1918,6 @@ function createContext(): DashboardActionContext {
     schedulePublishState: vi.fn(),
     publishState: vi.fn(),
     oauth: {} as DashboardActionContext["oauth"],
-    announcements: {} as DashboardActionContext["announcements"],
-    getAnnouncementOptions: () => ({
-      version: "1.0.0",
-      locale: "en"
-    })
   };
 }
 

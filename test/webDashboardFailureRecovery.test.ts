@@ -5,7 +5,6 @@ import type { DashboardClientMessage, DashboardHostMessage } from "../src/domain
 const { buildState, executeAction } = vi.hoisted(() => ({ buildState: vi.fn(), executeAction: vi.fn() }));
 vi.mock("../src/application/dashboard/buildDashboardState", () => ({ buildDashboardState: buildState }));
 vi.mock("../src/presentation/dashboard/actionHandlers", () => ({ executeDashboardActionMessage: executeAction }));
-vi.mock("../src/services/announcements", () => ({ AnnouncementService: class { getState = vi.fn().mockResolvedValue({}); dispose() {} } }));
 import { WebDashboardServer } from "../src/services/webDashboardServer";
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -20,6 +19,26 @@ function createServer() {
 }
 
 describe("browser action completion during state failure", () => {
+  it("bounds shutdown when an HTTP connection never finishes closing",async()=>{
+    vi.useFakeTimers();const {server}=createServer();
+    const closeAllConnections=vi.fn(),closeIdleConnections=vi.fn();
+    Reflect.set(server,"server",{close:vi.fn(),closeAllConnections,closeIdleConnections});
+    try {
+      const stopping=server.stop();await vi.advanceTimersByTimeAsync(1500);await stopping;
+      expect(closeAllConnections).toHaveBeenCalledOnce();expect(closeIdleConnections).toHaveBeenCalledOnce();
+    } finally {server.dispose();vi.useRealTimers();}
+  });
+
+  it("discards a completed snapshot from a stopped dashboard generation",async()=>{
+    const {server}=createServer();let release!:(state:unknown)=>void;
+    Reflect.set(server,"buildState",()=>new Promise(resolve=>{release=resolve;}));
+    const broadcast=vi.fn();Reflect.set(server,"broadcastRealtimeState",broadcast);
+    Reflect.get(server,"webSocketClients").add({readyState:1,close:vi.fn()});
+    const work=Reflect.get(server,"broadcastRealtimeSnapshot").call(server) as Promise<void>;
+    await server.stop();release({accounts:[]});await work;
+    expect(broadcast).not.toHaveBeenCalled();server.dispose();
+  });
+
   it("returns a completed action within 250ms when its optional snapshot stalls", async () => {
     vi.useFakeTimers();
     buildState.mockReturnValue(new Promise(() => undefined));

@@ -12,7 +12,7 @@ export const CENTRAL_ACCOUNT_OPERATION_KEY = "accounts:central-operation";
 // Settings Sync must never block an unrelated manual account change.
 export const ENCRYPTED_SYNC_OPERATION_KEY = "accounts:encrypted-sync";
 type LockOwner = { token: string; pid: number; startedAt: number; heartbeatAt: number; background: boolean; yieldRequested?: boolean };
-type OperationLease = { active: boolean };
+type OperationLease = { active: boolean; signal: AbortSignal };
 
 export class CrossWindowOperationBusyError extends Error {
   constructor(public readonly operationLabel: string) {
@@ -43,7 +43,8 @@ export class CrossWindowOperationCoordinator {
     const key = operationKey.trim();
     if (!key) throw new Error("A cross-window operation key is required.");
     const inherited = this.operationContext.getStore();
-    if (inherited?.get(key)?.active) return task(new AbortController().signal);
+    const parentLease = inherited?.get(key);
+    if (parentLease?.active) return task(parentLease.signal);
     if (this.pendingRequests >= 32) throw new CrossWindowOperationBusyError(operationLabel);
     this.pendingRequests++;
     let pending = true;
@@ -87,7 +88,7 @@ export class CrossWindowOperationCoordinator {
         };
         const heartbeat = setInterval(renew, owner.background ? Math.min(50, this.heartbeatMs) : this.heartbeatMs);
         heartbeat.unref?.();
-        const lease: OperationLease = { active: true };
+        const lease: OperationLease = { active: true, signal: controller.signal };
         const nextContext = new Map(inherited ?? []);
         nextContext.set(key, lease);
         let taskError: unknown;

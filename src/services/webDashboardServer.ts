@@ -1,3 +1,4 @@
+import { getSqliteStateStore } from "../storage/sqliteState";
 import { normalizeCodexSessionGoal } from "../domain/codexSessionState";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
@@ -42,7 +43,6 @@ import {
 } from "../presentation/dashboard/settings";
 import { recordPeerQuotaChecks } from "./quotaCheckCoordination";
 import { AccountsRepository } from "../storage";
-import { AnnouncementService, type AnnouncementOptions } from "./announcements";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { isValidSyncAccountEnablement, type SyncAccountEnablement } from "./syncEnablementRegistry";
 import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessions, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "./codexSessionResume";
@@ -402,7 +402,6 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly browserSocketPassphraseFingerprint = new WeakMap<WebSocket, string>();
   private readonly loginAttempts = new Map<string, LoginAttempt>();
   private readonly settingsStore = new ExtensionSettingsStore();
-  private readonly announcements: AnnouncementService;
   private readonly oauth: DashboardOAuthCoordinator;
   private notificationMirrorSubscription: vscode.Disposable | undefined;
   private notificationDeliverySubscription: vscode.Disposable | undefined;
@@ -410,6 +409,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly assetCache = new Map<string, { content: Buffer; gzip: Buffer; etag: string }>();
   private readonly assetVersion: string;
   private readonly dashboardRealtimeSubscription: () => void;
+  private readonly stopStorageSubscription: (() => void) | undefined;
   private readonly remoteSessionLive = new Map<string, DashboardCodexSessionLiveState>();
   private readonly browserPush: BrowserPushService;
   private readonly conversationShares: ConversationShares;
@@ -425,7 +425,6 @@ export class WebDashboardServer implements vscode.Disposable {
     this.assetVersion = getWebDashboardAssetVersion(context.extensionUri.fsPath, String((context.extension?.packageJSON as { version?: string } | undefined)?.version ?? "dev"));
     this.deviceId = context.globalState?.get<string>("codexManager.webDashboard.deviceId") ?? crypto.randomUUID();
     void context.globalState?.update("codexManager.webDashboard.deviceId", this.deviceId);
-    this.announcements = new AnnouncementService(getCodexManagerStorageRoot(), context.extensionUri.fsPath);
     this.oauth = new DashboardOAuthCoordinator(
       repo,
       () => undefined,
@@ -502,6 +501,10 @@ export class WebDashboardServer implements vscode.Disposable {
         });
         void this.sendRealtimeSnapshot(socket);
       }
+    });
+    this.stopStorageSubscription = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], topics => {
+      if (topics.has("accounts")) this.publishLocalPeerState();
+      this.publishRealtimeState();
     });
   }
 
@@ -608,9 +611,10 @@ export class WebDashboardServer implements vscode.Disposable {
     this.lastRealtimeSignature = "";
     this.localCliSessions = undefined;
     this.localCliSessionsReadAt = 0;
+    this.localCliSessionsRetryAt = 0;
     this.localCliSessionsRead = undefined;
     this.localPeerState = undefined;
-    this.localPeerStateRevision = 0;
+    this.localPeerStateRevision += 1;
     this.localPeerStateRead = undefined;
     this.encryptedSync?.setOnlineDeviceIds(undefined);
     for (const [requestId, waiter] of this.peerActionWaiters) {
@@ -625,7 +629,15 @@ export class WebDashboardServer implements vscode.Disposable {
     for (const waiter of this.peerVaultWaiters.values()) waiter(false);
     this.peerVaultWaiters.clear();
     if (!server) return;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve,reject) => {
+      const timer = setTimeout(() => {
+        try { server.closeAllConnections?.(); resolve(); }
+        catch (error) { reject(error instanceof Error ? error : new Error("Dashboard shutdown failed.", { cause:error })); }
+      }, 1_500);
+      timer.unref?.();
+      server.close(error => { clearTimeout(timer); if (error) reject(error); else resolve(); });
+      server.closeIdleConnections?.();
+    });
   }
 
   async applyConfiguration(): Promise<void> {
@@ -702,8 +714,9 @@ export class WebDashboardServer implements vscode.Disposable {
   dispose(): void {
     this.encryptedSync?.setRealtimeSyncPublisher?.(undefined);
     this.dashboardRealtimeSubscription();
+    this.stopStorageSubscription?.();
     this.oauth.dispose();
-    void this.stop();
+    void this.stop().catch(error=>console.error("[codexManager] dashboard shutdown failed",error));
   }
 
   private isEnabled(): boolean {
@@ -1144,8 +1157,6 @@ export class WebDashboardServer implements vscode.Disposable {
             schedulePublishState: () => this.publishRealtimeState(),
             publishState: () => Promise.resolve(),
             oauth: this.oauth,
-            announcements: this.announcements,
-            getAnnouncementOptions: () => this.getAnnouncementOptions(),
             hostKind: "browser",
             configureEncryptedSync: this.encryptedSync
               ? (passphrase, confirmation, currentPassphrase) =>
@@ -1709,7 +1720,9 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async broadcastRealtimeSnapshot(): Promise<void> {
     if (this.webSocketClients.size === 0) return;
-    this.broadcastRealtimeState(await this.buildState());
+    const revision = this.peerConnectionRevision;
+    const state = await this.buildState();
+    if (revision === this.peerConnectionRevision) this.broadcastRealtimeState(state);
   }
 
   private publishProcessedSnapshot(messages: readonly DashboardHostMessage[]): void {
@@ -1779,7 +1792,7 @@ export class WebDashboardServer implements vscode.Disposable {
   ): Promise<import("../domain/dashboard/types").DashboardCliSessionSummary[]> {
     if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return [];
     const now = Date.now();
-    if (now < this.localCliSessionsRetryAt) return this.localCliSessions ?? [];
+    if (!force && now < this.localCliSessionsRetryAt) return this.localCliSessions ?? [];
     if (!force && this.localCliSessions && now - this.localCliSessionsReadAt < LOCAL_CLI_SESSION_CACHE_MS) {
       return this.localCliSessions;
     }
@@ -1787,24 +1800,28 @@ export class WebDashboardServer implements vscode.Disposable {
     // Realtime/peer refreshes only need the session list. Avoid probing the
     // CLI model catalog here; that probe can take seconds when the cache is
     // cold and belongs to the explicit composer-config action instead.
-    this.localCliSessionsRead = readCodexCliSessions()
+    const revision = this.peerConnectionRevision;
+    const pending = readCodexCliSessions()
       .then((sessions) => stabilizeSessionProjectPaths(this.context, sessions))
       .then((sessions) => {
+        if (revision !== this.peerConnectionRevision) return sessions;
         this.localCliSessions = sessions;
         this.localCliSessionsReadAt = Date.now();
         this.localCliSessionsRetryAt = sessions.some(session => session.status === "unknown") ? Date.now() + SESSION_DISCOVERY_RETRY_GAP_MS : 0;
         return sessions;
       })
       .catch((error: unknown) => {
+        if (revision !== this.peerConnectionRevision) return [];
         const reason = error instanceof Error ? error.message : String(error);
         this.localCliSessionsRetryAt = Date.now() + SESSION_DISCOVERY_RETRY_GAP_MS;
         recordPersistentEvent("warning", "session-list", "Background session refresh delayed; retrying quietly", { reason });
         return this.localCliSessions = this.localCliSessions?.map(session => session.archived ? session : { ...session, status: "unknown", statusError: reason, locked: true, canStop: false }) ?? [];
       })
       .finally(() => {
-        this.localCliSessionsRead = undefined;
+        if (this.localCliSessionsRead === pending) this.localCliSessionsRead = undefined;
       });
-    return this.localCliSessionsRead;
+    this.localCliSessionsRead = pending;
+    return pending;
   }
 
   private async getConnectedPeers(): Promise<DashboardPeerView[]> {
@@ -2188,8 +2205,8 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private publishLocalPeerState(): void {
     this.invalidateLocalPeerState();
-    void this.publishPeerSessions();
-    if (this.peerSockets.size > 0) void this.broadcastPeerAggregate();
+    void this.publishPeerSessions().catch(error=>console.warn("[codexManager] peer state publish delayed",error));
+    if (this.peerSockets.size > 0) void this.broadcastPeerAggregate().catch(error=>console.warn("[codexManager] peer aggregate publish delayed",error));
   }
 
   private async readLocalPeerState(): Promise<LocalPeerState> {
@@ -2199,11 +2216,7 @@ export class WebDashboardServer implements vscode.Disposable {
       const enabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
       const [sessions, dashboard] = await Promise.all([
         enabled ? this.readLocalCliSessions() : Promise.resolve([]),
-        this.announcements
-          .getState(this.getAnnouncementOptions())
-          .then((announcements) =>
-            buildDashboardState(this.repo, this.settingsStore, "/assets/codex.svg", announcements)
-          )
+        buildDashboardState(this.repo, this.settingsStore, "/assets/codex.svg")
       ]);
       return {
         revision,
@@ -2220,7 +2233,7 @@ export class WebDashboardServer implements vscode.Disposable {
     } finally {
       if (this.localPeerStateRead === pending) this.localPeerStateRead = undefined;
     }
-    if (result.revision !== this.localPeerStateRevision) return this.readLocalPeerState();
+    if (result.revision !== this.localPeerStateRevision) return this.peerStopped ? result.state : this.readLocalPeerState();
     this.localPeerState = result.state;
     return result.state;
   }
@@ -2258,8 +2271,6 @@ export class WebDashboardServer implements vscode.Disposable {
           schedulePublishState: () => this.publishRealtimeState(),
           publishState: () => Promise.resolve(),
           oauth: this.oauth,
-          announcements: this.announcements,
-          getAnnouncementOptions: () => this.getAnnouncementOptions(),
           hostKind: "browser",
           configureEncryptedSync: this.encryptedSync
             ? (passphrase, confirmation, currentPassphrase) =>
@@ -2570,7 +2581,6 @@ export class WebDashboardServer implements vscode.Disposable {
       this.repo,
       this.settingsStore,
       "/assets/codex.svg",
-      await this.announcements.getState(this.getAnnouncementOptions()),
       await this.getConnectedPeers()
     );
     const peerSessions = [...this.peerSessions.values()];
@@ -2584,13 +2594,6 @@ export class WebDashboardServer implements vscode.Disposable {
     };
   }
 
-  private getAnnouncementOptions(): AnnouncementOptions {
-    const packageJson = this.context.extension.packageJSON as { version?: string };
-    return {
-      version: packageJson.version ?? "0.0.0",
-      locale: this.settingsStore.resolveLanguage()
-    };
-  }
 
   private async sendAsset(
     requestPath: string,

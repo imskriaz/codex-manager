@@ -48,16 +48,6 @@ export function buildDashboardStateSignature(state: DashboardState): string {
       ].join(":")
     )
     .join("|");
-  const announcementSignature = [
-    state.announcements.unreadIds.join(","),
-    state.announcements.popupAnnouncement?.id ?? "",
-    state.announcements.announcements
-      .map(
-        (item) =>
-          `${item.id}:${item.title}:${item.summary}:${item.createdAt}:${item.releaseVersion ?? ""}:${item.restartRequired ? "1" : "0"}:${item.restartHint ?? ""}:${item.pinned ? "1" : "0"}`
-      )
-      .join("|")
-  ].join(":");
   const dailyUsageSignature = (state.dailyUsageCache ?? [])
     .map(
       (entry) =>
@@ -123,7 +113,6 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.terminalNotice?.level ?? "",
     state.terminalNotice?.message ?? "",
     state.terminalNotice?.createdAt ?? "",
-    announcementSignature,
     dailyUsageSignature,
     accountSignature
   ].join("||");

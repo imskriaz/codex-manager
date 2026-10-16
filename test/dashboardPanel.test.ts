@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as vscode from "vscode";
 import type { DashboardState } from "../src/domain/dashboard/types";
 
 const { buildDashboardStateMock, backfillMissingResetCreditExpiriesMock } = vi.hoisted(() => ({
@@ -14,7 +15,12 @@ vi.mock("../src/presentation/dashboard/resetCreditsBackfill", () => ({
   backfillMissingResetCreditExpiries: backfillMissingResetCreditExpiriesMock
 }));
 
-import { publishDashboardSnapshot } from "../src/presentation/dashboard/panel";
+import { DashboardPanelController, publishDashboardSnapshot } from "../src/presentation/dashboard/panel";
+
+beforeEach(()=>{
+  buildDashboardStateMock.mockReset();backfillMissingResetCreditExpiriesMock.mockReset();
+  Object.assign(vscode.Uri,{joinPath:vi.fn(()=>({fsPath:"icon"}))});
+});
 
 function createState(): DashboardState {
   return {
@@ -46,10 +52,6 @@ function createState(): DashboardState {
     copy: {} as DashboardState["copy"],
     tokenAutomation: {
       enabled: true
-    },
-    announcements: {
-      announcements: [],
-      unreadIds: []
     },
     indexHealth: {
       status: "healthy",
@@ -92,6 +94,35 @@ function createContext(dailyUsageCache: unknown = []) {
 }
 
 describe("publishDashboardSnapshot", () => {
+  function controller() {
+    const postMessage=vi.fn(async()=>true);
+    const panel={title:"",webview:{postMessage,asWebviewUri:()=>({toString:()=>"logo"})}};
+    const instance=Object.assign(Object.create(DashboardPanelController.prototype),{
+      panel,webviewReady:true,panelRevision:0,forcePublish:false,publishAgain:false,
+      context:{...createContext() as object,extensionUri:{fsPath:"extension"}},repo:{},settingsStore:{}
+    }) as {publishState(force?:boolean):Promise<void>;panel:unknown;panelRevision:number};
+    return{instance,panel,postMessage};
+  }
+
+  it("joins concurrent refreshes and publishes only the newest requested snapshot",async()=>{
+    const {instance,postMessage}=controller();let release!:(state:DashboardState)=>void;
+    const newest={...createState(),brandSub:"latest"};
+    buildDashboardStateMock.mockImplementationOnce(()=>new Promise<DashboardState>(resolve=>{release=resolve;})).mockResolvedValue(newest);
+    backfillMissingResetCreditExpiriesMock.mockResolvedValue(false);
+    const first=instance.publishState();await vi.waitFor(()=>expect(release).toBeTypeOf("function"));
+    const second=instance.publishState(true);release(createState());await Promise.all([first,second]);
+    expect(postMessage).toHaveBeenCalledOnce();expect(postMessage.mock.calls[0]?.[0].state.brandSub).toBe("latest");
+  });
+
+  it("does not send a completed old read into a replacement panel",async()=>{
+    const {instance,postMessage}=controller();let release!:(state:DashboardState)=>void;
+    buildDashboardStateMock.mockImplementationOnce(()=>new Promise<DashboardState>(resolve=>{release=resolve;}));
+    backfillMissingResetCreditExpiriesMock.mockResolvedValue(false);
+    const publish=instance.publishState();await vi.waitFor(()=>expect(release).toBeTypeOf("function"));
+    instance.panel={webview:{postMessage:vi.fn()}};instance.panelRevision++;
+    release(createState());await publish;expect(postMessage).not.toHaveBeenCalled();
+  });
+
   it("publishes the current snapshot without waiting for reset credits backfill", async () => {
     const state = createState();
     let resolveBackfill: (value: boolean) => void = () => undefined;
@@ -114,7 +145,6 @@ describe("publishDashboardSnapshot", () => {
         repo: {} as never,
         settingsStore: {} as never,
         logoUri: "logo",
-        announcementsState: state.announcements,
         setPanelTitle,
         postMessage,
         schedulePublishState
@@ -148,7 +178,6 @@ describe("publishDashboardSnapshot", () => {
       repo: {} as never,
       settingsStore: {} as never,
       logoUri: "logo",
-      announcementsState: state.announcements,
       setPanelTitle: vi.fn(),
       postMessage: vi.fn(async () => true),
       schedulePublishState
@@ -177,7 +206,6 @@ describe("publishDashboardSnapshot", () => {
       repo: {} as never,
       settingsStore: {} as never,
       logoUri: "logo",
-      announcementsState: state.announcements,
       setPanelTitle: vi.fn(),
       postMessage,
       schedulePublishState: vi.fn()

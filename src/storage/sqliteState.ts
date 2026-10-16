@@ -13,8 +13,102 @@ export type Database = {
   close(): void;
 };
 
+export type SqliteTopic = "accounts" | "settings" | "usage" | "sessions" | "session-status" | "state";
+type ChangeListener = { topics: ReadonlySet<SqliteTopic>; changed: (topics: ReadonlySet<SqliteTopic>) => void };
+
 export class SqliteStateStore {
+  private readonly statements = new Map<string, ReturnType<Database["prepare"]>>();
+  private readonly listeners = new Set<ChangeListener>();
+  private revisions = new Map<string, number>();
+  private changeTimer: NodeJS.Timeout | undefined;
+  private changeQueued = false;
+  private notificationsReady = false;
+  private pollingFailed = false;
+  private depth = 0;
+  private closed = false;
   private constructor(readonly file: string, readonly database: Database) {}
+
+  /** Reuse bounded prepared statements across all readers and writers on this connection. */
+  prepare(sql: string): ReturnType<Database["prepare"]> {
+    if (this.closed) throw new Error("The manager database is closed.");
+    let statement = this.statements.get(sql);
+    if (!statement) {
+      statement = this.database.prepare(sql);
+      if (this.statements.size >= 64) this.statements.delete(this.statements.keys().next().value!);
+      this.statements.set(sql, statement);
+    }
+    return statement;
+  }
+
+  private initializeNotifications(): void {
+    if (this.notificationsReady) return;
+    this.database.exec("CREATE TABLE IF NOT EXISTS manager_revisions(topic TEXT PRIMARY KEY,revision INTEGER NOT NULL)");
+    for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
+      const row = operation === "DELETE" ? "OLD" : "NEW";
+      const topic = `CASE WHEN ${row}.namespace LIKE 'settings%' THEN 'settings' WHEN ${row}.namespace='account-index' OR (${row}.namespace='files' AND ${row}.key LIKE 'accounts-index%') THEN 'accounts' ELSE 'state' END`;
+      this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_state_${operation} AFTER ${operation} ON state
+        WHEN ${row}.namespace IN ('global','files','account-index') OR ${row}.namespace LIKE 'workspace:%' OR ${row}.namespace LIKE 'settings%'
+        BEGIN INSERT INTO manager_revisions(topic,revision) VALUES(${topic},1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
+    }
+    this.notificationsReady = true;
+  }
+
+  watchTable(table: string, topic: SqliteTopic): void {
+    if (!/^[a-z_]+$/.test(table) || !/^[a-z-]+$/.test(topic)) throw new Error("Invalid storage change topic.");
+    this.initializeNotifications();
+    for (const operation of ["INSERT", "UPDATE", "DELETE"])
+      this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_${table}_${operation} AFTER ${operation} ON ${table}
+        BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('${topic}',1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
+  }
+
+  /** One poll per shared connection observes committed changes from every process. */
+  subscribe(topics: readonly SqliteTopic[], changed: ChangeListener["changed"]): () => void {
+    if (this.closed) throw new Error("The manager database is closed.");
+    if (!topics.length) return () => undefined;
+    this.initializeNotifications();
+    if (!this.listeners.size) this.revisions = this.readRevisions();
+    const listener: ChangeListener = { topics: new Set(topics), changed };
+    this.listeners.add(listener);
+    this.changeTimer ??= setInterval(() => this.publishChanges(), 250);
+    this.changeTimer.unref?.();
+    return () => {
+      this.listeners.delete(listener);
+      if (!this.listeners.size && this.changeTimer) { clearInterval(this.changeTimer); this.changeTimer = undefined; }
+    };
+  }
+
+  private readRevisions(): Map<string, number> {
+    return new Map(this.prepare("SELECT topic,revision FROM manager_revisions").all().map(row => [String(row["topic"]),Number(row["revision"])]));
+  }
+
+  revision(topic: SqliteTopic): number {
+    this.initializeNotifications();
+    return Number(this.prepare("SELECT revision FROM manager_revisions WHERE topic=?").get(topic)?.["revision"] ?? 0);
+  }
+
+  private publishChanges(): void {
+    if (this.closed || !this.listeners.size || this.depth) return;
+    try {
+      const next = this.readRevisions();
+      const changed = new Set([...next].filter(([topic,version]) => version !== (this.revisions.get(topic) ?? 0)).map(([topic]) => topic as SqliteTopic));
+      this.revisions = next;
+      this.pollingFailed = false;
+      if (!changed.size) return;
+      for (const listener of [...this.listeners]) {
+        if (!this.listeners.has(listener) || ![...changed].some(topic => listener.topics.has(topic))) continue;
+        try { listener.changed(changed); } catch (error) { console.warn("[codexManager] storage subscriber failed",error); }
+      }
+    } catch (error) {
+      if (!this.pollingFailed) console.warn("[codexManager] storage subscriptions delayed; retrying",error);
+      this.pollingFailed = true;
+    }
+  }
+
+  private changed(): void {
+    if (!this.listeners.size || this.depth || this.changeQueued || this.closed) return;
+    this.changeQueued = true;
+    queueMicrotask(() => { this.changeQueued = false; this.publishChanges(); });
+  }
 
   static async open(file: string): Promise<SqliteStateStore> {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -34,47 +128,63 @@ export class SqliteStateStore {
   }
 
   get<T>(namespace: string, key: string): T | undefined {
-    const row = this.database.prepare("SELECT value FROM state WHERE namespace = ? AND key = ?").get(namespace, key);
+    const row = this.prepare("SELECT value FROM state WHERE namespace = ? AND key = ?").get(namespace, key);
     return row ? JSON.parse(String(row["value"])) as T : undefined;
   }
 
   set(namespace: string, key: string, value: unknown): void {
     if (value === undefined) {
-      this.database.prepare("DELETE FROM state WHERE namespace = ? AND key = ?").run(namespace, key);
+      this.prepare("DELETE FROM state WHERE namespace = ? AND key = ?").run(namespace, key);
     } else {
       const serialized = JSON.stringify(value);
       if (serialized === undefined) throw new Error("The storage value cannot be serialized.");
-      this.database.prepare("INSERT INTO state (namespace, key, value) VALUES (?, ?, ?) ON CONFLICT (namespace, key) DO UPDATE SET value = excluded.value WHERE state.value != excluded.value")
+      this.prepare("INSERT INTO state (namespace, key, value) VALUES (?, ?, ?) ON CONFLICT (namespace, key) DO UPDATE SET value = excluded.value WHERE state.value != excluded.value")
         .run(namespace, key, serialized);
     }
+    this.changed();
   }
 
   keys(namespace: string): string[] {
-    return this.database.prepare("SELECT key FROM state WHERE namespace = ? ORDER BY key").all(namespace).map(row => String(row["key"]));
+    return this.prepare("SELECT key FROM state WHERE namespace = ? ORDER BY key").all(namespace).map(row => String(row["key"]));
   }
 
   recent<T>(namespace: string, limit: number): T[] {
-    return this.database.prepare("SELECT value FROM state WHERE namespace = ? ORDER BY key DESC LIMIT ?").all(namespace, limit)
+    return this.prepare("SELECT value FROM state WHERE namespace = ? ORDER BY key DESC LIMIT ?").all(namespace, limit)
       .map(row => JSON.parse(String(row["value"])) as T).reverse();
   }
 
   deleteBefore(namespace: string, key: string): void {
-    this.database.prepare("DELETE FROM state WHERE namespace = ? AND key < ?").run(namespace, key);
+    this.prepare("DELETE FROM state WHERE namespace = ? AND key < ?").run(namespace, key);
   }
 
   transaction<T>(write: () => T): T {
-    this.database.exec("BEGIN IMMEDIATE");
+    const savepoint = `manager_nested_${this.depth}`;
+    this.database.exec(this.depth ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
+    this.depth++;
     try {
       const result = write();
-      this.database.exec("COMMIT");
+      this.database.exec(this.depth > 1 ? `RELEASE ${savepoint}` : "COMMIT");
       return result;
     } catch (error) {
-      try { this.database.exec("ROLLBACK"); } catch { /* Preserve the original write failure. */ }
+      try {
+        this.database.exec(this.depth > 1 ? `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}` : "ROLLBACK");
+      } catch { /* Preserve the original write failure. */ }
       throw error;
+    } finally {
+      this.depth--;
+      this.changed();
     }
   }
 
-  close(): void { this.database.close(); }
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.changeTimer) clearInterval(this.changeTimer);
+    this.changeTimer = undefined;
+    this.listeners.clear();
+    this.statements.clear();
+    this.database.close();
+  }
 }
 
 let stateStore: SqliteStateStore | undefined;

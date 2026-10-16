@@ -67,7 +67,6 @@ import type { DashboardLanguage } from "../../localization/languages";
 import { getErrorMessage } from "../../core";
 import type { SwitchAccountCommandResult } from "../../application/accounts/commandService";
 import { AccountsRepository } from "../../storage";
-import { AnnouncementService, type AnnouncementOptions } from "../../services/announcements";
 import { runWithConcurrencyLimit, waitWithin } from "../../utils/concurrency";
 import { runWithBulkProviderRequests } from "../../utils/network";
 import { t } from "../../utils";
@@ -104,7 +103,6 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   // remain usable while another window owns an account mutation or is already
   // reloading. Actions that delegate to registered commands rely on the
   // command's narrower operation lock instead of taking a second one here.
-  "refreshAnnouncements",
   "shareTokens",
   "exportBackup",
   "openNetworkLogs",
@@ -171,8 +169,6 @@ export type DashboardActionContext = {
   schedulePublishState: () => void;
   publishState: (force?: boolean) => Promise<void>;
   oauth: DashboardOAuthCoordinator;
-  announcements: AnnouncementService;
-  getAnnouncementOptions: () => AnnouncementOptions;
   /** Browser actions must never open VS Code-owned prompts or confirmations. */
   hostKind?: "webview" | "browser";
   configureEncryptedSync?: (passphrase: string, confirmation: string, currentPassphrase?: string) => Promise<boolean>;
@@ -407,18 +403,6 @@ async function runDashboardAction(
       };
     case "refreshAll":
       return { batchResult: await vscode.commands.executeCommand<DashboardBatchResult>("codexManager.refreshAllQuotas") };
-    case "refreshAnnouncements":
-      await ctx.announcements.forceRefresh(ctx.getAnnouncementOptions());
-      ctx.schedulePublishState();
-      return undefined;
-    case "markAnnouncementRead":
-      await ctx.announcements.markAsRead(payload?.announcementId ?? "");
-      ctx.schedulePublishState();
-      return undefined;
-    case "markAllAnnouncementsRead":
-      await ctx.announcements.markAllAsRead(ctx.getAnnouncementOptions());
-      ctx.schedulePublishState();
-      return undefined;
     case "shareTokens":
       return handleShareTokens(ctx.repo, payload, translate);
     case "exportBackup":

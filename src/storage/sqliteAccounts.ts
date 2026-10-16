@@ -14,6 +14,7 @@ function schema(store: SqliteStateStore): void {
     session_started_at REAL, hourly_remaining REAL, long_remaining REAL, data TEXT NOT NULL
   ); CREATE INDEX IF NOT EXISTS accounts_queue ON accounts(enabled, queue_priority);
   CREATE INDEX IF NOT EXISTS accounts_updated ON accounts(updated_at);`);
+  store.watchTable("accounts","accounts");
   initialized.add(store);
 }
 
@@ -22,13 +23,13 @@ export function hasAccountRows(store: SqliteStateStore): boolean { return store.
 export function readAccountIndex(store: SqliteStateStore): CodexManagerIndex {
   const header = store.get<Omit<CodexManagerIndex, "accounts">>("account-index", "header");
   if (!header) throw Object.assign(new Error("Accounts index does not exist."), { code: "ENOENT" });
-  const accounts = store.database.prepare("SELECT data FROM accounts ORDER BY position").all().map(row => JSON.parse(String(row["data"])) as CodexManagerAccountRecord);
+  const accounts = store.prepare("SELECT data FROM accounts ORDER BY position").all().map(row => JSON.parse(String(row["data"])) as CodexManagerAccountRecord);
   return parseAccountsIndex(JSON.stringify({ ...header, accounts }), store.file);
 }
 
 export function readAccountRow(store: SqliteStateStore, id: string, home: string): CodexManagerAccountRecord | undefined {
   if (!hasAccountRows(store)) return undefined;
-  const row = store.database.prepare("SELECT data FROM accounts WHERE id = ?").get(id);
+  const row = store.prepare("SELECT data FROM accounts WHERE id = ?").get(id);
   if (!row) return undefined;
   const account = parseAccountsIndex(JSON.stringify({ accounts: [JSON.parse(String(row["data"]))] }), store.file).accounts[0]!;
   if (account.id !== id) throw new Error("Stored account identity does not match its database key.");
@@ -62,10 +63,10 @@ export function saveAccountIndex(store: SqliteStateStore, value: CodexManagerInd
         store.set("files", "accounts-index.backup-1.json", { text: JSON.stringify(previous) });
       }
     }
-    for (const row of store.database.prepare("SELECT id FROM accounts").all()) {
-      if (!ids.has(String(row["id"]))) store.database.prepare("DELETE FROM accounts WHERE id = ?").run(String(row["id"]));
+    for (const row of store.prepare("SELECT id FROM accounts").all()) {
+      if (!ids.has(String(row["id"]))) store.prepare("DELETE FROM accounts WHERE id = ?").run(String(row["id"]));
     }
-    const write = store.database.prepare(`INSERT INTO accounts(id,position,email,enabled,queue_priority,updated_at,total_usage_ms,session_started_at,hourly_remaining,long_remaining,data)
+    const write = store.prepare(`INSERT INTO accounts(id,position,email,enabled,queue_priority,updated_at,total_usage_ms,session_started_at,hourly_remaining,long_remaining,data)
       VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET position=excluded.position,email=excluded.email,enabled=excluded.enabled,
       queue_priority=excluded.queue_priority,updated_at=excluded.updated_at,total_usage_ms=excluded.total_usage_ms,
       session_started_at=excluded.session_started_at,hourly_remaining=excluded.hourly_remaining,long_remaining=excluded.long_remaining,data=excluded.data

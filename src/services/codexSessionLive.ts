@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "../domain/dashboard/types";
-import { CodexSessionLiveReducer } from "../domain/codexSessionLive";
+import { CodexSessionLiveReducer, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import type { CodexAppServerRpc } from "./codexAppServerRpc";
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import { captureSessionAccount, recordSessionLive } from "./sessionRecording";
@@ -16,16 +16,20 @@ const streams = new Map<string, { reducer: CodexSessionLiveReducer; timer?: Node
 export function getCodexSessionLiveState(sessionId: string): DashboardCodexSessionLiveState | undefined {
   prune();
   const current = streams.get(sessionId.toLowerCase())?.reducer.snapshot();
-  if (current) return current;
+  if (current?.status === "running" || current?.status === "starting") return current;
   const store = getSqliteStateStore();
-  return store ? readStoredSessionLive(store,getCodexHome(),sessionId.toLowerCase()) : undefined;
+  const stored = store ? readStoredSessionLive(store,getCodexHome(),sessionId.toLowerCase()) : undefined;
+  return stored && isNewerCodexSessionLiveState(stored,current) ? stored : current ?? stored;
 }
 
 export function listCodexSessionLiveStates(): DashboardCodexSessionLiveState[] {
   prune();
   const store = getSqliteStateStore();
   const states = new Map((store ? listStoredSessionLive(store,getCodexHome()) : []).map(state=>[state.sessionId,state]));
-  for (const [id,stream] of streams) states.set(id,stream.reducer.snapshot());
+  for (const [id,stream] of streams) {
+    const current = stream.reducer.snapshot();
+    if (isNewerCodexSessionLiveState(current,states.get(id))) states.set(id,current);
+  }
   return [...states.values()];
 }
 

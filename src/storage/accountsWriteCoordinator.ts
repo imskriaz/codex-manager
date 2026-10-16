@@ -18,6 +18,7 @@ import { sqliteStoreForFile } from "./sqliteState";
 const INDEX_PERSIST_OPERATION_KEY = "accounts:index-persist";
 
 export function disposeWriteCoordinator(state: AccountsRepositoryState): void {
+  state.disposed = true;
   if (state.saveDebounceTimer) {
     clearTimeout(state.saveDebounceTimer);
     state.saveDebounceTimer = null;
@@ -110,6 +111,7 @@ export async function flushPendingSave(
 }
 
 export function assertWriteAllowed(state: AccountsRepositoryState): void {
+  if (state.disposed) throw createError.storageWriteBlocked("Account repository is closed.");
   if (state.indexHealth.status === "corrupted_unrecoverable") {
     console.warn("[codexManager] blocked write because accounts index is corrupted");
     throw createError.storageWriteBlocked("Accounts index is corrupted. Restore accounts before writing again.");
@@ -126,12 +128,14 @@ export async function persistIndexWithBackups(params: {
 }): Promise<void> {
   try {
     await runCrossWindowExclusive(INDEX_PERSIST_OPERATION_KEY, "Account index save", async () => {
+      assertWriteAllowed(params.state);
       await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
       const sqlite = sqliteStoreForFile(params.indexPath);
       const current = await readIndexSnapshot(params.indexPath).catch((error: unknown) => {
         if (sqlite && !isFileNotFoundError(error)) throw error;
         return undefined;
       });
+      assertWriteAllowed(params.state);
       const index = sqlite && current && params.state.persistedIndex
         ? mergeAccountsIndexChanges(params.state.persistedIndex, params.index, current, params.activeCodexHomeKey)
         : cloneIndex(params.index);

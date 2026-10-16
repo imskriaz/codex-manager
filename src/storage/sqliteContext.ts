@@ -40,15 +40,7 @@ export async function initializeSqliteContext(context: vscode.ExtensionContext):
         void vscode.window.showWarningMessage(`Settings could not be saved to SQLite. Retry the setting change: ${error instanceof Error ? error.message : String(error)}`);
       }
     }));
-    let pollingErrorReported = false;
-    const poll = setInterval(() => {
-      try { publishConfigurationChanges(); pollingErrorReported = false; } catch (error) {
-        if (!pollingErrorReported) console.warn("[codexManager] settings refresh delayed; retrying", error);
-        pollingErrorReported = true;
-      }
-    }, 1_000);
-    poll.unref?.();
-    context.subscriptions.push({ dispose: () => clearInterval(poll) });
+    context.subscriptions.push({ dispose: store.subscribe(["settings"], publishConfigurationChanges) });
     return Object.create(context, { globalState: { value: globalState }, workspaceState: { value: workspaceState } }) as vscode.ExtensionContext;
   } catch (error) {
     configurationNamespace = undefined;

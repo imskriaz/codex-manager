@@ -5,13 +5,13 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import { disposePersistentLogging, PersistentSqliteLogger, registerPersistentLogging, runWithPersistentOperation } from "../src/utils/persistentLog";
-import { SqliteStateStore } from "../src/storage/sqliteState";
+import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { removeTestDirectory } from "./testFilesystem";
 
 const temporaryDirectories: string[] = [];
 const loggers: PersistentSqliteLogger[] = [];
 afterEach(async () => {
-  await disposePersistentLogging();
+  await disposePersistentLogging(true);
   for (const logger of loggers.splice(0)) await logger.close().catch(() => undefined);
   vi.restoreAllMocks();
   await Promise.all(temporaryDirectories.splice(0).map(directory => removeTestDirectory(directory)));
@@ -41,6 +41,31 @@ async function register(directory: string) {
 }
 
 describe("SQLite persistent diagnostics", () => {
+  it("applies logging preferences committed by another window",async()=>{
+    const directory=await root(),store=await SqliteStateStore.open(path.join(directory,"manager.sqlite"));
+    const peer=await SqliteStateStore.open(store.file);configureSqliteStateStore(store);
+    const {isPersistentLoggingEnabled,getPersistentLogRetentionDays}=await import("../src/utils/persistentLog");
+    try {
+      await register(directory);
+      peer.set("files","logging-settings.json",{text:JSON.stringify({enabled:true,retentionDays:7})});
+      await vi.waitFor(()=>{expect(isPersistentLoggingEnabled()).toBe(true);expect(getPersistentLogRetentionDays()).toBe(7);});
+      peer.set("files","logging-settings.json",{text:JSON.stringify({enabled:false,retentionDays:3})});
+      await vi.waitFor(()=>expect(isPersistentLoggingEnabled()).toBe(false));
+    } finally {await disposePersistentLogging(true);configureSqliteStateStore(undefined);peer.close();store.close();}
+  });
+
+  it("does not install a late logger after the owning host shuts down",async()=>{
+    const directory=await root();await register(directory);
+    const {setPersistentLoggingEnabled,isPersistentLoggingEnabled}=await import("../src/utils/persistentLog");
+    let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+    const initialize=PersistentSqliteLogger.prototype.initialize;
+    const paused=vi.spyOn(PersistentSqliteLogger.prototype,"initialize").mockImplementationOnce(async function(){await gate;await initialize.call(this);});
+    const enabling=setPersistentLoggingEnabled(true);
+    const failed=expect(enabling).rejects.toThrow("interrupted");
+    await vi.waitFor(()=>expect(paused).toHaveBeenCalledOnce());await disposePersistentLogging(true);release();
+    await failed;expect(isPersistentLoggingEnabled()).toBe(false);
+  });
+
   it("bounds queued records during slow storage and records skipped events", async () => {
     const directory = await root();
     let resume!: () => void;

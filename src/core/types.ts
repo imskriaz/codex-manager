@@ -239,50 +239,6 @@ export interface CodexManagerRestoreResult {
   restoredEmails: string[];
 }
 
-export type CodexAnnouncementType = string;
-
-export interface CodexAnnouncementAction {
-  type: string;
-  target: string;
-  label: string;
-  arguments?: unknown[];
-}
-
-export interface CodexAnnouncementImage {
-  url: string;
-  label?: string;
-  alt?: string;
-}
-
-export interface CodexAnnouncement {
-  id: string;
-  type: CodexAnnouncementType;
-  priority: number;
-  releaseVersion?: string;
-  currentVersion?: string;
-  restartRequired?: boolean;
-  restartHint?: string;
-  title: string;
-  summary: string;
-  content: string;
-  action?: CodexAnnouncementAction;
-  targetVersions: string;
-  targetLanguages: string[];
-  showOnce: boolean;
-  popup: boolean;
-  pinned: boolean;
-  createdAt: string;
-  expiresAt?: string | null;
-  locales?: Record<string, unknown> | null;
-  images: CodexAnnouncementImage[];
-}
-
-export interface CodexAnnouncementState {
-  announcements: CodexAnnouncement[];
-  unreadIds: string[];
-  popupAnnouncement: CodexAnnouncement | null;
-}
-
 /**
  * Codex auth.json 文件格式
  */

@@ -1,6 +1,5 @@
 import type { DashboardLanguage, DashboardLanguageOption } from "../../localization/languages";
 import type {
-  CodexAnnouncementState,
   CodexDailyUsageBreakdown,
   CodexImportPreviewSummary,
   CodexImportResultSummary,
@@ -113,22 +112,6 @@ export interface DashboardCopy {
   refreshPage: string;
   githubProject: string;
   githubProjectTip: string;
-  announcementsTitle: string;
-  announcementsTooltip: string;
-  announcementsEmpty: string;
-  announcementsRefresh: string;
-  announcementsRefreshing: string;
-  announcementsMarkAllRead: string;
-  announcementsGotIt: string;
-  announcementsPinned: string;
-  announcementsTypeInfo: string;
-  announcementsTypeFeature: string;
-  announcementsTypeWarning: string;
-  announcementsTypeUrgent: string;
-  announcementsJustNow: string;
-  announcementsMinutesAgo: string;
-  announcementsHoursAgo: string;
-  announcementsDaysAgo: string;
   addAccount: string;
   importCurrent: string;
   refreshAll: string;
@@ -484,7 +467,6 @@ export interface DashboardState {
   encryptedSyncEnabledSessionCount?: number;
   copy: DashboardCopy;
   tokenAutomation: DashboardTokenAutomationViewModel;
-  announcements: CodexAnnouncementState;
   indexHealth: CodexIndexHealthSummary;
   accounts: DashboardAccountViewModel[];
   /** Recent terminal result shown by the dashboard's top toast. */
@@ -513,9 +495,6 @@ export type DashboardActionName =
   | "inspectCurrentAuth"
   | "completeOnboarding"
   | "refreshAll"
-  | "refreshAnnouncements"
-  | "markAnnouncementRead"
-  | "markAllAnnouncementsRead"
   | "shareTokens"
   | "exportBackup"
   | "configureEncryptedSync"
@@ -606,7 +585,6 @@ export interface DashboardActionPayload {
   issueKey?: string;
   recoveryMode?: boolean;
   lockMinutes?: number;
-  announcementId?: string;
   privacyMode?: boolean;
   queuePriority?: boolean;
   tokenRefreshEnabled?: boolean;

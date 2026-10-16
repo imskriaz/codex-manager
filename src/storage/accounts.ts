@@ -175,15 +175,20 @@ export class AccountsRepository {
   private readonly switchInFlight = new Map<string, Promise<CodexManagerAccountRecord>>();
   /** getTokens 内存缓存，减少 SecretStore/Keychain 重复读取 */
   private readonly tokenCache = new Map<string, TokenCacheEntry>();
+  private readonly tokenReads = new Map<string, Promise<CodexTokens | undefined>>();
+  private readonly secretSubscription: vscode.Disposable | undefined;
+  private readonly stopStorageSubscription: (() => void) | undefined;
   private switchCoordinator: AccountSwitchCoordinator | undefined;
   private homeScopeMigrationPending = false;
 
   /** 防止重复释放 */
-  private disposed = false;
+  private get disposed(): boolean { return this.state.disposed; }
+  private cachedAccountRevision: number | undefined;
   private startupSyncTimer: NodeJS.Timeout | undefined;
 
   /** 任何 token 写入后清空整个缓存，下次 getTokens 重新从 SecretStore 读取 */
   private invalidateTokenCache(): void {
+    this.tokenReads.clear();
     if (this.tokenCache.size > 0) {
       this.tokenCache.clear();
     }
@@ -191,10 +196,12 @@ export class AccountsRepository {
 
   private invalidateTokenCacheForAccount(accountId: string): void {
     this.tokenCache.delete(accountId);
+    this.tokenReads.delete(accountId);
   }
 
   constructor(context: vscode.ExtensionContext, indexPathOverride?: string, legacyDurableIndexPath?: string) {
     this.secretStore = new SecretStore(context.secrets);
+    this.secretSubscription = this.secretStore.onDidChange(accountId => this.invalidateTokenCacheForAccount(accountId));
     this.codexHomeStateKey = getCodexHomeStateKey();
     // Production has one cross-platform, reinstall-safe source of truth.
     // Tests must opt into another path explicitly so production can never
@@ -205,6 +212,11 @@ export class AccountsRepository {
       ...(legacyDurableIndexPath ? [legacyDurableIndexPath] : []),
       ...(context.extensionUri && !indexPathOverride ? [path.join(codexHome, "codex-manager", INDEX_FILE)] : [])
     ].filter((candidate, index, all) => candidate !== this.indexPath && all.indexOf(candidate) === index);
+    try {
+      this.stopStorageSubscription = sqliteStoreForFile(this.indexPath)?.subscribe(["accounts"], () => {
+        if (!this.state.isDirty && !this.state.pendingSave) this.state.cache = null;
+      });
+    } catch (error) { this.secretSubscription?.dispose(); throw error; }
   }
 
   get accountsIndexPath(): string {
@@ -262,7 +274,10 @@ export class AccountsRepository {
     if (this.disposed) {
       return;
     }
-    this.disposed = true;
+    this.state.disposed = true;
+    this.stopStorageSubscription?.();
+    this.secretSubscription?.dispose();
+    this.invalidateTokenCache();
     if (this.startupSyncTimer) {
       clearTimeout(this.startupSyncTimer);
       this.startupSyncTimer = undefined;
@@ -453,15 +468,25 @@ export class AccountsRepository {
    */
   async getTokens(accountId: string, options: { bypassCache?: boolean } = {}): Promise<CodexTokens | undefined> {
     try {
+      if (this.disposed) throw new Error("Account repository is closed.");
       // 内存缓存命中直接返回，避免 Dashboard 刷新时重复读 Keychain
       const cached = this.tokenCache.get(accountId);
       if (!options.bypassCache && cached && Date.now() - cached.cachedAt < TOKEN_CACHE_TTL_MS) {
         return cached.tokens;
       }
 
-      const storedTokens = await this.secretStore.getTokens(accountId);
-      this.tokenCache.set(accountId, { tokens: storedTokens, cachedAt: Date.now() });
-      return storedTokens;
+      const previousRead = !options.bypassCache && this.tokenReads.get(accountId);
+      if (previousRead) return await previousRead;
+      const read = this.secretStore.getTokens(accountId);
+      this.tokenReads.set(accountId, read);
+      try {
+        const storedTokens = await read;
+        if (!this.disposed && this.tokenReads.get(accountId) === read) {
+          if (this.tokenCache.size >= 256) this.tokenCache.delete(this.tokenCache.keys().next().value!);
+          this.tokenCache.set(accountId, { tokens: storedTokens, cachedAt: Date.now() });
+        }
+        return storedTokens;
+      } finally { if (this.tokenReads.get(accountId) === read) this.tokenReads.delete(accountId); }
     } catch (cause) {
       throw new StorageError(`Failed to get tokens for ${accountId}`, {
         code: ErrorCode.STORAGE_SECRET_ACCESS_FAILED,
@@ -1573,9 +1598,11 @@ export class AccountsRepository {
    * 读取索引 (带缓存)
    */
   private async readIndex(): Promise<CodexManagerIndex> {
+    if (this.disposed) throw new Error("Account repository is closed.");
     if (this.indexReadInFlight) return this.indexReadInFlight;
     const pending = this.readIndexInternal()
       .then((index) => {
+        if (this.disposed) throw new Error("Account repository is closed.");
         if (scopeActiveAccountState(index, this.codexHomeStateKey)) {
           this.homeScopeMigrationPending = true;
         }
@@ -1593,13 +1620,20 @@ export class AccountsRepository {
       throw createError.storageWriteBlocked("Accounts index is corrupted and must be restored before continuing.");
     }
 
-    const cached = readPendingOrCachedIndex(this.state, sqliteStoreForFile(this.indexPath) ? 0 : CACHE_TTL_MS);
+    const store = sqliteStoreForFile(this.indexPath);
+    if (store) {
+      const revision = store.revision("accounts");
+      if (revision !== this.cachedAccountRevision) this.state.cache = null;
+      this.cachedAccountRevision = revision;
+    }
+    const cached = readPendingOrCachedIndex(this.state, CACHE_TTL_MS);
     if (cached) {
       return cached;
     }
 
     try {
       const snapshot = await readIndexSnapshot(this.indexPath);
+      if (this.disposed) throw new Error("Account repository is closed.");
       if (sqliteStoreForFile(this.indexPath)) this.state.persistedIndex = cloneIndex(snapshot);
       this.state.cache = {
         data: snapshot,
@@ -1612,6 +1646,7 @@ export class AccountsRepository {
       };
       return cloneIndex(snapshot);
     } catch (cause) {
+      if (this.disposed) throw cause;
       if (sqliteStoreForFile(this.indexPath) && isSqliteError(cause)) throw cause;
       if (isFileNotFoundError(cause)) {
         if (sqliteStoreForFile(this.indexPath)) this.state.persistedIndex = createEmptyIndex();

@@ -55,10 +55,7 @@ describe("buildDashboardState token recovery", () => {
       getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" })
     };
 
-    const snapshot = buildDashboardState(repo as never, settingsStore as never, "logo", {
-      announcements: [],
-      unreadIds: []
-    });
+    const snapshot = buildDashboardState(repo as never, settingsStore as never, "logo");
     await expect(snapshot).resolves.toMatchObject({ accounts: [{ id: "slow-refresh" }] });
     expect(refreshTokensMock).toHaveBeenCalledOnce();
 
@@ -72,11 +69,11 @@ describe("buildDashboardState token recovery", () => {
     const getTokens = vi.fn().mockRejectedValueOnce(new Error("Secret Storage unavailable")).mockResolvedValue(tokens);
     const repo = { getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }), listAccounts: vi.fn().mockResolvedValue(accounts), getTokens };
     const settings = { resolveLanguage: () => "en", getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" }) };
-    const failed = await buildDashboardState(repo as never, settings as never, "logo", { announcements: [], unreadIds: [] });
+    const failed = await buildDashboardState(repo as never, settings as never, "logo");
     expect(failed.accounts).toHaveLength(2);
     expect(failed.accounts.find((account) => account.id === "storage-unavailable")).toMatchObject({ healthKind: "refresh_failed", healthMessage: expect.stringContaining("Secret Storage unavailable") });
     expect(failed.accounts.find((account) => account.id === "storage-healthy")?.healthKind).toBe("healthy");
-    const recovered = await buildDashboardState(repo as never, settings as never, "logo", { announcements: [], unreadIds: [] });
+    const recovered = await buildDashboardState(repo as never, settings as never, "logo");
     expect(recovered.accounts.every((account) => account.healthKind === "healthy")).toBe(true);
   });
   it("clears a stale refresh failure after another path restores a valid access token", async () => {
@@ -104,14 +101,8 @@ describe("buildDashboardState token recovery", () => {
       getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" })
     };
 
-    const failed = await buildDashboardState(repo as never, settingsStore as never, "logo", {
-      announcements: [],
-      unreadIds: []
-    });
-    const recovered = await buildDashboardState(repo as never, settingsStore as never, "logo", {
-      announcements: [],
-      unreadIds: []
-    });
+    const failed = await buildDashboardState(repo as never, settingsStore as never, "logo");
+    const recovered = await buildDashboardState(repo as never, settingsStore as never, "logo");
 
     expect(failed.accounts[0]?.healthKind).toBe("refresh_failed");
     expect(recovered.accounts[0]?.healthKind).toBe("healthy");
@@ -146,17 +137,11 @@ describe("buildDashboardState token recovery", () => {
         getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" })
       };
 
-      const failed = await buildDashboardState(repo as never, settingsStore as never, "logo", {
-        announcements: [],
-        unreadIds: []
-      });
+      const failed = await buildDashboardState(repo as never, settingsStore as never, "logo");
       expect(failed.accounts[0]?.healthKind).toBe("refresh_failed");
 
       await vi.advanceTimersByTimeAsync(60_001);
-      const recovered = await buildDashboardState(repo as never, settingsStore as never, "logo", {
-        announcements: [],
-        unreadIds: []
-      });
+      const recovered = await buildDashboardState(repo as never, settingsStore as never, "logo");
 
       expect(refreshTokensMock).toHaveBeenCalledTimes(2);
       expect(recovered.accounts[0]?.healthKind).toBe("healthy");
@@ -200,14 +185,8 @@ describe("buildDashboardState token recovery", () => {
       getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" })
     };
 
-    const first = await buildDashboardState(repo as never, settingsStore as never, "logo", {
-      announcements: [],
-      unreadIds: []
-    });
-    const second = await buildDashboardState(repo as never, settingsStore as never, "logo", {
-      announcements: [],
-      unreadIds: []
-    });
+    const first = await buildDashboardState(repo as never, settingsStore as never, "logo");
+    const second = await buildDashboardState(repo as never, settingsStore as never, "logo");
 
     expect(refreshTokensMock).toHaveBeenCalledTimes(1);
     expect(repo.updateTokens).toHaveBeenCalledTimes(1);

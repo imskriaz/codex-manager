@@ -12,8 +12,7 @@ import { formatAccountStructure, formatAuthProvider, formatPlanType, getDashboar
 import {
   CodexManagerAccountRecord,
   CodexCreditsSummary,
-  CodexTokens,
-  type CodexAnnouncementState
+  CodexTokens
 } from "../../core/types";
 import { resolveCodexAppLaunchPath } from "../../utils/codexApp";
 import {
@@ -58,7 +57,6 @@ export async function buildDashboardState(
   repo: AccountsRepository,
   settingsStore: ExtensionSettingsStore,
   logoUri: string,
-  announcements: CodexAnnouncementState,
   connectedPeers?: DashboardPeerView[]
 ): Promise<DashboardState> {
   const lang = settingsStore.resolveLanguage();
@@ -165,7 +163,6 @@ export async function buildDashboardState(
       lastRefreshAt: tokenAutomation.lastSuccessAt,
       lastFailureMessage: tokenAutomation.lastFailureMessage
     },
-    announcements,
     indexHealth,
     terminalNotice: resolveTerminalNotice(autoSwitchRuntime.dashboardNotice, activeAccount, copy),
     accounts: sortedAccounts.map((account) =>

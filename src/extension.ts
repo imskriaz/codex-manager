@@ -1,3 +1,5 @@
+import { cleanupManagerStorage } from "./storage/storageCleanup";
+import { getSqliteStateStore } from "./storage/sqliteState";
 import { registerSessionRecording, disposeSessionRecording } from "./services/sessionRecording";
 import { onDidChangeConfiguration } from "./storage/configurationEvents";
 import * as vscode from "vscode";
@@ -7,7 +9,7 @@ import {
   getCodexProxyConfigurationError,
   initializeCodexProxyEnvironment
 } from "./infrastructure/config/proxyEnvironment";
-import { configureCrossWindowOperationCoordinator } from "./utils/crossWindowOperations";
+import { configureCrossWindowOperationCoordinator, runCrossWindowExclusive, CrossWindowOperationBusyError } from "./utils/crossWindowOperations";
 import { disposePersistentLogging, registerPersistentLogging } from "./utils/persistentLog";
 import { enableTransientVscodeNotices } from "./utils/notificationMirror";
 import { getCodexManagerStorageRoot } from "./utils/storageRoot";
@@ -75,6 +77,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // window has immediate visual feedback.
   workbench = new AccountsWorkbench(context);
   registerSessionRecording(context);
+  if (getSqliteStateStore()) {
+  const cleanupTimer = setTimeout(() => {
+    void runCrossWindowExclusive("background:storage-cleanup", "Storage cleanup", () => {
+      const store = getSqliteStateStore();
+      if (store) cleanupManagerStorage(store);
+      return Promise.resolve();
+    }, { background: true }).catch(error => {
+      if (!(error instanceof CrossWindowOperationBusyError)) console.warn("[codexManager] storage cleanup postponed",error);
+    });
+  }, 2_000);
+  cleanupTimer.unref?.();
+  context.subscriptions.push({dispose:()=>clearTimeout(cleanupTimer)});
+  }
   try {
     await initializeCodexProxyEnvironment();
   } catch (error) {
@@ -118,6 +133,6 @@ export async function deactivate(): Promise<void> {
   disposeCodexProxyEnvironment();
   await disposeCrossWindowAccountMode();
   disposeSessionRecording();
-  await disposePersistentLogging();
+  await disposePersistentLogging(true);
   disposeSqliteContext();
 }

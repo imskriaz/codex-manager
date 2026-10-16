@@ -10,7 +10,6 @@ import type {
 } from "../../domain/dashboard/types";
 import { ExtensionSettingsStore, getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import { AccountsRepository } from "../../storage";
-import { AnnouncementService, type AnnouncementOptions } from "../../services/announcements";
 import { renderDashboardShell } from "./shell";
 import { buildDashboardStateSignature } from "./signature";
 import { executeDashboardActionMessage } from "./actionHandlers";
@@ -28,8 +27,8 @@ import { scheduleExtensionHostReload } from "../../application/accounts/switchEf
 import { resolveOnboardingCompleted } from "../../services/onboarding";
 import { getCodexSessionReadNotice, readCodexCliSessions, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "../../services/codexSessionResume";
 import { stabilizeSessionProjectPaths } from "../../services/sessionProjectBindings";
+import { getSqliteStateStore } from "../../storage/sqliteState";
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "../../services/dashboardRealtime";
-import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
 import { listPendingCodexAppServerPrompts } from "../../services/codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "../../services/codexSessionLive";
 import { recordPersistentEvent } from "../../utils/persistentLog";
@@ -55,7 +54,6 @@ type PublishDashboardSnapshotParams = {
   repo: AccountsRepository;
   settingsStore: ExtensionSettingsStore;
   logoUri: string;
-  announcementsState: Awaited<ReturnType<AnnouncementService["getState"]>>;
   setPanelTitle: (title: string) => void;
   postMessage: (message: DashboardHostMessage) => Thenable<boolean>;
   schedulePublishState: () => void;
@@ -67,8 +65,7 @@ export async function publishDashboardSnapshot(params: PublishDashboardSnapshotP
   const baseState = await buildDashboardState(
     params.repo,
     params.settingsStore,
-    params.logoUri,
-    params.announcementsState
+    params.logoUri
   );
   const state = {
     ...baseState,
@@ -92,9 +89,8 @@ export async function publishDashboardSnapshot(params: PublishDashboardSnapshotP
   return signature;
 }
 
-class DashboardPanelController {
+export class DashboardPanelController {
   private readonly settingsStore = new ExtensionSettingsStore();
-  private readonly announcements: AnnouncementService;
   private readonly oauth: DashboardOAuthCoordinator;
   private panel: vscode.WebviewPanel | undefined;
   private configWatcher: vscode.Disposable | undefined;
@@ -108,12 +104,15 @@ class DashboardPanelController {
   private cliSessionRefreshAfter = 0;
   private lastPublishedStateSignature: string | undefined;
   private closingForRestart = false;
+  private statePublish: Promise<void> | undefined;
+  private publishAgain = false;
+  private forcePublish = false;
+  private panelRevision = 0;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly repo: AccountsRepository
   ) {
-    this.announcements = new AnnouncementService(getCodexManagerStorageRoot(), context.extensionUri.fsPath);
     this.oauth = new DashboardOAuthCoordinator(
       repo,
       () => {
@@ -133,11 +132,25 @@ class DashboardPanelController {
         } satisfies DashboardHostMessage);
       }
     );
-    subscribeDashboardRealtime((message) => {
+    const stopRealtime = subscribeDashboardRealtime((message) => {
       if (message.type === "dashboard:notice" || message.type === "dashboard:terminal-output" || message.type === "dashboard:terminal-complete" || message.type === "dashboard:codex-request" || message.type === "dashboard:codex-request-resolved" || message.type === "dashboard:codex-session-live") {
         void this.panel?.webview.postMessage(message);
       }
     });
+    let stopStorage: (() => void) | undefined;
+    try { stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => this.schedulePublishState()); }
+    catch (error) { stopRealtime(); this.oauth.dispose(); throw error; }
+    context.subscriptions.push({ dispose: () => {
+      stopRealtime(); stopStorage?.();
+      this.panelRevision++;
+      this.panel = undefined;
+      this.webviewReady = false;
+      if (this.publishTimer) clearTimeout(this.publishTimer);
+      this.stopCliSessionRealtime();
+      this.configWatcher?.dispose();
+      this.oauth.dispose();
+      if (dashboardPanelController === this) dashboardPanelController = undefined;
+    } });
   }
 
   open(restoredPanel?: vscode.WebviewPanel): void {
@@ -170,6 +183,7 @@ class DashboardPanelController {
       }
 
       this.panel.onDidDispose(() => {
+        this.panelRevision++;
         if (!this.closingForRestart) {
           void Promise.resolve(this.context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false)).catch((error: unknown) => {
             void vscode.window.showWarningMessage(`The dashboard closed, but its reopen state could not be saved: ${error instanceof Error ? error.message : String(error)}`);
@@ -291,35 +305,31 @@ class DashboardPanelController {
     }, delayMs);
   }
 
-  private async publishState(force = false): Promise<void> {
-    if (!this.panel || !this.webviewReady) {
-      return;
-    }
-
-    const logoUri = this.panel.webview
-      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "product-icons", "codex-openai.svg"))
-      .toString();
-    const signature = await publishDashboardSnapshot({
-      context: this.context,
-      repo: this.repo,
-      settingsStore: this.settingsStore,
-      logoUri,
-      announcementsState: await this.announcements.getState(this.getAnnouncementOptions()),
-      setPanelTitle: (title) => {
-        if (this.panel) {
-          this.panel.title = title;
-        }
-      },
-      postMessage: (message) => this.panel!.webview.postMessage(message),
-      schedulePublishState: () => this.schedulePublishState(),
-      lastPublishedStateSignature: this.lastPublishedStateSignature,
-      force
+  private publishState(force = false): Promise<void> {
+    this.forcePublish ||= force;
+    if (this.statePublish) { this.publishAgain = true; return this.statePublish; }
+    const publishing = Promise.resolve().then(async () => {
+      try {
+        do {
+          this.publishAgain = false;
+          const panel = this.panel, revision = this.panelRevision;
+          if (!panel || !this.webviewReady) return;
+          const forced = this.forcePublish;
+          this.forcePublish = false;
+          const logoUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "product-icons", "codex-openai.svg")).toString();
+          const signature = await publishDashboardSnapshot({
+            context: this.context, repo: this.repo, settingsStore: this.settingsStore, logoUri,
+            setPanelTitle: title => { if (this.panel === panel && this.panelRevision === revision && !this.publishAgain) panel.title = title; },
+            postMessage: message => this.panel === panel && this.panelRevision === revision && !this.publishAgain ? panel.webview.postMessage(message) : Promise.resolve(false),
+            schedulePublishState: () => this.schedulePublishState(),
+            lastPublishedStateSignature: this.lastPublishedStateSignature, force: forced
+          });
+          if (this.panel === panel && this.panelRevision === revision && !this.publishAgain && signature) this.lastPublishedStateSignature = signature;
+        } while (this.publishAgain);
+      } finally { this.statePublish = undefined; }
     });
-    if (!signature) {
-      return;
-    }
-
-    this.lastPublishedStateSignature = signature;
+    this.statePublish = publishing;
+    return publishing;
   }
 
   private async handleActionMessage(
@@ -334,8 +344,6 @@ class DashboardPanelController {
           schedulePublishState: () => this.schedulePublishState(),
           publishState: async (force = false) => this.publishState(force),
           oauth: this.oauth,
-          announcements: this.announcements,
-          getAnnouncementOptions: () => this.getAnnouncementOptions(),
           hostKind: "webview"
         },
         message
@@ -529,13 +537,6 @@ class DashboardPanelController {
     }
   }
 
-  private getAnnouncementOptions(): AnnouncementOptions {
-    const packageJson = this.context.extension.packageJSON as { version?: string };
-    return {
-      version: packageJson.version ?? "0.0.0",
-      locale: this.settingsStore.resolveLanguage()
-    };
-  }
 }
 
 export function openQuotaSummaryPanel(context: vscode.ExtensionContext, repo: AccountsRepository): void {

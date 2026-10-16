@@ -5,11 +5,23 @@ import { constants } from "fs";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { isManagedStatePath, SqliteStateStore, type Database } from "./sqliteState";
 import { getCodexHomeStateKey } from "../codex/authFile";
+import { CrossWindowOperationCoordinator } from "../utils/crossWindowOperations";
 
 type Snapshot = { file: string; key: string; bytes: Buffer; hash: string; modifiedAt: number };
 
 /** Retain every source byte until both databases commit and the source is verified unchanged. */
 export async function migrateManagerStorage(targetRoot = getCodexManagerStorageRoot(), beforeCleanup?: () => Promise<void>): Promise<{ migrated: boolean; archivedFiles: number }> {
+  targetRoot = path.resolve(targetRoot);
+  const sourceRoot = path.resolve(targetRoot,"..",".codex-manager");
+  const source = await fs.lstat(sourceRoot).catch((error:NodeJS.ErrnoException)=>{if(error.code === "ENOENT")return undefined;throw error;});
+  if (!source) return {migrated:false,archivedFiles:0};
+  if (!source.isDirectory() || source.isSymbolicLink() || sourceRoot === targetRoot)
+    throw new Error("The previous manager storage must be a real, separate directory.");
+  const coordinator = new CrossWindowOperationCoordinator(targetRoot);
+  return coordinator.runExclusive("storage:root-migration","Storage migration",()=>migrateStorageExclusive(targetRoot,beforeCleanup),{waitMs:2_000});
+}
+
+async function migrateStorageExclusive(targetRoot:string,beforeCleanup?:()=>Promise<void>):Promise<{migrated:boolean;archivedFiles:number}> {
   targetRoot = path.resolve(targetRoot);
   const sourceRoot = path.resolve(targetRoot, "..", ".codex-manager");
   const sourceStat = await fs.lstat(sourceRoot).catch((error: NodeJS.ErrnoException) => {

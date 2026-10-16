@@ -1,3 +1,4 @@
+import { fireSqliteConfigurationChanges } from "../storage/configurationEvents";
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
 import * as path from "path";
@@ -42,6 +43,8 @@ let loggingRegistration: { context: vscode.ExtensionContext; storageRoot: string
 let loggingUpdate: Promise<void> | undefined;
 let loggingUpdateRequest = "";
 let persistentLogRetentionDays = PERSISTENT_LOG_RETENTION_DAYS;
+let loggingEpoch = 0;
+let stopLoggingSettings: (() => void) | undefined;
 
 /** Diagnostics use their own WAL database so log volume cannot bloat manager state. */
 export class PersistentSqliteLogger {
@@ -204,20 +207,51 @@ export async function registerPersistentLogging(
   context: vscode.ExtensionContext,
   storageRoot = getCodexManagerStorageRoot()
 ): Promise<void> {
+  stopLoggingSettings?.();
   await disposePersistentLogging();
+  const epoch = loggingEpoch;
   loggingRegistration = { context, storageRoot };
   persistentLogRetentionDays = PERSISTENT_LOG_RETENTION_DAYS;
   try {
     const settings = await readLoggingSettings(storageRoot);
+    if (epoch !== loggingEpoch) return;
     persistentLogRetentionDays = settings.retentionDays;
     if (settings.enabled) {
-      persistentLogger = await createPersistentLogger(storageRoot, settings.retentionDays);
+      const candidate = await createPersistentLogger(storageRoot, settings.retentionDays);
+      if (epoch !== loggingEpoch) { await candidate.close(); return; }
+      persistentLogger = candidate;
       restoreGlobalCapture = installGlobalFailureCapture(persistentLogger, context.extensionPath);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn("[codexManager] persistent logging unavailable; disabled", error);
   }
 
+  const registration = loggingRegistration;
+  let cancelled = false, needsRetry = false, refreshTimer: NodeJS.Timeout | undefined;
+  const refresh = ():void => {
+    refreshTimer = undefined;
+    if (cancelled || registration !== loggingRegistration) return;
+    void readLoggingSettings(storageRoot).then(settings => {
+      if (cancelled || registration !== loggingRegistration ||
+          (!needsRetry && settings.enabled === isPersistentLoggingEnabled() && settings.retentionDays === persistentLogRetentionDays)) return;
+      needsRetry = false;
+      return updatePersistentLoggingSettings({});
+    }).catch(error => {
+      if (cancelled) return;
+      needsRetry = true;
+      console.warn("[codexManager] shared logging preference refresh delayed",toErrorMessage(error));
+      refreshTimer = setTimeout(refresh,2_000); refreshTimer.unref?.();
+    });
+  };
+  const stop = sqliteStoreForFile(path.join(storageRoot,"logging-settings.json"))?.subscribe(["state"],()=>{
+    if (!cancelled && !refreshTimer) { refreshTimer=setTimeout(refresh,0); refreshTimer.unref?.(); }
+  });
+  const dispose = ():void => {
+    cancelled = true; if (refreshTimer) clearTimeout(refreshTimer); stop?.();
+    if (stopLoggingSettings === dispose) stopLoggingSettings = undefined;
+  };
+  stopLoggingSettings = dispose;
+  context.subscriptions.push({dispose});
   context.subscriptions.push(
     vscode.commands.registerCommand("codexManager.openPersistentLogs", async () => {
       try {
@@ -281,13 +315,17 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
     throw new Error("Persistent logging is still updating. Retry after the current update finishes.");
   }
   loggingUpdateRequest = request;
-  loggingUpdate = runCrossWindowExclusive("preferences:file-logging", "Persistent logging update", async () => {
+  const update:Promise<void> = runCrossWindowExclusive("preferences:file-logging", "Persistent logging update", async () => {
     if (!loggingRegistration) throw new Error("Persistent logging is still initializing. Retry shortly.");
     const { context, storageRoot } = loggingRegistration;
+    const epoch = loggingEpoch;
     const settings = { ...await readLoggingSettings(storageRoot), ...patch };
     const candidate = settings.enabled && !persistentLogger ? await createPersistentLogger(storageRoot, settings.retentionDays) : undefined;
+    const retentionChanged = persistentLogRetentionDays !== settings.retentionDays;
     try {
+      if (epoch !== loggingEpoch) throw new Error("Logging update was interrupted because the host stopped.");
       await withLoggingSettingsStore(storageRoot, store => store.set("files", "logging-settings.json", { text: JSON.stringify(settings) }));
+      if (epoch !== loggingEpoch) throw new Error("Logging settings were saved; reload the window to apply them.");
     } catch (error) {
       await candidate?.close().catch(() => undefined);
       throw error;
@@ -299,10 +337,12 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
     }
     persistentLogRetentionDays = settings.retentionDays;
     persistentLogger?.setRetentionDays(settings.retentionDays);
-    if (patch.retentionDays && persistentLogger)
+    if ((patch.retentionDays || retentionChanged || Object.keys(patch).length === 0) && persistentLogger)
       await persistentLogger.pruneExpiredLogs();
-  }).finally(() => { loggingUpdate = undefined; loggingUpdateRequest = ""; });
-  return loggingUpdate;
+    fireSqliteConfigurationChanges(["persistentLoggingEnabled","persistentLogRetentionDays"]);
+  }).finally(() => { if (loggingUpdate === update) { loggingUpdate = undefined; loggingUpdateRequest = ""; } });
+  loggingUpdate = update;
+  return update;
 }
 
 async function createPersistentLogger(storageRoot: string, retentionDays: number): Promise<PersistentSqliteLogger> {
@@ -312,7 +352,12 @@ async function createPersistentLogger(storageRoot: string, retentionDays: number
   return logger;
 }
 
-export async function disposePersistentLogging(): Promise<void> {
+export async function disposePersistentLogging(stopWatching = false): Promise<void> {
+  loggingEpoch++;
+  if (stopWatching) {
+    stopLoggingSettings?.(); loggingRegistration = undefined;
+    loggingUpdate = undefined; loggingUpdateRequest = "";
+  }
   restoreGlobalCapture?.();
   restoreGlobalCapture = undefined;
   const logger = persistentLogger;

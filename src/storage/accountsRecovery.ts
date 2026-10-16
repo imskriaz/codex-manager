@@ -102,8 +102,10 @@ export async function persistRecoveredIndex(params: {
   }
   params.state.pendingSave = null;
   await runCrossWindowExclusive(INDEX_PERSIST_OPERATION_KEY, "Account index recovery", async () => {
+    if (params.state.disposed) throw createError.storageWriteBlocked("Account repository is closed.");
     await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
     await backupCurrentIndex(params.indexPath, params.backupCount);
+    if (params.state.disposed) throw createError.storageWriteBlocked("Account repository is closed.");
     await writeIndexAtomically(params.indexPath, params.index, params.tempSuffix);
   });
   params.state.isDirty = false;
