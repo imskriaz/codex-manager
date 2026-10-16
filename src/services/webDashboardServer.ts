@@ -503,7 +503,7 @@ export class WebDashboardServer implements vscode.Disposable {
       }
     });
     this.stopStorageSubscription = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], topics => {
-      if (topics.has("accounts")) this.publishLocalPeerState();
+      if (topics.has("accounts") || (topics.has("state") && this.lastPeerClaimFingerprint !== JSON.stringify(this.encryptedSync?.getRealtimeEnablementRegistry() ?? []))) this.publishLocalPeerState();
       this.publishRealtimeState();
     });
   }
@@ -804,6 +804,15 @@ export class WebDashboardServer implements vscode.Disposable {
     // `Origin: null`; rejecting that opaque value here prevents legitimate
     // users from ever reaching password verification. Authenticated APIs and
     // WebSocket upgrades retain the stricter origin checks below.
+    if (method === "GET" && path === "/login") {
+      const returnPath = normalizeWebDashboardReturnPath(requestUrl.searchParams.get("returnTo") ?? "/");
+      if (await this.isAuthorized(request)) {
+        response.statusCode = 303;
+        response.setHeader("Location", returnPath);
+        response.end();
+      } else this.sendHtml(response, loginPage(Boolean(await this.encryptedSync?.hasDashboardPassphrase()), "Your dashboard session expired. Sign in again to continue.", returnPath));
+      return;
+    }
     if (method === "POST" && path === "/login") {
       const requestedReturnPath = requestUrl.searchParams.get("returnTo") ?? "/";
       await this.handleLogin(request, response, normalizeWebDashboardReturnPath(requestedReturnPath));
@@ -2197,12 +2206,15 @@ export class WebDashboardServer implements vscode.Disposable {
     }
   }
 
+  private lastPeerClaimFingerprint = "";
+
   private invalidateLocalPeerState(): void {
     this.localPeerState = undefined;
     this.localPeerStateRevision += 1;
   }
 
   private publishLocalPeerState(): void {
+    this.lastPeerClaimFingerprint = JSON.stringify(this.encryptedSync?.getRealtimeEnablementRegistry() ?? []);
     this.invalidateLocalPeerState();
     void this.publishPeerSessions().catch(error=>console.warn("[codexManager] peer state publish delayed",error));
     if (this.peerSockets.size > 0) void this.broadcastPeerAggregate().catch(error=>console.warn("[codexManager] peer aggregate publish delayed",error));
@@ -2246,7 +2258,7 @@ export class WebDashboardServer implements vscode.Disposable {
       deviceName: os.hostname(),
       sessions: [...state.sessions].sort((a, b) => Number(isCodexSessionRunning(b)) - Number(isCodexSessionRunning(a))),
       accounts: state.accounts,
-      enablementRegistry: state.enablementRegistry,
+      enablementRegistry: this.encryptedSync?.getRealtimeEnablementRegistry() ?? [],
       sentAt: this.lastPeerSentAt
     };
     return {

@@ -30,7 +30,7 @@ describe("CrossWindowOperationCoordinator", () => {
       });
     }, { background: true });
     await ready;
-    await expect(manual.runExclusive("account:switch:home", "Account switch", async () => "switched", { waitMs: 2_000 })).resolves.toBe("switched");
+    await expect(manual.runExclusive("account:switch:home", "Account switch", async () => "switched")).resolves.toBe("switched");
     await renewal;
     await expectReleased(directory);
     await removeTestDirectory(directory);

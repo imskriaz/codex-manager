@@ -1,3 +1,5 @@
+import { prepareQuotaSummaryPanelForExtensionHostRestart } from "./presentation/dashboard/panel";
+import { waitWithin } from "./utils/concurrency";
 import { cleanupManagerStorage } from "./storage/storageCleanup";
 import { getSqliteStateStore } from "./storage/sqliteState";
 import { registerSessionRecording, disposeSessionRecording } from "./services/sessionRecording";
@@ -125,6 +127,8 @@ function resolveExtensionVersion(context: vscode.ExtensionContext): string {
  * 停用扩展
  */
 export async function deactivate(): Promise<void> {
+  try { await waitWithin(prepareQuotaSummaryPanelForExtensionHostRestart(), 500, "Dashboard reopen state could not be confirmed before shutdown."); }
+  catch (error) { console.warn("[codexManager] dashboard recovery state was retained where available", error); }
   try { await workbench?.shutdown(); }
   catch (error) { console.error("[codexManager] final account save failed during shutdown", error); }
   workbench = undefined;

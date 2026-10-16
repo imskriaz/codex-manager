@@ -59,6 +59,13 @@ function synchronizeSqliteConfiguration(event?: vscode.ConfigurationChangeEvent)
     for (const key of configurationKeys) {
       if (event && !event.affectsConfiguration(`codexManager.${key}`)) continue;
       const value = config.get(key);
+      if (!event && key === "dailyTokenUsageEnabled" && !store.get("migrations", `${namespace}:token-history-default-on`)) {
+        const inspected = config.inspect(key);
+        const explicit = inspected?.globalValue !== undefined || inspected?.workspaceValue !== undefined || inspected?.workspaceFolderValue !== undefined ||
+          store.get("settings-overrides:global", key) !== undefined || store.get(`settings-overrides:${namespace}`, key) !== undefined || store.get(`settings-native:${namespace}`, key) !== undefined;
+        if (!explicit) store.set(namespace, key, value);
+        store.set("migrations", `${namespace}:token-history-default-on`, true);
+      }
       if (event || store.get(namespace, key) === undefined) store.set(namespace, key, value);
       const inspected = config.inspect(key);
       if (event || !store.get("migrations", `${namespace}:native-workspace`))

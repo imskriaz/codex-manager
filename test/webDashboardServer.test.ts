@@ -586,3 +586,15 @@ describe("confirmed peer claim sync", () => {
     } finally { server.dispose(); vi.useRealTimers(); }
   });
 });
+
+
+it("signs the current claim registry even when account and session data stay cached", async () => {
+  const released = { accountId: "one", deviceId: "peer", deviceName: "Other PC", enabled: false, revision: 2, updatedAt: Date.now() };
+  const server = Object.create(WebDashboardServer.prototype) as any;
+  Object.assign(server, { deviceId: "local", lastPeerSentAt: 0,
+    readLocalPeerState: vi.fn(async () => ({ sessions: [], accounts: [], enablementRegistry: [{ ...released, enabled: true, revision: 1 }] })),
+    encryptedSync: { getRealtimeEnablementRegistry: () => [released], signRealtimePeerPayload: vi.fn(async () => "signed") } });
+  const snapshot = await server.readLocalPeerSessions();
+  expect(snapshot.enablementRegistry).toEqual([released]);
+  expect(server.encryptedSync.signRealtimePeerPayload).toHaveBeenCalledWith(expect.stringContaining('"enabled":false'));
+});

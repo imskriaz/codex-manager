@@ -28,11 +28,12 @@ async function saveCheck(context: vscode.ExtensionContext, accountId: string, ch
   else await context.globalState.update(`codexManager.dailyUsageCheck.v1.${accountId}`, check);
 }
 
-/** Called on account load only; persist attempts before I/O to survive reloads and crashes. */
+/** Persist attempts before I/O; manual refresh bypasses only the automatic daily schedule. */
 export function loadDailyTokenUsage(
   context: vscode.ExtensionContext,
   accountId: string,
-  fetchUsage: (signal: AbortSignal) => Promise<CodexDailyUsageBreakdown | undefined>
+  fetchUsage: (signal: AbortSignal) => Promise<CodexDailyUsageBreakdown | undefined>,
+  options: { manual?: boolean } = {}
 ): Promise<DashboardDailyUsageCacheEntry> {
   let requests = inFlight.get(context.globalState);
   if (!requests) { requests = new Map(); inFlight.set(context.globalState, requests); }
@@ -46,7 +47,8 @@ export function loadDailyTokenUsage(
     const at = Date.now();
     const lastCheckedAt = Math.max(check?.at ?? 0, previous?.fetchedAt ?? 0);
     if (lastCheckedAt > at + 5 * 60_000) throw new Error("The system clock changed. Saved usage was preserved; check the clock before retrying.");
-    if (at < Math.max(lastCheckedAt + DAY_MS, check?.retryAt ?? 0)) {
+    if (options.manual && at < (check?.retryAt ?? 0)) throw new Error("The usage provider requested a retry delay. Saved history was kept; retry after the server cooldown.");
+    if (!options.manual && at < Math.max(lastCheckedAt + DAY_MS, check?.retryAt ?? 0)) {
       if (check?.error) throw new Error(`${check.error} Automatic usage checks wait at least 24 hours and respect server retry delays.`);
       if (previous) return previous;
       throw new Error("A recent usage check did not produce saved data. The next automatic check is available after 24 hours.");
@@ -69,7 +71,7 @@ export function loadDailyTokenUsage(
       catch (saveError) { throw new AggregateError([error, saveError], `${message} The usage check outcome could not be saved; existing history was preserved.`); }
       throw error;
     }
-  }, { waitMs: 0 }).finally(() => { requests!.delete(accountId); });
+  }, options.manual ? {} : { waitMs: 0, background: true }).finally(() => { requests!.delete(accountId); });
   requests.set(accountId, request);
   return request;
 }

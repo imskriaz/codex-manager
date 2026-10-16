@@ -14,6 +14,7 @@ import {
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
   normalizeUsageHistoryRetentionDays,
+  normalizeTokenHistoryRetentionDays,
   normalizeSyncHeartbeatMinutes
 } from "../../infrastructure/config/extensionSettings";
 import { isDashboardLanguageOption } from "../../localization/languages";
@@ -170,6 +171,12 @@ export async function handleDashboardSettingUpdate(
     case "autoRefreshCurrentMinutes":
       if (typeof value === "number") {
         await updateDashboardConfiguration(config, key, normalizeCurrentAutoRefreshMinutes(value), target);
+        updated = true;
+      }
+      break;
+    case "tokenHistoryRetentionDays":
+      if (typeof value === "number") {
+        await updateDashboardConfiguration(config, key, normalizeTokenHistoryRetentionDays(value), target);
         updated = true;
       }
       break;

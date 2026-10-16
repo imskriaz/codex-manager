@@ -18,14 +18,17 @@ snapshot.usageSummary = { revision: 1, count: 4 };
 delete snapshot.usageHistory;
 delete snapshot.dailyUsageCache;
 const mockHost = `(() => {
-  const state = ${JSON.stringify(snapshot)};
+  let state = ${JSON.stringify(snapshot)};
   const day = 86400000;
   const date = new Date(Date.now() - day).toISOString().slice(0,10);
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
-  window.__usageActions = []; window.__deferredUsage = [];
+  window.__usageActions = []; window.__deferredUsage = []; window.__dailyResults = []; window.__dailyActive = 0; window.__dailyMax = 0;
+  window.__addUsageAccounts = () => { state = {...state, accounts:[...state.accounts, ...["c","d","e","f","g","h"].map(id => ({...state.accounts[1],id,email:id+"@example.invalid"}))]}; dispatch({type:"dashboard:snapshot",state}); };
+  window.__releaseDaily = () => { window.__holdDaily = false; for (const result of window.__dailyResults.splice(0)) { window.__dailyActive--; dispatch(result); } };
   window.__finishUsage = () => { for (const result of window.__deferredUsage.splice(0).reverse()) dispatch(result); };
   window.acquireVsCodeApi = () => ({ postMessage(message) {
     window.__usageActions.push(message);
+    if (message.action === "getDailyUsage" && window.__holdDaily) { window.__dailyActive++; window.__dailyMax = Math.max(window.__dailyMax,window.__dailyActive); }
     setTimeout(() => {
       if (message.type === 'dashboard:ready') { dispatch({type:'dashboard:snapshot',state}); return; }
       if (message.type === 'dashboard:setting') {
@@ -45,10 +48,12 @@ const mockHost = `(() => {
         if (window.__failUsage) { window.__failUsage = false; error = 'Saved graph database is temporarily unavailable.'; }
       } else if (message.action === 'getDailyUsage') {
         payload = {dailyUsage:{days:30,points:[{date,totalTokens:100}]},dailyUsageFetchedAt:Date.now()};
+        if (window.__failDaily === message.accountId) error = "Token endpoint temporarily unavailable.";
       }
       const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,
         accountId:message.accountId,status:error ? 'failed' : 'completed',payload,error};
-      if (window.__deferUsage && message.action === 'getUsageGraph') window.__deferredUsage.push(result);
+      if (window.__holdDaily && message.action === "getDailyUsage") window.__dailyResults.push(result);
+      else if (window.__deferUsage && message.action === 'getUsageGraph') window.__deferredUsage.push(result);
       else dispatch(result);
     }, 0);
   }});
@@ -59,7 +64,7 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: "msedge", headless: true });
 const results = [];
 try {
-  for (const width of [1440, 1024, 768, 390, 320]) {
+  for (const width of [1440, 1024, 768, 390, 320].filter(width => !process.argv.includes("--desktop-only") || width === 1440)) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: "block" });
     const page = await context.newPage();
     const errors = [];
@@ -77,7 +82,7 @@ try {
       throw error;
     });
     const loadMs = Date.now() - started;
-    assert.equal(await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage").length), 0, "Collection is off by default");
+    assert.equal(await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage").length), 0, "Explicitly disabled collection does not fetch");
     assert.equal(await page.evaluate(() => window.__usageActions.filter(action => ["getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(action.action)).length), 0, "The dashboard does not inspect an inactive workspace");
     const chart = page.locator(".usage-graph-card");
     const quotaHeight = (await chart.boundingBox()).height;
@@ -103,6 +108,10 @@ try {
     assert.equal(await page.getByRole("tooltip").count(), 0);
     await page.screenshot({ path: path.join(output, `quota-${width}.png`) });
     await page.getByRole("button", { name: "Graph settings", exact: true }).click();
+    const quotaSummary = page.getByLabel("Account quota summary", { exact: true });
+    await quotaSummary.waitFor();
+    assert.equal(await quotaSummary.locator(".usage-graph-cache-row").count(), 2);
+    assert.match(await quotaSummary.innerText(), /10%/);
     await page.getByRole("button", { name: "Daily token usage", exact: true }).click();
     await page.locator('.usage-graph-bar-hitarea[aria-label*="100 tokens"]').waitFor();
     assert.equal(await page.locator(".usage-graph-bar-hitarea").count(), 2, "Both cached accounts appear");
@@ -158,7 +167,7 @@ try {
 
     if (width === 1440) {
       await page.locator("#settingsOpenButton").click();
-      await page.locator("#settings-tab-automation").click();
+      await page.locator("#settings-tab-data").click();
       const toggle = page.getByRole("button", { name: "Automatic token history", exact: true });
       assert.equal(await toggle.getAttribute("aria-pressed"), "false");
       await toggle.click();
@@ -170,6 +179,30 @@ try {
       await toggle.click();
       await page.keyboard.press("Escape");
     }
+    await page.getByRole("button", { name: "Graph settings", exact: true }).click();
+    const menu = page.getByRole("dialog", { name: "Graph settings", exact: true });
+    const menuBounds = await menu.boundingBox();
+    assert.ok(menuBounds.x >= 8 && menuBounds.x + menuBounds.width <= width - 7 && menuBounds.y >= 8 && menuBounds.y + menuBounds.height <= 893, "Chart menu stays within the viewport");
+    await page.getByRole("button", { name: "Refresh token history for a@example.invalid", exact: true }).click();
+    await menu.getByText("Updated", { exact: true }).waitFor();
+    await page.evaluate(() => { window.__failDaily = "b"; });
+    await page.getByRole("button", { name: "Refresh token history for b@example.invalid", exact: true }).click();
+    await menu.getByRole("alert").filter({ hasText: "Token endpoint temporarily unavailable." }).waitFor();
+    assert.ok((await menu.locator(".usage-graph-cache-row").first().boundingBox()).height <= 24, "Each account stays on one compact line");
+    await page.screenshot({ path: path.join(output, `menu-${width}.png`) });
+    if (width === 1440) {
+      await page.evaluate(() => { window.__addUsageAccounts(); window.__holdDaily = true; window.__failDaily = "b"; });
+      await menu.getByRole("button", { name: "Refresh all", exact: true }).click();
+      await page.waitForFunction(() => window.__dailyResults.length === 3);
+      assert.equal(await page.evaluate(() => window.__dailyMax), 3, "Bulk history refresh has three requests in flight");
+      await page.evaluate(() => window.__releaseDaily());
+      await menu.getByText("Finished: 7 updated, 1 failed.", { exact: true }).waitFor().catch(async error => {
+        console.log(JSON.stringify(await page.evaluate(() => ({menu:document.querySelector(".usage-graph-settings-popover")?.textContent,pending:window.__dailyResults.length,actions:window.__usageActions.filter(action => action.action === "getDailyUsage").map(action => action.accountId)}))));
+        await page.screenshot({ path: path.join(output, "bulk-failure.png") });
+        throw error;
+      });
+    }
+    await page.keyboard.press("Escape");
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "The graph fits the viewport");
     assert.deepEqual(errors, [], "No browser runtime errors");
     results.push({ width, loadMs, consolidatedAccounts: 2, staleHistory: "visible", failedQuery: "preserved", outOfOrder: "ignored" });

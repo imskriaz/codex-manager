@@ -72,6 +72,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.autoRefreshCurrentMinutes,
     state.settings.quotaFreshnessMs ?? "",
     state.settings.usageHistoryRetentionDays,
+    state.settings.tokenHistoryRetentionDays ?? 30,
     state.settings.dailyTokenUsageEnabled ? "1" : "0",
     state.settings.persistentLoggingEnabled ? "1" : "0",
     state.settings.persistentLogRetentionDays ?? 3,

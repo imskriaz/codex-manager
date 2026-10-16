@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.2
+
+- Keep compact chart menus within the viewport, show account quota usage and last check times, and add per-account and bulk token-history refresh with bounded concurrency and visible results. Enable automatic token history by default while preserving explicit choices, and move quota and token retention controls into Data & Sync.
+- Close the VS Code dashboard tab before reload recovery storage can stall, preserve its reopen state where available, and restore it after cancelled or failed reloads.
+- Return expired browser sessions to sign-in with a terminal result for pending actions and no automatic replay. Distinguish incompatible shared claim hosts from browser login failures during account switching.
+- Push committed claim changes over authenticated peer connections, refresh claim views across local windows, and read the current registry when sending peer snapshots. Retain reconciliation for reconnects and missed events.
+- Let manual operations interrupt optional background ownership and sync waits. Bound VS Code Settings Sync acknowledgement, share pending sync commands, and retain unsynchronized changes after cancellation or timeout.
+
 ## 1.3.1
 
 - Store account metadata, quota and token history, recovery snapshots, session statistics, and cross-window coordination in indexed SQLite rows. Keep only visible graph ranges and required runtime data in memory, write changed rows incrementally, and share committed changes between hosts.

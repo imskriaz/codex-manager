@@ -1036,7 +1036,7 @@ export class AccountsRepository {
         await releaseCrossWindowAccount(previousAccountId);
       }
       return account;
-    }), { waitMs: 2_000 });
+    }));
     this.switchInFlight.set(key, operation);
     return operation.finally(() => {
       if (this.switchInFlight.get(key) === operation) this.switchInFlight.delete(key);

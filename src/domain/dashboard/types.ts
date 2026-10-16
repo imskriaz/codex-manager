@@ -18,6 +18,7 @@ export type DashboardSettingKey =
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
+  | "tokenHistoryRetentionDays"
   | "dailyTokenUsageEnabled"
   | "autoSwitchEnabled"
   | "autoSwitchWaitForSessionsEnabled"
@@ -64,6 +65,7 @@ export interface DashboardSettings {
   /** Shared candidate freshness bound in milliseconds. */
   quotaFreshnessMs?: number;
   usageHistoryRetentionDays: number;
+  tokenHistoryRetentionDays?: number;
   dailyTokenUsageEnabled?: boolean;
   autoSwitchEnabled: boolean;
   autoSwitchWaitForSessionsEnabled?: boolean;

@@ -49,6 +49,10 @@ const mockHost = `(() => {
   let messageReads = 0;
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
   window.__uiActions = []; window.__uiSessions = sessions;
+  window.__setUiPaths = customPath => {
+    Object.assign(state.settings, {codexCliPath:customPath,codexAppPath:customPath,resolvedCodexAppPath:customPath});
+    dispatch({type:'dashboard:snapshot',state});
+  };
   window.acquireVsCodeApi = () => ({postMessage(message) {
     window.__uiActions.push(message);
     setTimeout(() => {
@@ -613,7 +617,7 @@ try {
         assert.equal(await workspaceToggle.getAttribute("aria-pressed"), "true", "Hiding workspace controls preserves their settings");
         assert.equal(await cliCard.getByRole("button", { name: "Auto-detect CLI", exact: true }).isDisabled(), true, "An empty CLI path already uses auto-detection");
         const customPath = "C:/" + "long-cli-directory/".repeat(20) + "codex.exe";
-        await page.evaluate(({ state, customPath }) => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: { ...state, settings: { ...state.settings, codexCliPath: customPath, codexAppPath: customPath, resolvedCodexAppPath: customPath } } } })), { state: snapshot, customPath });
+        await page.evaluate(customPath => window.__setUiPaths(customPath), customPath);
         await page.waitForFunction(path => document.querySelector("#settings-panel-general > .settings-layout > .settings-block > .settings-path-note")?.textContent === path, customPath);
         assert.equal(await cliCard.getByRole("button", { name: "Auto-detect CLI", exact: true }).isEnabled(), true, "A custom CLI path can return to auto-detection");
         assert.ok(await cliCard.evaluate(element => element.scrollWidth <= element.clientWidth), "Long CLI paths stay inside their card");
@@ -622,6 +626,14 @@ try {
         await page.screenshot({ path: path.join(output, `settings-domain-${width}x${height}.png`) });
         await cliCard.scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(output, `settings-cli-path-${width}x${height}.png`) });
+      }
+      if (await tab.getAttribute("id") === "settings-tab-data") {
+        const tokenToggle = page.getByRole("button", { name: "Automatic token history", exact: true });
+        const block = tokenToggle.locator("../..");
+        const layout = page.locator("#settings-panel-data > .settings-layout");
+        assert.ok(Math.abs((await block.boundingBox()).width - (await layout.boundingBox()).width) <= 2, "Automatic token history fills the Data & Sync width");
+        assert.equal(await page.getByText("Token history retention", { exact: true }).count(), 1);
+        assert.equal(await page.locator("#settings-panel-automation").getByText("Automatic token history", { exact: true }).count(), 0);
       }
       if (await tab.getAttribute("id") === "settings-tab-automation") {
         const switchToggle = page.getByRole("button", { name: snapshot.copy.autoSwitchTitle, exact: true });

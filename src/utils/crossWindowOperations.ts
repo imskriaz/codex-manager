@@ -52,13 +52,15 @@ export class CrossWindowOperationCoordinator {
       return await this.withStore(async store => {
         const localKey = `${this.databasePath}:${key}`;
         const owner: LockOwner = { token: crypto.randomUUID(), pid: process.pid, startedAt: Date.now(), heartbeatAt: Date.now(), background: options.background === true };
-        const deadline = Date.now() + Math.min(2_000, Math.max(0, options.waitMs ?? 0));
+        const startedAt = Date.now();
+        let deadline = startedAt + Math.min(2_000, Math.max(0, options.waitMs ?? 0));
         let acquired = false;
         do {
           acquired = store.transaction(() => {
             const current = store.get<LockOwner>("operation-leases", key);
             if (current && !this.isStale(current, localKey)) {
               if (!options.background && current.background) {
+                if (options.waitMs === undefined) deadline = startedAt + 500;
                 store.set("operation-leases", key, { ...current, yieldRequested: true });
                 activeOwners.get(localKey)?.controller.abort(new Error("Background ownership renewal yielded to an account switch."));
               }
@@ -162,13 +164,15 @@ export function runCentralAccountOperationWithCooldown<T>(operationLabel: string
 }
 
 /** Only completed maintenance updates its marker; offline and failed work remains retryable. */
-export function runSharedMaintenance<T>(operationKey: string, operationLabel: string, cooldownMs: number, task: () => Promise<T>, markerKey = `maintenance-${crypto.createHash("sha256").update(operationKey).digest("hex")}.json`): Promise<{ ran: boolean; value?: T }> {
-  return runCrossWindowExclusive(operationKey, operationLabel, async () => {
+export function runSharedMaintenance<T>(operationKey: string, operationLabel: string, cooldownMs: number, task: (signal: AbortSignal) => Promise<T>, markerKey = `maintenance-${crypto.createHash("sha256").update(operationKey).digest("hex")}.json`): Promise<{ ran: boolean; value?: T }> {
+  return runCrossWindowExclusive(operationKey, operationLabel, async signal => {
     const completedAt = await sharedCoordinator?.readMarker(markerKey);
     const age = typeof completedAt === "number" ? Date.now() - completedAt : Infinity;
     if (age >= 0 && age < cooldownMs) return { ran: false };
-    const value = await task();
+    signal.throwIfAborted();
+    const value = await task(signal);
+    signal.throwIfAborted();
     await sharedCoordinator?.writeMarker(markerKey).catch(error => console.warn("[codexManager] maintenance cooldown could not be persisted", error));
     return { ran: true, value };
-  });
+  }, { background: true });
 }

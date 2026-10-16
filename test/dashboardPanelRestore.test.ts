@@ -105,13 +105,10 @@ describe("dashboard tab persistence", () => {
     expect(state.workspaceState.update).toHaveBeenCalledWith(key, false);
   });
 
-  it("saves managed recovery before closing and clears it only after reopening", async () => {
+  it("closes immediately and saves managed recovery for reopening", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context();
     module.openQuotaSummaryPanel(state as never, {} as never);
-    created.dispose.mockImplementationOnce(() => {
-      expect(state.workspaceState.get(key)).toBe(true);
-    });
     expect(await module.prepareQuotaSummaryPanelForExtensionHostRestart()).toBe(true);
     expect(state.workspaceState.update).toHaveBeenCalledWith(key, true);
   });
@@ -133,7 +130,7 @@ describe("dashboard tab persistence", () => {
     expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
   });
 
-  it("does not close a panel after a cancelled slow recovery save finishes", async () => {
+  it("closes before a slow save and never closes the replacement after late cancellation", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context();
     module.openQuotaSummaryPanel(state as never, {} as never);
@@ -141,10 +138,33 @@ describe("dashboard tab persistence", () => {
     state.workspaceState.update.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     const controller = new AbortController();
     const pending = module.prepareQuotaSummaryPanelForExtensionHostRestart(controller.signal);
+    expect(created.dispose).toHaveBeenCalledOnce();
     const checked = expect(pending).rejects.toThrow("cancelled");
     controller.abort(new Error("cancelled"));
+    const replacement = panel();
+    vi.mocked(vscode.window.createWebviewPanel).mockReturnValueOnce(replacement as never);
+    await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
     finish();
     await checked;
+    expect(replacement.dispose).not.toHaveBeenCalled();
+  });
+
+  it("closes despite storage failure and can restore within the current host", async () => {
+    const module = await import("../src/presentation/dashboard/panel");
+    const state = context();
+    module.openQuotaSummaryPanel(state as never, {} as never);
+    state.workspaceState.update.mockRejectedValueOnce(new Error("storage full"));
+    await expect(module.prepareQuotaSummaryPanelForExtensionHostRestart()).rejects.toThrow("reopen state could not be saved");
+    expect(created.dispose).toHaveBeenCalledOnce();
+    await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves an open panel alone when preparation was already cancelled", async () => {
+    const module = await import("../src/presentation/dashboard/panel");
+    module.openQuotaSummaryPanel(context() as never, {} as never);
+    const controller = new AbortController(); controller.abort(new Error("cancelled"));
+    await expect(module.prepareQuotaSummaryPanelForExtensionHostRestart(controller.signal)).rejects.toThrow("cancelled");
     expect(created.dispose).not.toHaveBeenCalled();
   });
 

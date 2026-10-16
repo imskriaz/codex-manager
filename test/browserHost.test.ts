@@ -423,4 +423,57 @@ describe("browser dashboard bridge", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:host-status", stage: "live" }));
   });
 
+  it("fails expired HTTP switches once and routes to sign-in without replay", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const assign = vi.fn();
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 401 }));
+    const windowMock = { dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      location: { pathname: "/dash", assign }, acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock, MessageEvent: Event, fetch: fetchMock, console, Error, Array, JSON, Date, Map });
+    const post = windowMock.acquireVsCodeApi!().postMessage;
+    await post({ type: "dashboard:action", requestId: "expired", action: "switch" });
+    await post({ type: "dashboard:action", requestId: "retry", action: "switch" });
+    expect(events).toContainEqual(expect.objectContaining({ requestId: "expired", status: "failed", error: expect.stringContaining("was not performed") }));
+    expect(events).toContainEqual(expect.objectContaining({ requestId: "retry", status: "failed", error: expect.stringContaining("was not sent") }));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2Fdash");
+  });
+
+  it("redirects an expired initial snapshot while preserving the conversation return path", async () => {
+    const assign = vi.fn();
+    const windowMock = { dispatchEvent: vi.fn(), location: { pathname: "/12345678-1234-1234-1234-123456789abc", assign },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: unknown) {} }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock, MessageEvent: Event, fetch: vi.fn(async () => ({ ok: false, status: 401 })), console, Error, Array, JSON, Date, Map });
+    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:ready" });
+    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2F12345678-1234-1234-1234-123456789abc");
+  });
+
+  it("stops reconnecting and preserves uncertain outcomes when an authenticated socket expires", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    let socket!: Socket;
+    class Socket {
+      static readonly OPEN = 1; readyState = 0;
+      listeners = new Map<string, (event?: any) => void>();
+      send = vi.fn(); close = vi.fn();
+      constructor() { socket = this; }
+      addEventListener(type: string, callback: (event?: unknown) => void) { this.listeners.set(type, callback); }
+    }
+    const assign = vi.fn();
+    const windowMock = { dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data), setTimeout: vi.fn(), clearTimeout: vi.fn(),
+      location: { protocol: "https:", host: "dashboard.example", pathname: "/dash", assign }, WebSocket: Socket,
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    const fetchMock = vi.fn();
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock, MessageEvent: Event, fetch: fetchMock, console, Error, Array, JSON, Date, Map });
+    socket.readyState = Socket.OPEN; socket.listeners.get("open")!();
+    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", requestId: "uncertain", action: "switch" });
+    socket.listeners.get("close")!({ code: 4001 });
+    expect(events).toContainEqual(expect.objectContaining({ requestId: "uncertain", status: "failed", error: expect.stringContaining("outcome is unknown") }));
+    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2Fdash");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(socket.send).toHaveBeenCalledOnce();
+  });
+
 });

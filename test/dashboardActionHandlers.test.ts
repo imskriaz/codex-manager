@@ -1870,7 +1870,7 @@ describe("executeDashboardActionMessage", () => {
       })
     } as unknown as DashboardActionContext["repo"];
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ days: 30, daily_usage: [{ date: "2026-08-28", total_tokens: 42 }] }), {
+      new Response(JSON.stringify({ days: 30, daily_usage: [{ date: new Date().toISOString().slice(0, 10), total_tokens: 42 }] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       })
@@ -1913,7 +1913,7 @@ describe("executeDashboardActionMessage", () => {
   it("does not read credentials or collect usage when automatic history is disabled", async () => {
     const context = createContext();
     context.repo = { getAccount: vi.fn().mockResolvedValue({ id: "a" }), getTokens: vi.fn() } as never;
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageEnabled" ? false : fallback } as never);
     const result = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "getDailyUsage", accountId: "a", requestId: "disabled-usage", payload: { automatic: true } });
     expect(result.status).toBe("completed");
     expect(result.payload?.notice?.message).toMatch(/disabled/);

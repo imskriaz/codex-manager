@@ -1,3 +1,4 @@
+import { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { render } from "preact";
 import { BrowserNotifications } from "./browserNotifications";
 import { createPortal } from "preact/compat";
@@ -384,6 +385,7 @@ function App() {
   const handleActionTimeout = useCallback(
     (action: DashboardActionName, requestId: string) => {
       sessionActionRequests.current.delete(requestId);
+      if (action === "getDailyUsage") tokenHistoryRefresh.finish(requestId, false, "Token refresh timed out. Saved history was kept; verify before retrying.");
       if (action === "getCodexCliSessionMessages") {
         const target = messageRequests.current.get(requestId);
         messageRequests.current.delete(requestId);
@@ -434,6 +436,7 @@ function App() {
     selectedPeerId,
     handleActionTimeout
   );
+  const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId);
   const snapshot = state.snapshot;
   useEffect(() => {
     if (isBrowserDashboard || !snapshot || onboardingVisibilityResolvedRef.current) {
@@ -682,6 +685,7 @@ function App() {
         } else setUsageGraphError(message.error ?? "Saved graph data could not be loaded. Retry to query the database again.");
       }
       if (message.type === "dashboard:action-result" && message.action === "getDailyUsage" && message.accountId) {
+        tokenHistoryRefresh.finish(message.requestId, message.status === "completed" && Boolean(message.payload?.dailyUsage), message.error ?? (message.status === "cancelled" ? "Refresh cancelled. Saved history was kept." : "No token history was returned. Saved history was kept."));
         if (message.status === "completed" && message.payload?.dailyUsage) {
           setUsageGraphVersion(current => current + 1);
           setDailyUsageErrorByAccount((current) => {
@@ -1373,7 +1377,7 @@ function App() {
       setUsageGraphData(undefined);
       setUsageGraphError(undefined);
     }
-    const key = snapshot?.settings.dailyTokenUsageEnabled && currentUsageAccountId ? `${selectedPeerId}:${currentUsageAccountId}` : undefined;
+    const key = snapshot && snapshot.settings.dailyTokenUsageEnabled !== false && currentUsageAccountId ? `${selectedPeerId}:${currentUsageAccountId}` : undefined;
     if (loadedUsageAccountRef.current === key) return;
     loadedUsageAccountRef.current = key;
     if (key && currentUsageAccountId) sendAction("getDailyUsage", currentUsageAccountId, { days: 30, automatic: true });
@@ -2179,7 +2183,7 @@ function App() {
             usageGraphData={usageGraphDataSourceRef.current === selectedPeerId ? usageGraphData : undefined}
             usageGraphError={usageGraphError}
             usageGraphPending={isActionPending("getUsageGraph")}
-            usageGraphRevision={`${snapshot.usageSummary?.revision ?? 0}:${usageGraphVersion}`}
+            usageGraphRevision={`${snapshot.usageSummary?.revision ?? 0}:${usageGraphVersion}:${snapshot.settings.tokenHistoryRetentionDays ?? 30}`}
             usageGraphSource={selectedPeerId}
             usageGraphPaused={isBrowserDashboard && isCliSessionsPath(browserPath)}
             onLoadUsageGraph={(query) => {
@@ -2189,6 +2193,7 @@ function App() {
             }}
             dailyUsagePending={Boolean(overviewAccount && isActionPending("getDailyUsage", overviewAccount.id))}
             dailyUsageError={overviewAccount ? dailyUsageErrorByAccount[overviewAccount.id] : undefined}
+            tokenHistoryRefresh={tokenHistoryRefresh}
             onSetAutoSwitchLock={handleAutoSwitchLock}
             onAddAccount={
               overviewAccount

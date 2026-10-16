@@ -63,7 +63,7 @@ export function readDailyUsageRow(store: SqliteStateStore, accountId: string): D
   return entry;
 }
 
-export function upsertDailyUsageRow(store: SqliteStateStore, entry: DashboardDailyUsageCacheEntry): void {
+export function upsertDailyUsageRow(store: SqliteStateStore, entry: DashboardDailyUsageCacheEntry, cutoff?: string): void {
   initializeUsageStorage(store);
   store.transaction(() => {
     const previous = store.prepare("SELECT fetched_at FROM daily_usage WHERE account_id=?").get(entry.accountId);
@@ -75,9 +75,12 @@ export function upsertDailyUsageRow(store: SqliteStateStore, entry: DashboardDai
       ON CONFLICT(account_id,date) DO UPDATE SET fetched_at=excluded.fetched_at,data=excluded.data
       WHERE excluded.fetched_at>=daily_usage_points.fetched_at AND daily_usage_points.data!=excluded.data`);
     for (const point of entry.usage.points) write.run(entry.accountId, point.date, entry.fetchedAt, JSON.stringify(point));
-    // Each account keeps its latest 30 reported days; partial responses preserve missing days.
-    store.prepare(`DELETE FROM daily_usage_points WHERE account_id=? AND date NOT IN
-      (SELECT date FROM daily_usage_points WHERE account_id=? ORDER BY date DESC LIMIT 30)`).run(entry.accountId, entry.accountId);
+    if (cutoff) store.prepare("DELETE FROM daily_usage_points WHERE date<?").run(cutoff);
+    else {
+      // Legacy imports retain their existing thirty-point bound.
+      store.prepare(`DELETE FROM daily_usage_points WHERE account_id=? AND date NOT IN
+        (SELECT date FROM daily_usage_points WHERE account_id=? ORDER BY date DESC LIMIT 30)`).run(entry.accountId, entry.accountId);
+    }
   });
 }
 
@@ -116,7 +119,7 @@ export function readUsageSummary(store: SqliteStateStore): DashboardUsageSummary
 }
 
 /** Bound the renderer's working set; the database keeps the authoritative history. */
-export function queryUsageRows(store: SqliteStateStore, query: DashboardUsageGraphQuery): DashboardUsageGraphData {
+export function queryUsageRows(store: SqliteStateStore, query: DashboardUsageGraphQuery, tokenCutoff = 0): DashboardUsageGraphData {
   initializeUsageStorage(store);
   const result: DashboardUsageGraphData = { ...query, history: [], dailyUsageCache: [], truncated: false };
   if (query.mode === "quota") {
@@ -138,11 +141,11 @@ export function queryUsageRows(store: SqliteStateStore, query: DashboardUsageGra
       entries.set(accountId, { accountId, fetchedAt: Number(row["fetched_at"]), usage: { days: 30, points: [] } });
     }
     const rows = store.prepare("SELECT account_id,data FROM daily_usage_points WHERE date>=? AND date<? ORDER BY date DESC,account_id LIMIT 10001")
-      .all(new Date(query.from).toISOString().slice(0, 10), new Date(query.to).toISOString().slice(0, 10));
+      .all(new Date(Math.max(query.from, tokenCutoff)).toISOString().slice(0, 10), new Date(query.to).toISOString().slice(0, 10));
     result.truncated = rows.length > 10_000;
     for (const row of rows.slice(0, 10_000).reverse()) entries.get(String(row["account_id"]))?.usage.points.push(JSON.parse(String(row["data"])) as DashboardDailyUsageCacheEntry["usage"]["points"][number]);
     result.dailyUsageCache = [...entries.values()];
-    const oldest = store.prepare("SELECT MIN(date) AS date FROM daily_usage_points").get()?.["date"];
+    const oldest = store.prepare("SELECT MIN(date) AS date FROM daily_usage_points WHERE date>=?").get(new Date(tokenCutoff).toISOString().slice(0, 10))?.["date"];
     if (typeof oldest === "string") result.oldestAt = Date.parse(`${oldest}T00:00:00Z`);
   }
   return result;

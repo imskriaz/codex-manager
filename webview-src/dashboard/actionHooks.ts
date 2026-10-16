@@ -95,8 +95,10 @@ export function useDashboardActions(
               : payload
       });
     } catch (error) {
-      dispatch({ type: "resolve-action", requestId });
-      actionFeedbackRef.current.onNotice({ level: "error", message: `The action could not be sent: ${error instanceof Error ? error.message : String(error)}` });
+      const detail = `The action could not be sent: ${error instanceof Error ? error.message : String(error)}`;
+      queueMicrotask(() => window.dispatchEvent(new MessageEvent("message", { data: {
+        type: "dashboard:action-result", action, accountId, requestId, status: "failed", error: detail
+      } })));
     }
     return requestId;
   }, [dispatch, targetDeviceId]);

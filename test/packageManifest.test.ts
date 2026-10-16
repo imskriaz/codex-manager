@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.3.1");
+    expect(manifest.version).toBe("1.3.2");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });
@@ -163,7 +163,7 @@ describe("extension manifest configuration", () => {
       contributes?: { configuration?: { properties?: Record<string, { type?: string; default?: unknown }> } };
     };
 
-    expect(manifest.contributes?.configuration?.properties?.["codexManager.dailyTokenUsageEnabled"]).toMatchObject({ type: "boolean", default: false });
+    expect(manifest.contributes?.configuration?.properties?.["codexManager.dailyTokenUsageEnabled"]).toMatchObject({ type: "boolean", default: true });
     expect(manifest.contributes?.configuration?.properties?.["codexManager.usageHistoryRetentionDays"]).toMatchObject({
       type: "number",
       minimum: 1,

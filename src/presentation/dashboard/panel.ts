@@ -49,6 +49,7 @@ function isLocalCliSessionWatchPath(filename: string | Buffer | null): boolean {
 }
 
 let dashboardPanelController: DashboardPanelController | undefined;
+let reopenAfterRestart = false;
 
 type PublishDashboardSnapshotParams = {
   context: vscode.ExtensionContext;
@@ -187,6 +188,7 @@ export class DashboardPanelController {
       this.panel.onDidDispose(() => {
         this.panelRevision++;
         if (!this.closingForRestart) {
+          reopenAfterRestart = false;
           void Promise.resolve(this.context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false)).catch((error: unknown) => {
             void vscode.window.showWarningMessage(`The dashboard closed, but its reopen state could not be saved: ${error instanceof Error ? error.message : String(error)}`);
           });
@@ -425,15 +427,16 @@ export class DashboardPanelController {
       return false;
     }
     signal?.throwIfAborted();
-    await this.context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, true);
-    signal?.throwIfAborted();
-    if (this.panel !== panel) {
-      await this.context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
-      return false;
-    }
+    // Close before optional recovery storage can stall or be cancelled.
+    reopenAfterRestart = true;
     this.closingForRestart = true;
     try { panel.dispose(); }
     finally { this.closingForRestart = false; }
+    try { await this.context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, true); }
+    catch (error) {
+      throw new Error(`The dashboard closed, but its reopen state could not be saved. Run Codex Manager: Show Quota Summary after reload. ${error instanceof Error ? error.message : String(error)}`);
+    }
+    signal?.throwIfAborted();
     return true;
   }
 
@@ -568,10 +571,11 @@ export async function restoreQuotaSummaryPanelAfterExtensionHostRestart(
   context: vscode.ExtensionContext,
   repo: AccountsRepository
 ): Promise<void> {
-  if (!context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false)) {
+  if (!reopenAfterRestart && !context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false)) {
     return;
   }
   openQuotaSummaryPanel(context, repo);
+  reopenAfterRestart = false;
   await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
 }
 

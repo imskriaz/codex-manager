@@ -1,9 +1,10 @@
+import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadDailyTokenUsage } from "../src/services/dailyTokenUsage";
-import { readDashboardDailyUsage, upsertDashboardDailyUsageCache } from "../src/services/dashboardUsageHistory";
+import { readDashboardDailyUsage, queryDashboardUsage, upsertDashboardDailyUsageCache } from "../src/services/dashboardUsageHistory";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
@@ -155,4 +156,39 @@ describe("daily token usage on account load", () => {
     await loadDailyTokenUsage(context(), "a", fetchUsage);
     expect(fetchUsage).toHaveBeenCalledTimes(2);
   });
+  it("refreshes manually inside 24 hours while retaining automatic throttling", async () => {
+    const ctx = context();
+    const fetchUsage = vi.fn().mockResolvedValue(usage);
+    await loadDailyTokenUsage(ctx, "a", fetchUsage);
+    now += 1000;
+    fetchUsage.mockResolvedValue({ ...usage, points: [{ ...usage.points[0], totalTokens: 99 }] });
+    await expect(loadDailyTokenUsage(ctx, "a", fetchUsage, { manual: true })).resolves.toMatchObject({ usage: { points: [{ totalTokens: 99 }] } });
+    await loadDailyTokenUsage(ctx, "a", fetchUsage);
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps provider retry delays even for explicit refresh", async () => {
+    const fetchUsage = vi.fn().mockRejectedValue(new APIError("rate limited", { statusCode: 429, context: { retryAt: now + 60000 } }));
+    await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow("rate limited");
+    await expect(loadDailyTokenUsage(context(), "a", fetchUsage, { manual: true })).rejects.toThrow("server cooldown");
+    expect(fetchUsage).toHaveBeenCalledOnce();
+  });
+
+  it("retains ninety days in SQLite and applies a shorter retention to queries and writes", async () => {
+    let retention = 90;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "tokenHistoryRetentionDays" ? retention : fallback } as never);
+    const current = now;
+    const point = (at: number) => ({ date: new Date(at).toISOString().slice(0, 10), totalTokens: 42 });
+    now -= 60 * DAY;
+    await upsertDashboardDailyUsageCache(context(), "a", { days: 1, points: [point(now)] }, now);
+    now = current;
+    await upsertDashboardDailyUsageCache(context(), "a", { days: 1, points: [point(now)] }, now);
+    const query = { mode: "tokens" as const, from: now - 61 * DAY, to: now - 31 * DAY };
+    expect(queryDashboardUsage(context(), query).dailyUsageCache[0]?.usage.points).toHaveLength(1);
+    retention = 7;
+    expect(queryDashboardUsage(context(), query).dailyUsageCache[0]?.usage.points).toHaveLength(0);
+    await upsertDashboardDailyUsageCache(context(), "a", { days: 1, points: [point(now)] }, now + 1);
+    expect(store.prepare("SELECT COUNT(*) AS count FROM daily_usage_points").get()?.["count"]).toBe(1);
+  });
+
 });

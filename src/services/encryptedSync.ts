@@ -17,7 +17,7 @@ import { CrossWindowOperationBusyError, runCrossWindowExclusive, runEncryptedSyn
 import { getCodexManagerConfiguration, getSyncHeartbeatMinutes } from "../infrastructure/config/extensionSettings";
 import { clearTokenAutomationError } from "../presentation/workbench/tokenAutomationState";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
-import { deleteSqliteStateFile, hasSqliteStateFile, listSqliteStateFiles, readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
+import { deleteSqliteStateFile, getSqliteMementoStorage, getSqliteStateStore, hasSqliteStateFile, listSqliteStateFiles, readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 import { canonicalizeSyncAccountLeases, isValidSyncAccountLease, type SyncAccountLease } from "./syncLeases";
 import {
   canonicalizeSyncAccountEnablement,
@@ -154,6 +154,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private realtimeVaultMutations: Promise<boolean> = Promise.resolve(true);
   private mutationVersion = 0;
   private currentSyncTask: Promise<boolean> | undefined;
+  private backgroundSyncAbort: AbortController | undefined;
+  private settingsSyncTask: Promise<unknown> | undefined;
+  private stopClaimStorageSubscription: (() => void) | undefined;
+  private localEnablementWrites = 0;
   private currentSyncAnnouncesSuccess = false;
   private currentSyncUsesSettingsSync = false;
   private backgroundSyncTimer: NodeJS.Timeout | undefined;
@@ -203,6 +207,14 @@ export class EncryptedSyncManager implements vscode.Disposable {
     const timer = setTimeout(() => controller.abort(), 10_000);
     try {
       const response = await undiciFetch(new URL("/api/peer-account-claim", origin), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request, signature }), signal: controller.signal, redirect: "error" });
+      if ([401, 404, 405, 501].includes(response.status)) {
+        void response.body?.cancel().catch(() => undefined);
+        throw new Error(`The shared dashboard host does not support signed account claims (HTTP ${response.status}). Update and reload Codex Manager on the PC hosting the shared dashboard, then retry. Account switching does not use a browser login session.`);
+      }
+      if (!(response.headers.get("content-type") ?? "").includes("application/json")) {
+        void response.body?.cancel().catch(() => undefined);
+        throw new Error(`The shared account-claim endpoint returned an unexpected response (HTTP ${response.status}). Check the shared host and proxy routing before retrying.`);
+      }
       const payload = await response.json() as { result?: AccountClaimResult; signature?: string; error?: string };
       signal?.throwIfAborted();
       if (!response.ok || !payload.result || typeof payload.signature !== "string" || payload.result.requestId !== request.requestId ||
@@ -374,6 +386,14 @@ export class EncryptedSyncManager implements vscode.Disposable {
     }
     const deviceId = await this.getDeviceId();
     this.updateVisibleEnablement(this.readLocalEnablement(), deviceId);
+    this.stopClaimStorageSubscription = getSqliteStateStore()?.subscribe(["state"], () => {
+      if (this.disposed) return;
+      const entries = this.readLocalEnablement();
+      if (visibleEnablementFingerprint(entries, deviceId) === visibleEnablementFingerprint(visibleAccountEnablement, visibleEnablementDeviceId)) return;
+      if (!this.localEnablementWrites) this.mutationVersion++;
+      this.realtimeVaultCache = undefined;
+      this.updateVisibleEnablement(entries, deviceId);
+    });
     // Keep the dashboard's password action in sync with Secret Storage from
     // the first render. Without this, an enabled sync setting with a missing
     // secret looked configured and a dashboard Sync click fell through to the
@@ -425,6 +445,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   dispose(): void {
     this.disposed = true;
+    this.backgroundSyncAbort?.abort(new Error("Sync stopped."));
+    this.stopClaimStorageSubscription?.();
+    this.stopClaimStorageSubscription = undefined;
     this.cancelCurrentClaim?.();
     if (this.currentClaimTimer) clearInterval(this.currentClaimTimer);
     this.currentClaimTimer = undefined;
@@ -824,7 +847,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   async canAutomateAccountAfterVaultRefresh(accountId: string): Promise<boolean> {
-    await this.mutationChain.catch(() => undefined);
+    await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account storage is still committing. Retry after the pending write finishes.");
     await this.refreshEnablementFromDownloadedVault();
     return this.canAutomateAccount(accountId);
   }
@@ -839,7 +862,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   async prepareAccountSwitch(accountId: string): Promise<void> {
     if (encryptedSyncRegistryOverrideEnabled) return;
-    await this.mutationChain;
+    await waitWithin(this.mutationChain, 500, "Account storage is still committing. Retry after the pending write finishes.");
     if (this.isCurrentAccountOnly()) {
       const result = await this.requestCurrentClaim("acquire", accountId);
       this.preparedCurrentClaims.set(accountId, { claim: result.claim!, acquired: result.acquired === true });
@@ -872,7 +895,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   async prepareAccountEnablement(accountId: string, enabled: boolean): Promise<void> {
     if (this.isCurrentAccountOnly()) return;
     if (encryptedSyncRegistryOverrideEnabled) return;
-    await this.mutationChain.catch(() => undefined);
+    await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account storage is still committing. Retry after the pending write finishes.");
     await this.refreshEnablementFromDownloadedVault();
     const current = this.findForeignEnablement(accountId, true);
     if (enabled && current) {
@@ -974,7 +997,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       // Before turning it off, refresh and reapply the shared registry so the
       // dashboard cannot report that enforcement is restored while overrides
       // are still active locally.
-      await this.mutationChain.catch(() => undefined);
+      await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account storage is still committing. Retry after the pending write finishes.");
       await this.refreshEnablementFromDownloadedVault();
       const sharedEnablement = this.readLocalEnablement();
       if (sharedEnablement.length > 0) {
@@ -1110,14 +1133,26 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (this.currentSyncTask) {
       const runningTask = this.currentSyncTask;
       const needsFollowup =
-        (syncSettings && !this.currentSyncUsesSettingsSync) || (announceSuccess && !this.currentSyncAnnouncesSuccess);
-      const result = await runningTask;
+        (syncSettings && !this.currentSyncUsesSettingsSync) || (announceSuccess && !this.currentSyncAnnouncesSuccess) || Boolean(interactive && this.backgroundSyncAbort);
+      if (interactive && this.backgroundSyncAbort) this.backgroundSyncAbort.abort(new Error("Background sync yielded to manual sync."));
+      const result = interactive && this.backgroundSyncAbort
+        ? await waitWithin(runningTask, 500, "A previous sync is finishing a storage commit. Retry when it completes.")
+        : await runningTask;
       return needsFollowup && !this.disposed ? this.syncNow(interactive, announceSuccess, syncSettings) : result;
     }
-    const execute = async (): Promise<boolean> => {
+    const controller = interactive ? undefined : new AbortController();
+    this.backgroundSyncAbort = controller;
+    const execute = async (signal?: AbortSignal): Promise<boolean> => {
+      const abort = () => controller?.abort(signal?.reason);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
       try {
         return await this.performSyncNow(interactive, announceSuccess, syncSettings);
+      } catch (error) {
+        if (controller?.signal.aborted) return false;
+        throw error;
       } finally {
+        signal?.removeEventListener("abort", abort);
         await this.repo.flush?.();
       }
     };
@@ -1132,7 +1167,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     try {
       return await task;
     } finally {
-      if (this.currentSyncTask === task) this.currentSyncTask = undefined;
+      if (this.currentSyncTask === task) { this.currentSyncTask = undefined; this.backgroundSyncAbort = undefined; }
       if (this.currentSyncTask === undefined) {
         this.currentSyncAnnouncesSuccess = false;
         this.currentSyncUsesSettingsSync = false;
@@ -1184,12 +1219,14 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
     this.syncing = true;
     try {
+      this.backgroundSyncAbort?.signal.throwIfAborted();
       const passphrase = await this.getOrPromptForPassphrase(interactive);
       if (!passphrase) {
         encryptedSyncNeedsConfiguration = true;
         return false;
       }
-      await this.mutationChain.catch(() => undefined);
+      await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account storage is still committing. Retry after the pending write finishes.", this.backgroundSyncAbort?.signal);
+      this.backgroundSyncAbort?.signal.throwIfAborted();
       const mutationVersion = this.mutationVersion;
       // Another VS Code window may have replaced the shared index since this
       // host last read it. Drop only the clean cache; pending local writes are
@@ -1298,6 +1335,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         return false;
       }
 
+      this.backgroundSyncAbort?.signal.throwIfAborted();
       await this.updateLocalStateIfChanged(LOCAL_DELETIONS_KEY, mergedDeletions);
       await this.storeLocalEnablement(mergedEnablement, await this.getDeviceId());
 
@@ -1325,6 +1363,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         syncDeletionsFingerprint(remote.deletions ?? []) !== syncDeletionsFingerprint(mergedDeletions)
       ) {
         const encrypted = await encryptSyncPayload(merged, passphrase);
+        this.backgroundSyncAbort?.signal.throwIfAborted();
         await this.context.globalState.update(SYNC_KEY, encrypted);
         wroteSyncVault = true;
         this.lastRemoteRaw = encrypted;
@@ -1347,6 +1386,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         }
         return false;
       }
+      this.backgroundSyncAbort?.signal.throwIfAborted();
       await this.updateLocalStateIfChanged(LOCAL_ENABLEMENT_PENDING_KEY, []);
       pendingEnablementAccountIds = new Set();
       await this.updateLocalStateIfChanged(LOCAL_VAULT_DIRTY_KEY, []);
@@ -1430,11 +1470,14 @@ export class EncryptedSyncManager implements vscode.Disposable {
       // used by Settings Sync. In particular, getAccounts() can be empty while
       // Settings Sync is active. Let the Settings Sync command report whether
       // the service can run instead of rejecting a healthy signed-in session.
-      await vscode.commands.executeCommand("workbench.userDataSync.actions.syncNow");
+      const pending = this.settingsSyncTask ??= Promise.resolve(vscode.commands.executeCommand("workbench.userDataSync.actions.syncNow"));
+      void pending.finally(() => { if (this.settingsSyncTask === pending) this.settingsSyncTask = undefined; }).catch(() => undefined);
+      await waitWithin(pending, 5_000, "VS Code Settings Sync did not confirm completion. Local changes remain queued; check Settings Sync and retry.", this.backgroundSyncAbort?.signal);
       encryptedSyncNeedsSettingsSync = false;
       encryptedSyncSettingsFailure = undefined;
       return true;
     } catch (error) {
+      if (this.backgroundSyncAbort?.signal.aborted) throw error;
       encryptedSyncNeedsSettingsSync = true;
       const detail = error instanceof Error ? error.message : String(error);
       const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
@@ -1521,9 +1564,18 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   private async storeLocalEnablement(entries: SyncAccountEnablement[], deviceId: string): Promise<void> {
-    const canonical = canonicalizeSyncAccountEnablement(entries).slice(-MAX_ENABLEMENT_RECORDS);
-    await this.updateLocalStateIfChanged(LOCAL_ENABLEMENT_KEY, canonical);
-    this.updateVisibleEnablement(canonical, deviceId);
+    let canonical = canonicalizeSyncAccountEnablement(entries).slice(-MAX_ENABLEMENT_RECORDS);
+    this.localEnablementWrites++;
+    try {
+      const storage = getSqliteMementoStorage(this.context.globalState);
+      if (storage) storage.store.transaction(() => {
+        canonical = mergeSyncAccountEnablement(this.readLocalEnablement(), canonical).slice(-MAX_ENABLEMENT_RECORDS);
+        if (syncEnablementFingerprint(canonical) !== syncEnablementFingerprint(this.readLocalEnablement()))
+          storage.store.set(storage.namespace, LOCAL_ENABLEMENT_KEY, canonical);
+      });
+      else await this.updateLocalStateIfChanged(LOCAL_ENABLEMENT_KEY, canonical);
+      this.updateVisibleEnablement(canonical, deviceId);
+    } finally { this.localEnablementWrites--; }
   }
 
   private async updateLocalStateIfChanged(key: string, value: unknown): Promise<void> {

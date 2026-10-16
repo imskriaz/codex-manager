@@ -531,43 +531,6 @@ export function SettingsOverlay(props: {
                 </SettingsToggleBlock>
               </div>
               <SettingsToggleBlock
-                title="Automatic token history"
-                sub="On account load, collect daily token usage for the current account at most once every 24 hours. Inactive accounts are never polled. Saved history remains available when off."
-                enabled={props.settings.dailyTokenUsageEnabled === true}
-                onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}
-              />
-              <div class="settings-block settings-block-wide settings-history-block">
-                <div class="settings-toggle-head">
-                  <div class="settings-block-head">
-                    <div class="settings-block-title settings-title-with-badge">
-                      {usageHistoryCopy.title}
-                      <span class="settings-count-badge">{usageHistoryCopy.count}</span>
-                    </div>
-                    <div class="settings-block-sub">{usageHistoryCopy.sub}</div>
-                  </div>
-                  <button
-                    class="settings-history-clear"
-                    type="button"
-                    disabled={props.usageHistoryCount === 0}
-                    title={usageHistoryCopy.clear}
-                    aria-label={usageHistoryCopy.clear}
-                    onClick={props.onClearUsageHistory}
-                  >
-                    {renderRemoveIcon()}
-                  </button>
-                </div>
-                <SettingsDiscreteSlider
-                  value={props.settings.usageHistoryRetentionDays}
-                  values={USAGE_HISTORY_RETENTION_VALUES}
-                  accent="sky"
-                  scaleValues={[0, 7, 30, 60, 90]}
-                  valueLabel={(value) => resolveRetentionValueLabel(value, props.lang)}
-                  description={(value) => resolveRetentionDescription(value, props.lang)}
-                  onPreview={(value) => props.onPatchSettings({ usageHistoryRetentionDays: value })}
-                  onCommit={(value) => patchAndSend("usageHistoryRetentionDays", value)}
-                />
-              </div>
-              <SettingsToggleBlock
                 title={props.copy.autoSwitchTitle}
                 sub={props.copy.autoSwitchSub}
                 enabled={props.settings.autoSwitchEnabled}
@@ -725,6 +688,57 @@ export function SettingsOverlay(props: {
           >
             <SettingsPanelIntro tab={tabs[2]!} />
             <div class="settings-layout">
+              <SettingsToggleBlock
+                title="Automatic token history"
+                sub="On account load, collect daily token usage for the current account at most once every 24 hours. Inactive accounts are never polled. Saved history remains available when off."
+                enabled={props.settings.dailyTokenUsageEnabled !== false}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}
+              />
+              <div class="settings-block settings-block-wide settings-history-block">
+                <div class="settings-toggle-head">
+                  <div class="settings-block-head">
+                    <div class="settings-block-title settings-title-with-badge">
+                      {usageHistoryCopy.title}
+                      <span class="settings-count-badge">{usageHistoryCopy.count}</span>
+                    </div>
+                    <div class="settings-block-sub">{usageHistoryCopy.sub}</div>
+                  </div>
+                  <button
+                    class="settings-history-clear"
+                    type="button"
+                    disabled={props.usageHistoryCount === 0}
+                    title={usageHistoryCopy.clear}
+                    aria-label={usageHistoryCopy.clear}
+                    onClick={props.onClearUsageHistory}
+                  >
+                    {renderRemoveIcon()}
+                  </button>
+                </div>
+                <SettingsDiscreteSlider
+                  value={props.settings.usageHistoryRetentionDays}
+                  values={USAGE_HISTORY_RETENTION_VALUES}
+                  accent="sky"
+                  scaleValues={[0, 7, 30, 60, 90]}
+                  valueLabel={(value) => resolveRetentionValueLabel(value, props.lang)}
+                  description={(value) => resolveRetentionDescription(value, props.lang)}
+                  onPreview={(value) => props.onPatchSettings({ usageHistoryRetentionDays: value })}
+                  onCommit={(value) => patchAndSend("usageHistoryRetentionDays", value)}
+                />
+              </div>
+              <div class="settings-block settings-block-wide settings-history-block">
+                <div class="settings-block-head"><div class="settings-block-title">Token history retention</div><div class="settings-block-sub">Keep saved daily token totals across accounts. Longer histories accumulate over future checks; each provider response covers up to 30 days.</div></div>
+                <SettingsDiscreteSlider
+                  value={props.settings.tokenHistoryRetentionDays ?? 30}
+                  values={USAGE_HISTORY_RETENTION_VALUES}
+                  accent="sky"
+                  scaleValues={[1, 7, 30, 60, 90]}
+                  valueLabel={(value) => resolveRetentionValueLabel(value, props.lang)}
+                  description={(value) => `Keep ${value} days of token history`}
+                  onPreview={(value) => props.onPatchSettings({ tokenHistoryRetentionDays: value })}
+                  onCommit={(value) => patchAndSend("tokenHistoryRetentionDays", value)}
+                />
+              </div>
               <SettingsToggleBlock
                 title="Auto Sync"
                 sub={transferCopy.syncSub}

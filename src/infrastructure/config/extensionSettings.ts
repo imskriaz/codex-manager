@@ -37,7 +37,8 @@ export class ExtensionSettingsStore {
         normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15))
       ),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
-      dailyTokenUsageEnabled: config.get<boolean>("dailyTokenUsageEnabled", false),
+      tokenHistoryRetentionDays: normalizeTokenHistoryRetentionDays(config.get<number>("tokenHistoryRetentionDays", 30)),
+      dailyTokenUsageEnabled: config.get<boolean>("dailyTokenUsageEnabled", true),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
       autoSwitchWaitForSessionsEnabled: config.get<boolean>("autoSwitchWaitForSessionsEnabled", false),
       // The 5-hour quota is always part of automatic quota control. Keep the
@@ -232,4 +233,8 @@ export function normalizeAutoSwitchLockMinutes(value: number): number {
   }
 
   return Math.max(0, Math.min(120, Math.round(value)));
+}
+
+export function normalizeTokenHistoryRetentionDays(value: number): number {
+  return normalizeUsageHistoryRetentionDays(Number.isFinite(value) && value > 0 ? value : 30);
 }

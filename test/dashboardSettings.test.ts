@@ -3,10 +3,10 @@ import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
 
 describe("handleDashboardSettingUpdate", () => {
-  it("persists the opt-in token history toggle and rejects non-boolean values", async () => {
+  it("persists the token history toggle and rejects non-boolean values", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update,
-      inspect: vi.fn(() => ({ key: "codexManager.dailyTokenUsageEnabled", defaultValue: false })) } as never);
+      inspect: vi.fn(() => ({ key: "codexManager.dailyTokenUsageEnabled", defaultValue: true })) } as never);
     await expect(handleDashboardSettingUpdate("dailyTokenUsageEnabled", true)).resolves.toBe(true);
     expect(update).toHaveBeenCalledWith("dailyTokenUsageEnabled", true, vscode.ConfigurationTarget.Global);
     update.mockClear();
@@ -228,4 +228,12 @@ describe("handleDashboardSettingUpdate", () => {
     );
     expect(update).toHaveBeenNthCalledWith(2, "quotaWarningThreshold", 15, vscode.ConfigurationTarget.Workspace);
   });
+});
+
+
+it("bounds token history retention independently from quota retention", async () => {
+  const update = vi.fn().mockResolvedValue(undefined);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: () => ({}) } as never);
+  await expect(handleDashboardSettingUpdate("tokenHistoryRetentionDays", 120)).resolves.toBe(true);
+  expect(update).toHaveBeenCalledWith("tokenHistoryRetentionDays", 90, vscode.ConfigurationTarget.Global);
 });

@@ -164,7 +164,7 @@ describe("current account only sync", () => {
     fetchMock.mockRejectedValueOnce(new Error("host offline"));
     await expect(manager.prepareAccountSwitch("next")).rejects.toThrow("offline");
     fetchMock.mockResolvedValueOnce(
-      new Response(JSON.stringify({ result: { requestId: "wrong-request", ok: true }, signature: "forged" }))
+      new Response(JSON.stringify({ result: { requestId: "wrong-request", ok: true }, signature: "forged" }), { headers: { "content-type": "application/json" } })
     );
     await expect(manager.prepareAccountSwitch("next")).rejects.toThrow("could not confirm");
     expect(active).toBe("previous");

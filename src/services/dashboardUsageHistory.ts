@@ -1,3 +1,4 @@
+import { getCodexManagerConfiguration, normalizeTokenHistoryRetentionDays } from "../infrastructure/config/extensionSettings";
 import type * as vscode from "vscode";
 import type { DashboardDailyUsageCacheEntry, DashboardState, DashboardUsageSample, DashboardUsageGraphQuery, DashboardUsageGraphData, DashboardUsageSummary } from "../domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../core/types";
@@ -24,6 +25,11 @@ export function readDashboardUsageSummary(context: vscode.ExtensionContext): Das
   return store ? readUsageSummary(store) : { revision: history!.at(-1)?.at ?? 0, count: history!.length };
 }
 
+function tokenHistoryCutoff(): number {
+  const days = normalizeTokenHistoryRetentionDays(getCodexManagerConfiguration().get<number>("tokenHistoryRetentionDays", 30));
+  return (Math.floor(Date.now() / 86_400_000) - days + 1) * 86_400_000;
+}
+
 export function queryDashboardUsage(context: vscode.ExtensionContext, query: DashboardUsageGraphQuery | undefined): DashboardUsageGraphData {
   if (!query || !["quota", "tokens"].includes(query.mode) || !Number.isFinite(query.from) || !Number.isFinite(query.to) ||
     query.from <= 0 || query.to <= query.from || query.to - query.from > 31 * 86_400_000 || query.to > Date.now() + 86_400_000) {
@@ -32,7 +38,7 @@ export function queryDashboardUsage(context: vscode.ExtensionContext, query: Das
   initializeDashboardUsageStorage(context);
   const store = getSqliteStateStore();
   if (store) {
-    const result = queryUsageRows(store, query);
+    const result = queryUsageRows(store, query, tokenHistoryCutoff());
     if (normalizeDashboardDailyUsageCache(result.dailyUsageCache).length !== result.dailyUsageCache.length) {
       throw new Error("Saved token history could not be read. Existing records were preserved.");
     }
@@ -47,7 +53,8 @@ export function queryDashboardUsage(context: vscode.ExtensionContext, query: Das
     result.history = [...previous.values(), ...history.filter(sample => sample.at >= query.from && sample.at <= query.to)];
     result.oldestAt = history[0]?.at;
   } else {
-    const entries = readDashboardDailyUsageCache(context);
+    const cutoff = tokenHistoryCutoff();
+    const entries = readDashboardDailyUsageCache(context).map(entry => ({ ...entry, usage: { ...entry.usage, points: entry.usage.points.filter(point => Date.parse(`${point.date}T00:00:00Z`) >= cutoff) } }));
     result.dailyUsageCache = entries.map(entry => ({ ...entry, usage: { ...entry.usage,
       points: entry.usage.points.filter(point => {
         const at = Date.parse(`${point.date}T00:00:00Z`);
@@ -124,9 +131,9 @@ export async function upsertDashboardDailyUsageCache(
     const points = new Map(previous?.usage.points.map(point => [point.date, point]));
     for (const point of usage.points) points.set(point.date, point);
     const entry = { accountId, fetchedAt, usage: { days: Math.max(previous?.usage.days ?? 1, usage.days),
-      points: [...points.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-30) } };
+      points: [...points.values()].filter(point => Date.parse(`${point.date}T00:00:00Z`) >= tokenHistoryCutoff()).sort((a, b) => a.date.localeCompare(b.date)).slice(-90) } };
     if (store) {
-      upsertDailyUsageRow(store, entry);
+      upsertDailyUsageRow(store, entry, new Date(tokenHistoryCutoff()).toISOString().slice(0, 10));
       return [entry];
     }
     const current = readDashboardDailyUsageCache(context);
@@ -154,7 +161,7 @@ export function normalizeDashboardDailyUsageCache(value: unknown): DashboardDail
         Number.isFinite(entry.fetchedAt) &&
         entry.fetchedAt > 0 &&
         entry.fetchedAt <= latestAllowedTimestamp &&
-        isDailyUsageBreakdown(entry.usage)
+        isDailyUsageBreakdown(entry.usage, 91)
       );
     })
     .sort((left, right) => right.fetchedAt - left.fetchedAt)
@@ -165,7 +172,7 @@ export function normalizeDashboardDailyUsageCache(value: unknown): DashboardDail
     });
 }
 
-export function isDailyUsageBreakdown(value: unknown): value is CodexDailyUsageBreakdown {
+export function isDailyUsageBreakdown(value: unknown, maxPoints = 31): value is CodexDailyUsageBreakdown {
   if (!value || typeof value !== "object") return false;
   const usage = value as Partial<CodexDailyUsageBreakdown>;
   return (
@@ -174,7 +181,7 @@ export function isDailyUsageBreakdown(value: unknown): value is CodexDailyUsageB
     usage.days >= 1 &&
     usage.days <= 30 &&
     Array.isArray(usage.points) &&
-    usage.points.length <= 31 &&
+    usage.points.length <= maxPoints &&
     usage.points.every(
       (point) =>
         point &&

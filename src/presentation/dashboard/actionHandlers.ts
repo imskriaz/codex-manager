@@ -778,10 +778,10 @@ async function runDashboardAction(
     case "getResetCredits":
       return handleGetResetCredits(ctx.repo, account);
     case "getDailyUsage":
-      if (payload?.automatic === true && !getCodexManagerConfiguration().get<boolean>("dailyTokenUsageEnabled", false)) {
+      if (payload?.automatic === true && !getCodexManagerConfiguration().get<boolean>("dailyTokenUsageEnabled", true)) {
         return { notice: { level: "warning", message: "Automatic token history is disabled. Saved history remains available." } };
       }
-      return handleGetDailyUsage(ctx.context, ctx.repo, account, payload?.days);
+      return handleGetDailyUsage(ctx.context, ctx.repo, account, payload?.days, payload?.automatic !== true);
     case "getUsageGraph":
       return { usageGraph: queryDashboardUsage(ctx.context, payload?.usageGraph) };
     case "openNewCodexWebview":
@@ -1268,6 +1268,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "autoRefreshMinutes",
     "autoRefreshCurrentMinutes",
     "usageHistoryRetentionDays",
+    "tokenHistoryRetentionDays",
     "dailyTokenUsageEnabled",
     "autoSwitchEnabled",
     "autoSwitchWaitForSessionsEnabled",
@@ -1684,7 +1685,8 @@ async function handleGetDailyUsage(
   context: vscode.ExtensionContext,
   repo: AccountsRepository,
   account: Awaited<ReturnType<AccountsRepository["getAccount"]>>,
-  requestedDays: number | undefined
+  requestedDays: number | undefined,
+  manual = false
 ) {
   if (!account) {
     throw new Error("Account not found");
@@ -1699,7 +1701,7 @@ async function handleGetDailyUsage(
     const usage = await fetchDailyUsageBreakdown(tokens, days, signal);
     if (!await repo.getAccount(account.id)) throw new Error("The account was removed while loading usage. The result was not saved.");
     return usage;
-  });
+  }, { manual });
   return { dailyUsage: entry.usage, dailyUsageFetchedAt: entry.fetchedAt };
 }
 

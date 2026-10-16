@@ -160,3 +160,20 @@ describe("SQLite extension context and settings migration", () => {
     } finally { peer?.close(); vi.useRealTimers(); }
   });
 });
+
+
+it("enables token collection for untouched defaults and preserves an explicit Off choice", async () => {
+  await initializeSqliteContext(context());
+  const store = getSqliteStateStore()!;
+  const namespace = store.keys("migrations").find(key => key.endsWith(":token-history-default-on"))!.replace(":token-history-default-on", "");
+  store.set(namespace, "dailyTokenUsageEnabled", false);
+  store.set("migrations", `${namespace}:token-history-default-on`, undefined);
+  disposeSqliteContext();
+  await initializeSqliteContext(context());
+  expect(getCodexManagerConfiguration().get("dailyTokenUsageEnabled")).toBe(true);
+  await getCodexManagerConfiguration().update("dailyTokenUsageEnabled", false, vscode.ConfigurationTarget.Global);
+  getSqliteStateStore()!.set("migrations", `${namespace}:token-history-default-on`, undefined);
+  disposeSqliteContext();
+  await initializeSqliteContext(context());
+  expect(getCodexManagerConfiguration().get("dailyTokenUsageEnabled")).toBe(false);
+});

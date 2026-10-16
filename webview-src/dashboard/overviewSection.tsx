@@ -1,3 +1,4 @@
+import type { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { createPortal } from "preact/compat";
 import type { ComponentChildren } from "preact";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -79,6 +80,7 @@ export function OverviewSection(props: {
   onLoadUsageGraph?: (query: DashboardUsageGraphQuery) => void;
   dailyUsagePending?: boolean;
   dailyUsageError?: string;
+  tokenHistoryRefresh?: ReturnType<typeof useTokenHistoryRefresh>;
   onSetAutoSwitchLock: (minutes: number) => void;
   onAddAccount: () => void;
   onSetPassword: () => void;
@@ -301,9 +303,10 @@ export function OverviewSection(props: {
               usageGraphSource={props.usageGraphSource}
               usageGraphPaused={props.usageGraphPaused}
               onLoadUsageGraph={props.onLoadUsageGraph}
-              automaticTokenHistory={props.settings.dailyTokenUsageEnabled === true}
+              automaticTokenHistory={props.settings.dailyTokenUsageEnabled !== false}
               dailyUsagePending={props.dailyUsagePending}
               dailyUsageError={props.dailyUsageError}
+              tokenHistoryRefresh={props.tokenHistoryRefresh}
             />
           ) : null}
           <div class="overview-bottom-row">
@@ -749,6 +752,7 @@ function UsageGraph(props: {
   onLoadUsageGraph?: (query: DashboardUsageGraphQuery) => void;
   dailyUsagePending?: boolean;
   dailyUsageError?: string;
+  tokenHistoryRefresh?: ReturnType<typeof useTokenHistoryRefresh>;
 }) {
   const [range, setRange] = useState<UsageGraphRange>("1h");
   const [windowOffset, setWindowOffset] = useState(0);
@@ -758,6 +762,20 @@ function UsageGraph(props: {
   const [hovered, setHovered] = useState<{ bar: UsageGraphBar; anchor: UsageGraphAnchor }>();
   const tooltipId = useId();
   const cardRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number }>();
+  useLayoutEffect(() => {
+    if (!settingsOpen) { setMenuPosition(undefined); return; }
+    const menu = menuRef.current?.getBoundingClientRect();
+    const anchor = menuButtonRef.current?.getBoundingClientRect();
+    if (menu && anchor) {
+      const position = positionUsageGraphTooltip(anchor, menu.width, menu.height, window.innerWidth, window.innerHeight);
+      const left = Math.max(8, Math.min(window.innerWidth - menu.width - 8, anchor.right - menu.width));
+      setMenuPosition(previous => previous?.left === left && previous.top === position.top ? previous : { left, top: position.top });
+    }
+  }, [settingsOpen, graphMode, props.accounts.length, props.tokenHistoryRefresh?.statuses]);
+  useLayoutEffect(() => { if (settingsOpen) menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }); }, [settingsOpen]);
   const graphStageRef = useRef<HTMLDivElement>(null);
   const loadQueryRef = useRef(props.onLoadUsageGraph);
   loadQueryRef.current = props.onLoadUsageGraph;
@@ -786,6 +804,13 @@ function UsageGraph(props: {
     : aggregateUsageEvents(buildUsageEvents(selectUsageHistoryWindow(data?.history ?? [], graphStartAt, graphEndAt),
         { from: graphStartAt, to: graphEndAt, buckets: bucketCount }), graphStartAt, duration, bucketCount),
     [data, graphMode, dailyUsageCache, graphStartAt, graphEndAt, duration, bucketCount]);
+  const usageByAccount = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const event of events) totals.set(event.accountId, (totals.get(event.accountId) ?? 0) + event.used);
+    return totals;
+  }, [events]);
+  const cacheByAccount = useMemo(() => new Map(dailyUsageCache.map(entry => [entry.accountId, entry])), [dailyUsageCache]);
+  const refreshErrors = Object.entries(props.tokenHistoryRefresh?.statuses ?? {}).filter(([, status]) => status.state === "error");
   const maximum = resolveUsageAxisMaximum(Math.max(0, ...events.map(event => event.used)));
   const bars = useMemo(() => layoutUsageGraphBars(events, graphStartAt, graphEndAt, bucketCount, maximum), [events, graphStartAt, graphEndAt, bucketCount, maximum]);
   const accountIds = new Set(events.map(event => event.accountId));
@@ -811,11 +836,14 @@ function UsageGraph(props: {
   useEffect(() => {
     if (!settingsOpen && !hovered) return;
     const dismiss = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !cardRef.current?.contains(event.target)) { setSettingsOpen(false); setHovered(undefined); }
+      if (event.target instanceof Node && !cardRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) { setSettingsOpen(false); setHovered(undefined); }
     };
-    const hideTooltip = (): void => setHovered(undefined);
+    const hideTooltip = (event: Event): void => {
+      setHovered(undefined);
+      if (!(event.target instanceof Node && menuRef.current?.contains(event.target))) setSettingsOpen(false);
+    };
     const escape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") { setSettingsOpen(false); setHovered(undefined); }
+      if (event.key === "Escape") { if (settingsOpen) menuButtonRef.current?.focus(); setSettingsOpen(false); setHovered(undefined); }
     };
     document.addEventListener("pointerdown", dismiss);
     document.addEventListener("keydown", escape);
@@ -853,24 +881,37 @@ function UsageGraph(props: {
             </select>
           </div>
           <div class="usage-graph-settings-wrap">
-            <button type="button" class={settingsOpen ? "active" : ""} aria-label="Graph settings" aria-expanded={settingsOpen} title="Graph settings" onClick={() => { setHovered(undefined); setSettingsOpen(open => !open); }}>⚙</button>
-            {settingsOpen ? <div class="usage-graph-settings-popover" role="dialog" aria-label="Graph settings">
+            <button ref={menuButtonRef} type="button" class={settingsOpen ? "active" : ""} aria-label="Graph settings" aria-expanded={settingsOpen} title="Graph settings" onClick={() => { setHovered(undefined); setSettingsOpen(open => !open); }}>⚙</button>
+            {settingsOpen ? createPortal(<div ref={menuRef} class="usage-graph-settings-popover" role="dialog" aria-label="Graph settings" style={{ left: menuPosition?.left ?? 8, top: menuPosition?.top ?? 8, visibility: menuPosition ? "visible" : "hidden" }}>
               <strong>Chart data</strong>
               <button type="button" class={graphMode === "quota" ? "active" : ""} aria-pressed={graphMode === "quota"} onClick={() => { setGraphMode("quota"); setRange("1h"); setWindowOffset(0); setSettingsOpen(false); }}>Quota changes</button>
               <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { setGraphMode("tokens"); setRange("30d"); setWindowOffset(0); setSettingsOpen(false); }}>Daily token usage</button>
               <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved daily totals across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at most once every 24 hours." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
-              {graphMode === "tokens" ? <div class="usage-graph-cache-list" aria-label="Saved account history">
+              <div class="usage-graph-cache-head"><span>{graphMode === "tokens" ? "Saved accounts" : "Account usage"}</span>
+                {graphMode === "tokens" ? <button type="button" disabled={props.tokenHistoryRefresh?.busy || !props.accounts.length} onClick={() => props.tokenHistoryRefresh?.refresh(props.accounts.map(account => account.id))}>{renderRefreshIcon()} Refresh all</button> : <small>Used · last checked</small>}
+              </div>
+              {graphMode === "tokens" && props.tokenHistoryRefresh?.summary ? <div class="usage-graph-refresh-summary" role="status">{props.tokenHistoryRefresh.summary}</div> : null}
+              <div class="usage-graph-cache-list" aria-label={graphMode === "tokens" ? "Saved account history" : "Account quota summary"}>
                 {props.accounts.map(account => {
-                  const entry = dailyUsageCache.find(entry => entry.accountId === account.id);
-                  return <div key={account.id} class="usage-graph-cache-row">
+                  const entry = cacheByAccount.get(account.id);
+                  const refresh = props.tokenHistoryRefresh?.statuses[account.id];
+                  const pending = refresh?.state === "pending" || refresh?.state === "queued";
+                  const checkedAt = graphMode === "tokens" ? entry?.fetchedAt : account.lastQuotaAt;
+                  const age = checkedAt ? formatRelativeTimestamp(checkedAt, props.now, "Unknown", props.lang) : "Not checked";
+                  const stateLabel = refresh?.state === "error" ? "Failed" : refresh?.message;
+                  return <div key={account.id} class={`usage-graph-cache-row${graphMode === "quota" ? " is-quota" : ""}`}>
                     <i style={{ background: accountMap.get(account.id)?.color }} />
-                    <span>{accountMap.get(account.id)?.label}</span>
-                    <small title={entry ? `Last successful update: ${formatTimestamp(entry.fetchedAt, "Unknown")}` : "No saved history"}>{entry ? `${props.now - entry.fetchedAt >= 86_400_000 ? "Stale · " : ""}${formatRelativeTimestamp(entry.fetchedAt, props.now, "Unknown", props.lang)}` : "Not collected"}</small>
+                    <span title={accountMap.get(account.id)?.label}>{accountMap.get(account.id)?.label}</span>
+                    <small class={graphMode === "tokens" && refresh ? `is-${refresh.state}` : ""} role={graphMode === "tokens" && refresh ? "status" : undefined} title={graphMode === "tokens" && refresh ? refresh.message : `${graphMode === "quota" ? "Quota used in selected period. " : ""}Last successful check: ${checkedAt ? formatTimestamp(checkedAt, "Unknown") : "Not collected"}`}>
+                      {graphMode === "tokens" ? stateLabel ?? (entry ? `${props.now - entry.fetchedAt >= 86_400_000 ? "Stale · " : ""}${age}` : "Not collected") : `${formatUsageValue(usageByAccount.get(account.id) ?? 0)} · ${age}`}
+                    </small>
+                    {graphMode === "tokens" ? <button class="usage-graph-account-refresh" type="button" disabled={pending} aria-busy={pending} aria-label={`Refresh token history for ${accountMap.get(account.id)?.label}`} title="Refresh this account's token history" onClick={() => props.tokenHistoryRefresh?.refresh([account.id])}>{renderRefreshIcon()}</button> : null}
                   </div>;
                 })}
-              </div> : null}
+              </div>
+              {graphMode === "tokens" && refreshErrors.length ? <div class="usage-graph-settings-error" role="alert">{refreshErrors.map(([id, status]) => `${accountMap.get(id)?.label ?? "Account"}: ${status.message}`).join("\n")}</div> : null}
               {error ? <span class="usage-graph-settings-error">{error}</span> : null}
-            </div> : null}
+            </div>, document.body) : null}
           </div>
           <div class="usage-graph-navigation">
             <button type="button" disabled={typeof data?.oldestAt !== "number" || !Number.isFinite(data.oldestAt) || data.oldestAt >= graphStartAt} title="Older period" aria-label="Older period" onClick={() => setWindowOffset(current => current + 1)}>‹</button>

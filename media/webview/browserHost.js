@@ -9,6 +9,7 @@
   let lastProbeAt = 0;
   let snapshotInFlight;
   let latestSnapshot;
+  let authenticationRequired = false;
   let hiddenAt;
   const pendingSocketActions = new Map();
   const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage"].includes(message?.action)
@@ -74,11 +75,13 @@
   };
 
   const loadSnapshot = () => {
+    if (authenticationRequired) return Promise.resolve(false);
     if (snapshotInFlight) return snapshotInFlight;
     snapshotInFlight = (async () => {
       const { response, state } = await fetchSnapshot();
+      if (authenticationRequired) return false;
       if (response.status === 401) {
-        window.location.reload();
+        requireSignIn();
         return false;
       }
       if (!response.ok) throw new Error(`Dashboard refresh failed (${response.status})`);
@@ -110,7 +113,23 @@
     pendingSocketActions.clear();
   };
 
+  const requireSignIn = () => {
+    if (authenticationRequired) return;
+    authenticationRequired = true;
+    resetConnectingSocket();
+    const active = realtimeSocket;
+    realtimeSocket = undefined;
+    try { active?.close(); } catch { /* Already disconnected. */ }
+    if (reconnectTimer !== undefined) window.clearTimeout?.(reconnectTimer);
+    reconnectTimer = undefined;
+    failUnconfirmedSocketActions();
+    publishConnection();
+    dispatch({ type: "dashboard:notice", level: "warning", message: "Dashboard session expired. Sign in again, then verify account state before retrying. Pending actions will not be replayed." });
+    window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname || "/")}`);
+  };
+
   const scheduleReconnect = () => {
+    if (authenticationRequired) return;
     if (isBrowserOffline()) { publishStatus("offline"); return; }
     if (reconnectTimer !== undefined) return;
     const delay = reconnectDelayMs;
@@ -123,6 +142,7 @@
   };
 
   const connectRealtime = () => {
+    if (authenticationRequired) return;
     if (isBrowserOffline()) { publishStatus("offline"); return; }
     if (connectingSocket || realtimeSocket) return;
     if (typeof window.WebSocket !== "function") {
@@ -180,7 +200,7 @@
       dispatch({ type: "dashboard:connection", transport: "websocket", connected: false });
       failUnconfirmedSocketActions();
       if (event.code === 4001) {
-        window.location.reload();
+        requireSignIn();
         return;
       }
       scheduleReconnect();
@@ -230,6 +250,7 @@
     let reachedHost = false;
     let timer;
     try {
+      if (authenticationRequired) throw new Error("Dashboard session expired. This action was not sent. Sign in again before retrying.");
       if (isBrowserOffline()) throw new Error("The browser is offline. This action was not sent; reconnect and try again.");
       // Manual view recovery must work even when an open socket stops responding.
       if (realtimeSocket && realtimeSocket.readyState === window.WebSocket.OPEN && message?.action !== "refreshView") {
@@ -260,8 +281,8 @@
       });
       reachedHost = true;
       if (response.status === 401) {
-        window.location.reload();
-        return;
+        void response.body?.cancel().catch(() => undefined);
+        throw Object.assign(new Error("Dashboard session expired. This action was not performed. Sign in again before retrying."), { authenticationRequired: true });
       }
       if (!response.ok) throw new Error(`Dashboard action failed (${response.status})`);
       const payload = await parseJsonResponse(response, "Dashboard action");
@@ -289,6 +310,7 @@
       // Action failures already have a request-scoped result. Do not emit a
       // second standalone toast for the same failed action.
       if (message?.type !== "dashboard:action") dispatch({ type: "dashboard:notice", level: "error", message: detail });
+      if (error?.authenticationRequired) requireSignIn();
     } finally {
       if (timer !== undefined) window.clearTimeout?.(timer);
     }
