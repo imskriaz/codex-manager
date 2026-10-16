@@ -22,6 +22,10 @@ Running-turn recovery uses `running_turns`. Live updates use `session_turns`, in
 
 Account attribution is captured when a managed turn starts, so switching accounts does not reassign a running turn. Native or remote turns whose account cannot be established retain an unknown account rather than guessing. These tables record only sessions observed by the manager; past native transcripts are not imported as historical account statistics.
 
+Auto Resume uses workspace-scoped SQLite recovery and open-tab snapshots. Startup transfers the previous snapshot into its retry queue atomically before closing editors, acknowledges each verified open, and retains sessions captured by another host during restoration. A workspace lease prevents simultaneous restoration by two hosts. Committed native status changes refresh tracking without waiting for the periodic scan. Recovery records retain their Codex home; a different isolated home reports a conflict instead of discarding or opening its saved sessions. Goal verification, unavailable editors, cancellation, and failed storage writes preserve retryable records. Private published conversation snapshots continue to use OS-backed SecretStorage; SQLite leases serialize their mutations across hosts.
+
+Quota-interrupted sessions remain Auto Resume candidates when a native goal is usage-limited or the latest turn has a structured quota failure. A later successful turn or explicit cancellation clears that evidence. Candidate IDs are persisted in the workspace recovery records; native process-running status remains separate.
+
 Example read-only queries:
 
 ```sql

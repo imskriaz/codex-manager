@@ -10,6 +10,45 @@ import {
 } from "../webview-src/dashboard/accountSorting";
 
 describe("sortWithQueuedAccount", () => {
+  it.each([true, false])("keeps remote claims last with quota grouping %s", (groupQuota) => {
+    const account = (id: string, overrides: Record<string, unknown> = {}) => ({
+      id, email: `${id}@example.com`, isActive: false, switchQueued: false,
+      metrics: [{ key: "weekly", visible: true, percentage: 50 }], ...overrides
+    }) as any;
+    const remote = { runningDeviceName: "Other PC", runningOnThisDevice: false };
+    const accounts = [
+      account("remote-z", { ...remote, runningDeviceOnline: true, queuePriority: true }),
+      account("remote-active", { ...remote, isActive: true }),
+      account("remote-queued", { ...remote, switchQueued: true }),
+      account("remote-a", remote),
+      account("missing", { metrics: [] }),
+      account("exhausted", { metrics: [{ key: "weekly", visible: true, percentage: 0 }] }),
+      account("stale", { lastQuotaAt: 1 }),
+      account("local", { ...remote, runningOnThisDevice: true }),
+      account("offline", { ...remote, runningDeviceOnline: false }),
+      account("unnamed", { runningOnThisDevice: false, runningDeviceOnline: true }),
+      account("queued", { switchQueued: true }),
+      account("active", { isActive: true })
+    ];
+    const originalIds = accounts.map((item) => item.id);
+    for (const direction of [1, -1]) {
+      const sorted = sortWithQueuedAccount(accounts, (left, right) => direction * left.id.localeCompare(right.id), groupQuota);
+      expect(sorted.slice(0, 2).map((item) => item.id)).toEqual(["active", "queued"]);
+      expect(sorted.slice(-4).map((item) => item.id)).toEqual([
+        "remote-active", "remote-queued", ...(direction === 1 ? ["remote-a", "remote-z"] : ["remote-z", "remote-a"])
+      ]);
+      expect(sorted).toHaveLength(accounts.length);
+      expect(new Set(sorted.map((item) => item.id)).size).toBe(accounts.length);
+    }
+    expect(accounts.map((item) => item.id)).toEqual(originalIds);
+    accounts[0].runningDeviceOnline = false;
+    expect(sortWithQueuedAccount(accounts, () => 0, groupQuota).slice(-3).map((item) => item.id))
+      .toEqual(["remote-active", "remote-queued", "remote-a"]);
+    accounts[0].runningDeviceOnline = true;
+    expect(sortWithQueuedAccount(accounts, () => 0, groupQuota).slice(-4).map((item) => item.id))
+      .toEqual(["remote-active", "remote-queued", "remote-z", "remote-a"]);
+  });
+
   it("always keeps the current account first when its quota is exhausted", () => {
     const account = (id: string, percentage: number, isActive = false) =>
       ({

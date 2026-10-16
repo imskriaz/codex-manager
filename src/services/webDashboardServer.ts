@@ -757,15 +757,13 @@ export class WebDashboardServer implements vscode.Disposable {
       const token = path.slice("/api/share/".length);
       const share = await this.conversationShares.get(token);
       if (!share) { response.statusCode = 404; this.sendJson(response, { error: "This shared link is invalid, expired, or revoked." }); return; }
-      try {
-        const target = JSON.parse(share.sessionKey) as unknown;
-        const sessionId = Array.isArray(target) && target[0] === "local" && typeof target[1] === "string" ? target[1] : undefined;
-        const current = sessionId ? await readCodexCliSessionMessages(sessionId).catch(() => undefined) : undefined;
-        const updated = current ? await this.conversationShares.refresh(token, current) : share;
-        this.sendJson(response, { title: updated?.title ?? share.title, expiresAt: updated?.expiresAt ?? share.expiresAt, messages: updated?.messages ?? share.messages });
-      } catch {
-        this.sendJson(response, { title: share.title, expiresAt: share.expiresAt, messages: share.messages });
-      }
+      let target: unknown;
+      try { target = JSON.parse(share.sessionKey); } catch { /* Older links keep their saved snapshot. */ }
+      const sessionId = Array.isArray(target) && target[0] === "local" && typeof target[1] === "string" ? target[1] : undefined;
+      const current = sessionId ? await readCodexCliSessionMessages(sessionId).catch(() => undefined) : undefined;
+      const updated = current ? await this.conversationShares.refresh(token, current) : await this.conversationShares.get(token);
+      if (!updated) { response.statusCode = 404; this.sendJson(response, { error: "This shared link is invalid, expired, or revoked." }); return; }
+      this.sendJson(response, { title: updated.title, expiresAt: updated.expiresAt, messages: updated.messages });
       return;
     }
     if (method === "POST" && path === "/api/peer-account-claim") {

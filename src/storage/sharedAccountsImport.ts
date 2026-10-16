@@ -19,7 +19,7 @@ export function toSharedEntries(
   input: SharedCodexManagerAccountJson | SharedCodexManagerAccountJson[]
 ): SharedCodexManagerAccountJson[] {
   const entries = Array.isArray(input) ? input : [input];
-  return entries.map(normalizeSharedAccountImportEntry);
+  return [...entries];
 }
 
 export function previewSharedAccountsImportEntries(
@@ -103,8 +103,4 @@ export function applySharedAccountEntry(
       account.lastQuotaAt = account.updatedAt;
     }
   }
-}
-
-function normalizeSharedAccountImportEntry(entry: SharedCodexManagerAccountJson): SharedCodexManagerAccountJson {
-  return entry;
 }

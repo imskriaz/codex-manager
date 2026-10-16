@@ -1,5 +1,6 @@
 import { sqliteConfiguration } from "../storage/sqliteContext";
 import { readCodexSessionGoals } from "./codexSessionGoals";
+import { isCodexQuotaInterruption } from "../domain/codexSessionState";
 import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -16,7 +17,7 @@ import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDi
 import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { reserveCodexSessionLive } from "./codexSessionLive";
 import { recordNativeSessionStatus } from "./sessionRecording";
-import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery } from "../storage/sqliteSessions";
+import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatus } from "../storage/sqliteSessions";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -251,7 +252,7 @@ export async function readCodexCliSessionSummary(
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
-const recentRunningSessions = new Map<string, { ids: string[]; checkedAt: number }>();
+const recentRunningSessions = new Map<string, { ids: string[]; checkedAt: number; revision?: number }>();
 const runningSessionListeners = new Set<(home: string) => void>();
 
 export function readRunningCodexSessionIds(codexHome = resolveCodexHome(), signal?: AbortSignal, sessionIds?: string[]): Promise<string[]> {
@@ -267,7 +268,7 @@ export function readRunningCodexSessionIds(codexHome = resolveCodexHome(), signa
       try { saveSessionDiscovery(store,codexHome,ids,startedAt); }
       catch (error) { console.warn("[codexManager] shared session discovery cache could not be saved",error); }
     }
-    recentRunningSessions.set(snapshotKey, { ids: [...ids], checkedAt: Date.now() });
+    recentRunningSessions.set(snapshotKey, { ids: [...ids], checkedAt: Date.now(), revision: store?.revision("session-status") });
     if (recentRunningSessions.size > 8) recentRunningSessions.delete(recentRunningSessions.keys().next().value!);
     for (const listener of runningSessionListeners) {
       try { listener(key); } catch (error) { console.warn("[codexManager] session recovery could not be scheduled", error); }
@@ -284,13 +285,20 @@ function runningSessionSnapshotKey(home: string, ids?: string[]): string {
 export function readRecentRunningCodexSessionIds(codexHome = resolveCodexHome(), sessionIds?: string[]): string[] | undefined {
   let full = recentRunningSessions.get(runningSessionSnapshotKey(codexHome));
   const store = getSqliteStateStore();
+  let revision: number | undefined;
   if (store) {
     try {
+      revision = store.revision("session-status");
+      if (sessionIds) {
+        const statuses = sessionIds.map(id => readSessionStatus(store,codexHome,id));
+        if (statuses.every(status => status !== "unknown")) return sessionIds.filter((_id,index) => statuses[index] === "running" || statuses[index] === "starting");
+      }
       const shared = readSessionDiscovery(store,codexHome);
       full = shared;
     } catch (error) { console.warn("[codexManager] shared session discovery cache could not be read",error); full = undefined; }
   }
-  const scoped = sessionIds ? recentRunningSessions.get(runningSessionSnapshotKey(codexHome, sessionIds)) : undefined;
+  let scoped = sessionIds ? recentRunningSessions.get(runningSessionSnapshotKey(codexHome, sessionIds)) : undefined;
+  if (store && (revision === undefined || scoped?.revision !== revision)) scoped = undefined;
   const snapshot = scoped && (!full || scoped.checkedAt >= full.checkedAt) ? scoped : full;
   const age = snapshot ? Date.now() - snapshot.checkedAt : Infinity;
   return snapshot && age >= 0 && age < 30_000 ? snapshot.ids.filter(id => !sessionIds || sessionIds.includes(id)) : undefined;
@@ -2957,7 +2965,7 @@ async function inspectCliSessionRunning(
   const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId, signal);
   const turnState = await readRecentTranscriptTurnState(transcript);
   // A loaded conversation can retain its writer lock after its turn finishes.
-  if (turnState === "terminal") return false;
+  if (turnState === "terminal" || turnState === "failed" || turnState === "quota-paused") return false;
   const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId, signal);
   signal?.throwIfAborted();
   if (nativeRunning !== undefined) return nativeRunning;
@@ -3067,7 +3075,7 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
   }
 }
 
-type RecentTranscriptTurnState = "active" | "terminal" | "unknown";
+type RecentTranscriptTurnState = "active" | "terminal" | "failed" | "quota-paused" | "unknown";
 const cliTranscriptTurnStateCache = new Map<string, {
   size: number; mtimeMs: number; offset: number;
   state: RecentTranscriptTurnState; resumeState: RecentTranscriptTurnState;
@@ -3103,13 +3111,21 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     for (const [index, line] of lines.entries()) {
       if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; }
       try {
-        const record = JSON.parse(line) as { type?: string; turn_id?: string; payload?: { type?: string; turn_id?: string } };
+        const record = JSON.parse(line) as { type?: string; turn_id?: string; error?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; message?: unknown; reason?: unknown } };
         const type = record?.type === "event_msg" ? record.payload?.type : record?.type;
         const eventTurnId = record?.type === "event_msg" ? record.payload?.turn_id : record?.turn_id;
         if (["task_complete", "task_completed", "task_failed", "turn_aborted", "turn_failed", "turn/completed", "turn.completed"].includes(type ?? "")) {
-          if (!eventTurnId || !turnId || eventTurnId === turnId) { state = "terminal"; turnId = eventTurnId ?? turnId; }
+          if (!eventTurnId || !turnId || eventTurnId === turnId) {
+            const quota = isCodexQuotaInterruption(JSON.stringify([record.error,record.payload?.error, /failed|aborted/.test(type ?? "") ? record.payload?.message : undefined]));
+            const cancelled = typeof record.payload?.reason === "string" && /user|cancel/i.test(record.payload.reason);
+            state = quota || (state === "quota-paused" && !cancelled) ? "quota-paused" : /failed/.test(type ?? "") && !cancelled ? "failed" : "terminal";
+            turnId = eventTurnId ?? turnId;
+          }
+        } else if (type === "error" && (!eventTurnId || !turnId || eventTurnId === turnId) && isCodexQuotaInterruption(JSON.stringify(record))) {
+          state = "quota-paused";
+          turnId = eventTurnId ?? turnId;
         } else if (["task_started", "turn_started", "turn/started", "turn.started"].includes(type ?? "")) {
-          if (state !== "terminal" || !eventTurnId || eventTurnId !== turnId) { state = "active"; turnId = eventTurnId; }
+          if (!["terminal","failed","quota-paused"].includes(state) || !eventTurnId || eventTurnId !== turnId) { state = "active"; turnId = eventTurnId; }
         }
       } catch { /* Ignore partial records and quoted event text. */ }
     }
@@ -3124,6 +3140,20 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     if (cliTranscriptTurnStateCache.size > MAX_VISIBLE_CLI_SESSIONS * 3) cliTranscriptTurnStateCache.delete(cliTranscriptTurnStateCache.keys().next().value!);
     return state;
   }
+}
+
+/** Quota-stopped turns are recovery candidates, never native process locks. */
+export async function readQuotaInterruptedCodexSessionIds(home = resolveCodexHome(), ids?: readonly string[], signal?: AbortSignal, limitedGoalIds: readonly string[] = []): Promise<string[]> {
+  signal?.throwIfAborted();
+  const transcripts = await findCliSessionTranscripts(home, ids ? new Set(ids) : undefined, signal);
+  const interrupted = new Set(limitedGoalIds.filter(id => !ids || ids.includes(id)));
+  for (const [id, transcript] of transcripts) {
+    signal?.throwIfAborted();
+    const state = await readRecentTranscriptTurnState(transcript);
+    if (state === "quota-paused") interrupted.add(id);
+    else if (state === "terminal") interrupted.delete(id);
+  }
+  return [...interrupted];
 }
 
 /** Locate all visible session transcripts in one bounded walk. The previous

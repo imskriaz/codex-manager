@@ -161,7 +161,7 @@ describe("durable open conversation recovery", () => {
     try {
       await expect(persistOpenCodexSessions(state.context)).resolves.toEqual([first]);
       expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
-      expect(selection).toHaveBeenCalledWith(undefined, [], [first], expect.any(AbortSignal), "running", undefined, [first]);
+      expect(selection).toHaveBeenCalledWith(undefined, [], [first], expect.any(AbortSignal), "running", undefined, [first], [first]);
       expect(sessionEditor.readRunningCodexSessionIds).not.toHaveBeenCalled();
     } finally { selection.mockRestore(); recent.mockRestore(); }
   });
@@ -254,7 +254,7 @@ describe("durable open conversation recovery", () => {
     const close = vi.fn(async () => undefined);
     expect((await resumePersistedCodexSessions(state.context, open, close)).opened).toBe(1);
     expect(open).toHaveBeenCalledWith(first, expect.any(AbortSignal));
-    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+    expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
     close.mockClear();
     open.mockClear();
     expect((await resumePersistedCodexSessions(createContext([second]).context, open, close)).attempted).toBe(0);

@@ -1,6 +1,10 @@
 import type { DashboardCliSessionSummary, DashboardCodexSessionLiveState, DashboardCodexSessionGoal, DashboardPeerView } from "./dashboard/types";
 import { readSubAgentMetadata } from "./sessionSource";
 
+export function isCodexQuotaInterruption(message: string): boolean {
+  return /usage[_ -]?limit(?:[_ -]?reached|ed)|usageLimitReached|hit (?:your |the )?usage limit|(?:quota|usage limit) (?:has been )?(?:exceeded|exhausted|reached)|insufficient_quota|quota_exceeded|out of quota/i.test(message);
+}
+
 export function isCliTurnActive(state: DashboardCodexSessionLiveState | undefined): boolean {
   return state?.status === "starting" || state?.status === "running";
 }

@@ -137,18 +137,15 @@ export function hasDashboardAutoQueueCapability(account: DashboardAccountViewMod
   return thresholds && "nowMs" in thresholds ? isAutoQueueCandidateEligible(value, thresholds) : hasAutoQueueCapability(value, thresholds);
 }
 
-/**
- * Keep the account that is waiting for a window reload immediately after the
- * currently active account, regardless of the selected secondary sort key.
- * This makes a pending switch visible and actionable instead of allowing
- * quota/health/name sorting to bury it in the list.
- */
+/** Keep foreign claims last and pending local switches beside the active account. */
 export function sortWithQueuedAccount(
   accounts: readonly DashboardAccountViewModel[],
   compare: (left: DashboardAccountViewModel, right: DashboardAccountViewModel) => number,
   groupQuota = true
 ): DashboardAccountViewModel[] {
   return [...accounts].sort((left, right) => {
+    const claimDifference = Number(isAccountClaimedByAnotherDevice(left)) - Number(isAccountClaimedByAnotherDevice(right));
+    if (claimDifference !== 0) return claimDifference;
     const activeDifference = Number(right.isActive) - Number(left.isActive);
     if (activeDifference !== 0) return activeDifference;
     const pendingDifference = Number(right.switchQueued) - Number(left.switchQueued);

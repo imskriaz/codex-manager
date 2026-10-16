@@ -58,7 +58,6 @@ import {
   refreshSingleQuotaSafely
 } from "../src/application/accounts/quota";
 import { setCurrentWindowRuntimeAccountId } from "../src/presentation/workbench/windowRuntimeAccount";
-import { canWindowUseAccount } from "../src/services/windowAccountMode";
 import { clearAutoSwitchLock, consumeAutoSwitchNotice, getAutoSwitchRuntimeSnapshot, setAutoSwitchLock } from "../src/presentation/workbench/autoSwitchState";
 
 type QuotaRefreshRepo = Pick<
@@ -843,7 +842,7 @@ describe("refreshSingleQuota token automation state", () => {
       maybeAutoSwitchForActiveQuota(
         repo as unknown as AccountsRepository,
         { refresh: vi.fn() },
-        { canUseAccount: canWindowUseAccount }
+        { canUseAccount: () => true }
       )
     ).resolves.toBe(true);
 

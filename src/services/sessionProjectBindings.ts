@@ -1,6 +1,7 @@
 import * as path from "path";
 import type * as vscode from "vscode";
 import type { DashboardCliProject, DashboardCliSessionSummary } from "../domain/dashboard/types";
+import { getSqliteStateStore } from "../storage/sqliteState";
 
 const SESSION_PROJECT_BINDINGS_KEY = "codexManager.cliSessionProjectBindings.v1";
 const MAX_BINDINGS = 500;
@@ -12,7 +13,18 @@ export async function stabilizeSessionProjectPaths(
   sessions: DashboardCliSessionSummary[],
   projects: DashboardCliProject[] = []
 ): Promise<DashboardCliSessionSummary[]> {
-  const stored = context.globalState.get<unknown>(SESSION_PROJECT_BINDINGS_KEY);
+  const store = getSqliteStateStore();
+  if (store) return store.transaction(() => {
+    const result = stabilizeSessionProjectPathsInternal(store.get("global", SESSION_PROJECT_BINDINGS_KEY), sessions, projects);
+    if (result.bindings) store.set("global", SESSION_PROJECT_BINDINGS_KEY, result.bindings);
+    return result.sessions;
+  });
+  const result = stabilizeSessionProjectPathsInternal(context.globalState.get(SESSION_PROJECT_BINDINGS_KEY), sessions, projects);
+  if (result.bindings) await context.globalState.update(SESSION_PROJECT_BINDINGS_KEY, result.bindings);
+  return result.sessions;
+}
+
+function stabilizeSessionProjectPathsInternal(stored: unknown, sessions: DashboardCliSessionSummary[], projects: DashboardCliProject[]): { sessions: DashboardCliSessionSummary[]; bindings?: Record<string, SessionProjectBinding> } {
   const bindings: Record<string, SessionProjectBinding> = Object.create(null) as Record<string, SessionProjectBinding>;
   if (stored && typeof stored === "object" && !Array.isArray(stored)) {
     for (const [id, value] of Object.entries(stored)) {
@@ -45,8 +57,7 @@ export async function stabilizeSessionProjectPaths(
     for (const [sessionId] of entries.slice(MAX_BINDINGS)) delete bindings[sessionId];
     changed = true;
   }
-  if (changed) await context.globalState.update(SESSION_PROJECT_BINDINGS_KEY, bindings);
-  return stabilized;
+  return { sessions: stabilized, bindings: changed ? bindings : undefined };
 }
 
 export function canonicalProjectPath(value: string): string {

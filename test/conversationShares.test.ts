@@ -1,5 +1,10 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { ConversationShares, sharedConversationPage } from "../src/services/conversationShares";
+import * as coordination from "../src/utils/crossWindowOperations";
+import { mkdtemp } from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { removeTestDirectory } from "./testFilesystem";
 let stored: Map<string, string>;
 let secrets: { get: ReturnType<typeof vi.fn>; store: ReturnType<typeof vi.fn> };
 let service: ConversationShares;
@@ -56,6 +61,25 @@ it("rejects corrupt persisted storage rather than replacing existing shares", as
   secrets.get.mockResolvedValue("not-json");
   await expect(service.create(input())).rejects.toThrow(); expect(secrets.store).not.toHaveBeenCalled();
 });
+it("ignores malformed saved records and partial live messages without breaking valid links", async () => {
+  const { token } = await service.create(input());
+  const key = "codexManager.conversationShares.v1";
+  const records = JSON.parse(stored.get(key)!);
+  stored.set(key, JSON.stringify([...records, null, {}, { ...records[0], messages: [null] }]));
+  expect(await service.get(token)).toBeDefined();
+  await service.refresh(token, [null, { role: "assistant", text: "updated" }] as never);
+  expect((await service.get(token))?.messages).toEqual([{ role: "assistant", text: "updated" }]);
+});
+
+it("keeps links readable and revocable when live refresh would fill total share storage", async () => {
+  const shares = await Promise.all(Array.from({ length: 9 }, (_, index) => service.create(input(`pc:${index}`))));
+  for (const share of shares) await service.refresh(share.token, [{ role: "assistant", text: "x".repeat(240 * 1024) }]);
+  expect(Buffer.byteLength(stored.get("codexManager.conversationShares.v1")!)).toBeLessThanOrEqual(2 * 1024 * 1024);
+  expect((await service.get(shares[8]!.token))?.messages[0]?.text).toBe(input().messages[0]!.text);
+  await service.revoke("pc:8");
+  expect(await service.get(shares[8]!.token)).toBeUndefined();
+  expect(await new ConversationShares(secrets).get(shares[0]!.token)).toBeDefined();
+});
 it("bounds queued storage writes and resumes them after storage responds", async () => {
   let release: ((value: undefined) => void) | undefined;
   secrets.get.mockImplementationOnce(() => new Promise<undefined>(resolve => { release = resolve; }));
@@ -65,4 +89,34 @@ it("bounds queued storage writes and resumes them after storage responds", async
   const results = await Promise.all(pending);
   expect(await service.get(results[0]!.token)).toBeUndefined();
   expect(await service.get(results.at(-1)!.token)).toBeDefined();
+});
+
+it("avoids unchanged refresh writes and lets owners revoke older overfull stores",async()=>{
+  const shares=await Promise.all(Array.from({length:9},(_,n)=>service.create(input(`pc:${n}`))));
+  const before=secrets.store.mock.calls.length;
+  await service.refresh(shares[0]!.token,input().messages);
+  expect(secrets.store).toHaveBeenCalledTimes(before);
+  const key="codexManager.conversationShares.v1",records=JSON.parse(stored.get(key)!);
+  for(const record of records)record.messages=[{role:"assistant",text:"x".repeat(240*1024)}];
+  stored.set(key,JSON.stringify(records));
+  await expect(service.get(shares[0]!.token)).rejects.toThrow("full");
+  await service.revoke("pc:8");
+  expect(await service.get(shares[0]!.token)).toBeDefined();
+});
+
+it("serializes independent hosts so a concurrent create and revoke preserve each other's changes",async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),"codex-share-coordination-"));
+  const coordinator=new coordination.CrossWindowOperationCoordinator(root);
+  const exclusive=vi.spyOn(coordination,"runCrossWindowExclusive").mockImplementation((key,label,work,options)=>coordinator.runExclusive(key,label,work,options));
+  try {
+    const old=await service.create(input());
+    let finish!:()=>void;
+    secrets.store.mockImplementationOnce(async(key,value)=>{await new Promise<void>(resolve=>{finish=resolve;});stored.set(key,value);});
+    const other=new ConversationShares(secrets);
+    const created=other.create(input("other:thread"));
+    await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
+    const revoked=service.revoke("pc:thread");finish();
+    const next=await created;await revoked;
+    expect(await service.get(old.token)).toBeUndefined();expect(await other.get(next.token)).toBeDefined();
+  } finally {exclusive.mockRestore();await removeTestDirectory(root);}
 });

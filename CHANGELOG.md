@@ -2,6 +2,11 @@
 
 ## 1.3.1
 
+- Recover quota-interrupted parents even after native running status stops, including usage-limited goals. Atomically transfer Auto Resume snapshots into SQLite recovery, preserve peer captures during acknowledgement, and react to committed status changes. Retain recovery when the Codex home changes or storage fails.
+- Bound shared-conversation refresh storage, retain revocation during refresh, and serialize writes across hosts. Save session/project bindings in one SQLite transaction.
+- Reject account claims before isolated-window startup completes; remove redundant eligibility and import wrappers. Update runtime and packaging dependencies.
+- Keep account card plan, reset credit, device, and subscription expiry on one line; shorten long device names with an ellipsis.
+- Place accounts claimed by another online PC after all other accounts in every dashboard sort, including the automatic queue.
 - Share committed SQLite change notifications, prepared queries, discovery results, and credential reads; batch session/status commits and dispose subscriptions with their owners. Keep failed batches retryable and discard stale cache completions.
 - Remove verified duplicate migration records and retired storage without discarding unknown account recovery data.
 - Remove the retired announcements service, remote feed, cache writes, UI component, and bundled announcement data.

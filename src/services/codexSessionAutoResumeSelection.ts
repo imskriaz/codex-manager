@@ -4,6 +4,7 @@ import {
   findCliSessionTranscripts,
   readOpenCodexSessionIds,
   readRunningCodexSessionIds,
+  readQuotaInterruptedCodexSessionIds,
   resolveCodexHome
 } from "./codexSessionResume";
 import { readSubAgentMetadata } from "../domain/sessionSource";
@@ -11,7 +12,7 @@ import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 
 type SqliteDatabase = {
-  prepare(sql: string): { get(id: string): Record<string, unknown> | undefined };
+  prepare(sql: string): { get(id: string): Record<string, unknown> | undefined; all(): Record<string, unknown>[] };
   close(): void;
 };
 type SqliteModule = { DatabaseSync: new (file: string, options: { readOnly: boolean }) => SqliteDatabase };
@@ -41,7 +42,8 @@ export async function filterAutoResumeGoalSessionIds(
     const statement = db.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
     return ids.filter((id) => {
       signal?.throwIfAborted();
-      return statement.get(id)?.["status"] === "active";
+      const status = statement.get(id)?.["status"];
+      return status === "active" || status === "usage_limited";
     });
   } catch (error) {
     signal?.throwIfAborted();
@@ -74,10 +76,25 @@ export async function readAutoResumeCodexSessionIds(
   signal?: AbortSignal,
   selection: "running" | "open" = "running",
   goalOnly = isAutoResumeGoalOnlyEnabled(),
-  runningSessionIds?: string[]
+  runningSessionIds?: string[],
+  candidateSessionIds?: string[]
 ): Promise<string[]> {
   signal?.throwIfAborted();
-  const running = selection === "open" ? openSessionIds : runningSessionIds ?? await readRunningCodexSessionIds(home, signal);
+  let running = openSessionIds;
+  if (selection === "running") {
+    const goals = await openMetadataDatabase(home, "goals");
+    let limited: string[] = [];
+    try {
+      limited = goals?.prepare("SELECT thread_id FROM thread_goals WHERE status='usage_limited' LIMIT 10001").all()
+        .map(row => row["thread_id"]).filter((id): id is string => typeof id === "string" && (!candidateSessionIds || candidateSessionIds.includes(id))) ?? [];
+    } catch { /* Optional goal metadata; transcript evidence remains available. */ }
+    finally { goals?.close(); }
+    if (limited.length > 10000) throw new Error("Quota recovery exceeded its safe discovery limit. Saved recovery was retained.");
+    const interrupted = await readQuotaInterruptedCodexSessionIds(home, candidateSessionIds, signal, limited);
+    const inspect = candidateSessionIds?.filter(id => !interrupted.includes(id));
+    const live = runningSessionIds ?? (inspect?.length === 0 ? [] : await readRunningCodexSessionIds(home, signal, inspect));
+    running = [...new Set([...live, ...interrupted])];
+  }
   signal?.throwIfAborted();
   if (!running.length) return [];
   const transcripts = await findCliSessionTranscripts(home, new Set(running), signal);
@@ -97,8 +114,8 @@ export async function readAutoResumeCodexSessionIds(
           /* use transcript */
         }
       }
-      if (metadata?.["archived"] === 1) continue;
       const transcript = transcripts.get(id);
+      if (metadata?.["archived"] === 1 || transcript?.startsWith(path.join(home,"archived_sessions")+path.sep)) continue;
       if ((typeof metadata?.["source"] !== "string" || !metadata?.["source"] || !metadata?.["cwd"]) && transcript) {
         let parsedMetadata = false;
         const raw = await readSafeFileSnapshot(transcript, { maxBytes: 1024 * 1024 })

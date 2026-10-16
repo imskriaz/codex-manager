@@ -176,7 +176,7 @@ Codex Manager is available under the [MIT License](LICENSE). The project was ori
 
 ### Session-aware switching and current-account claims
 
-Auto Resume captures all local running parent conversations across projects and restores each as a persistent native Codex tab. The optional active-goals filter still applies.
+Auto Resume captures local running and quota-interrupted parent conversations across projects and restores each as a persistent native Codex tab. A usage-limited goal or structured quota failure remains eligible after its native turn stops. Completed, cancelled, and unrelated idle sessions are excluded. The goal-only filter accepts active and usage-limited goals. Native running checks still report actual process activity, so quota exhaustion cannot block an account switch indefinitely.
 
 **Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, automatic switching waits with a warning and retries. Manual account switching remains available immediately.
 
@@ -204,7 +204,7 @@ Session inspection is demand-driven. Overlapping consumers share bounded running
 | --- | --- | --- |
 | Wait for running sessions | Auto Switch and Wait for running sessions enabled | All local running session IDs |
 | Auto Resume at managed reload | Auto Switch and Auto Resume enabled | Recent verified running IDs (up to 30 seconds old), otherwise a fresh check; then goal filter |
-| Auto Resume tab autosave | Auto Switch and Auto Resume enabled | Running open parent tabs, saved to SQLite when session checks complete; optional active-goal filter |
+| Auto Resume tab autosave | Auto Switch and Auto Resume enabled | Running or quota-interrupted open parent tabs, saved to SQLite on committed status changes; optional active/usage-limited goal filter |
 | Auto Resume restore | Saved recovery exists and both toggles enabled | Saved IDs and goal filter |
 | Running indicators and workspace lists | Dashboard/session view requests status | Per-session native/transcript status |
 | Explicit session actions | A session command needs ownership | Per-session status |

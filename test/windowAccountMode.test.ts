@@ -13,7 +13,6 @@ vi.mock("../src/utils/storageRoot", () => ({
 
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
 import {
-  canWindowUseAccount,
   claimCrossWindowAccount,
   disposeCrossWindowAccountMode,
   ensureCrossWindowAccountAssignment,
@@ -52,7 +51,6 @@ describe("parallel window account mode", () => {
     await initializeCrossWindowAccountMode();
     expect(process.env["CODEX_HOME"]).toBe(normalHome);
     expect(getCrossWindowHome()).toBeUndefined();
-    expect(canWindowUseAccount("account-a")).toBe(true);
     await expect(fs.stat(path.join(testState.root, "window-account-slots-v1.json"))).rejects.toMatchObject({
       code: "ENOENT"
     });
@@ -93,6 +91,8 @@ describe("parallel window account mode", () => {
     await expect(initializeCrossWindowAccountMode()).rejects.toThrow();
     expect(process.env["CODEX_HOME"]).toBe(normalHome);
     expect(getCrossWindowHome()).toBeUndefined();
+    await expect(claimCrossWindowAccount("account-a")).rejects.toThrow("isolation is not ready");
+    await expect(ensureCrossWindowAccountAssignment([], vi.fn())).rejects.toThrow("isolation is not ready");
     expect((await fs.readdir(testState.root)).some((name) => name.includes(".tmp-"))).toBe(false);
     await fs.rmdir(path.join(testState.root, "window-account-slots-v1.json"));
     await initializeCrossWindowAccountMode();
@@ -140,7 +140,6 @@ describe("parallel window account mode", () => {
       heartbeatAt: Date.now()
     });
     await fs.writeFile(registryPath, JSON.stringify(registry), "utf8");
-    expect(canWindowUseAccount("account-b")).toBe(true);
     await expect(claimCrossWindowAccount("account-b")).resolves.toBeUndefined();
     expect(getCrossWindowAccountId()).toBe("account-b");
   });

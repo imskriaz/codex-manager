@@ -26,6 +26,20 @@ import {
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
 describe("workspace tools", () => {
+  it("previews DOCX and retains Mammoth CLI compatibility with the argparse security override",async()=>{
+    const root=await mkdtemp(join(tmpdir(),"codex-docx-preview-"));
+    const restoreWorkspace=exposeWorkspaceRoot(root);
+    try {
+      const {default:JSZip}=await import("jszip");
+      const zip=new JSZip();
+      zip.file("[Content_Types].xml",'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+      zip.file("_rels/.rels",'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+      zip.file("word/document.xml",'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Verified document preview</w:t></w:r></w:p></w:body></w:document>');
+      const file=join(root,"sample.docx");await writeFile(file,await zip.generateAsync({type:"nodebuffer"}));
+      expect(await readWorkspaceFile(root,"sample.docx")).toMatchObject({kind:"document",content:"<p>Verified document preview</p>"});
+      expect(execFileSync(process.execPath,[join(process.cwd(),"node_modules/mammoth/bin/mammoth"),file],{encoding:"utf8"})).toContain("<p>Verified document preview</p>");
+    } finally {restoreWorkspace();await rm(root,{recursive:true,force:true});}
+  });
   it.skipIf(process.platform !== "win32")("accepts Windows workspace casing without allowing sibling projects", () => {
     const restoreWorkspace = exposeWorkspaceRoot("D:\\Projects\\Codex-Manager");
     try {

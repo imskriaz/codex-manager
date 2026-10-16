@@ -10458,7 +10458,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   margin: 0;
 }
 
-.dashboard-view-cards .saved-credit-summary { flex-wrap: wrap; gap: 4px 8px; }
+.dashboard-view-cards .saved-credit-summary { flex-wrap: nowrap; gap: 4px 6px; }
 .dashboard-view-cards .saved-credit-summary .saved-plan-badge { flex-shrink: 0; }
 
 .cli-turn-details { max-height: 180px; overflow: auto; flex-shrink: 0; overflow-wrap: anywhere; }

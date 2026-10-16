@@ -54,7 +54,7 @@ describe("extension manifest configuration", () => {
     };
 
     expect(manifest.dependencies).toMatchObject({
-      undici: "6.28.0",
+      undici: "6.29.1",
       ws: expect.any(String)
     });
     expect(manifest.dependencies?.["@types/ws"]).toBeUndefined();
@@ -151,7 +151,7 @@ describe("extension manifest configuration", () => {
     expect(property?.markdownDescription).toContain("Experimental");
     expect(property?.markdownDescription).toContain("Works without enabling Session Integration");
     expect(property?.markdownDescription).toContain("reopen them after a VS Code restart");
-    expect(property?.markdownDescription).toContain("save running parent conversation tabs to SQLite as session checks complete");
+    expect(property?.markdownDescription).toContain("save running and quota-interrupted parent conversation tabs to SQLite");
     expect(property?.markdownDescription).toContain("while Auto Switch is enabled");
     expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeGoalOnlyEnabled"])
       .toMatchObject({ type: "boolean", scope: "machine", default: true });

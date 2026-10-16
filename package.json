@@ -136,13 +136,13 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Experimental: while Auto Switch is enabled, save running parent conversation tabs to SQLite as session checks complete and reopen them after a VS Code restart. Managed Reload reuses running-session checks verified within the last 30 seconds. Turning Auto Switch off disables Auto Resume and clears saved recovery; the Auto Resume preference is retained. Skip idle tabs and sub-agents. Works without enabling Session Integration."
+          "markdownDescription": "Experimental: while Auto Switch is enabled, save running and quota-interrupted parent conversation tabs to SQLite and reopen them after a VS Code restart. Managed Reload reuses running-session checks verified within the last 30 seconds. Turning Auto Switch off disables Auto Resume and clears saved recovery; the Auto Resume preference is retained. Skip completed, cancelled, and unrelated idle tabs and sub-agents. Works without enabling Session Integration."
         },
         "codexManager.autoResumeGoalOnlyEnabled": {
           "type": "boolean",
           "scope": "machine",
           "default": true,
-          "markdownDescription": "While Auto Switch and Auto Resume are on, reopen only parent sessions with an active goal. Turn this off to resume all eligible parent sessions."
+          "markdownDescription": "While Auto Switch and Auto Resume are on, reopen only parent sessions with an active or usage-limited goal. Quota exhaustion keeps a goal eligible for recovery. Turn this off to resume all eligible parent sessions."
         },
         "codexManager.crossWindowAccountModeEnabled": {
           "type": "boolean",
@@ -378,12 +378,15 @@
   },
   "dependencies": {
     "mammoth": "^1.12.2",
-    "undici": "6.28.0",
+    "undici": "6.29.1",
     "web-push": "^3.6.7",
     "ws": "^8.18.3"
   },
   "overrides": {
-    "qs": "^6.16.0"
+    "qs": "^6.16.0",
+    "mammoth": {
+      "argparse": "2.0.1"
+    }
   },
   "devDependencies": {
     "@codemirror/lang-cpp": "^6.0.3",
@@ -405,7 +408,7 @@
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.61.0",
     "@typescript-eslint/parser": "^8.61.0",
-    "@vscode/vsce": "^3.2.1",
+    "@vscode/vsce": "^4.0.0",
     "codemirror": "^6.0.2",
     "eslint": "^10.5.0",
     "markdown-it": "^15.0.1",

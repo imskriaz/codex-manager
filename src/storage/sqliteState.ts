@@ -188,6 +188,11 @@ export class SqliteStateStore {
 }
 
 let stateStore: SqliteStateStore | undefined;
+const mementoStorage = new WeakMap<vscode.Memento, { store: SqliteStateStore; namespace: string }>();
+
+export function getSqliteMementoStorage(memento: vscode.Memento): { store: SqliteStateStore; namespace: string } | undefined {
+  return mementoStorage.get(memento);
+}
 
 export function getSqliteStateStore(): SqliteStateStore | undefined { return stateStore; }
 
@@ -208,7 +213,7 @@ export function createSqliteMemento(store: SqliteStateStore, namespace: string, 
     });
   }
   const syncKeys = new Set<string>();
-  return {
+  const memento = {
     keys: () => store.keys(namespace),
     get: <T>(key: string, fallback?: T): T | undefined => {
       // Settings Sync remains the transport for the explicitly synchronized ciphertext.
@@ -229,6 +234,8 @@ export function createSqliteMemento(store: SqliteStateStore, namespace: string, 
       for (const key of keys) syncKeys.add(key);
     }
   } as vscode.Memento & { setKeysForSync(keys: readonly string[]): void };
+  mementoStorage.set(memento, { store, namespace });
+  return memento;
 }
 
 /** Existing paths identify migration sources; SQLite owns subsequent managed-state writes. */

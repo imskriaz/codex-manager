@@ -2,6 +2,14 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 
 describe("mobile dashboard header", () => {
+  it("keeps card plan, reset credit, device and expiry on one line at every width", () => {
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(css).toMatch(/\.dashboard-view-cards \.saved-credit-summary\s*\{[^}]*flex-wrap:\s*nowrap;/);
+    expect(css).not.toMatch(/\.dashboard-view-cards \.saved-credit-summary\s*\{[^}]*flex-wrap:\s*wrap;/);
+    expect(css).toMatch(/\.saved-credit-summary \.saved-running-device\s*\{[^}]*flex:\s*1 1 auto;/);
+    expect(css).toMatch(/\.saved-credit-summary \.saved-subscription-remaining,\s*\.saved-credit-summary \.saved-reset-badge\s*\{[^}]*flex:\s*none;/);
+  });
+
   it("keeps one row and exposes secondary actions through overflow", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8").replace(/\r\n/g, "\n");

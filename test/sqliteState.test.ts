@@ -294,6 +294,6 @@ describe("SQLite WAL state", () => {
     const opened = vi.fn(async () => undefined);
     expect(await resumePersistedCodexSessions(fresh, opened, async () => undefined)).toEqual({ attempted: 1, opened: 1, failed: [] });
     expect(opened).toHaveBeenCalledWith(id, expect.any(AbortSignal));
-    expect((fresh as unknown as { workspaceState: vscode.Memento }).workspaceState.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([id]);
+    expect((fresh as unknown as { workspaceState: vscode.Memento }).workspaceState.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
   });
 });

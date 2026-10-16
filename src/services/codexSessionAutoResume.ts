@@ -1,12 +1,16 @@
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
+import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
+import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import { getCodexHomeStateKey } from "../codex/authFile";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
 export const AUTO_RESUME_OPEN_SESSION_IDS_KEY = "codexManager.autoResumeOpenSessionIds";
+const AUTO_RESUME_HOME_KEY = "codexManager.autoResumeCodexHome";
 export const MAX_AUTO_RESUME_SESSIONS = 200;
 const OPERATION_TIMEOUT_MS = 30_000;
 const PER_SESSION_OPEN_TIMEOUT_MS = 8_000;
@@ -73,6 +77,10 @@ function normalizeIds(value: unknown): string[] {
 }
 
 function readPersistedSessionIds(context: AutoResumeContext, open = false): string[] {
+  const savedHome = context.workspaceState.get<unknown>(AUTO_RESUME_HOME_KEY);
+  if (typeof savedHome === "string" && getCodexHomeStateKey(savedHome) !== getCodexHomeStateKey(resolveCodexHome()) &&
+      (context.workspaceState.get(AUTO_RESUME_SESSION_IDS_KEY) !== undefined || context.workspaceState.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY) !== undefined))
+    throw new Error("Auto Resume belongs to a different Codex home. Saved sessions were retained; reopen the original isolated window or restore its Codex home before retrying.");
   if (open && openRecoveryIds.has(context.workspaceState)) return [...openRecoveryIds.get(context.workspaceState)!];
   return normalizeIds([
     ...normalizeIds(context.workspaceState.get<unknown>(open ? AUTO_RESUME_OPEN_SESSION_IDS_KEY : AUTO_RESUME_SESSION_IDS_KEY)),
@@ -111,7 +119,28 @@ async function bounded<T>(
   }
 }
 
-async function writeIds(context: AutoResumeContext, ids: string[], deadline: number, open = false): Promise<void> {
+async function writeIds(context: AutoResumeContext, ids: string[], deadline: number, open = false, options: { remove?: string[]; consumeOpen?: string[] } = {}): Promise<void> {
+  const storage = getSqliteMementoStorage(context.workspaceState);
+  if (storage) {
+    const { store, namespace } = storage;
+    store.transaction(() => {
+      readPersistedSessionIds(context, open);
+      const remove = new Set(options.remove ?? []);
+      const next = open ? ids : normalizeIds([
+        ...normalizeIds(store.get(namespace, AUTO_RESUME_SESSION_IDS_KEY)).filter(id => !remove.has(id)), ...ids
+      ]);
+      store.set(namespace, open ? AUTO_RESUME_OPEN_SESSION_IDS_KEY : AUTO_RESUME_SESSION_IDS_KEY, next.length ? next : undefined);
+      if (options.consumeOpen) {
+        const consumed = new Set(options.consumeOpen);
+        const remaining = normalizeIds(store.get(namespace, AUTO_RESUME_OPEN_SESSION_IDS_KEY)).filter(id => !consumed.has(id));
+        store.set(namespace, AUTO_RESUME_OPEN_SESSION_IDS_KEY, remaining.length ? remaining : undefined);
+      }
+      store.set(namespace, AUTO_RESUME_HOME_KEY, path.resolve(resolveCodexHome()));
+    });
+    recoveryIds.delete(context.workspaceState);
+    openRecoveryIds.delete(context.workspaceState);
+    return;
+  }
   // Memento mutates its cache before the write resolves. Retain the previous
   // recovery IDs in this host too, until storage acknowledges the replacement.
   const previous = readPersistedSessionIds(context, open);
@@ -132,6 +161,11 @@ async function writeIds(context: AutoResumeContext, ids: string[], deadline: num
     "Auto-resume storage did not respond within its deadline. Retry Reload after storage responds."
   );
   recovery.delete(context.workspaceState);
+  if (options.consumeOpen) {
+    const previousOpen = readPersistedSessionIds(context, true);
+    const remainingOpen = previousOpen.filter(id => !options.consumeOpen!.includes(id));
+    if (remainingOpen.length !== previousOpen.length) await writeIds(context, remainingOpen, deadline, true);
+  }
 }
 
 async function clearIds(context: AutoResumeContext, deadline: number): Promise<void> {
@@ -265,8 +299,7 @@ export function persistOpenCodexSessions(
   readOpenParents: (signal?: AbortSignal) => Promise<string[]> = async (signal) => {
     const open = readOpenCodexSessionIds();
     if (!open.length) return [];
-    const running = readRecentRunningCodexSessionIds(undefined, open) ?? await readRunningCodexSessionIds(undefined, signal, open);
-    return readAutoResumeCodexSessionIds(undefined, [], open, signal, "running", undefined, running);
+    return readAutoResumeCodexSessionIds(undefined, [], open, signal, "running", undefined, readRecentRunningCodexSessionIds(undefined, open), open);
   },
   signal?: AbortSignal
 ): Promise<string[]> {
@@ -391,6 +424,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   const inspections = onDidInspectRunningCodexSessions(home => {
     if (home === path.resolve(resolveCodexHome())) capture();
   });
+  const stopStorage = getSqliteStateStore()?.subscribe(["session-status"], () => { savedSignature = undefined; capture(); });
   refreshSubscription();
   return { dispose: () => {
     if (controller.signal.aborted) return;
@@ -398,6 +432,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
     if (timer) clearTimeout(timer);
     tabs?.dispose();
     inspections.dispose();
+    stopStorage?.();
     configuration?.dispose();
   } };
 }
@@ -411,7 +446,7 @@ export function resumePersistedCodexSessions(
 ): Promise<AutoResumeResult> {
   const controller = new AbortController();
   restoreControllers.add(controller);
-  return serialize(context, "restore", async () => {
+  const restore = async (): Promise<AutoResumeResult> => {
     const deadline = Date.now() + OPERATION_TIMEOUT_MS;
     if (!isAutoResumeAvailable()) {
       await clearIds(context, deadline);
@@ -435,15 +470,11 @@ export function resumePersistedCodexSessions(
         return { attempted: 0, opened: 0, failed: [] };
       }
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during discovery. Retry to verify the saved sessions.");
-      if (savedIds.length && ids.length !== savedIds.length) {
-        await writeIds(context, ids, deadline);
-        await writeIds(context, ids, deadline, true);
-      }
+      if (savedIds.length) await writeIds(context, ids, deadline, false, { remove: savedIds, consumeOpen: savedIds });
       if (!ids.length) {
         unrestoredOpenSnapshots.delete(context.workspaceState);
         return { attempted: 0, opened: 0, failed: [] };
       }
-      await writeIds(context, ids, deadline);
       unrestoredOpenSnapshots.delete(context.workspaceState);
       let remaining = [...ids];
       const result: AutoResumeResult = { attempted: ids.length, opened: 0, failed: [] };
@@ -475,7 +506,7 @@ export function resumePersistedCodexSessions(
           if (!(await bounded(() => filterAutoResumeGoalSessionIds([id], undefined, controller.signal), deadline - Date.now(),
             "Auto Resume could not verify this session's goal before its deadline.", controller.signal)).length) {
             remaining = remaining.filter((candidate) => candidate !== id);
-            await writeIds(context, remaining, deadline);
+            await writeIds(context, remaining, deadline, false, { remove: [id] });
             continue;
           }
           const sessionController = new AbortController();
@@ -504,7 +535,7 @@ export function resumePersistedCodexSessions(
         }
         result.opened += 1;
         remaining = remaining.filter((candidate) => candidate !== id);
-        await writeIds(context, remaining, deadline);
+        await writeIds(context, remaining, deadline, false, { remove: [id] });
       }
       if (!isAutoResumeAvailable()) await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS);
       return result;
@@ -518,6 +549,10 @@ export function resumePersistedCodexSessions(
       controller.abort();
       changed?.dispose();
     }
+  };
+  return serialize(context, "restore", () => {
+    const storage = getSqliteMementoStorage(context.workspaceState);
+    return storage ? runCrossWindowExclusive(`auto-resume:${storage.namespace}`, "Auto Resume in this workspace", restore) : restore();
   }).finally(() => restoreControllers.delete(controller));
 }
 

@@ -115,20 +115,13 @@ export async function readCrossWindowActiveAccountIds(): Promise<string[]> {
   return [...new Set(value.slots.filter(isLive).flatMap((candidate) => candidate.accountId ? [candidate.accountId] : []))];
 }
 
-export function canWindowUseAccount(accountId: string): boolean {
-  void accountId;
-  // Parallel windows isolate CODEX_HOME; they do not reserve accounts. Two
-  // windows may deliberately run the same account, and both manual and
-  // automatic switching must remain available in that configuration.
-  return true;
-}
-
 export function claimCrossWindowAccount(accountId: string): Promise<void> {
   return lifecycle.runExclusive("window-mode", () => claimWindowAccount(accountId));
 }
 
 async function claimWindowAccount(accountId: string): Promise<void> {
-  if (!isCrossWindowAccountModeEnabled() || !slot) return;
+  if (!isCrossWindowAccountModeEnabled()) return;
+  if (!slot) throw new Error("Parallel window isolation is not ready. Reload this window before switching accounts.");
   await writeRegistry((registry) => {
     const current = registry.slots.find((candidate) => candidate.slotId === slot!.slotId);
     if (!current) throw new Error("This VS Code window is no longer registered for parallel accounts.");
@@ -154,7 +147,8 @@ export async function ensureCrossWindowAccountAssignment(
   accounts: readonly CodexManagerAccountRecord[],
   switchAccount: (accountId: string) => Promise<unknown>
 ): Promise<{ accountId?: string; assigned: boolean }> {
-  if (!isCrossWindowAccountModeEnabled() || !slot) return { assigned: false };
+  if (!isCrossWindowAccountModeEnabled()) return { assigned: false };
+  if (!slot) throw new Error("Parallel window isolation is not ready. Reload this window before assigning an account.");
   const existing = slot.accountId;
   const active = accounts.find((account) => account.isActive);
   // Disabling controls automation eligibility, not loaded authentication.

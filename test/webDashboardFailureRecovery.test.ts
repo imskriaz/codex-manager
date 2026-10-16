@@ -6,6 +6,7 @@ const { buildState, executeAction } = vi.hoisted(() => ({ buildState: vi.fn(), e
 vi.mock("../src/application/dashboard/buildDashboardState", () => ({ buildDashboardState: buildState }));
 vi.mock("../src/presentation/dashboard/actionHandlers", () => ({ executeDashboardActionMessage: executeAction }));
 import { WebDashboardServer } from "../src/services/webDashboardServer";
+import * as sessionEditor from "../src/services/codexSessionResume";
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -19,6 +20,19 @@ function createServer() {
 }
 
 describe("browser action completion during state failure", () => {
+  it("does not serve a revoked snapshot when revocation finishes during live message discovery",async()=>{
+    const {server}=createServer();
+    Reflect.set(server,"settingsStore",{getDashboardSettings:()=>({})});
+    const share={sessionKey:JSON.stringify(["local","aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]),title:"Private",expiresAt:Date.now()+1000,messages:[{role:"user",text:"private content"}]};
+    const refresh=vi.fn(async()=>undefined);
+    Reflect.set(server,"conversationShares",{get:vi.fn().mockResolvedValue(share),refresh});
+    vi.spyOn(sessionEditor,"readCodexCliSessionMessages").mockResolvedValue([{role:"assistant",text:"new content"}] as never);
+    const end=vi.fn(),response={setHeader:vi.fn(),end,statusCode:200};
+    try {
+      await Reflect.get(server,"handle").call(server,{method:"GET",url:"/api/share/"+"a".repeat(64),headers:{host:"127.0.0.1:39875"}},response);
+      expect(response.statusCode).toBe(404);expect(end.mock.calls[0]?.[0]).not.toContain("private content");
+    } finally {server.dispose();}
+  });
   it("bounds shutdown when an HTTP connection never finishes closing",async()=>{
     vi.useFakeTimers();const {server}=createServer();
     const closeAllConnections=vi.fn(),closeIdleConnections=vi.fn();

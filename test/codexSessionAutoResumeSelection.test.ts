@@ -67,13 +67,34 @@ describe("auto resume selection", () => {
     expect(await selectSessions(home, [home], ids, undefined, "running", true)).toEqual([ids[0]]);
     expect(await selectSessions(home, [], ids, undefined, "open", true)).toEqual([ids[0]]);
   });
-  it.each(["paused", "blocked", "complete", "usage_limited", "budget_limited"])(
+  it.each(["paused", "blocked", "complete", "budget_limited"])(
     "goal-only excludes %s goals", async (status) => {
       const home = await fixture();
       goals(home, [status, "active", null]);
       expect(await selectSessions(home, [home], ids, undefined, "running", true)).toEqual([]);
     }
   );
+  it("keeps quota-blocked parent goals eligible after the native turn stops", async () => {
+    const home = await fixture();
+    goals(home, ["usage_limited", "usage_limited", "complete"]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [])).toEqual([ids[0]]);
+    expect(await filterAutoResumeGoalSessionIds(ids, home, undefined, true)).toEqual([ids[0], ids[1]]);
+    await appendFile(path.join(home,"sessions",`rollout-${ids[0]}.jsonl`),JSON.stringify({type:"event_msg",payload:{type:"turn_aborted",reason:"user_cancelled"}})+"\n");
+    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [])).toEqual([]);
+  });
+
+  it("recovers quota failures without treating unrelated idle, cancelled, or completed sessions as running", async () => {
+    const home = await fixture();
+    const transcript = path.join(home, "sessions", `rollout-${ids[0]}.jsonl`);
+    const event = (type: string, extra = {}) => JSON.stringify({type:"event_msg",payload:{type,turn_id:"turn-1",...extra}})+"\n";
+    await appendFile(transcript, event("error", {message:"You've hit your usage limit"})+event("task_failed")+event("task_started"));
+    expect(await sessionEditor.readRunningCodexSessionIds(home,undefined,[ids[0]!])).toEqual([]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [])).toEqual([ids[0]]);
+    await appendFile(transcript,event("turn_aborted",{reason:"user_cancelled"}));
+    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [])).toEqual([]);
+    await appendFile(transcript,JSON.stringify({type:"event_msg",payload:{type:"task_started",turn_id:"turn-2"}})+"\n"+JSON.stringify({type:"event_msg",payload:{type:"task_complete",turn_id:"turn-2"}})+"\n");
+    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [])).toEqual([]);
+  });
   it("goal-only skips missing goals and retains recovery on corrupt or incompatible storage", async () => {
     const home = await fixture();
     expect(await filterAutoResumeGoalSessionIds(ids, home, undefined, true)).toEqual([]);
@@ -248,7 +269,7 @@ describe("auto resume selection", () => {
   });
   it("explains that all running parents resume and sub-agents are skipped", () => {
     const copy = getDashboardCopy("en").autoResumeSub;
-    expect(copy).toContain("running parent sessions");
+    expect(copy).toContain("quota-interrupted parent sessions");
     expect(copy).toContain("VS Code restart");
     expect(copy).toContain("sub-agents are skipped");
   });

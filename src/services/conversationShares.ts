@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { SecretStorage } from "vscode";
+import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 
 const STORAGE_KEY = "codexManager.conversationShares.v1";
 const TTL = 30 * 24 * 60 * 60 * 1000;
@@ -12,22 +13,25 @@ export class ConversationShares {
   private pending = 0;
   constructor(private readonly secrets: Pick<SecretStorage, "get" | "store">) {}
 
-  private async read(): Promise<Share[]> {
+  private async read(allowFull = false): Promise<Share[]> {
     const raw = await this.secrets.get(STORAGE_KEY);
     if (!raw) return [];
-    if (Buffer.byteLength(raw) > 2 * 1024 * 1024) throw new Error("Shared conversation storage is full. Revoke a link and retry.");
+    if (Buffer.byteLength(raw) > (allowFull ? 8 : 2) * 1024 * 1024) throw new Error("Shared conversation storage is full. Revoke a link and retry.");
     const records: unknown = JSON.parse(raw);
     if (!Array.isArray(records)) throw new Error("Shared conversation storage could not be read. Restore storage before retrying.");
-    return (records as Share[]).filter(record => typeof record.fingerprint === "string" &&
+    return (records as Share[]).filter(record => record && typeof record === "object" && typeof record.fingerprint === "string" &&
       typeof record.sessionKey === "string" && typeof record.title === "string" &&
       Array.isArray(record.messages) && record.messages.every(message =>
-        (message.role === "user" || message.role === "assistant") && typeof message.text === "string") && record.expiresAt > Date.now());
+        message && (message.role === "user" || message.role === "assistant") && typeof message.text === "string") &&
+      typeof record.expiresAt === "number" && Number.isFinite(record.expiresAt) && record.expiresAt > Date.now());
   }
 
   private mutate<T>(work: () => Promise<T>): Promise<T> {
     if (this.pending >= 16) return Promise.reject(new Error("Share requests are busy. Retry shortly."));
     this.pending++;
-    const result = this.writes.catch(() => undefined).then(work).finally(() => { this.pending--; });
+    const result = this.writes.catch(() => undefined)
+      .then(() => runCrossWindowExclusive("state:conversation-shares", "Shared conversation update", work, { waitMs: 500 }))
+      .finally(() => { this.pending--; });
     this.writes = result;
     return result;
   }
@@ -58,7 +62,7 @@ export class ConversationShares {
   revoke(sessionKey: unknown): Promise<void> {
     return this.mutate(async () => {
       if (typeof sessionKey !== "string" || !sessionKey || sessionKey.length > 256) throw new Error("Choose a conversation before revoking its link.");
-      await this.secrets.store(STORAGE_KEY, JSON.stringify((await this.read()).filter(record => record.sessionKey !== sessionKey)));
+      await this.secrets.store(STORAGE_KEY, JSON.stringify((await this.read(true)).filter(record => record.sessionKey !== sessionKey)));
     });
   }
 
@@ -76,12 +80,15 @@ export class ConversationShares {
       if (index < 0) return undefined;
       const current = records[index]!;
       const nextMessages = messages.filter((message) =>
-        (message.role === "user" || message.role === "assistant") && typeof message.text === "string"
+        message && (message.role === "user" || message.role === "assistant") && typeof message.text === "string"
       ).slice(-2000).map((message) => ({ role: message.role as string, text: String(message.text) }));
       if (!nextMessages.length || Buffer.byteLength(JSON.stringify(nextMessages)) > 256 * 1024) return current;
+      if (JSON.stringify(nextMessages) === JSON.stringify(current.messages)) return current;
       const updated = { ...current, messages: nextMessages };
       records[index] = updated;
-      await this.secrets.store(STORAGE_KEY, JSON.stringify(records));
+      const raw = JSON.stringify(records);
+      if (Buffer.byteLength(raw) > 2 * 1024 * 1024) return current;
+      await this.secrets.store(STORAGE_KEY, raw);
       return updated;
     });
   }
