@@ -1,6 +1,7 @@
 import type { CodexManagerAccountRecord, CodexTokens, DecodedAuthClaims } from "../core/types";
 
 export type RemoteAccountProfileLike = {
+  requestStartedAt?: number;
   email?: string;
   userId?: string;
   planType?: string;
@@ -164,6 +165,7 @@ export function buildAccountRecordDraft(params: {
     claimsWorkspaceTitle;
 
   return {
+    ...params.existing,
     id: params.storageId,
     loginAt: params.claims.loginAt ?? params.existing?.loginAt,
     sessionStartedAt: params.existing?.sessionStartedAt,
@@ -214,6 +216,8 @@ export function applyRemoteProfileToAccount(params: {
   planType?: string;
   allowAccountIdRepair?: boolean;
 }): boolean {
+  const requestedAt = params.remoteProfile?.requestStartedAt;
+  if (requestedAt !== undefined && requestedAt < (params.account.profileRequestAt ?? 0)) return false;
   const claimsAccountId = params.claims.accountId ?? params.account.accountId;
   if (!params.allowAccountIdRepair && !didRemoteAccountMatchClaims(params.remoteProfile, claimsAccountId)) {
     return false;
@@ -244,6 +248,7 @@ export function applyRemoteProfileToAccount(params: {
     params.account.organizationId
   );
 
+  if (requestedAt !== undefined) params.account.profileRequestAt = requestedAt;
   return true;
 }
 

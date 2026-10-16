@@ -1,3 +1,4 @@
+import { runCrossWindowOnce, sharedResourceKey } from "../utils/crossWindowOperations";
 import * as crypto from "crypto";
 import * as http from "http";
 import * as vscode from "vscode";
@@ -381,6 +382,10 @@ function createCodeWaiter(session: OAuthSession, cancellationToken?: vscode.Canc
 }
 
 async function exchangeCodeForTokens(code: string, verifier: string, redirectUri: string): Promise<CodexTokens> {
+  return runCrossWindowOnce(sharedResourceKey("oauth-code", [code, verifier, redirectUri]), "OAuth authorization", () => exchangeCodeForTokensInternal(code, verifier, redirectUri));
+}
+
+async function exchangeCodeForTokensInternal(code: string, verifier: string, redirectUri: string): Promise<CodexTokens> {
   const response = await fetchWithTimeout(
     TOKEN_ENDPOINT,
     {

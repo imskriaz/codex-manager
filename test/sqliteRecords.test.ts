@@ -49,10 +49,31 @@ describe("account and statistics rows", () => {
       peer.exec("BEGIN IMMEDIATE");
       expect(() => saveAccountIndex(store, { accounts: [] }, 3)).toThrow(/locked|busy/i);
       expect(readAccountRow(store, "a", "home")).toBeDefined();
+      expect(readAccountIndex(store).accounts).toHaveLength(1);
       peer.exec("ROLLBACK");
       saveAccountIndex(store, { accounts: [] }, 3);
       expect(readAccountRow(store, "a", "home")).toBeUndefined();
     } finally { peer.close(); }
+  });
+
+  it("keeps account headers and rows in one read snapshot while another connection commits", async () => {
+    const account = { id: "a", email: "a@example.test", createdAt: 1, updatedAt: 1 };
+    saveAccountIndex(store, { accounts: [account], currentAccountId: "a" });
+    const peer = await SqliteStateStore.open(store.file);
+    const get = store.get.bind(store);
+    let committed = false;
+    const snapshot = vi.spyOn(store, "get").mockImplementation((namespace, key) => {
+      const value = get(namespace, key);
+      if (namespace === "account-index" && key === "header" && !committed) {
+        committed = true;
+        saveAccountIndex(peer, { accounts: [{ ...account, id: "b" }], currentAccountId: "b" });
+      }
+      return value;
+    });
+    try {
+      expect(readAccountIndex(store)).toMatchObject({ currentAccountId: "a", accounts: [{ id: "a" }] });
+      expect(readAccountIndex(store)).toMatchObject({ currentAccountId: "b", accounts: [{ id: "b" }] });
+    } finally { snapshot.mockRestore(); peer.close(); }
   });
 
   it("imports aggregate usage once, deduplicates samples, and rejects stale daily replacements", () => {

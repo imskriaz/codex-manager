@@ -18,7 +18,8 @@ import {
   cloneIndex,
   markActive,
   scopeActiveAccountState,
-  syncActiveAccountState
+  syncActiveAccountState,
+  mergeAccountsIndexChanges
 } from "./accountsIndex";
 import {
   dismissAccountHealthIssue,
@@ -79,10 +80,11 @@ import {
   getCodexHome,
   getCodexHomeStateKey,
   readAuthFile,
-  writeAuthFile
+  writeAuthFile,
+  runCodexHomeOperation
 } from "../codex";
 import { needsTokenRefresh, refreshTokens } from "../auth/oauth";
-import { createKeyedMutex, waitWithin } from "../utils/concurrency";
+import { waitWithin } from "../utils/concurrency";
 import { publishDashboardRealtime } from "../services/dashboardRealtime";
 import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
 import { normalizeResetCreditExpiry, normalizeResetCreditIds, normalizeUsableResetCount } from "../utils/quotaWindows";
@@ -99,7 +101,7 @@ import {
   SharedCodexManagerAccountJson
 } from "../core/types";
 import { fetchRemoteAccountProfile } from "../services/profile";
-import { clearQuotaCacheForAccount } from "../services/quota";
+import { clearQuotaCacheForAccount, resetCreditsGenerationKey } from "../services/quota";
 import {
   clearSubscriptionRetryPending,
   fetchSubscriptionStatus,
@@ -115,6 +117,9 @@ import { hasAccountRows, readAccountRow } from "./sqliteAccounts";
 import {
   CrossWindowOperationBusyError,
   runCrossWindowExclusive,
+  runCrossWindowJoined,
+  sharedResourceKey,
+  sharedReadGeneration,
   runCentralAccountOperationWithCooldown
 } from "../utils/crossWindowOperations";
 import { AccountError, StorageError, createError, ErrorCode } from "../core/errors";
@@ -170,8 +175,8 @@ export class AccountsRepository {
   private readonly legacyIndexPaths: string[];
   private readonly state = createAccountsRepositoryState();
   private indexReadInFlight: Promise<CodexManagerIndex> | undefined;
+  private readonly indexBases = new WeakMap<CodexManagerIndex, CodexManagerIndex>();
   /** 按账号串行化切号/刷新，避免并发刷新同一账号 token */
-  private readonly accountMutex = createKeyedMutex();
   private readonly switchInFlight = new Map<string, Promise<CodexManagerAccountRecord>>();
   /** getTokens 内存缓存，减少 SecretStore/Keychain 重复读取 */
   private readonly tokenCache = new Map<string, TokenCacheEntry>();
@@ -182,7 +187,9 @@ export class AccountsRepository {
   private homeScopeMigrationPending = false;
 
   /** 防止重复释放 */
-  private get disposed(): boolean { return this.state.disposed; }
+  private get disposed(): boolean {
+    return this.state.disposed;
+  }
   private cachedAccountRevision: number | undefined;
   private startupSyncTimer: NodeJS.Timeout | undefined;
 
@@ -201,7 +208,9 @@ export class AccountsRepository {
 
   constructor(context: vscode.ExtensionContext, indexPathOverride?: string, legacyDurableIndexPath?: string) {
     this.secretStore = new SecretStore(context.secrets);
-    this.secretSubscription = this.secretStore.onDidChange(accountId => this.invalidateTokenCacheForAccount(accountId));
+    this.secretSubscription = this.secretStore.onDidChange((accountId) =>
+      this.invalidateTokenCacheForAccount(accountId)
+    );
     this.codexHomeStateKey = getCodexHomeStateKey();
     // Production has one cross-platform, reinstall-safe source of truth.
     // Tests must opt into another path explicitly so production can never
@@ -216,7 +225,10 @@ export class AccountsRepository {
       this.stopStorageSubscription = sqliteStoreForFile(this.indexPath)?.subscribe(["accounts"], () => {
         if (!this.state.isDirty && !this.state.pendingSave) this.state.cache = null;
       });
-    } catch (error) { this.secretSubscription?.dispose(); throw error; }
+    } catch (error) {
+      this.secretSubscription?.dispose();
+      throw error;
+    }
   }
 
   get accountsIndexPath(): string {
@@ -244,9 +256,7 @@ export class AccountsRepository {
         return { authSyncCompleted: true };
       }
       try {
-        await runCrossWindowExclusive("background:account-auth-sync", "Account auth sync", () =>
-          this.runAndFlush(() => this.syncActiveAccountFromAuthFileInternal())
-        );
+        await this.syncActiveAccountFromAuthFile();
         return { authSyncCompleted: true };
       } catch (cause) {
         // Another VS Code window may legitimately own the startup auth sync.
@@ -359,7 +369,13 @@ export class AccountsRepository {
   async getAccount(accountId: string): Promise<CodexManagerAccountRecord | undefined> {
     try {
       const store = sqliteStoreForFile(this.indexPath);
-      if (store && hasAccountRows(store) && !this.state.pendingSave && !this.state.isDirty && this.state.indexHealth.status !== "corrupted_unrecoverable")
+      if (
+        store &&
+        hasAccountRows(store) &&
+        !this.state.pendingSave &&
+        !this.state.isDirty &&
+        this.state.indexHealth.status !== "corrupted_unrecoverable"
+      )
         return readAccountRow(store, accountId, this.codexHomeStateKey);
       return (await this.readIndex()).accounts.find((item) => item.id === accountId);
     } catch (error) {
@@ -486,7 +502,9 @@ export class AccountsRepository {
           this.tokenCache.set(accountId, { tokens: storedTokens, cachedAt: Date.now() });
         }
         return storedTokens;
-      } finally { if (this.tokenReads.get(accountId) === read) this.tokenReads.delete(accountId); }
+      } finally {
+        if (this.tokenReads.get(accountId) === read) this.tokenReads.delete(accountId);
+      }
     } catch (cause) {
       throw new StorageError(`Failed to get tokens for ${accountId}`, {
         code: ErrorCode.STORAGE_SECRET_ACCESS_FAILED,
@@ -495,58 +513,117 @@ export class AccountsRepository {
     }
   }
 
-  async updateTokens(accountId: string, tokens: CodexTokens): Promise<CodexManagerAccountRecord> {
-    const index = await this.readIndex();
-    const account = index.accounts.find((item) => item.id === accountId);
+  async refreshAccountTokens(
+    accountId: string,
+    options: { force?: boolean; skewSeconds?: number } = {}
+  ): Promise<CodexTokens> {
+    const initial = await this.getTokens(accountId, { bypassCache: true });
+    if (!initial) throw createError.accountNotFound(accountId);
+    return runCrossWindowJoined(
+      sharedResourceKey("token-renewal-request", [accountId, toComparableTokenSnapshot(initial), options]),
+      "Token refresh",
+      () =>
+        runCrossWindowExclusive(
+          sharedResourceKey("token-renewal", accountId),
+          "Token refresh",
+          async () => {
+            const current = await this.getTokens(accountId, { bypassCache: true });
+            if (!current || !(await this.getAccount(accountId))) throw createError.accountNotFound(accountId);
+            if (
+              !areTokenCredentialsEqual(initial, current) ||
+              (!options.force && !needsTokenRefresh(current, options.skewSeconds))
+            )
+              return current;
+            if (!current.refreshToken) throw new Error("No refresh token is available. Reauthorize this account.");
+            const refreshed = await refreshTokens(current.refreshToken, current.idToken);
+            const next = { ...refreshed, accountId: refreshed.accountId ?? current.accountId };
+            await this.updateTokens(accountId, next, current);
+            return next;
+          },
+          { waitMs: 120_000 }
+        )
+    );
+  }
 
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
+  private withAccountCredentials<T>(accountId: string, task: () => Promise<T>, flush = true): Promise<T> {
+    return runCrossWindowExclusive(
+      sharedResourceKey("account-credentials", accountId),
+      "Account credentials",
+      async () => {
+        this.invalidateCachedIndex();
+        return flush ? this.runAndFlush(task) : task();
+      },
+      { waitMs: 500 }
+    );
+  }
 
-    const effectiveTokens = {
-      ...tokens,
-      accountId: tokens.accountId ?? account.accountId
-    };
+  async updateTokens(
+    accountId: string,
+    tokens: CodexTokens,
+    expectedTokens?: CodexTokens
+  ): Promise<CodexManagerAccountRecord> {
+    return runCodexHomeOperation(
+      "Update account credentials",
+      () =>
+        this.withAccountCredentials(accountId, async () => {
+          const index = await this.readIndex();
+          const account = index.accounts.find((item) => item.id === accountId);
 
-    const previousTokens = await this.secretStore.getTokens(accountId);
-    const credentialsChanged = !previousTokens || !areTokenCredentialsEqual(previousTokens, effectiveTokens);
-    await this.secretStore.setTokens(accountId, effectiveTokens);
-    this.invalidateTokenCacheForAccount(accountId);
+          if (!account) {
+            throw createError.accountNotFound(accountId);
+          }
 
-    let shouldWriteIndex = false;
-    if (credentialsChanged) {
-      account.credentialUpdatedAt = Date.now();
-      account.updatedAt = account.credentialUpdatedAt;
-      shouldWriteIndex = true;
-    }
-    if (effectiveTokens.accountId && effectiveTokens.accountId !== account.accountId) {
-      account.accountId = effectiveTokens.accountId;
-      account.updatedAt = Date.now();
-      shouldWriteIndex = true;
-    }
+          const effectiveTokens = {
+            ...tokens,
+            accountId: tokens.accountId ?? account.accountId
+          };
 
-    if (getQuotaIssueKind(account.quotaError) === "auth") {
-      account.quotaError = undefined;
-      account.dismissedHealthIssueKey = undefined;
-      account.updatedAt = Date.now();
-      shouldWriteIndex = true;
-    }
+          const previousTokens = await this.secretStore.getTokens(accountId);
+          if (expectedTokens && (!previousTokens || !areTokenCredentialsEqual(previousTokens, expectedTokens))) {
+            throw new Error("Account credentials changed during refresh. The newer credentials were preserved.");
+          }
+          const credentialsChanged = !previousTokens || !areTokenCredentialsEqual(previousTokens, effectiveTokens);
+          await this.secretStore.setTokens(accountId, effectiveTokens);
+          this.invalidateTokenCacheForAccount(accountId);
+          if (credentialsChanged) clearQuotaCacheForAccount(accountId);
 
-    if (account.isActive) {
-      await writeAuthFile({
-        ...effectiveTokens,
-        accountId: account.accountId ?? effectiveTokens.accountId
-      });
-    }
+          let shouldWriteIndex = false;
+          if (credentialsChanged) {
+            account.credentialUpdatedAt = Date.now();
+            account.updatedAt = account.credentialUpdatedAt;
+            shouldWriteIndex = true;
+          }
+          if (effectiveTokens.accountId && effectiveTokens.accountId !== account.accountId) {
+            account.accountId = effectiveTokens.accountId;
+            account.updatedAt = Date.now();
+            shouldWriteIndex = true;
+          }
 
-    if (shouldWriteIndex) {
-      this.writeIndex(index);
-    }
-    if (credentialsChanged) {
-      this.switchCoordinator?.onVaultMutation?.("credentials-changed", [account.id]);
-    }
+          if (getQuotaIssueKind(account.quotaError) === "auth") {
+            account.quotaError = undefined;
+            account.dismissedHealthIssueKey = undefined;
+            account.updatedAt = Date.now();
+            shouldWriteIndex = true;
+          }
 
-    return account;
+          if (account.isActive) {
+            await writeAuthFile({
+              ...effectiveTokens,
+              accountId: account.accountId ?? effectiveTokens.accountId
+            });
+          }
+
+          if (shouldWriteIndex) {
+            this.writeIndex(index);
+          }
+          if (credentialsChanged) {
+            this.switchCoordinator?.onVaultMutation?.("credentials-changed", [account.id]);
+          }
+
+          return account;
+        }),
+      2_000
+    );
   }
 
   async refreshAccountProfileMetadata(accountId: string): Promise<CodexManagerAccountRecord> {
@@ -573,39 +650,46 @@ export class AccountsRepository {
       });
     }
 
-    const freshIndex = await this.readIndex();
-    const freshAccount = freshIndex.accounts.find((item) => item.id === accountId);
-    const freshTokens = await this.getTokens(accountId, { bypassCache: true });
-    if (!freshAccount || !freshTokens || !areTokenCredentialsEqual(tokens, freshTokens)) {
-      throw new Error("The account changed while its profile was refreshing. Refresh the account and try again.");
-    }
+    return this.withAccountCredentials(accountId, async () => {
+      const freshIndex = await this.readIndex();
+      const freshAccount = freshIndex.accounts.find((item) => item.id === accountId);
+      const freshTokens = await this.getTokens(accountId, { bypassCache: true });
+      if (!freshAccount || !freshTokens || !areTokenCredentialsEqual(tokens, freshTokens)) {
+        throw new Error("The account changed while its profile was refreshing. Refresh the account and try again.");
+      }
+      const profileRequestAt = remoteProfile.requestStartedAt ?? Date.now();
+      if (profileRequestAt < (freshAccount.profileRequestAt ?? 0)) return freshAccount;
+      freshAccount.profileRequestAt = profileRequestAt;
 
-    if (
-      applyRemoteProfileFromTokens({
-        account: freshAccount,
-        tokens,
-        remoteProfile,
-        planType: freshAccount.planType,
-        allowAccountIdRepair: true
-      })
-    ) {
-      freshAccount.updatedAt = Date.now();
-      freshAccount.dismissedHealthIssueKey = undefined;
+      if (
+        applyRemoteProfileFromTokens({
+          account: freshAccount,
+          tokens,
+          remoteProfile,
+          planType: freshAccount.planType,
+          allowAccountIdRepair: true
+        })
+      ) {
+        freshAccount.updatedAt = Date.now();
+        freshAccount.dismissedHealthIssueKey = undefined;
+      }
       this.writeIndex(freshIndex);
-    }
 
-    return freshAccount;
+      return freshAccount;
+    });
   }
 
   async dismissHealthIssue(accountId: string, issueKey?: string): Promise<CodexManagerAccountRecord> {
-    const index = await this.readIndex();
-    const account = dismissAccountHealthIssue(index, accountId, issueKey, Date.now());
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = dismissAccountHealthIssue(index, accountId, issueKey, Date.now());
+      if (!account) {
+        throw createError.accountNotFound(accountId);
+      }
 
-    this.writeIndex(index);
-    return account;
+      this.writeIndex(index);
+      return account;
+    });
   }
 
   async previewSharedAccountsImport(
@@ -677,59 +761,69 @@ export class AccountsRepository {
     // 异步获取远程配置，不阻塞主要流程
     const remoteProfile = options.identityFallback ? undefined : await this.readOptionalAccountProfile(tokens);
 
-    const index = options.allowRecoveryWrite ? await this.readIndexForRecovery() : await this.readIndex();
-    const previousActiveId = index.currentAccountId;
     const id = buildAccountStorageId(claimsWithEmail.email, claimsWithEmail.accountId, claimsWithEmail.organizationId);
-    const existing = index.accounts.find((item) => item.id === id);
-    const previousTokens = existing ? await this.secretStore.getTokens(id) : undefined;
-    const now = Date.now();
-    const account = buildAccountRecordDraft({
-      storageId: id,
-      claims: claimsWithEmail,
-      tokens,
-      existing,
-      existingAccounts: index.accounts,
-      remoteProfile,
-      addedVia: options.addedVia ?? "oauth",
-      forceActive,
-      now
-    });
-    if (!existing || !previousTokens || !areTokenCredentialsEqual(previousTokens, tokens)) {
-      account.credentialUpdatedAt = options.credentialUpdatedAt ?? now;
-    }
+    return runCodexHomeOperation("Save account credentials", () =>
+      this.withAccountCredentials(
+        id,
+        async () => {
+          const index = options.allowRecoveryWrite ? await this.readIndexForRecovery() : await this.readIndex();
+          const previousActiveId = index.currentAccountId;
+          const existing = index.accounts.find((item) => item.id === id);
+          const previousTokens = existing ? await this.secretStore.getTokens(id) : undefined;
+          const now = Date.now();
+          const account = buildAccountRecordDraft({
+            storageId: id,
+            claims: claimsWithEmail,
+            tokens,
+            existing,
+            existingAccounts: index.accounts,
+            remoteProfile,
+            addedVia: options.addedVia ?? "oauth",
+            forceActive,
+            now
+          });
+          if (!existing || !previousTokens || !areTokenCredentialsEqual(previousTokens, tokens)) {
+            account.credentialUpdatedAt = options.credentialUpdatedAt ?? now;
+          }
 
-    // 替换或添加账号
-    index.accounts = index.accounts.filter((item) => item.id !== id);
-    index.accounts.push(account);
+          // 替换或添加账号
+          index.accounts = index.accounts.filter((item) => item.id !== id);
+          index.accounts.push(account);
 
-    if (forceActive) {
-      markActive(index, id, Date.now(), this.codexHomeStateKey);
-      reconcileStatusBarSelections(index, id, previousActiveId);
-    }
+          if (forceActive) {
+            markActive(index, id, Date.now(), this.codexHomeStateKey);
+            reconcileStatusBarSelections(index, id, previousActiveId);
+          }
 
-    // 保存令牌
-    const storedTokens = {
-      ...tokens,
-      accountId: account.accountId ?? tokens.accountId
-    };
-    await this.secretStore.setTokens(id, storedTokens);
-    this.invalidateTokenCache();
+          // 保存令牌
+          const storedTokens = {
+            ...tokens,
+            accountId: account.accountId ?? tokens.accountId
+          };
+          await this.secretStore.setTokens(id, storedTokens);
+          this.invalidateTokenCache();
+          if (account.isActive && (!previousTokens || !areTokenCredentialsEqual(previousTokens, storedTokens)))
+            await writeAuthFile(storedTokens);
 
-    if (options.persistImmediately) {
-      await this.persistRecoveredIndex(index, options.restoreSource ?? "shared_json");
-      if (!existing) {
-        this.switchCoordinator?.onAccountsMutated?.({ addedAccountIds: [id], removedAccountIds: [] });
-      }
-    } else if (options.allowRecoveryWrite) {
-      markRecoveryPending(this.state, index);
-    } else {
-      this.writeIndex(index);
-    }
-    if (existing && (!previousTokens || !areTokenCredentialsEqual(previousTokens, storedTokens))) {
-      this.switchCoordinator?.onVaultMutation?.("credentials-changed", [id]);
-    }
+          if (options.persistImmediately) {
+            await this.persistRecoveredIndex(index, options.restoreSource ?? "shared_json");
+            if (!existing) {
+              this.switchCoordinator?.onAccountsMutated?.({ addedAccountIds: [id], removedAccountIds: [] });
+            }
+          } else if (options.allowRecoveryWrite) {
+            markRecoveryPending(this.state, index);
+          } else {
+            this.writeIndex(index);
+          }
+          if (existing && (!previousTokens || !areTokenCredentialsEqual(previousTokens, storedTokens))) {
+            this.switchCoordinator?.onVaultMutation?.("credentials-changed", [id]);
+          }
 
-    return account;
+          return account;
+        },
+        !options.allowRecoveryWrite || options.persistImmediately === true
+      )
+    );
   }
 
   /**
@@ -927,58 +1021,69 @@ export class AccountsRepository {
     const imported: CodexManagerAccountRecord[] = [];
 
     for (const entry of entries) {
-      const restoredTokens = restoreSharedTokens(entry);
-      const identityFallback = resolveSharedAccountIdentity(entry);
       const incomingStorageId = previewSharedEntry(entry).storageId;
-      const beforeImportIndex = options.allowRecoveryWrite ? await this.readIndexForRecovery() : await this.readIndex();
-      const accountExistedBeforeImport = Boolean(
-        incomingStorageId && beforeImportIndex.accounts.some((account) => account.id === incomingStorageId)
+      if (!incomingStorageId) throw new Error("The imported account identity is missing.");
+      await runCodexHomeOperation("Import account credentials", () =>
+        this.withAccountCredentials(
+          incomingStorageId,
+          async () => {
+            const restoredTokens = restoreSharedTokens(entry);
+            const identityFallback = resolveSharedAccountIdentity(entry);
+            const beforeImportIndex = options.allowRecoveryWrite
+              ? await this.readIndexForRecovery()
+              : await this.readIndex();
+            const accountExistedBeforeImport = Boolean(
+              incomingStorageId && beforeImportIndex.accounts.some((account) => account.id === incomingStorageId)
+            );
+            const previousTokens = incomingStorageId ? await this.secretStore.getTokens(incomingStorageId) : undefined;
+            const credentialsChanged =
+              accountExistedBeforeImport &&
+              (!previousTokens || !areTokenCredentialsEqual(previousTokens, restoredTokens));
+            const created = await this.upsertFromTokensInternal(restoredTokens, false, {
+              allowRecoveryWrite: options.allowRecoveryWrite,
+              persistImmediately: false,
+              addedVia: "json",
+              identityFallback,
+              credentialUpdatedAt:
+                normalizeEpochMs(entry.credential_updated_at) ??
+                normalizeEpochMs(entry.last_used) ??
+                normalizeEpochMs(entry.added_at ?? undefined)
+            });
+            const index = options.allowRecoveryWrite ? await this.readIndexForRecovery() : await this.readIndex();
+            const account = index.accounts.find((item) => item.id === created.id);
+            if (!account) throw createError.accountNotFound(created.id);
+
+            applySharedAccountEntry(account, entry);
+            // Encrypted sync intentionally omits device-local quota errors. When it
+            // delivers genuinely different credentials, an auth error produced by
+            // the replaced token is stale and must not keep this PC in Reauthorize.
+            // Preserve quota and service errors, and do nothing for an unchanged
+            // import so a still-invalid credential remains visible.
+            if (credentialsChanged && getQuotaIssueKind(account.quotaError) === "auth") {
+              account.quotaError = undefined;
+              account.dismissedHealthIssueKey = undefined;
+            }
+
+            const storedTokens = {
+              ...restoredTokens,
+              accountId: account.accountId ?? restoredTokens.accountId
+            };
+            await this.secretStore.setTokens(account.id, storedTokens);
+            this.invalidateTokenCache();
+            if (account.isActive && credentialsChanged) await writeAuthFile(storedTokens);
+
+            if (options.persistImmediately) {
+              await this.persistRecoveredIndex(index, options.restoreSource ?? "shared_json");
+            } else if (options.allowRecoveryWrite) {
+              markRecoveryPending(this.state, index);
+            } else {
+              this.writeIndex(index);
+            }
+            imported.push({ ...account });
+          },
+          !options.allowRecoveryWrite || options.persistImmediately === true
+        )
       );
-      const previousTokens = incomingStorageId ? await this.secretStore.getTokens(incomingStorageId) : undefined;
-      const credentialsChanged =
-        accountExistedBeforeImport && (!previousTokens || !areTokenCredentialsEqual(previousTokens, restoredTokens));
-      const created = await this.upsertFromTokensInternal(restoredTokens, false, {
-        allowRecoveryWrite: options.allowRecoveryWrite,
-        persistImmediately: false,
-        addedVia: "json",
-        identityFallback,
-        credentialUpdatedAt:
-          normalizeEpochMs(entry.credential_updated_at) ??
-          normalizeEpochMs(entry.last_used) ??
-          normalizeEpochMs(entry.added_at ?? undefined)
-      });
-      const index = options.allowRecoveryWrite ? await this.readIndexForRecovery() : await this.readIndex();
-      const account = index.accounts.find((item) => item.id === created.id);
-      if (!account) {
-        continue;
-      }
-
-      applySharedAccountEntry(account, entry);
-      // Encrypted sync intentionally omits device-local quota errors. When it
-      // delivers genuinely different credentials, an auth error produced by
-      // the replaced token is stale and must not keep this PC in Reauthorize.
-      // Preserve quota and service errors, and do nothing for an unchanged
-      // import so a still-invalid credential remains visible.
-      if (credentialsChanged && getQuotaIssueKind(account.quotaError) === "auth") {
-        account.quotaError = undefined;
-        account.dismissedHealthIssueKey = undefined;
-      }
-
-      const storedTokens = {
-        ...restoredTokens,
-        accountId: account.accountId ?? restoredTokens.accountId
-      };
-      await this.secretStore.setTokens(account.id, storedTokens);
-      this.invalidateTokenCache();
-
-      if (options.persistImmediately) {
-        await this.persistRecoveredIndex(index, options.restoreSource ?? "shared_json");
-      } else if (options.allowRecoveryWrite) {
-        markRecoveryPending(this.state, index);
-      } else {
-        this.writeIndex(index);
-      }
-      imported.push({ ...account });
     }
 
     return imported;
@@ -999,54 +1104,92 @@ export class AccountsRepository {
     if (existing) return existing;
     cancelCodexSessionAutoResume();
     // 按账号串行化，避免切号与后台续期并发刷新同一账号 token
-    const operation = runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, "Account switch", () => this.accountMutex.runExclusive(accountId, async () => {
-      this.state.cache = null;
-      this.invalidateTokenCache();
-      if (options.expectedActiveAccountId !== undefined) {
-        const active = (await this.listAccounts()).find((candidate) => candidate.isActive)?.id ?? null;
-        if (active !== options.expectedActiveAccountId) throw new Error("The active account changed. Automatic switching was cancelled; refresh and retry.");
-      }
-      const parallelMode = isCrossWindowAccountModeEnabled();
-      let previousAccountId: string | undefined;
-      if (parallelMode) {
-        const current = (await this.listAccounts()).find((candidate) => candidate.isActive);
-        previousAccountId = current?.id;
-        await claimCrossWindowAccount(accountId);
-      }
-      let account: CodexManagerAccountRecord;
-      let authChanged = false;
-      try {
-        await this.switchCoordinator?.prepareAccountSwitch(accountId);
-        account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true, () => { authChanged = true; });
-        await this.flush();
-      } catch (error) {
-        if (authChanged) {
-          throw new Error(`The Codex credentials changed, but the account selection could not be saved: ${error instanceof Error ? error.message : String(error)}. Check storage and the active account before retrying.`);
-        }
-        try { await this.switchCoordinator?.cancelAccountSwitch(accountId); }
-        catch { void vscode.window.showWarningMessage("The switch failed and its account claim could not be released. Reconnect and sync claims before retrying."); }
-        if (parallelMode && previousAccountId !== accountId) {
-          if (previousAccountId) await claimCrossWindowAccount(previousAccountId);
-          else await releaseCrossWindowAccount(accountId);
-        }
-        throw error;
-      }
-      await this.switchCoordinator?.completeAccountSwitch(accountId);
-      if (parallelMode && previousAccountId && previousAccountId !== accountId) {
-        await releaseCrossWindowAccount(previousAccountId);
-      }
-      return account;
-    }));
+    const operation = this.prepareSwitchTokens(accountId).then(() =>
+      runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, "Account switch", () =>
+        this.withAccountCredentials(accountId, async () => {
+          this.state.cache = null;
+          this.invalidateTokenCache();
+          if (options.expectedActiveAccountId !== undefined) {
+            const active = (await this.listAccounts()).find((candidate) => candidate.isActive)?.id ?? null;
+            if (active !== options.expectedActiveAccountId)
+              throw new Error("The active account changed. Automatic switching was cancelled; refresh and retry.");
+          }
+          const parallelMode = isCrossWindowAccountModeEnabled();
+          let previousAccountId: string | undefined;
+          if (parallelMode) {
+            const current = (await this.listAccounts()).find((candidate) => candidate.isActive);
+            previousAccountId = current?.id;
+            await claimCrossWindowAccount(accountId);
+          }
+          let account: CodexManagerAccountRecord;
+          let authChanged = false;
+          try {
+            await this.switchCoordinator?.prepareAccountSwitch(accountId);
+            account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true, () => {
+              authChanged = true;
+            });
+            await this.flush();
+          } catch (error) {
+            if (authChanged) {
+              throw new Error(
+                `The Codex credentials changed, but the account selection could not be saved: ${error instanceof Error ? error.message : String(error)}. Check storage and the active account before retrying.`
+              );
+            }
+            try {
+              await this.switchCoordinator?.cancelAccountSwitch(accountId);
+            } catch {
+              void vscode.window.showWarningMessage(
+                "The switch failed and its account claim could not be released. Reconnect and sync claims before retrying."
+              );
+            }
+            if (parallelMode && previousAccountId !== accountId) {
+              if (previousAccountId) await claimCrossWindowAccount(previousAccountId);
+              else await releaseCrossWindowAccount(accountId);
+            }
+            throw error;
+          }
+          await this.switchCoordinator?.completeAccountSwitch(accountId);
+          if (parallelMode && previousAccountId && previousAccountId !== accountId) {
+            await releaseCrossWindowAccount(previousAccountId);
+          }
+          return account;
+        })
+      )
+    );
     this.switchInFlight.set(key, operation);
     return operation.finally(() => {
       if (this.switchInFlight.get(key) === operation) this.switchInFlight.delete(key);
     });
   }
 
-  private async switchAccountLocked(accountId: string, forceTokenRefresh: boolean, onAuthWritten: () => void): Promise<CodexManagerAccountRecord> {
+  private async prepareSwitchTokens(accountId: string): Promise<void> {
+    const tokens = await this.getTokens(accountId, { bypassCache: true });
+    if (!tokens || !needsTokenRefresh(tokens, 0)) return;
+    if (!tokens.refreshToken)
+      throw new Error("The saved credentials have expired. Reauthorize the account before switching.");
+    const renewal = this.refreshAccountTokens(accountId, { force: true });
+    try {
+      await waitWithin(
+        renewal,
+        ACCOUNT_SWITCH_TOKEN_REFRESH_WAIT_MS,
+        "Account credentials are still refreshing. The account was not switched; retry in a moment."
+      );
+    } catch (error) {
+      void renewal.catch((lateError) =>
+        console.warn("[codexManager] pending switch credential refresh failed", lateError)
+      );
+      throw error;
+    }
+  }
+
+  private async switchAccountLocked(
+    accountId: string,
+    forceTokenRefresh: boolean,
+    onAuthWritten: () => void
+  ): Promise<CodexManagerAccountRecord> {
     let index = await this.readIndex();
     assertWriteAllowed(this.state);
-    let account = index.accounts.find((item) => item.id === accountId);
+    const account = index.accounts.find((item) => item.id === accountId);
 
     if (!account) {
       throw createError.accountNotFound(accountId);
@@ -1058,56 +1201,18 @@ export class AccountsRepository {
         code: ErrorCode.AUTH_TOKEN_MISSING
       });
     }
-    const accountSnapshot = account;
 
     // 切号前按需刷新 token，避免写入过期 token 导致 codex 登录失败（对齐 cockpit switch_account_managed）
-    let effectiveTokens = {
+    const effectiveTokens = {
       ...tokens,
       accountId: account.accountId ?? tokens.accountId
     };
 
     let backgroundRotation: (() => Promise<void>) | undefined;
     if (needsTokenRefresh(tokens, 0)) {
-      if (!tokens.refreshToken) throw new Error(`The saved credentials for ${account.email} have expired. Reauthorize the account before switching.`);
-      const refreshTask = refreshTokens(tokens.refreshToken, tokens.idToken);
-      let refreshed: CodexTokens;
-      try {
-        refreshed = await waitWithin(
-          refreshTask,
-          ACCOUNT_SWITCH_TOKEN_REFRESH_WAIT_MS,
-          "Account credentials are still refreshing."
-        );
-      } catch (error) {
-        if (error instanceof Error && error.message === "Account credentials are still refreshing.") {
-          void refreshTask
-            .then((lateTokens) =>
-              this.updateTokens(accountId, {
-                ...lateTokens,
-                accountId: lateTokens.accountId ?? accountSnapshot.accountId ?? tokens.accountId
-              })
-            )
-            .catch((lateError) => {
-              const message = `The credentials for ${accountSnapshot.email} could not be refreshed in the background: ${lateError instanceof Error ? lateError.message : String(lateError)}.`;
-              publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
-              if (!shouldSuppressDashboardNotifications()) void vscode.window.showWarningMessage(message);
-            });
-          throw new Error(
-            `The credentials for ${accountSnapshot.email} are still refreshing. The account was not switched; retry in a moment.`
-          );
-        }
-        throw error;
-      }
-      effectiveTokens = { ...refreshed, accountId: refreshed.accountId ?? account.accountId ?? tokens.accountId };
-      index = await this.readIndex();
-      assertWriteAllowed(this.state);
-      account = index.accounts.find((item) => item.id === accountId);
-      if (!account) throw createError.accountNotFound(accountId);
-      const latestTokens = await this.getTokens(accountId, { bypassCache: true });
-      if (!latestTokens || !areTokenCredentialsEqual(tokens, latestTokens)) {
-        throw new Error("The account credentials changed during token refresh. Refresh the account and try again.");
-      }
-      await this.secretStore.setTokens(accountId, effectiveTokens);
-      this.invalidateTokenCache();
+      throw new Error(
+        `The credentials for ${account.email} changed or expired during switching. Refresh or reauthorize the account and retry.`
+      );
     } else if (forceTokenRefresh && tokens.refreshToken) {
       const accountSnapshot = account;
       // Manual switching must remain immediate. Rotate in the background after
@@ -1115,11 +1220,7 @@ export class AccountsRepository {
       // if this account is still active when the rotation completes.
       backgroundRotation = async () => {
         try {
-          const refreshed = await refreshTokens(tokens.refreshToken!, tokens.idToken);
-          await this.updateTokens(accountId, {
-            ...refreshed,
-            accountId: refreshed.accountId ?? accountSnapshot.accountId ?? tokens.accountId
-          });
+          await this.refreshAccountTokens(accountId, { force: true });
         } catch (error) {
           console.warn(`[codexManager] token rotation failed after switching ${accountSnapshot.email}:`, error);
           const message = `Switched to ${accountSnapshot.email}, but its token refresh failed: ${error instanceof Error ? error.message : String(error)}. Refresh or reauthorize this account if Codex cannot connect.`;
@@ -1151,38 +1252,49 @@ export class AccountsRepository {
     if (!requestId || requestId.length > 128 || !Number.isSafeInteger(availableBefore) || availableBefore <= 0) {
       throw new Error("Invalid quota reset request metadata.");
     }
-    const index = await this.readIndex();
-    const account = index.accounts.find((item) => item.id === accountId);
-    if (!account) throw createError.accountNotFound(accountId);
-    if (account.resetCreditAttempt)
-      throw new Error("A previous reset has an unverified outcome. Refresh quota before attempting another reset.");
-    account.resetCreditAttempt = { requestId, attemptedAt: Date.now(), availableBefore };
-    this.writeIndex(index);
-    await this.flush();
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = index.accounts.find((item) => item.id === accountId);
+      if (!account) throw createError.accountNotFound(accountId);
+      if (account.resetCreditAttempt)
+        throw new Error("A previous reset has an unverified outcome. Refresh quota before attempting another reset.");
+      account.resetCreditsGeneration = await sharedReadGeneration(resetCreditsGenerationKey(account.accountId), true);
+      account.resetCreditAttempt = { requestId, attemptedAt: Date.now(), availableBefore };
+      this.writeIndex(index);
+      await this.flush();
+    });
   }
 
   async completeResetCreditAttempt(accountId: string, requestId: string): Promise<void> {
-    const index = await this.readIndex();
-    const account = index.accounts.find((item) => item.id === accountId);
-    if (account?.resetCreditAttempt?.requestId !== requestId) return;
-    account.resetCreditAttempt = undefined;
-    this.writeIndex(index);
-    await this.flush();
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = index.accounts.find((item) => item.id === accountId);
+      if (account?.resetCreditAttempt?.requestId !== requestId) return;
+      account.resetCreditAttempt = undefined;
+      this.writeIndex(index);
+      await this.flush();
+    });
   }
 
   /**
    * 移除账号
    */
   async removeAccount(accountId: string): Promise<void> {
-    const index = await this.readIndex();
-    if (!removeAccountFromIndex(index, accountId)) {
-      return;
-    }
+    return runCodexHomeOperation("Remove account", () =>
+      this.withAccountCredentials(accountId, async () => {
+        const index = await this.readIndex();
+        if (index.accounts.find((account) => account.id === accountId)?.resetCreditAttempt)
+          throw new Error("Verify the pending quota reset before removing this account.");
+        if (!removeAccountFromIndex(index, accountId)) {
+          return;
+        }
 
-    await this.secretStore.deleteTokens(accountId);
-    this.invalidateTokenCache();
-    clearQuotaCacheForAccount(accountId);
-    this.writeIndex(index);
+        await this.secretStore.deleteTokens(accountId);
+        this.invalidateTokenCache();
+        clearQuotaCacheForAccount(accountId);
+        this.writeIndex(index);
+      })
+    );
   }
 
   /**
@@ -1193,70 +1305,80 @@ export class AccountsRepository {
    * @returns 更新后的账号记录
    */
   async setStatusBarVisibility(accountId: string, visible: boolean): Promise<CodexManagerAccountRecord> {
-    const index = await this.readIndex();
-    const account = setStatusBarVisibilityOnIndex(index, accountId, visible, Date.now());
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = setStatusBarVisibilityOnIndex(index, accountId, visible, Date.now());
 
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
-    this.writeIndex(index);
+      if (!account) {
+        throw createError.accountNotFound(accountId);
+      }
+      this.writeIndex(index);
 
-    return account;
+      return account;
+    });
   }
 
   /** Include or exclude a saved account from automated work on this PC only. */
   async setAccountEnabled(accountId: string, enabled: boolean): Promise<CodexManagerAccountRecord> {
     await this.switchCoordinator?.prepareAccountEnablement?.(accountId, enabled);
-    const index = await this.readIndex();
-    const account = setAccountEnabledOnIndex(index, accountId, enabled, Date.now());
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = setAccountEnabledOnIndex(index, accountId, enabled, Date.now());
 
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
-    // Enablement remains local in the account index. Encrypted sync publishes
-    // only the ownership registry, never this machine-specific field itself.
-    this.writeIndex(index, { notifyAccountSync: false });
-    await this.switchCoordinator?.completeAccountEnablement?.(accountId, enabled);
-    return account;
+      if (!account) {
+        throw createError.accountNotFound(accountId);
+      }
+      // Enablement remains local in the account index. Encrypted sync publishes
+      // only the ownership registry, never this machine-specific field itself.
+      this.writeIndex(index, { notifyAccountSync: false });
+      await this.switchCoordinator?.completeAccountEnablement?.(accountId, enabled);
+      return account;
+    });
   }
 
   /** Apply a local safety fence without publishing a new ownership claim. */
   async setAccountEnabledFromSync(accountId: string, enabled: boolean): Promise<CodexManagerAccountRecord> {
-    const index = await this.readIndex();
-    const account = setAccountEnabledOnIndex(index, accountId, enabled, Date.now());
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = setAccountEnabledOnIndex(index, accountId, enabled, Date.now());
 
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
-    this.writeIndex(index, { notifyAccountSync: false });
-    return account;
+      if (!account) {
+        throw createError.accountNotFound(accountId);
+      }
+      this.writeIndex(index, { notifyAccountSync: false });
+      return account;
+    });
   }
 
   /** Set whether this PC prioritizes an account in its automatic switching queue. */
   async setAccountQueuePriority(accountId: string, queuePriority: boolean): Promise<CodexManagerAccountRecord> {
-    const index = await this.readIndex();
-    const account = setAccountQueuePriorityOnIndex(index, accountId, queuePriority, Date.now());
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = setAccountQueuePriorityOnIndex(index, accountId, queuePriority, Date.now());
 
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
-    this.writeIndex(index, { notifyAccountSync: false });
-    return account;
+      if (!account) {
+        throw createError.accountNotFound(accountId);
+      }
+      this.writeIndex(index, { notifyAccountSync: false });
+      return account;
+    });
   }
 
   /** Enable or disable background token refresh for one account. */
   async setAccountTokenRefreshEnabled(accountId: string, enabled: boolean): Promise<CodexManagerAccountRecord> {
-    const index = await this.readIndex();
-    const previous = index.accounts.find((item) => item.id === accountId)?.tokenRefreshEnabled === true;
-    const account = setAccountTokenRefreshEnabledOnIndex(index, accountId, enabled, Date.now());
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
-    this.writeIndex(index);
-    if (previous !== enabled) {
-      this.switchCoordinator?.onVaultMutation?.("token-refresh-setting-changed", [accountId]);
-    }
-    return account;
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const previous = index.accounts.find((item) => item.id === accountId)?.tokenRefreshEnabled === true;
+      const account = setAccountTokenRefreshEnabledOnIndex(index, accountId, enabled, Date.now());
+      if (!account) {
+        throw createError.accountNotFound(accountId);
+      }
+      this.writeIndex(index);
+      if (previous !== enabled) {
+        this.switchCoordinator?.onVaultMutation?.("token-refresh-setting-changed", [accountId]);
+      }
+      return account;
+    });
   }
 
   /**
@@ -1275,62 +1397,79 @@ export class AccountsRepository {
     quotaError?: CodexManagerAccountRecord["quotaError"],
     updatedTokens?: CodexTokens,
     updatedPlanType?: string,
-    updatedSubscriptionActiveUntil?: string
+    updatedSubscriptionActiveUntil?: string,
+    expectedTokens?: CodexTokens
   ): Promise<CodexManagerAccountRecord> {
     const storedTokens = updatedTokens ?? (await this.secretStore.getTokens(accountId));
     const before = await this.getAccount(accountId);
-    let remoteProfile;
+    let remoteProfile: Awaited<ReturnType<typeof fetchRemoteAccountProfile>>;
     if (storedTokens && before && shouldAttemptRemoteProfileRepair(before, updatedPlanType ?? before.planType)) {
       remoteProfile = await this.readOptionalAccountProfile(storedTokens);
     }
-    // Apply the quota to the latest index after optional network work finishes.
-    const index = await this.readIndex();
-    const account = index.accounts.find((item) => item.id === accountId);
+    return runCodexHomeOperation(
+      "Update quota credentials",
+      () =>
+        this.withAccountCredentials(accountId, async () => {
+          const latestTokens = await this.getTokens(accountId, { bypassCache: true });
+          if (
+            expectedTokens &&
+            (!latestTokens ||
+              (!areTokenCredentialsEqual(latestTokens, expectedTokens) &&
+                (!updatedTokens || !areTokenCredentialsEqual(latestTokens, updatedTokens))))
+          ) {
+            throw new Error("Account credentials changed while quota was loading. The outdated result was discarded.");
+          }
+          // Apply the quota to the latest index after optional network work finishes.
+          const index = await this.readIndex();
+          const account = index.accounts.find((item) => item.id === accountId);
 
-    if (!account) {
-      throw createError.accountNotFound(accountId);
-    }
+          if (!account) {
+            throw createError.accountNotFound(accountId);
+          }
 
-    const now = Date.now();
-    const effectivePlanType = applyQuotaUpdate({
-      account,
-      quotaSummary,
-      quotaError,
-      updatedPlanType,
-      updatedSubscriptionActiveUntil,
-      now
-    });
-    const previousStoredAccountId = storedTokens?.accountId;
-    if (storedTokens) {
-      syncLoginAtFromTokens(account, storedTokens);
-    }
+          const now = Date.now();
+          const effectivePlanType = applyQuotaUpdate({
+            account,
+            quotaSummary,
+            quotaError,
+            updatedPlanType,
+            updatedSubscriptionActiveUntil,
+            now
+          });
+          const previousStoredAccountId = storedTokens?.accountId;
+          if (storedTokens) {
+            syncLoginAtFromTokens(account, storedTokens);
+          }
 
-    if (storedTokens && remoteProfile) {
-      applyRemoteProfileFromTokens({
-        account,
-        tokens: storedTokens,
-        remoteProfile,
-        planType: effectivePlanType
-      });
-    }
+          if (storedTokens && remoteProfile) {
+            applyRemoteProfileFromTokens({
+              account,
+              tokens: storedTokens,
+              remoteProfile,
+              planType: effectivePlanType
+            });
+          }
 
-    const nextStoredTokens =
-      updatedTokens ?? (account.accountId !== previousStoredAccountId ? storedTokens : undefined);
-    if (storedTokens && nextStoredTokens) {
-      const effectiveNextTokens = {
-        ...nextStoredTokens,
-        accountId: account.accountId ?? storedTokens.accountId
-      };
-      await this.secretStore.setTokens(accountId, effectiveNextTokens);
-      this.invalidateTokenCache();
-      if (account.isActive) {
-        await writeAuthFile(effectiveNextTokens);
-      }
-    }
+          const nextStoredTokens =
+            updatedTokens ?? (account.accountId !== previousStoredAccountId ? storedTokens : undefined);
+          if (storedTokens && nextStoredTokens) {
+            const effectiveNextTokens = {
+              ...nextStoredTokens,
+              accountId: account.accountId ?? storedTokens.accountId
+            };
+            await this.secretStore.setTokens(accountId, effectiveNextTokens);
+            this.invalidateTokenCache();
+            if (account.isActive) {
+              await writeAuthFile(effectiveNextTokens);
+            }
+          }
 
-    this.writeIndex(index);
+          this.writeIndex(index);
 
-    return account;
+          return account;
+        }),
+      500
+    );
   }
 
   private reportProfileRefreshWarning(error: unknown): void {
@@ -1342,7 +1481,11 @@ export class AccountsRepository {
   private async readOptionalAccountProfile(tokens: CodexTokens) {
     const controller = new AbortController();
     try {
-      return await waitWithin(fetchRemoteAccountProfile(tokens, { signal: controller.signal }), 500, "Account profile is still loading");
+      return await waitWithin(
+        fetchRemoteAccountProfile(tokens, { signal: controller.signal }),
+        500,
+        "Account profile is still loading"
+      );
     } catch (error) {
       this.reportProfileRefreshWarning(error);
       return undefined;
@@ -1356,7 +1499,7 @@ export class AccountsRepository {
    * 同步激活账号状态 (从 auth.json)
    */
   async syncActiveAccountFromAuthFile(): Promise<void> {
-    await runCrossWindowExclusive("background:account-auth-sync", "Account auth sync", () =>
+    await runCodexHomeOperation("Account auth sync", () =>
       this.runAndFlush(() => this.syncActiveAccountFromAuthFileInternal())
     );
   }
@@ -1416,11 +1559,22 @@ export class AccountsRepository {
   }
 
   private async runAndFlush<T>(task: () => Promise<T>): Promise<T> {
+    let result: T;
     try {
-      return await task();
-    } finally {
-      await this.flush();
+      result = await task();
+    } catch (error) {
+      try {
+        await this.flush();
+      } catch (flushError) {
+        throw new AggregateError(
+          [error, flushError],
+          `${error instanceof Error ? error.message : String(error)}. Pending changes could not be saved.`
+        );
+      }
+      throw error;
     }
+    await this.flush();
+    return result;
   }
 
   /**
@@ -1453,7 +1607,10 @@ export class AccountsRepository {
     }
 
     const effectiveAccountId = account.accountId ?? undefined;
-    let snapshotResult: { planType?: string; subscriptionActiveUntil?: string; accountId?: string } | undefined;
+    const requestStartedAt = Date.now();
+    let snapshotResult:
+      | { planType?: string; subscriptionActiveUntil?: string; accountId?: string; requestStartedAt?: number }
+      | undefined;
     let fetchError: string | undefined;
     try {
       snapshotResult = await fetchSubscriptionStatus(
@@ -1468,46 +1625,58 @@ export class AccountsRepository {
     }
 
     // 网络返回后重读 index，避免覆盖期间其他操作（updateQuota/switchAccount）的并发修改
-    const freshIndex = await this.readIndex();
-    const freshAccount = freshIndex.accounts.find((item) => item.id === accountId);
-    if (!freshAccount) {
-      return;
-    }
-
-    if (fetchError) {
-      markSubscriptionRetryPending(freshAccount, fetchError);
-    } else if (snapshotResult) {
-      let changed = false;
-      if (snapshotResult.accountId && snapshotResult.accountId !== freshAccount.accountId) {
-        freshAccount.accountId = snapshotResult.accountId;
-        changed = true;
-      }
-      if (snapshotResult.planType && snapshotResult.planType !== freshAccount.planType) {
-        freshAccount.planType = snapshotResult.planType;
-        changed = true;
-      }
-      if (
-        snapshotResult.subscriptionActiveUntil &&
-        snapshotResult.subscriptionActiveUntil !== freshAccount.subscriptionActiveUntil
-      ) {
-        freshAccount.subscriptionActiveUntil = snapshotResult.subscriptionActiveUntil;
-        changed = true;
+    return this.withAccountCredentials(accountId, async () => {
+      const freshIndex = await this.readIndex();
+      const freshAccount = freshIndex.accounts.find((item) => item.id === accountId);
+      if (!freshAccount) {
+        return;
       }
 
-      freshAccount.subscriptionQueryLastAttemptAt = Date.now();
+      const freshTokens = await this.getTokens(accountId, { bypassCache: true });
+      if (!freshTokens || !areTokenCredentialsEqual(tokens, freshTokens)) {
+        throw new Error(
+          "Account credentials changed while subscription details were loading. The outdated result was discarded."
+        );
+      }
+      const fetchedAt = snapshotResult?.requestStartedAt ?? requestStartedAt;
+      if (fetchedAt < (freshAccount.subscriptionRequestAt ?? 0)) return;
+      freshAccount.subscriptionRequestAt = fetchedAt;
 
-      if (subscriptionMissingOrExpired(freshAccount.subscriptionActiveUntil)) {
-        markSubscriptionRetryPending(freshAccount, "订阅接口未返回有效订阅时间");
-      } else {
-        clearSubscriptionRetryPending(freshAccount);
+      if (fetchError) {
+        markSubscriptionRetryPending(freshAccount, fetchError);
+      } else if (snapshotResult) {
+        let changed = false;
+        if (snapshotResult.accountId && snapshotResult.accountId !== freshAccount.accountId) {
+          freshAccount.accountId = snapshotResult.accountId;
+          changed = true;
+        }
+        if (snapshotResult.planType && snapshotResult.planType !== freshAccount.planType) {
+          freshAccount.planType = snapshotResult.planType;
+          changed = true;
+        }
+        if (
+          snapshotResult.subscriptionActiveUntil &&
+          snapshotResult.subscriptionActiveUntil !== freshAccount.subscriptionActiveUntil
+        ) {
+          freshAccount.subscriptionActiveUntil = snapshotResult.subscriptionActiveUntil;
+          changed = true;
+        }
+
+        freshAccount.subscriptionQueryLastAttemptAt = Date.now();
+
+        if (subscriptionMissingOrExpired(freshAccount.subscriptionActiveUntil)) {
+          markSubscriptionRetryPending(freshAccount, "订阅接口未返回有效订阅时间");
+        } else {
+          clearSubscriptionRetryPending(freshAccount);
+        }
+
+        if (changed) {
+          freshAccount.updatedAt = Date.now();
+        }
       }
 
-      if (changed) {
-        freshAccount.updatedAt = Date.now();
-      }
-    }
-
-    this.writeIndex(freshIndex);
+      this.writeIndex(freshIndex);
+    });
   }
 
   /**
@@ -1517,23 +1686,33 @@ export class AccountsRepository {
     accountId: string,
     availableCount: number,
     nextExpiresAt?: number,
-    availableIds?: string[]
-  ): Promise<void> {
-    const index = await this.readIndex();
-    const account = index.accounts.find((item) => item.id === accountId);
-    if (!account?.quotaSummary) {
-      return;
-    }
-    const summary = account.quotaSummary;
-    const count = normalizeUsableResetCount(availableCount);
-    summary.resetCreditsAvailable = count;
-    summary.resetCreditsNextExpiresAt = count > 0 ? normalizeResetCreditExpiry(nextExpiresAt) : undefined;
-    summary.resetCreditsAvailableIds =
-      count > 0
-        ? normalizeResetCreditIds(availableIds)?.filter((id) => !summary.resetCreditsExcludedIds?.includes(id))
-        : [];
-    account.updatedAt = Date.now();
-    this.writeIndex(index);
+    availableIds?: string[],
+    requestStartedAt = Date.now(),
+    generation?: number
+  ): Promise<boolean> {
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = index.accounts.find((item) => item.id === accountId);
+      if (!account?.quotaSummary) {
+        return false;
+      }
+      if (requestStartedAt < Math.max(account.resetCreditsRequestAt ?? 0, account.resetCreditAttempt?.attemptedAt ?? 0))
+        return false;
+      if (generation !== undefined && generation < (account.resetCreditsGeneration ?? 0)) return false;
+      account.resetCreditsRequestAt = requestStartedAt;
+      if (generation !== undefined) account.resetCreditsGeneration = generation;
+      const summary = account.quotaSummary;
+      const count = normalizeUsableResetCount(availableCount);
+      summary.resetCreditsAvailable = count;
+      summary.resetCreditsNextExpiresAt = count > 0 ? normalizeResetCreditExpiry(nextExpiresAt) : undefined;
+      summary.resetCreditsAvailableIds =
+        count > 0
+          ? normalizeResetCreditIds(availableIds)?.filter((id) => !summary.resetCreditsExcludedIds?.includes(id))
+          : [];
+      account.updatedAt = Date.now();
+      this.writeIndex(index);
+      return true;
+    });
   }
 
   /** Permanently fences one provider reset credit after an ineligible response. */
@@ -1542,32 +1721,34 @@ export class AccountsRepository {
     if (!normalizedId) {
       return;
     }
-    const index = await this.readIndex();
-    const account = index.accounts.find((item) => item.id === accountId);
-    if (!account?.quotaSummary) {
-      return;
-    }
-    const summary = account.quotaSummary;
-    const excluded = new Set(normalizeResetCreditIds(summary.resetCreditsExcludedIds) ?? []);
-    if (excluded.has(normalizedId)) {
-      return;
-    }
-    const wasAvailable =
-      summary.resetCreditsAvailableIds === undefined || summary.resetCreditsAvailableIds.includes(normalizedId);
-    excluded.add(normalizedId);
-    summary.resetCreditsExcludedIds = Array.from(excluded);
-    if (summary.resetCreditsAvailableIds) {
-      summary.resetCreditsAvailableIds = summary.resetCreditsAvailableIds.filter((id) => id !== normalizedId);
-    }
-    summary.resetCreditsAvailable = Math.max(
-      0,
-      normalizeUsableResetCount(summary.resetCreditsAvailable) - Number(wasAvailable)
-    );
-    // The rejected credit may own the recorded earliest expiry. Without a
-    // per-credit expiry map, clear it and let the next snapshot derive it.
-    if (wasAvailable) summary.resetCreditsNextExpiresAt = undefined;
-    account.updatedAt = Date.now();
-    this.writeIndex(index);
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = index.accounts.find((item) => item.id === accountId);
+      if (!account?.quotaSummary) {
+        return;
+      }
+      const summary = account.quotaSummary;
+      const excluded = new Set(normalizeResetCreditIds(summary.resetCreditsExcludedIds) ?? []);
+      if (excluded.has(normalizedId)) {
+        return;
+      }
+      const wasAvailable =
+        summary.resetCreditsAvailableIds === undefined || summary.resetCreditsAvailableIds.includes(normalizedId);
+      excluded.add(normalizedId);
+      summary.resetCreditsExcludedIds = Array.from(excluded);
+      if (summary.resetCreditsAvailableIds) {
+        summary.resetCreditsAvailableIds = summary.resetCreditsAvailableIds.filter((id) => id !== normalizedId);
+      }
+      summary.resetCreditsAvailable = Math.max(
+        0,
+        normalizeUsableResetCount(summary.resetCreditsAvailable) - Number(wasAvailable)
+      );
+      // The rejected credit may own the recorded earliest expiry. Without a
+      // per-credit expiry map, clear it and let the next snapshot derive it.
+      if (wasAvailable) summary.resetCreditsNextExpiresAt = undefined;
+      account.updatedAt = Date.now();
+      this.writeIndex(index);
+    });
   }
 
   /**
@@ -1599,20 +1780,23 @@ export class AccountsRepository {
    */
   private async readIndex(): Promise<CodexManagerIndex> {
     if (this.disposed) throw new Error("Account repository is closed.");
-    if (this.indexReadInFlight) return this.indexReadInFlight;
-    const pending = this.readIndexInternal()
-      .then((index) => {
-        if (this.disposed) throw new Error("Account repository is closed.");
-        if (scopeActiveAccountState(index, this.codexHomeStateKey)) {
-          this.homeScopeMigrationPending = true;
-        }
-        return index;
-      })
-      .finally(() => {
-        if (this.indexReadInFlight === pending) this.indexReadInFlight = undefined;
-      });
+    const pending =
+      this.indexReadInFlight ??
+      this.readIndexInternal()
+        .then((index) => {
+          if (this.disposed) throw new Error("Account repository is closed.");
+          if (scopeActiveAccountState(index, this.codexHomeStateKey)) {
+            this.homeScopeMigrationPending = true;
+          }
+          return index;
+        })
+        .finally(() => {
+          if (this.indexReadInFlight === pending) this.indexReadInFlight = undefined;
+        });
     this.indexReadInFlight = pending;
-    return pending;
+    const index = cloneIndex(await pending);
+    this.indexBases.set(index, cloneIndex(index));
+    return index;
   }
 
   private async readIndexInternal(): Promise<CodexManagerIndex> {
@@ -1716,6 +1900,9 @@ export class AccountsRepository {
    */
   private writeIndex(index: CodexManagerIndex, options: { notifyAccountSync?: boolean } = {}): void {
     assertWriteAllowed(this.state);
+    const base = this.indexBases.get(index);
+    const current = this.state.pendingSave ?? this.state.cache?.data;
+    if (base && current) index = mergeAccountsIndexChanges(base, index, current, this.codexHomeStateKey);
     this.homeScopeMigrationPending = false;
     const previousIndex = this.state.pendingSave ?? this.state.cache?.data;
     const previousIds = new Set(previousIndex?.accounts.map((account) => account.id) ?? []);

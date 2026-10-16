@@ -13,6 +13,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { CodexAuthFile, CodexTokens } from "../core/types";
+import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 
 /** macOS 下 Codex 读取凭证的 Keychain service */
 const CODEX_KEYCHAIN_SERVICE = "Codex Auth";
@@ -100,12 +101,17 @@ function getErrorMessage(error: unknown): string {
 }
 
 function enqueueAuthFileOperation<T>(operation: () => Promise<T>): Promise<T> {
-  const result = authFileOperationChain.catch(() => undefined).then(operation);
+  const result = authFileOperationChain.catch(() => undefined).then(() =>
+    runCodexHomeOperation("Codex credentials", operation));
   authFileOperationChain = result.then(
     () => undefined,
     () => undefined
   );
   return result;
+}
+
+export function runCodexHomeOperation<T>(label: string, operation: () => Promise<T>, waitMs = 0): Promise<T> {
+  return runCrossWindowExclusive(`account:switch:${getCodexHomeStateKey()}`, label, operation, { waitMs });
 }
 
 async function readAuthCandidate(filePath: string): Promise<CodexAuthFile> {

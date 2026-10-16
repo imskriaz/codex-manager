@@ -103,7 +103,7 @@
         "codexManager.dailyTokenUsageEnabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Collect daily token usage when the current account loads, at most once every 24 hours per account. Inactive accounts are never polled. Saved usage remains available when disabled."
+          "markdownDescription": "Collect daily token usage when the current account loads, at most once every hour per account. Missing account history is collected when the token chart loads. Saved usage remains available when disabled."
         },
         "codexManager.usageHistoryRetentionDays": {
           "type": "number",

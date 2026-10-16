@@ -22,20 +22,15 @@ import {
 import { APIError } from "../core/errors";
 import { logNetworkEvent } from "../utils/debug";
 import { ACCOUNT_CHECK_URL } from "../infrastructure/config/apiEndpoints";
+import { runCrossWindowSharedRead, sharedResourceKey } from "../utils/crossWindowOperations";
 
 const PROFILE_CACHE_TTL_MS = 60_000;
-
-type ProfileCacheEntry = {
-  profile: RemoteAccountProfile;
-  expiresAt: number;
-};
-
-const profileCache = new Map<string, ProfileCacheEntry>();
 
 /**
  * 远程账号档案信息
  */
 interface RemoteAccountProfile {
+  requestStartedAt?: number;
   /** 用户邮箱 */
   email?: string;
   /** 用户 ID */
@@ -71,23 +66,21 @@ export async function fetchRemoteAccountProfile(
   tokens: CodexTokens,
   options: { forceRefresh?: boolean; preferredAccountName?: string; preferredAccountStructure?: string; signal?: AbortSignal } = {}
 ): Promise<RemoteAccountProfile | undefined> {
+  const key = sharedResourceKey("account-profile", [tokens, options.preferredAccountName, options.preferredAccountStructure, options.forceRefresh === true]);
+  return runCrossWindowSharedRead(key, "Account profile", async signal => {
+    const requestStartedAt = Date.now();
+    const profile = await fetchRemoteAccountProfileInternal(tokens, { ...options, signal });
+    return profile ? { ...profile, requestStartedAt } : undefined;
+  }, { signal: options.signal, maxAgeMs: options.forceRefresh ? 0 : PROFILE_CACHE_TTL_MS });
+}
+
+async function fetchRemoteAccountProfileInternal(
+  tokens: CodexTokens,
+  options: { forceRefresh?: boolean; preferredAccountName?: string; preferredAccountStructure?: string; signal?: AbortSignal }
+): Promise<RemoteAccountProfile | undefined> {
   options.signal?.throwIfAborted();
   const claims = extractClaims(tokens.idToken, tokens.accessToken);
   const accountId = tokens.accountId ?? claims.accountId;
-  const organizationId = claims.organizationId;
-  pruneProfileCache();
-  const cacheKey = buildProfileCacheKey(
-    tokens.accessToken,
-    accountId,
-    organizationId,
-    options.preferredAccountName,
-    options.preferredAccountStructure
-  );
-  const cached = profileCache.get(cacheKey);
-  if (cached && !options.forceRefresh) {
-    return cached.profile;
-  }
-
   const primary = await requestAccountProfile(ACCOUNT_CHECK_URL, tokens.accessToken, accountId, options.signal);
   const shouldRetry =
     accountId &&
@@ -116,10 +109,7 @@ export async function fetchRemoteAccountProfile(
         options.preferredAccountStructure
       );
       if (fallbackProfile) {
-        profileCache.set(cacheKey, {
-          profile: fallbackProfile,
-          expiresAt: Date.now() + PROFILE_CACHE_TTL_MS
-        });
+
         return fallbackProfile;
       }
     }
@@ -139,12 +129,6 @@ export async function fetchRemoteAccountProfile(
     options.preferredAccountName,
     options.preferredAccountStructure
   );
-  if (profile) {
-    profileCache.set(cacheKey, {
-      profile,
-      expiresAt: Date.now() + PROFILE_CACHE_TTL_MS
-    });
-  }
   return profile;
 }
 
@@ -416,23 +400,4 @@ function readScalarField(record: Record<string, unknown> | undefined, keys: stri
     }
   }
   return undefined;
-}
-
-function buildProfileCacheKey(
-  accessToken: string,
-  accountId?: string,
-  organizationId?: string,
-  accountName?: string,
-  accountStructure?: string
-): string {
-  return `${accessToken}::${accountId ?? ""}::${organizationId ?? ""}::${accountName ?? ""}::${accountStructure ?? ""}`;
-}
-
-function pruneProfileCache(): void {
-  const now = Date.now();
-  for (const [key, entry] of profileCache.entries()) {
-    if (entry.expiresAt <= now) {
-      profileCache.delete(key);
-    }
-  }
 }

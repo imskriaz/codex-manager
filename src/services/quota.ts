@@ -23,6 +23,7 @@ import {
   UsageWindowInfo
 } from "../core/types";
 import { APIError } from "../core/errors";
+import { sharedResourceKey, runCrossWindowSharedRead, sharedReadGeneration } from "../utils/crossWindowOperations";
 import { needsTokenRefresh, refreshTokens } from "../auth/oauth";
 import { shouldRetryWithoutWorkspace } from "./workspaceRetry";
 import { QUOTA_USAGE_URL, RESET_CREDITS_CONSUME_URL, RESET_CREDITS_URL } from "../infrastructure/config/apiEndpoints";
@@ -42,6 +43,7 @@ const QUOTA_CACHE_TTL_MS = 30000; // 30 秒
 
 /** 配额缓存接口 */
 interface QuotaCacheEntry {
+  credentialKey: string;
   /** 缓存的配额摘要 */
   summary: CodexQuotaSummary;
   /** 缓存时间戳 */
@@ -80,26 +82,28 @@ export async function refreshQuota(
   account: CodexManagerAccountRecord,
   tokens: CodexTokens,
   forceRefresh = false,
-  options: { allowTokenRefresh?: boolean } = {}
+  options: { allowTokenRefresh?: boolean; renewTokens?: () => Promise<CodexTokens> } = {}
 ): Promise<QuotaRefreshResult> {
   pruneQuotaCache();
+  const credentialKey = sharedResourceKey("quota-credentials", tokens);
   const generation = getQuotaCacheGeneration(account.id);
   if (!forceRefresh) {
     const cached = quotaCache.get(account.id);
     if (cached) {
-      if (Date.now() - cached.timestamp < QUOTA_CACHE_TTL_MS) {
+      if (cached.credentialKey === credentialKey && Date.now() - cached.timestamp < QUOTA_CACHE_TTL_MS) {
         return { quota: cached.summary, requestStartedAt: cached.timestamp };
       }
       quotaCache.delete(account.id);
     }
   }
 
-  const inflight = inflightQuotaRefreshes.get(account.id);
+  const requestKey = `${account.id}:${sharedResourceKey("quota", [tokens, options.allowTokenRefresh === true, generation])}`;
+  const inflight = inflightQuotaRefreshes.get(requestKey);
   if (inflight) {
     return inflight;
   }
 
-  const requestStartedAt = Date.now();
+  let requestStartedAt = Date.now();
   const refreshTask = (async (): Promise<QuotaRefreshResult> => {
     let effectiveTokens = tokens;
     let tokensUpdated = false;
@@ -108,14 +112,16 @@ export async function refreshQuota(
       if (!tokens.refreshToken) {
         return { error: buildError("Token expired and no refresh token is available"), requestStartedAt };
       }
-      effectiveTokens = await refreshTokens(tokens.refreshToken, tokens.idToken);
+      effectiveTokens = options.renewTokens ? await options.renewTokens() : await refreshTokens(tokens.refreshToken, tokens.idToken);
       effectiveTokens.accountId = effectiveTokens.accountId ?? account.accountId;
       tokensUpdated = true;
     }
 
     const accountId =
       account.accountId ?? extractClaims(effectiveTokens.idToken, effectiveTokens.accessToken).accountId;
-    const primary = await requestQuotaUsage(effectiveTokens.accessToken, accountId);
+    const readGeneration = await sharedReadGeneration(resetCreditsGenerationKey(accountId));
+    const primary = await requestQuotaUsage(effectiveTokens.accessToken, accountId, readGeneration, generation);
+    requestStartedAt = primary.requestStartedAt;
     const usageResult =
       accountId && !primary.ok && shouldRetryWithoutWorkspace(primary.status, primary.raw)
         ? await (async () => {
@@ -123,7 +129,7 @@ export async function refreshQuota(
               accountId,
               status: primary.status
             });
-            return requestQuotaUsage(effectiveTokens.accessToken);
+            return requestQuotaUsage(effectiveTokens.accessToken, undefined, readGeneration, generation);
           })()
         : primary;
 
@@ -147,6 +153,7 @@ export async function refreshQuota(
 
     if (generation === getQuotaCacheGeneration(account.id)) {
       quotaCache.set(account.id, {
+        credentialKey,
         summary: quotaSummary,
         timestamp: Date.now()
       });
@@ -161,17 +168,24 @@ export async function refreshQuota(
     };
   })();
 
-  inflightQuotaRefreshes.set(account.id, refreshTask);
+  inflightQuotaRefreshes.set(requestKey, refreshTask);
   try {
     return await refreshTask;
   } finally {
-    if (inflightQuotaRefreshes.get(account.id) === refreshTask) {
-      inflightQuotaRefreshes.delete(account.id);
+    if (inflightQuotaRefreshes.get(requestKey) === refreshTask) {
+      inflightQuotaRefreshes.delete(requestKey);
     }
   }
 }
 
-async function requestQuotaUsage(
+function requestQuotaUsage(accessToken: string, accountId: string | undefined, generation: number, cacheGeneration: number) {
+  return runCrossWindowSharedRead(sharedResourceKey("quota-usage", [accessToken, accountId, generation, cacheGeneration]), "Quota request", async () => {
+    const requestStartedAt = Date.now();
+    return { ...await requestQuotaUsageInternal(accessToken, accountId), requestStartedAt };
+  }, { timeoutMs: 300_000 });
+}
+
+async function requestQuotaUsageInternal(
   accessToken: string,
   accountId?: string
 ): Promise<{
@@ -669,7 +683,7 @@ function pruneQuotaCache(): void {
 export function clearQuotaCacheForAccount(accountId: string): void {
   quotaCacheGenerations.set(accountId, getQuotaCacheGeneration(accountId) + 1);
   quotaCache.delete(accountId);
-  inflightQuotaRefreshes.delete(accountId);
+  for (const key of inflightQuotaRefreshes.keys()) if (key.startsWith(`${accountId}:`)) inflightQuotaRefreshes.delete(key);
 }
 
 function getQuotaCacheGeneration(accountId: string): number {
@@ -677,6 +691,10 @@ function getQuotaCacheGeneration(accountId: string): number {
 }
 
 // ── 主动重置次数（rate-limit reset credits）──
+
+export function resetCreditsGenerationKey(accountId?: string): string {
+  return sharedResourceKey("reset-credits-generation", accountId ?? "unscoped");
+}
 
 /**
  * 查询账号的主动重置次数（可用于手动重置 5 小时配额窗口）。
@@ -690,6 +708,16 @@ export async function fetchResetCredits(
   accountId?: string,
   excludedIds: readonly string[] = []
 ): Promise<CodexResetCreditsSnapshot> {
+  const identity = resetCreditsGenerationKey(accountId);
+  const generation = await sharedReadGeneration(identity);
+  return runCrossWindowSharedRead(sharedResourceKey("reset-credits-request", [identity, accessToken, generation, [...excludedIds].sort()]), "Reset credit snapshot", async () => {
+    const requestStartedAt = Date.now();
+    const snapshot = await fetchResetCreditsInternal(accessToken, accountId, excludedIds);
+    return { ...snapshot, requestStartedAt, generation };
+  });
+}
+
+async function fetchResetCreditsInternal(accessToken: string, accountId: string | undefined, excludedIds: readonly string[]): Promise<CodexResetCreditsSnapshot> {
   const headers = new Headers({
     Authorization: `Bearer ${accessToken}`,
     Accept: "application/json"
@@ -753,6 +781,7 @@ export function isResetCreditIneligibleError(error: unknown): boolean {
  * @param accountId - ChatGPT account ID
  */
 export async function consumeResetCredit(accessToken: string, accountId?: string, requestId?: string): Promise<void> {
+  await sharedReadGeneration(resetCreditsGenerationKey(accountId), true);
   const headers = new Headers({
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",

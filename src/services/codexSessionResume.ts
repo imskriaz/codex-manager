@@ -1,5 +1,6 @@
 import { sqliteConfiguration } from "../storage/sqliteContext";
 import { readCodexSessionGoals } from "./codexSessionGoals";
+import { getCodexHomeStateKey } from "../codex/authFile";
 import { isCodexQuotaInterruption } from "../domain/codexSessionState";
 import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
@@ -24,7 +25,7 @@ import type {
   DashboardCliSessionSummary,
   DashboardCliSandboxMode
 } from "../domain/dashboard/types";
-import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive, runCrossWindowSharedRead, sharedResourceKey } from "../utils/crossWindowOperations";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
@@ -151,6 +152,10 @@ export async function readCodexCliSessions(
 }
 
 async function readLocalSessionList(codexHome: string, limit: number): Promise<DashboardCliSessionSummary[]> {
+  return runCrossWindowSharedRead(sharedResourceKey("local-session-list", [getCodexHomeStateKey(codexHome), limit]), "Local session discovery", () => readLocalSessionListInternal(codexHome, limit));
+}
+
+async function readLocalSessionListInternal(codexHome: string, limit: number): Promise<DashboardCliSessionSummary[]> {
   const state = await readStateSessionRecords(codexHome);
   const index = await readCodexCliSessionIndex(codexHome).catch((error: unknown) => {
     if (!state.length) throw error;

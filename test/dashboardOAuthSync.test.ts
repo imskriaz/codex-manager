@@ -25,6 +25,38 @@ vi.mock("../src/application/accounts/queuedAccountActivation", () => ({
 import { DashboardOAuthCoordinator } from "../src/presentation/dashboard/oauthCoordinator";
 
 describe("dashboard OAuth encrypted sync", () => {
+  it("shares duplicate listeners and commits concurrent callback completion once", async () => {
+    let finish!: (tokens: Record<string, string>) => void;
+    const pending = new Promise<Record<string, string>>(resolve => { finish = resolve; });
+    oauthMocks.listen.mockReturnValue(pending);
+    oauthMocks.complete.mockReturnValue(pending);
+    const repo = { upsertFromTokens: vi.fn().mockResolvedValue({ id: "one", email: "one@example.com" }) };
+    const notify = vi.fn(), coordinator = new DashboardOAuthCoordinator(repo as never, vi.fn(), undefined, notify);
+    const id = coordinator.prepareSession(key => key)?.oauthSession?.sessionId;
+    const first = coordinator.startAutoFlow(id, key => key), duplicate = coordinator.startAutoFlow(id, key => key);
+    const manual = coordinator.completeSession(id, "http://localhost/callback?code=ok", key => key);
+    finish({ idToken: "id", accessToken: "access" });
+    const results = await Promise.all([first, duplicate, manual]);
+    expect(results.every(result => result?.email === "one@example.com")).toBe(true);
+    expect(oauthMocks.listen).toHaveBeenCalledOnce(); expect(repo.upsertFromTokens).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledOnce(); expect(quotaMocks.refresh).toHaveBeenCalledOnce();
+    await expect(coordinator.completeSession(id, "http://localhost/callback?code=ok", key => key)).resolves.toEqual(results[0]);
+    coordinator.dispose();
+  });
+
+  it("keeps the selected reauthorization identity after session cancellation during exchange", async () => {
+    let finish!: (tokens: Record<string, string>) => void;
+    oauthMocks.complete.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const repo = { upsertFromTokens: vi.fn(), updateTokens: vi.fn() };
+    const coordinator = new DashboardOAuthCoordinator(repo as never, vi.fn());
+    const id = coordinator.prepareSession(key => key, "expected-account")?.oauthSession?.sessionId;
+    const pending = coordinator.completeSession(id, "http://localhost/callback?code=ok", key => key);
+    const outcome = expect(pending).rejects.toThrow("message.oauthCallbackFailed");
+    coordinator.cancelSession(id); finish({ idToken: "wrong-account", accessToken: "access" });
+    await outcome; expect(repo.upsertFromTokens).not.toHaveBeenCalled(); expect(repo.updateTokens).not.toHaveBeenCalled();
+    coordinator.dispose();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     oauthMocks.prepare.mockReturnValue({

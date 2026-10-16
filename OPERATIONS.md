@@ -6,6 +6,12 @@ No pending action disables the entire dashboard or all controls on an account. O
 
 ## Dashboard operation inventory
 
+Cross-window coordination lives in `src/utils/crossWindowOperations.ts` and the shared SQLite store. Locks cover one Codex home, account, canonical file, or Git common directory; unrelated resources remain independent. Token renewal rereads Secret Storage after acquiring its account lease and checks the original credentials before saving. Credentials stay in Secret Storage; shared read keys are hashed and result caches contain no OAuth tokens.
+
+Quota, reset-credit, profile, subscription, and local session discovery share compatible reads. Provider admission allows two requests across local hosts, including at most one bulk request, with shared pacing and server cooldown. Individual read cancellation leaves other consumers running. Read caches are bounded and expendable; failed cache writes preserve completed results. Failed mutations remain visible and retain required storage and authorization checks.
+
+Dashboard and Command Palette account batches use `src/application/accounts/batch.ts` for deduplication, pacing, and per-account outcomes. Browser login/logout updates share one session-list lease. OAuth exchanges retain a single-use marker across restarts, and duplicate callback completion saves and notifies once. Reset-credit generations reject snapshots that began before redemption; uncertain redemption remains fenced until verified. File revision checks and writes share a canonical path lease; Git add/commit/push share the canonical common-directory lease.
+
 Every action in `DashboardActionName` is listed below. “Required work” describes what must actually finish before success can be reported; none of these actions globally blocks the dashboard.
 
 | Operations | Required work and failure behavior |

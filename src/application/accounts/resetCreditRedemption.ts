@@ -32,7 +32,8 @@ export async function redeemAccountResetCredit(
       .filter((credit) => credit.status === undefined || credit.status === "available")
       .map((credit) => credit.id)
       .filter((id): id is string => Boolean(id));
-    await repo.updateResetCreditsSnapshot(accountId, snapshot.availableCount, snapshot.nextExpiresAt, ids);
+    const accepted = await repo.updateResetCreditsSnapshot(accountId, snapshot.availableCount, snapshot.nextExpiresAt, ids, snapshot.requestStartedAt, snapshot.generation);
+    if (accepted === false) throw new Error("The reset-credit snapshot became outdated. Refresh quota before retrying.");
     await repo.flush?.();
     account = await repo.getAccount(accountId);
     if (!account || snapshot.availableCount <= 0)

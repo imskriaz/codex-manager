@@ -436,7 +436,7 @@ function App() {
     selectedPeerId,
     handleActionTimeout
   );
-  const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId);
+  const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled !== false);
   const snapshot = state.snapshot;
   useEffect(() => {
     if (isBrowserDashboard || !snapshot || onboardingVisibilityResolvedRef.current) {
@@ -1380,7 +1380,7 @@ function App() {
     const key = snapshot && snapshot.settings.dailyTokenUsageEnabled !== false && currentUsageAccountId ? `${selectedPeerId}:${currentUsageAccountId}` : undefined;
     if (loadedUsageAccountRef.current === key) return;
     loadedUsageAccountRef.current = key;
-    if (key && currentUsageAccountId) sendAction("getDailyUsage", currentUsageAccountId, { days: 30, automatic: true });
+    if (key && currentUsageAccountId) tokenHistoryRefresh.refresh([currentUsageAccountId], true);
   }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled]);
 
   if (!snapshot) {

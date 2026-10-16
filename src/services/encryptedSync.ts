@@ -13,7 +13,7 @@ import { readCrossWindowActiveAccountIds } from "./windowAccountMode";
 import type { AccountClaimRequest, AccountClaimResult } from "./accountClaimAuthority";
 import type { SharedCodexManagerAccountJson } from "../core/types";
 import { AccountsRepository } from "../storage";
-import { CrossWindowOperationBusyError, runCrossWindowExclusive, runEncryptedSyncOperation, runSharedMaintenance } from "../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError, runCrossWindowExclusive, runCrossWindowJoined, runEncryptedSyncOperation, runSharedMaintenance } from "../utils/crossWindowOperations";
 import { getCodexManagerConfiguration, getSyncHeartbeatMinutes } from "../infrastructure/config/extensionSettings";
 import { clearTokenAutomationError } from "../presentation/workbench/tokenAutomationState";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
@@ -1898,7 +1898,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
     }
     // Share the first Secret Storage read/write across startup and realtime
     // callers. Otherwise two callers can persist and publish different IDs.
-    const pending = Promise.resolve(this.context.secrets.get(DEVICE_KEY)).then(async (existing) => {
+    const pending = runCrossWindowJoined("identity:device", "Device identity", async () => {
+      const existing = await this.context.secrets.get(DEVICE_KEY);
       if (existing) {
         return existing;
       }

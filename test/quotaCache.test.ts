@@ -60,6 +60,28 @@ function createUsageResponse(usedPercent: number): Response {
 }
 
 describe("quota cache invalidation", () => {
+  it("separates concurrent reads with different credentials and renewal permissions", async () => {
+    let finish!: (value: Response) => void;
+    fetchWithTimeoutMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+    fetchWithTimeoutMock.mockImplementation(async () => createUsageResponse(20));
+    const original = refreshQuota(account, tokens, true);
+    await vi.waitFor(() => expect(fetchWithTimeoutMock).toHaveBeenCalledOnce());
+    const changed = refreshQuota(account, { ...tokens, accessToken: "different-credentials" }, true, { allowTokenRefresh: false });
+    await expect(changed).resolves.toMatchObject({ quota: { hourlyPercentage: 80 } });
+    expect(fetchWithTimeoutMock).toHaveBeenCalledTimes(2);
+    finish(createUsageResponse(10)); await original;
+
+    clearQuotaCacheForAccount(account.id);
+    needsTokenRefreshMock.mockReturnValue(true);
+    const expired = { ...tokens, accessToken: "expired-policy", refreshToken: "refresh" };
+    const renew = vi.fn(async () => ({ ...tokens, accessToken: "rotated-policy" }));
+    await Promise.all([refreshQuota(account, expired, true, { allowTokenRefresh: false }),
+      refreshQuota(account, expired, true, { allowTokenRefresh: true, renewTokens: renew })]);
+    expect(renew).toHaveBeenCalledOnce();
+    const headers = fetchWithTimeoutMock.mock.calls.map(call => new Headers(call[1].headers).get("Authorization"));
+    expect(headers).toContain("Bearer expired-policy"); expect(headers).toContain("Bearer rotated-policy");
+  });
+
   const account: CodexManagerAccountRecord = {
     id: "account-1",
     email: "dev@example.com",

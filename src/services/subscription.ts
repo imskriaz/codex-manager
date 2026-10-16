@@ -11,6 +11,7 @@ import type { CodexManagerAccountRecord } from "../core/types";
 import { fetchWithTimeout, summarizeNetworkBody } from "../utils/network";
 import { logNetworkEvent } from "../utils/debug";
 import { APIError } from "../core/errors";
+import { runCrossWindowSharedRead, sharedResourceKey } from "../utils/crossWindowOperations";
 import { isFreePlanType } from "../utils/quotaLabels";
 import {
   SUBSCRIPTION_ACCOUNTS_CHECK_URL,
@@ -20,6 +21,7 @@ import {
 
 /** 订阅状态快照 */
 export interface SubscriptionStatusSnapshot {
+  requestStartedAt?: number;
   accountId?: string;
   planType?: string;
   subscriptionActiveUntil?: string;
@@ -77,6 +79,16 @@ export async function fetchSubscriptionStatus(
   organizationId?: string,
   accountName?: string,
   accountStructure?: string
+): Promise<SubscriptionStatusSnapshot> {
+  return runCrossWindowSharedRead(sharedResourceKey("subscription", [accessToken, accountId, organizationId, accountName, accountStructure]), "Subscription details", async () => {
+    const requestStartedAt = Date.now();
+    const snapshot = await fetchSubscriptionStatusInternal(accessToken, accountId, organizationId, accountName, accountStructure);
+    return { ...snapshot, requestStartedAt };
+  });
+}
+
+async function fetchSubscriptionStatusInternal(
+  accessToken: string, accountId?: string, organizationId?: string, accountName?: string, accountStructure?: string
 ): Promise<SubscriptionStatusSnapshot> {
   // 第一步：accounts/check
   const snapshot = await fetchAccountCheck(accessToken, accountId, organizationId, accountName, accountStructure);

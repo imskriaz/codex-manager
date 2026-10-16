@@ -802,6 +802,7 @@ describe("auto refresh scheduler", () => {
       listAccounts: vi.fn(async () => accounts),
       getAccount: vi.fn(async (id: string) => accounts.find((account) => account.id === id)),
       getTokens: vi.fn(async () => ({ accessToken: "old", idToken: "id", refreshToken: "old-refresh" })),
+      refreshAccountTokens: vi.fn(async (id: string) => { const tokens = await refreshTokensMock(); await repo.updateTokens(id, tokens); return tokens; }),
       updateTokens: vi.fn(async () => accounts[0])
     } as unknown as AccountsRepository;
     const view = { refresh: vi.fn() };

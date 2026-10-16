@@ -94,6 +94,8 @@ export interface CodexResetCredit {
 
 /** Codex 主动重置次数快照 */
 export interface CodexResetCreditsSnapshot {
+  requestStartedAt?: number;
+  generation?: number;
   availableCount: number;
   credits: CodexResetCredit[];
   nextExpiresAt?: number;
@@ -141,6 +143,10 @@ export interface CodexQuotaErrorInfo {
  * 账号记录
  */
 export interface CodexManagerAccountRecord {
+  resetCreditsRequestAt?: number;
+  resetCreditsGeneration?: number;
+  profileRequestAt?: number;
+  subscriptionRequestAt?: number;
   /** 内部存储 ID */
   id: string;
   /** 登录时间戳 (毫秒) */

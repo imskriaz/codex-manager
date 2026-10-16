@@ -37,7 +37,8 @@ describe("fetchRemoteAccountProfile", () => {
     const controller = new AbortController();
     const tokens = { idToken: createJwt({ email: "cancel@example.test" }), accessToken: "cancel-profile-access" };
     fetchWithTimeoutMock.mockImplementation(async (_url: unknown, init: RequestInit) => {
-      expect(init.signal).toBe(controller.signal);
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(init.signal?.aborted).toBe(false);
       controller.abort();
       throw new DOMException("Aborted", "AbortError");
     });

@@ -44,13 +44,23 @@ describe("quota usage graph", () => {
 
   it("consolidates daily tokens by their saved account and date without double counting", () => {
     const events = buildDailyTokenUsageEvents([
-      { accountId: "a", fetchedAt: 1, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 10 }] } },
-      { accountId: "b", fetchedAt: 2, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 20 }] } },
-      { accountId: "a", fetchedAt: 3, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 15 }] } }
+      { accountId: "a", fetchedAt: 1, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 110, extensionTokens: 10 }] } },
+      { accountId: "b", fetchedAt: 2, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 220, surfaceValues: { vscode: 20, cli: 200 } }] } },
+      { accountId: "a", fetchedAt: 3, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 115, extensionTokens: 15 }] } }
     ]);
     expect(events.map(event => [event.accountId, event.used])).toEqual([["a", 15], ["b", 20]]);
     expect(events.every(event => event.at === Date.parse("2026-10-15T00:00:00Z"))).toBe(true);
   });
+  it("excludes CLI and unknown totals while preserving an explicit VS Code zero", () => {
+    const events = buildDailyTokenUsageEvents([{ accountId: "a", fetchedAt: 1, usage: { days: 3, points: [
+      { date: "2026-10-13", totalTokens: 900, surfaceValues: { cli: 900 } },
+      { date: "2026-10-14", totalTokens: 700 },
+      { date: "2026-10-15", totalTokens: 500, extensionTokens: 0 }
+    ] } }]);
+    expect(events).toMatchObject([{ accountId: "a", used: 0 }]);
+    expect(events).toHaveLength(1);
+  });
+
 });
 
 

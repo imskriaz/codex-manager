@@ -236,6 +236,8 @@ function isValidAccountsIndex(value: unknown): value is CodexManagerIndex {
       Number.isFinite(record.createdAt) &&
       typeof record.updatedAt === "number" &&
       Number.isFinite(record.updatedAt) &&
+      [record.profileRequestAt, record.subscriptionRequestAt, record.resetCreditsRequestAt].every(value => value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0)) &&
+      (record.resetCreditsGeneration === undefined || (Number.isSafeInteger(record.resetCreditsGeneration) && record.resetCreditsGeneration >= 0)) &&
       (record.sessionStartedAt === undefined ||
         (typeof record.sessionStartedAt === "number" && Number.isFinite(record.sessionStartedAt))) &&
       (record.lastSelectedAt === undefined ||

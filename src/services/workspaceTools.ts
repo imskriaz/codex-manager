@@ -1,3 +1,4 @@
+import { runCrossWindowExclusive, sharedPathKey } from "../utils/crossWindowOperations";
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
 import * as crypto from "crypto";
 import { promises as fs } from "fs";
@@ -207,10 +208,12 @@ export async function deleteWorkspaceFile(
   filePath: string | undefined
 ): Promise<string> {
   const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
+  return runCrossWindowExclusive(sharedPathKey("workspace-file", absolute), "Workspace file change", async () => {
   const stat = await fs.stat(absolute);
   if (!stat.isFile()) throw new Error("Only files can be deleted from the project tree.");
   await fs.unlink(absolute);
   return relative;
+  });
 }
 
 function terminalInfo(terminal: vscode.Terminal): DashboardWorkspaceTerminalInfo {
@@ -337,6 +340,7 @@ export async function saveWorkspaceFile(
   }
   if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) throw new Error("Keep edited files under 1 MB.");
   const { relative, absolute } = await resolveReadableWorkspaceFile(projectPath, filePath);
+  return runCrossWindowExclusive(sharedPathKey("workspace-file", absolute), "Workspace file change", async () => {
   const stat = await fs.stat(absolute);
   if (!stat.isFile()) throw new Error("Choose a file from the project tree.");
   const currentSnapshot = await readSafeFileSnapshot(absolute, {
@@ -373,6 +377,7 @@ export async function saveWorkspaceFile(
   }
   const contentBuffer = Buffer.from(content, "utf8");
   return { path: relative, content, language: languageForFile(relative), kind: "text", mimeType: textMimeTypeForFile(relative), size: contentBuffer.byteLength, revision: workspaceFileRevision(contentBuffer) };
+  });
 }
 
 function workspaceFileRevision(content: Buffer): string {
@@ -715,10 +720,15 @@ export async function commitWorkspaceChanges(
   if (!message) throw new Error("Enter a commit message before committing changes.");
   if (message.length > 200) throw new Error("Keep the commit message under 200 characters.");
   const cwd = resolveWorkspaceProjectPath(projectPath);
+  const repository = await runProcess("git", ["rev-parse", "--git-common-dir"], cwd, GIT_TIMEOUT_MS);
+  if (repository.exitCode !== 0 || repository.timedOut) throw new Error("Git repository could not be verified. Retry after Git responds.");
+  const canonical = await fs.realpath(path.resolve(cwd, repository.stdout.trim()));
+  return runCrossWindowExclusive(sharedPathKey("workspace-git", canonical), "Git repository change", async () => {
   await requireSuccessfulGit(["add", "--all"], cwd, "Workspace changes could not be staged.");
   await requireSuccessfulGit(["commit", "-m", message], cwd, "Git could not create the commit.");
   environmentReads.delete(cwd);
   return readEnvironmentAfterGitMutation(cwd);
+  });
 }
 
 export async function pushWorkspaceBranch(
@@ -727,9 +737,14 @@ export async function pushWorkspaceBranch(
 ): Promise<DashboardWorkspaceEnvironment | undefined> {
   if (confirmed !== true) throw new Error("Confirm pushing the current branch, then try again.");
   const cwd = resolveWorkspaceProjectPath(projectPath);
+  const repository = await runProcess("git", ["rev-parse", "--git-common-dir"], cwd, GIT_TIMEOUT_MS);
+  if (repository.exitCode !== 0 || repository.timedOut) throw new Error("Git repository could not be verified. Retry after Git responds.");
+  const canonical = await fs.realpath(path.resolve(cwd, repository.stdout.trim()));
+  return runCrossWindowExclusive(sharedPathKey("workspace-git", canonical), "Git repository change", async () => {
   await requireSuccessfulGit(["push"], cwd, "Git could not push the current branch.", COMMAND_TIMEOUT_MS);
   environmentReads.delete(cwd);
   return readEnvironmentAfterGitMutation(cwd);
+  });
 }
 
 async function readEnvironmentAfterGitMutation(cwd: string): Promise<DashboardWorkspaceEnvironment | undefined> {

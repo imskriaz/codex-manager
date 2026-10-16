@@ -10921,6 +10921,9 @@ html[data-theme="dark"] .cli-terminal-panel {
   text-overflow: ellipsis;
 }
 .usage-graph-controls { flex-shrink: 0; }
+.usage-graph-summary-trigger { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; padding: 2px 0; border: 0; border-radius: 3px; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
+.usage-graph-summary-trigger:hover .usage-graph-summary { color: var(--text-primary); }
+.usage-graph-summary-trigger:focus-visible { outline: 1px solid var(--accent-blue); outline-offset: 2px; }
 .usage-graph-status {
   max-width: 55px;
   padding: 2px 0;
@@ -10977,6 +10980,14 @@ html[data-theme="dark"] .cli-terminal-panel {
   line-height: 1.35;
   pointer-events: none;
 }
+.usage-graph-accounts-tooltip { width: 320px; gap: 5px; padding: 10px; overflow-y: auto; pointer-events: auto; }
+.usage-graph-accounts-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.usage-graph-accounts-heading span { color: var(--text-secondary); font-size: 10px; }
+.usage-graph-accounts-list { display: grid; max-height: min(240px, 45vh); overflow-y: auto; border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); padding: 4px 0; }
+.usage-graph-account-stat { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: center; gap: 6px; min-height: 24px; font-size: 10px; }
+.usage-graph-account-stat i { width: 7px; height: 7px; border-radius: 2px; }
+.usage-graph-account-stat > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-graph-account-stat strong { font-size: 10px; font-weight: 600; white-space: nowrap; }
 .usage-graph-tooltip time { color: var(--text-secondary); font-size: 10px; }
 .usage-graph-tooltip-account { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .usage-graph-tooltip-account strong { overflow-wrap: anywhere; font-weight: 600; }

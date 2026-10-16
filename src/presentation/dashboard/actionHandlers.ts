@@ -1,3 +1,4 @@
+import { runAccountBatch } from "../../application/accounts/batch";
 import * as vscode from "vscode";
 import { readWorkspaceTerminalActivity } from "../../services/dashboardRealtime";
 import { createHash } from "node:crypto";
@@ -33,7 +34,7 @@ import {
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import { respondCodexAppServerPrompt } from "../../services/codexAppServerPrompts";
 import { getCodexSessionLiveState } from "../../services/codexSessionLive";
-import { unloadAuthFile } from "../../codex";
+import { unloadAuthFile, runCodexHomeOperation } from "../../codex";
 import { queryDashboardUsage } from "../../services/dashboardUsageHistory";
 import { loadDailyTokenUsage } from "../../services/dailyTokenUsage";
 import {
@@ -68,8 +69,7 @@ import type { DashboardLanguage } from "../../localization/languages";
 import { getErrorMessage } from "../../core";
 import type { SwitchAccountCommandResult } from "../../application/accounts/commandService";
 import { AccountsRepository } from "../../storage";
-import { runWithConcurrencyLimit, waitWithin } from "../../utils/concurrency";
-import { runWithBulkProviderRequests } from "../../utils/network";
+import { waitWithin } from "../../utils/concurrency";
 import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
 import { clearAutoSwitchLock, setAutoSwitchLock } from "../workbench/autoSwitchState";
@@ -154,7 +154,6 @@ import {
   handleCodexAppRestartPreference,
   promptWindowReloadForAccount
 } from "../../application/accounts/switchEffects";
-import { refreshTokens } from "../../auth/oauth";
 import { consumeDashboardActionNotice, shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 import { runWithPersistentOperation } from "../../utils/persistentLog";
 import { markOnboardingCompleted } from "../../services/onboarding";
@@ -179,8 +178,6 @@ export type DashboardActionContext = {
   getRemoteCliSessions?: () => DashboardCliSessionSummary[];
 };
 
-const CODEX_BATCH_REFRESH_CONCURRENCY = 1;
-const CODEX_BATCH_REFRESH_DELAY_MS = 300;
 const ACCOUNT_REQUIRED_ACTIONS = new Set<DashboardActionName>([
   "exportAuthFile",
   "setAutoSwitchLock",
@@ -589,6 +586,7 @@ async function runDashboardAction(
     case "disableAll":
       return handleDisableAll(ctx.repo, ctx.schedulePublishState);
     case "unloadAuth": {
+      return runCodexHomeOperation("Sign out", async () => {
       const activeAccount = (await ctx.repo.listAccounts()).find((candidate) => candidate.isActive);
       await unloadAuthFile();
       let releaseWarning: string | undefined;
@@ -617,6 +615,7 @@ async function runDashboardAction(
               : "Codex auth unloaded. Reloading; Codex will stay signed out until you log in or switch an account."
         }
       };
+          });
     }
     case "reloadPrompt":
       return handleReloadPrompt(account, payload, ctx.hostKind === "browser");
@@ -924,11 +923,7 @@ async function handleRefreshToken(
       throw new Error("No refresh token is available. Reauthorize this account.");
     }
 
-    const refreshed = await refreshTokens(tokens.refreshToken, tokens.idToken);
-    await repo.updateTokens(account.id, {
-      ...refreshed,
-      accountId: refreshed.accountId ?? account.accountId ?? tokens.accountId
-    });
+    await repo.refreshAccountTokens(account.id, { force: true });
     markTokenAutomationRefreshSuccess(account.id);
     schedulePublishState();
 
@@ -1353,42 +1348,14 @@ async function handleBatchRefresh(
   payload: DashboardActionPayload | undefined,
   translate: ReturnType<typeof t>
 ) {
-  const requestedIds = [...new Set(payload?.accountIds ?? [])];
-  const accountsById = new Map(
-    await Promise.all(requestedIds.map(async (id) => [id, await repo.getAccount(id)] as const))
-  );
-  const targetIds = requestedIds;
-  let success = 0;
-  let failed = 0;
-  const failures: DashboardBatchResultFailure[] = [];
-  await runWithBulkProviderRequests(() => runWithConcurrencyLimit(
-    targetIds,
-    CODEX_BATCH_REFRESH_CONCURRENCY,
-    async (id) => {
-      try {
+  const batchResult = await runAccountBatch(repo, payload?.accountIds ?? [], async id => {
         const result = await refreshSingleQuota(repo, { refresh() {} }, id, {
-          announce: false,
-          forceRefresh: true,
-          refreshView: false,
-          warnQuota: false
+          announce: false, forceRefresh: true, refreshView: false, warnQuota: false
         });
         if (result.error || result.skipped) throw new Error(result.error?.message ?? "Quota refresh was skipped.");
-        success += 1;
-      } catch (error) {
-        failed += 1;
-        failures.push({
-          accountId: id,
-          email: accountsById.get(id)?.email,
-          message: toFailureMessage(error)
-        });
-        console.warn(`[codexManager] batch quota refresh failed for ${id}:`, error);
-      } finally {
-        // Keep completed accounts visible while a later account is slow.
-        schedulePublishState();
-      }
-    },
-    { delayMs: CODEX_BATCH_REFRESH_DELAY_MS }
-  ));
+  }, { kind: "batch_refresh", onComplete: schedulePublishState });
+  const success = batchResult.successCount;
+  const failed = batchResult.failedCount;
   schedulePublishState();
   const message = translate("message.batchRefreshSummary", {
     success,
@@ -1399,14 +1366,7 @@ async function handleBatchRefresh(
   } else {
     void vscode.window.showInformationMessage(message);
   }
-  return {
-    batchResult: {
-      kind: "batch_refresh" as const,
-      successCount: success,
-      failedCount: failed,
-      failures
-    }
-  };
+  return { batchResult };
 }
 
 async function handleBatchResync(
@@ -1415,34 +1375,11 @@ async function handleBatchResync(
   payload: DashboardActionPayload | undefined,
   translate: ReturnType<typeof t>
 ) {
-  const targetIds = [...new Set(payload?.accountIds ?? [])];
-  const accountsById = new Map(
-    await Promise.all(targetIds.map(async (id) => [id, await repo.getAccount(id)] as const))
-  );
-  let success = 0;
-  let failed = 0;
-  const failures: DashboardBatchResultFailure[] = [];
-  await runWithBulkProviderRequests(() => runWithConcurrencyLimit(
-    targetIds,
-    4,
-    async (id) => {
-      try {
+  const batchResult = await runAccountBatch(repo, payload?.accountIds ?? [], async id => {
         await resyncAccountInfo(repo, id);
-        success += 1;
-      } catch (error) {
-        failed += 1;
-        failures.push({
-          accountId: id,
-          email: accountsById.get(id)?.email,
-          message: toFailureMessage(error)
-        });
-        console.warn(`[codexManager] batch profile resync failed for ${id}:`, error);
-      } finally {
-        schedulePublishState();
-      }
-    },
-    { delayMs: CODEX_BATCH_REFRESH_DELAY_MS }
-  ));
+  }, { kind: "batch_resync", onComplete: schedulePublishState });
+  const success = batchResult.successCount;
+  const failed = batchResult.failedCount;
   schedulePublishState();
   const message = translate("message.batchResyncSummary", {
     success,
@@ -1453,14 +1390,7 @@ async function handleBatchResync(
   } else {
     void vscode.window.showInformationMessage(message);
   }
-  return {
-    batchResult: {
-      kind: "batch_resync" as const,
-      successCount: success,
-      failedCount: failed,
-      failures
-    }
-  };
+  return { batchResult };
 }
 
 async function resyncAccountInfo(repo: AccountsRepository, accountId: string): Promise<void> {

@@ -80,7 +80,7 @@ describe("resetCreditsBackfill", () => {
         nextExpiresAt: 1_800_000_000
       })
     );
-    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith("account-1", 1, 1_800_000_000);
+    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith("account-1", 1, 1_800_000_000, [], undefined, undefined);
     expect(onUpdated).toHaveBeenCalled();
     expect(updated).toBe(true);
   });

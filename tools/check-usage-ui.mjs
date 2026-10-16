@@ -22,8 +22,14 @@ const mockHost = `(() => {
   const day = 86400000;
   const date = new Date(Date.now() - day).toISOString().slice(0,10);
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
-  window.__usageActions = []; window.__deferredUsage = []; window.__dailyResults = []; window.__dailyActive = 0; window.__dailyMax = 0;
+  window.__missingUsageIds = []; window.__usageActions = []; window.__deferredUsage = []; window.__dailyResults = []; window.__dailyActive = 0; window.__dailyMax = 0;
   window.__addUsageAccounts = () => { state = {...state, accounts:[...state.accounts, ...["c","d","e","f","g","h"].map(id => ({...state.accounts[1],id,email:id+"@example.invalid"}))]}; dispatch({type:"dashboard:snapshot",state}); };
+  window.__setUsageAutomatic = enabled => { state = {...state,settings:{...state.settings,dailyTokenUsageEnabled:enabled}}; dispatch({type:"dashboard:snapshot",state}); };
+  window.__addMissingAccounts = () => {
+    window.__missingUsageIds = ["i","j","k","l"];
+    state = {...state, settings:{...state.settings,dailyTokenUsageEnabled:true}, usageSummary:{...state.usageSummary,revision:state.usageSummary.revision+1}, accounts:[...state.accounts,...window.__missingUsageIds.map(id => ({...state.accounts[1],id,email:id+"@example.invalid"}))]};
+    dispatch({type:"dashboard:snapshot",state});
+  };
   window.__releaseDaily = () => { window.__holdDaily = false; for (const result of window.__dailyResults.splice(0)) { window.__dailyActive--; dispatch(result); } };
   window.__finishUsage = () => { for (const result of window.__deferredUsage.splice(0).reverse()) dispatch(result); };
   window.acquireVsCodeApi = () => ({ postMessage(message) {
@@ -43,12 +49,13 @@ const mockHost = `(() => {
           history: query.mode === 'quota' ? state.accounts.flatMap(account => [
             {accountId:account.id,at:query.from + 60000,hourly:90},
             {accountId:account.id,at:query.to - 60000,hourly:80}]) : [],
-          dailyUsageCache: query.mode === 'tokens' ? state.accounts.map((account,index) => ({accountId:account.id,
-            fetchedAt:Date.now() - (index ? 60000 : 2 * day),usage:{days:30,points:window.__emptyUsage ? [] : window.__richUsage ? Array.from({length:30},(_,i) => ({date:new Date(query.to-(30-i)*day).toISOString().slice(0,10),totalTokens:window.__zeroUsage ? 0 : (1+(i*7)%11)*1234*(index+1),surfaceValues:window.__zeroUsage ? {} : {cli:1000,vscode:234}})) : [{date,totalTokens:tokens * (index + 1)}]}})) : []};
+          dailyUsageCache: query.mode === 'tokens' ? state.accounts.filter(account => !window.__missingUsageIds.includes(account.id)).map((account,index) => ({accountId:account.id,
+            fetchedAt:Date.now() - (index ? 60000 : 2 * 3600000),usage:{days:30,points:window.__emptyUsage ? [] : window.__richUsage ? Array.from({length:30},(_,i) => ({date:new Date(query.to-(30-i)*day).toISOString().slice(0,10),totalTokens:window.__zeroUsage ? 0 : (1+(i*7)%11)*1234*(index+1),surfaceValues:{cli:1000,vscode:window.__zeroUsage ? 0 : 234}})) : [{date:query.to-query.from===day ? new Date(query.to-day).toISOString().slice(0,10) : date,totalTokens:tokens * (index + 1) + 500,extensionTokens:tokens * (index + 1)}]}})) : []};
         if (window.__failUsage) { window.__failUsage = false; error = 'Saved graph database is temporarily unavailable.'; }
       } else if (message.action === 'getDailyUsage') {
-        payload = {dailyUsage:{days:30,points:[{date,totalTokens:100}]},dailyUsageFetchedAt:Date.now()};
+        payload = {dailyUsage:{days:30,points:[{date,totalTokens:600,extensionTokens:100}]},dailyUsageFetchedAt:Date.now()};
         if (window.__failDaily === message.accountId) error = "Token endpoint temporarily unavailable.";
+        else window.__missingUsageIds = window.__missingUsageIds.filter(id => id !== message.accountId);
       }
       const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,
         accountId:message.accountId,status:error ? 'failed' : 'completed',payload,error};
@@ -112,7 +119,7 @@ try {
     await quotaSummary.waitFor();
     assert.equal(await quotaSummary.locator(".usage-graph-cache-row").count(), 2);
     assert.match(await quotaSummary.innerText(), /10%/);
-    await page.getByRole("button", { name: "Daily token usage", exact: true }).click();
+    await page.getByRole("button", { name: "VS Code token usage", exact: true }).click();
     await page.locator('.usage-graph-bar-hitarea[aria-label*="100 tokens"]').waitFor();
     assert.equal(await page.locator(".usage-graph-bar-hitarea").count(), 2, "Both cached accounts appear");
     assert.equal(new Set(await page.locator(".usage-graph-bar").evaluateAll(bars => bars.map(bar => bar.getAttribute("fill")))).size, 2, "Account colours remain distinct");
@@ -129,6 +136,27 @@ try {
     assert.ok(box.x >= 0 && box.x + box.width <= width && box.y >= 0 && box.y + box.height <= 900, "Tooltip stays inside viewport");
     await page.screenshot({ path: path.join(output, `tokens-${width}.png`) });
     await page.keyboard.press("Escape");
+
+    const statsTrigger = page.getByRole("button", { name: "View account usage stats", exact: true });
+    await statsTrigger.click();
+    const accountStats = page.getByRole("tooltip", { name: "Account usage stats", exact: true });
+    await accountStats.waitFor();
+    assert.equal(await accountStats.locator(".usage-graph-account-stat").count(), 2);
+    assert.match(await accountStats.innerText(), /VS Code tokens/);
+    assert.match(await accountStats.innerText(), /100 tokens/);
+    assert.match(await accountStats.innerText(), /200 tokens/);
+    const statsBounds = await accountStats.boundingBox();
+    assert.ok(statsBounds.x >= 8 && statsBounds.x + statsBounds.width <= width - 7 && statsBounds.y >= 8 && statsBounds.y + statsBounds.height <= 893, "Account stats stay inside the viewport");
+    await page.screenshot({ path: path.join(output, `account-stats-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await page.mouse.move(width - 1, 899);
+    assert.equal(await accountStats.count(), 0, "Escape dismisses account stats");
+    assert.deepEqual(await page.getByRole("combobox", { name: "Graph time range" }).locator("option").allTextContents(), ["1D", "7D", "30D"]);
+    await page.getByRole("combobox", { name: "Graph time range" }).selectOption("24h");
+    await page.locator('.usage-graph-bar-hitarea[aria-label*="700 tokens"]').waitFor();
+    assert.equal((await chart.boundingBox()).height, quotaHeight);
+    await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");
+    await page.locator('.usage-graph-bar-hitarea[aria-label*="100 tokens"]').waitFor();
 
     await page.evaluate(() => { window.__failUsage = true; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("7d");
@@ -162,7 +190,7 @@ try {
     assert.equal((await chart.boundingBox()).height, quotaHeight);
     await page.evaluate(() => { window.__emptyUsage = true; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");
-    await chart.getByText("No saved tokens in this period", { exact: true }).waitFor();
+    await chart.getByText("No saved VS Code tokens in this period", { exact: true }).waitFor();
     assert.equal((await chart.boundingBox()).height, quotaHeight);
 
     if (width === 1440) {
@@ -201,6 +229,33 @@ try {
         await page.screenshot({ path: path.join(output, "bulk-failure.png") });
         throw error;
       });
+    }
+    if (width === 1440) {
+      await page.keyboard.press("Escape");
+      await page.mouse.move(width - 1, 899);
+      await page.evaluate(() => { window.__holdDaily = true; window.__failDaily = "j"; window.__addMissingAccounts(); });
+      await page.waitForFunction(() => window.__dailyResults.length === 3);
+      const startedBeforeOff = await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage" && ["i","j","k","l"].includes(action.accountId)).length);
+      await page.evaluate(() => window.__setUsageAutomatic(false));
+      await page.locator("#settingsOpenButton").click();
+      await page.locator("#settings-tab-data").click();
+      const automaticToggle = page.getByRole("button", { name: "Automatic token history", exact: true });
+      await automaticToggle.waitFor();
+      assert.equal(await automaticToggle.getAttribute("aria-pressed"), "false");
+      await page.keyboard.press("Escape");
+      await page.evaluate(() => window.__releaseDaily());
+      await page.waitForFunction(() => window.__dailyActive === 0);
+      assert.equal(await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage" && ["i","j","k","l"].includes(action.accountId)).length), startedBeforeOff, "Turning automatic collection off cancels queued checks");
+      await page.evaluate(() => window.__setUsageAutomatic(true));
+      await page.waitForFunction(() => ["i","j","k","l"].every(id => window.__usageActions.some(action => action.action === "getDailyUsage" && action.accountId === id && action.payload.automatic === true)));
+      await page.waitForFunction(() => window.__missingUsageIds.length === 1);
+      const autoChecks = await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage" && ["i","j","k","l"].includes(action.accountId)));
+      assert.equal(autoChecks.length, 4, "Missing usage loads without opening account stats");
+      await statsTrigger.click();
+      await accountStats.waitFor();
+      await accountStats.locator(".usage-graph-account-stat").filter({ hasText: "j@example.invalid" }).getByText("Failed", { exact:true }).waitFor();
+      assert.equal(await accountStats.locator(".usage-graph-account-stat").count(), 12, "The tooltip lists every account");
+      assert.equal(await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage" && ["i","j","k","l"].includes(action.accountId)).length), 4, "Opening stats does not fetch or retry usage");
     }
     await page.keyboard.press("Escape");
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "The graph fits the viewport");

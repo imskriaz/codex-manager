@@ -157,9 +157,9 @@ export class SqliteStateStore {
     this.prepare("DELETE FROM state WHERE namespace = ? AND key < ?").run(namespace, key);
   }
 
-  transaction<T>(write: () => T): T {
+  transaction<T>(write: () => T, mode: "write" | "read" = "write"): T {
     const savepoint = `manager_nested_${this.depth}`;
-    this.database.exec(this.depth ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
+    this.database.exec(this.depth ? `SAVEPOINT ${savepoint}` : mode === "read" ? "BEGIN" : "BEGIN IMMEDIATE");
     this.depth++;
     try {
       const result = write();
@@ -172,7 +172,7 @@ export class SqliteStateStore {
       throw error;
     } finally {
       this.depth--;
-      this.changed();
+      if (mode !== "read") this.changed();
     }
   }
 

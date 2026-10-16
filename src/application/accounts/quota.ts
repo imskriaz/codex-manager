@@ -1,6 +1,8 @@
 import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { waitWithin } from "../../utils/concurrency";
+import { sharedResourceKey } from "../../utils/crossWindowOperations";
+import { runWithBulkProviderRequests } from "../../utils/network";
 import { publishDashboardRealtime } from "../../services/dashboardRealtime";
 import { readRunningCodexSessionIds } from "../../services/codexSessionResume";
 import {
@@ -107,32 +109,41 @@ export async function refreshSingleQuota(
   accountId: string,
   options: RefreshSingleQuotaOptions = {}
 ): Promise<QuotaRefreshResult> {
+  const account = await repo.getAccount(accountId);
+  if (!account) throw createError.accountNotFound(accountId);
+  if (options.skipDisabled && account.enabled === false) {
+    if (options.announce !== false) void vscode.window.showWarningMessage(formatDisabledQuotaSkip(formatAccountToastLabel(account)));
+    return { skipped: "disabled" };
+  }
+  const tokens = await repo.getTokens(accountId, { bypassCache: true });
   // Background/manual batch refreshes frequently converge on the same account
   // (scheduler, safety sweep, and a dashboard click). Share one request for
   // silent callers so token reads, network fetches, and index writes are not
   // duplicated. User-facing calls keep their own notification semantics.
   if (options.announce === false && !options.awaitSubscriptionRefresh) {
-    const existing = silentQuotaRefreshes.get(accountId);
+    const requestKey = sharedResourceKey("quota-caller", [accountId, tokens, options]);
+    const existing = silentQuotaRefreshes.get(requestKey);
     if (existing) return existing;
-    const task = coordinatedQuotaRefresh(repo, view, accountId, options).finally(() => {
-      if (silentQuotaRefreshes.get(accountId) === task) silentQuotaRefreshes.delete(accountId);
+    const task = coordinatedQuotaRefresh(repo, view, accountId, options, tokens).finally(() => {
+      if (silentQuotaRefreshes.get(requestKey) === task) silentQuotaRefreshes.delete(requestKey);
     });
-    silentQuotaRefreshes.set(accountId, task);
+    silentQuotaRefreshes.set(requestKey, task);
     return task;
   }
-  return coordinatedQuotaRefresh(repo, view, accountId, options);
+  return coordinatedQuotaRefresh(repo, view, accountId, options, tokens);
 }
 
 async function coordinatedQuotaRefresh(
   repo: AccountsRepository,
   view: RefreshView,
   accountId: string,
-  options: RefreshSingleQuotaOptions
+  options: RefreshSingleQuotaOptions,
+  tokens: CodexTokens | undefined
 ): Promise<QuotaRefreshResult> {
-  const run = (): Promise<QuotaRefreshResult> =>
-    runAndFlush(repo, () => refreshSingleQuotaInternal(repo, view, accountId, options));
-  const key = `network:account-quota:${accountId}`;
-  if (options.announce !== false || options.forceRefresh === true) return runCrossWindowExclusive(key, "Quota refresh", run);
+  const execute = () => runAndFlush(repo, () => refreshSingleQuotaInternal(repo, view, accountId, options, tokens));
+  const run = (): Promise<QuotaRefreshResult> => options.announce === false && !options.forceRefresh ? runWithBulkProviderRequests(execute) : execute();
+  if (options.announce !== false || options.forceRefresh === true) return run();
+  const key = sharedResourceKey("network:account-quota", [accountId, tokens, options]);
   const result = await runSharedMaintenance(key, "Quota refresh", 15_000, run);
   if (result.ran) return result.value!;
   // Another window completed the maintenance request. Re-read its durable
@@ -153,7 +164,8 @@ async function refreshSingleQuotaInternal(
   repo: AccountsRepository,
   view: RefreshView,
   accountId: string,
-  options: RefreshSingleQuotaOptions = {}
+  options: RefreshSingleQuotaOptions,
+  tokens: CodexTokens | undefined
 ): Promise<QuotaRefreshResult> {
   const announce = options.announce ?? true;
   const forceRefresh = options.forceRefresh ?? announce;
@@ -171,10 +183,6 @@ async function refreshSingleQuotaInternal(
     return { skipped: "disabled" };
   }
 
-  // Quota refresh can rotate OAuth tokens. Read through to SecretStorage so a
-  // concurrent background refresh (or another Codex process) cannot leave this
-  // request using a stale cached refresh token.
-  const tokens = await repo.getTokens(accountId, { bypassCache: true });
   if (!tokens) {
     throw createError.accountNotFound(account.email);
   }
@@ -182,7 +190,8 @@ async function refreshSingleQuotaInternal(
   const allowTokenRefresh = (options.allowTokenRefresh ?? true) && account.tokenRefreshEnabled === true;
   const refreshStartedAt = Date.now();
   let result = await refreshQuota(account, tokens, forceRefresh, {
-    allowTokenRefresh
+    allowTokenRefresh,
+    ...(repo.refreshAccountTokens ? { renewTokens: () => repo.refreshAccountTokens(accountId) } : {})
   });
   let effectiveTokens = tokens;
   if (!allowTokenRefresh && account.isActive && getQuotaIssueKind(result.error) === "auth") {
@@ -204,7 +213,8 @@ async function refreshSingleQuotaInternal(
     result.error,
     result.updatedTokens,
     result.updatedPlanType,
-    result.updatedSubscriptionActiveUntil
+    result.updatedSubscriptionActiveUntil,
+    effectiveTokens
   );
   recordAccountQuotaCheck(updatedAccount, updatedAccount.lastQuotaAt ?? Date.now());
   // 后台异步拉取重置次数明细（含最新可用次数与最近到期时间），不阻塞配额刷新
@@ -261,7 +271,9 @@ async function refreshSingleQuotaInternal(
       void vscode.window.showInformationMessage(copy.quotaRefreshed(label));
     }
   }
-  const subscriptionRefresh = repo.refreshSubscriptionState(accountId, forceRefresh);
+  const subscriptionRefresh = awaitSubscriptionRefresh
+    ? repo.refreshSubscriptionState(accountId, forceRefresh)
+    : runWithBulkProviderRequests(() => repo.refreshSubscriptionState(accountId, forceRefresh));
   if (awaitSubscriptionRefresh) {
     await subscriptionRefresh;
   } else {
@@ -317,7 +329,8 @@ async function refreshImportedAccountQuotaInternal(
   }
 
   const result = await refreshQuota(account, tokens, true, {
-    allowTokenRefresh: account.tokenRefreshEnabled === true
+    allowTokenRefresh: account.tokenRefreshEnabled === true,
+    ...(repo.refreshAccountTokens ? { renewTokens: () => repo.refreshAccountTokens(accountId) } : {})
   });
   const updatedAccount = await repo.updateQuota(
     accountId,
@@ -325,7 +338,8 @@ async function refreshImportedAccountQuotaInternal(
     result.error,
     result.updatedTokens,
     result.updatedPlanType,
-    result.updatedSubscriptionActiveUntil
+    result.updatedSubscriptionActiveUntil,
+    tokens
   );
   if (!result.error && updatedAccount.quotaSummary) {
     const credTokens = result.updatedTokens ?? tokens;
@@ -407,9 +421,12 @@ async function syncResetCreditsSnapshot(
       accountId,
       snapshot.availableCount,
       snapshot.nextExpiresAt,
-      availableIds
+      availableIds,
+      snapshot.requestStartedAt,
+      snapshot.generation
     );
-    await update;
+    const applied = await update;
+    if (applied === false) return false;
     view?.refresh();
     return true;
   } catch (error) {

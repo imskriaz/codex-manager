@@ -1,3 +1,4 @@
+import { runAccountBatch } from "./batch";
 import * as path from "path";
 import * as vscode from "vscode";
 import { loginWithOAuth } from "../../auth";
@@ -7,8 +8,7 @@ import { CodexManagerAccountRecord, SharedCodexManagerAccountJson } from "../../
 import { AccountsRepository } from "../../storage";
 import { buildAccountStorageId } from "../../utils/accountIdentity";
 import { extractClaims } from "../../utils/jwt";
-import { runWithConcurrencyLimit, waitWithin } from "../../utils/concurrency";
-import { runWithBulkProviderRequests } from "../../utils/network";
+import { waitWithin } from "../../utils/concurrency";
 import { needsWindowReloadForAccount } from "../../presentation/workbench/windowRuntimeAccount";
 import { getCommandCopy, getLanguage, logNetworkEvent, resolveLongQuotaLabel, t } from "../../utils";
 import { getAutoRefreshMinutes, getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
@@ -32,14 +32,9 @@ import {
   promptWindowReloadForAccount
 } from "./switchEffects";
 import { activateQueuedAccountIfCurrentMissing } from "./queuedAccountActivation";
-import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../../utils/crossWindowOperations";
 import { shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 import { publishDashboardRealtime } from "../../services/dashboardRealtime";
 import type { DashboardBatchResult } from "../../domain/dashboard/types";
-const REFRESH_ALL_SILENT_CONCURRENCY = 1;
-const REFRESH_ALL_MANUAL_CONCURRENCY = 2;
-const REFRESH_ALL_SILENT_DELAY_MS = 300;
-const REFRESH_ALL_MANUAL_DELAY_MS = 150;
 
 export type SwitchAccountCommandResult = {
   status: "switched" | "already-active" | "cancelled";
@@ -384,57 +379,24 @@ export class AccountsCommandService {
           (!wasAccountQuotaCheckedWithin(account, quotaCheckGapMs) &&
             !(typeof account.lastQuotaAt === "number" && Date.now() - account.lastQuotaAt < quotaCheckGapMs))
       );
-    let success = 0;
-    let failed = 0;
-    const failures: DashboardBatchResult["failures"] = [];
+    let batchResult: DashboardBatchResult = { kind: "batch_refresh", successCount: 0, failedCount: 0, failures: [] };
     const refreshAll = async (progress?: vscode.Progress<{ message?: string; increment?: number }>) => {
-      let started = 0;
-      await runWithBulkProviderRequests(() => runWithConcurrencyLimit(
-        accounts,
-        options?.silent ? REFRESH_ALL_SILENT_CONCURRENCY : REFRESH_ALL_MANUAL_CONCURRENCY,
-        async (account) => {
-          started += 1;
-          progress?.report({ message: copy.refreshingStep(started, accounts.length, account.email) });
-          if (options?.silent) {
-            try {
-              await runCrossWindowExclusive(`quota:refresh:${account.id}`, "Quota refresh", () =>
-                refreshSingleQuotaSafely(this.repo, this.view, account.id, {
-                  allowTokenRefresh: true,
-                  forceRefresh: options.forceRefresh,
-                  skipDisabled: true,
-                  canUseAccount: this.canAutomateAccount
-                })
-              );
-            } catch (error) {
-              if (!(error instanceof CrossWindowOperationBusyError)) {
-                throw error;
-              }
-            }
-            return;
-          }
-          try {
-            const result = await runCrossWindowExclusive(`quota:refresh:${account.id}`, "Quota refresh", () =>
-              refreshSingleQuota(this.repo, this.view, account.id, {
-                announce: false,
-                forceRefresh: options?.forceRefresh ?? true,
-                refreshView: false,
-                warnQuota: false
-              })
-            );
-            if (result.error || result.skipped) throw new Error(result.error?.message ?? "Quota refresh was skipped.");
-            success += 1;
-          } catch (error) {
-            failed += 1;
-            failures.push({ accountId: account.id, email: account.email, message: getErrorMessage(error) });
-            console.warn(`[codexManager] refresh all failed for ${account.email}:`, error);
-          } finally {
-            // Publish each completed account so the initiating dashboard and
-            // other windows do not wait for the slowest account in the batch.
-            this.view.refresh();
-          }
-        },
-        { delayMs: options?.silent ? REFRESH_ALL_SILENT_DELAY_MS : REFRESH_ALL_MANUAL_DELAY_MS }
-      ));
+      batchResult = await runAccountBatch(this.repo, accounts.map(account => account.id), async id => {
+        if (options?.silent) {
+          await refreshSingleQuotaSafely(this.repo, this.view, id, {
+            allowTokenRefresh: true, forceRefresh: options.forceRefresh, skipDisabled: true, canUseAccount: this.canAutomateAccount
+          });
+          return;
+        }
+        const result = await refreshSingleQuota(this.repo, this.view, id, {
+          announce: false, forceRefresh: options?.forceRefresh ?? true, refreshView: false, warnQuota: false
+        });
+        if (result.error || result.skipped) throw new Error(result.error?.message ?? "Quota refresh was skipped.");
+      }, {
+        kind: "batch_refresh", background: options?.silent,
+        onStart: (id, started, total) => progress?.report({ message: copy.refreshingStep(started, total, accounts.find(account => account.id === id)?.email ?? id) }),
+        onComplete: () => this.view.refresh()
+      });
     };
 
     if (options?.silent) {
@@ -443,6 +405,7 @@ export class AccountsCommandService {
       await this.withProgress(copy.progressRefreshAll, refreshAll);
     }
 
+    const { successCount: success, failedCount: failed } = batchResult;
     this.view.refresh();
     if (options?.silent) {
       const switched = await maybeAutoSwitchForActiveQuota(this.repo, this.view, { canUseAccount: this.canAutomateAccount });
@@ -455,7 +418,7 @@ export class AccountsCommandService {
       } else {
         void vscode.window.showInformationMessage(message);
       }
-      return { kind: "batch_refresh", successCount: success, failedCount: failed, failures };
+      return batchResult;
     }
     return undefined;
   }

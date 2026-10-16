@@ -92,8 +92,9 @@ async function backfillMissingResetCreditExpiriesInternal(
             }`
           );
         }
-        await repo.updateResetCreditsSnapshot(account.id, snapshot.availableCount, snapshot.nextExpiresAt);
-        updated = true;
+        const accepted = await repo.updateResetCreditsSnapshot(account.id, snapshot.availableCount, snapshot.nextExpiresAt,
+          snapshot.credits.filter(credit => credit.status === undefined || credit.status === "available").flatMap(credit => credit.id ? [credit.id] : []), snapshot.requestStartedAt, snapshot.generation);
+        if (accepted !== false) updated = true;
       } catch (error) {
         console.warn(
           `[codexManager] reset credits backfill failed for ${account.email ?? account.id}:`,

@@ -690,7 +690,7 @@ export function SettingsOverlay(props: {
             <div class="settings-layout">
               <SettingsToggleBlock
                 title="Automatic token history"
-                sub="On account load, collect daily token usage for the current account at most once every 24 hours. Inactive accounts are never polled. Saved history remains available when off."
+                sub="On account load, collect daily token usage for the current account at most once every hour. Missing account history is collected when the token chart loads. Saved history remains available when off."
                 enabled={props.settings.dailyTokenUsageEnabled !== false}
                 className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}

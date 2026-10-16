@@ -72,6 +72,7 @@ describe("AccountsRepository token persistence", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await removeTestDirectory(tempDir);
   }, 15_000);
 
@@ -306,7 +307,7 @@ describe("AccountsRepository token persistence", () => {
     const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     await expect(repo.init()).resolves.toEqual({ authSyncCompleted: false });
 
-    expect(runExclusive).toHaveBeenCalledWith("background:account-auth-sync", "Account auth sync", expect.any(Function));
+    expect(runExclusive).toHaveBeenCalledWith(`account:switch:${getCodexHomeStateKey()}`, "Account auth sync", expect.any(Function), { waitMs: 0 });
     runExclusive.mockRestore();
     repo.dispose();
   });
@@ -333,7 +334,7 @@ describe("AccountsRepository token persistence", () => {
     const repo = new AccountsRepository(context, path.join(tempDir, "accounts-index.json"));
     await expect(repo.init()).resolves.toEqual({ authSyncCompleted: false });
 
-    expect(runExclusive).toHaveBeenCalledWith("accounts:index-persist", "Account index save", expect.any(Function));
+    expect(runExclusive).toHaveBeenCalledWith("accounts:index-persist", "Account index save", expect.any(Function), { waitMs: 2_000 });
     runExclusive.mockRestore();
     repo.dispose();
   });

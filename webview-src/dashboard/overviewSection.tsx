@@ -1,6 +1,6 @@
 import type { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { createPortal } from "preact/compat";
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, RefObject } from "preact";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type {
   DashboardAccountViewModel,
@@ -11,7 +11,6 @@ import type {
   DashboardUsageGraphData,
   DashboardUsageGraphQuery
 } from "../../src/domain/dashboard/types";
-import type { CodexDailyUsageBreakdown } from "../../src/core/types";
 import type { DashboardUsageSample } from "../../src/domain/dashboard/types";
 import { formatRelativeTimestamp, formatTimestamp, getSensitiveDisplayValue, resolveLockMinutes } from "./helpers";
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
@@ -760,7 +759,18 @@ function UsageGraph(props: {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [hovered, setHovered] = useState<{ bar: UsageGraphBar; anchor: UsageGraphAnchor }>();
+  const [accountSummary, setAccountSummary] = useState<{ anchor: UsageGraphAnchor; pinned: boolean }>();
+  const summaryButtonRef = useRef<HTMLButtonElement>(null);
+  const summaryPanelRef = useRef<HTMLDivElement>(null);
+  const summaryCloseTimer = useRef<ReturnType<typeof setTimeout>>();
   const tooltipId = useId();
+  const summaryTooltipId = useId();
+  const keepSummaryOpen = (): void => { clearTimeout(summaryCloseTimer.current); };
+  const dismissSummaryLater = (): void => {
+    keepSummaryOpen();
+    if (!accountSummary?.pinned) summaryCloseTimer.current = setTimeout(() => setAccountSummary(current => current?.pinned ? current : undefined), 150);
+  };
+  useEffect(() => () => clearTimeout(summaryCloseTimer.current), []);
   const cardRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -784,7 +794,7 @@ function UsageGraph(props: {
     color: USAGE_GRAPH_COLORS[index % USAGE_GRAPH_COLORS.length]!,
     device: account.runningDeviceName ? getSensitiveDisplayValue(account.runningDeviceName, props.privacyMode, "name") : undefined,
   }])), [props.accounts, props.privacyMode]);
-  const availableRanges = graphMode === "tokens" ? USAGE_GRAPH_RANGES.filter(candidate => candidate.key.endsWith("d")) : USAGE_GRAPH_RANGES;
+  const availableRanges = graphMode === "tokens" ? USAGE_GRAPH_RANGES.filter(candidate => candidate.durationMs >= 86_400_000) : USAGE_GRAPH_RANGES;
   const activeRange = availableRanges.some(candidate => candidate.key === range) ? range : graphMode === "tokens" ? "30d" : "1h";
   const rangeDuration = USAGE_GRAPH_RANGES.find(candidate => candidate.key === activeRange)!.durationMs;
   const queryWindow = useMemo(() => {
@@ -810,13 +820,21 @@ function UsageGraph(props: {
     return totals;
   }, [events]);
   const cacheByAccount = useMemo(() => new Map(dailyUsageCache.map(entry => [entry.accountId, entry])), [dailyUsageCache]);
+  const missingUsageAccounts = props.accounts.filter(account => !cacheByAccount.has(account.id));
+  useEffect(() => {
+    if (!props.automaticTokenHistory || graphMode !== "tokens" || !data || props.usageGraphPending || props.usageGraphError) return;
+    const missing = missingUsageAccounts.filter(account => !props.tokenHistoryRefresh?.statuses[account.id]);
+    if (missing.length) props.tokenHistoryRefresh?.refresh(missing.map(account => account.id), true);
+  }, [props.automaticTokenHistory, data, props.accounts, props.usageGraphPending, props.usageGraphError, props.tokenHistoryRefresh?.statuses]);
+  useEffect(() => { setAccountSummary(undefined); }, [graphMode, activeRange, windowOffset, props.usageGraphSource]);
+  useEffect(() => { if (settingsOpen) setAccountSummary(undefined); }, [settingsOpen]);
   const refreshErrors = Object.entries(props.tokenHistoryRefresh?.statuses ?? {}).filter(([, status]) => status.state === "error");
   const maximum = resolveUsageAxisMaximum(Math.max(0, ...events.map(event => event.used)));
   const bars = useMemo(() => layoutUsageGraphBars(events, graphStartAt, graphEndAt, bucketCount, maximum), [events, graphStartAt, graphEndAt, bucketCount, maximum]);
   const accountIds = new Set(events.map(event => event.accountId));
   const legend = props.accounts.filter(account => !accountIds.size || accountIds.has(account.id));
   const total = events.reduce((sum, event) => sum + event.used, 0);
-  const staleCount = dailyUsageCache.filter(entry => props.now - entry.fetchedAt >= 86_400_000).length;
+  const staleCount = dailyUsageCache.filter(entry => props.now - entry.fetchedAt >= 3_600_000).length;
   const missingCount = Math.max(0, props.accounts.length - dailyUsageCache.length);
   const pending = props.usageGraphPending || (graphMode === "tokens" && props.dailyUsagePending);
   const error = props.usageGraphError ?? (graphMode === "tokens" ? props.dailyUsageError : undefined);
@@ -825,25 +843,28 @@ function UsageGraph(props: {
   const status = pending ? "Updating" : error ? "Failed" : data?.truncated ? "Limited" : graphMode === "tokens"
     ? !dailyUsageCache.length ? "No data" : missingCount ? "Partial" : staleCount ? "Stale" : "Saved" : undefined;
   const statusDetail = error ?? (data?.truncated ? feedback : graphMode === "tokens"
-    ? `${dailyUsageCache.length} of ${props.accounts.length} accounts saved${staleCount ? ` · ${staleCount} stale` : ""}. ${props.automaticTokenHistory ? "Checked on account load, at most once per 24 hours." : "Automatic token history is off."}`
+    ? `${dailyUsageCache.length} of ${props.accounts.length} accounts saved${staleCount ? ` · ${staleCount} stale` : ""}. ${props.automaticTokenHistory ? "Checked on account load, at most once per hour." : "Automatic token history is off."}`
     : "Changes in each account's quota. Timing is estimated between refreshes.");
   const formatAxis = (value: number) => graphMode === "tokens" ? USAGE_COMPACT_NUMBER.format(value) : formatUsageValue(value);
   const showBar = (bar: UsageGraphBar, target: SVGRectElement): void => {
     setSettingsOpen(false);
+    keepSummaryOpen();
+    setAccountSummary(undefined);
     setHovered({ bar, anchor: target.getBoundingClientRect() });
   };
   useEffect(() => { setHovered(undefined); }, [data, graphMode, props.usageGraphSource]);
   useEffect(() => {
-    if (!settingsOpen && !hovered) return;
+    if (!settingsOpen && !hovered && !accountSummary) return;
     const dismiss = (event: PointerEvent): void => {
-      if (event.target instanceof Node && !cardRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) { setSettingsOpen(false); setHovered(undefined); }
+      if (event.target instanceof Node && !cardRef.current?.contains(event.target) && !menuRef.current?.contains(event.target) && !summaryPanelRef.current?.contains(event.target)) { setSettingsOpen(false); setHovered(undefined); setAccountSummary(undefined); }
     };
     const hideTooltip = (event: Event): void => {
       setHovered(undefined);
+      if (!(event.target instanceof Node && summaryPanelRef.current?.contains(event.target))) setAccountSummary(undefined);
       if (!(event.target instanceof Node && menuRef.current?.contains(event.target))) setSettingsOpen(false);
     };
     const escape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") { if (settingsOpen) menuButtonRef.current?.focus(); setSettingsOpen(false); setHovered(undefined); }
+      if (event.key === "Escape") { if (settingsOpen) menuButtonRef.current?.focus(); if (accountSummary) summaryButtonRef.current?.focus({ preventScroll: true }); setSettingsOpen(false); setHovered(undefined); keepSummaryOpen(); setAccountSummary(undefined); }
     };
     document.addEventListener("pointerdown", dismiss);
     document.addEventListener("keydown", escape);
@@ -855,15 +876,21 @@ function UsageGraph(props: {
       window.removeEventListener("resize", hideTooltip);
       window.removeEventListener("scroll", hideTooltip, true);
     };
-  }, [settingsOpen, Boolean(hovered)]);
+  }, [settingsOpen, Boolean(hovered), Boolean(accountSummary)]);
   const bucketTotal = hovered ? bars.filter(bar => bar.bucketStart === hovered.bar.bucketStart).reduce((sum, bar) => sum + bar.event.used, 0) : 0;
   return (
-    <div class="usage-graph-card" ref={cardRef} data-mode={graphMode} aria-label={graphMode === "tokens" ? "Daily token usage chart" : "Quota usage chart"}>
+    <div class="usage-graph-card" ref={cardRef} data-mode={graphMode} aria-label={graphMode === "tokens" ? "VS Code token usage chart" : "Quota usage chart"}>
       <div class="usage-graph-head">
         <div class="usage-graph-title">
           <strong>{graphMode === "tokens" ? "Tokens" : "Quota"}</strong>
-          <span class="usage-graph-summary" title={graphMode === "tokens" ? `${USAGE_EXACT_NUMBER.format(total)} tokens in this period` : "Accounts with quota changes in this period"}>
-            {graphMode === "tokens" ? `${USAGE_COMPACT_NUMBER.format(total)} total` : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"}`}
+          <button ref={summaryButtonRef} type="button" class="usage-graph-summary-trigger" aria-label="View account usage stats" aria-expanded={Boolean(accountSummary)} aria-describedby={accountSummary ? summaryTooltipId : undefined}
+            onMouseEnter={event => { keepSummaryOpen(); setHovered(undefined); setSettingsOpen(false); const anchor = event.currentTarget.getBoundingClientRect(); setAccountSummary(current => current?.pinned ? current : { anchor, pinned: false }); }}
+            onMouseLeave={dismissSummaryLater}
+            onFocus={event => { keepSummaryOpen(); setHovered(undefined); setSettingsOpen(false); const anchor = event.currentTarget.getBoundingClientRect(); setAccountSummary(current => current?.pinned ? current : { anchor, pinned: false }); }}
+            onBlur={dismissSummaryLater}
+            onClick={event => { keepSummaryOpen(); setHovered(undefined); setSettingsOpen(false); const anchor = event.currentTarget.getBoundingClientRect(); setAccountSummary(current => current?.pinned ? undefined : { anchor, pinned: true }); }}>
+          <span class="usage-graph-summary">
+            {graphMode === "tokens" ? events.length ? `${USAGE_COMPACT_NUMBER.format(total)} total` : "No data" : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"}`}
           </span>
           <span class="usage-graph-color-key" aria-label="Account color key">
             {legend.slice(0, USAGE_GRAPH_MAX_COLOR_KEYS).map(account => {
@@ -872,12 +899,13 @@ function UsageGraph(props: {
             })}
             {legend.length > USAGE_GRAPH_MAX_COLOR_KEYS ? <small>+{legend.length - USAGE_GRAPH_MAX_COLOR_KEYS}</small> : null}
           </span>
+          </button>
         </div>
         <div class="usage-graph-controls">
           {status ? <button type="button" class="usage-graph-status" data-warning={Boolean(error || data?.truncated || staleCount || missingCount)} title={statusDetail} aria-label={`Usage data: ${status}. ${statusDetail ?? ""}`} onClick={() => { setHovered(undefined); setSettingsOpen(open => !open); }}>{status}</button> : null}
           <div class="usage-graph-ranges">
             <select value={activeRange} aria-label="Graph time range" onChange={event => { setRange(event.currentTarget.value as UsageGraphRange); setWindowOffset(0); }}>
-              {availableRanges.map(candidate => <option key={candidate.key} value={candidate.key}>{candidate.label}</option>)}
+              {availableRanges.map(candidate => <option key={candidate.key} value={candidate.key}>{graphMode === "tokens" && candidate.key === "24h" ? "1D" : candidate.label}</option>)}
             </select>
           </div>
           <div class="usage-graph-settings-wrap">
@@ -885,8 +913,8 @@ function UsageGraph(props: {
             {settingsOpen ? createPortal(<div ref={menuRef} class="usage-graph-settings-popover" role="dialog" aria-label="Graph settings" style={{ left: menuPosition?.left ?? 8, top: menuPosition?.top ?? 8, visibility: menuPosition ? "visible" : "hidden" }}>
               <strong>Chart data</strong>
               <button type="button" class={graphMode === "quota" ? "active" : ""} aria-pressed={graphMode === "quota"} onClick={() => { setGraphMode("quota"); setRange("1h"); setWindowOffset(0); setSettingsOpen(false); }}>Quota changes</button>
-              <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { setGraphMode("tokens"); setRange("30d"); setWindowOffset(0); setSettingsOpen(false); }}>Daily token usage</button>
-              <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved daily totals across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at most once every 24 hours." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
+              <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { setGraphMode("tokens"); setRange("30d"); setWindowOffset(0); setSettingsOpen(false); }}>VS Code token usage</button>
+              <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved daily VS Code totals across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at most once every hour. Missing history loads automatically." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
               <div class="usage-graph-cache-head"><span>{graphMode === "tokens" ? "Saved accounts" : "Account usage"}</span>
                 {graphMode === "tokens" ? <button type="button" disabled={props.tokenHistoryRefresh?.busy || !props.accounts.length} onClick={() => props.tokenHistoryRefresh?.refresh(props.accounts.map(account => account.id))}>{renderRefreshIcon()} Refresh all</button> : <small>Used · last checked</small>}
               </div>
@@ -903,7 +931,7 @@ function UsageGraph(props: {
                     <i style={{ background: accountMap.get(account.id)?.color }} />
                     <span title={accountMap.get(account.id)?.label}>{accountMap.get(account.id)?.label}</span>
                     <small class={graphMode === "tokens" && refresh ? `is-${refresh.state}` : ""} role={graphMode === "tokens" && refresh ? "status" : undefined} title={graphMode === "tokens" && refresh ? refresh.message : `${graphMode === "quota" ? "Quota used in selected period. " : ""}Last successful check: ${checkedAt ? formatTimestamp(checkedAt, "Unknown") : "Not collected"}`}>
-                      {graphMode === "tokens" ? stateLabel ?? (entry ? `${props.now - entry.fetchedAt >= 86_400_000 ? "Stale · " : ""}${age}` : "Not collected") : `${formatUsageValue(usageByAccount.get(account.id) ?? 0)} · ${age}`}
+                      {graphMode === "tokens" ? stateLabel ?? (entry ? `${props.now - entry.fetchedAt >= 3_600_000 ? "Stale · " : ""}${age}` : "Not collected") : `${formatUsageValue(usageByAccount.get(account.id) ?? 0)} · ${age}`}
                     </small>
                     {graphMode === "tokens" ? <button class="usage-graph-account-refresh" type="button" disabled={pending} aria-busy={pending} aria-label={`Refresh token history for ${accountMap.get(account.id)?.label}`} title="Refresh this account's token history" onClick={() => props.tokenHistoryRefresh?.refresh([account.id])}>{renderRefreshIcon()}</button> : null}
                   </div>;
@@ -925,7 +953,7 @@ function UsageGraph(props: {
         </div>
         <div class="usage-graph-scroll">
           <div class="usage-graph-scroll-content">
-            <svg class="usage-graph" viewBox={`0 0 100 ${USAGE_GRAPH_VIEWBOX_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={graphMode === "tokens" ? "Daily token usage for all saved accounts" : "Quota used by account"}>
+            <svg class="usage-graph" viewBox={`0 0 100 ${USAGE_GRAPH_VIEWBOX_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={graphMode === "tokens" ? "VS Code token usage for all saved accounts" : "Quota used by account"}>
               {[10, 31, 52].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} class="usage-graph-gridline" />)}
               {hovered ? <rect class="usage-graph-cursor" x={((hovered.bar.bucketStart - graphStartAt) / duration) * 100} y="4" width={100 / bucketCount} height="48" /> : null}
               {bars.map((bar, index) => {
@@ -952,16 +980,49 @@ function UsageGraph(props: {
             </div>
           </div>
         </div>
-        {!events.length && !pending && !error ? <div class="usage-graph-empty"><strong>{graphMode === "tokens" ? "No saved tokens in this period" : "No quota changes yet"}</strong><span>{graphMode === "tokens" ? "Saved account totals appear here" : "Changes appear after quota refreshes"}</span></div> : null}
+        {!events.length && !pending && !error ? <div class="usage-graph-empty"><strong>{graphMode === "tokens" ? "No saved VS Code tokens in this period" : "No quota changes yet"}</strong><span>{graphMode === "tokens" ? "VS Code daily totals appear here" : "Changes appear after quota refreshes"}</span></div> : null}
         {events.length > 0 && total === 0 ? <div class="usage-graph-empty"><strong>No token use recorded</strong><span>Saved daily total: 0 tokens</span></div> : null}
         {feedback ? <div class="usage-graph-feedback" data-warning={Boolean(error || data?.truncated)} role={error || data?.truncated ? "alert" : "status"}>
           <span title={feedback}>{feedback}{previousPeriod ? " Showing the previous period." : ""}</span>
           {props.usageGraphError ? <button type="button" disabled={props.usageGraphPending} aria-label="Retry saved graph" onClick={() => loadQueryRef.current?.(queryWindow)}>Retry</button> : null}
         </div> : null}
       </div>
+      {accountSummary ? <UsageGraphAccountsTooltip id={summaryTooltipId} panelRef={summaryPanelRef} anchor={accountSummary.anchor} mode={graphMode} lang={props.lang} now={props.now} from={graphStartAt} to={graphEndAt} total={total} pending={Boolean(props.usageGraphPending)} error={props.usageGraphError} onMouseEnter={keepSummaryOpen} onMouseLeave={dismissSummaryLater}
+        rows={props.accounts.map(account => ({ ...accountMap.get(account.id)!, used: usageByAccount.get(account.id), checkedAt: graphMode === "tokens" ? cacheByAccount.get(account.id)?.fetchedAt : account.lastQuotaAt, refresh: graphMode === "tokens" ? props.tokenHistoryRefresh?.statuses[account.id] : undefined }))} /> : null}
       {hovered ? <UsageGraphTooltip id={tooltipId} bar={hovered.bar} anchor={hovered.anchor} account={accountMap.get(hovered.bar.event.accountId)} mode={graphMode} lang={props.lang} now={props.now} bucketTotal={bucketTotal} fetchedAt={dailyUsageCache.find(entry => entry.accountId === hovered.bar.event.accountId)?.fetchedAt} /> : null}
     </div>
   );
+}
+
+function UsageGraphAccountsTooltip(props: {
+  id: string; panelRef: RefObject<HTMLDivElement>; anchor: UsageGraphAnchor; mode: "quota" | "tokens";
+  lang: DashboardState["lang"]; now: number; from: number; to: number; total: number; pending: boolean; error?: string;
+  onMouseEnter: () => void; onMouseLeave: () => void;
+  rows: Array<{ label: string; color: string; used?: number; checkedAt?: number; refresh?: { state: string; message: string } }>;
+}) {
+  const [position, setPosition] = useState<{ left: number; top: number }>();
+  useLayoutEffect(() => {
+    const bounds = props.panelRef.current?.getBoundingClientRect();
+    if (bounds) {
+      const next = positionUsageGraphTooltip(props.anchor, bounds.width, bounds.height, window.innerWidth, window.innerHeight);
+      setPosition(previous => previous?.left === next.left && previous.top === next.top ? previous : next);
+    }
+  }, [props.anchor, props.rows, props.pending, props.error]);
+  const tokens = props.mode === "tokens";
+  const format = (value: number): string => tokens ? `${USAGE_EXACT_NUMBER.format(value)} tokens` : formatUsageValue(value);
+  const errors = [...new Set(props.rows.filter(row => row.refresh?.state === "error").map(row => row.refresh!.message))];
+  return createPortal(<div id={props.id} ref={props.panelRef} class="usage-graph-tooltip usage-graph-accounts-tooltip" role="tooltip" aria-label="Account usage stats" onMouseEnter={props.onMouseEnter} onMouseLeave={props.onMouseLeave} style={{ left: position?.left ?? 8, top: position?.top ?? 8, visibility: position ? "visible" : "hidden" }}>
+    <div class="usage-graph-accounts-heading"><strong>{tokens ? "VS Code tokens" : "Quota usage"}</strong><span>{props.rows.some(row => row.used !== undefined) ? format(props.total) : "No data"}</span></div>
+    <time>{formatGraphTime(props.from, props.lang, "date")} – {formatGraphTime(props.to - 1, props.lang, "date")}{tokens ? " · UTC" : ""}</time>
+    <div class="usage-graph-accounts-list" tabIndex={0} aria-label="Usage by account">
+      {props.rows.map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.checkedAt ? ` · Last checked ${formatTimestamp(row.checkedAt, "Unknown")}` : ""}${row.refresh ? ` · ${row.refresh.message}` : ""}`}>
+        <i style={{ background: row.color }} /><span>{row.label}</span><strong>{row.used !== undefined ? format(row.used) : row.refresh?.state === "pending" || row.refresh?.state === "queued" ? "Loading…" : row.refresh?.state === "error" ? "Failed" : props.pending ? "Loading…" : "No data"}</strong>
+      </div>)}
+      {!props.rows.length ? <span>No saved accounts.</span> : null}
+    </div>
+    <div class="usage-graph-tooltip-meta"><span>{tokens ? "VS Code only · daily totals" : "Estimated between quota checks"}</span>{props.pending ? <span role="status">Loading saved usage…</span> : null}</div>
+    {props.error || errors.length ? <div class="usage-graph-settings-error" role="alert">{props.error ?? errors.join("\n")}</div> : null}
+  </div>, document.body);
 }
 
 function UsageGraphTooltip(props: {
@@ -996,7 +1057,7 @@ function UsageGraphTooltip(props: {
     {tokens && props.bucketTotal > props.bar.event.used ? <div class="usage-graph-tooltip-combined"><span>All accounts this day</span><strong>{USAGE_EXACT_NUMBER.format(props.bucketTotal)} tokens</strong></div> : null}
     <div class="usage-graph-tooltip-meta">
       <span>{tokens ? today ? "Today so far · UTC" : "Saved daily total · UTC" : "Estimated between quota checks"}</span>
-      {tokens && props.fetchedAt ? <span data-stale={props.now - props.fetchedAt >= 86_400_000}>Updated {formatRelativeTimestamp(props.fetchedAt, props.now, "Unknown", props.lang)}{props.now - props.fetchedAt >= 86_400_000 ? " · Stale" : ""}</span> : null}
+      {tokens && props.fetchedAt ? <span data-stale={props.now - props.fetchedAt >= 3_600_000}>Updated {formatRelativeTimestamp(props.fetchedAt, props.now, "Unknown", props.lang)}{props.now - props.fetchedAt >= 3_600_000 ? " · Stale" : ""}</span> : null}
       {props.account?.device ? <span>{props.account.device}</span> : null}
     </div>
   </div>, document.body);
@@ -1006,46 +1067,12 @@ export function buildDailyTokenUsageEvents(entries: readonly DashboardDailyUsage
   const points = new Map<string, UsageEvent>();
   for (const entry of [...entries].sort((a, b) => a.fetchedAt - b.fetchedAt)) for (const point of entry.usage.points) {
     const at = Date.parse(`${point.date}T00:00:00Z`);
-    if (Number.isFinite(at) && Number.isFinite(point.totalTokens) && point.totalTokens >= 0) {
-      points.set(`${entry.accountId}:${point.date}`, { at, accountId: entry.accountId, used: point.totalTokens, segments: buildDailyUsageSegments(point) });
+    const used = point.extensionTokens ?? point.surfaceValues?.["vscode"] ?? point.surfaceValues?.["vs_code"] ?? point.surfaceValues?.["visual_studio_code"];
+    if (Number.isFinite(at) && typeof used === "number" && Number.isFinite(used) && used >= 0) {
+      points.set(`${entry.accountId}:${point.date}`, { at, accountId: entry.accountId, used, segments: [{ key: "Visual Studio Code", used, color: USAGE_GRAPH_COLORS[0]! }] });
     }
   }
   return [...points.values()].sort((a, b) => a.at - b.at);
-}
-
-function buildDailyUsageSegments(point: CodexDailyUsageBreakdown["points"][number]): UsageSegment[] {
-  const surfaceEntries = Object.entries(point.surfaceValues ?? {})
-    .filter(([, value]) => Number.isFinite(value) && value > 0)
-    .map(([key, value], index) => ({
-      key: formatUsageSurfaceLabel(key),
-      used: value,
-      color: USAGE_GRAPH_COLORS[index % USAGE_GRAPH_COLORS.length] ?? "#58a6ff"
-    }));
-  if (surfaceEntries.length) return surfaceEntries;
-  const fallback = [
-    ["Input", point.inputTokens],
-    ["Output", point.outputTokens],
-    ["Cached", point.cachedTokens]
-  ] as Array<[string, number | undefined]>;
-  const segments = fallback
-    .filter(([, value]) => typeof value === "number" && value > 0)
-    .map(([key, value], index) => ({
-      key,
-      used: value as number,
-      color: USAGE_GRAPH_COLORS[index % USAGE_GRAPH_COLORS.length] ?? "#58a6ff"
-    }));
-  return segments.length
-    ? segments
-    : [{ key: "Total", used: point.totalTokens, color: USAGE_GRAPH_COLORS[0] ?? "#58a6ff" }];
-}
-
-function formatUsageSurfaceLabel(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === "vscode" || normalized === "vs_code" || normalized === "visual_studio_code")
-    return "Visual Studio Code";
-  if (normalized === "work" || normalized === "chatgpt") return normalized === "work" ? "Work" : "ChatGPT";
-  if (normalized === "codex" || normalized === "cli") return "Codex CLI";
-  return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function selectUsageHistoryWindow(

@@ -288,7 +288,7 @@ describe("refreshSingleQuota token automation state", () => {
       forceRefresh: true
     });
 
-    expect(repo.updateQuota).toHaveBeenCalledWith(account.id, undefined, undefined, tokens, "pro", "1800000000");
+    expect(repo.updateQuota).toHaveBeenCalledWith(account.id, undefined, undefined, tokens, "pro", "1800000000", tokens);
   });
 
   it("can wait for the subscription refresh before completing account info sync", async () => {
@@ -446,7 +446,7 @@ describe("refreshSingleQuota token automation state", () => {
     await Promise.resolve();
 
     expect(fetchResetCreditsMock).toHaveBeenCalledWith(tokens.accessToken, "acct-1");
-    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 1, 1_800_000_000, []);
+    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 1, 1_800_000_000, [], undefined, undefined);
     expect(view.refresh).toHaveBeenCalled();
   });
 
@@ -492,7 +492,7 @@ describe("refreshSingleQuota token automation state", () => {
     await Promise.resolve();
 
     expect(fetchResetCreditsMock).toHaveBeenCalledWith(tokens.accessToken, "acct-2");
-    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 0, undefined, []);
+    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith(account.id, 0, undefined, [], undefined, undefined);
   });
 
 

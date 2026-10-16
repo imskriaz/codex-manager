@@ -9,8 +9,10 @@ import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqli
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
 import { APIError } from "../src/core/errors";
+import { fetchWithTimeout } from "../src/utils/network";
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 const usage = { days: 30, points: [{ date: "2026-10-15", totalTokens: 42 }] };
 let root: string;
 let store: SqliteStateStore;
@@ -33,7 +35,24 @@ afterEach(async () => {
 });
 
 describe("daily token usage on account load", () => {
-  it("shares a request and reuses the persisted result across contexts until exactly 24 hours", async () => {
+  it("uses the shared bulk budget for automatic history and foreground capacity for a manual check", async () => {
+    const budgets: boolean[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const slot = store.get<{ background: boolean }>("provider-budget", "0") ?? store.get<{ background: boolean }>("provider-budget", "1");
+      budgets.push(slot!.background);
+      return new Response(JSON.stringify(usage), { status: 200 });
+    });
+    const fetchUsage = async (signal: AbortSignal) => {
+      const response = await fetchWithTimeout("https://provider.example.test/usage", { signal });
+      return await response.json() as typeof usage;
+    };
+    await loadDailyTokenUsage(context(), "a", fetchUsage);
+    now += 1000;
+    await loadDailyTokenUsage(context(), "b", fetchUsage, { manual: true });
+    expect(budgets).toEqual([true, false]);
+  });
+
+  it("shares a request and reuses the persisted result across contexts until exactly one hour", async () => {
     const ctx = context();
     let complete!: (value: typeof usage) => void;
     const fetchUsage = vi.fn(() => new Promise<typeof usage>(resolve => { complete = resolve; }));
@@ -43,7 +62,7 @@ describe("daily token usage on account load", () => {
     await vi.waitFor(() => expect(fetchUsage).toHaveBeenCalledTimes(1));
     complete(usage);
     await expect(first).resolves.toMatchObject({ accountId: "a", usage });
-    now += DAY - 1;
+    now += HOUR - 1;
     await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).resolves.toMatchObject({ usage });
     expect(fetchUsage).toHaveBeenCalledTimes(1);
     now++;
@@ -52,14 +71,25 @@ describe("daily token usage on account load", () => {
     expect(fetchUsage).toHaveBeenCalledTimes(2);
   });
 
+  it("applies the hourly gap to existing saved data without changing its timestamp", async () => {
+    const fetchedAt = now - HOUR + 1;
+    await upsertDashboardDailyUsageCache(context(), "a", usage, fetchedAt);
+    const fetchUsage = vi.fn().mockResolvedValue(usage);
+    await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).resolves.toMatchObject({ fetchedAt });
+    expect(fetchUsage).not.toHaveBeenCalled();
+    now++;
+    await loadDailyTokenUsage(context(), "a", fetchUsage);
+    expect(fetchUsage).toHaveBeenCalledOnce();
+  });
+
   it("preserves old data on failure and persists the failed attempt without automatic retries", async () => {
     await upsertDashboardDailyUsageCache(context(), "a", usage, now - 2 * DAY);
     const fetchUsage = vi.fn().mockRejectedValue(new Error("offline"));
     await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow("offline");
     expect(readDashboardDailyUsage(context(), "a")?.usage).toEqual(usage);
-    await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow(/offline.*24 hours/);
+    await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow(/offline.*one hour/);
     expect(fetchUsage).toHaveBeenCalledTimes(1);
-    now += DAY;
+    now += HOUR;
     fetchUsage.mockResolvedValue(usage);
     await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).resolves.toMatchObject({ usage });
   });
@@ -145,18 +175,18 @@ describe("daily token usage on account load", () => {
     await expect(loadDailyTokenUsage(ctx, "after-drain", fetchUsage)).resolves.toMatchObject({ accountId: "after-drain" });
   });
 
-  it("honours a server retry delay longer than 24 hours", async () => {
-    const fetchUsage = vi.fn().mockRejectedValue(new APIError("rate limited", { statusCode: 429, context: { retryAt: now + 2 * DAY } }));
+  it("honours a server retry delay longer than one hour", async () => {
+    const fetchUsage = vi.fn().mockRejectedValue(new APIError("rate limited", { statusCode: 429, context: { retryAt: now + 2 * HOUR } }));
     await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow("rate limited");
-    now += DAY;
+    now += HOUR;
     await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow("server retry delays");
     expect(fetchUsage).toHaveBeenCalledTimes(1);
-    now += DAY;
+    now += HOUR;
     fetchUsage.mockResolvedValue(usage);
     await loadDailyTokenUsage(context(), "a", fetchUsage);
     expect(fetchUsage).toHaveBeenCalledTimes(2);
   });
-  it("refreshes manually inside 24 hours while retaining automatic throttling", async () => {
+  it("refreshes manually inside one hour while retaining automatic throttling", async () => {
     const ctx = context();
     const fetchUsage = vi.fn().mockResolvedValue(usage);
     await loadDailyTokenUsage(ctx, "a", fetchUsage);

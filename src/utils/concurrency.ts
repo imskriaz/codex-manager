@@ -88,7 +88,7 @@ export async function createSharedInspection<T>(
     const task = waitWithin(Promise.race([cancelled, Promise.resolve().then(() => {
       controller.signal.throwIfAborted();
       return inspect(controller.signal);
-    })]), 30_000, "Session inspection timed out.").finally(() => {
+    })]), 300_000, "Shared inspection timed out.").finally(() => {
       controller.abort();
       if (sharedInspections.get(key)?.task === task) sharedInspections.delete(key);
     });

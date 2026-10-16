@@ -1,6 +1,6 @@
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
-import { needsTokenRefresh, refreshTokens } from "../auth/oauth";
+import { needsTokenRefresh } from "../auth/oauth";
 import { CodexManagerAccountRecord, CodexDailyUsageBreakdown, CodexDailyUsagePoint } from "../core/types";
 import { resolveAccountHealth, isHealthDismissed } from "../application/accounts/health";
 import { resolveSubscriptionDisplay } from "../application/dashboard/buildDashboardState";
@@ -25,7 +25,7 @@ import {
   resolveLongQuotaLabel
 } from "../utils";
 import { formatRelativeReset, formatTimestamp } from "../utils/time";
-import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import { CrossWindowOperationBusyError } from "../utils/crossWindowOperations";
 
 let detailsPanel: vscode.WebviewPanel | undefined;
 let detailsPanelRequestId = 0;
@@ -196,22 +196,11 @@ async function getFreshUsageTokens(
     return tokens;
   }
 
-  const refreshed = await runCrossWindowExclusive(`background:token-refresh:${accountId}`, "Token refresh", () =>
-    refreshTokens(tokens.refreshToken!, tokens.idToken)
-  ).catch((error: unknown) => {
-    if (error instanceof CrossWindowOperationBusyError) {
-      return undefined;
-    }
+  const refreshed = await repo.refreshAccountTokens(accountId).catch((error: unknown) => {
+    if (error instanceof CrossWindowOperationBusyError) return undefined;
     throw error;
   });
-  if (!refreshed) {
-    return tokens;
-  }
-  await repo.updateTokens(accountId, {
-    ...refreshed,
-    accountId: refreshed.accountId ?? tokens.accountId
-  });
-
+  if (!refreshed) return tokens;
   return {
     ...tokens,
     ...refreshed,

@@ -19,6 +19,9 @@ import { extractClaims } from "../../utils/jwt";
 
 export class DashboardOAuthCoordinator {
   private static readonly SESSION_TTL_MS = 10 * 60 * 1000;
+  private readonly authorizations = new Map<string, Promise<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"]>>();
+  private readonly pendingAuthorizations = new Set<string>();
+  private readonly autoFlows = new Map<string, Promise<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] | undefined>>();
   private readonly oauthSessions = new Map<string, PreparedOAuthLoginSession>();
   private readonly oauthSessionCreatedAt = new Map<string, number>();
   private readonly oauthSessionAccountIds = new Map<string, string | undefined>();
@@ -38,6 +41,9 @@ export class DashboardOAuthCoordinator {
     });
     this.oauthCancellationSources.clear();
     this.oauthSessions.clear();
+    this.authorizations.clear();
+    this.pendingAuthorizations.clear();
+    this.autoFlows.clear();
     this.oauthSessionCreatedAt.clear();
     this.oauthSessionAccountIds.clear();
   }
@@ -47,6 +53,8 @@ export class DashboardOAuthCoordinator {
     accountId?: string
   ): Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] {
     try {
+      for (const id of this.oauthSessions.keys()) if (this.isSessionExpired(id)) this.cancelSession(id);
+      if (this.oauthSessions.size >= 32) throw new Error("The authorization queue is full. Cancel an unused login and retry.");
       const prepared = prepareOAuthLoginSession();
       const sessionId = `oauth-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       this.oauthSessions.set(sessionId, prepared);
@@ -88,6 +96,21 @@ export class DashboardOAuthCoordinator {
     oauthSessionId: string | undefined,
     translate: (key: TranslationKey, values?: TranslationParams) => string
   ): Promise<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] | undefined> {
+    if (oauthSessionId) {
+      const current = this.autoFlows.get(oauthSessionId);
+      if (current) return current;
+    }
+    const result = this.startAutoFlowInternal(oauthSessionId, translate).finally(() => {
+      if (oauthSessionId && this.autoFlows.get(oauthSessionId) === result) this.autoFlows.delete(oauthSessionId);
+    });
+    if (oauthSessionId) this.autoFlows.set(oauthSessionId, result);
+    return result;
+  }
+
+  private async startAutoFlowInternal(
+    oauthSessionId: string | undefined,
+    translate: (key: TranslationKey, values?: TranslationParams) => string
+  ): Promise<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] | undefined> {
     if (!oauthSessionId) {
       const message = translate("message.oauthPrepareFailed", {
         message: "Missing OAuth session"
@@ -106,28 +129,22 @@ export class DashboardOAuthCoordinator {
       throw new Error(message);
     }
 
+    const expectedAccountId = this.oauthSessionAccountIds.get(oauthSessionId);
     try {
       const source = new vscode.CancellationTokenSource();
       this.oauthCancellationSources.set(oauthSessionId, source);
       const tokens = await listenForPreparedOAuthLoginSession(session, source.token);
-      const created = await this.upsertAuthorizedAccount(oauthSessionId, tokens);
-      this.schedulePublishState();
-      this.reportAuthorized(oauthSessionId, created.email);
-      const completion = await this.finishAuthorizedAccount(created.id, created.email, translate);
+      const result = await this.finishAuthorization(oauthSessionId, tokens, translate, expectedAccountId);
       this.cancelSession(oauthSessionId);
-      this.schedulePublishState();
-      showOAuthCompletion(completion);
-      return {
-        email: created.email,
-        ...(completion.level === "warning" ? { notice: completion } : {})
-      };
+      return result;
     } catch (error) {
       const cancelled = error instanceof Error && error.message === "OAuth login cancelled by user.";
       this.oauthCancellationSources.get(oauthSessionId)?.dispose();
       this.oauthCancellationSources.delete(oauthSessionId);
       if (cancelled) {
-        this.oauthSessions.delete(oauthSessionId);
-        this.oauthSessionAccountIds.delete(oauthSessionId);
+        const completed = this.authorizations.get(oauthSessionId);
+        if (completed) return completed;
+        this.cancelSession(oauthSessionId);
         return undefined;
       }
       const message = translate("message.oauthCallbackFailed", {
@@ -151,6 +168,8 @@ export class DashboardOAuthCoordinator {
       throw new Error(message);
     }
 
+    const completed = this.authorizations.get(oauthSessionId);
+    if (completed) return completed;
     const session = this.oauthSessions.get(oauthSessionId);
     if (!session || this.isSessionExpired(oauthSessionId)) {
       this.cancelSession(oauthSessionId);
@@ -161,23 +180,12 @@ export class DashboardOAuthCoordinator {
       throw new Error(message);
     }
 
+    const expectedAccountId = this.oauthSessionAccountIds.get(oauthSessionId);
     try {
       const tokens = await completeOAuthLoginSession(session, callbackUrl.trim());
-      const created = await this.upsertAuthorizedAccount(oauthSessionId, tokens);
-      this.schedulePublishState();
-      this.reportAuthorized(oauthSessionId, created.email);
-      const completion = await this.finishAuthorizedAccount(created.id, created.email, translate);
-      this.oauthCancellationSources.get(oauthSessionId)?.dispose();
-      this.oauthCancellationSources.delete(oauthSessionId);
-      this.oauthSessions.delete(oauthSessionId);
-      this.oauthSessionCreatedAt.delete(oauthSessionId);
-      this.oauthSessionAccountIds.delete(oauthSessionId);
-      this.schedulePublishState();
-      showOAuthCompletion(completion);
-      return {
-        email: created.email,
-        ...(completion.level === "warning" ? { notice: completion } : {})
-      };
+      const result = await this.finishAuthorization(oauthSessionId, tokens, translate, expectedAccountId);
+      this.cancelSession(oauthSessionId);
+      return result;
     } catch (error) {
       const message = translate("message.oauthCallbackFailed", {
         message: error instanceof Error ? error.message : String(error)
@@ -185,6 +193,32 @@ export class DashboardOAuthCoordinator {
       void vscode.window.showErrorMessage(message);
       throw new Error(message);
     }
+  }
+
+  private finishAuthorization(sessionId: string, tokens: Awaited<ReturnType<typeof completeOAuthLoginSession>>, translate: (key: TranslationKey, values?: TranslationParams) => string, expectedAccountId?: string) {
+    const previous = this.authorizations.get(sessionId);
+    if (previous) return previous;
+    if (!this.oauthSessions.has(sessionId)) throw new Error("OAuth login cancelled by user.");
+    if (this.authorizations.size >= 64) {
+      const completed = [...this.authorizations.keys()].find(id => !this.pendingAuthorizations.has(id));
+      if (!completed) throw new Error("Authorization completion is busy. Retry shortly.");
+      this.authorizations.delete(completed);
+    }
+    this.pendingAuthorizations.add(sessionId);
+    const result = (async () => {
+      const created = await this.upsertAuthorizedAccount(tokens, expectedAccountId);
+      this.schedulePublishState();
+      this.reportAuthorized(sessionId, created.email);
+      const completion = await this.finishAuthorizedAccount(created.id, created.email, translate);
+      this.schedulePublishState();
+      showOAuthCompletion(completion);
+      return { email: created.email, ...(completion.level === "warning" ? { notice: completion } : {}) };
+    })().catch((error: unknown) => {
+      if (this.authorizations.get(sessionId) === result) this.authorizations.delete(sessionId);
+      throw error;
+    }).finally(() => { this.pendingAuthorizations.delete(sessionId); });
+    this.authorizations.set(sessionId, result);
+    return result;
   }
 
   private reportAuthorized(sessionId: string, email: string): void {
@@ -223,10 +257,9 @@ export class DashboardOAuthCoordinator {
   }
 
   private async upsertAuthorizedAccount(
-    sessionId: string,
-    tokens: Parameters<AccountsRepository["upsertFromTokens"]>[0]
+    tokens: Parameters<AccountsRepository["upsertFromTokens"]>[0],
+    expectedAccountId?: string
   ) {
-    const expectedAccountId = this.oauthSessionAccountIds.get(sessionId);
     if (expectedAccountId) {
       const claims = extractClaims(tokens.idToken, tokens.accessToken);
       const authorizedAccountId = claims.email

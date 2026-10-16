@@ -28,7 +28,8 @@ import {
 } from "../../presentation/workbench/tokenAutomationState";
 import { getAutoSwitchRuntimeSnapshot } from "../../presentation/workbench/autoSwitchState";
 import { getAccountAutomationState, isHealthDismissed, resolveAccountHealth } from "../accounts/health";
-import { needsTokenRefresh, refreshTokens } from "../../auth/oauth";
+import { needsTokenRefresh } from "../../auth/oauth";
+import { runWithBulkProviderRequests } from "../../utils/network";
 import {
   isFreePlanType,
   isMonthlyQuotaWindow,
@@ -107,7 +108,7 @@ export async function buildDashboardState(
           Date.now() - previousAttempt.attemptedAt >= DASHBOARD_REFRESH_RETRY_COOLDOWN_MS;
         if (canAttempt) {
           dashboardRefreshAttempts.set(account.id, { refreshToken, attemptedAt: Date.now() });
-          const refreshTask = refreshDashboardAccountToken(repo, account, refreshToken, tokens.idToken, tokens.accountId);
+          const refreshTask = refreshDashboardAccountToken(repo, account, tokens.accountId);
           void refreshTask.catch(() => undefined);
           try {
             // Keep the first render responsive. The refresh promise continues
@@ -186,18 +187,16 @@ export async function buildDashboardState(
 async function refreshDashboardAccountToken(
   repo: AccountsRepository,
   account: CodexManagerAccountRecord,
-  refreshToken: string,
-  idToken?: string,
   existingAccountId?: string
 ): Promise<CodexTokens> {
   try {
-    const refreshed = await refreshTokens(refreshToken, idToken);
+    const refreshed = await runWithBulkProviderRequests(() => repo.refreshAccountTokens(account.id, { skewSeconds: 0 }));
     const tokens = {
       ...refreshed,
       accountId: refreshed.accountId ?? account.accountId ?? existingAccountId
     };
-    const updatedAccount = await repo.updateTokens(account.id, tokens);
-    Object.assign(account, updatedAccount);
+    const updatedAccount = await repo.getAccount(account.id);
+    if (updatedAccount) Object.assign(account, updatedAccount);
     dashboardRefreshAttempts.delete(account.id);
     markTokenAutomationRefreshSuccess(account.id);
     return tokens;

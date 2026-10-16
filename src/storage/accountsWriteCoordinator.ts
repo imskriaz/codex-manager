@@ -167,7 +167,7 @@ export async function persistIndexWithBackups(params: {
         params.state.indexHealth.status === "corrupted_unrecoverable"
           ? { status: "healthy", availableBackups }
           : { ...params.state.indexHealth, availableBackups };
-    });
+    }, { waitMs: 2_000 });
   } catch (cause) {
     // Preserve the process-safe busy signal so startup can defer its auth
     // reconciliation instead of presenting a normal overlapping write from

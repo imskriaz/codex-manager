@@ -151,6 +151,6 @@ describe("subscription service", () => {
 
     const snapshot = await fetchSubscriptionStatus("free-token", "acct_free", undefined, "Personal", "personal");
 
-    expect(snapshot).toEqual({ accountId: "acct_free" });
+    expect(snapshot).toMatchObject({ accountId: "acct_free" });
   });
 });

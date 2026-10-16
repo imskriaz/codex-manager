@@ -4,9 +4,10 @@ import { APIError } from "../core/errors";
 import type { DashboardDailyUsageCacheEntry } from "../domain/dashboard/types";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import { runWithBulkProviderRequests } from "../utils/network";
 import { isDailyUsageBreakdown, readDashboardDailyUsage, upsertDashboardDailyUsageCache } from "./dashboardUsageHistory";
 
-const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 type Check = { at: number; error?: string; retryAt?: number };
 const inFlight = new WeakMap<vscode.Memento, Map<string, Promise<DashboardDailyUsageCacheEntry>>>();
 
@@ -28,7 +29,7 @@ async function saveCheck(context: vscode.ExtensionContext, accountId: string, ch
   else await context.globalState.update(`codexManager.dailyUsageCheck.v1.${accountId}`, check);
 }
 
-/** Persist attempts before I/O; manual refresh bypasses only the automatic daily schedule. */
+/** Persist attempts before I/O; manual refresh bypasses only the automatic hourly schedule. */
 export function loadDailyTokenUsage(
   context: vscode.ExtensionContext,
   accountId: string,
@@ -48,15 +49,15 @@ export function loadDailyTokenUsage(
     const lastCheckedAt = Math.max(check?.at ?? 0, previous?.fetchedAt ?? 0);
     if (lastCheckedAt > at + 5 * 60_000) throw new Error("The system clock changed. Saved usage was preserved; check the clock before retrying.");
     if (options.manual && at < (check?.retryAt ?? 0)) throw new Error("The usage provider requested a retry delay. Saved history was kept; retry after the server cooldown.");
-    if (!options.manual && at < Math.max(lastCheckedAt + DAY_MS, check?.retryAt ?? 0)) {
-      if (check?.error) throw new Error(`${check.error} Automatic usage checks wait at least 24 hours and respect server retry delays.`);
+    if (!options.manual && at < Math.max(lastCheckedAt + HOUR_MS, check?.retryAt ?? 0)) {
+      if (check?.error) throw new Error(`${check.error} Automatic usage checks wait at least one hour and respect server retry delays.`);
       if (previous) return previous;
-      throw new Error("A recent usage check did not produce saved data. The next automatic check is available after 24 hours.");
+      throw new Error("A recent usage check did not produce saved data. The next automatic check is available after one hour.");
     }
     await saveCheck(context, accountId, { at, error: "The previous daily usage check did not complete." });
     try {
       signal.throwIfAborted();
-      const usage = await fetchUsage(signal);
+      const usage = await (options.manual ? fetchUsage(signal) : runWithBulkProviderRequests(() => fetchUsage(signal)));
       signal.throwIfAborted();
       if (!isDailyUsageBreakdown(usage)) throw new Error("The usage endpoint returned no readable daily data.");
       const entries = await upsertDashboardDailyUsageCache(context, accountId, usage, at);

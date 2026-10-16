@@ -48,6 +48,8 @@ describe("buildDashboardState token recovery", () => {
       getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }),
       listAccounts: vi.fn().mockResolvedValue([account]),
       getTokens: vi.fn().mockResolvedValue({ idToken: "id", accessToken: "expired", refreshToken: "refresh" }),
+      refreshAccountTokens: vi.fn(async (id: string) => { const tokens = await refreshTokensMock(); await repo.updateTokens(id, tokens); return tokens; }),
+      getAccount: vi.fn(async () => await repo.updateTokens.mock.results.at(-1)?.value ?? account),
       updateTokens: vi.fn().mockResolvedValue(account)
     };
     const settingsStore = {
@@ -94,6 +96,8 @@ describe("buildDashboardState token recovery", () => {
         .fn()
         .mockResolvedValueOnce({ idToken: "id", accessToken: "expired", refreshToken: "refresh" })
         .mockResolvedValueOnce({ idToken: "id", accessToken: "valid", refreshToken: "refresh" }),
+      refreshAccountTokens: vi.fn(async (id: string) => { const tokens = await refreshTokensMock(); await repo.updateTokens(id, tokens); return tokens; }),
+      getAccount: vi.fn(async () => await repo.updateTokens.mock.results.at(-1)?.value ?? account),
       updateTokens: vi.fn()
     };
     const settingsStore = {
@@ -130,7 +134,9 @@ describe("buildDashboardState token recovery", () => {
         getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }),
         listAccounts: vi.fn().mockResolvedValue([account]),
         getTokens: vi.fn().mockResolvedValue({ idToken: "id", accessToken: "access-1", refreshToken: "refresh" }),
-        updateTokens: vi.fn().mockResolvedValue(account)
+        refreshAccountTokens: vi.fn(async (id: string) => { const tokens = await refreshTokensMock(); await repo.updateTokens(id, tokens); return tokens; }),
+      getAccount: vi.fn(async () => await repo.updateTokens.mock.results.at(-1)?.value ?? account),
+      updateTokens: vi.fn().mockResolvedValue(account)
       };
       const settingsStore = {
         resolveLanguage: () => "en",
@@ -178,6 +184,8 @@ describe("buildDashboardState token recovery", () => {
         accessToken: "access-2",
         refreshToken: "refresh-2"
       }),
+      refreshAccountTokens: vi.fn(async (id: string) => { const tokens = await refreshTokensMock(); await repo.updateTokens(id, tokens); return tokens; }),
+      getAccount: vi.fn(async () => await repo.updateTokens.mock.results.at(-1)?.value ?? account),
       updateTokens: vi.fn().mockResolvedValue({ ...account, quotaError: undefined })
     };
     const settingsStore = {

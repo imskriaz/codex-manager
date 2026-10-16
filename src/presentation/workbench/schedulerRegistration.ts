@@ -1,6 +1,7 @@
 import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
-import { needsTokenRefresh, refreshTokens } from "../../auth/oauth";
+import { needsTokenRefresh } from "../../auth/oauth";
+import { runWithBulkProviderRequests } from "../../utils/network";
 import {
   getCodexManagerConfiguration,
   getAutoRefreshCurrentMinutes,
@@ -579,13 +580,7 @@ export function registerTokenRefreshScheduler(params: {
                 throw new Error("Token expired and no refresh token is available");
               }
 
-              const refreshed = await refreshTokens(tokens.refreshToken, tokens.idToken);
-              // A provider may rotate the refresh token. Once requested, save
-              // the response even if automation is disabled while it is in flight.
-              await params.repo.updateTokens(account.id, {
-                ...refreshed,
-                accountId: refreshed.accountId ?? latestAccount.accountId ?? tokens.accountId
-              });
+              await runWithBulkProviderRequests(() => params.repo.refreshAccountTokens(account.id, { skewSeconds: params.skewSeconds }));
               if (!disposed && version === scheduleVersion) markTokenAutomationRefreshSuccess(account.id);
               refreshedCount += 1;
             });

@@ -1,3 +1,4 @@
+import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { normalizeCodexSessionGoal } from "../domain/codexSessionState";
 import * as crypto from "crypto";
@@ -996,19 +997,22 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async rememberSession(token: string, expiresAt: number): Promise<void> {
-    this.sessions.set(token, expiresAt);
+    await runCrossWindowExclusive("state:dashboard-sessions", "Dashboard login", async () => {
     const sessions = normalizePersistedWebDashboardSessions(
       await this.context.secrets.get(SESSION_SECRET_KEY),
       Date.now()
     ).filter((session) => session.fingerprint !== fingerprintWebDashboardSession(token));
     sessions.push({ fingerprint: fingerprintWebDashboardSession(token), expiresAt });
     await this.context.secrets.store(SESSION_SECRET_KEY, JSON.stringify(sessions.slice(-MAX_PERSISTED_SESSIONS)));
+    this.sessions.set(token, expiresAt);
+    }, { waitMs: 2_000 });
   }
 
   private async forgetSession(token: string | undefined): Promise<void> {
     if (!token) {
       return;
     }
+    await runCrossWindowExclusive("state:dashboard-sessions", "Dashboard logout", async () => {
     this.sessions.delete(token);
     const fingerprint = fingerprintWebDashboardSession(token);
     const sessions = normalizePersistedWebDashboardSessions(
@@ -1017,6 +1021,7 @@ export class WebDashboardServer implements vscode.Disposable {
     ).filter((session) => session.fingerprint !== fingerprint);
     await this.context.secrets.store(SESSION_SECRET_KEY, JSON.stringify(sessions));
     this.closeRemoteBrowserSockets((socket) => this.browserSocketSessionFingerprint.get(socket) === fingerprint);
+    }, { waitMs: 2_000 });
   }
 
   private async sendState(response: http.ServerResponse): Promise<void> {

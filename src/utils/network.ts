@@ -3,6 +3,7 @@ import { fetch as undiciFetch } from "undici";
 import { setTimeout as realSetTimeout } from "node:timers";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { getCodexProxyDispatcher } from "../infrastructure/config/proxyEnvironment";
+import { noteSharedProviderCooldown, runWithSharedProviderSlot } from "./crossWindowOperations";
 
 const DEFAULT_FETCH_TIMEOUT_MS = 15000;
 const DEFAULT_RETRY_DELAYS_MS = [1000, 3000, 7000] as const;
@@ -55,6 +56,7 @@ export async function fetchWithTimeout(
   try {
     await acquireProviderRequestSlot(controller.signal, bulk);
     acquired = true;
+    return await runWithSharedProviderSlot(controller.signal, bulk, async () => {
     const dispatcher = getCodexProxyDispatcher();
     if (dispatcher) {
       const response = (await undiciFetch(
@@ -65,15 +67,16 @@ export async function fetchWithTimeout(
           dispatcher
         } as Parameters<typeof undiciFetch>[1]
       )) as unknown as Response;
-      noteProviderResponse(response);
+      await noteProviderResponse(response);
       return await bufferProviderResponse(response, controller.signal);
     }
     const response = await fetch(input, {
       ...init,
       signal: controller.signal
     });
-    noteProviderResponse(response);
+    await noteProviderResponse(response);
     return await bufferProviderResponse(response, controller.signal);
+    });
   } catch (error) {
     if (timedOut) {
       throw new NetworkError(`${timeoutLabel} timed out after ${Math.round(timeoutMs / 1000)}s`, {
@@ -225,12 +228,13 @@ function canStartProviderRequest(bulk: boolean): boolean {
   return providerInFlight < PROVIDER_MAX_CONCURRENCY && (!bulk || providerBulkInFlight < 1);
 }
 
-function noteProviderResponse(response: Response): void {
+async function noteProviderResponse(response: Response): Promise<void> {
   if (response.status !== 429) {
     return;
   }
   const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
   providerCooldownUntil = Math.max(providerCooldownUntil, Date.now() + (retryAfter ?? PROVIDER_COOLDOWN_MS));
+  await noteSharedProviderCooldown(providerCooldownUntil);
 }
 
 function parseRetryAfter(value: string | null): number | undefined {

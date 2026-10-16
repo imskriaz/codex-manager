@@ -21,13 +21,16 @@ function schema(store: SqliteStateStore): void {
 export function hasAccountRows(store: SqliteStateStore): boolean { return store.get<boolean>("migrations", MIGRATION) === true; }
 
 export function readAccountIndex(store: SqliteStateStore): CodexManagerIndex {
+  return store.transaction(() => {
   const header = store.get<Omit<CodexManagerIndex, "accounts">>("account-index", "header");
   if (!header) throw Object.assign(new Error("Accounts index does not exist."), { code: "ENOENT" });
   const accounts = store.prepare("SELECT data FROM accounts ORDER BY position").all().map(row => JSON.parse(String(row["data"])) as CodexManagerAccountRecord);
   return parseAccountsIndexValue({ ...header, accounts }, store.file);
+  }, "read");
 }
 
 export function readAccountRow(store: SqliteStateStore, id: string, home: string): CodexManagerAccountRecord | undefined {
+  return store.transaction(() => {
   if (!hasAccountRows(store)) return undefined;
   const row = store.prepare("SELECT data FROM accounts WHERE id = ?").get(id);
   if (!row) return undefined;
@@ -36,6 +39,7 @@ export function readAccountRow(store: SqliteStateStore, id: string, home: string
   const header = store.get<Omit<CodexManagerIndex, "accounts">>("account-index", "header");
   const active = header?.activeAccountStateVersion === 1 ? header.activeAccountIdsByCodexHome?.[home] : header?.currentAccountId;
   return { ...account, isActive: active === id };
+  }, "read");
 }
 
 /** Account rows and rotating recovery snapshots commit together; unchanged rows are not rewritten. */
