@@ -1,6 +1,6 @@
 # Operation behavior in 1.3.2
 
-Local work does not require an available shared dashboard host. Manual and automatic account switching read committed local ownership records, write local credentials, and persist the selection. Shared claim confirmation and cleanup run afterward. Unconfirmed ownership produces a warning; HTTP 401, an incompatible endpoint, an offline host, or slow confirmation cannot prevent the local switch. Known foreign ownership still reports a conflict, and required local credential and storage checks still apply.
+Local work does not require an available shared dashboard host. Manual and automatic account switching read committed local ownership records, write local credentials, and persist the selection. Shared claim confirmation and cleanup run afterward. Unconfirmed ownership retries quietly in background diagnostics; HTTP 401, an incompatible endpoint, an offline host, or slow confirmation cannot prevent the local switch. Known foreign ownership still reports a conflict, and required local credential and storage checks still apply.
 
 No pending action disables the entire dashboard or all controls on an account. Only the action already running is disabled. Backend locks reject conflicting mutations promptly; duplicate session requests reuse their result. Optional discovery, recovery, profile enrichment, quota checks after import, and sync follow-up use existing bounded waits or background work. A failed service cannot make an operation requiring that service succeed: its initiating UI reports failure, cancellation, or an unknown outcome, while unrelated controls remain available.
 
@@ -16,7 +16,7 @@ Every action in `DashboardActionName` is listed below. “Required work” descr
 
 | Operations | Required work and failure behavior |
 | --- | --- |
-| `switch`, automatic selection | Local identity, known ownership, current selection, valid credentials, auth write and durable selection. Remote confirmation is background work with warnings. Expired credentials still require successful renewal or reauthorization. |
+| `switch`, automatic selection | Local identity, known ownership, current selection, valid credentials, auth write and durable selection. Remote confirmation retries quietly in the background. Expired credentials still require successful renewal or reauthorization. |
 | `unloadAuth`, `reloadPrompt` | Local auth removal or the requested VS Code reload. Recovery preparation is bounded; reload failure retains queued state and reports the outcome. |
 | `addAccount`, `reauthorize`, `prepareOAuthSession`, `cancelOAuthSession`, `startOAuthAutoFlow`, `completeOAuthSession` | Requested OAuth flow and credential storage. Consent, cancellation and provider errors remain visible. Optional quota/profile/sync follow-up cannot keep a saved account pending indefinitely. |
 | `importCurrent`, `inspectCurrentAuth`, `completeOnboarding` | Read/validate local auth, save imported data or onboarding preference. Optional network enrichment is bounded. |
@@ -56,7 +56,7 @@ Command names above have the `codexManager.` prefix. Internal reload/recovery co
 
 ## Failure and recovery limits
 
-- Offline, HTTP/authentication failure, missing configuration and slow shared hosts: switch locally, warn about unconfirmed ownership, retry confirmation in the background. Never fabricate a successful shared claim.
+- Offline, HTTP/authentication failure, missing configuration and slow shared hosts: switch locally, log unconfirmed ownership quietly, and retry confirmation in the background. Never fabricate a successful shared claim.
 - Reconnect, retry and reboot: reconcile the persisted active account, preserve other live local windows' accounts, and do not replay browser mutations. Claim failure does not undo a completed local switch.
 - Stale, missing and partial data: retain saved state where possible; revalidate identity, ownership and revisions before destructive writes. Known foreign ownership reports a conflict.
 - Duplicate and queue-full requests: reuse supported pending requests or report the conflict/capacity failure, without disabling unrelated UI.

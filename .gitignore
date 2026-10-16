@@ -2,6 +2,7 @@ node_modules
 out
 coverage
 *.vsix
+*.vsix.sha256
 *.apk
 *.log
 AGENTS.md

@@ -177,12 +177,14 @@ describe("current account only sync", () => {
     expect(manager.getRealtimeEnablementRegistry().find((entry) => entry.accountId === "previous")?.enabled).toBe(true);
   });
 
-  it.each([401, 403, 404, 503, "offline"])("completes local switching with a warning when claim confirmation fails with %s", async failure => {
+  it.each([401, 403, 404, 503, "offline"])("completes local switching quietly when claim confirmation fails with %s", async failure => {
     fetchMock.mockImplementation(async () => {
       if (failure === "offline") throw new Error("host offline");
       return new Response(JSON.stringify({ error: "claim unavailable" }), { status: failure, headers: { "content-type": "application/json" } });
     });
+    vi.mocked(vscode.window.showWarningMessage).mockClear();
     const notices = vi.fn();
+    const diagnostics = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const unsubscribe = subscribeDashboardRealtime(notices);
     try {
       await manager.prepareAccountSwitch("next");
@@ -192,8 +194,11 @@ describe("current account only sync", () => {
         await manager.completeAccountSwitch("next");
         return consumeDashboardActionNotice();
       });
-      expect(notice).toMatchObject({ level: "warning", message: expect.stringContaining("switched locally") });
-      expect(notices).toHaveBeenCalledWith(expect.objectContaining({ type: "dashboard:notice", level: "warning" }));
+      expect(notice).toBeUndefined();
+      await vi.waitFor(() => expect(diagnostics).toHaveBeenCalledWith("[codexManager]", expect.stringContaining("confirmation and cleanup will retry")));
+      expect(notices).not.toHaveBeenCalledWith(expect.objectContaining({ type: "dashboard:notice" }));
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect((manager as unknown as { currentClaimRetryTimer: unknown }).currentClaimRetryTimer).toBeDefined();
       await expect(reconcile()).rejects.toThrow();
       expect(active).toBe("next");
       expect(manager.getRealtimeEnablementRegistry().some(entry => entry.currentOnly)).toBe(false);

@@ -17,7 +17,7 @@ describe("extension manifest configuration", () => {
     expect(manifest).toMatchObject({
       name: "codex-manager",
       displayName: "Codex Manager",
-      preview: true,
+      preview: false,
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
@@ -60,8 +60,9 @@ describe("extension manifest configuration", () => {
     expect(manifest.dependencies?.["@types/ws"]).toBeUndefined();
     expect(manifest.devDependencies?.["@types/ws"]).toEqual(expect.any(String));
     expect(manifest.scripts?.package).toContain("--no-yarn --dependencies");
-    expect(manifest.scripts?.package).toContain("--pre-release");
+    expect(manifest.scripts?.package).not.toContain("--pre-release");
     expect(manifest.scripts?.package).toContain("tools/verify-vsix-layout.mjs");
+    expect(fs.readFileSync(path.join(root, ".vscodeignore"), "utf8")).toContain("*.vsix.sha256");
     expect(manifest.scripts?.["mobile:start"]).toBeUndefined();
     expect(manifest.scripts?.["mobile:typecheck"]).toBeUndefined();
     expect(lock.version).toBe(manifest.version);

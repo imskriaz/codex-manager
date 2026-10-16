@@ -243,8 +243,6 @@ export class EncryptedSyncManager implements vscode.Disposable {
         if (error instanceof CrossWindowOperationBusyError) { this.queueCurrentAccountReconciliation(5_000); return; }
         const message = `Shared account ownership could not be confirmed. Local operations remain available; confirmation and cleanup will retry in the background. ${error instanceof Error ? error.message : String(error)}`;
         console.warn("[codexManager]", message);
-        publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
-        void vscode.window.showWarningMessage(message);
         this.queueCurrentAccountReconciliation(30_000);
       });
     }, delayMs);
@@ -901,12 +899,6 @@ export class EncryptedSyncManager implements vscode.Disposable {
   completeAccountSwitch(accountId: string): Promise<void> {
     this.preparedCurrentClaims.delete(accountId);
     if (!this.isCurrentAccountOnly()) return Promise.resolve();
-    const owned = this.readLocalEnablement().find(entry => entry.accountId === accountId && entry.deviceId === visibleEnablementDeviceId);
-    if (!owned?.enabled || !owned.currentOnly || !isSyncAccountEnablementActive(owned)) {
-      const message = "Account switched locally. Shared ownership is unconfirmed; another PC may be using this account. Confirmation will retry in the background.";
-      publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message });
-      void vscode.window.showWarningMessage(message);
-    }
     // Remote ownership never holds local auth changes or their completion open.
     this.queueCurrentAccountReconciliation();
     return Promise.resolve();

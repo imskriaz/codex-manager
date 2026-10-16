@@ -2,10 +2,12 @@
 
 ## 1.3.2
 
+- Keep pending shared-account confirmation and background retry failures out of desktop, dashboard, and push notifications. Preserve background retries, diagnostics, known ownership conflicts, and explicit sync failures.
+- Build 1.3.2 as a stable VSIX without prerelease or preview metadata.
 - Coordinate account credentials, token renewal, provider request budgets, browser sessions, OAuth completion, file edits, and Git mutations across local windows through shared SQLite leases. Share compatible quota, credit, profile, subscription, and local-session reads; use one batch runner. Preserve newer credentials and metadata, reject stale reset-credit snapshots, and retain completed reads when their optional result cache cannot be saved.
 - Reduce the automatic token-history gap to one hour, preserve provider retry delays, and collect missing account history when the token chart loads.
 - Show VS Code token usage only, add a one-day range alongside seven and thirty days, and open a compact account-usage tooltip from the chart total and account colors.
-- Switch accounts locally without waiting for the shared claim host, and show a warning while ownership confirmation retries in the background. Retain known ownership conflicts and local storage checks. Continue independent claim cleanup after a failed confirmation, and distinguish HTTP 401 authentication rejection from an unsupported endpoint.
+- Switch accounts locally without waiting for the shared claim host, while ownership confirmation retries quietly in the background. Retain known ownership conflicts and local storage checks. Continue independent claim cleanup after a failed confirmation, and distinguish HTTP 401 authentication rejection from an unsupported endpoint.
 - Keep unrelated dashboard and account-card controls available during pending operations; disable only the action already running. Document the complete operation inventory and its required dependencies in OPERATIONS.md.
 - Retry optional WebSocket connections quietly, without live-channel warning banners or reconnect notices. Preserve explicit action failures and host-unavailable recovery.
 - Keep compact chart menus within the viewport, show account quota usage and last check times, and add per-account and bulk token-history refresh with bounded concurrency and visible results. Enable automatic token history by default while preserving explicit choices, and move quota and token retention controls into Data & Sync.

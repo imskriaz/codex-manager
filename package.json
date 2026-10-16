@@ -4,7 +4,7 @@
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
   "version": "1.3.2",
   "publisher": "imskriaz",
-  "preview": true,
+  "preview": false,
   "icon": "media/product-icons/codex-openai.png",
   "license": "MIT",
   "repository": {
@@ -378,7 +378,7 @@
     "watch:webview": "vite build --watch --config vite.webview.config.mts",
     "compile": "npm run typecheck:webview && npm run build:webview && tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && vsce package --no-yarn --dependencies --pre-release && node tools/verify-vsix-layout.mjs",
+    "package": "npm run compile && vsce package --no-yarn --dependencies && node tools/verify-vsix-layout.mjs",
     "lint": "eslint src webview-src --ext ts,tsx",
     "lint:fix": "eslint src webview-src --ext ts,tsx --fix",
     "test": "vitest run",
