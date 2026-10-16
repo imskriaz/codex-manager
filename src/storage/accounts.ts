@@ -123,6 +123,7 @@ import {
   releaseCrossWindowAccount
 } from "../services/windowAccountMode";
 import { cancelCodexSessionAutoResume } from "../services/codexSessionAutoResume";
+import { isSqliteError, sqliteStoreForFile } from "./sqliteState";
 
 /** 缓存失效时间 (毫秒) */
 const CACHE_TTL_MS = 5000;
@@ -1588,7 +1589,7 @@ export class AccountsRepository {
       throw createError.storageWriteBlocked("Accounts index is corrupted and must be restored before continuing.");
     }
 
-    const cached = readPendingOrCachedIndex(this.state, CACHE_TTL_MS);
+    const cached = readPendingOrCachedIndex(this.state, sqliteStoreForFile(this.indexPath) ? 0 : CACHE_TTL_MS);
     if (cached) {
       return cached;
     }
@@ -1606,6 +1607,7 @@ export class AccountsRepository {
       };
       return cloneIndex(snapshot);
     } catch (cause) {
+      if (sqliteStoreForFile(this.indexPath) && isSqliteError(cause)) throw cause;
       if (isFileNotFoundError(cause)) {
         const interrupted = await readLatestValidTempIndex(this.indexPath, INDEX_TEMP_SUFFIX);
         const legacy = interrupted ? undefined : await this.readLegacyIndex();
@@ -1627,7 +1629,7 @@ export class AccountsRepository {
               restoreError
             );
           }
-          if (persisted && legacy) {
+          if (persisted && legacy && !sqliteStoreForFile(this.indexPath)) {
             await fs.unlink(legacy.filePath).catch((error) => {
               if (!isFileNotFoundError(error)) {
                 console.warn(
@@ -1683,7 +1685,7 @@ export class AccountsRepository {
         removedAccountIds: [...previousIds].filter((accountId) => !nextIds.has(accountId))
       });
     }
-    markPendingSave(this.state, index, DEBOUNCE_DELAY_MS, () => {
+    markPendingSave(this.state, index, sqliteStoreForFile(this.indexPath) ? 0 : DEBOUNCE_DELAY_MS, () => {
       void this.flushPendingSave();
     });
   }

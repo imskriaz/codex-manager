@@ -49,9 +49,10 @@ The screenshots below use representative, privacy-safe data so you can preview t
 
 ## Requirements
 
-- VS Code 1.96 or newer.
+- VS Code 1.101 or newer.
+- Node.js 22.13 or newer for the optional detached relay.
 - A working Codex installation and a writable `CODEX_HOME` (the default Codex location is used when `CODEX_HOME` is not set).
-- Node.js 20 or newer only when building from source.
+- Node.js 22.13 or newer when building and testing from source.
 - A signed-in VS Code Settings Sync account for optional cross-PC claim checks.
 - `cloudflared` only when publishing the browser dashboard outside the local machine.
 
@@ -149,7 +150,8 @@ Important combinations:
 
 ## Privacy and security
 
-- Account tokens remain in local VS Code SecretStorage, the Codex credential file, and separate password-encrypted, email-named recovery files under `~/.codex-manager/accounts`. They are not sent to a Codex Manager server.
+- Account tokens remain in local VS Code SecretStorage and the Codex credential file. Password-encrypted recovery records are stored in `~/.codex-manager/codex-manager.sqlite`. They are not sent to a Codex Manager server.
+- Account metadata, settings, session recovery, usage history, and other extension state share that SQLite database, using WAL and full synchronous commits. Existing state is migrated without deleting its source files. VS Code Settings remains the editing interface and stays synchronized with SQLite. Process locks, diagnostic logs, Codex-owned files, and browser offline caches keep their platform formats.
 - Auto Sync synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Full cross-PC account sync** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
@@ -157,7 +159,7 @@ Important combinations:
 
 ## Troubleshooting
 
-- **No accounts appear after reinstall:** enter the same shared Password so Codex Manager can unlock the account files under `~/.codex-manager/accounts`.
+- **No accounts appear after reinstall:** enter the same shared Password so Codex Manager can unlock the encrypted account records in `~/.codex-manager/codex-manager.sqlite`. Earlier account files under `~/.codex-manager/accounts` are imported automatically.
 - **Quota refresh fails:** run **Refresh Quota**, check your network/proxy settings, and inspect **Open Persistent Logs** for the operation ID.
 - **Switch did not affect Codex:** close/restart the Codex desktop app or enable the extension’s app-restart setting. Verify the active `auth.json` in **Open Codex Home**.
 - **Browser dashboard cannot connect:** confirm Web dashboard is enabled, the shared Password is configured in General, and the Cloudflare route points to `http://127.0.0.1:39875`.
@@ -201,8 +203,8 @@ Session inspection is demand-driven. Overlapping consumers share bounded running
 | Consumer | Required condition | Check |
 | --- | --- | --- |
 | Wait for running sessions | Auto Switch and Wait for running sessions enabled | All local running session IDs |
-| Auto Resume at managed reload | Auto Switch and Auto Resume enabled | Running IDs, then goal filter |
-| Auto Resume tab autosave | Auto Switch and Auto Resume enabled | Open parent tabs and optional active-goal filter |
+| Auto Resume at managed reload | Auto Switch and Auto Resume enabled | Recent verified running IDs (up to 30 seconds old), otherwise a fresh check; then goal filter |
+| Auto Resume tab autosave | Auto Switch and Auto Resume enabled | Running open parent tabs, saved to SQLite when session checks complete; optional active-goal filter |
 | Auto Resume restore | Saved recovery exists and both toggles enabled | Saved IDs and goal filter |
 | Running indicators and workspace lists | Dashboard/session view requests status | Per-session native/transcript status |
 | Explicit session actions | A session command needs ownership | Per-session status |

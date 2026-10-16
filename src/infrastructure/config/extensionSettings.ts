@@ -8,6 +8,7 @@ import { DashboardLanguage, DashboardLanguageOption, resolveDashboardLanguage } 
 import { normalizeQuotaColorThresholds } from "../../utils";
 import { getAutoQueueQuotaFreshnessMs, normalizeAutoQueueThreshold } from "../../domain/autoQueuePolicy";
 import { getPersistentLogRetentionDays, isPersistentLoggingEnabled } from "../../utils/persistentLog";
+import { sqliteConfiguration } from "../../storage/sqliteContext";
 
 const CODEX_ACCOUNTS_SECTION = "codexManager";
 
@@ -137,7 +138,7 @@ export function normalizeUsageHistoryRetentionDays(value: number): number {
 }
 
 export function getCodexManagerConfiguration(): vscode.WorkspaceConfiguration {
-  return vscode.workspace.getConfiguration(CODEX_ACCOUNTS_SECTION);
+  return sqliteConfiguration(vscode.workspace.getConfiguration(CODEX_ACCOUNTS_SECTION));
 }
 
 export function isAutoResumeEnabled(config = getCodexManagerConfiguration()): boolean {

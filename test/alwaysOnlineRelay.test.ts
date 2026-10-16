@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import * as crypto from "node:crypto";
 import * as path from "node:path";
 import * as vm from "node:vm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../src/domain/codexSessionLive";
 
 type Json = Record<string, any>;
@@ -12,7 +12,7 @@ const source = readFileSync("tools/always-online-server.js", "utf8");
 const sessionId = "12345678-1234-1234-1234-123456789abc";
 const streamId = "22345678-1234-1234-1234-123456789abc";
 
-function harness(contractAvailable = true) {
+function harness(contractAvailable = true, storageReady?: Promise<unknown>) {
   let now = 1700000000000;
   const hostKey = Buffer.from("isolated-relay-test-key").toString("base64url");
   const timers = new Map<object, () => void>();
@@ -29,12 +29,16 @@ function harness(contractAvailable = true) {
   }
   class Server extends EventEmitter { clients = new Set<Socket>(); close(callback: () => void) { callback(); } }
   const server = new EventEmitter() as EventEmitter & Json;
-  server.listen = () => undefined;
+  let listening = false;
+  let configuredStore: unknown;
+  server.listen = () => { listening = true; };
   server.close = (callback: () => void) => callback();
   const processStub = { argv: ["node", "relay.js", "config.json"], once() {}, exit() {}, exitCode: 0, pid: 1234 };
   const mockRequire = Object.assign((id: string) => {
     if (id === "node:http") return { createServer(handler: typeof requestHandler) { requestHandler = handler; return server; } };
-    if (id === "node:fs") return { readFileSync() { return JSON.stringify({ hostKey, modulePaths: ["fixture"] }); }, writeFileSync() {} };
+    if (id === "node:fs") return { existsSync() { return !!storageReady; }, readFileSync() { return JSON.stringify({ hostKey, modulePaths: ["fixture"] }); }, writeFileSync() {} };
+    if (id === "node:sqlite") return { DatabaseSync: class { exec() {} prepare() { return { get: () => ({ value: JSON.stringify({ text: JSON.stringify({ hostKey, modulePaths: ["fixture"] }) }) }) }; } close() {} } };
+    if (id.endsWith("sqliteState.js")) return { SqliteStateStore: { open: () => storageReady }, configureSqliteStateStore: (store: unknown) => { configuredStore = store; } };
     if (id === "node:crypto") return crypto;
     if (id === "node:path") return path;
     if (id === "mock-ws") return { WebSocketServer: Server };
@@ -69,11 +73,24 @@ function harness(contractAvailable = true) {
     requestHandler!(request, response); request.emit("data", JSON.stringify(message)); request.emit("end");
     return response.statusCode;
   };
-  return { relay, connect, signed, live, output, heartbeat, advance(ms: number) { now += ms; },
+  return { relay, connect, signed, live, output, heartbeat, listening: () => listening, configuredStore: () => configuredStore, advance(ms: number) { now += ms; },
     expire() { relay.pruneEvents(); }, runTimers() { for (const callback of [...timers.values()]) callback(); }, now: () => now };
 }
 
 describe("detached relay authenticated realtime and recovery", () => {
+  it("opens shared SQLite storage before accepting relay connections", async () => {
+    let complete!: (store: unknown) => void;
+    const ready = new Promise(resolve => { complete = resolve; });
+    const h = harness(true, ready);
+    expect(h.listening()).toBe(false);
+    const store = { shared: true };
+    complete(store);
+    await vi.waitFor(() => {
+      expect(h.configuredStore()).toBe(store);
+      expect(h.listening()).toBe(true);
+    });
+  });
+
   it("relays device-bound state without origin loops, rejects spoofed/unknown sources and malformed states", () => {
     const h = harness(), source = h.connect("source"), target = h.connect("target"), stranger = h.connect();
     source.sent = []; target.sent = [];

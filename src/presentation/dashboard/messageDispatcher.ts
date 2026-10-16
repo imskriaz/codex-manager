@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import type { DashboardClientMessage, DashboardSettingKey, DashboardUsageSample } from "../../domain/dashboard/types";
 import { runWithPersistentOperation } from "../../utils/persistentLog";
+import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 
 export type DashboardMessageHandlers = {
   onReady: () => void | Promise<void>;
@@ -69,9 +70,9 @@ function describeDashboardMessage(message: DashboardClientMessage): string {
 }
 
 export async function clearDashboardCodexAppPath(): Promise<void> {
-  await vscode.workspace.getConfiguration("codexManager").update("codexAppPath", "", vscode.ConfigurationTarget.Global);
+  await getCodexManagerConfiguration().update("codexAppPath", "", vscode.ConfigurationTarget.Global);
 }
 
 export async function clearDashboardCodexCliPath(): Promise<void> {
-  await vscode.workspace.getConfiguration("codexManager").update("codexCliPath", "", vscode.ConfigurationTarget.Global);
+  await getCodexManagerConfiguration().update("codexCliPath", "", vscode.ConfigurationTarget.Global);
 }

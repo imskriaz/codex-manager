@@ -6,6 +6,7 @@ import * as vscode from "vscode";
 import { redactDebugText } from "./debug";
 import { getCodexManagerStorageRoot } from "./storageRoot";
 import { readSafeFileSnapshot } from "./safeFileReads";
+import { sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "./crossWindowOperations";
 
 export const PERSISTENT_LOG_RETENTION_DAYS = 3;
@@ -283,9 +284,12 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
     const file = path.join(storageRoot, "logging-settings.json");
     const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
     try {
-      await fs.mkdir(storageRoot, { recursive: true });
-      await fs.writeFile(temporary, JSON.stringify(settings), { mode: 0o600, flag: "wx" });
-      await fs.rename(temporary, file);
+      if (sqliteStoreForFile(file)) writeSqliteStateFile(file, JSON.stringify(settings));
+      else {
+        await fs.mkdir(storageRoot, { recursive: true });
+        await fs.writeFile(temporary, JSON.stringify(settings), { mode: 0o600, flag: "wx" });
+        await fs.rename(temporary, file);
+      }
     } catch (error) {
       await candidate?.flush().catch(() => undefined);
       throw error;

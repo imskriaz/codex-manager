@@ -3,6 +3,7 @@ import * as fsSync from "fs";
 import * as path from "path";
 import { CodexManagerIndex } from "../core/types";
 import { getBackupPath, parseAccountsIndex } from "./accountsIndex";
+import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "./sqliteState";
 
 // Windows can briefly keep the previous index handle open during extension
 // host replacement/update. Give the owner enough time to release it before
@@ -11,7 +12,7 @@ const REPLACE_RETRY_DELAYS_MS = [20, 50, 100, 200, 400, 800, 1_200, 1_800, 2_500
 const TRANSIENT_REPLACE_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
 export async function readIndexSnapshot(filePath: string): Promise<CodexManagerIndex> {
-  const raw = await fs.readFile(filePath, "utf8");
+  const raw = sqliteStoreForFile(filePath) ? readSqliteStateFile(filePath) : await fs.readFile(filePath, "utf8");
   return parseAccountsIndex(raw, filePath);
 }
 
@@ -56,6 +57,11 @@ export async function writeIndexAtomically(
   operations: { rename?: typeof fs.rename; wait?: (ms: number) => Promise<void> } = {}
 ): Promise<void> {
   const serialized = JSON.stringify(index, null, 2);
+  if (sqliteStoreForFile(indexPath)) {
+    parseAccountsIndex(serialized, indexPath);
+    writeSqliteStateFile(indexPath, serialized);
+    return;
+  }
   const tempPath = createUniqueTempPath(indexPath, tempSuffix);
   parseAccountsIndex(serialized, tempPath);
   const handle = await fs.open(tempPath, "wx", 0o600);
@@ -76,6 +82,11 @@ export async function writeIndexAtomically(
 
 export function writeIndexAtomicallySync(indexPath: string, index: CodexManagerIndex, tempSuffix: string): void {
   const serialized = JSON.stringify(index, null, 2);
+  if (sqliteStoreForFile(indexPath)) {
+    parseAccountsIndex(serialized, indexPath);
+    writeSqliteStateFile(indexPath, serialized);
+    return;
+  }
   const tempPath = createUniqueTempPath(indexPath, tempSuffix);
   parseAccountsIndex(serialized, tempPath);
   const descriptor = fsSync.openSync(tempPath, "wx", 0o600);

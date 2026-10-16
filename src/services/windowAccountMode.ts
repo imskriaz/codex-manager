@@ -6,6 +6,7 @@ import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import * as vscode from "vscode";
 import type { CodexManagerAccountRecord } from "../core/types";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
+import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { createKeyedMutex } from "../utils/concurrency";
@@ -195,6 +196,7 @@ async function writeRegistry(mutator: (registry: Registry) => void): Promise<voi
     const registry = await readRegistry(file);
     registry.slots = registry.slots.filter(isLive);
     mutator(registry);
+    if (sqliteStoreForFile(file)) { writeSqliteStateFile(file, JSON.stringify(registry)); return; }
     const temp = `${file}.tmp-${process.pid}-${crypto.randomUUID()}`;
     try {
       await fs.writeFile(temp, JSON.stringify(registry, null, 2), { encoding: "utf8", mode: 0o600 });
@@ -207,7 +209,7 @@ async function writeRegistry(mutator: (registry: Registry) => void): Promise<voi
 
 async function readRegistry(file: string): Promise<Registry> {
   try {
-    const value = JSON.parse(await fs.readFile(file, "utf8")) as Partial<Registry>;
+    const value = JSON.parse(sqliteStoreForFile(file) ? readSqliteStateFile(file) : await fs.readFile(file, "utf8")) as Partial<Registry>;
     if (!Array.isArray(value.slots) || !value.slots.every(isValidSlot)) throw new Error("Parallel window registry is incomplete. Restore its storage before retrying.");
     return { slots: value.slots };
   } catch (error) {

@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import { sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { CrossWindowOperationCoordinator } from "../utils/crossWindowOperations";
 import {
@@ -143,6 +144,10 @@ export class AccountClaimAuthority {
           if (records.size > 1000)
             throw new Error("Shared account claim storage is full. Remove obsolete claims before retrying.");
           await fs.mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+          if (sqliteStoreForFile(this.file)) {
+            writeSqliteStateFile(this.file, JSON.stringify([...records.values()]));
+            return { requestId: request.requestId, ok: true, claim, acquired };
+          }
           const temp = `${this.file}.${process.pid}.tmp`;
           try {
             await fs.writeFile(temp, JSON.stringify([...records.values()]), { mode: 0o600 });

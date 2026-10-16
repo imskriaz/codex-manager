@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.2.24");
+    expect(manifest.version).toBe("1.2.25");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });
@@ -153,7 +153,7 @@ describe("extension manifest configuration", () => {
     expect(property?.markdownDescription).toContain("Experimental");
     expect(property?.markdownDescription).toContain("Works without enabling Session Integration");
     expect(property?.markdownDescription).toContain("reopen them after a VS Code restart");
-    expect(property?.markdownDescription).toContain("save open parent conversation tabs as they change");
+    expect(property?.markdownDescription).toContain("save running parent conversation tabs to SQLite as session checks complete");
     expect(property?.markdownDescription).toContain("while Auto Switch is enabled");
     expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeGoalOnlyEnabled"])
       .toMatchObject({ type: "boolean", scope: "machine", default: true });

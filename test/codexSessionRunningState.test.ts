@@ -25,7 +25,7 @@ vi.mock("child_process", async (original) => {
   } };
 });
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.openRpc }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { getCodexSessionReadNotice, readCodexCliSessions, readCodexCliSessionSummary, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
+import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexCliSessions, readCodexCliSessionSummary, readRecentRunningCodexSessionIds, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
 import { readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 
@@ -60,6 +60,43 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it("retains recent verified checks for recovery while safety checks remain fresh", async () => {
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+    const checked = vi.fn();
+    const listener = onDidInspectRunningCodexSessions(checked);
+    try {
+      expect(await readRunningCodexSessionIds(home)).toEqual([id]);
+      expect(readRecentRunningCodexSessionIds(home)).toEqual([id]);
+      const reads = vi.mocked(readNativeCodexSessionRunning).mock.calls.length;
+      const copy = readRecentRunningCodexSessionIds(home)!;
+      copy.length = 0;
+      expect(readRecentRunningCodexSessionIds(home)).toEqual([id]);
+      expect(readNativeCodexSessionRunning).toHaveBeenCalledTimes(reads);
+      vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+      expect(await readRunningCodexSessionIds(home)).toEqual([]);
+      expect(readRecentRunningCodexSessionIds(home)).toEqual([]);
+      expect(checked).toHaveBeenCalledTimes(2);
+      const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 30_001);
+      try { expect(readRecentRunningCodexSessionIds(home)).toBeUndefined(); }
+      finally { clock.mockRestore(); }
+    } finally { listener.dispose(); }
+  });
+
+  it("checks only requested open sessions and keeps partial observations out of full-scan recovery", async () => {
+    const other = "01a04882-d037-7a42-ad24-9afb61901189";
+    await writeFile(path.join(home, "sessions", `rollout-${other}.jsonl`), event("task_started"));
+    vi.mocked(readNativeCodexSessionRunning).mockImplementation(async (_home, requested) => {
+      if (requested === other) throw new Error("unrelated session unavailable");
+      return true;
+    });
+    expect(await readRunningCodexSessionIds(home, undefined, [id])).toEqual([id]);
+    expect(readRecentRunningCodexSessionIds(home, [id])).toEqual([id]);
+    expect(readRecentRunningCodexSessionIds(home)).toBeUndefined();
+    await expect(readRunningCodexSessionIds(home)).rejects.toThrow("unrelated session unavailable");
+    expect(readRecentRunningCodexSessionIds(home)).toBeUndefined();
+    expect(readRecentRunningCodexSessionIds(home, [id])).toEqual([id]);
+  });
+
   it("returns unknown history on a hung inspection and recovers on the next refresh", async () => {
     vi.useFakeTimers();
     vi.mocked(readNativeCodexSessionRunning).mockImplementation(() => new Promise(() => undefined));

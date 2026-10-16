@@ -6,6 +6,7 @@ import { spawn, type ChildProcess } from "child_process";
 import * as vscode from "vscode";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
+import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 
 /** Reuses the normal dashboard port; the detached relay takes over when the
  * VS Code-managed server releases it. */
@@ -82,11 +83,12 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     try {
       const storage = getCodexManagerStorageRoot();
       const configPath = path.join(storage, CONFIG_FILE);
-      const config = JSON.parse(await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>;
+      const config = JSON.parse(sqliteStoreForFile(configPath) ? readSqliteStateFile(configPath) : await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>;
       if (config.adminToken) {
         await waitForRelayShutdown(ALWAYS_ONLINE_RELAY_PORT, config.adminToken, path.join(storage, PID_FILE));
       }
-    } catch {
+    } catch (error) {
+      if (sqliteStoreForFile(path.join(getCodexManagerStorageRoot(), CONFIG_FILE)) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       // No previous relay is normal on first activation.
     }
   }
@@ -125,8 +127,9 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     const configPath = path.join(storage, CONFIG_FILE);
     let adminToken: string | undefined;
     try {
-      adminToken = (JSON.parse(await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>).adminToken;
-    } catch {
+      adminToken = (JSON.parse(sqliteStoreForFile(configPath) ? readSqliteStateFile(configPath) : await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>).adminToken;
+    } catch (error) {
+      if (sqliteStoreForFile(configPath) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       // A missing config means the relay was never enabled.
     }
     const pidPath = path.join(storage, PID_FILE);
@@ -214,7 +217,8 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       modulePaths: prepared.modulePaths,
       claimRegistryPath: path.join(storage, "account-claim-authority.json")
     };
-    await fs.writeFile(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
+    if (sqliteStoreForFile(configPath)) writeSqliteStateFile(configPath, JSON.stringify(config));
+    else await fs.writeFile(configPath, JSON.stringify(config), { encoding: "utf8", mode: 0o600 });
     await writeStartupLauncher(this.context, configPath, scriptTarget);
     this.preparedRelay = prepared;
     return prepared;
@@ -251,8 +255,9 @@ export class AlwaysOnlineServer implements vscode.Disposable {
 
 async function readPreviousRelayConfig(configPath: string): Promise<Partial<RelayConfig> | undefined> {
   try {
-    return JSON.parse(await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>;
-  } catch {
+    return JSON.parse(sqliteStoreForFile(configPath) ? readSqliteStateFile(configPath) : await fs.readFile(configPath, "utf8")) as Partial<RelayConfig>;
+  } catch (error) {
+    if (sqliteStoreForFile(configPath) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return undefined;
   }
 }

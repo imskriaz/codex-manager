@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.25
+
+- Migrate extension state, settings, account metadata, encrypted account backups, and session recovery to a shared SQLite database with WAL, full synchronous commits, bounded write waits, and preserved migration sources. Keep VS Code Settings and Settings Sync compatible; require VS Code 1.101 or newer.
+- Save running parent conversation tabs as session checks complete. Reuse recent verified checks during managed reload capture, preserve unacknowledged recovery as in 1.2.17, and skip idle tabs and sub-agents.
+
 ## 1.2.24
 
 - Wait for VS Code to publish conversation tabs after `openWith`, with bounded timeout and cancellation, so Auto Resume can restore sessions during early window activation.

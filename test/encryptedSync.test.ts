@@ -27,6 +27,7 @@ import {
 } from "../src/presentation/workbench/tokenAutomationState";
 import * as coordination from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
+import { configureSqliteStateStore, listSqliteStateFiles, readSqliteStateFile, SqliteStateStore } from "../src/storage/sqliteState";
 
 const PASSPHRASE = "correct horse battery staple";
 
@@ -230,8 +231,10 @@ describe("encrypted account sync", () => {
     manager.dispose();
   });
 
-  it("restores credentials from the encrypted user-owned vault after reinstall", async () => {
+  it.each([false, true])("restores credentials from the encrypted user-owned vault after reinstall (SQLite: %s)", async (sqlite) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-durable-vault-"));
+    const store = sqlite ? await SqliteStateStore.open(path.join(directory, "codex-manager.sqlite")) : undefined;
+    configureSqliteStateStore(store);
     const legacyVaultPath = path.join(directory, "encrypted-accounts-vault.json");
     const vaultPath = path.join(directory, "accounts", "durable-account@example.com.json");
     const entry = createEntry("durable-account", 500, "durable-refresh-token");
@@ -264,10 +267,10 @@ describe("encrypted account sync", () => {
       };
       const source = new EncryptedSyncManager(createContext(), sourceRepo as never, legacyVaultPath);
       await source.start();
-      await vi.waitFor(async () => expect(await fs.readFile(vaultPath, "utf8")).toContain("ciphertext"), {
+      await vi.waitFor(async () => expect(sqlite ? readSqliteStateFile(vaultPath) : await fs.readFile(vaultPath, "utf8")).toContain("ciphertext"), {
         timeout: 10_000
       });
-      const rawVault = await fs.readFile(vaultPath, "utf8");
+      const rawVault = sqlite ? readSqliteStateFile(vaultPath) : await fs.readFile(vaultPath, "utf8");
       expect(rawVault).not.toContain("durable-refresh-token");
       source.dispose();
 
@@ -297,6 +300,8 @@ describe("encrypted account sync", () => {
       expect(restoredEntries[0]?.tokens?.refresh_token).toBe("durable-refresh-token");
       restored.dispose();
     } finally {
+      configureSqliteStateStore(undefined);
+      store?.close();
       await removeTestDirectory(directory);
     }
   });
@@ -454,8 +459,10 @@ describe("encrypted account sync", () => {
     }
   });
 
-  it("recovers temp-only and newer durable account snapshots after an interrupted update", async () => {
+  it.each([false, true])("recovers temp-only and newer durable account snapshots after an interrupted update (SQLite: %s)", async (sqlite) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-account-vault-temps-"));
+    const store = sqlite ? await SqliteStateStore.open(path.join(directory, "codex-manager.sqlite")) : undefined;
+    configureSqliteStateStore(store);
     const legacyVaultPath = path.join(directory, "encrypted-accounts-vault.json");
     const accountsDirectory = path.join(directory, "accounts");
     await fs.mkdir(accountsDirectory, { recursive: true });
@@ -517,15 +524,23 @@ describe("encrypted account sync", () => {
 
       expect(restoredEntries.map((entry) => entry.id).sort()).toEqual(["newer", "orphan"]);
       expect(restoredEntries.find((entry) => entry.id === "newer")?.tokens?.refresh_token).toBe("newer-refresh-token");
-      await expect(fs.access(orphanFinal)).resolves.toBeUndefined();
+      if (sqlite) {
+        expect(readSqliteStateFile(orphanFinal)).toContain("ciphertext");
+        expect(await fs.readFile(`${orphanFinal}.tmp-interrupted`, "utf8")).toContain("ciphertext");
+        expect((await decryptSyncPayload(readSqliteStateFile(newerFinal), PASSPHRASE)).accounts[0]?.tokens?.refresh_token).toBe("newer-refresh-token");
+      } else await expect(fs.access(orphanFinal)).resolves.toBeUndefined();
       manager.dispose();
     } finally {
+      configureSqliteStateStore(undefined);
+      store?.close();
       await removeTestDirectory(directory);
     }
   });
 
-  it("deletes only the intentionally removed account vault file", async () => {
+  it.each([false, true])("deletes only the intentionally removed account vault file (SQLite: %s)", async (sqlite) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-manager-account-vault-delete-"));
+    const store = sqlite ? await SqliteStateStore.open(path.join(directory, "codex-manager.sqlite")) : undefined;
+    configureSqliteStateStore(store);
     const legacyVaultPath = path.join(directory, "encrypted-accounts-vault.json");
     const accountsDirectory = path.join(directory, "accounts");
     let entries = [createEntry("kept", 500), createEntry("removed", 600)];
@@ -555,16 +570,18 @@ describe("encrypted account sync", () => {
     try {
       const manager = new EncryptedSyncManager(context, repo as never, legacyVaultPath);
       await manager.start();
-      await vi.waitFor(async () => expect(await fs.readdir(accountsDirectory)).toHaveLength(2), { timeout: 10_000 });
+      await vi.waitFor(async () => expect(sqlite ? listSqliteStateFiles(accountsDirectory) : await fs.readdir(accountsDirectory)).toHaveLength(2), { timeout: 10_000 });
 
       entries = entries.filter((entry) => entry.id !== "removed");
       manager.onAccountsMutated({ addedAccountIds: [], removedAccountIds: ["removed"] });
 
-      await vi.waitFor(async () => expect(await fs.readdir(accountsDirectory)).toEqual(["kept@example.com.json"]), {
+      await vi.waitFor(async () => expect(sqlite ? listSqliteStateFiles(accountsDirectory) : await fs.readdir(accountsDirectory)).toEqual(["kept@example.com.json"]), {
         timeout: 10_000
       });
       manager.dispose();
     } finally {
+      configureSqliteStateStore(undefined);
+      store?.close();
       await removeTestDirectory(directory);
     }
   });

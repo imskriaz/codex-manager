@@ -16,6 +16,7 @@ import { CrossWindowOperationBusyError, runCrossWindowExclusive, runEncryptedSyn
 import { getCodexManagerConfiguration, getSyncHeartbeatMinutes } from "../infrastructure/config/extensionSettings";
 import { clearTokenAutomationError } from "../presentation/workbench/tokenAutomationState";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
+import { deleteSqliteStateFile, hasSqliteStateFile, listSqliteStateFiles, readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 import { canonicalizeSyncAccountLeases, isValidSyncAccountLease, type SyncAccountLease } from "./syncLeases";
 import {
   canonicalizeSyncAccountEnablement,
@@ -1600,7 +1601,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
       this.legacyDurableVaultPath &&
       [...this.legacyMigrationAccountIds].every((accountId) => writtenAccountIds.has(accountId))
     ) {
-      await fs.unlink(this.legacyDurableVaultPath).catch((error) => {
+      const legacyPath = this.legacyDurableVaultPath;
+      await (sqliteStoreForFile(legacyPath)
+        ? Promise.resolve().then(() => deleteSqliteStateFile(legacyPath))
+        : fs.unlink(legacyPath)).catch((error) => {
         if (!isFileNotFoundError(error)) throw error;
       });
       this.legacyMigrationAccountIds.clear();
@@ -1628,7 +1632,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
     if (this.legacyDurableVaultPath) {
       try {
-        const raw = await fs.readFile(this.legacyDurableVaultPath, "utf8");
+        const raw = sqliteStoreForFile(this.legacyDurableVaultPath) ? readSqliteStateFile(this.legacyDurableVaultPath) : await fs.readFile(this.legacyDurableVaultPath, "utf8");
         const legacy = await decryptSyncPayload(raw, passphrase);
         for (const account of legacy.accounts) {
           const entry = createSyncEntry(account);
@@ -1695,7 +1699,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       if (options.writtenPaths.has(path.resolve(filePath).toLowerCase())) continue;
       let durable: SyncPayload;
       try {
-        durable = await decryptSyncPayload(await fs.readFile(filePath, "utf8"), passphrase);
+        durable = await decryptSyncPayload(sqliteStoreForFile(filePath) ? readSqliteStateFile(filePath) : await fs.readFile(filePath, "utf8"), passphrase);
       } catch {
         // Never discard a vault file that cannot be authenticated. It may be
         // recoverable with the previous password or from an intact backup.
@@ -1709,7 +1713,10 @@ export class EncryptedSyncManager implements vscode.Disposable {
         const expected = options.currentFileNamesByAccountId.get(accountId);
         return expected && expected.toLowerCase() !== path.basename(filePath).toLowerCase();
       });
-      if (explicitlyRemoved || staleAccount || replacedPath) await fs.unlink(filePath);
+      if (explicitlyRemoved || staleAccount || replacedPath) {
+        if (sqliteStoreForFile(filePath)) deleteSqliteStateFile(filePath);
+        else await fs.unlink(filePath);
+      }
     }
   }
 
@@ -2155,19 +2162,19 @@ function durableAccountFileBase(email: unknown): string {
 
 async function listDurableAccountVaultFiles(directory: string): Promise<string[]> {
   try {
-    const entries = await fs.readdir(directory, { withFileTypes: true });
+    const names = sqliteStoreForFile(directory) ? listSqliteStateFiles(directory)
+      : (await fs.readdir(directory, { withFileTypes: true })).filter(entry => entry.isFile()).map(entry => entry.name);
     const canonicalNames = new Set<string>();
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const lower = entry.name.toLowerCase();
+    for (const name of names) {
+      const lower = name.toLowerCase();
       if (lower.endsWith(DURABLE_ACCOUNT_FILE_SUFFIX)) {
-        canonicalNames.add(entry.name);
+        canonicalNames.add(name);
         continue;
       }
       const tempMarker = `${DURABLE_ACCOUNT_FILE_SUFFIX}.tmp-`;
       const markerIndex = lower.indexOf(tempMarker);
       if (markerIndex >= 0) {
-        canonicalNames.add(entry.name.slice(0, markerIndex + DURABLE_ACCOUNT_FILE_SUFFIX.length));
+        canonicalNames.add(name.slice(0, markerIndex + DURABLE_ACCOUNT_FILE_SUFFIX.length));
       }
     }
     return [...canonicalNames]
@@ -2180,6 +2187,7 @@ async function listDurableAccountVaultFiles(directory: string): Promise<string[]
 }
 
 async function writePrivateFileAtomically(filePath: string, contents: string): Promise<void> {
+  if (sqliteStoreForFile(filePath)) { writeSqliteStateFile(filePath, contents); return; }
   const directory = path.dirname(filePath);
   const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
@@ -2210,6 +2218,11 @@ async function writePrivateFileAtomically(filePath: string, contents: string): P
 }
 
 async function readDurableAccountVault(filePath: string, passphrase: string): Promise<SyncPayload> {
+  if (hasSqliteStateFile(filePath)) {
+    const stored = await decryptSyncPayload(readSqliteStateFile(filePath), passphrase);
+    if (stored.accounts.length !== 1) throw new Error("Each durable account vault must contain exactly one account.");
+    return stored;
+  }
   const directory = path.dirname(filePath);
   const canonicalName = path.basename(filePath);
   const prefix = `${canonicalName}.tmp-`;
@@ -2231,10 +2244,12 @@ async function readDurableAccountVault(filePath: string, passphrase: string): Pr
     .filter((value): value is { candidatePath: string; modifiedAt: number } => Boolean(value))
     .sort((left, right) => right.modifiedAt - left.modifiedAt)) {
     try {
-      const recovered = await decryptSyncPayload(await fs.readFile(candidate.candidatePath, "utf8"), passphrase);
+      const raw = await fs.readFile(candidate.candidatePath, "utf8");
+      const recovered = await decryptSyncPayload(raw, passphrase);
       if (recovered.accounts.length !== 1)
         throw new Error("Each durable account vault must contain exactly one account.");
-      if (candidate.candidatePath !== filePath) {
+      if (sqliteStoreForFile(filePath)) writeSqliteStateFile(filePath, raw);
+      else if (candidate.candidatePath !== filePath) {
         await fs.rename(candidate.candidatePath, filePath).catch(() => undefined);
       }
       return recovered;

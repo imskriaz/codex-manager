@@ -1,6 +1,7 @@
 import { constants, promises as fs } from "fs";
 import type { Stats } from "fs";
 import type { FileHandle } from "fs/promises";
+import { readSqliteStateFile, sqliteStoreForFile } from "../storage/sqliteState";
 
 export const DEFAULT_SAFE_FILE_READ_TIMEOUT_MS = 5_000;
 
@@ -37,6 +38,13 @@ export async function readSafeFileSnapshot(
   filePath: string,
   options: SafeFileSnapshotOptions
 ): Promise<SafeFileSnapshot> {
+  if (sqliteStoreForFile(filePath)) {
+    const raw = Buffer.from(readSqliteStateFile(filePath, options.rejectIfLarger ? options.maxBytes : undefined));
+    if (typeof options.startOffset === "function") throw new Error("Managed state does not support a file-stat offset.");
+    const startOffset = Math.max(0, Math.min(raw.length, Math.floor(options.startOffset ?? 0)));
+    const buffer = raw.subarray(startOffset, startOffset + Math.max(0, Math.floor(options.maxBytes)));
+    return { buffer, size: raw.length, mtimeMs: Date.now(), startOffset, endOffset: startOffset + buffer.length, bytesRead: buffer.length };
+  }
   const timeoutMs = options.timeoutMs ?? DEFAULT_SAFE_FILE_READ_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   const maxBytes = Math.max(0, Math.floor(options.maxBytes));

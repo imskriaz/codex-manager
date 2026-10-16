@@ -3,6 +3,7 @@ import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 
 const LOCK_DIRECTORY_NAME = "cross-window-operations-v1";
 const OWNER_FILE_NAME = "owner.json";
@@ -318,7 +319,7 @@ export async function runCentralAccountOperationWithCooldown<T>(
     const markerPath = sharedStorageRootPath ? path.join(sharedStorageRootPath, STARTUP_COOLDOWN_FILE) : undefined;
     if (markerPath) {
       try {
-        const marker = JSON.parse(await fs.readFile(markerPath, "utf8")) as { completedAt?: unknown };
+        const marker = JSON.parse(sqliteStoreForFile(markerPath) ? readSqliteStateFile(markerPath) : await fs.readFile(markerPath, "utf8")) as { completedAt?: unknown };
         const age = typeof marker.completedAt === "number" ? Date.now() - marker.completedAt : Infinity;
         if (age >= 0 && age < cooldownMs) {
           return { ran: false };
@@ -331,8 +332,10 @@ export async function runCentralAccountOperationWithCooldown<T>(
 
     const value = await task();
     if (markerPath) {
-      await fs
-        .writeFile(markerPath, JSON.stringify({ completedAt: Date.now() }), "utf8")
+      await Promise.resolve().then(async () => {
+        if (sqliteStoreForFile(markerPath)) writeSqliteStateFile(markerPath, JSON.stringify({ completedAt: Date.now() }));
+        else await fs.writeFile(markerPath, JSON.stringify({ completedAt: Date.now() }), "utf8");
+      })
         .catch((error: unknown) => console.warn("[codexManager] startup sync cooldown marker update skipped:", error));
     }
     return { ran: true, value };
@@ -385,7 +388,7 @@ export async function runSharedMaintenance<T>(
       : undefined;
     if (marker) {
       try {
-        const { completedAt } = JSON.parse(await fs.readFile(marker, "utf8")) as { completedAt?: unknown };
+        const { completedAt } = JSON.parse(sqliteStoreForFile(marker) ? readSqliteStateFile(marker) : await fs.readFile(marker, "utf8")) as { completedAt?: unknown };
         const age = typeof completedAt === "number" ? Date.now() - completedAt : Infinity;
         if (age >= 0 && age < cooldownMs) return { ran: false };
       } catch { /* Missing or interrupted marker: retry under the shared lease. */ }
@@ -394,8 +397,11 @@ export async function runSharedMaintenance<T>(
     if (marker) {
       const temporary = `${marker}.tmp-${process.pid}-${crypto.randomUUID()}`;
       try {
-        await fs.writeFile(temporary, JSON.stringify({ completedAt: Date.now() }), { mode: 0o600 });
-        await fs.rename(temporary, marker);
+        if (sqliteStoreForFile(marker)) writeSqliteStateFile(marker, JSON.stringify({ completedAt: Date.now() }));
+        else {
+          await fs.writeFile(temporary, JSON.stringify({ completedAt: Date.now() }), { mode: 0o600 });
+          await fs.rename(temporary, marker);
+        }
       } catch (error) {
         console.warn("[codexManager] maintenance cooldown could not be persisted", error);
       } finally { await fs.rm(temporary, { force: true }).catch(() => undefined); }

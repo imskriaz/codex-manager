@@ -16,6 +16,7 @@ import {
   disposeCrossWindowAccountMode
 } from "./services/windowAccountMode";
 import { registerWorkspaceTerminalMonitoring } from "./services/workspaceTools";
+import { disposeSqliteContext, initializeSqliteContext } from "./storage/sqliteContext";
 
 let workbench: AccountsWorkbench | undefined;
 let transientNotices: vscode.Disposable | undefined;
@@ -26,6 +27,10 @@ let transientNotices: vscode.Disposable | undefined;
  * @param context - 扩展上下文
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  try { context = await initializeSqliteContext(context); } catch (error) {
+    void vscode.window.showErrorMessage(`Codex Manager storage could not open. Existing data was retained: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
   registerWorkspaceTerminalMonitoring(context);
   const extensionVersion = resolveExtensionVersion(context);
   transientNotices = enableTransientVscodeNotices();
@@ -100,4 +105,5 @@ export async function deactivate(): Promise<void> {
   disposeCodexProxyEnvironment();
   await disposeCrossWindowAccountMode();
   await disposePersistentLogging();
+  disposeSqliteContext();
 }

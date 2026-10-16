@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
 import * as path from "path";
+import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 import type {
   CodexAnnouncement,
   CodexAnnouncementAction,
@@ -144,7 +145,9 @@ export class AnnouncementService {
 
   private async saveCache(payload: unknown): Promise<void> {
     await this.ensureAnnouncementDir();
-    await fs.writeFile(this.cachePath, `${JSON.stringify({ time: Date.now(), data: payload }, null, 2)}\n`, "utf8");
+    const serialized = `${JSON.stringify({ time: Date.now(), data: payload }, null, 2)}\n`;
+    if (sqliteStoreForFile(this.cachePath)) writeSqliteStateFile(this.cachePath, serialized);
+    else await fs.writeFile(this.cachePath, serialized, "utf8");
   }
 
   private async getReadIds(): Promise<string[]> {
@@ -158,7 +161,9 @@ export class AnnouncementService {
   private async saveReadIds(ids: string[]): Promise<void> {
     const unique = Array.from(new Set(ids.map((value) => value.trim()).filter(Boolean)));
     await this.ensureAnnouncementDir();
-    await fs.writeFile(this.readIdsPath, `${JSON.stringify(unique, null, 2)}\n`, "utf8");
+    const serialized = `${JSON.stringify(unique, null, 2)}\n`;
+    if (sqliteStoreForFile(this.readIdsPath)) writeSqliteStateFile(this.readIdsPath, serialized);
+    else await fs.writeFile(this.readIdsPath, serialized, "utf8");
   }
 }
 
@@ -521,7 +526,7 @@ function isCachePayload(value: unknown): value is { time: number; data: unknown 
 
 async function readJsonSafe<T>(filePath: string, fallback: T): Promise<unknown> {
   try {
-    const raw = await fs.readFile(filePath, "utf8");
+    const raw = sqliteStoreForFile(filePath) ? readSqliteStateFile(filePath) : await fs.readFile(filePath, "utf8");
     return JSON.parse(raw) as unknown;
   } catch {
     return fallback;

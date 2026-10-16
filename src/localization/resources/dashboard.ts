@@ -195,7 +195,7 @@ const en: DashboardCopy = {
   autoResumeGoalOnlyTitle: "Resume goal sessions only",
   autoResumeGoalOnlySub: "Reopen only parent sessions with an active goal. Enabled by default. Turn off to include eligible parent sessions without goals.",
   autoResumeSub:
-    "While Auto Switch is on, open parent tabs and running parent sessions reopen after Reload or a VS Code restart. The goal-only filter is enabled by default. Sub-agents are skipped. Works without Session Integration.",
+    "While Auto Switch is on, running parent sessions are saved to SQLite as session checks complete and reopen after Reload or a VS Code restart. The goal-only filter is enabled by default. Idle tabs and sub-agents are skipped. Works without Session Integration.",
   autoSwitchLockMinutesTitle: "Temporary Lock Duration",
   autoSwitchLockMinutesSub:
     "Default duration when temporarily locking the current account against automatic switching.",

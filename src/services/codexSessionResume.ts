@@ -25,6 +25,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
+import { hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -247,12 +248,44 @@ export async function readCodexCliSessionSummary(
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
-export function readRunningCodexSessionIds(codexHome = resolveCodexHome(), signal?: AbortSignal): Promise<string[]> {
+const recentRunningSessions = new Map<string, { ids: string[]; checkedAt: number }>();
+const runningSessionListeners = new Set<(home: string) => void>();
+
+export function readRunningCodexSessionIds(codexHome = resolveCodexHome(), signal?: AbortSignal, sessionIds?: string[]): Promise<string[]> {
+  sessionIds?.forEach(validateSessionId);
   const key = path.resolve(codexHome);
-  return createSharedInspection(`codex-running:${key}`, (inspectionSignal) => inspectRunningCodexSessionIds(codexHome, inspectionSignal), signal);
+  const snapshotKey = runningSessionSnapshotKey(codexHome, sessionIds);
+  return createSharedInspection(`codex-running:${snapshotKey}`, async inspectionSignal => {
+    const ids = await inspectRunningCodexSessionIds(codexHome, inspectionSignal, sessionIds);
+    inspectionSignal.throwIfAborted();
+    recentRunningSessions.set(snapshotKey, { ids: [...ids], checkedAt: Date.now() });
+    if (recentRunningSessions.size > 8) recentRunningSessions.delete(recentRunningSessions.keys().next().value!);
+    for (const listener of runningSessionListeners) {
+      try { listener(key); } catch (error) { console.warn("[codexManager] session recovery could not be scheduled", error); }
+    }
+    return ids;
+  }, signal);
 }
 
-async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSignal): Promise<string[]> {
+function runningSessionSnapshotKey(home: string, ids?: string[]): string {
+  return JSON.stringify([path.resolve(home), ids ? [...new Set(ids)].sort() : null]);
+}
+
+/** Reload recovery can reuse checks completed before quota exhaustion; safety checks stay fresh. */
+export function readRecentRunningCodexSessionIds(codexHome = resolveCodexHome(), sessionIds?: string[]): string[] | undefined {
+  const full = recentRunningSessions.get(runningSessionSnapshotKey(codexHome));
+  const scoped = sessionIds ? recentRunningSessions.get(runningSessionSnapshotKey(codexHome, sessionIds)) : undefined;
+  const snapshot = scoped && (!full || scoped.checkedAt >= full.checkedAt) ? scoped : full;
+  const age = snapshot ? Date.now() - snapshot.checkedAt : Infinity;
+  return snapshot && age >= 0 && age < 30_000 ? snapshot.ids.filter(id => !sessionIds || sessionIds.includes(id)) : undefined;
+}
+
+export function onDidInspectRunningCodexSessions(listener: (home: string) => void): vscode.Disposable {
+  runningSessionListeners.add(listener);
+  return { dispose: () => { runningSessionListeners.delete(listener); } };
+}
+
+async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSignal, requestedIds?: string[]): Promise<string[]> {
   signal?.throwIfAborted();
   const lockDirectory = path.join(codexHome, SESSION_LOCK_DIRECTORY);
   const lockEntries = await fs.readdir(lockDirectory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
@@ -266,9 +299,9 @@ async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSi
     .slice(0, MAX_SESSION_SCAN_ENTRIES);
   const activeIds = path.resolve(codexHome) === path.resolve(resolveCodexHome())
     ? [...activeCliTurns.keys(), ...activeAppServerTurns.keys()] : [];
-  const transcriptPaths = await findCliSessionTranscripts(codexHome, undefined, signal);
+  const transcriptPaths = await findCliSessionTranscripts(codexHome, requestedIds ? new Set(requestedIds) : undefined, signal);
   const stateRecords = await readStateSessionRecords(codexHome);
-  const sessionIds = [...new Set([...lockedSessionIds, ...activeIds, ...transcriptPaths.keys()])];
+  const sessionIds = requestedIds ? [...new Set(requestedIds)] : [...new Set([...lockedSessionIds, ...activeIds, ...transcriptPaths.keys()])];
   if (!sessionIds.length) {
     return [];
   }
@@ -2644,6 +2677,17 @@ async function readTrackedCliTurnsWithDiagnostics(
 }> {
   const canonicalPath = path.join(storageRoot, RUNNING_TURNS_FILE);
   let filePath = canonicalPath;
+  let raw: string | undefined;
+  if (sqliteStoreForFile(canonicalPath)) {
+    try { raw = readSqliteStateFile(canonicalPath, MAX_RUNNING_TURNS_BYTES); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        if (!hasSqliteStateFile(canonicalPath) && legacyPath && legacyPath !== canonicalPath)
+          return readTrackedCliTurnsWithDiagnostics(path.dirname(legacyPath));
+        return { turns: [] };
+      }
+      return { turns: [], failure: `recovery journal could not be read: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  } else {
   let stat: Awaited<ReturnType<typeof fs.stat>> | undefined;
   try {
     stat = await fs.stat(filePath);
@@ -2672,7 +2716,8 @@ async function readTrackedCliTurnsWithDiagnostics(
   if (!stat.isFile()) return { turns: [], failure: "recovery journal path is not a file" };
   if (stat.size > MAX_RUNNING_TURNS_BYTES)
     return { turns: [], failure: "recovery journal is too large to read safely" };
-  const raw = await fs.readFile(filePath, "utf8").catch(() => undefined);
+  raw = await fs.readFile(filePath, "utf8").catch(() => undefined);
+  }
   if (raw === undefined) return { turns: [], failure: "recovery journal could not be read" };
   if (!raw.trim()) return { turns: [] };
   try {
@@ -2745,6 +2790,7 @@ async function updateTrackedCliTurns(transform: (turns: TrackedCliTurn[]) => Tra
       }
       const current = tracked.turns;
       const next = transform(current);
+      if (sqliteStoreForFile(filePath)) { writeSqliteStateFile(filePath, JSON.stringify(next)); return; }
       await fs.mkdir(storageRoot, { recursive: true, mode: 0o700 });
       const temporaryPath = `${filePath}.${process.pid}.${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
       const handle = await fs.open(temporaryPath, "wx", 0o600);

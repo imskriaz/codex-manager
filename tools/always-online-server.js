@@ -10,7 +10,18 @@ const path = require("node:path");
 
 const configPath = process.argv[2];
 if (!configPath) throw new Error("Missing relay config path");
-const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+const databasePath = path.join(path.dirname(configPath), "codex-manager.sqlite");
+let storedConfig;
+if (fs.existsSync(databasePath)) {
+  const { DatabaseSync } = require("node:sqlite");
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  try {
+    database.exec("PRAGMA busy_timeout = 100");
+    const row = database.prepare("SELECT value FROM state WHERE namespace = ? AND key = ?").get("files", path.basename(configPath));
+    if (row) storedConfig = JSON.parse(row.value).text;
+  } finally { database.close(); }
+}
+const config = JSON.parse(storedConfig === undefined ? fs.readFileSync(configPath, "utf8") : storedConfig);
 // The detached relay takes over the normal dashboard port after VS Code
 // releases it. Ignore stale config values so this project never opens a
 // second dashboard port.
@@ -39,6 +50,18 @@ for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
   } catch { /* Other relay events remain available if this dependency is unavailable. */ }
 }
 const startedAt = Date.now();
+const stateStorageReady = (async () => {
+  if (!fs.existsSync(databasePath)) return;
+  let storage;
+  for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
+    try {
+      storage = require(path.join(root, "out", "storage", "sqliteState.js"));
+      break;
+    } catch { /* Try the next installed extension root. */ }
+  }
+  if (!storage) throw new Error("The installed SQLite storage module is unavailable.");
+  storage.configureSqliteStateStore(await storage.SqliteStateStore.open(databasePath));
+})();
 for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
   try { claimContract = require(path.join(root, "out", "services", "accountClaimAuthority.js")); break; }
   catch { /* Account switching will fail visibly if the shared contract is unavailable. */ }
@@ -441,10 +464,10 @@ function bind() {
     shutdown(1);
   };
   httpServer.once("error", onError);
-  httpServer.listen(port, "127.0.0.1", () => {
+  stateStorageReady.then(() => httpServer.listen(port, "127.0.0.1", () => {
     httpServer.off("error", onError);
     console.log(`[codex-manager-relay] listening on 127.0.0.1:${port}`);
-  });
+  })).catch(error => { console.error("Relay storage could not open", error); shutdown(1); });
 }
 bind();
 

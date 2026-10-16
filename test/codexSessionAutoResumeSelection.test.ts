@@ -250,6 +250,6 @@ describe("auto resume selection", () => {
     const copy = getDashboardCopy("en").autoResumeSub;
     expect(copy).toContain("running parent sessions");
     expect(copy).toContain("VS Code restart");
-    expect(copy).toContain("Sub-agents are skipped");
+    expect(copy).toContain("sub-agents are skipped");
   });
 });

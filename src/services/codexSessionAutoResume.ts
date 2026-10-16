@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import * as path from "path";
 import { filterAutoResumeGoalSessionIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
@@ -171,11 +172,11 @@ async function clearIds(context: AutoResumeContext, deadline: number): Promise<v
   unrestoredOpenSnapshots.delete(context.workspaceState);
 }
 
-/** Replace recovery with verified running parent IDs at a managed reload boundary. */
+/** Add verified running parents without dropping unacknowledged recovery. */
 export function persistRunningCodexSessions(
   context: AutoResumeContext,
   readRunningSessionIds: (signal?: AbortSignal) => Promise<string[]> = (signal) =>
-    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal),
+    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal, "running", undefined, readRecentRunningCodexSessionIds()),
   signal?: AbortSignal
 ): Promise<string[]> {
   return serialize(context, "capture", async () => {
@@ -215,7 +216,9 @@ export function persistRunningCodexSessions(
         await clearIds(context, deadline);
         return [];
       }
-      const ids = await bounded(() => filterAutoResumeGoalSessionIds(normalizeIds(running), undefined, controller.signal), deadline - Date.now(),
+      const ids = await bounded(() => filterAutoResumeGoalSessionIds(normalizeIds([
+        ...readPersistedSessionIds(context), ...normalizeIds(running)
+      ]), undefined, controller.signal), deadline - Date.now(),
         "Auto Resume could not verify goals before saving recovery.", controller.signal);
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Retry after preferences settle.");
       controller.signal.throwIfAborted();
@@ -258,8 +261,12 @@ export type AutoResumeResult = {
 /** Replace the open-tab snapshot; failed restoration remains in its separate recovery queue. */
 export function persistOpenCodexSessions(
   context: AutoResumeContext,
-  readOpenParents: (signal?: AbortSignal) => Promise<string[]> = (signal) =>
-    readAutoResumeCodexSessionIds(undefined, undefined, undefined, signal, "open"),
+  readOpenParents: (signal?: AbortSignal) => Promise<string[]> = async (signal) => {
+    const open = readOpenCodexSessionIds();
+    if (!open.length) return [];
+    const running = readRecentRunningCodexSessionIds(undefined, open) ?? await readRunningCodexSessionIds(undefined, signal, open);
+    return readAutoResumeCodexSessionIds(undefined, [], open, signal, "running", undefined, running);
+  },
   signal?: AbortSignal
 ): Promise<string[]> {
   return serialize(context, "track", async () => {
@@ -337,7 +344,9 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
           dirty = false;
           try {
             const goalOnly = isAutoResumeGoalOnlyEnabled();
-            const signature = isAutoResumeAvailable() ? `${goalOnly}:${readOpenCodexSessionIds().sort().join(",")}` : "disabled";
+            const open = readOpenCodexSessionIds().sort();
+            const signature = isAutoResumeAvailable()
+              ? `${goalOnly}:${open.join(",")}:${readRecentRunningCodexSessionIds(undefined, open)?.sort().join(",")}` : "disabled";
             // A goal may become active while the same tabs remain open.
             if (signature !== savedSignature || (isAutoResumeAvailable() && goalOnly)) {
               await persistOpenCodexSessions(context, undefined, controller.signal);
@@ -378,12 +387,16 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
     if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled") || event.affectsConfiguration("codexManager.autoResumeEnabled") ||
         event.affectsConfiguration("codexManager.autoSwitchEnabled")) refreshSubscription();
   });
+  const inspections = onDidInspectRunningCodexSessions(home => {
+    if (home === path.resolve(resolveCodexHome())) capture();
+  });
   refreshSubscription();
   return { dispose: () => {
     if (controller.signal.aborted) return;
     controller.abort(new Error("Codex Manager is shutting down."));
     if (timer) clearTimeout(timer);
     tabs?.dispose();
+    inspections.dispose();
     configuration?.dispose();
   } };
 }

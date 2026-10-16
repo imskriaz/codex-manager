@@ -4,6 +4,7 @@ import { cloneIndex } from "./accountsIndex";
 import {
   backupCurrentIndex,
   countAvailableBackups,
+  isFileNotFoundError,
   readIndexSnapshot,
   writeIndexAtomically
 } from "./accountsPersistence";
@@ -11,6 +12,7 @@ import type { CodexManagerIndex } from "../core/types";
 import { createError } from "../core/errors";
 import type { AccountsRepositoryState } from "./accountsRepositoryState";
 import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import { sqliteStoreForFile } from "./sqliteState";
 
 const INDEX_PERSIST_OPERATION_KEY = "accounts:index-persist";
 
@@ -129,7 +131,10 @@ export async function persistIndexWithBackups(params: {
     await runCrossWindowExclusive(INDEX_PERSIST_OPERATION_KEY, "Account index save", async () => {
       await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
       if (params.activeCodexHomeKey) {
-        const current = await readIndexSnapshot(params.indexPath).catch(() => undefined);
+        const current = await readIndexSnapshot(params.indexPath).catch((error: unknown) => {
+          if (sqliteStoreForFile(params.indexPath) && !isFileNotFoundError(error)) throw error;
+          return undefined;
+        });
         if (current?.activeAccountIdsByCodexHome) {
           const localAccountId = params.index.activeAccountIdsByCodexHome?.[params.activeCodexHomeKey];
           params.index.activeAccountStateVersion = 1;

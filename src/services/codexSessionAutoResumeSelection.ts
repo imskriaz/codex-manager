@@ -73,10 +73,11 @@ export async function readAutoResumeCodexSessionIds(
   openSessionIds = readOpenCodexSessionIds(),
   signal?: AbortSignal,
   selection: "running" | "open" = "running",
-  goalOnly = isAutoResumeGoalOnlyEnabled()
+  goalOnly = isAutoResumeGoalOnlyEnabled(),
+  runningSessionIds?: string[]
 ): Promise<string[]> {
   signal?.throwIfAborted();
-  const running = selection === "open" ? openSessionIds : await readRunningCodexSessionIds(home, signal);
+  const running = selection === "open" ? openSessionIds : runningSessionIds ?? await readRunningCodexSessionIds(home, signal);
   signal?.throwIfAborted();
   if (!running.length) return [];
   const transcripts = await findCliSessionTranscripts(home, new Set(running), signal);
