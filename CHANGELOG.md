@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.26
+
+- Fix activation with VS Code's frozen settings object so SQLite-backed preferences no longer prevent dashboard commands from registering. Package local builds as pre-releases.
+
 ## 1.2.25
 
 - Migrate extension state, settings, account metadata, encrypted account backups, and session recovery to a shared SQLite database with WAL, full synchronous commits, bounded write waits, and preserved migration sources. Keep VS Code Settings and Settings Sync compatible; require VS Code 1.101 or newer.

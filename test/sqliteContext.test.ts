@@ -9,7 +9,7 @@ const fixture = vi.hoisted(() => ({ root: "" }));
 vi.mock("../src/utils/storageRoot", () => ({ getCodexManagerStorageRoot: () => fixture.root }));
 import { disposeSqliteContext, initializeSqliteContext } from "../src/storage/sqliteContext";
 import { configureSqliteStateStore, getSqliteStateStore } from "../src/storage/sqliteState";
-import { getCodexManagerConfiguration } from "../src/infrastructure/config/extensionSettings";
+import { getCodexManagerConfiguration, getSyncHeartbeatMinutes } from "../src/infrastructure/config/extensionSettings";
 import { removeTestDirectory } from "./testFilesystem";
 
 const manifest = JSON.parse(readFileSync("package.json", "utf8"));
@@ -32,12 +32,12 @@ beforeEach(async () => {
   fixture.root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-sqlite-context-"));
   values = new Map([["autoResumeEnabled", true], ["autoSwitchEnabled", true], ["autoResumeGoalOnlyEnabled", false]]);
   listeners = new Set(); subscriptions = [];
-  nativeConfig = {
+  nativeConfig = Object.freeze({
     get: vi.fn((key: string, fallback?: unknown) => values.has(key) ? values.get(key) : manifest.contributes.configuration.properties[`codexManager.${key}`]?.default ?? fallback),
     update: vi.fn(async (key: string, value: unknown) => { values.set(key, value); changed(); }),
     inspect: vi.fn((key: string) => ({ key, globalValue: values.get(key) })),
     has: vi.fn((key: string) => values.has(key))
-  } as unknown as vscode.WorkspaceConfiguration;
+  }) as unknown as vscode.WorkspaceConfiguration;
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue(nativeConfig);
   vi.mocked(vscode.workspace.onDidChangeConfiguration).mockImplementation(listener => {
     listeners.add(listener);
@@ -53,6 +53,18 @@ afterEach(async () => {
 });
 
 describe("SQLite extension context and settings migration", () => {
+  it("supports VS Code's frozen configuration methods during workbench initialization", async () => {
+    await initializeSqliteContext(context());
+    expect(Object.isFrozen(nativeConfig)).toBe(true);
+    expect(getSyncHeartbeatMinutes()).toBe(manifest.contributes.configuration.properties["codexManager.encryptedSyncVsCodeHeartbeatMinutes"].default);
+    const config = getCodexManagerConfiguration();
+    expect(config.get("unknownSetting", "fallback")).toBe("fallback");
+    expect(config.has("autoResumeEnabled")).toBe(true);
+    expect(config.inspect("autoResumeEnabled")).toMatchObject({ globalValue: true });
+    expect(vi.mocked(nativeConfig.has).mock.contexts.at(-1)).toBe(nativeConfig);
+    expect(vi.mocked(nativeConfig.inspect).mock.contexts.at(-1)).toBe(nativeConfig);
+  });
+
   it("migrates existing state and settings while preserving credentials and VS Code editing", async () => {
     const original = context();
     const migrated = await initializeSqliteContext(original);

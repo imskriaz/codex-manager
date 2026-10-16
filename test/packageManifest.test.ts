@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.2.25");
+    expect(manifest.version).toBe("1.2.26");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });
@@ -60,6 +60,7 @@ describe("extension manifest configuration", () => {
     expect(manifest.dependencies?.["@types/ws"]).toBeUndefined();
     expect(manifest.devDependencies?.["@types/ws"]).toEqual(expect.any(String));
     expect(manifest.scripts?.package).toContain("--no-yarn --dependencies");
+    expect(manifest.scripts?.package).toContain("--pre-release");
     expect(manifest.scripts?.package).toContain("tools/verify-vsix-layout.mjs");
     expect(manifest.scripts?.["mobile:start"]).toBeUndefined();
     expect(manifest.scripts?.["mobile:typecheck"]).toBeUndefined();

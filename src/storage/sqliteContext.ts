@@ -59,18 +59,19 @@ export function sqliteConfiguration(config: vscode.WorkspaceConfiguration): vsco
   const store = configurationStore;
   const namespace = configurationNamespace;
   if (!store || !namespace) return config;
-  return new Proxy(config, {
-    get: (target, property) => {
+  // VS Code freezes configuration methods; a separate target permits delegation.
+  return new Proxy({ ...config }, {
+    get: (_target, property) => {
       if (property === "get") return <T>(key: string, fallback?: T): T | undefined => {
         const value = store.get<T>(namespace, key);
-        return value === undefined ? target.get<T>(key, fallback as T) : value;
+        return value === undefined ? config.get<T>(key, fallback as T) : value;
       };
       if (property === "update") return async (...args: Parameters<vscode.WorkspaceConfiguration["update"]>) => {
-        await target.update(...args);
+        await config.update(...args);
         synchronizeSqliteConfiguration();
       };
-      const value: unknown = Reflect.get(target, property);
-      return typeof value === "function" ? value.bind(target) as unknown : value;
+      const value: unknown = Reflect.get(config, property);
+      return typeof value === "function" ? value.bind(config) as unknown : value;
     }
   });
 }
