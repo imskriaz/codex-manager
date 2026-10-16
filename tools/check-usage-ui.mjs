@@ -41,7 +41,7 @@ const mockHost = `(() => {
             {accountId:account.id,at:query.from + 60000,hourly:90},
             {accountId:account.id,at:query.to - 60000,hourly:80}]) : [],
           dailyUsageCache: query.mode === 'tokens' ? state.accounts.map((account,index) => ({accountId:account.id,
-            fetchedAt:Date.now() - (index ? 60000 : 2 * day),usage:{days:30,points:[{date,totalTokens:tokens * (index + 1)}]}})) : []};
+            fetchedAt:Date.now() - (index ? 60000 : 2 * day),usage:{days:30,points:window.__emptyUsage ? [] : window.__richUsage ? Array.from({length:30},(_,i) => ({date:new Date(query.to-(30-i)*day).toISOString().slice(0,10),totalTokens:window.__zeroUsage ? 0 : (1+(i*7)%11)*1234*(index+1),surfaceValues:window.__zeroUsage ? {} : {cli:1000,vscode:234}})) : [{date,totalTokens:tokens * (index + 1)}]}})) : []};
         if (window.__failUsage) { window.__failUsage = false; error = 'Saved graph database is temporarily unavailable.'; }
       } else if (message.action === 'getDailyUsage') {
         payload = {dailyUsage:{days:30,points:[{date,totalTokens:100}]},dailyUsageFetchedAt:Date.now()};
@@ -59,7 +59,7 @@ await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: "msedge", headless: true });
 const results = [];
 try {
-  for (const width of [1440, 390]) {
+  for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: "block" });
     const page = await context.newPage();
     const errors = [];
@@ -79,6 +79,17 @@ try {
     const loadMs = Date.now() - started;
     assert.equal(await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage").length), 0, "Collection is off by default");
     assert.equal(await page.evaluate(() => window.__usageActions.filter(action => ["getWorkspaceEnvironment", "listWorkspaceTerminals"].includes(action.action)).length), 0, "The dashboard does not inspect an inactive workspace");
+    const chart = page.locator(".usage-graph-card");
+    const quotaHeight = (await chart.boundingBox()).height;
+    assert.ok(quotaHeight <= 130, "The chart keeps its compact height on every screen");
+    await page.locator(".usage-graph-bar-hitarea").first().focus();
+    await page.getByRole("tooltip").waitFor();
+    assert.match(await page.getByRole("tooltip").innerText(), /quota used/);
+    await page.keyboard.press("ArrowRight");
+    assert.ok(await page.locator(".usage-graph-bar-hitarea").nth(1).evaluate(bar => bar === document.activeElement), "Arrow keys move between account bars");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.getByRole("tooltip").count(), 0);
+    await page.screenshot({ path: path.join(output, `quota-${width}.png`) });
     await page.getByRole("button", { name: "Graph settings", exact: true }).click();
     await page.getByRole("button", { name: "Daily token usage", exact: true }).click();
     await page.locator('.usage-graph-bar-hitarea[aria-label*="100 tokens"]').waitFor();
@@ -86,12 +97,24 @@ try {
     assert.equal(new Set(await page.locator(".usage-graph-bar").evaluateAll(bars => bars.map(bar => bar.getAttribute("fill")))).size, 2, "Account colours remain distinct");
     assert.ok(await page.locator(".usage-graph-card").getByText(/Stale/).count(), "Stale history is labelled");
     assert.equal(await page.locator('.usage-graph-bar-hitarea[aria-label*="% tokens"]').count(), 0, "Token totals are not percentages");
+    assert.equal((await chart.boundingBox()).height, quotaHeight, "Both chart modes keep the same height");
+    await page.locator('.usage-graph-bar-hitarea[aria-label*="100 tokens"]').click();
+    const tooltip = page.getByRole("tooltip");
+    await tooltip.waitFor();
+    assert.match(await tooltip.innerText(), /a@example.invalid/);
+    assert.match(await tooltip.innerText(), /300 tokens/);
+    assert.match(await tooltip.innerText(), /Stale/);
+    const box = await tooltip.boundingBox();
+    assert.ok(box.x >= 0 && box.x + box.width <= width && box.y >= 0 && box.y + box.height <= 900, "Tooltip stays inside viewport");
     await page.screenshot({ path: path.join(output, `tokens-${width}.png`) });
+    await page.keyboard.press("Escape");
 
     await page.evaluate(() => { window.__failUsage = true; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("7d");
     await page.getByRole("button", { name: "Retry saved graph", exact: true }).waitFor();
     assert.equal(await page.locator(".usage-graph-bar-hitarea").count(), 2, "A failed query preserves the last result");
+    assert.equal((await chart.boundingBox()).height, quotaHeight, "A failure does not resize the chart");
+    assert.match(await chart.innerText(), /temporarily unavailable/);
     await page.getByRole("button", { name: "Retry saved graph", exact: true }).click();
     await page.locator('.usage-graph-bar-hitarea[aria-label*="700 tokens"]').waitFor();
 
@@ -103,6 +126,23 @@ try {
     await page.evaluate(() => { window.__deferUsage = false; window.__finishUsage(); });
     await page.locator('.usage-graph-bar-hitarea[aria-label*="700 tokens"]').waitFor();
     assert.equal(await page.locator('.usage-graph-bar-hitarea[aria-label*="100 tokens"]').count(), 0, "A late response cannot replace the selected range");
+
+    await page.evaluate(() => { window.__richUsage = true; });
+    await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");
+    await page.waitForFunction(() => document.querySelectorAll(".usage-graph-bar").length === 60);
+    assert.equal((await chart.boundingBox()).height, quotaHeight, "A full month stays compact");
+    await page.locator(".usage-graph-bar-hitarea").last().focus();
+    await page.getByRole("tooltip").waitFor();
+    await page.screenshot({ path: path.join(output, `month-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.__zeroUsage = true; });
+    await page.getByRole("combobox", { name: "Graph time range" }).selectOption("7d");
+    await chart.getByText("No token use recorded", { exact: true }).waitFor();
+    assert.equal((await chart.boundingBox()).height, quotaHeight);
+    await page.evaluate(() => { window.__emptyUsage = true; });
+    await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");
+    await chart.getByText("No saved tokens in this period", { exact: true }).waitFor();
+    assert.equal((await chart.boundingBox()).height, quotaHeight);
 
     if (width === 1440) {
       await page.locator("#settingsOpenButton").click();

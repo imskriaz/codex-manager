@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildUsageEvents, buildDailyTokenUsageEvents, resolveUsageGraphBucketCount } from "../webview-src/dashboard/overviewSection";
+import { buildUsageEvents, buildDailyTokenUsageEvents, resolveUsageGraphBucketCount, resolveUsageAxisMaximum, layoutUsageGraphBars, positionUsageGraphTooltip, summarizeUsageSegments } from "../webview-src/dashboard/overviewSection";
 
 describe("quota usage graph", () => {
   it("distributes a quota change observed after five minutes across those minutes", () => {
@@ -50,5 +50,42 @@ describe("quota usage graph", () => {
     ]);
     expect(events.map(event => [event.accountId, event.used])).toEqual([["a", 15], ["b", 20]]);
     expect(events.every(event => event.at === Date.parse("2026-10-15T00:00:00Z"))).toBe(true);
+  });
+});
+
+
+describe("compact usage chart layout", () => {
+  it("uses readable linear scales for small quota changes and large token totals", () => {
+    expect([0, 0.03, 0.4, 2, 2345, Infinity].map(resolveUsageAxisMaximum)).toEqual([1, 0.05, 0.5, 2, 5000, 1]);
+    expect(Number.isFinite(resolveUsageAxisMaximum(Number.MAX_VALUE))).toBe(true);
+    const bars = layoutUsageGraphBars([{ at: 5, accountId: "b", used: 25 }, { at: 5, accountId: "a", used: 50 }], 0, 10, 2, 100);
+    expect(bars.map(bar => bar.event.accountId)).toEqual(["a", "b"]);
+    expect(bars[0]!.height).toBe(bars[1]!.height * 2);
+    expect(bars[0]!.x + bars[0]!.width).toBeLessThan(bars[1]!.x);
+    expect(bars.every(bar => bar.x >= 0 && bar.x + bar.width <= 100)).toBe(true);
+    expect(bars.map(bar => [bar.bucketStart, bar.bucketEnd])).toEqual([[5, 10], [5, 10]]);
+  });
+
+  it("keeps saved zero values and rejects invalid or out-of-range points", () => {
+    const events = [-1, 0, 10, 11, NaN].map(at => ({ at, accountId: String(at), used: 0 }));
+    events.push({ at: 5, accountId: "invalid", used: Infinity });
+    expect(layoutUsageGraphBars(events, 0, 10, 2, 1).map(bar => bar.event.at)).toEqual([0, 10]);
+    expect(layoutUsageGraphBars(events, 0, 0, 2, 1)).toEqual([]);
+    expect(layoutUsageGraphBars(events, 0, 10, NaN, 1)).toEqual([]);
+  });
+
+  it("positions tooltips inside narrow viewports and falls below a top-edge bar", () => {
+    const anchor = { left: 310, right: 320, top: 15, bottom: 50 };
+    expect(positionUsageGraphTooltip(anchor, 264, 200, 320, 600)).toEqual({ left: 48, top: 60 });
+    expect(positionUsageGraphTooltip({ ...anchor, left: 0, right: 10, top: 590, bottom: 600 }, 264, 200, 320, 600)).toEqual({ left: 8, top: 380 });
+  });
+
+  it("bounds source detail while preserving the complete total", () => {
+    const segments = [1, 6, 3, 2, 4, 5, NaN, -1].map((used, index) => ({ key: String(index), used, color: "blue" }));
+    const rows = summarizeUsageSegments(segments);
+    expect(rows.map(row => row.used)).toEqual([6, 5, 4, 6]);
+    expect(rows[3]!.key).toBe("Other sources");
+    expect(rows.reduce((sum, row) => sum + row.used, 0)).toBe(21);
+    expect(segments).toHaveLength(8);
   });
 });

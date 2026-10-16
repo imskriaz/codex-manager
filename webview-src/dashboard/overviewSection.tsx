@@ -1,6 +1,6 @@
 import { createPortal } from "preact/compat";
 import type { ComponentChildren } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type {
   DashboardAccountViewModel,
   DashboardCopy,
@@ -671,7 +671,6 @@ export type UsageSegment = { key: string; used: number; color: string };
 export type UsageEvent = { at: number; accountId: string; used: number; segments?: UsageSegment[] };
 type UsageGraphRange = "1h" | "3h" | "6h" | "24h" | "7d" | "30d";
 const USAGE_GRAPH_COLORS = ["#58a6ff", "#3fb950", "#d29922", "#bc8cff", "#f778ba", "#f0883e"];
-const USAGE_DEVICE_COLORS = ["#79c0ff", "#56d364", "#e3b341", "#d2a8ff", "#ff7bce", "#ffa657"];
 const USAGE_GRAPH_MAX_COLOR_KEYS = 6;
 const USAGE_GRAPH_MINUTE_MS = 60_000;
 const USAGE_GRAPH_MAX_DISTRIBUTION_MINUTES = 60;
@@ -686,6 +685,54 @@ const USAGE_GRAPH_RANGES: Array<{ key: UsageGraphRange; label: string; durationM
 const USAGE_GRAPH_VIEWBOX_HEIGHT = 56;
 const USAGE_GRAPH_BASELINE = 52;
 const USAGE_GRAPH_MAX_BAR_HEIGHT = 42;
+
+type UsageGraphBar = { event: UsageEvent; x: number; width: number; height: number; bucketStart: number; bucketEnd: number };
+type UsageGraphAnchor = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
+const USAGE_COMPACT_NUMBER = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const USAGE_EXACT_NUMBER = new Intl.NumberFormat("en", { maximumFractionDigits: 3 });
+
+export function resolveUsageAxisMaximum(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  return Math.min(Number.MAX_VALUE, ([1, 2, 5, 10].find(step => step * magnitude >= value) ?? 10) * magnitude);
+}
+
+export function layoutUsageGraphBars(events: readonly UsageEvent[], from: number, to: number, buckets: number, maximum: number): UsageGraphBar[] {
+  if (![from, to, buckets, maximum].every(Number.isFinite) || to <= from || !Number.isInteger(buckets) || buckets < 1 || maximum <= 0) return [];
+  const duration = (to - from) / buckets;
+  const groups = new Map<number, UsageEvent[]>();
+  for (const event of events) {
+    if (!Number.isFinite(event.at) || !Number.isFinite(event.used) || event.used < 0 || event.at < from || event.at > to) continue;
+    const bucket = Math.min(buckets - 1, Math.floor((event.at - from) / duration));
+    const group = groups.get(bucket) ?? [];
+    group.push(event);
+    groups.set(bucket, group);
+  }
+  const slotWidth = 100 / buckets;
+  const width = slotWidth * 0.72 / Math.max(1, ...[...groups.values()].map(group => group.length));
+  return [...groups.entries()].sort(([a], [b]) => a - b).flatMap(([bucket, group]) =>
+    group.sort((a, b) => a.accountId.localeCompare(b.accountId)).map((event, index) => ({
+      event,
+      x: bucket * slotWidth + slotWidth / 2 + (index - (group.length - 1) / 2) * width * 1.12 - width / 2,
+      width,
+      height: Math.max(0, Math.min(1, event.used / maximum)) * USAGE_GRAPH_MAX_BAR_HEIGHT,
+      bucketStart: from + bucket * duration,
+      bucketEnd: from + (bucket + 1) * duration
+    }))
+  );
+}
+
+export function positionUsageGraphTooltip(anchor: UsageGraphAnchor, width: number, height: number, viewportWidth: number, viewportHeight: number): { left: number; top: number } {
+  const left = Math.max(8, Math.min(viewportWidth - width - 8, (anchor.left + anchor.right - width) / 2));
+  const above = anchor.top - height - 10;
+  const top = above >= 8 ? above : Math.max(8, Math.min(viewportHeight - height - 8, anchor.bottom + 10));
+  return { left, top };
+}
+
+export function summarizeUsageSegments(segments: readonly UsageSegment[]): UsageSegment[] {
+  const rows = segments.filter(segment => Number.isFinite(segment.used) && segment.used > 0).sort((a, b) => b.used - a.used);
+  return rows.length <= 4 ? rows : [...rows.slice(0, 3), { key: "Other sources", used: rows.slice(3).reduce((sum, row) => sum + row.used, 0), color: "currentColor" }];
+}
 
 function UsageGraph(props: {
   automaticTokenHistory: boolean;
@@ -707,399 +754,211 @@ function UsageGraph(props: {
   const [windowOffset, setWindowOffset] = useState(0);
   const [graphMode, setGraphMode] = useState<"quota" | "tokens">("quota");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [hoveredEvent, setHoveredEvent] = useState<{ event: UsageEvent; label: string; left: number; top: number }>();
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const [hovered, setHovered] = useState<{ bar: UsageGraphBar; anchor: UsageGraphAnchor }>();
+  const tooltipId = useId();
+  const cardRef = useRef<HTMLDivElement>(null);
+  const graphStageRef = useRef<HTMLDivElement>(null);
   const loadQueryRef = useRef(props.onLoadUsageGraph);
   loadQueryRef.current = props.onLoadUsageGraph;
-  const graphStageRef = useRef<HTMLDivElement>(null);
-  const accountMap = new Map(
-    props.accounts.map((account, index) => [
-      account.id,
-      {
-        label: getSensitiveDisplayValue(account.email, props.privacyMode, "email"),
-        color: USAGE_GRAPH_COLORS[index % USAGE_GRAPH_COLORS.length],
-        device: account.runningDeviceName,
-        deviceColor: account.runningDeviceName ? colorForUsageDevice(account.runningDeviceName) : undefined
-      }
-    ])
-  );
+  const accountMap = useMemo(() => new Map(props.accounts.map((account, index) => [account.id, {
+    label: getSensitiveDisplayValue(account.email, props.privacyMode, "email"),
+    color: USAGE_GRAPH_COLORS[index % USAGE_GRAPH_COLORS.length]!,
+    device: account.runningDeviceName ? getSensitiveDisplayValue(account.runningDeviceName, props.privacyMode, "name") : undefined,
+  }])), [props.accounts, props.privacyMode]);
   const availableRanges = graphMode === "tokens" ? USAGE_GRAPH_RANGES.filter(candidate => candidate.key.endsWith("d")) : USAGE_GRAPH_RANGES;
-  const activeRange = availableRanges.some((candidate) => candidate.key === range)
-    ? range
-    : graphMode === "tokens"
-      ? "30d"
-      : "1h";
-  const rangeDuration =
-    USAGE_GRAPH_RANGES.find((candidate) => candidate.key === activeRange)?.durationMs ?? 60 * 60 * 1000;
+  const activeRange = availableRanges.some(candidate => candidate.key === range) ? range : graphMode === "tokens" ? "30d" : "1h";
+  const rangeDuration = USAGE_GRAPH_RANGES.find(candidate => candidate.key === activeRange)!.durationMs;
   const queryWindow = useMemo(() => {
     const end = graphMode === "tokens" ? (Math.floor(props.now / 86_400_000) + 1) * 86_400_000 : props.now;
     return { mode: graphMode, from: end - (windowOffset + 1) * rangeDuration, to: end - windowOffset * rangeDuration };
   }, [graphMode, rangeDuration, windowOffset, props.usageGraphRevision, props.usageGraphSource]);
   useEffect(() => { if (!props.usageGraphPaused) loadQueryRef.current?.(queryWindow); }, [queryWindow, props.usageGraphPaused]);
   const data = props.usageGraphData?.mode === graphMode ? props.usageGraphData : undefined;
-  const matchingResult = data?.from === queryWindow.from && data?.to === queryWindow.to;
-  const history = data?.history ?? [];
-  const dailyUsageCache = (data?.dailyUsageCache ?? []).filter(entry => accountMap.has(entry.accountId));
-  const tokenEvents = useMemo(() => buildDailyTokenUsageEvents(dailyUsageCache), [data, props.accounts]);
-  const tokenBreakdown = useMemo(() => ({ days: 30, points: dailyUsageCache.flatMap(entry => entry.usage.points) }), [data, props.accounts]);
-  const graphEndAt = data?.to ?? queryWindow.to;
   const graphStartAt = data?.from ?? queryWindow.from;
-  const oldestHistoryAt = data?.oldestAt ?? Number.POSITIVE_INFINITY;
-  const graphAxisMode: "time" | "date" = activeRange.endsWith("h") ? "time" : "date";
-  const bucketCount = resolveUsageGraphBucketCount(activeRange);
-  const events = useMemo(() => aggregateUsageEvents(
-    (graphMode === "tokens" ? tokenEvents : buildUsageEvents(selectUsageHistoryWindow(history, graphStartAt, graphEndAt),
-      { from: graphStartAt, to: graphEndAt, buckets: bucketCount })).filter(
-      (event) => event.at >= graphStartAt && event.at <= graphEndAt
-    ),
-    graphStartAt,
-    rangeDuration,
-    bucketCount
-  ), [data, graphMode, tokenEvents, graphStartAt, graphEndAt, rangeDuration, bucketCount]);
-  const eventAccountIds = new Set(events.map((event) => event.accountId));
-  const legendSource = props.accounts.filter((account) => !eventAccountIds.size || eventAccountIds.has(account.id));
-  const legendAccounts = legendSource
-    .slice(0, USAGE_GRAPH_MAX_COLOR_KEYS)
-    .map((account) => ({ id: account.id, ...accountMap.get(account.id)! }));
-  const hiddenLegendAccountCount = Math.max(0, legendSource.length - legendAccounts.length);
-  const maxUsage = Math.max(1, ...events.map((event) => event.used));
-  const timeSpan = rangeDuration;
-  const graphWidth = 100;
-  // Purely proportional sizing: the SVG stretches to its container, and bar
-  // width follows the selected range density without fixed min/max values.
-  const barWidth = events.length ? (graphWidth / Math.max(bucketCount, events.length)) * 0.58 : 0;
-  const eventOffsets = buildUsageEventOffsets(events, barWidth);
-  const canGoOlder = Number.isFinite(oldestHistoryAt) && oldestHistoryAt < graphStartAt;
-  const canGoNewer = windowOffset > 0;
-  const formatValue = (value: number) => graphMode === "tokens" ? new Intl.NumberFormat().format(Math.round(value)) : formatUsageValue(value);
-  const axisTop = formatValue(maxUsage);
-  // A few large drops can otherwise flatten all of the smaller changes. Use a
-  // gentle square-root lift for bar heights while retaining the real values in
-  // the axis labels and hover details.
-  const axisMid = formatValue(maxUsage / 4);
+  const graphEndAt = data?.to ?? queryWindow.to;
+  const duration = graphEndAt - graphStartAt;
+  const displayedRange = USAGE_GRAPH_RANGES.find(candidate => candidate.durationMs === duration)?.key ?? activeRange;
+  const bucketCount = graphMode === "tokens" ? Math.max(1, Math.round(duration / 86_400_000)) : resolveUsageGraphBucketCount(displayedRange);
+  const dailyUsageCache = useMemo(() => (data?.dailyUsageCache ?? []).filter(entry => accountMap.has(entry.accountId)), [data, accountMap]);
+  const events = useMemo(() => graphMode === "tokens"
+    ? buildDailyTokenUsageEvents(dailyUsageCache).filter(event => event.at >= graphStartAt && event.at < graphEndAt)
+    : aggregateUsageEvents(buildUsageEvents(selectUsageHistoryWindow(data?.history ?? [], graphStartAt, graphEndAt),
+        { from: graphStartAt, to: graphEndAt, buckets: bucketCount }), graphStartAt, duration, bucketCount),
+    [data, graphMode, dailyUsageCache, graphStartAt, graphEndAt, duration, bucketCount]);
+  const maximum = resolveUsageAxisMaximum(Math.max(0, ...events.map(event => event.used)));
+  const bars = useMemo(() => layoutUsageGraphBars(events, graphStartAt, graphEndAt, bucketCount, maximum), [events, graphStartAt, graphEndAt, bucketCount, maximum]);
+  const accountIds = new Set(events.map(event => event.accountId));
+  const legend = props.accounts.filter(account => !accountIds.size || accountIds.has(account.id));
+  const total = events.reduce((sum, event) => sum + event.used, 0);
+  const staleCount = dailyUsageCache.filter(entry => props.now - entry.fetchedAt >= 86_400_000).length;
+  const missingCount = Math.max(0, props.accounts.length - dailyUsageCache.length);
+  const pending = props.usageGraphPending || (graphMode === "tokens" && props.dailyUsagePending);
+  const error = props.usageGraphError ?? (graphMode === "tokens" ? props.dailyUsageError : undefined);
+  const previousPeriod = data && (data.from !== queryWindow.from || data.to !== queryWindow.to);
+  const feedback = error ?? (data?.truncated ? "Only the latest 10,000 records are shown. Choose a shorter range for complete detail." : pending ? "Updating saved usage…" : undefined);
+  const status = pending ? "Updating" : error ? "Failed" : data?.truncated ? "Limited" : graphMode === "tokens"
+    ? !dailyUsageCache.length ? "No data" : missingCount ? "Partial" : staleCount ? "Stale" : "Saved" : undefined;
+  const statusDetail = error ?? (data?.truncated ? feedback : graphMode === "tokens"
+    ? `${dailyUsageCache.length} of ${props.accounts.length} accounts saved${staleCount ? ` · ${staleCount} stale` : ""}. ${props.automaticTokenHistory ? "Checked on account load, at most once per 24 hours." : "Automatic token history is off."}`
+    : "Changes in each account's quota. Timing is estimated between refreshes.");
+  const formatAxis = (value: number) => graphMode === "tokens" ? USAGE_COMPACT_NUMBER.format(value) : formatUsageValue(value);
+  const showBar = (bar: UsageGraphBar, target: SVGRectElement): void => {
+    setSettingsOpen(false);
+    setHovered({ bar, anchor: target.getBoundingClientRect() });
+  };
+  useEffect(() => { setHovered(undefined); }, [data, graphMode, props.usageGraphSource]);
+  useEffect(() => {
+    if (!settingsOpen && !hovered) return;
+    const dismiss = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !cardRef.current?.contains(event.target)) { setSettingsOpen(false); setHovered(undefined); }
+    };
+    const hideTooltip = (): void => setHovered(undefined);
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") { setSettingsOpen(false); setHovered(undefined); }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    window.addEventListener("resize", hideTooltip);
+    window.addEventListener("scroll", hideTooltip, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("resize", hideTooltip);
+      window.removeEventListener("scroll", hideTooltip, true);
+    };
+  }, [settingsOpen, Boolean(hovered)]);
+  const bucketTotal = hovered ? bars.filter(bar => bar.bucketStart === hovered.bar.bucketStart).reduce((sum, bar) => sum + bar.event.used, 0) : 0;
   return (
-    <div class="usage-graph-card">
+    <div class="usage-graph-card" ref={cardRef} data-mode={graphMode} aria-label={graphMode === "tokens" ? "Daily token usage chart" : "Quota usage chart"}>
       <div class="usage-graph-head">
         <div class="usage-graph-title">
-          <span>
-            {graphMode === "tokens"
-              ? props.lang === "zh"
-                ? "每日用量"
-                : "Daily token usage · All accounts"
-              : props.lang === "zh"
-                ? "配额"
-                : "Quota"}
+          <strong>{graphMode === "tokens" ? "Tokens" : "Quota"}</strong>
+          <span class="usage-graph-summary" title={graphMode === "tokens" ? `${USAGE_EXACT_NUMBER.format(total)} tokens in this period` : "Accounts with quota changes in this period"}>
+            {graphMode === "tokens" ? `${USAGE_COMPACT_NUMBER.format(total)} total` : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"}`}
           </span>
-          {legendAccounts.length ? (
-            <span
-              class="usage-graph-color-key"
-              aria-label={props.lang === "zh" ? "账号和电脑颜色标识" : "Account and computer color key"}
-            >
-              {legendAccounts.map((account) => {
-                const title = account.device ? `${account.label} · ${account.device}` : account.label;
-                return (
-                  <i
-                    key={account.id}
-                    class="usage-graph-color-chip"
-                    style={{
-                      background: account.deviceColor
-                        ? `linear-gradient(90deg, ${account.color} 0 50%, ${account.deviceColor} 50% 100%)`
-                        : account.color,
-                      borderColor: account.deviceColor ?? account.color
-                    }}
-                    role="img"
-                    aria-label={title}
-                    title={title}
-                  ></i>
-                );
-              })}
-              {hiddenLegendAccountCount ? <small>+{hiddenLegendAccountCount}</small> : null}
-            </span>
-          ) : null}
+          <span class="usage-graph-color-key" aria-label="Account color key">
+            {legend.slice(0, USAGE_GRAPH_MAX_COLOR_KEYS).map(account => {
+              const entry = accountMap.get(account.id)!;
+              return <i key={account.id} class="usage-graph-color-chip" style={{ background: entry.color }} role="img" aria-label={entry.label} title={entry.label} />;
+            })}
+            {legend.length > USAGE_GRAPH_MAX_COLOR_KEYS ? <small>+{legend.length - USAGE_GRAPH_MAX_COLOR_KEYS}</small> : null}
+          </span>
         </div>
         <div class="usage-graph-controls">
-          <div class="usage-graph-ranges" aria-label={props.lang === "zh" ? "图表时间范围" : "Graph time range"}>
-            <select
-              value={activeRange}
-              aria-label={props.lang === "zh" ? "图表时间范围" : "Graph time range"}
-              onChange={(event) => {
-                setRange(event.currentTarget.value as UsageGraphRange);
-                setWindowOffset(0);
-              }}
-            >
-              {availableRanges.map((candidate) => (
-                <option key={candidate.key} value={candidate.key}>
-                  {candidate.label}
-                </option>
-              ))}
+          {status ? <button type="button" class="usage-graph-status" data-warning={Boolean(error || data?.truncated || staleCount || missingCount)} title={statusDetail} aria-label={`Usage data: ${status}. ${statusDetail ?? ""}`} onClick={() => { setHovered(undefined); setSettingsOpen(open => !open); }}>{status}</button> : null}
+          <div class="usage-graph-ranges">
+            <select value={activeRange} aria-label="Graph time range" onChange={event => { setRange(event.currentTarget.value as UsageGraphRange); setWindowOffset(0); }}>
+              {availableRanges.map(candidate => <option key={candidate.key} value={candidate.key}>{candidate.label}</option>)}
             </select>
           </div>
           <div class="usage-graph-settings-wrap">
-            <button
-              type="button"
-              class={settingsOpen ? "active" : ""}
-              aria-label={props.lang === "zh" ? "图表设置" : "Graph settings"}
-              title={props.lang === "zh" ? "图表设置" : "Graph settings"}
-              onClick={() => setSettingsOpen((open) => !open)}
-            >
-              ⚙
-            </button>
-            {settingsOpen ? (
-              <div class="usage-graph-settings-popover" role="dialog">
-                <strong>{props.lang === "zh" ? "数据" : "Data"}</strong>
-                <button
-                  type="button"
-                  class={graphMode === "quota" ? "active" : ""}
-                  onClick={() => {
-                    setGraphMode("quota");
-                    setRange("1h");
-                    setWindowOffset(0);
-                    setSettingsOpen(false);
-                  }}
-                >
-                  Quota changes
-                </button>
-                <button
-                  type="button"
-                  class={graphMode === "tokens" ? "active" : ""}
-                  onClick={() => {
-                    setGraphMode("tokens");
-                    setRange("30d");
-                    setWindowOffset(0);
-                  }}
-                >
-                  Daily token usage
-                </button>
-                {props.dailyUsageError ? (
-                  <span class="usage-graph-settings-error" role="alert">
-                    {props.dailyUsageError}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
+            <button type="button" class={settingsOpen ? "active" : ""} aria-label="Graph settings" aria-expanded={settingsOpen} title="Graph settings" onClick={() => { setHovered(undefined); setSettingsOpen(open => !open); }}>⚙</button>
+            {settingsOpen ? <div class="usage-graph-settings-popover" role="dialog" aria-label="Graph settings">
+              <strong>Chart data</strong>
+              <button type="button" class={graphMode === "quota" ? "active" : ""} aria-pressed={graphMode === "quota"} onClick={() => { setGraphMode("quota"); setRange("1h"); setWindowOffset(0); setSettingsOpen(false); }}>Quota changes</button>
+              <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { setGraphMode("tokens"); setRange("30d"); setWindowOffset(0); setSettingsOpen(false); }}>Daily token usage</button>
+              <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved daily totals across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at most once every 24 hours." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
+              {graphMode === "tokens" ? <div class="usage-graph-cache-list" aria-label="Saved account history">
+                {props.accounts.map(account => {
+                  const entry = dailyUsageCache.find(entry => entry.accountId === account.id);
+                  return <div key={account.id} class="usage-graph-cache-row">
+                    <i style={{ background: accountMap.get(account.id)?.color }} />
+                    <span>{accountMap.get(account.id)?.label}</span>
+                    <small title={entry ? `Last successful update: ${formatTimestamp(entry.fetchedAt, "Unknown")}` : "No saved history"}>{entry ? `${props.now - entry.fetchedAt >= 86_400_000 ? "Stale · " : ""}${formatRelativeTimestamp(entry.fetchedAt, props.now, "Unknown", props.lang)}` : "Not collected"}</small>
+                  </div>;
+                })}
+              </div> : null}
+              {error ? <span class="usage-graph-settings-error">{error}</span> : null}
+            </div> : null}
           </div>
           <div class="usage-graph-navigation">
-            <button
-              type="button"
-              disabled={!canGoOlder}
-              title={props.lang === "zh" ? "较早时间" : "Older period"}
-              aria-label={props.lang === "zh" ? "较早时间" : "Older period"}
-              onClick={() => {
-                setWindowOffset((current) => current + 1);
-              }}
-            >
-              ‹
-            </button>
-            <button
-              type="button"
-              disabled={!canGoNewer}
-              title={props.lang === "zh" ? "较新时间" : "Newer period"}
-              aria-label={props.lang === "zh" ? "较新时间" : "Newer period"}
-              onClick={() => {
-                setWindowOffset((current) => Math.max(0, current - 1));
-              }}
-            >
-              ›
-            </button>
+            <button type="button" disabled={typeof data?.oldestAt !== "number" || !Number.isFinite(data.oldestAt) || data.oldestAt >= graphStartAt} title="Older period" aria-label="Older period" onClick={() => setWindowOffset(current => current + 1)}>‹</button>
+            <button type="button" disabled={windowOffset === 0} title="Newer period" aria-label="Newer period" onClick={() => setWindowOffset(current => Math.max(0, current - 1))}>›</button>
           </div>
         </div>
       </div>
-      {graphMode === "tokens" ? (
-        <div class="usage-graph-breakdown" role="status" aria-live="polite">
-          <span>{props.automaticTokenHistory ? "Saved history · Checks on account load, at most once per 24 hours" : "Saved history · Automatic collection is off"}</span>
-          {props.accounts.map(account => {
-            const entry = dailyUsageCache.find(entry => entry.accountId === account.id);
-            return <span key={account.id} title={entry ? `Last successful update: ${formatTimestamp(entry.fetchedAt, props.lang)}` : "No saved token history"}>
-              <strong>{accountMap.get(account.id)?.label}</strong> {entry ? `${props.now - entry.fetchedAt >= 86_400_000 ? "Stale · " : ""}${formatRelativeTimestamp(entry.fetchedAt, props.now, "Unknown", props.lang)}` : "Not collected"}
-            </span>;
-          })}
-        </div>
-      ) : null}
-      {props.usageGraphPending || props.dailyUsagePending ? <div class="usage-graph-breakdown" role="status">Loading saved usage…{data && !matchingResult ? " Showing the previous result." : ""}</div> : null}
-      {props.usageGraphError || props.dailyUsageError || data?.truncated ? (
-        <div class="usage-graph-breakdown" role="alert">
-          <span>{props.usageGraphError ?? props.dailyUsageError ?? "This range contains more than 10,000 records. The latest records are shown; choose a shorter range for complete detail."}</span>
-          {props.usageGraphError ? <button type="button" disabled={props.usageGraphPending} onClick={() => loadQueryRef.current?.(queryWindow)}>Retry saved graph</button> : null}
-        </div>
-      ) : null}
-      <div class="usage-graph-stage" ref={graphStageRef} onMouseLeave={() => setHoveredEvent(undefined)}>
+      <div class="usage-graph-stage" ref={graphStageRef} onMouseLeave={() => setHovered(undefined)}>
         <div class="usage-graph-axis" aria-hidden="true">
-          <span>{axisTop}</span>
-          <span>{axisMid}</span>
-          <span>0</span>
+          {[maximum, maximum / 2, 0].map((value, index) => <span key={index} style={{ top: `${([10, 31, 52][index]! / USAGE_GRAPH_VIEWBOX_HEIGHT) * 100}%` }}>{formatAxis(value)}</span>)}
         </div>
         <div class="usage-graph-scroll">
           <div class="usage-graph-scroll-content">
-            <svg
-              class="usage-graph"
-              viewBox={`0 0 ${graphWidth} ${USAGE_GRAPH_VIEWBOX_HEIGHT}`}
-              preserveAspectRatio="none"
-              role="img"
-              aria-label={graphMode === "tokens" ? "Daily token usage for all saved accounts" : props.lang === "zh" ? "配额使用" : "Quota usage"}
-            >
-              {[10, 31, 52].map((y) => (
-                <line key={y} x1="0" y1={y} x2={graphWidth} y2={y} class="usage-graph-gridline" />
-              ))}
-              {events.map((event, index) => {
-                const account = accountMap.get(event.accountId) ?? {
-                  label: props.lang === "zh" ? "未知账号" : "Unknown account",
-                  color: "#8b949e",
-                  device: undefined,
-                  deviceColor: undefined
-                };
-                const timePosition =
-                  timeSpan > 0 ? (event.at - graphStartAt) / timeSpan : index / Math.max(events.length, 1);
-                const offset = eventOffsets.get(`${event.accountId}-${event.at}-${index}`) ?? 0;
-                const x = Math.max(
-                  0,
-                  Math.min(graphWidth - barWidth, timePosition * graphWidth + offset - barWidth / 2)
-                );
-                const normalizedUsage = Math.max(0, Math.min(1, event.used / maxUsage));
-                const height = Math.max(3, Math.sqrt(normalizedUsage) * USAGE_GRAPH_MAX_BAR_HEIGHT);
-                const y = USAGE_GRAPH_BASELINE - height;
-                const ariaLabel =
-                  graphMode === "tokens"
-                    ? `${account.label}: ${formatValue(event.used)} tokens, ${formatGraphTime(event.at, props.lang, graphAxisMode)}`
-                    : `${account.label}: ${formatUsageValue(event.used)} ${props.lang === "zh" ? "配额使用" : "quota used"}, ${formatGraphTime(event.at, props.lang, graphAxisMode)}`;
-                const segments = graphMode !== "tokens" && event.segments?.length
-                  ? event.segments
-                  : [{ key: "quota", used: event.used, color: account.color }];
-                let segmentOffset = 0;
-                return (
-                  <g key={`${event.accountId}-${event.at}`}>
-                    {segments.map((segment, segmentIndex) => {
-                      const segmentHeight = height * (segment.used / Math.max(event.used, 1));
-                      const segmentY = USAGE_GRAPH_BASELINE - segmentOffset - segmentHeight;
-                      segmentOffset += segmentHeight;
-                      return (
-                        <rect
-                          key={`${segment.key}-${segmentIndex}`}
-                          class="usage-graph-bar"
-                          x={x}
-                          y={segmentY}
-                          width={barWidth}
-                          height={Math.max(1, segmentHeight)}
-                          rx={barWidth * 0.18}
-                          fill={graphMode === "tokens" ? account.color : segment.color}
-                        />
-                      );
-                    })}
-                    <rect
-                      class="usage-graph-bar-hitarea"
-                      x={x}
-                      y={y}
-                      width={barWidth}
-                      height={height}
-                      fill="transparent"
-                      style={{ animationDelay: `${(index % 10) * 110}ms` }}
-                      tabIndex={0}
-                      aria-label={ariaLabel}
-                      onMouseEnter={(pointerEvent) => {
-                        const stage = graphStageRef.current?.getBoundingClientRect();
-                        const bar = pointerEvent.currentTarget.getBoundingClientRect();
-                        if (stage) {
-                          setHoveredEvent({
-                            event,
-                            label: account.label,
-                            left: ((bar.left + bar.width / 2 - stage.left) / stage.width) * 100,
-                            top: Math.max(4, bar.top - stage.top - 8)
-                          });
-                        }
-                      }}
-                      onFocus={(focusEvent) => {
-                        const stage = graphStageRef.current?.getBoundingClientRect();
-                        const bar = focusEvent.currentTarget.getBoundingClientRect();
-                        if (stage) {
-                          setHoveredEvent({
-                            event,
-                            label: account.label,
-                            left: ((bar.left + bar.width / 2 - stage.left) / stage.width) * 100,
-                            top: Math.max(4, bar.top - stage.top - 8)
-                          });
-                        }
-                      }}
-                      onBlur={() => setHoveredEvent(undefined)}
-                    />
-                  </g>
-                );
+            <svg class="usage-graph" viewBox={`0 0 100 ${USAGE_GRAPH_VIEWBOX_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={graphMode === "tokens" ? "Daily token usage for all saved accounts" : "Quota used by account"}>
+              {[10, 31, 52].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} class="usage-graph-gridline" />)}
+              {hovered ? <rect class="usage-graph-cursor" x={((hovered.bar.bucketStart - graphStartAt) / duration) * 100} y="4" width={100 / bucketCount} height="48" /> : null}
+              {bars.map((bar, index) => {
+                const account = accountMap.get(bar.event.accountId) ?? { label: "Unknown account", color: "#8b949e" };
+                const selected = hovered?.bar === bar;
+                const label = `${account.label}: ${USAGE_EXACT_NUMBER.format(bar.event.used)} ${graphMode === "tokens" ? "tokens" : "percent quota used"}, ${formatGraphTime(bar.event.at, props.lang, graphMode === "tokens" || displayedRange.endsWith("d") ? "date" : "time")}`;
+                return <g key={`${bar.event.accountId}:${bar.bucketStart}`}>
+                  <rect class={`usage-graph-bar${selected ? " is-active" : ""}`} x={bar.x} y={USAGE_GRAPH_BASELINE - bar.height} width={bar.width} height={bar.height} rx={Math.min(bar.width * 0.2, 0.3)} fill={account.color} />
+                  <rect class="usage-graph-bar-hitarea" x={Math.max(0, bar.x - bar.width * 0.18)} y="4" width={bar.width * 1.36} height="48" fill="transparent" role="img" tabIndex={index === Math.min(focusedIndex, bars.length - 1) ? 0 : -1} aria-label={label} aria-describedby={selected ? tooltipId : undefined}
+                    onMouseEnter={event => showBar(bar, event.currentTarget)}
+                    onFocus={event => { setFocusedIndex(index); showBar(bar, event.currentTarget); }}
+                    onBlur={() => setHovered(undefined)}
+                    onClick={event => showBar(bar, event.currentTarget)}
+                    onKeyDown={event => {
+                      if (event.key === "Escape") { event.stopPropagation(); setHovered(undefined); return; }
+                      const next = event.key === "Home" ? 0 : event.key === "End" ? bars.length - 1 : event.key === "ArrowRight" ? Math.min(bars.length - 1, index + 1) : event.key === "ArrowLeft" ? Math.max(0, index - 1) : undefined;
+                      if (next !== undefined) { event.preventDefault(); graphStageRef.current?.querySelectorAll<SVGRectElement>(".usage-graph-bar-hitarea")[next]?.focus(); }
+                    }} />
+                </g>;
               })}
             </svg>
             <div class="usage-graph-time-axis" aria-hidden="true">
-              {[0, 0.5, 1].map((position) => (
-                <span
-                  key={position}
-                  class={`${position === 0 ? "is-start" : position === 1 ? "is-end" : ""}`}
-                  style={{ left: `${position * 100}%` }}
-                >
-                  {formatGraphTime(graphStartAt + timeSpan * position, props.lang, graphAxisMode)}
-                </span>
-              ))}
+              {[0, 0.5, 1].map(position => <span key={position} class={position === 0 ? "is-start" : position === 1 ? "is-end" : ""} style={{ left: `${position * 100}%` }}>{formatGraphTime(graphStartAt + duration * position - (graphMode === "tokens" && position === 1 ? 1 : 0), props.lang, graphMode === "tokens" || displayedRange.endsWith("d") ? "date" : "time")}</span>)}
             </div>
           </div>
         </div>
-        {hoveredEvent ? (
-          <div
-            class="usage-graph-tooltip"
-            role="status"
-            style={{ left: `${Math.min(96, Math.max(4, hoveredEvent.left))}%`, top: `${hoveredEvent.top}px` }}
-          >
-            <strong>
-              {graphMode === "tokens"
-                ? props.lang === "zh"
-                  ? "每日 token 用量"
-                  : hoveredEvent.label
-                : hoveredEvent.label}
-            </strong>
-            <span>
-              {formatValue(hoveredEvent.event.used)}{" "}
-              {graphMode === "tokens" ? "tokens" : props.lang === "zh" ? "配额使用" : "quota used"}
-            </span>
-            {graphMode === "tokens" && hoveredEvent.event.segments?.length ? (
-              <div class="usage-graph-tooltip-breakdown">
-                {hoveredEvent.event.segments.map((segment) => (
-                  <span key={segment.key}>
-                    <i style={{ background: segment.color }} />
-                    {segment.key}: {formatValue(segment.used)}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-            <time>{formatGraphTime(hoveredEvent.event.at, props.lang, graphAxisMode)}</time>
-          </div>
-        ) : null}
-        {!events.length ? (
-          <div class="usage-graph-empty">
-            {graphMode === "tokens" ? "No saved token usage in this period" : props.lang === "zh" ? "尚未检测到配额下降" : "No quota decrease detected yet"}
-          </div>
-        ) : null}
+        {!events.length && !pending && !error ? <div class="usage-graph-empty"><strong>{graphMode === "tokens" ? "No saved tokens in this period" : "No quota changes yet"}</strong><span>{graphMode === "tokens" ? "Saved account totals appear here" : "Changes appear after quota refreshes"}</span></div> : null}
+        {events.length > 0 && total === 0 ? <div class="usage-graph-empty"><strong>No token use recorded</strong><span>Saved daily total: 0 tokens</span></div> : null}
+        {feedback ? <div class="usage-graph-feedback" data-warning={Boolean(error || data?.truncated)} role={error || data?.truncated ? "alert" : "status"}>
+          <span title={feedback}>{feedback}{previousPeriod ? " Showing the previous period." : ""}</span>
+          {props.usageGraphError ? <button type="button" disabled={props.usageGraphPending} aria-label="Retry saved graph" onClick={() => loadQueryRef.current?.(queryWindow)}>Retry</button> : null}
+        </div> : null}
       </div>
-      {graphMode === "tokens" ? <DailyUsageBreakdown usage={tokenBreakdown} /> : null}
+      {hovered ? <UsageGraphTooltip id={tooltipId} bar={hovered.bar} anchor={hovered.anchor} account={accountMap.get(hovered.bar.event.accountId)} mode={graphMode} lang={props.lang} now={props.now} bucketTotal={bucketTotal} fetchedAt={dailyUsageCache.find(entry => entry.accountId === hovered.bar.event.accountId)?.fetchedAt} /> : null}
     </div>
   );
 }
 
-function DailyUsageBreakdown(props: { usage: CodexDailyUsageBreakdown }) {
-  const points = props.usage.points;
-  const sum = (key: keyof CodexDailyUsageBreakdown["points"][number]): number =>
-    points.reduce((total, point) => total + (typeof point[key] === "number" ? (point[key] as number) : 0), 0);
-  const items = (
-    [
-      ["Total", sum("totalTokens")],
-      ["Extension", sum("extensionTokens")],
-      ["Other", sum("otherTokens")],
-      ["Input", sum("inputTokens")],
-      ["Output", sum("outputTokens")],
-      ["Cached", sum("cachedTokens")]
-    ] as Array<[string, number]>
-  ).filter(([, value]) => value > 0);
-  return items.length ? (
-    <div class="usage-graph-breakdown" aria-label="Daily token usage breakdown">
-      {items.map(([label, value]) => (
-        <span key={label}>
-          <strong>{label}</strong> {new Intl.NumberFormat().format(value)}
-        </span>
-      ))}
+function UsageGraphTooltip(props: {
+  id: string;
+  bar: UsageGraphBar;
+  anchor: UsageGraphAnchor;
+  account?: { label: string; color: string; device?: string };
+  mode: "quota" | "tokens";
+  lang: DashboardState["lang"];
+  now: number;
+  bucketTotal: number;
+  fetchedAt?: number;
+}) {
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ left: number; top: number }>();
+  useLayoutEffect(() => {
+    const bounds = tooltipRef.current?.getBoundingClientRect();
+    if (bounds) setPosition(positionUsageGraphTooltip(props.anchor, bounds.width, bounds.height, window.innerWidth, window.innerHeight));
+  }, [props.anchor, props.bar, props.account?.label]);
+  const tokens = props.mode === "tokens";
+  const date = new Intl.DateTimeFormat(props.lang === "zh" ? "zh-CN" : props.lang === "zh-hant" ? "zh-TW" : "en", {
+    weekday: "short", month: "short", day: "numeric", year: "numeric",
+    ...(tokens ? { timeZone: "UTC" } : { hour: "2-digit", minute: "2-digit" })
+  }).format(props.bar.event.at);
+  const segments = summarizeUsageSegments(props.bar.event.segments ?? []);
+  const today = tokens && Math.floor(props.bar.event.at / 86_400_000) === Math.floor(props.now / 86_400_000);
+  return createPortal(<div id={props.id} ref={tooltipRef} class="usage-graph-tooltip" role="tooltip" style={{ left: position?.left ?? 8, top: position?.top ?? 8, visibility: position ? "visible" : "hidden" }}>
+    <time dateTime={new Date(props.bar.event.at).toISOString()}>{date}</time>
+    <div class="usage-graph-tooltip-account"><i style={{ background: props.account?.color ?? "#8b949e" }} /><strong>{props.account?.label ?? "Unknown account"}</strong></div>
+    <div class="usage-graph-tooltip-value"><strong>{tokens ? USAGE_EXACT_NUMBER.format(props.bar.event.used) : formatUsageValue(props.bar.event.used)}</strong><span>{tokens ? "tokens" : "quota used"}</span></div>
+    {tokens && segments.length ? <div class="usage-graph-tooltip-breakdown" aria-label="Token breakdown">{segments.map(segment => <div key={segment.key}><span>{segment.key}</span><strong>{USAGE_EXACT_NUMBER.format(segment.used)}</strong></div>)}</div> : null}
+    {tokens && props.bucketTotal > props.bar.event.used ? <div class="usage-graph-tooltip-combined"><span>All accounts this day</span><strong>{USAGE_EXACT_NUMBER.format(props.bucketTotal)} tokens</strong></div> : null}
+    <div class="usage-graph-tooltip-meta">
+      <span>{tokens ? today ? "Today so far · UTC" : "Saved daily total · UTC" : "Estimated between quota checks"}</span>
+      {tokens && props.fetchedAt ? <span data-stale={props.now - props.fetchedAt >= 86_400_000}>Updated {formatRelativeTimestamp(props.fetchedAt, props.now, "Unknown", props.lang)}{props.now - props.fetchedAt >= 86_400_000 ? " · Stale" : ""}</span> : null}
+      {props.account?.device ? <span>{props.account.device}</span> : null}
     </div>
-  ) : null;
+  </div>, document.body);
 }
 
 export function buildDailyTokenUsageEvents(entries: readonly DashboardDailyUsageCacheEntry[]): UsageEvent[] {
@@ -1267,50 +1126,13 @@ export function resolveUsageGraphBucketCount(range: UsageGraphRange): number {
   }
 }
 
-/**
- * Keep events with the same sample timestamp individually visible. Without
- * this small deterministic spread, multiple accounts changing in one snapshot
- * render as a single opaque block at exactly the same x coordinate.
- */
-function buildUsageEventOffsets(events: UsageEvent[], barWidth: number): Map<string, number> {
-  const grouped = new Map<number, number[]>();
-  events.forEach((event, index) => {
-    const indexes = grouped.get(event.at) ?? [];
-    indexes.push(index);
-    grouped.set(event.at, indexes);
-  });
-
-  const offsets = new Map<string, number>();
-  for (const indexes of grouped.values()) {
-    if (indexes.length < 2) {
-      continue;
-    }
-    indexes.forEach((index, position) => {
-      offsets.set(
-        `${events[index]!.accountId}-${events[index]!.at}-${index}`,
-        (position - (indexes.length - 1) / 2) * barWidth * 0.82
-      );
-    });
-  }
-  return offsets;
-}
-
 function formatUsageValue(value: number): string {
-  const rounded = Math.round(value * 10) / 10;
-  return `${rounded}%`;
-}
-
-function colorForUsageDevice(deviceName: string): string {
-  let hash = 0;
-  for (let index = 0; index < deviceName.length; index += 1) {
-    hash = (hash * 31 + deviceName.charCodeAt(index)) >>> 0;
-  }
-  return USAGE_DEVICE_COLORS[hash % USAGE_DEVICE_COLORS.length]!;
+  return `${USAGE_EXACT_NUMBER.format(value)}%`;
 }
 
 function formatGraphTime(timestamp: number, lang: DashboardState["lang"], mode: "time" | "date" = "time"): string {
   return new Date(timestamp).toLocaleString(lang === "zh" ? "zh-CN" : lang === "zh-hant" ? "zh-TW" : undefined, {
-    ...(mode === "date" ? { month: "2-digit", day: "2-digit" } : { hour: "2-digit", minute: "2-digit" }),
+    ...(mode === "date" ? { month: "2-digit", day: "2-digit", timeZone: "UTC" } : { hour: "2-digit", minute: "2-digit" }),
     hour12: mode === "time"
   });
 }

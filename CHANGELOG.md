@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.3
+
+- Redesign quota and token charts with matching compact heights, linear scales, clear units, and grouped account bars. Add keyboard and touch tooltips with exact values, daily totals, and history freshness. Keep stale data visible during loading or failure and remove continuous chart animations.
+
 ## 1.3.2
 
 - Consolidate saved daily token usage across accounts with an opt-in check on account load, limited to one attempt per account every 24 hours. Preserve history and report failed or incomplete checks.
