@@ -370,6 +370,13 @@ function App() {
     [closeBrowserPush, isBrowserDashboard]
   );
   const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const logDownloadRequestRef = useRef<string>();
+  const logConsoleRequestRef = useRef<string>();
+  const [logConsoleOpen, setLogConsoleOpen] = useState(false);
+  const [logConsoleText, setLogConsoleText] = useState("");
+  const [logConsoleError, setLogConsoleError] = useState<string>();
+  const [logConsoleLimited, setLogConsoleLimited] = useState(false);
+
   const [browserHostStage, setBrowserHostStage] = useState<Extract<DashboardHostMessage, { type: "dashboard:host-status" }>["stage"]>("connecting");
   const [browserLastSyncAt, setBrowserLastSyncAt] = useState<number>();
   const showNotice = useCallback(
@@ -385,6 +392,10 @@ function App() {
   const handleActionTimeout = useCallback(
     (action: DashboardActionName, requestId: string) => {
       sessionActionRequests.current.delete(requestId);
+      if (action === "viewLogs" && logConsoleRequestRef.current === requestId) {
+        logConsoleRequestRef.current = undefined;
+        setLogConsoleError("Logs timed out. Saved records are still shown; retrying automatically.");
+      }
       if (action === "getDailyUsage") tokenHistoryRefresh.finish(requestId, false, "Token refresh timed out. Saved history was kept; verify before retrying.");
       if (action === "getCodexCliSessionMessages") {
         const target = messageRequests.current.get(requestId);
@@ -472,6 +483,17 @@ function App() {
   useEffect(() => {
     if (isBrowserDashboard && snapshot) void writeDashboardStateCache(snapshot);
   }, [isBrowserDashboard, snapshot]);
+  const refreshLogConsole = useCallback(() => {
+    if (logConsoleRequestRef.current) return;
+    logConsoleRequestRef.current = sendAction("viewLogs");
+  }, [sendAction]);
+  useEffect(() => {
+    if (!logConsoleOpen) return;
+    refreshLogConsole();
+    const timer = setInterval(refreshLogConsole, 2_000);
+    return () => { clearInterval(timer); logConsoleRequestRef.current = undefined; };
+  }, [logConsoleOpen, refreshLogConsole]);
+
   const lastCliListRequestAtRef = useRef(0);
   const lastCliRealtimeRevisionRef = useRef(0);
   const lastCliMessageRequestRef = useRef<{ target: CliSessionTarget; at: number }>();
@@ -517,7 +539,6 @@ function App() {
     sendAction("listWorkspaceTerminals", undefined, { targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
   }, [sendAction, selectedPeerId]);
   const lastAutomaticWorkspaceLoadRef = useRef<string>();
-  const logDownloadRequestRef = useRef<string>();
   const modals = useDashboardModals({
     dispatch,
     sendAction,
@@ -684,6 +705,18 @@ function App() {
           setUsageGraphData(message.payload.usageGraph);
           setUsageGraphError(undefined);
         } else setUsageGraphError(message.error ?? "Saved graph data could not be loaded. Retry to query the database again.");
+      }
+      if (message.type === "dashboard:action-result" && message.action === "viewLogs" && message.requestId === logConsoleRequestRef.current) {
+        logConsoleRequestRef.current = undefined;
+        if (message.status === "completed" && message.payload?.logDownload) {
+          try {
+            const parsed = JSON.parse(message.payload.logDownload.text) as { records?: unknown[]; limited?: boolean };
+            if (!Array.isArray(parsed.records)) throw new Error("Missing log records");
+            setLogConsoleText([...parsed.records].reverse().map(record => JSON.stringify(record)).join("\n") || "No saved logs yet.");
+            setLogConsoleLimited(parsed.limited === true);
+            setLogConsoleError(undefined);
+          } catch { setLogConsoleError("The log response was unreadable. Retry refresh."); }
+        } else setLogConsoleError(message.error ?? "No logs were returned. Retry refresh.");
       }
       if (message.type === "dashboard:action-result" && message.action === "downloadLogs" && message.requestId === logDownloadRequestRef.current) {
         logDownloadRequestRef.current = undefined;
@@ -2525,8 +2558,6 @@ function App() {
         onThresholdCommit={handleThresholdCommit}
         onPickCodexAppPath={() => postMessageToHost({ type: "dashboard:pickCodexAppPath" })}
         onClearCodexAppPath={() => postMessageToHost({ type: "dashboard:clearCodexAppPath" })}
-        onPickCodexCliPath={() => postMessageToHost({ type: "dashboard:pickCodexCliPath" })}
-        onClearCodexCliPath={() => postMessageToHost({ type: "dashboard:clearCodexCliPath" })}
         onClearUsageHistory={() => {
           postMessageToHost({ type: "dashboard:usage-history", samples: [] });
           try {
@@ -2538,6 +2569,8 @@ function App() {
         onExportBackup={handleExportBackup}
         onDownloadLogs={() => { logDownloadRequestRef.current = sendAction("downloadLogs"); }}
         downloadLogsPending={isActionPending("downloadLogs")}
+        onShowLogs={() => setLogConsoleOpen(true)}
+        showLogsPending={isActionPending("viewLogs")}
         onImportBackup={modals.openImportModal}
         onConfigureSync={handleConfigureEncryptedSync}
         onSyncNow={handleSyncNow}
@@ -2545,6 +2578,17 @@ function App() {
         onSetRegistryOverride={handleRegistryOverride}
         registryOverridePending={isActionPending("setEncryptedSyncRegistryOverride")}
       />
+
+      <ModalShell open={logConsoleOpen} title="Diagnostic logs" closeLabel={snapshot.copy.closeModal} onClose={() => setLogConsoleOpen(false)} className="log-console-modal">
+        <div class="settings-note">Recent redacted logs refresh every 2 seconds while open.</div>
+        {logConsoleError && <div role="status" class="settings-note">{logConsoleError}</div>}
+        {logConsoleLimited && <div class="settings-note">Showing up to 1,000 recent records; older logs exceed the display limit.</div>}
+        <pre class="log-console-output" tabIndex={0} aria-label="Log records">{logConsoleText || (logConsoleError ? "No records loaded." : "Loading logs…")}</pre>
+        <div class="settings-actions">
+          <button class="settings-action-btn" type="button" disabled={isActionPending("viewLogs")} onClick={refreshLogConsole}>Refresh</button>
+          <button class="settings-action-btn" type="button" disabled={isActionPending("downloadLogs")} onClick={() => { logDownloadRequestRef.current = sendAction("downloadLogs"); }}>Download</button>
+        </div>
+      </ModalShell>
 
       {isBrowserDashboard && <BrowserNotifications offerOnLoad />}
       <OnboardingModal

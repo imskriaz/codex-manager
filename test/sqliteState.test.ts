@@ -292,7 +292,7 @@ describe("SQLite WAL state", () => {
     await persistOpenCodexSessions(context, async () => [id]);
     const fresh = { workspaceState: createSqliteMemento(await open(), "workspace:reload", legacy()) } as never;
     const opened = vi.fn(async () => undefined);
-    expect(await resumePersistedCodexSessions(fresh, opened, async () => undefined)).toEqual({ attempted: 1, opened: 1, failed: [] });
+    expect(await resumePersistedCodexSessions(fresh, opened)).toEqual({ attempted: 1, opened: 1, failed: [] });
     expect(opened).toHaveBeenCalledWith(id, expect.any(AbortSignal));
     expect((fresh as unknown as { workspaceState: vscode.Memento }).workspaceState.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toBeUndefined();
   });

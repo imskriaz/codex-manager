@@ -67,6 +67,15 @@ describe("dashboard tab persistence", () => {
     expect(state.workspaceState.update).not.toHaveBeenCalled();
   });
 
+  it("restores the dashboard without stealing focus from recovering conversations", async () => {
+    const module = await import("../src/presentation/dashboard/panel");
+    const state = context(true);
+    await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith("codexQuotaSummary", expect.any(String), expect.objectContaining({ preserveFocus: true }), expect.any(Object));
+    module.openQuotaSummaryPanel(state as never, {} as never);
+    expect(created.reveal).toHaveBeenCalledWith(expect.anything(), false);
+  });
+
   it("discards a late restored duplicate and keeps the already-open dashboard", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context(true);

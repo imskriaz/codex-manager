@@ -2,7 +2,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
@@ -451,8 +451,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
   openSession: (sessionId: string, signal?: AbortSignal) => Promise<void> = (sessionId, signal) =>
-    openCodexSessionInVsCode(sessionId, signal, true),
-  closeSessions: (signal?: AbortSignal) => Promise<void> = closeOpenCodexSessionTabs
+    openCodexSessionInVsCode(sessionId, signal, true)
 ): Promise<AutoResumeResult> {
   const controller = new AbortController();
   restoreControllers.add(controller);
@@ -492,21 +491,7 @@ export function resumePersistedCodexSessions(
       unrestoredOpenSnapshots.delete(context.workspaceState);
       let remaining = [...ids];
       const result: AutoResumeResult = { attempted: ids.length, opened: 0, failed: [] };
-      try {
-        if (!isAutoResumeAvailable() || goalOnly !== isAutoResumeGoalOnlyEnabled())
-          controller.abort(new Error("Auto Resume preferences changed before closing previous tabs. Saved sessions were retained."));
-        controller.signal.throwIfAborted();
-        await bounded(() => closeSessions(controller.signal), deadline - Date.now(),
-          "VS Code did not close the previous Codex tabs within 30 seconds. Saved sessions will retry on the next activation.",
-          controller.signal);
-        controller.signal.throwIfAborted();
-      } catch (error) {
-        controller.abort(error);
-        result.failed = ids.map((sessionId) => ({ sessionId, message: error instanceof Error ? error.message : String(error) }));
-        recordPersistentEvent("warning", "auto-resume", "Previous tabs could not close; recovery retained", { count: ids.length }, error);
-        if (!isAutoResumeAvailable()) await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
-        return result;
-      }
+      // Keep restored custom documents alive while Codex resolves them during activation.
       for (const id of ids) {
         if (!isAutoResumeAvailable())
           controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));

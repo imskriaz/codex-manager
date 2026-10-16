@@ -154,7 +154,7 @@ Important combinations:
 - Account metadata, settings, session recovery, usage history, and other extension state share that SQLite database, using WAL and full synchronous commits. Existing state is migrated without deleting its source files. VS Code Settings remains the editing interface and stays synchronized with SQLite. Process locks, diagnostic logs, Codex-owned files, and browser offline caches keep their platform formats.
 - Auto Sync synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Sync account logins** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
-- Persistent logs redact tokens and account identifiers and retain the current UTC day plus the previous two days.
+- Persistent logs redact tokens and account identifiers. In **Data & sync**, choose the log level and retention, open **Show logs** for recent history with live refresh, or **Download logs** for a redacted JSON export. The console and download include up to 1,000 recent records within 512 KiB.
 - Review the [MIT License](LICENSE) and only manage accounts you own or are authorized to use.
 
 ## Troubleshooting
@@ -163,7 +163,7 @@ Important combinations:
 - **Quota refresh fails:** run **Refresh Quota**, check your network/proxy settings, and inspect **Open Persistent Logs** for the operation ID.
 - **Switch did not affect Codex:** close/restart the Codex desktop app or enable the extension’s app-restart setting. Verify the active `auth.json` in **Open Codex Home**.
 - **Browser dashboard cannot connect:** confirm Web dashboard is enabled, the shared Password is configured in General, and the Cloudflare route points to `http://127.0.0.1:39875`.
-- **Sessions are missing:** enable CLI integration, verify the configured Codex CLI path, and confirm the Codex session index exists.
+- **Sessions are missing:** enable CLI integration, verify the Codex CLI installation, and confirm the Codex session index exists.
 
 ## Documentation map
 

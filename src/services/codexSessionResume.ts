@@ -1305,12 +1305,12 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
   validateSessionId(sessionId);
   signal?.throwIfAborted();
   sessionId = sessionId.toLowerCase();
-  if (signal && readOpenCodexSessionIds(false).includes(sessionId)) return;
+  if (signal && !focusWindow && readOpenCodexSessionIds(false).includes(sessionId)) return;
   const pending = editorOpens.get(sessionId);
   if (pending) {
     await pending.catch(() => undefined);
     signal?.throwIfAborted();
-    return openCodexSessionInVsCode(sessionId, signal);
+    return openCodexSessionInVsCode(sessionId, signal, focusWindow);
   }
   const opening = (async () => {
     await activateOfficialCodexExtension();
@@ -1363,23 +1363,6 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
   } finally {
     if (editorOpens.get(sessionId) === opening) editorOpens.delete(sessionId);
   }
-}
-
-/** Inspect only native conversation tabs, never sidebar panels or other editors. */
-export async function closeOpenCodexSessionTabs(signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
-  await activateOfficialCodexExtension();
-  signal?.throwIfAborted();
-  const tabs = (vscode.window.tabGroups?.all ?? []).flatMap((group) => group.tabs)
-    .filter((tab) => (tab.input as { viewType?: string })?.viewType === CODEX_CONVERSATION_VIEW_TYPE);
-  if (!tabs.length) return;
-  if (tabs.some((tab) => tab.isDirty))
-    throw new Error("A Codex conversation has unsaved changes. Save or close it, then retry Auto Resume.");
-  const closed = await vscode.window.tabGroups.close(tabs, true);
-  signal?.throwIfAborted();
-  if (!closed || (vscode.window.tabGroups?.all ?? []).some((group) => group.tabs.some((tab) =>
-    (tab.input as { viewType?: string })?.viewType === CODEX_CONVERSATION_VIEW_TYPE)))
-    throw new Error("VS Code could not close all previous Codex conversation tabs. Close them, then retry Auto Resume.");
 }
 
 export function readOpenCodexSessionIds(includePreview = true): string[] {

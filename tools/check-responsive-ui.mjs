@@ -51,6 +51,7 @@ const mockHost = `(() => {
   const messages = ${JSON.stringify(messages)};
   const config = ${JSON.stringify(config)};
   let messageReads = 0;
+  let logReads = 0;
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
   window.__uiActions = []; window.__uiSessions = sessions;
   window.__setUiPaths = customPath => {
@@ -68,7 +69,12 @@ const mockHost = `(() => {
         dispatch({type:'dashboard:snapshot',state});
       } else if(message.type === 'dashboard:action') {
         let payload = {}, error;
-        if(message.action === 'downloadLogs') payload = {logDownload:{filename:'codex-manager-logs-fixture.json',text:JSON.stringify({format:'codex-manager-logs',records:[]})},notice:{level:'info',message:'Logs prepared for download.'}};
+        if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
+          if(message.action === 'viewLogs') logReads++;
+          if(window.__failNextLogRead) { window.__failNextLogRead = false; error = 'Simulated log storage failure.'; }
+          else payload = {logDownload:{filename:'codex-manager-logs-fixture.json',text:window.__invalidNextLogRead ? '{' : JSON.stringify({format:'codex-manager-logs',records:[{message:'live record '+logReads},{message:'old record'}]})},notice:{level:'info',message:'Logs refreshed.'}};
+          window.__invalidNextLogRead = false;
+        }
         else if(message.action === 'getUsageGraph') payload = {usageGraph:{...message.payload.usageGraph,history:[],dailyUsageCache:[],truncated:false}};
         else if(message.action === 'listCodexCliSessions') payload = {cliSessions:sessions,cliComposerConfig:config};
         else if(message.action === 'startCodexCliSession') {
@@ -594,19 +600,10 @@ try {
         const inputBounds = await domain.boundingBox();
         assert.ok(inputBounds.width >= domainBounds.width - 28 && inputBounds.x + inputBounds.width <= domainBounds.x + domainBounds.width, "Cloudflared input fills its card without overflow");
         const general = page.locator("#settings-panel-general > .settings-layout");
-        const cliCard = general.locator(":scope > .settings-block").filter({ has: page.getByText("Codex CLI path", { exact: true }) });
-        const pathBounds = await cliCard.locator(".settings-path-note").boundingBox();
-        const actionsBounds = await cliCard.locator(".settings-inline-actions").boundingBox();
-        assert.ok(actionsBounds.y >= pathBounds.y + pathBounds.height, "CLI path actions sit below the path");
-        assert.ok(await cliCard.evaluate(element => element.scrollWidth <= element.clientWidth), "CLI path card has no horizontal overflow");
         const restart = general.locator(":scope > .settings-block").filter({ has: page.getByRole("button", { name: snapshot.copy.codexAppRestartTitle, exact: true }) });
-        const cliBounds = await cliCard.boundingBox();
-        const restartBounds = await restart.boundingBox();
-        assert.ok(Math.abs(cliBounds.width - restartBounds.width) <= 2, "CLI path and desktop restart have equal widths");
-        if (width > 560) assert.ok(Math.abs(cliBounds.y - restartBounds.y) <= 2, "CLI path and desktop restart share a row");
-        assert.ok(await restart.evaluate(element => element.scrollWidth <= element.clientWidth), "Expanded desktop restart fits its card");
         const parallel = general.locator(":scope > .settings-block").filter({ has: page.getByRole("button", { name: snapshot.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)", exact: true }) });
-        assert.ok(Math.abs((await parallel.boundingBox()).width - (await general.boundingBox()).width) <= 2, "Parallel window accounts spans the settings width");
+        assert.equal(await page.getByText("Codex CLI path", { exact: true }).count(), 0, "CLI path setting is removed");
+        assert.ok(Math.abs((await restart.boundingBox()).width - (await parallel.boundingBox()).width) <= 2, "Restart and parallel settings use equal-width cards");
         const dashboardToggle = page.getByRole("button", { name: "Web Dashboard", exact: true });
         const workspaceToggle = page.getByRole("button", { name: "Enable workspace (Experimental)", exact: true });
         const dashboardCard = dashboardToggle.locator("../..");
@@ -617,22 +614,14 @@ try {
         await page.locator(".settings-session-transport").waitFor({ state: "visible" });
         await dashboardToggle.click();
         await workspaceToggle.waitFor({ state: "hidden" });
+        await domain.waitFor({ state: "hidden" });
+        await page.getByRole("button", { name: "Keep connections online", exact: true }).waitFor({ state: "hidden" });
         assert.equal(await page.locator(".settings-session-transport").count(), 0, "Dashboard off hides both workspace controls");
-        assert.equal(await cliCard.isVisible(), true, "CLI configuration remains independent of Web Dashboard");
         await dashboardToggle.click();
         await workspaceToggle.waitFor({ state: "visible" });
         assert.equal(await workspaceToggle.getAttribute("aria-pressed"), "true", "Hiding workspace controls preserves their settings");
-        assert.equal(await cliCard.getByRole("button", { name: "Auto-detect CLI", exact: true }).isDisabled(), true, "An empty CLI path already uses auto-detection");
-        const customPath = "C:/" + "long-cli-directory/".repeat(20) + "codex.exe";
-        await page.evaluate(customPath => window.__setUiPaths(customPath), customPath);
-        await page.waitForFunction(path => document.querySelector("#settings-panel-general > .settings-layout > .settings-block > .settings-path-note")?.textContent === path, customPath);
-        assert.equal(await cliCard.getByRole("button", { name: "Auto-detect CLI", exact: true }).isEnabled(), true, "A custom CLI path can return to auto-detection");
-        assert.ok(await cliCard.evaluate(element => element.scrollWidth <= element.clientWidth), "Long CLI paths stay inside their card");
-        assert.ok(await restart.evaluate(element => element.scrollWidth <= element.clientWidth), "Long desktop paths stay inside their card");
         await domain.scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(output, `settings-domain-${width}x${height}.png`) });
-        await cliCard.scrollIntoViewIfNeeded();
-        await page.screenshot({ path: path.join(output, `settings-cli-path-${width}x${height}.png`) });
       }
       if (await tab.getAttribute("id") === "settings-tab-data") {
         const level = page.getByRole("combobox", { name: "Log level", exact: true });
@@ -641,6 +630,26 @@ try {
         await level.selectOption("info");
         const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download logs", exact: true }).click()]);
         assert.equal(download.suggestedFilename(), "codex-manager-logs-fixture.json", "Redacted logs can be downloaded in the browser");
+        await page.getByRole("button", { name: "Show logs", exact: true }).click();
+        await page.getByRole("dialog", { name: "Diagnostic logs", exact: true }).waitFor();
+        await page.locator(".log-console-output").filter({ hasText: "old record" }).waitFor();
+        const consoleOutput = page.locator(".log-console-output");
+        const initialLogs = await consoleOutput.innerText();
+        await page.waitForFunction(text => document.querySelector(".log-console-output")?.textContent !== text, initialLogs);
+        await page.evaluate(() => { window.__failNextLogRead = true; });
+        const consoleDialog = page.getByRole("dialog", { name: "Diagnostic logs", exact: true });
+        await consoleDialog.getByRole("button", { name: "Refresh", exact: true }).click();
+        await consoleDialog.getByText("Simulated log storage failure.", { exact: true }).waitFor();
+        assert.ok((await consoleOutput.innerText()).includes("old record"), "Storage failures preserve previous logs");
+        await consoleDialog.getByText("Simulated log storage failure.", { exact: true }).waitFor({ state: "hidden" });
+        await page.evaluate(() => { window.__invalidNextLogRead = true; });
+        await consoleDialog.getByRole("button", { name: "Refresh", exact: true }).click();
+        await consoleDialog.getByText("The log response was unreadable. Retry refresh.", { exact: true }).waitFor();
+        assert.ok((await consoleOutput.innerText()).includes("old record"), "Malformed responses preserve previous logs");
+        await consoleDialog.getByRole("button", { name: "Close", exact: true }).click();
+        const logReadsAfterClose = await page.evaluate(() => window.__uiActions.filter(action => action.action === "viewLogs").length);
+        await page.waitForTimeout(2_100);
+        assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "viewLogs").length), logReadsAfterClose, "Closing the console stops polling");
         const tokenToggle = page.getByRole("button", { name: "Automatic token history", exact: true });
         const block = tokenToggle.locator("../..");
         const layout = page.locator("#settings-panel-data > .settings-layout");
@@ -655,7 +664,10 @@ try {
         assert.equal(await options.count(), 5, "Switching contains reset, wait, resume, refresh, and reload options");
         const bounds = await options.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
         assert.ok(bounds.every(rect => Math.abs(rect.width - bounds[0].width) <= 2), "Switching options use equal-width cards");
-        if (width > 560) assert.ok(Math.abs(bounds[0].y - bounds[1].y) <= 2 && Math.abs(bounds[2].y - bounds[3].y) <= 2, "Switching options form two rows of two");
+        if (width > 560) {
+          assert.ok(Math.abs(bounds[0].y - bounds[1].y) <= 2 && Math.abs(bounds[2].y - bounds[3].y) <= 2, "Switching options form two rows of two");
+          assert.ok(bounds[4].x > bounds[0].x && bounds[4].y >= bounds[3].bottom && bounds[4].y < bounds[2].bottom, "Reload fills the space below Refresh beside Auto Resume");
+        }
         const refreshCard = page.getByRole("button", { name: snapshot.copy.autoSwitchRefreshAllTitle, exact: true }).locator("../..");
         const refreshBounds = await refreshCard.boundingBox();
         const refreshHead = await refreshCard.locator(":scope > .settings-toggle-head").boundingBox();

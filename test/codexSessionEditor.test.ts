@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareCodexSessionsForExtensionHostRestart, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds } from "../src/services/codexSessionResume";
+import { openCodexSessionInVsCode, readOpenCodexSessionIds } from "../src/services/codexSessionResume";
 
 describe("Codex VS Code session editor", () => {
   let activateExtension: ReturnType<typeof vi.fn>;
@@ -32,50 +32,6 @@ describe("Codex VS Code session editor", () => {
       }
       return undefined;
     });
-  });
-
-  it("closes every official conversation across groups while preserving files and sidebar panels", async () => {
-    const groups = vscode.window.tabGroups.all as unknown as Array<{ tabs: unknown[] }>;
-    const native = (id: string) => ({ input: { viewType: "chatgpt.conversationEditor", uri: { path: `/local/${id}` } } });
-    const first = native("first");
-    const second = { ...native("second"), isPreview: true };
-    const text = { input: { uri: { scheme: "file", path: "source.ts" } } };
-    const sidebar = { input: { viewType: "chatgpt.sidebar" } };
-    groups[0]!.tabs.push(first, text);
-    groups.push({ tabs: [second, sidebar] });
-    vi.mocked(vscode.window.tabGroups.close).mockImplementation(async (closing: unknown) => {
-      for (const group of groups) group.tabs = group.tabs.filter(tab => !(closing as unknown[]).includes(tab));
-      return true;
-    });
-    await closeOpenCodexSessionTabs(new AbortController().signal);
-    expect(vscode.window.tabGroups.close).toHaveBeenCalledWith([first, second], true);
-    expect(groups.flatMap(group => group.tabs)).toEqual([text, sidebar]);
-  });
-
-  it.each(["refused", "unchanged", "dirty", "rejected", "aborted"])(
-    "reports an all-conversation close that is %s", async (failure) => {
-      await openCodexSessionInVsCode("01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3");
-      const old = vscode.window.tabGroups.all[0]!.tabs[0]!;
-      const controller = new AbortController();
-      const close = vi.mocked(vscode.window.tabGroups.close);
-      if (failure === "refused") close.mockResolvedValue(false);
-      if (failure === "unchanged") close.mockResolvedValue(true);
-      if (failure === "dirty") Object.assign(old, { isDirty: true });
-      if (failure === "rejected") close.mockRejectedValue(new Error("close failed"));
-      if (failure === "aborted") close.mockImplementation(async () => { controller.abort(); return true; });
-      await expect(closeOpenCodexSessionTabs(controller.signal)).rejects.toThrow();
-      if (failure === "dirty") expect(close).not.toHaveBeenCalled();
-    }
-  );
-
-  it("leaves old tabs intact if activation fails or cancellation precedes closing", async () => {
-    await openCodexSessionInVsCode("01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3");
-    activateExtension.mockRejectedValueOnce(new Error("offline"));
-    await expect(closeOpenCodexSessionTabs()).rejects.toThrow("offline");
-    const controller = new AbortController();
-    controller.abort();
-    await expect(closeOpenCodexSessionTabs(controller.signal)).rejects.toThrow();
-    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
   });
 
   it("promotes an existing preview tab before acknowledging automatic recovery", async () => {
@@ -164,6 +120,30 @@ describe("Codex VS Code session editor", () => {
     await openCodexSessionInVsCode(id.toUpperCase(), new AbortController().signal);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     expect(activateExtension).not.toHaveBeenCalled();
+  });
+
+  it("focuses an existing restored tab without closing its custom document", async () => {
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    await openCodexSessionInVsCode(id);
+    Object.assign(vscode.window.tabGroups.all[0]!.tabs[0]!, { isDirty: true });
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+    await openCodexSessionInVsCode(id, new AbortController().signal, true);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("vscode.openWith", expect.anything(), "chatgpt.conversationEditor", expect.objectContaining({ preserveFocus: false, preview: false }));
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.focusActiveEditorGroup");
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+    expect(vscode.window.tabGroups.all[0]!.tabs).toHaveLength(1);
+  });
+
+  it("preserves the focus request when another open is already pending", async () => {
+    let activate: (() => void) | undefined;
+    activateExtension.mockImplementationOnce(() => new Promise<void>(resolve => { activate = resolve; }));
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    const first = openCodexSessionInVsCode(id, new AbortController().signal);
+    const focused = openCodexSessionInVsCode(id, new AbortController().signal, true);
+    activate?.();
+    await Promise.all([first, focused]);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.focusActiveEditorGroup");
+    expect(vscode.window.tabGroups.all[0]!.tabs).toHaveLength(1);
   });
 
   it("coalesces concurrent automatic opens until their native tab exists", async () => {

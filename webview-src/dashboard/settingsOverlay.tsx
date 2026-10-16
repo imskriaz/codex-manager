@@ -63,11 +63,11 @@ export function SettingsOverlay(props: {
   onThresholdCommit: (key: "yellow" | "green", value: number) => void;
   onPickCodexAppPath: () => void;
   onClearCodexAppPath: () => void;
-  onPickCodexCliPath: () => void;
-  onClearCodexCliPath: () => void;
   onClearUsageHistory: () => void;
   onExportBackup: () => void;
   onDownloadLogs: () => void;
+  onShowLogs: () => void;
+  showLogsPending: boolean;
   downloadLogsPending: boolean;
   onImportBackup: () => void;
   onConfigureSync: () => void;
@@ -303,11 +303,10 @@ export function SettingsOverlay(props: {
                       </SettingsSegmentBlock>
                     )}
                   </div>
-                </SettingsToggleBlock>
-                <div class="settings-integration-grid">
-                  <SettingsToggleBlock
-                    title={
-                      props.lang === "zh"
+                  <div class="settings-integration-grid">
+                    <SettingsToggleBlock
+                      title={
+                        props.lang === "zh"
                         ? "始终在线 WebSocket 主机"
                         : props.lang === "zh-hant"
                           ? "始終在線 WebSocket 主機"
@@ -385,49 +384,8 @@ export function SettingsOverlay(props: {
                     </div>
                   </div>
                 </div>
+                </SettingsToggleBlock>
               </div>
-              <SettingsPathBlock
-                copy={props.copy}
-                pathValue={props.settings.codexCliPath ?? ""}
-                hasCustomPath={Boolean(props.settings.codexCliPath)}
-                title={
-                  props.lang === "zh"
-                    ? "Codex CLI 路径"
-                    : props.lang === "zh-hant"
-                      ? "Codex CLI 路徑"
-                      : "Codex CLI path"
-                }
-                sub={
-                  props.lang === "zh"
-                    ? "可选。指定 Codex CLI 可执行文件或启动脚本；留空则自动检测。"
-                    : props.lang === "zh-hant"
-                      ? "可選。指定 Codex CLI 可執行檔或啟動腳本；留空則自動偵測。"
-                      : "Choose Codex or use auto-detect."
-                }
-                emptyLabel={
-                  props.lang === "zh"
-                    ? "未设置 CLI 路径，将使用自动检测。"
-                    : props.lang === "zh-hant"
-                      ? "未設定 CLI 路徑，將使用自動偵測。"
-                      : "Using auto-detect."
-                }
-                pickLabel={
-                  props.lang === "zh"
-                    ? "选择 CLI 路径"
-                    : props.lang === "zh-hant"
-                      ? "選擇 CLI 路徑"
-                      : "Choose CLI path"
-                }
-                clearLabel={
-                  props.lang === "zh"
-                    ? "自动检测 CLI"
-                    : props.lang === "zh-hant"
-                      ? "自動偵測 CLI"
-                      : "Auto-detect CLI"
-                }
-                onPick={props.onPickCodexCliPath}
-                onClear={props.onClearCodexCliPath}
-              />
               <SettingsToggleBlock
                 title={props.copy.codexAppRestartTitle}
                 sub={props.copy.codexAppRestartSub}
@@ -470,7 +428,6 @@ export function SettingsOverlay(props: {
                   "Use a separate account in each VS Code window."
                 }
                 enabled={props.settings.crossWindowAccountModeEnabled === true}
-                className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("crossWindowAccountModeEnabled", enabled)}
               >
                 <div class="settings-note">
@@ -568,7 +525,7 @@ export function SettingsOverlay(props: {
                     onPreview={(value) => props.onPatchSettings({ autoSwitchWeeklyThreshold: value })}
                     onCommit={(value) => patchAndSend("autoSwitchWeeklyThreshold", value)}
                   />
-                  <div class="settings-integration-grid">
+                  <div class="settings-integration-grid settings-switch-options">
                     <SettingsToggleBlock
                       title={props.copy.autoResetTitle ?? "Automatic quota reset plan"}
                       sub={
@@ -869,6 +826,9 @@ export function SettingsOverlay(props: {
                 <div class="settings-actions">
                   <button class="settings-action-btn" type="button" disabled={props.downloadLogsPending} aria-busy={props.downloadLogsPending} onClick={props.onDownloadLogs}>
                     {props.downloadLogsPending ? "Preparing logs…" : "Download logs"}
+                  </button>
+                  <button class="settings-action-btn" type="button" disabled={props.showLogsPending} aria-busy={props.showLogsPending} onClick={props.onShowLogs}>
+                    {props.showLogsPending ? "Loading logs…" : "Show logs"}
                   </button>
                 </div>
               </div>

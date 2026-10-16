@@ -10380,6 +10380,14 @@ html[data-theme="dark"] .cli-terminal-panel {
   height: auto;
 }
 
+.settings-layout .settings-switch-options > .settings-block:last-child {
+  grid-column: 2;
+}
+
+.settings-layout .settings-switch-options > .settings-block:nth-child(3) {
+  grid-row: span 2;
+}
+
 @media (max-width: 560px) {
   .settings-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -10395,6 +10403,14 @@ html[data-theme="dark"] .cli-terminal-panel {
 
   .settings-layout .settings-integration-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-layout .settings-switch-options > .settings-block:last-child {
+    grid-column: auto;
+  }
+
+  .settings-layout .settings-switch-options > .settings-block:nth-child(3) {
+    grid-row: auto;
   }
 
   .settings-layout .settings-note-list {
@@ -15132,3 +15148,6 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
   .dashboard-density-compact .saved-progress .row-head,
   .dashboard-density-compact .saved-progress .percent { font-size: 11px; }
 }
+
+.log-console-modal { max-width: min(960px, calc(100vw - 32px)); }
+.log-console-output { max-height: min(65vh, 560px); overflow: auto; margin: 0; padding: 10px; border: 1px solid var(--border-muted); border-radius: 8px; background: var(--bg-canvas); color: var(--text-primary); font: 11px/1.45 var(--vscode-editor-font-family, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }

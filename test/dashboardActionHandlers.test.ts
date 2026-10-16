@@ -1998,6 +1998,20 @@ function createResetContext() {
 }
 
 describe("diagnostic downloads", () => {
+  it("shows recent and retained logs to the browser console", async () => {
+    vi.spyOn(diagnostics, "exportPersistentLogs").mockResolvedValue({ filename: "logs.json", text: '{"records":[{"message":"old"},{"message":"live"}]}', limited: false });
+    const ctx = { ...createContext(), hostKind: "browser" as const };
+    const result = await executeDashboardActionMessage(ctx, { type: "dashboard:action", action: "viewLogs", requestId: "logs-view" });
+    expect(result).toMatchObject({ status: "completed", payload: { logDownload: { text: expect.stringContaining("old") }, notice: { message: "Logs refreshed." } } });
+  });
+
+  it("reports log console storage errors to either initiating dashboard", async () => {
+    vi.spyOn(diagnostics, "exportPersistentLogs").mockRejectedValue(new Error("log store locked"));
+    for (const hostKind of ["webview", "browser"] as const) {
+      expect(await executeDashboardActionMessage({ ...createContext(), hostKind }, { type: "dashboard:action", action: "viewLogs", requestId: "logs-failed" })).toMatchObject({ status: "failed", errorMessage: "log store locked" });
+    }
+  });
+
   it("returns a browser download directly and keeps independent account mutations available", async () => {
     vi.spyOn(diagnostics, "exportPersistentLogs").mockResolvedValue({ filename: "logs.json", text: '{"records":[]}', limited: false });
     const ctx = { ...createContext(), hostKind: "browser" as const };

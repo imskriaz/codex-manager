@@ -108,6 +108,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "shareTokens",
   "exportBackup",
   "downloadLogs",
+  "viewLogs",
   "openNetworkLogs",
   "exportAuthFile",
   "copyText",
@@ -213,6 +214,8 @@ export async function executeDashboardActionMessage(
   payload?: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"];
   errorMessage?: string;
 }> {
+  // Polling the console must not fill the log with its own successful reads.
+  if (message.action === "viewLogs") return executeDashboardActionMessageCore(ctx, message);
   const execute = () => runWithPersistentOperation(
     `dashboard:${message.action}`,
     () => executeDashboardActionMessageCore(ctx, message),
@@ -406,6 +409,10 @@ async function runDashboardAction(
       return { batchResult: await vscode.commands.executeCommand<DashboardBatchResult>("codexManager.refreshAllQuotas") };
     case "shareTokens":
       return handleShareTokens(ctx.repo, payload, translate);
+    case "viewLogs": {
+      const logs = await exportPersistentLogs();
+      return { logDownload: { filename: logs.filename, text: logs.text }, notice: { level: "info" as const, message: "Logs refreshed." } };
+    }
     case "downloadLogs": {
       const logs = await exportPersistentLogs();
       const notice = { level: logs.limited ? "warning" as const : "info" as const,

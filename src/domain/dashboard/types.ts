@@ -523,6 +523,7 @@ export type DashboardActionName =
   | "shareTokens"
   | "exportBackup"
   | "downloadLogs"
+  | "viewLogs"
   | "configureEncryptedSync"
   | "syncNow"
   | "setEncryptedSyncRegistryOverride"

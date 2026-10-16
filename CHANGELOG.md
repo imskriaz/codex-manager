@@ -2,6 +2,11 @@
 
 ## 1.3.2
 
+- Preserve restored Codex custom documents during Auto Resume to avoid editor-load races, focus each recovered conversation, and restore the dashboard without stealing focus.
+- Add a live diagnostic console with recent retained history, automatic retry, and log downloads.
+
+- Nest connection controls inside Web Dashboard, remove the CLI path control, give desktop restart and parallel accounts equal width, and move reload beside Auto Resume.
+
 - Capture running sidebar goals even without a conversation tab. Add shared log levels, redacted recent-log downloads, host-run correlation, and detailed capture/filter/restore decisions.
 
 - Make all dashboard settings compact with short, plain descriptions and remove stretched cards with empty space. Keep warnings and action results readable.

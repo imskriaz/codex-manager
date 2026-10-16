@@ -156,7 +156,7 @@ export class DashboardPanelController {
     } });
   }
 
-  open(restoredPanel?: vscode.WebviewPanel): void {
+  open(restoredPanel?: vscode.WebviewPanel, preserveFocus = false): void {
     const panelTitle = this.getPanelTitle();
     const iconUri = this.getPanelIconUri();
     const targetColumn = this.getTargetViewColumn();
@@ -165,7 +165,7 @@ export class DashboardPanelController {
       restoredPanel.dispose();
     }
     if (!this.panel) {
-      this.panel = restoredPanel ?? vscode.window.createWebviewPanel(DASHBOARD_VIEW_TYPE, panelTitle, targetColumn, {
+      this.panel = restoredPanel ?? vscode.window.createWebviewPanel(DASHBOARD_VIEW_TYPE, panelTitle, { viewColumn: targetColumn, preserveFocus }, {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
@@ -262,7 +262,7 @@ export class DashboardPanelController {
     } else {
       this.panel.title = panelTitle;
       this.panel.iconPath = iconUri;
-      this.panel.reveal(targetColumn, false);
+      this.panel.reveal(targetColumn, preserveFocus);
     }
 
     if (this.webviewReady) {
@@ -556,7 +556,7 @@ export function registerDashboardPanelSerializer(
   return vscode.window.registerWebviewPanelSerializer(DASHBOARD_VIEW_TYPE, {
     async deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
       dashboardPanelController ??= new DashboardPanelController(context, repo);
-      dashboardPanelController.open(panel);
+      dashboardPanelController.open(panel, true);
       if (context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false))
         await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
     }
@@ -574,7 +574,8 @@ export async function restoreQuotaSummaryPanelAfterExtensionHostRestart(
   if (!reopenAfterRestart && !context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false)) {
     return;
   }
-  openQuotaSummaryPanel(context, repo);
+  dashboardPanelController ??= new DashboardPanelController(context, repo);
+  dashboardPanelController.open(undefined, true);
   reopenAfterRestart = false;
   await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
 }

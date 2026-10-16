@@ -40,7 +40,8 @@ beforeEach(async()=>{
   Object.assign(vscode.window,{tabGroups:{get all(){return [{tabs}];},close:vi.fn(async()=>{tabs=[];return true;}),onDidChangeTabs:()=>({dispose(){}})}});
   vi.mocked(vscode.extensions.getExtension).mockReturnValue({isActive:true,exports:{},activate:async()=>({})} as never);
   vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command,...args)=>{
-    if(command==="vscode.openWith")tabs.push({input:{viewType:"chatgpt.conversationEditor",uri:args[0] as never}});
+    if(command==="vscode.openWith" && !tabs.some(tab => tab.input.uri.path === (args[0] as {path:string}).path))
+      tabs.push({input:{viewType:"chatgpt.conversationEditor",uri:args[0] as never}});
   });
 });
 afterEach(async()=>{
@@ -56,7 +57,9 @@ it("captures quota-stopped parents, survives a fresh connection, verifies native
   store.close();store=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(store);
   const result=await resumePersistedCodexSessions(context());
   expect(result).toEqual({attempted:2,opened:2,failed:[]});
-  expect(tabs.map(tab=>tab.input.uri.path)).toEqual(ids.slice(0,2).map(id=>`/local/${id}`));
+  expect(tabs.map(tab=>tab.input.uri.path)).toEqual(ids.map(id=>`/local/${id}`));
+  expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith").map(([, uri]) => (uri as {path:string}).path)).toEqual(ids.slice(0,2).map(id=>`/local/${id}`));
   expect(store.get(namespace,queue)).toBeUndefined();expect(store.get(namespace,snapshot)).toBeUndefined();
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
 });
@@ -67,28 +70,28 @@ it("captures quota-interrupted open tabs even when native running inspection is 
   expect(running).not.toHaveBeenCalled();expect(store.get(namespace,snapshot)).toEqual(ids.slice(0,2));
 });
 
-it("rolls back the snapshot transfer before closing tabs when its second write fails",async()=>{
+it("rolls back the snapshot transfer before opening tabs when its second write fails",async()=>{
   store.set(namespace,snapshot,[ids[0]]);
   const write=store.set.bind(store);
   vi.spyOn(store,"set").mockImplementation((ns,key,value)=>{if(key===snapshot&&value===undefined)throw new Error("storage full");write(ns,key,value);});
-  const close=vi.fn();
-  await expect(resumePersistedCodexSessions(context(),vi.fn(),close)).rejects.toThrow("storage full");
-  expect(close).not.toHaveBeenCalled();expect(store.get(namespace,snapshot)).toEqual([ids[0]]);expect(store.get(namespace,queue)).toBeUndefined();
+  const open=vi.fn();
+  await expect(resumePersistedCodexSessions(context(),open)).rejects.toThrow("storage full");
+  expect(open).not.toHaveBeenCalled();expect(store.get(namespace,snapshot)).toEqual([ids[0]]);expect(store.get(namespace,queue)).toBeUndefined();
 });
 
 it("retains peer captures and failed opens while preventing concurrent workspace restoration",async()=>{
   store.set(namespace,snapshot,[ids[0]]);
   let release!:()=>void;
   const open=vi.fn(()=>new Promise<void>(resolve=>{release=resolve;}));
-  const first=resumePersistedCodexSessions(context(),open,async()=>undefined);
+  const first=resumePersistedCodexSessions(context(),open);
   await vi.waitFor(()=>expect(release).toBeTypeOf("function"));
-  await expect(resumePersistedCodexSessions(context(),vi.fn(),vi.fn())).rejects.toThrow("still in progress");
+  await expect(resumePersistedCodexSessions(context(),vi.fn())).rejects.toThrow("still in progress");
   await persistRunningCodexSessions(context(),async()=>[ids[1]!]);
   release();expect((await first).opened).toBe(1);
   expect(store.get(namespace,queue)).toEqual([ids[1]]);
-  expect((await resumePersistedCodexSessions(context(),async()=>{throw new Error("editor offline");},async()=>undefined)).failed).toHaveLength(1);
+  expect((await resumePersistedCodexSessions(context(),async()=>{throw new Error("editor offline");})).failed).toHaveLength(1);
   expect(store.get(namespace,queue)).toEqual([ids[1]]);
-  expect((await resumePersistedCodexSessions(context(),async()=>undefined,async()=>undefined)).opened).toBe(1);
+  expect((await resumePersistedCodexSessions(context(),async()=>undefined)).opened).toBe(1);
 });
 
 it("retains recovery when an isolated Codex home changes instead of dropping missing goals",async()=>{

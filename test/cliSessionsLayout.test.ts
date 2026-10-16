@@ -192,22 +192,19 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain("mergeCachedCliSessions");
     expect(settings).toContain('"Enable workspace (Experimental)"');
     expect(settings).toContain("Add chats and terminals to this dashboard.");
+    const dashboardStart = settings.indexOf(': "Web Dashboard"');
+    const dashboardEnd = settings.indexOf("</SettingsToggleBlock>", settings.indexOf("Shared dashboard address"));
+    expect(dashboardStart).toBeGreaterThan(-1);
+    expect(dashboardEnd).toBeGreaterThan(dashboardStart);
+    expect(settings.slice(dashboardStart, dashboardEnd)).toContain("Keep connections online");
+    expect(settings.slice(dashboardStart, dashboardEnd)).toContain("Shared dashboard address");
   });
 
-  it("keeps parallel window accounts with workspace settings instead of automation", () => {
+  it("keeps the removed CLI path out while retaining restart and parallel settings", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
-    const generalStart = settings.indexOf('id="settings-panel-general"');
-    const automationStart = settings.indexOf('id="settings-panel-automation"');
-    const workspaceStart = settings.indexOf('title="Workspace connection"');
-    const parallelStart = settings.indexOf("crossWindowAccountModeTitle");
-
-    expect(generalStart).toBeGreaterThan(-1);
-    expect(automationStart).toBeGreaterThan(generalStart);
-    expect(workspaceStart).toBeGreaterThan(generalStart);
-    expect(parallelStart).toBeGreaterThan(workspaceStart);
-    expect(parallelStart).toBeLessThan(automationStart);
-    expect(settings.slice(generalStart, automationStart)).toContain("crossWindowAccountModeTitle");
-    expect(settings.slice(automationStart)).not.toContain("crossWindowAccountModeTitle");
+    expect(settings).not.toContain("Codex CLI path");
+    expect(settings).toContain("codexAppRestartTitle");
+    expect(settings).toContain("crossWindowAccountModeTitle");
   });
 
   it("labels Auto Resume experimental and leaves its switch available without Session Integration", () => {
@@ -243,7 +240,7 @@ describe("sessions sidebar layout", () => {
     expect(resumeStart).toBeLessThan(switchEnd);
     const switchContent = settings.slice(switchStart, outerSwitchEnd);
     expect(switchContent).toContain('enabled={props.settings.autoSwitchEnabled}');
-    expect(switchContent).toContain('class="settings-integration-grid"');
+    expect(switchContent).toContain('class="settings-integration-grid settings-switch-options"');
     for (const title of ["autoResetTitle", "autoResumeTitle", "autoSwitchRefreshAllTitle"]) {
       expect(switchContent).toContain(`props.copy.${title}`);
     }
