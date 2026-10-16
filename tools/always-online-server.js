@@ -10,7 +10,7 @@ const path = require("node:path");
 
 const configPath = process.argv[2];
 if (!configPath) throw new Error("Missing relay config path");
-const databasePath = path.join(path.dirname(configPath), "codex-manager.sqlite");
+const databasePath = path.join(path.dirname(configPath), "manager.sqlite");
 let storedConfig;
 if (fs.existsSync(databasePath)) {
   const { DatabaseSync } = require("node:sqlite");
@@ -50,6 +50,7 @@ for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
   } catch { /* Other relay events remain available if this dependency is unavailable. */ }
 }
 const startedAt = Date.now();
+let relayStorage;
 const stateStorageReady = (async () => {
   if (!fs.existsSync(databasePath)) return;
   let storage;
@@ -61,6 +62,8 @@ const stateStorageReady = (async () => {
   }
   if (!storage) throw new Error("The installed SQLite storage module is unavailable.");
   storage.configureSqliteStateStore(await storage.SqliteStateStore.open(databasePath));
+  relayStorage = storage;
+  return storage;
 })();
 for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
   try { claimContract = require(path.join(root, "out", "services", "accountClaimAuthority.js")); break; }
@@ -452,7 +455,13 @@ const pidPath = config.pidPath;
 // Record the waiting relay before binding. During a normal VS Code handoff the
 // dashboard still owns the shared port briefly, and the next extension host
 // must be able to identify and stop this exact relay process.
-if (pidPath) fs.writeFileSync(pidPath, String(process.pid), { mode: 0o600 });
+const pidStorageReady = stateStorageReady.then(storage => {
+  if (pidPath) {
+    if (!storage) throw new Error("Relay PID storage requires SQLite.");
+    storage.writeSqliteStateFile(pidPath, String(process.pid));
+  }
+  return storage;
+});
 function bind() {
   const onError = (error) => {
     httpServer.off("error", onError);
@@ -464,7 +473,7 @@ function bind() {
     shutdown(1);
   };
   httpServer.once("error", onError);
-  stateStorageReady.then(() => httpServer.listen(port, "127.0.0.1", () => {
+  pidStorageReady.then(() => httpServer.listen(port, "127.0.0.1", () => {
     httpServer.off("error", onError);
     console.log(`[codex-manager-relay] listening on 127.0.0.1:${port}`);
   })).catch(error => { console.error("Relay storage could not open", error); shutdown(1); });
@@ -476,7 +485,12 @@ function shutdown(code) {
   const finish = () => {
     if (finished) return;
     finished = true;
-    if (pidPath) { try { fs.unlinkSync(pidPath); } catch {} }
+    if (pidPath) {
+      try {
+        if (relayStorage?.readSqliteStateFile(pidPath) === String(process.pid)) relayStorage.deleteSqliteStateFile(pidPath);
+      } catch (error) { console.error("Relay PID cleanup failed", error); }
+    }
+    try { relayStorage?.getSqliteStateStore?.()?.close(); } catch (error) { console.error("Relay storage close failed", error); }
     process.exit(code);
   };
   for (const pending of pendingActions.values()) clearTimeout(pending.timer);

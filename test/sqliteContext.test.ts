@@ -11,6 +11,8 @@ import { disposeSqliteContext, initializeSqliteContext } from "../src/storage/sq
 import { configureSqliteStateStore, getSqliteStateStore } from "../src/storage/sqliteState";
 import { getCodexManagerConfiguration, getSyncHeartbeatMinutes } from "../src/infrastructure/config/extensionSettings";
 import { removeTestDirectory } from "./testFilesystem";
+import { onDidChangeConfiguration } from "../src/storage/configurationEvents";
+import { SqliteStateStore } from "../src/storage/sqliteState";
 
 const manifest = JSON.parse(readFileSync("package.json", "utf8"));
 let values: Map<string, unknown>;
@@ -27,7 +29,7 @@ function context() {
     storageUri: { fsPath: path.join(fixture.root, "workspace") }, extension: { packageJSON: manifest },
     secrets: { get: vi.fn(), store: vi.fn(), delete: vi.fn() }, subscriptions } as unknown as vscode.ExtensionContext;
 }
-function changed() { for (const listener of listeners) listener({ affectsConfiguration: key => key === "codexManager" } as vscode.ConfigurationChangeEvent); }
+function changed() { for (const listener of listeners) listener({ affectsConfiguration: key => key === "codexManager" || key.startsWith("codexManager.") } as vscode.ConfigurationChangeEvent); }
 beforeEach(async () => {
   fixture.root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-sqlite-context-"));
   values = new Map([["autoResumeEnabled", true], ["autoSwitchEnabled", true], ["autoResumeGoalOnlyEnabled", false]]);
@@ -53,6 +55,16 @@ afterEach(async () => {
 });
 
 describe("SQLite extension context and settings migration", () => {
+  it("preserves native workspace precedence over global SQLite preferences", async () => {
+    vi.mocked(nativeConfig.inspect).mockImplementation(key => ({ key, workspaceValue: key === "autoResumeEnabled" ? true : undefined }) as never);
+    await initializeSqliteContext(context());
+    const config = getCodexManagerConfiguration();
+    await config.update("autoResumeEnabled", false, vscode.ConfigurationTarget.Global);
+    expect(config.get("autoResumeEnabled")).toBe(true);
+    await config.update("autoResumeEnabled", false, vscode.ConfigurationTarget.Workspace);
+    expect(config.get("autoResumeEnabled")).toBe(false);
+  });
+
   it("supports VS Code's frozen configuration methods during workbench initialization", async () => {
     await initializeSqliteContext(context());
     expect(Object.isFrozen(nativeConfig)).toBe(true);
@@ -65,7 +77,7 @@ describe("SQLite extension context and settings migration", () => {
     expect(vi.mocked(nativeConfig.inspect).mock.contexts.at(-1)).toBe(nativeConfig);
   });
 
-  it("migrates existing state and settings while preserving credentials and VS Code editing", async () => {
+  it("migrates settings while preserving credentials and writes dashboard changes only to SQLite", async () => {
     const original = context();
     const migrated = await initializeSqliteContext(original);
     expect(migrated.globalState.get("accountPreference")).toBe(true);
@@ -77,7 +89,7 @@ describe("SQLite extension context and settings migration", () => {
     expect(config.get("autoResumeGoalOnlyEnabled")).toBe(false);
     expect(nativeConfig.get).not.toHaveBeenCalled();
     await config.update("autoResumeEnabled", false, vscode.ConfigurationTarget.Global);
-    expect(nativeConfig.update).toHaveBeenCalledWith("autoResumeEnabled", false, vscode.ConfigurationTarget.Global);
+    expect(nativeConfig.update).not.toHaveBeenCalled();
     expect(getCodexManagerConfiguration().get("autoResumeEnabled")).toBe(false);
     values.set("autoResumeEnabled", true);
     changed();
@@ -106,9 +118,45 @@ describe("SQLite extension context and settings migration", () => {
     const first = await initializeSqliteContext(original);
     await first.globalState.update("accountPreference", undefined);
     await first.workspaceState.update("recovery", ["latest"]);
+    await getCodexManagerConfiguration().update("autoResumeEnabled", false);
     disposeSqliteContext();
     const second = await initializeSqliteContext(original);
     expect(second.globalState.get("accountPreference")).toBeUndefined();
     expect(second.workspaceState.get("recovery")).toEqual(["latest"]);
+    expect(getCodexManagerConfiguration().get("autoResumeEnabled")).toBe(false);
+  });
+
+  it("preserves workspace overrides and validates values before writing SQLite", async () => {
+    await initializeSqliteContext(context());
+    const config = getCodexManagerConfiguration();
+    await config.update("autoResumeEnabled", false, vscode.ConfigurationTarget.Workspace);
+    await config.update("autoResumeEnabled", true, vscode.ConfigurationTarget.Global);
+    expect(config.get("autoResumeEnabled")).toBe(false);
+    expect(config.inspect("autoResumeEnabled")).toMatchObject({ workspaceValue: false, globalValue: true });
+    await config.update("autoResumeEnabled", undefined, vscode.ConfigurationTarget.Workspace);
+    expect(config.get("autoResumeEnabled")).toBe(true);
+    await expect(config.update("autoResumeEnabled", "invalid")).rejects.toThrow("Invalid value");
+    await expect(config.update("autoRefreshMinutes", -1)).rejects.toThrow("Invalid value");
+    await expect(config.update("dashboardTheme", "invalid")).rejects.toThrow("Invalid value");
+    expect(nativeConfig.update).not.toHaveBeenCalled();
+  });
+
+  it("notifies settings consumers locally and after another window commits a change", async () => {
+    vi.useFakeTimers();
+    let peer: SqliteStateStore | undefined;
+    try {
+      await initializeSqliteContext(context());
+      const listener = vi.fn();
+      subscriptions.push(onDidChangeConfiguration(listener));
+      await getCodexManagerConfiguration().update("autoResumeEnabled", false);
+      expect(listener).toHaveBeenCalledOnce();
+      expect(listener.mock.calls[0]![0].affectsConfiguration("codexManager.autoResumeEnabled")).toBe(true);
+      expect(listener.mock.calls[0]![0].affectsConfiguration("codexManager.crossWindowAccountModeEnabled")).toBe(false);
+      peer = await SqliteStateStore.open(getSqliteStateStore()!.file);
+      peer.set("settings-overrides:global", "autoResumeEnabled", true);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getCodexManagerConfiguration().get("autoResumeEnabled")).toBe(true);
+      expect(listener).toHaveBeenCalledTimes(2);
+    } finally { peer?.close(); vi.useRealTimers(); }
   });
 });

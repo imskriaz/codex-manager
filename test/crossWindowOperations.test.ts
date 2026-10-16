@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { describe, expect, it, vi } from "vitest";
+import { SqliteStateStore } from "../src/storage/sqliteState";
 import { removeTestDirectory } from "./testFilesystem";
 import {
   CrossWindowOperationBusyError,
@@ -28,17 +29,14 @@ describe("CrossWindowOperationCoordinator", () => {
     await ready;
     await expect(manual.runExclusive("account:switch:home", "Account switch", async () => "switched", { waitMs: 2_000 })).resolves.toBe("switched");
     await renewal;
-    expect(await fs.readdir(path.join(directory, "cross-window-operations-v1"))).toEqual([]);
+    await expectReleased(directory);
     await removeTestDirectory(directory);
   });
 
   it("recovers a dead owner immediately even when its heartbeat is fresh", async () => {
     const directory = await createTestDirectory("switch-dead-owner");
     const key = "account:switch:dead";
-    const digest = (await import("crypto")).createHash("sha256").update(key).digest("hex");
-    const lockPath = path.join(directory, "cross-window-operations-v1", digest);
-    await fs.mkdir(lockPath, { recursive: true });
-    await fs.writeFile(path.join(lockPath, "owner.json"), JSON.stringify({ instanceId: "dead", pid: 999999999, startedAt: Date.now(), heartbeatAt: Date.now() }));
+    await seed(directory, "operation-leases", key, { token: "dead", pid: 999999999, startedAt: Date.now(), heartbeatAt: Date.now() });
     await expect(new CrossWindowOperationCoordinator(directory).runExclusive(key, "Account switch", async () => "recovered")).resolves.toBe("recovered");
     await removeTestDirectory(directory);
   });
@@ -63,7 +61,7 @@ describe("CrossWindowOperationCoordinator", () => {
   });
   it("retries initialization after unavailable storage recovers", async () => {
     const directory = await createTestDirectory("cross-window-init-retry");
-    const lockRoot = path.join(directory, "cross-window-operations-v1");
+    const lockRoot = path.join(directory, "manager.sqlite");
     await fs.writeFile(lockRoot, "storage blocker");
     const coordinator = new CrossWindowOperationCoordinator(directory);
     await expect(coordinator.initialize()).rejects.toThrow();
@@ -75,7 +73,7 @@ describe("CrossWindowOperationCoordinator", () => {
   it("does not suppress startup recovery after a backwards clock correction", async () => {
     const directory = await createTestDirectory("cross-window-clock-recovery");
     await configureCrossWindowOperationCoordinator(directory);
-    await fs.writeFile(path.join(directory, "startup-sync-cooldown.json"), JSON.stringify({ completedAt: Date.now() + 86_400_000 }));
+    await seed(directory, "files", "startup-sync-cooldown.json", { text: JSON.stringify({ completedAt: Date.now() + 86_400_000 }) });
     const task = vi.fn(async () => "recovered");
     expect(await runCentralAccountOperationWithCooldown("Recovery", 60_000, task)).toEqual({ ran: true, value: "recovered" });
     expect(task).toHaveBeenCalledOnce();
@@ -142,7 +140,7 @@ describe("CrossWindowOperationCoordinator", () => {
     release();
     await firstRun;
     expect(executions).toBe(1);
-    expect(await fs.readdir(path.join(directory, "cross-window-operations-v1"))).toEqual([]);
+    await expectReleased(directory);
     await removeTestDirectory(directory);
   });
 
@@ -217,42 +215,75 @@ describe("CrossWindowOperationCoordinator", () => {
     await expect(
       second.runExclusive("quota:refresh:failed", "Quota refresh", async () => "retried")
     ).resolves.toBe("retried");
-    expect(await fs.readdir(path.join(directory, "cross-window-operations-v1"))).toEqual([]);
+    await expectReleased(directory);
     await removeTestDirectory(directory);
   });
 
   it("reclaims a stale lock left by another coordinator in this process", async () => {
     const directory = await createTestDirectory("cross-window-operation-live-owner");
-    const lockRoot = path.join(directory, "cross-window-operations-v1");
     const key = "quota:refresh:live";
-    const digest = (await import("crypto")).createHash("sha256").update(key).digest("hex");
-    const lockPath = path.join(lockRoot, digest);
-    await fs.mkdir(lockPath, { recursive: true });
-    await fs.writeFile(
-      path.join(lockPath, "owner.json"),
-      JSON.stringify({ instanceId: "live", pid: process.pid, startedAt: Date.now(), heartbeatAt: 1 }),
-      "utf8"
-    );
+    await seed(directory, "operation-leases", key, { token: "live", pid: process.pid, startedAt: Date.now(), heartbeatAt: 1 });
 
     const coordinator = new CrossWindowOperationCoordinator(directory, 5, 10);
     await expect(coordinator.runExclusive(key, "Quota refresh", async () => "recovered")).resolves.toBe("recovered");
     await removeTestDirectory(directory);
   });
 
-  it("runs one startup cleanup and removes abandoned lock directories", async () => {
-    const directory = await createTestDirectory("cross-window-operation-cleanup");
-    const lockRoot = path.join(directory, "cross-window-operations-v1");
-    await fs.mkdir(path.join(lockRoot, `${"a".repeat(64)}.abandoned-crashed-window`), { recursive: true });
-
+  it("recovers abandoned SQLite leases without recreating file locks", async () => {
+    const directory = await createTestDirectory("sqlite-abandoned-lease");
+    await seed(directory, "operation-leases", "abandoned", { token: "old", pid: 999999999, startedAt: 1, heartbeatAt: 1 });
     const first = new CrossWindowOperationCoordinator(directory);
     const second = new CrossWindowOperationCoordinator(directory);
     await Promise.all([first.initialize(), second.initialize()]);
+    await expect(first.runExclusive("abandoned", "Recovery", async () => "recovered")).resolves.toBe("recovered");
+    await expectReleased(directory);
+    await removeTestDirectory(directory);
+  });
 
-    expect(await fs.readdir(lockRoot)).toEqual([]);
+  it("bounds pending requests and recovers after the owner finishes", async () => {
+    const directory = await createTestDirectory("sqlite-full-queue");
+    const coordinator = new CrossWindowOperationCoordinator(directory);
+    let finish!: () => void, started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const owner = coordinator.runExclusive("busy", "Owner", async () => { started(); await new Promise<void>(resolve => { finish = resolve; }); });
+    await ready;
+    const queued = Array.from({ length: 32 }, () => coordinator.runExclusive("busy", "Queued", async () => undefined, { waitMs: 100 }).catch(error => error));
+    await expect(coordinator.runExclusive("busy", "Overflow", async () => undefined)).rejects.toThrow("still in progress");
+    const outcomes = await Promise.all(queued);
+    expect(outcomes.every(error => error instanceof CrossWindowOperationBusyError)).toBe(true);
+    finish(); await owner;
+    await expect(coordinator.runExclusive("busy", "Retry", async () => "retried")).resolves.toBe("retried");
+    await expectReleased(directory);
+    await removeTestDirectory(directory);
+  });
+
+  it("does not start actions when lease storage is full and permits a later retry", async () => {
+    const directory = await createTestDirectory("sqlite-lease-full");
+    const coordinator = new CrossWindowOperationCoordinator(directory);
+    const task = vi.fn(async () => "completed");
+    const set = SqliteStateStore.prototype.set;
+    const failure = vi.spyOn(SqliteStateStore.prototype, "set").mockImplementation(function(namespace, key, value) {
+      if (namespace === "operation-leases") throw new Error("database or disk is full");
+      return set.call(this, namespace, key, value);
+    });
+    await expect(coordinator.runExclusive("full", "Action", task)).rejects.toThrow("full");
+    expect(task).not.toHaveBeenCalled();
+    failure.mockRestore();
+    await expect(coordinator.runExclusive("full", "Action", task)).resolves.toBe("completed");
+    await expectReleased(directory);
     await removeTestDirectory(directory);
   });
 });
 
+async function seed(directory: string, namespace: string, key: string, value: unknown) {
+  const store = await SqliteStateStore.open(path.join(directory, "manager.sqlite"));
+  try { store.set(namespace, key, value); } finally { store.close(); }
+}
+async function expectReleased(directory: string) {
+  const store = await SqliteStateStore.open(path.join(directory, "manager.sqlite"));
+  try { expect(store.keys("operation-leases")).toEqual([]); } finally { store.close(); }
+  expect(await fs.readdir(directory)).toEqual(["manager.sqlite"]);
+}
 function createTestDirectory(prefix: string): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), `${prefix}-`));
 }

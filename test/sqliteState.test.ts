@@ -10,6 +10,12 @@ import {
 } from "../src/storage/sqliteState";
 import { readIndexSnapshot } from "../src/storage/accountsPersistence";
 import { persistIndexWithBackups } from "../src/storage/accountsWriteCoordinator";
+import { flushPendingSave, markPendingSave } from "../src/storage/accountsWriteCoordinator";
+import * as persistence from "../src/storage/accountsPersistence";
+import { cloneIndex, mergeAccountsIndexChanges } from "../src/storage/accountsIndex";
+import { configureCrossWindowOperationCoordinator, runCrossWindowExclusive } from "../src/utils/crossWindowOperations";
+import { readDashboardDailyUsageCache, upsertDashboardDailyUsageCache } from "../src/services/dashboardUsageHistory";
+import { AnnouncementService } from "../src/services/announcements";
 import { createAccountsRepositoryState } from "../src/storage/accountsRepositoryState";
 import { readSafeFileSnapshot } from "../src/utils/safeFileReads";
 import { AUTO_RESUME_OPEN_SESSION_IDS_KEY, persistOpenCodexSessions, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
@@ -20,7 +26,7 @@ import { removeTestDirectory } from "./testFilesystem";
 let root: string;
 const stores = new Set<SqliteStateStore>();
 async function open() {
-  const store = await SqliteStateStore.open(path.join(root, "codex-manager.sqlite"));
+  const store = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
   stores.add(store);
   return store;
 }
@@ -33,7 +39,10 @@ function legacy(initial: Record<string, unknown> = {}) {
     setKeysForSync: vi.fn(), values
   };
 }
-beforeEach(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-sqlite-state-")); });
+beforeEach(async () => {
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "codex-sqlite-state-"));
+  await configureCrossWindowOperationCoordinator(root);
+});
 afterEach(async () => {
   configureSqliteStateStore(undefined);
   for (const store of stores) store.close();
@@ -43,6 +52,87 @@ afterEach(async () => {
 });
 
 describe("SQLite WAL state", () => {
+  it("merges simultaneous account edits, additions, deletions and separate home selections", () => {
+    const account = (id: string) => ({ id, email: `${id}@example.com`, createdAt: 1, updatedAt: 1 });
+    const base = { accounts: [account("a"), account("b"), account("removed")], activeAccountStateVersion: 1 as const, activeAccountIdsByCodexHome: { first: "a", second: "b" } };
+    const local = cloneIndex(base);
+    local.accounts[0]!.enabled = false;
+    local.accounts[0]!.updatedAt = 2;
+    local.accounts.push(account("local-added"));
+    local.activeAccountIdsByCodexHome!.first = "b";
+    const peer = cloneIndex(base);
+    peer.accounts[0]!.queuePriority = 3;
+    peer.accounts[0]!.updatedAt = 10;
+    peer.accounts = peer.accounts.filter(item => item.id !== "removed");
+    peer.accounts.push(account("peer-added"));
+    peer.activeAccountIdsByCodexHome!.second = "a";
+    const merged = mergeAccountsIndexChanges(base, local, peer, "first");
+    expect(merged.accounts.find(item => item.id === "a")).toMatchObject({ enabled: false, queuePriority: 3, updatedAt: 10 });
+    expect(merged.accounts.map(item => item.id).sort()).toEqual(["a", "b", "local-added", "peer-added"]);
+    expect(merged.currentAccountId).toBe("b");
+    expect(merged.activeAccountIdsByCodexHome).toEqual({ first: "b", second: "a" });
+    expect(base.accounts[0]).not.toHaveProperty("enabled");
+  });
+
+  it("rebases queued writes on the committed index instead of erasing another window's fields", async () => {
+    configureSqliteStateStore(await open());
+    const file = path.join(root, "accounts-index.json");
+    const base = { accounts: [{ id: "a", email: "a@example.com", createdAt: 1, updatedAt: 1 }] };
+    const state = createAccountsRepositoryState();
+    state.persistedIndex = cloneIndex(base);
+    writeSqliteStateFile(file, JSON.stringify({ accounts: [{ ...base.accounts[0], enabled: false }] }));
+    const first = cloneIndex(base);
+    first.accounts[0]!.queuePriority = 2;
+    markPendingSave(state, first, 60_000, () => undefined);
+    clearTimeout(state.saveDebounceTimer!);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const read = persistence.readIndexSnapshot;
+    const paused = vi.spyOn(persistence, "readIndexSnapshot").mockImplementationOnce(async (...args) => { const snapshot = await read(...args); await gate; return snapshot; });
+    const save = (index: typeof first) => persistIndexWithBackups({ state, indexPath: file, index, tempSuffix: ".tmp", backupCount: 3 });
+    const savingFirst = flushPendingSave(state, save);
+    await vi.waitFor(() => expect(paused).toHaveBeenCalledOnce());
+    const second = cloneIndex(first);
+    second.accounts[0]!.showInStatusBar = true;
+    markPendingSave(state, second, 60_000, () => undefined);
+    clearTimeout(state.saveDebounceTimer!);
+    const savingSecond = flushPendingSave(state, save);
+    release();
+    await Promise.all([savingFirst, savingSecond]);
+    await state.persistChain;
+    expect((await readIndexSnapshot(file)).accounts[0]).toMatchObject({ enabled: false, queuePriority: 2, showInStatusBar: true });
+    expect(state.pendingSave).toBeNull();
+    expect(state.isDirty).toBe(false);
+  });
+
+  it("serializes separate dashboard windows before reading and updating shared usage", async () => {
+    const store = await open();
+    configureSqliteStateStore(store);
+    const firstState = createSqliteMemento(store, "global", legacy());
+    const secondState = createSqliteMemento(await open(), "global", legacy());
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    const blocker = runCrossWindowExclusive("state:dashboard-usage", "Competing usage writer", async () => { entered(); await gate; });
+    await ready;
+    const first = upsertDashboardDailyUsageCache({ globalState: firstState } as never, "a", { days: 1, points: [] });
+    const second = upsertDashboardDailyUsageCache({ globalState: secondState } as never, "b", { days: 1, points: [] });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    release();
+    await Promise.all([blocker, first, second]);
+    expect(readDashboardDailyUsageCache({ globalState: secondState } as never).map(item => item.accountId).sort()).toEqual(["a", "b"]);
+  });
+
+  it("does not clear announcement read history after a managed storage read fails", async () => {
+    const store = await open();
+    configureSqliteStateStore(store);
+    const file = path.join(root, "announcements", "announcement_read_ids.json");
+    writeSqliteStateFile(file, "invalid JSON");
+    const service = new AnnouncementService(root, root);
+    await expect(service.markAsRead("new")).rejects.toThrow();
+    expect(readSqliteStateFile(file)).toBe("invalid JSON");
+  });
   it("uses WAL and full commits, exposes updates across connections, and rolls back incomplete transactions", async () => {
     const store = await open();
     const peer = await open();
@@ -96,7 +186,7 @@ describe("SQLite WAL state", () => {
   });
 
   it("rejects corrupt and future databases without replacing their contents", async () => {
-    const file = path.join(root, "codex-manager.sqlite");
+    const file = path.join(root, "manager.sqlite");
     await fs.writeFile(file, "damaged database");
     await expect(open()).rejects.toThrow();
     expect(await fs.readFile(file, "utf8")).toBe("damaged database");

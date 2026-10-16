@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.6
+
+- Store account metadata, quota history, daily usage, running-turn recovery, and live session statistics in indexed SQLite rows with safe cross-window updates. Capture the account when a turn starts and preserve committed records across restarts.
+- Store manager state in `~/.codex/manager.sqlite` and redacted diagnostics in a separate `manager_logs.sqlite`. Open recent logs without creating a JSONL file.
+- Automatically migrate existing databases, legacy JSON, logs, and recovery snapshots; verify committed copies before removing `~/.codex-manager`, and retain sources when older hosts or storage errors prevent a safe move.
+- Use SQLite for cross-window operation leases, relay PID tracking, and dashboard preference writes. Run the packaged relay script directly and use the Windows startup registry instead of generated launcher files.
+
 ## 1.2.26
 
 - Fix activation with VS Code's frozen settings object so SQLite-backed preferences no longer prevent dashboard commands from registering. Package local builds as pre-releases.

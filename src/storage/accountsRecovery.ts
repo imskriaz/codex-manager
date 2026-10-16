@@ -12,6 +12,7 @@ import type { CodexManagerIndex, CodexManagerRestoreResult } from "../core/types
 import { createError, ErrorCode, StorageError, getErrorMessage } from "../core/errors";
 import type { AccountsRepositoryState } from "./accountsRepositoryState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import { sqliteStoreForFile } from "./sqliteState";
 
 const INDEX_PERSIST_OPERATION_KEY = "accounts:index-persist";
 
@@ -106,6 +107,7 @@ export async function persistRecoveredIndex(params: {
     await writeIndexAtomically(params.indexPath, params.index, params.tempSuffix);
   });
   params.state.isDirty = false;
+  if (sqliteStoreForFile(params.indexPath)) params.state.persistedIndex = cloneIndex(params.index);
   params.state.cache = {
     data: cloneIndex(params.index),
     timestamp: Date.now()

@@ -1,3 +1,4 @@
+import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { AccountsRepository } from "../storage";
 import { CodexManagerAccountRecord } from "../core/types";
@@ -30,7 +31,7 @@ export class AccountsStatusBarProvider {
     this.showStarting();
     this.context.subscriptions.push(
       this.item,
-      vscode.workspace.onDidChangeConfiguration((event) => {
+      onDidChangeConfiguration((event) => {
         if (
           event.affectsConfiguration("codexManager.displayLanguage") ||
           event.affectsConfiguration("codexManager.dashboardTheme") ||

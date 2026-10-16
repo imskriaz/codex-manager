@@ -80,7 +80,7 @@ import {
   setCurrentWindowRuntimeAccountId
 } from "../workbench/windowRuntimeAccount";
 import { parseSharedJsonInput, toFailureMessage, toImportActionPayload } from "./actionUtils";
-import { getCodexManagerStorageRoot } from "../../utils/storageRoot";
+import { homedir } from "node:os";
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
@@ -1124,7 +1124,7 @@ async function handleDownloadJsonFile(payload: DashboardActionPayload | undefine
   }
 
   const target = await vscode.window.showSaveDialog({
-    defaultUri: vscode.Uri.file(path.join(getCodexManagerStorageRoot(), defaultName)),
+    defaultUri: vscode.Uri.file(path.join(homedir(), defaultName)),
     filters: {
       JSON: ["json"]
     },

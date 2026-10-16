@@ -1,3 +1,4 @@
+import { sqliteConfiguration } from "../storage/sqliteContext";
 import { readCodexSessionGoals } from "./codexSessionGoals";
 import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
@@ -14,6 +15,8 @@ import { appServerChatInput, withCliImageAttachments } from "./codexChatAttachme
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { reserveCodexSessionLive } from "./codexSessionLive";
+import { recordNativeSessionStatus } from "./sessionRecording";
+import { readRunningTurnRows, saveRunningTurnRows } from "../storage/sqliteSessions";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -25,7 +28,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
-import { hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
+import { hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile } from "../storage/sqliteState";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -318,7 +321,9 @@ async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSi
     if (archivedIds.has(sessionId)) {
       return;
     }
-    if (await isCliSessionRunning(codexHome, sessionId, transcriptPaths.get(sessionId), false, signal)) {
+    const active = await isCliSessionRunning(codexHome, sessionId, transcriptPaths.get(sessionId), false, signal);
+    recordNativeSessionStatus(codexHome,sessionId,active);
+    if (active) {
       running.add(sessionId);
     }
   });
@@ -361,7 +366,7 @@ function configuredSessionTransport(): "app-server-stdio" | "cli" {
 // Coalesce refreshes; bounded local reads keep the list usable during startup.
 const sessionListReads = new Map<string, { pending?: Promise<DashboardCliSessionSummary[]>; sessions?: DashboardCliSessionSummary[]; expiresAt: number; retryAt: number; local?: boolean }>();
 async function readResilientSessionList(codexHome: string, limit: number): Promise<DashboardCliSessionSummary[]> {
-  const key = JSON.stringify([path.resolve(codexHome), process.env["CODEX_CLI_PATH"], vscode.workspace.getConfiguration("codexManager").get("codexCliPath")]);
+  const key = JSON.stringify([path.resolve(codexHome), process.env["CODEX_CLI_PATH"], sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get("codexCliPath")]);
   let state = sessionListReads.get(key);
   if (!state) {
     state = { expiresAt: 0, retryAt: 0 };
@@ -2336,7 +2341,7 @@ export function getCodexCliPathCandidates(
 
 async function resolveCodexCliExecutable(): Promise<CodexCliExecutable> {
   const configuredPath = (
-    vscode.workspace.getConfiguration("codexManager").get<string>("codexCliPath", "") ?? ""
+    sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get<string>("codexCliPath", "") ?? ""
   ).trim();
   const bundledExtensionPath = vscode.extensions?.getExtension(CODEX_EXTENSION_ID)?.extensionPath;
   const signature = JSON.stringify({
@@ -2676,6 +2681,11 @@ async function readTrackedCliTurnsWithDiagnostics(
   sourcePath?: string;
 }> {
   const canonicalPath = path.join(storageRoot, RUNNING_TURNS_FILE);
+  const store = sqliteStoreForFile(canonicalPath);
+  if (store?.get("migrations","running-turn-rows-v1") && store.get("files",RUNNING_TURNS_FILE) === undefined) {
+    try { return { turns:readRunningTurnRows(store).filter(isTrackedCliTurn),sourcePath:canonicalPath }; }
+    catch (error) { return { turns:[],failure:`recovery rows could not be read: ${error instanceof Error ? error.message : String(error)}` }; }
+  }
   let filePath = canonicalPath;
   let raw: string | undefined;
   if (sqliteStoreForFile(canonicalPath)) {
@@ -2727,7 +2737,9 @@ async function readTrackedCliTurnsWithDiagnostics(
     for (const entry of value) {
       if (isTrackedCliTurn(entry) && !unique.has(entry.id)) unique.set(entry.id, entry);
     }
-    return { turns: [...unique.values()].slice(0, MAX_TRACKED_CLI_TURNS), sourcePath: filePath };
+    const turns = [...unique.values()].slice(0, MAX_TRACKED_CLI_TURNS);
+    if (store) saveRunningTurnRows(store,turns);
+    return { turns, sourcePath: filePath };
   } catch (error) {
     return {
       turns: [],
@@ -2790,7 +2802,8 @@ async function updateTrackedCliTurns(transform: (turns: TrackedCliTurn[]) => Tra
       }
       const current = tracked.turns;
       const next = transform(current);
-      if (sqliteStoreForFile(filePath)) { writeSqliteStateFile(filePath, JSON.stringify(next)); return; }
+      const store = sqliteStoreForFile(filePath);
+      if (store) { saveRunningTurnRows(store,next); return; }
       await fs.mkdir(storageRoot, { recursive: true, mode: 0o700 });
       const temporaryPath = `${filePath}.${process.pid}.${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
       const handle = await fs.open(temporaryPath, "wx", 0o600);

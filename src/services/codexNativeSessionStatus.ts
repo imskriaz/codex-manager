@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { recordNativeSessionStatus } from "./sessionRecording";
 
 type Observation = {
   home: string; id: string; owner?: string; revision?: number; running?: boolean; usedAt: number;
@@ -27,6 +28,7 @@ function follow(entry: Observation, following: boolean): void {
 }
 function settle(entry: Observation, running: boolean | undefined): void {
   entry.running = running;
+  recordNativeSessionStatus(entry.home,entry.id,running);
   for (const resolve of entry.waiters) resolve(running);
   entry.waiters.clear();
 }

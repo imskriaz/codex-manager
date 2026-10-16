@@ -115,6 +115,45 @@ export function createEmptyIndex(): CodexManagerIndex {
   return { accounts: [] };
 }
 
+/** Apply this window's edits to the latest index without reviving remotely removed accounts. */
+export function mergeAccountsIndexChanges(base: CodexManagerIndex, local: CodexManagerIndex, current: CodexManagerIndex, homeKey?: string): CodexManagerIndex {
+  base = cloneIndex(base);
+  const merged = cloneIndex(current);
+  if (homeKey) {
+    scopeActiveAccountState(base, homeKey);
+    scopeActiveAccountState(merged, homeKey);
+  }
+  const originals = new Map(base.accounts.map(account => [account.id, account]));
+  const incoming = new Map(local.accounts.map(account => [account.id, account]));
+  merged.accounts = merged.accounts.filter(account => !originals.has(account.id) || incoming.has(account.id));
+  const saved = new Map(merged.accounts.map(account => [account.id, account]));
+  const added: CodexManagerAccountRecord[] = [];
+  for (const account of local.accounts) {
+    const original = originals.get(account.id);
+    const latest = saved.get(account.id);
+    if (!original) {
+      if (latest) Object.assign(latest, structuredClone(account));
+      else added.push(structuredClone(account));
+    } else if (latest) {
+      const savedUpdatedAt = latest.updatedAt;
+      for (const key of new Set([...Object.keys(original), ...Object.keys(account)])) {
+        const previous: unknown = Reflect.get(original, key);
+        const next: unknown = Reflect.get(account, key);
+        if (JSON.stringify(previous) !== JSON.stringify(next)) Reflect.set(latest, key, structuredClone(next));
+      }
+      latest.updatedAt = Math.max(savedUpdatedAt, account.updatedAt);
+    }
+  }
+  merged.accounts.unshift(...added);
+  if (homeKey) {
+    const previous = base.activeAccountIdsByCodexHome?.[homeKey];
+    const next = local.activeAccountIdsByCodexHome?.[homeKey];
+    if (previous !== next) setScopedActiveAccount(merged, homeKey, next);
+    scopeActiveAccountState(merged, homeKey);
+  } else if (base.currentAccountId !== local.currentAccountId) merged.currentAccountId = local.currentAccountId;
+  return merged;
+}
+
 export function cloneIndex(index: CodexManagerIndex): CodexManagerIndex {
   const normalized: CodexManagerIndex = {
     currentAccountId: index?.currentAccountId,

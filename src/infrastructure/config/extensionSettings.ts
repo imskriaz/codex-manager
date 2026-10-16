@@ -1,3 +1,4 @@
+import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import type {
   DashboardCodexSessionTransport,
@@ -79,7 +80,7 @@ export class ExtensionSettingsStore {
   }
 
   onDidChange(listener: () => void): vscode.Disposable {
-    return vscode.workspace.onDidChangeConfiguration((event) => {
+    return onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration(CODEX_ACCOUNTS_SECTION)) {
         listener();
       }

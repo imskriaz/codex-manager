@@ -6,6 +6,7 @@ export interface CacheEntry<T> {
 }
 
 export interface AccountsRepositoryState {
+  persistedIndex?: CodexManagerIndex;
   cache: CacheEntry<CodexManagerIndex> | null;
   saveDebounceTimer: NodeJS.Timeout | null;
   pendingSave: CodexManagerIndex | null;

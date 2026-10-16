@@ -1,3 +1,4 @@
+import { sqliteConfiguration } from "../storage/sqliteContext";
 import * as vscode from "vscode";
 import type { DashboardState } from "../domain/dashboard/types";
 
@@ -16,7 +17,7 @@ export async function resolveOnboardingCompleted(
   const establishedInstallation =
     state.accounts.length > 0 ||
     (state.settings.encryptedSyncEnabled &&
-      vscode.workspace.getConfiguration("codexManager").inspect<boolean>("encryptedSyncEnabled")?.globalValue === true) ||
+      sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).inspect<boolean>("encryptedSyncEnabled")?.globalValue === true) ||
     state.settings.webDashboardEnabled ||
     Boolean(state.settings.cloudflaredDomain?.trim());
   if (establishedInstallation) {

@@ -1,3 +1,4 @@
+import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { waitWithin } from "../../utils/concurrency";
 import { publishDashboardRealtime } from "../../services/dashboardRealtime";
@@ -505,7 +506,7 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
   let waiting = false;
   let interrupt: (() => void) | undefined;
   const inspection = new AbortController();
-  const configuration = vscode.workspace.onDidChangeConfiguration((event) => {
+  const configuration = onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration(`codexManager.${AUTO_SWITCH_ENABLED}`) || event.affectsConfiguration("codexManager.autoSwitchWaitForSessionsEnabled")) {
       if (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, false) || !getCodexManagerConfiguration().get<boolean>("autoSwitchWaitForSessionsEnabled", false)) inspection.abort(new Error("Session waiting is disabled."));
     }

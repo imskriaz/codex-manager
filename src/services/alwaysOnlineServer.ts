@@ -1,3 +1,5 @@
+import { installRelayStartup, removeRelayStartup } from "../utils/relayStartup";
+import { sqliteConfiguration } from "../storage/sqliteContext";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as http from "http";
@@ -14,7 +16,6 @@ export const ALWAYS_ONLINE_RELAY_PORT = 39875;
 const CONFIG_FILE = "always-online-relay.json";
 const PID_FILE = "always-online-relay.pid";
 const SECRET_KEY = "codexManager.webDashboard.alwaysOnlineAdminToken.v1";
-const STARTUP_FILE = "CodexManagerAlwaysOnline.cmd";
 
 type RelayConfig = { port: number; hostKey: string; adminToken: string; pidPath: string; modulePaths: string[]; claimRegistryPath?: string };
 type PreparedRelay = RelayConfig & {
@@ -39,8 +40,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   async applyConfiguration(): Promise<
     "started" | "already-running" | "stopped" | "paused" | "waiting-for-configuration"
   > {
-    const enabled = vscode.workspace
-      .getConfiguration("codexManager")
+    const enabled = sqliteConfiguration(vscode.workspace.getConfiguration("codexManager"))
       .get<boolean>("webDashboardAlwaysOnlineEnabled", false);
     if (!enabled) {
       this.waitingForConfiguration = false;
@@ -76,8 +76,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   /** Release the shared port while the VS Code dashboard is active. */
   async prepareForVscodeSession(): Promise<void> {
     this.sessionActive = true;
-    const enabled = vscode.workspace
-      .getConfiguration("codexManager")
+    const enabled = sqliteConfiguration(vscode.workspace.getConfiguration("codexManager"))
       .get<boolean>("webDashboardAlwaysOnlineEnabled", false);
     if (!enabled) return;
     try {
@@ -151,7 +150,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     this.sessionActive = false;
     if (
       this.preparedRelay &&
-      vscode.workspace.getConfiguration("codexManager").get<boolean>("webDashboardAlwaysOnlineEnabled", false)
+      sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get<boolean>("webDashboardAlwaysOnlineEnabled", false)
     ) {
       // Disposable.dispose() is synchronous. Spawn the already-prepared relay
       // before the extension host exits; it retries the bind until the Web
@@ -246,9 +245,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private async prepareRelayFiles(): Promise<{ configPath: string; scriptTarget: string }> {
     const storage = getCodexManagerStorageRoot();
     await fs.mkdir(storage, { recursive: true });
-    const scriptSource = path.join(this.context.extensionUri.fsPath, "tools", "always-online-server.js");
-    const scriptTarget = path.join(storage, "always-online-server.js");
-    await fs.copyFile(scriptSource, scriptTarget);
+    const scriptTarget = path.join(this.context.extensionUri.fsPath, "tools", "always-online-server.js");
     return { configPath: path.join(storage, CONFIG_FILE), scriptTarget };
   }
 }
@@ -369,39 +366,25 @@ function requestShutdown(port: number, token: string): Promise<void> {
   });
 }
 
-async function writeStartupLauncher(
-  context: vscode.ExtensionContext,
-  configPath: string,
-  scriptPath: string
-): Promise<void> {
-  if (process.platform !== "win32") return;
-  const appData = process.env["APPDATA"];
-  const startup = appData ? path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup") : undefined;
-  if (!startup) return;
-  await fs.mkdir(startup, { recursive: true });
-  const command = `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\nstart "Codex Manager relay" /b "${process.execPath}" "${scriptPath}" "${configPath}"\r\n`;
-  await fs.writeFile(path.join(startup, STARTUP_FILE), command, { encoding: "utf8", mode: 0o600 });
+async function writeStartupLauncher(context: vscode.ExtensionContext, configPath: string, scriptPath: string): Promise<void> {
+  await installRelayStartup(configPath, scriptPath);
   void context;
 }
 
 async function removeStartupLauncher(context: vscode.ExtensionContext): Promise<void> {
-  const appData = process.env["APPDATA"];
-  if (process.platform !== "win32" || !appData) return;
-  try {
-    await fs.unlink(path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", STARTUP_FILE));
-  } catch {
-    /* already removed */
-  }
+  await removeRelayStartup();
   void context;
 }
 
 async function readLivePid(pidPath: string): Promise<number | undefined> {
   try {
-    const value = Number.parseInt((await fs.readFile(pidPath, "utf8")).trim(), 10);
+    const text = sqliteStoreForFile(pidPath) ? readSqliteStateFile(pidPath) : await fs.readFile(pidPath, "utf8");
+    const value = Number(text.trim());
     if (!Number.isInteger(value) || value <= 0) return undefined;
     process.kill(value, 0);
     return value;
-  } catch {
+  } catch (error) {
+    if (sqliteStoreForFile(pidPath) && (error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     return undefined;
   }
 }

@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { cloneIndex } from "./accountsIndex";
+import { cloneIndex, mergeAccountsIndexChanges } from "./accountsIndex";
+import { saveAccountIndex } from "./sqliteAccounts";
 import {
   backupCurrentIndex,
   countAvailableBackups,
@@ -85,28 +86,24 @@ export async function flushPendingSave(
   state: AccountsRepositoryState,
   persistIndex: (index: CodexManagerIndex) => Promise<void>
 ): Promise<void> {
-  const snapshot = state.pendingSave;
   state.saveDebounceTimer = null;
-
-  if (!snapshot) {
+  if (!state.pendingSave) {
     return;
   }
 
   const persistTask = state.persistChain
     .catch(() => undefined)
     .then(async () => {
+      const snapshot = state.pendingSave;
+      if (!snapshot) return;
       await persistIndex(snapshot);
+      if (state.pendingSave === snapshot) state.pendingSave = null;
+      if (!state.pendingSave) state.isDirty = false;
     });
   state.persistChain = persistTask;
 
   try {
     await persistTask;
-    if (state.pendingSave === snapshot) {
-      state.pendingSave = null;
-    }
-    if (!state.pendingSave) {
-      state.isDirty = false;
-    }
   } catch (error) {
     console.error("[codexManager] failed to persist accounts index:", error);
   }
@@ -130,24 +127,37 @@ export async function persistIndexWithBackups(params: {
   try {
     await runCrossWindowExclusive(INDEX_PERSIST_OPERATION_KEY, "Account index save", async () => {
       await fs.mkdir(path.dirname(params.indexPath), { recursive: true });
+      const sqlite = sqliteStoreForFile(params.indexPath);
+      const current = await readIndexSnapshot(params.indexPath).catch((error: unknown) => {
+        if (sqlite && !isFileNotFoundError(error)) throw error;
+        return undefined;
+      });
+      const index = sqlite && current && params.state.persistedIndex
+        ? mergeAccountsIndexChanges(params.state.persistedIndex, params.index, current, params.activeCodexHomeKey)
+        : cloneIndex(params.index);
       if (params.activeCodexHomeKey) {
-        const current = await readIndexSnapshot(params.indexPath).catch((error: unknown) => {
-          if (sqliteStoreForFile(params.indexPath) && !isFileNotFoundError(error)) throw error;
-          return undefined;
-        });
-        if (current?.activeAccountIdsByCodexHome) {
-          const localAccountId = params.index.activeAccountIdsByCodexHome?.[params.activeCodexHomeKey];
-          params.index.activeAccountStateVersion = 1;
-          params.index.activeAccountIdsByCodexHome = { ...current.activeAccountIdsByCodexHome };
+        if (current?.activeAccountIdsByCodexHome && !(sqlite && params.state.persistedIndex)) {
+          const localAccountId = index.activeAccountIdsByCodexHome?.[params.activeCodexHomeKey];
+          index.activeAccountStateVersion = 1;
+          index.activeAccountIdsByCodexHome = { ...current.activeAccountIdsByCodexHome };
           if (localAccountId) {
-            params.index.activeAccountIdsByCodexHome[params.activeCodexHomeKey] = localAccountId;
+            index.activeAccountIdsByCodexHome[params.activeCodexHomeKey] = localAccountId;
           } else {
-            delete params.index.activeAccountIdsByCodexHome[params.activeCodexHomeKey];
+            delete index.activeAccountIdsByCodexHome[params.activeCodexHomeKey];
           }
         }
       }
-      await backupCurrentIndex(params.indexPath, params.backupCount);
-      await writeIndexAtomically(params.indexPath, params.index, params.tempSuffix);
+      if (sqlite) saveAccountIndex(sqlite, index, params.backupCount);
+      else {
+        await backupCurrentIndex(params.indexPath, params.backupCount);
+        await writeIndexAtomically(params.indexPath, index, params.tempSuffix);
+      }
+      if (sqlite) {
+        params.state.persistedIndex = cloneIndex(index);
+        if (params.state.pendingSave && params.state.pendingSave !== params.index)
+          params.state.pendingSave = mergeAccountsIndexChanges(params.index, params.state.pendingSave, index, params.activeCodexHomeKey);
+        params.state.cache = { data: cloneIndex(params.state.pendingSave && params.state.pendingSave !== params.index ? params.state.pendingSave : index), timestamp: Date.now() };
+      }
       const availableBackups = await countAvailableBackups(params.indexPath, params.backupCount);
       params.state.indexHealth =
         params.state.indexHealth.status === "corrupted_unrecoverable"

@@ -1,3 +1,4 @@
+import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { registerCommands, runRegisteredCommand } from "../../commands";
 import { AccountsRepository } from "../../storage";
@@ -10,6 +11,7 @@ import { EncryptedSyncManager } from "../../services/encryptedSync";
 import { WebDashboardServer } from "../../services/webDashboardServer";
 import { AlwaysOnlineServer } from "../../services/alwaysOnlineServer";
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
+import { waitWithin } from "../../utils/concurrency";
 import {
   prepareQuotaSummaryPanelForExtensionHostRestart,
   registerDashboardPanelSerializer,
@@ -17,8 +19,7 @@ import {
 } from "../dashboard";
 import {
   ensureCrossWindowAccountAssignment,
-  isCrossWindowAccountModeEnabled,
-  canWindowUseAccount
+  isCrossWindowAccountModeEnabled
 } from "../../services/windowAccountMode";
 import {
   cancelCodexSessionAutoResume,
@@ -47,7 +48,7 @@ export class AccountsWorkbench {
     this.statusBar = new AccountsStatusBarProvider(context, this.repo);
     this.encryptedSync = new EncryptedSyncManager(context, this.repo);
     this.refreshCoordinator = new WorkbenchRefreshCoordinator(context, this.repo, this.statusBar, (accountId) =>
-      canWindowUseAccount(accountId) && this.encryptedSync.canAutomateAccountAfterVaultRefresh(accountId)
+      this.encryptedSync.canAutomateAccountAfterVaultRefresh(accountId)
     );
     this.webDashboard = new WebDashboardServer(context, this.repo, this.encryptedSync);
     this.alwaysOnlineServer = new AlwaysOnlineServer(context, this.encryptedSync);
@@ -195,7 +196,7 @@ export class AccountsWorkbench {
       });
     }
     this.context.subscriptions.push(
-      vscode.workspace.onDidChangeConfiguration((event) => {
+      onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("codexManager.privacyMode")) {
           this.webDashboard.publishRealtimeState();
         }
@@ -261,7 +262,7 @@ export class AccountsWorkbench {
           context: this.context,
           repo: this.repo,
           onRefresh: refreshers.refresh,
-          canRefreshAccount: (accountId) => canWindowUseAccount(accountId) && this.encryptedSync.canAutomateAccount(accountId)
+          canRefreshAccount: (accountId) => this.encryptedSync.canAutomateAccount(accountId)
         })
       );
     });
@@ -273,7 +274,7 @@ export class AccountsWorkbench {
           view: refreshers,
           checkIntervalMs: TOKEN_REFRESH_CHECK_INTERVAL_MS,
           skewSeconds: TOKEN_REFRESH_SKEW_SECONDS,
-          canRefreshAccount: (accountId) => canWindowUseAccount(accountId) && this.encryptedSync.canAutomateAccount(accountId)
+          canRefreshAccount: (accountId) => this.encryptedSync.canAutomateAccount(accountId)
         })
       );
     });
@@ -337,11 +338,13 @@ export class AccountsWorkbench {
     }
   }
 
-  shutdown(): void {
+  async shutdown(): Promise<void> {
+    if (this.disposed) return;
     this.autoResumeTracking?.dispose();
     this.autoResumeTracking = undefined;
     this.encryptedSync.shutdown();
-    this.dispose();
+    try { await waitWithin(this.repo.flush(), 1500, "Final account save did not finish before shutdown."); }
+    finally { this.dispose(); }
   }
 
   private async notifyIndexHealth(): Promise<void> {

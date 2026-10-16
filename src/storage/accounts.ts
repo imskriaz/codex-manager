@@ -111,6 +111,7 @@ import { buildAccountStorageId } from "../utils/accountIdentity";
 import { extractClaims } from "../utils/jwt";
 import { getQuotaIssueKind } from "../utils/quotaIssue";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
+import { hasAccountRows, readAccountRow } from "./sqliteAccounts";
 import {
   CrossWindowOperationBusyError,
   runCrossWindowExclusive,
@@ -342,6 +343,9 @@ export class AccountsRepository {
    */
   async getAccount(accountId: string): Promise<CodexManagerAccountRecord | undefined> {
     try {
+      const store = sqliteStoreForFile(this.indexPath);
+      if (store && hasAccountRows(store) && !this.state.pendingSave && !this.state.isDirty && this.state.indexHealth.status !== "corrupted_unrecoverable")
+        return readAccountRow(store, accountId, this.codexHomeStateKey);
       return (await this.readIndex()).accounts.find((item) => item.id === accountId);
     } catch (error) {
       if (isIndexHealthError(error)) {
@@ -1596,6 +1600,7 @@ export class AccountsRepository {
 
     try {
       const snapshot = await readIndexSnapshot(this.indexPath);
+      if (sqliteStoreForFile(this.indexPath)) this.state.persistedIndex = cloneIndex(snapshot);
       this.state.cache = {
         data: snapshot,
         timestamp: Date.now()
@@ -1609,6 +1614,7 @@ export class AccountsRepository {
     } catch (cause) {
       if (sqliteStoreForFile(this.indexPath) && isSqliteError(cause)) throw cause;
       if (isFileNotFoundError(cause)) {
+        if (sqliteStoreForFile(this.indexPath)) this.state.persistedIndex = createEmptyIndex();
         const interrupted = await readLatestValidTempIndex(this.indexPath, INDEX_TEMP_SUFFIX);
         const legacy = interrupted ? undefined : await this.readLegacyIndex();
         const migrated = interrupted ?? legacy?.index;

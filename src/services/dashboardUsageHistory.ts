@@ -1,6 +1,9 @@
 import type * as vscode from "vscode";
 import type { DashboardDailyUsageCacheEntry, DashboardState, DashboardUsageSample } from "../domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../core/types";
+import { getSqliteStateStore } from "../storage/sqliteState";
+import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
+import { readUsageRows, replaceUsageRows, readDailyUsageRows, replaceDailyUsageRows } from "../storage/sqliteUsage";
 
 const STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
 const MAX_SAMPLES = 10_000;
@@ -12,7 +15,11 @@ const MAX_FUTURE_TIMESTAMP_SKEW_MS = 5 * 60_000;
 const usageHistoryWriteQueues = new WeakMap<vscode.Memento, Promise<void>>();
 
 function enqueueUsageHistoryWrite<T>(context: vscode.ExtensionContext, task: () => Promise<T>): Promise<T> {
-  const run = (usageHistoryWriteQueues.get(context.globalState) ?? Promise.resolve()).then(task);
+  const run = (usageHistoryWriteQueues.get(context.globalState) ?? Promise.resolve()).then(() =>
+    getSqliteStateStore()
+      ? runCrossWindowExclusive("state:dashboard-usage", "Usage history update", task, { waitMs: 500, background: true })
+      : task()
+  );
   usageHistoryWriteQueues.set(context.globalState, run.then(
     () => undefined,
     () => undefined
@@ -21,11 +28,27 @@ function enqueueUsageHistoryWrite<T>(context: vscode.ExtensionContext, task: () 
 }
 
 export function readDashboardUsageHistory(context: vscode.ExtensionContext): DashboardUsageSample[] {
+  const store = getSqliteStateStore();
+  if (store) {
+    if (!store.get("migrations","usage-rows-v1")) replaceUsageRows(store,normalizeDashboardUsageHistory(context.globalState.get<unknown>(STORAGE_KEY)),STORAGE_KEY,true);
+    return normalizeDashboardUsageHistory(readUsageRows(store));
+  }
   return normalizeDashboardUsageHistory(context.globalState.get<unknown>(STORAGE_KEY));
 }
 
 export function readDashboardDailyUsageCache(context: vscode.ExtensionContext): DashboardDailyUsageCacheEntry[] {
+  const store = getSqliteStateStore();
+  if (store) {
+    if (!store.get("migrations","daily-usage-rows-v1")) replaceDailyUsageRows(store,normalizeDashboardDailyUsageCache(context.globalState.get<unknown>(DAILY_USAGE_CACHE_KEY)),DAILY_USAGE_CACHE_KEY,true);
+    return normalizeDashboardDailyUsageCache(readDailyUsageRows(store));
+  }
   return normalizeDashboardDailyUsageCache(context.globalState.get<unknown>(DAILY_USAGE_CACHE_KEY));
+}
+
+async function persistUsageHistory(context:vscode.ExtensionContext,samples:readonly DashboardUsageSample[]):Promise<void> {
+  const store = getSqliteStateStore();
+  if (store) replaceUsageRows(store,samples,STORAGE_KEY);
+  else await context.globalState.update(STORAGE_KEY,samples);
 }
 
 export async function upsertDashboardDailyUsageCache(
@@ -44,7 +67,9 @@ export async function upsertDashboardDailyUsageCache(
     const entries = current.filter((entry) => entry.accountId !== accountId);
     entries.push({ accountId, fetchedAt, usage });
     const normalized = normalizeDashboardDailyUsageCache(entries);
-    await context.globalState.update(DAILY_USAGE_CACHE_KEY, normalized);
+    const store = getSqliteStateStore();
+    if (store) replaceDailyUsageRows(store,normalized,DAILY_USAGE_CACHE_KEY);
+    else await context.globalState.update(DAILY_USAGE_CACHE_KEY, normalized);
     return normalized;
   });
 }
@@ -106,13 +131,13 @@ export async function saveDashboardUsageHistory(
   const normalized = normalizeDashboardUsageHistory(samples);
   await enqueueUsageHistoryWrite(context, async () => {
     if (samples.length === 0) {
-      await context.globalState.update(STORAGE_KEY, []);
+      await persistUsageHistory(context, []);
       return;
     }
     const current = readDashboardUsageHistory(context);
     const merged = new Map(current.map((sample) => [`${sample.accountId}:${sample.at}`, sample]));
     for (const sample of normalized) merged.set(`${sample.accountId}:${sample.at}`, sample);
-    await context.globalState.update(STORAGE_KEY, normalizeDashboardUsageHistory([...merged.values()]));
+    await persistUsageHistory(context, normalizeDashboardUsageHistory([...merged.values()]));
   });
 }
 
@@ -156,7 +181,7 @@ export async function appendDashboardUsageSnapshot(
     }
     if (!changed) return current;
     const normalized = normalizeDashboardUsageHistory(current);
-    await context.globalState.update(STORAGE_KEY, normalized);
+    await persistUsageHistory(context, normalized);
     return normalized;
   });
 }

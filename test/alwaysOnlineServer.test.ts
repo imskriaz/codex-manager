@@ -69,7 +69,7 @@ describe("always-online WebSocket relay handoff", () => {
     expect(shutdownRequest).toContain("request.destroy();");
     expect(service).toContain("this.spawnPreparedRelay(this.preparedRelay);");
     expect(service).not.toContain("void this.start().catch");
-    expect(relay.indexOf("fs.writeFileSync(pidPath")).toBeLessThan(relay.indexOf("bind();"));
+    expect(relay.indexOf("storage.writeSqliteStateFile(pidPath")).toBeLessThan(relay.indexOf("bind();"));
   });
 });
 

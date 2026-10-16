@@ -1,3 +1,4 @@
+import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
@@ -190,7 +191,7 @@ export function persistRunningCodexSessions(
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     signal?.addEventListener("abort", abort, { once: true });
-    const changed = vscode.workspace.onDidChangeConfiguration(() => {
+    const changed = onDidChangeConfiguration(() => {
       if (!isAutoResumeAvailable()) controller.abort(new Error("Auto Resume was turned off."));
     });
     try {
@@ -288,7 +289,7 @@ export function persistOpenCodexSessions(
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
     signal?.addEventListener("abort", abort, { once: true });
-    const changed = vscode.workspace.onDidChangeConfiguration(() => {
+    const changed = onDidChangeConfiguration(() => {
       if (!isAutoResumeAvailable()) controller.abort(new Error("Auto Resume was turned off."));
     });
     try {
@@ -383,7 +384,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
       );
     }
   };
-  const configuration = vscode.workspace.onDidChangeConfiguration((event) => {
+  const configuration = onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled") || event.affectsConfiguration("codexManager.autoResumeEnabled") ||
         event.affectsConfiguration("codexManager.autoSwitchEnabled")) refreshSubscription();
   });
@@ -416,7 +417,7 @@ export function resumePersistedCodexSessions(
       await clearIds(context, deadline);
       return { attempted: 0, opened: 0, failed: [] };
     }
-    const changed = vscode.workspace.onDidChangeConfiguration((event) => {
+    const changed = onDidChangeConfiguration((event) => {
       if (!isAutoResumeAvailable())
         controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
       else if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled"))

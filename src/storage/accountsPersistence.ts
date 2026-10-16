@@ -4,6 +4,7 @@ import * as path from "path";
 import { CodexManagerIndex } from "../core/types";
 import { getBackupPath, parseAccountsIndex } from "./accountsIndex";
 import { readSqliteStateFile, sqliteStoreForFile, writeSqliteStateFile } from "./sqliteState";
+import { hasAccountRows, readAccountIndex, saveAccountIndex } from "./sqliteAccounts";
 
 // Windows can briefly keep the previous index handle open during extension
 // host replacement/update. Give the owner enough time to release it before
@@ -12,8 +13,13 @@ const REPLACE_RETRY_DELAYS_MS = [20, 50, 100, 200, 400, 800, 1_200, 1_800, 2_500
 const TRANSIENT_REPLACE_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
 export async function readIndexSnapshot(filePath: string): Promise<CodexManagerIndex> {
-  const raw = sqliteStoreForFile(filePath) ? readSqliteStateFile(filePath) : await fs.readFile(filePath, "utf8");
-  return parseAccountsIndex(raw, filePath);
+  const store = sqliteStoreForFile(filePath);
+  const main = path.basename(filePath) === "accounts-index.json";
+  if (store && main && hasAccountRows(store)) return readAccountIndex(store);
+  const raw = store ? readSqliteStateFile(filePath) : await fs.readFile(filePath, "utf8");
+  const index = parseAccountsIndex(raw, filePath);
+  if (store && main) { saveAccountIndex(store, index, 0, true); return readAccountIndex(store); }
+  return index;
 }
 
 export async function countAvailableBackups(indexPath: string, backupCount: number): Promise<number> {
@@ -59,7 +65,9 @@ export async function writeIndexAtomically(
   const serialized = JSON.stringify(index, null, 2);
   if (sqliteStoreForFile(indexPath)) {
     parseAccountsIndex(serialized, indexPath);
-    writeSqliteStateFile(indexPath, serialized);
+    const store = sqliteStoreForFile(indexPath)!;
+    if (path.basename(indexPath) === "accounts-index.json") saveAccountIndex(store, index);
+    else writeSqliteStateFile(indexPath, serialized);
     return;
   }
   const tempPath = createUniqueTempPath(indexPath, tempSuffix);
@@ -84,7 +92,9 @@ export function writeIndexAtomicallySync(indexPath: string, index: CodexManagerI
   const serialized = JSON.stringify(index, null, 2);
   if (sqliteStoreForFile(indexPath)) {
     parseAccountsIndex(serialized, indexPath);
-    writeSqliteStateFile(indexPath, serialized);
+    const store = sqliteStoreForFile(indexPath)!;
+    if (path.basename(indexPath) === "accounts-index.json") saveAccountIndex(store, index);
+    else writeSqliteStateFile(indexPath, serialized);
     return;
   }
   const tempPath = createUniqueTempPath(indexPath, tempSuffix);
@@ -116,6 +126,17 @@ export async function readLatestValidTempIndex(
 ): Promise<CodexManagerIndex | undefined> {
   const directory = path.dirname(indexPath);
   const prefix = `${path.basename(indexPath)}${tempSuffix}-`;
+  const store = sqliteStoreForFile(indexPath);
+  if (store) {
+    const archived = store.keys("legacy-files").filter(key => key.startsWith(prefix))
+      .map(key => store.get<{ path: string; modifiedAt?: number; base64: string }>("legacy-files", key)!)
+      .filter(record => record.path.startsWith(prefix) && typeof record.base64 === "string")
+      .sort((left, right) => (right.modifiedAt ?? 0) - (left.modifiedAt ?? 0));
+    for (const record of archived) {
+      try { return parseAccountsIndex(Buffer.from(record.base64, "base64").toString("utf8"), record.path); }
+      catch { /* Older validated snapshots may still recover the account list. */ }
+    }
+  }
   let entries: string[];
   try {
     entries = await fs.readdir(directory);

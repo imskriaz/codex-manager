@@ -1,3 +1,4 @@
+import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { needsTokenRefresh, refreshTokens } from "../../auth/oauth";
 import {
@@ -459,7 +460,7 @@ export function registerAutoRefreshScheduler(params: {
   }, 5_000);
   sessionWaitTimer.unref?.();
 
-  const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
+  const configDisposable = onDidChangeConfiguration((event) => {
     const refreshScheduleChanged =
       event.affectsConfiguration("codexManager.autoRefreshMinutes") ||
       event.affectsConfiguration("codexManager.autoRefreshCurrentMinutes") ||
@@ -640,7 +641,7 @@ export function registerTokenRefreshScheduler(params: {
 
   applySchedule();
 
-  const configDisposable = vscode.workspace.onDidChangeConfiguration((event) => {
+  const configDisposable = onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration("codexManager.crossWindowAccountModeEnabled")) {
       applySchedule();
     }

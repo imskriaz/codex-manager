@@ -1,3 +1,4 @@
+import { sqliteConfiguration } from "../storage/sqliteContext";
 import * as vscode from "vscode";
 
 let networkOutputChannel: vscode.OutputChannel | undefined;
@@ -14,7 +15,7 @@ export function registerDebugOutput(context: vscode.ExtensionContext): void {
 }
 
 export function logNetworkEvent(scope: string, detail: Record<string, unknown>): void {
-  if (!vscode.workspace.getConfiguration("codexManager").get<boolean>("debugNetwork", false)) {
+  if (!sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get<boolean>("debugNetwork", false)) {
     return;
   }
 

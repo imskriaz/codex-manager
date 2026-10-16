@@ -6,7 +6,7 @@ import { getCodexManagerStorageRoot } from "../src/utils/storageRoot";
 describe("Codex Manager storage root", () => {
   it("uses a version-independent folder below the user home directory", () => {
     expect(getCodexManagerStorageRoot(path.join("C:", "Users", "test"))).toBe(
-      path.join("C:", "Users", "test", ".codex-manager")
+      path.join("C:", "Users", "test", ".codex")
     );
   });
 

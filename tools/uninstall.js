@@ -8,7 +8,7 @@ const appData = process.env.APPDATA;
 const startupLauncher = appData
   ? path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "CodexManagerAlwaysOnline.cmd")
   : undefined;
-const storage = path.join(os.homedir(), ".codex-manager");
+const storage = path.join(os.homedir(), ".codex");
 
 function removeFile(target) {
   if (!target) return;
@@ -49,10 +49,39 @@ async function main() {
   // Remove the boot trigger first, so a failed best-effort shutdown cannot
   // resurrect the relay at the next Windows sign-in.
   removeFile(startupLauncher);
+  if (process.platform === "win32") {
+    const { execFileSync } = require("node:child_process");
+    const key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    try {
+      execFileSync("reg.exe", ["query", key, "/v", "CodexManagerAlwaysOnline"], { windowsHide: true, timeout: 1_000, stdio: "pipe" });
+    } catch (error) {
+      if (error.status !== 1) throw error;
+      return stopRelay();
+    }
+    execFileSync("reg.exe", ["delete", key, "/v", "CodexManagerAlwaysOnline", "/f"], { windowsHide: true, timeout: 1_000, stdio: "pipe" });
+  }
+  return stopRelay();
+}
+
+async function stopRelay() {
   let config;
+  const configPath = path.join(storage, "always-online-relay.json");
+  const databasePath = path.join(storage, "manager.sqlite");
   try {
-    config = JSON.parse(fs.readFileSync(path.join(storage, "always-online-relay.json"), "utf8"));
-  } catch {
+    let raw;
+    if (fs.existsSync(databasePath)) {
+      const { DatabaseSync } = require("node:sqlite");
+      const database = new DatabaseSync(databasePath, { readOnly: true });
+      try {
+        database.exec("PRAGMA busy_timeout = 100");
+        const record = database.prepare("SELECT value FROM state WHERE namespace = ? AND key = ?").get("files", path.basename(configPath));
+        if (record) raw = JSON.parse(record.value).text;
+      } finally { database.close(); }
+    }
+    if (raw === null) return;
+    config = JSON.parse(raw === undefined ? fs.readFileSync(configPath, "utf8") : raw);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
     return;
   }
   await requestRelayShutdown(config);

@@ -1,19 +1,20 @@
 import * as fs from "fs";
 import * as path from "path";
 import type * as vscode from "vscode";
+import { hasAccountRows, readAccountIndex } from "./sqliteAccounts";
 
-type Database = {
+export type Database = {
   exec(sql: string): void;
   prepare(sql: string): {
-    get(...values: string[]): Record<string, unknown> | undefined;
-    all(...values: string[]): Record<string, unknown>[];
-    run(...values: Array<string | number>): unknown;
+    get(...values: Array<string | number | null>): Record<string, unknown> | undefined;
+    all(...values: Array<string | number | null>): Record<string, unknown>[];
+    run(...values: Array<string | number | null>): unknown;
   };
   close(): void;
 };
 
 export class SqliteStateStore {
-  private constructor(readonly file: string, private readonly database: Database) {}
+  private constructor(readonly file: string, readonly database: Database) {}
 
   static async open(file: string): Promise<SqliteStateStore> {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -50,6 +51,15 @@ export class SqliteStateStore {
 
   keys(namespace: string): string[] {
     return this.database.prepare("SELECT key FROM state WHERE namespace = ? ORDER BY key").all(namespace).map(row => String(row["key"]));
+  }
+
+  recent<T>(namespace: string, limit: number): T[] {
+    return this.database.prepare("SELECT value FROM state WHERE namespace = ? ORDER BY key DESC LIMIT ?").all(namespace, limit)
+      .map(row => JSON.parse(String(row["value"])) as T).reverse();
+  }
+
+  deleteBefore(namespace: string, key: string): void {
+    this.database.prepare("DELETE FROM state WHERE namespace = ? AND key < ?").run(namespace, key);
   }
 
   transaction<T>(write: () => T): T {
@@ -116,7 +126,11 @@ export function sqliteStoreForFile(file: string): SqliteStateStore | undefined {
   if (!stateStore) return undefined;
   const relative = path.relative(path.dirname(stateStore.file), path.resolve(file));
   const key = relative.replace(/\\/g, "/");
-  return /^(?:accounts-index(?:\.backup-\d+)?\.json|logging-settings\.json|window-account-slots-v1\.json|account-claim-authority\.json|always-online-relay\.json|encrypted-accounts-vault\.json|codex-manager-running-turns\.json|startup-sync-cooldown\.json|maintenance-[a-f0-9]+\.json|accounts(?:\/[^/]+\.json)?|announcements(?:\/announcement_(?:cache|read_ids)\.json)?)$/.test(key) ? stateStore : undefined;
+  return isManagedStatePath(key) ? stateStore : undefined;
+}
+
+export function isManagedStatePath(key: string): boolean {
+  return /^(?:accounts-index(?:\.backup-\d+)?\.json|logging-settings\.json|window-account-slots-v1\.json|account-claim-authority\.json|always-online-relay\.(?:json|pid)|encrypted-accounts-vault\.json|codex-manager-running-turns\.json|startup-sync-cooldown\.json|maintenance-[a-f0-9]+\.json|accounts(?:\/[^/]+\.json)?|announcements(?:\/announcement_(?:cache|read_ids)\.json)?)$/.test(key);
 }
 
 function fileKey(store: SqliteStateStore, file: string): string {
@@ -142,6 +156,7 @@ function readLegacyStateFile(file: string, maxBytes: number): string {
 
 export function hasSqliteStateFile(file: string): boolean {
   const store = sqliteStoreForFile(file);
+  if (store && fileKey(store, file) === "accounts-index.json" && hasAccountRows(store)) return true;
   return Boolean(store && store.get("files", fileKey(store, file)) !== undefined);
 }
 
@@ -149,6 +164,11 @@ export function readSqliteStateFile(file: string, maxBytes = 32 * 1024 * 1024): 
   const store = sqliteStoreForFile(file);
   if (!store) return readLegacyStateFile(file, maxBytes);
   const key = fileKey(store, file);
+  if (key === "accounts-index.json" && hasAccountRows(store)) {
+    const text = JSON.stringify(readAccountIndex(store));
+    if (Buffer.byteLength(text) > maxBytes) throw new Error("Stored state exceeds its safe read limit.");
+    return text;
+  }
   let record = store.get<{ text: string | null }>("files", key);
   if (record === undefined) {
     const text = readLegacyStateFile(file, maxBytes);
@@ -168,13 +188,21 @@ export function readSqliteStateFile(file: string, maxBytes = 32 * 1024 * 1024): 
 export function writeSqliteStateFile(file: string, text: string): void {
   const store = sqliteStoreForFile(file);
   if (!store) { fs.writeFileSync(file, text, { encoding: "utf8", mode: 0o600 }); return; }
-  store.set("files", fileKey(store, file), { text });
+  const key = fileKey(store, file);
+  store.transaction(() => {
+    if (key === "accounts-index.json") store.set("migrations", "account-rows-v1", undefined);
+    store.set("files", key, { text });
+  });
 }
 
 export function deleteSqliteStateFile(file: string): void {
   const store = sqliteStoreForFile(file);
   if (!store) { fs.rmSync(file, { force: true }); return; }
-  store.set("files", fileKey(store, file), { text: null });
+  const key = fileKey(store, file);
+  store.transaction(() => {
+    if (key === "accounts-index.json") store.set("migrations", "account-rows-v1", undefined);
+    store.set("files", key, { text: null });
+  });
 }
 
 export function listSqliteStateFiles(directory: string): string[] {

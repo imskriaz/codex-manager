@@ -1,3 +1,4 @@
+import { sqliteConfiguration } from "../storage/sqliteContext";
 import * as vscode from "vscode";
 
 /**
@@ -70,7 +71,7 @@ export function quotaMarkerForPercentage(value?: number): string {
 }
 
 export function getQuotaColorThresholds(): QuotaColorThresholds {
-  const config = vscode.workspace.getConfiguration("codexManager");
+  const config = sqliteConfiguration(vscode.workspace.getConfiguration("codexManager"));
   const green = config.get<number>("quotaGreenThreshold", 60);
   const yellow = config.get<number>("quotaYellowThreshold", 20);
   return normalizeQuotaColorThresholds(green, yellow);

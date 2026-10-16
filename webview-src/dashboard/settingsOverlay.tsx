@@ -814,7 +814,7 @@ export function SettingsOverlay(props: {
                 </div>
               </div>
               <SettingsToggleBlock
-                title="Enable file logging"
+                title="Enable SQLite logging"
                 sub="Save diagnostic logs on this PC. Off by default. Sensitive account details are redacted."
                 enabled={props.settings.persistentLoggingEnabled === true}
                 className="settings-block-wide"

@@ -57,6 +57,7 @@ import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboar
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
+import { recordSessionLive } from "./sessionRecording";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import { BrowserPushService } from "./browserPush";
 import { ConversationShares, sharedConversationPage } from "./conversationShares";
@@ -1456,6 +1457,7 @@ export class WebDashboardServer implements vscode.Disposable {
       this.currentRemoteSessionLive();
       const key = JSON.stringify([state.deviceId, state.sessionId]);
       if (!isNewerCodexSessionLiveState(state, this.remoteSessionLive.get(key))) return;
+      recordSessionLive(state);
       this.remoteSessionLive.set(key, state);
       while (this.remoteSessionLive.size > 30 || Buffer.byteLength(JSON.stringify([...this.remoteSessionLive.values()])) > 4 * 1024 * 1024)
         this.remoteSessionLive.delete(this.remoteSessionLive.keys().next().value!);

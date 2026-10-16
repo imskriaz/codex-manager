@@ -1,17 +1,13 @@
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
-import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import { redactDebugText } from "./debug";
 import { getCodexManagerStorageRoot } from "./storageRoot";
-import { readSafeFileSnapshot } from "./safeFileReads";
-import { sqliteStoreForFile, writeSqliteStateFile } from "../storage/sqliteState";
+import { SqliteStateStore, sqliteStoreForFile } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "./crossWindowOperations";
 
 export const PERSISTENT_LOG_RETENTION_DAYS = 3;
-const LOG_FILE_PREFIX = "codex-manager-";
-const LOG_FILE_PATTERN = /^codex-manager-(\d{4}-\d{2}-\d{2})(?:\.\d+)?\.jsonl$/;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_PERSISTENT_LOG_RECORD_BYTES = 64 * 1024;
 const MAX_PENDING_LOG_RECORDS = 128;
@@ -40,15 +36,15 @@ type PersistentLogRecord = {
 };
 
 const operationContext = new AsyncLocalStorage<OperationContext>();
-let persistentLogger: PersistentFileLogger | undefined;
+let persistentLogger: PersistentSqliteLogger | undefined;
 let restoreGlobalCapture: (() => void) | undefined;
 let loggingRegistration: { context: vscode.ExtensionContext; storageRoot: string } | undefined;
 let loggingUpdate: Promise<void> | undefined;
 let loggingUpdateRequest = "";
 let persistentLogRetentionDays = PERSISTENT_LOG_RETENTION_DAYS;
 
-/** A small JSONL logger so diagnostics do not depend on an external runtime or native module. */
-export class PersistentFileLogger {
+/** Diagnostics use their own WAL database so log volume cannot bloat manager state. */
+export class PersistentSqliteLogger {
   private writeChain: Promise<void> = Promise.resolve();
   private writeError: unknown;
   private writeFailureReported = false;
@@ -56,17 +52,21 @@ export class PersistentFileLogger {
   private pendingWrites = 0;
   private pendingBytes = 0;
   private droppedRecords = 0;
+  private store: SqliteStateStore | undefined;
+  private opening: Promise<SqliteStateStore> | undefined;
 
   constructor(
-    readonly logDirectory: string,
+    readonly databasePath: string,
     private retentionDays = PERSISTENT_LOG_RETENTION_DAYS,
     private readonly now: () => Date = () => new Date(),
     private readonly onWriteFailure?: (error: unknown) => void,
-    private readonly appendFile: typeof fs.appendFile = fs.appendFile
+    private readonly appendRecord = (store: SqliteStateStore, key: string, record: unknown): Promise<void> => { store.set("logs", key, record); return Promise.resolve(); }
   ) {}
 
-  get currentLogPath(): string {
-    return path.join(this.logDirectory, `${LOG_FILE_PREFIX}${toUtcDate(this.now())}.jsonl`);
+  private async database(): Promise<SqliteStateStore> {
+    if (this.store) return this.store;
+    this.opening ??= SqliteStateStore.open(this.databasePath).then(store => { this.store = store; return store; }).finally(() => { this.opening = undefined; });
+    return this.opening;
   }
 
   setRetentionDays(days: number): void {
@@ -74,20 +74,20 @@ export class PersistentFileLogger {
   }
 
   async ensureCurrentLog(): Promise<void> {
-    await fs.mkdir(this.logDirectory, { recursive: true });
-    if (this.writeError !== undefined || !(await fs.stat(this.currentLogPath).catch(() => undefined))) {
-      this.write("info", "lifecycle", "Persistent log file opened after date rollover");
+    await this.database();
+    if (this.writeError !== undefined) {
+      this.write("info", "lifecycle", "Persistent logging retry");
       await this.flush();
     }
   }
 
   async initialize(): Promise<void> {
-    await fs.mkdir(this.logDirectory, { recursive: true });
+    await this.database();
     await this.pruneExpiredLogs();
     this.activeUtcDate = toUtcDate(this.now());
     this.write("info", "lifecycle", "Persistent logging initialized", {
       retentionDays: this.retentionDays,
-      logFile: this.currentLogPath
+      database: this.databasePath
     });
     await this.flush();
   }
@@ -138,7 +138,7 @@ export class PersistentFileLogger {
     this.pendingWrites += 1;
     this.pendingBytes += lineBytes;
     const utcDate = toUtcDate(recordTime);
-    const targetPath = path.join(this.logDirectory, `${LOG_FILE_PREFIX}${utcDate}.jsonl`);
+    const key = `${recordTime.toISOString()}:${randomUUID()}`;
     const dayChanged = this.activeUtcDate !== undefined && this.activeUtcDate !== utcDate;
     this.activeUtcDate = utcDate;
     this.writeChain = this.writeChain
@@ -146,7 +146,7 @@ export class PersistentFileLogger {
         if (dayChanged) {
           await this.pruneExpiredLogs();
         }
-        await this.appendFile(targetPath, line, "utf8");
+        await this.appendRecord(await this.database(), key, JSON.parse(line));
         this.writeError = undefined;
         this.writeFailureReported = false;
       })
@@ -178,25 +178,25 @@ export class PersistentFileLogger {
   }
 
   async pruneExpiredLogs(): Promise<void> {
-    const entries = await fs.readdir(this.logDirectory, { withFileTypes: true });
     const currentDay = startOfUtcDay(this.now());
     const oldestRetainedDay = currentDay - (this.retentionDays - 1) * MILLISECONDS_PER_DAY;
-    await Promise.all(
-      entries.map(async (entry) => {
-        if (!entry.isFile()) {
-          return;
-        }
-        const match = LOG_FILE_PATTERN.exec(entry.name);
-        if (!match?.[1]) {
-          return;
-        }
-        const fileDay = Date.parse(`${match[1]}T00:00:00.000Z`);
-        if (Number.isNaN(fileDay) || fileDay >= oldestRetainedDay) {
-          return;
-        }
-        await fs.unlink(path.join(this.logDirectory, entry.name));
-      })
-    );
+    const store = await this.database();
+    const cutoff = new Date(oldestRetainedDay).toISOString();
+    store.deleteBefore("logs", cutoff);
+    // Archived legacy diagnostics obey the same retention once logging runs.
+    for (const key of store.keys("legacy-files")) {
+      const day = /^logs\/codex-manager-(\d{4}-\d{2}-\d{2})/.exec(key)?.[1];
+      if (day && Date.parse(`${day}T00:00:00.000Z`) < oldestRetainedDay) store.set("legacy-files", key, undefined);
+    }
+  }
+
+  async readRecent(): Promise<string> {
+    await this.flush();
+    return (await this.database()).recent<unknown>("logs", 1000).map(record => JSON.stringify(sanitizeLogValue(record))).join("\n");
+  }
+
+  async close(): Promise<void> {
+    try { await this.flush(); } finally { this.store?.close(); this.store = undefined; }
   }
 }
 
@@ -215,7 +215,7 @@ export async function registerPersistentLogging(
       restoreGlobalCapture = installGlobalFailureCapture(persistentLogger, context.extensionPath);
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn("[codexManager] file logging unavailable; disabled", error);
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn("[codexManager] persistent logging unavailable; disabled", error);
   }
 
   context.subscriptions.push(
@@ -223,12 +223,12 @@ export async function registerPersistentLogging(
       try {
         const logger = persistentLogger;
         if (!logger) {
-          void vscode.window.showInformationMessage("File logging is disabled. Enable it in Data & sync before opening logs.");
+          void vscode.window.showInformationMessage("Persistent logging is disabled. Enable it in Data & sync before opening logs.");
           return;
         }
         await logger.ensureCurrentLog();
         await logger.flush();
-        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(logger.currentLogPath));
+        const document = await vscode.workspace.openTextDocument({ content: await logger.readRecent(), language: "jsonl" });
         await vscode.window.showTextDocument(document, { preview: false });
       } catch (error) {
         const detail = toErrorMessage(error);
@@ -253,19 +253,24 @@ export function setPersistentLogRetentionDays(days: number): Promise<void> {
 }
 
 export function setPersistentLoggingEnabled(enabled: boolean): Promise<void> {
-  if (typeof enabled !== "boolean") return Promise.reject(new Error("Choose whether file logging is enabled."));
+  if (typeof enabled !== "boolean") return Promise.reject(new Error("Choose whether persistent logging is enabled."));
   return updatePersistentLoggingSettings({ enabled });
 }
 
 type LoggingSettings = { enabled: boolean; retentionDays: number };
 
 async function readLoggingSettings(storageRoot: string): Promise<LoggingSettings> {
-  const snapshot = await readSafeFileSnapshot(path.join(storageRoot, "logging-settings.json"), { maxBytes: 1024, rejectIfLarger: true })
-    .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+  const text = await withLoggingSettingsStore(storageRoot, store => store.get<{ text: string | null }>("files", "logging-settings.json")?.text);
   let value: Partial<LoggingSettings> | undefined;
-  try { value = snapshot ? JSON.parse(snapshot.buffer.toString("utf8")) as Partial<LoggingSettings> : undefined; }
+  try { value = text ? JSON.parse(text) as Partial<LoggingSettings> : undefined; }
   catch { /* An explicit settings update can repair a partial preference file. */ }
   return { enabled: value?.enabled === true, retentionDays: Number.isInteger(value?.retentionDays) && value!.retentionDays! >= 1 && value!.retentionDays! <= 30 ? value!.retentionDays! : PERSISTENT_LOG_RETENTION_DAYS };
+}
+
+async function withLoggingSettingsStore<T>(storageRoot: string, task: (store: SqliteStateStore) => T): Promise<T> {
+  const shared = sqliteStoreForFile(path.join(storageRoot, "logging-settings.json"));
+  const store = shared ?? await SqliteStateStore.open(path.join(storageRoot, "manager.sqlite"));
+  try { return task(store); } finally { if (!shared) store.close(); }
 }
 
 /** Commit the preference atomically before replacing the active logger. */
@@ -273,27 +278,20 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
   const request = JSON.stringify(patch);
   if (loggingUpdate) {
     if (loggingUpdateRequest === request) return loggingUpdate;
-    throw new Error("File logging is still updating. Retry after the current update finishes.");
+    throw new Error("Persistent logging is still updating. Retry after the current update finishes.");
   }
   loggingUpdateRequest = request;
-  loggingUpdate = runCrossWindowExclusive("preferences:file-logging", "File logging update", async () => {
-    if (!loggingRegistration) throw new Error("File logging is still initializing. Retry shortly.");
+  loggingUpdate = runCrossWindowExclusive("preferences:file-logging", "Persistent logging update", async () => {
+    if (!loggingRegistration) throw new Error("Persistent logging is still initializing. Retry shortly.");
     const { context, storageRoot } = loggingRegistration;
     const settings = { ...await readLoggingSettings(storageRoot), ...patch };
     const candidate = settings.enabled && !persistentLogger ? await createPersistentLogger(storageRoot, settings.retentionDays) : undefined;
-    const file = path.join(storageRoot, "logging-settings.json");
-    const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
     try {
-      if (sqliteStoreForFile(file)) writeSqliteStateFile(file, JSON.stringify(settings));
-      else {
-        await fs.mkdir(storageRoot, { recursive: true });
-        await fs.writeFile(temporary, JSON.stringify(settings), { mode: 0o600, flag: "wx" });
-        await fs.rename(temporary, file);
-      }
+      await withLoggingSettingsStore(storageRoot, store => store.set("files", "logging-settings.json", { text: JSON.stringify(settings) }));
     } catch (error) {
-      await candidate?.flush().catch(() => undefined);
+      await candidate?.close().catch(() => undefined);
       throw error;
-    } finally { await fs.rm(temporary, { force: true }).catch(() => undefined); }
+    }
     if (!settings.enabled) await disposePersistentLogging();
     else if (candidate) {
       persistentLogger = candidate;
@@ -302,15 +300,15 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
     persistentLogRetentionDays = settings.retentionDays;
     persistentLogger?.setRetentionDays(settings.retentionDays);
     if (patch.retentionDays && persistentLogger)
-      await persistentLogger.pruneExpiredLogs().catch(error => console.warn("[codexManager] log retention cleanup delayed", error));
+      await persistentLogger.pruneExpiredLogs();
   }).finally(() => { loggingUpdate = undefined; loggingUpdateRequest = ""; });
   return loggingUpdate;
 }
 
-async function createPersistentLogger(storageRoot: string, retentionDays: number): Promise<PersistentFileLogger> {
-  const logger = new PersistentFileLogger(path.join(storageRoot, "logs"), retentionDays, () => new Date(),
+async function createPersistentLogger(storageRoot: string, retentionDays: number): Promise<PersistentSqliteLogger> {
+  const logger = new PersistentSqliteLogger(path.join(storageRoot, "manager_logs.sqlite"), retentionDays, () => new Date(),
     error => console.warn("[codexManager] diagnostic log write failed; retrying on the next event", toErrorMessage(error)));
-  await logger.initialize();
+  try { await logger.initialize(); } catch (error) { await logger.close().catch(() => undefined); throw error; }
   return logger;
 }
 
@@ -323,7 +321,7 @@ export async function disposePersistentLogging(): Promise<void> {
     return;
   }
   logger.write("info", "lifecycle", "Persistent logging stopped");
-  await logger.flush().catch(() => undefined);
+  await logger.close().catch(() => undefined);
 }
 
 export function recordPersistentEvent(
@@ -381,7 +379,7 @@ export async function runWithPersistentOperation<T>(
   });
 }
 
-function installGlobalFailureCapture(logger: PersistentFileLogger, extensionPath: string): () => void {
+function installGlobalFailureCapture(logger: PersistentSqliteLogger, extensionPath: string): () => void {
   const original = {
     debug: console.debug,
     log: console.log,
@@ -436,7 +434,7 @@ function installGlobalFailureCapture(logger: PersistentFileLogger, extensionPath
 }
 
 function captureOwnedConsoleCall(
-  logger: PersistentFileLogger,
+  logger: PersistentSqliteLogger,
   level: PersistentLogLevel,
   args: readonly unknown[],
   extensionPath: string

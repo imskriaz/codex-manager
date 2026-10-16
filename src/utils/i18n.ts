@@ -1,3 +1,4 @@
+import { sqliteConfiguration } from "../storage/sqliteContext";
 /**
  * 国际化 (i18n) 工具模块
  *
@@ -17,7 +18,8 @@
 import * as vscode from "vscode";
 import type { DashboardLanguage } from "../localization/languages";
 import { resolveDashboardLanguage } from "../localization/languages";
-import { messageResources } from "../localization/resources/messages";
+import { messageResources, type TranslationKey } from "../localization/resources/messages";
+export type { TranslationKey } from "../localization/resources/messages";
 
 /**
  * 支持的语言
@@ -28,161 +30,7 @@ export type SupportedLanguage = DashboardLanguage;
  * 翻译键类型 - 确保类型安全
  * 使用字面量联合类型避免循环引用
  */
-export type TranslationKey =
-  // Common
-  | "common.loading"
-  | "common.success"
-  | "common.error"
-  | "common.cancel"
-  | "common.confirm"
-  | "common.retry"
-  | "common.unknown"
-  | "common.never"
-  // Account
-  | "account.current"
-  | "account.primary"
-  | "account.saved"
-  | "account.active"
-  | "account.switch"
-  | "account.add"
-  | "account.remove"
-  | "account.import"
-  | "account.refresh"
-  | "account.details"
-  | "account.teamName"
-  | "account.login"
-  | "account.userId"
-  | "account.accountId"
-  | "account.organization"
-  | "account.lastRefresh"
-  // Quota
-  | "quota.title"
-  | "quota.hourly"
-  | "quota.weekly"
-  | "quota.review"
-  | "quota.refreshed"
-  | "quota.refreshFailed"
-  | "quota.refreshAll"
-  | "quota.refreshing"
-  | "quota.refreshedCount"
-  | "quota.resetUnknown"
-  // Time
-  | "time.minutesLeft"
-  | "time.hoursLeft"
-  | "time.daysLeft"
-  | "time.minutesAgo"
-  | "time.hoursAgo"
-  | "time.daysAgo"
-  // Action prompts
-  | "action.addAccount.progress"
-  | "action.importAccount.progress"
-  | "action.switchAccount.progress"
-  | "action.refreshAll.progress"
-  // Messages
-  | "message.addedAndRefreshed"
-  | "message.importedAndRefreshed"
-  | "message.switchedAndAskReload"
-  | "message.alreadyActive"
-  | "message.addedButQuotaFailed"
-  | "message.importedButQuotaFailed"
-  | "message.addAccountFailed"
-  | "message.removeAccountFailed"
-  | "message.switchAccountFailed"
-  | "message.refreshQuotaFailed"
-  | "message.tokenExpired"
-  | "message.tokenMissing"
-  | "message.accountNotFound"
-  | "message.networkError"
-  | "message.apiError"
-  | "message.oauthManualCallbackOffer"
-  | "message.shareTokensReady"
-  | "message.shareTokensFailed"
-  | "message.importSharedJsonSuccess"
-  | "message.importSharedJsonFailed"
-  | "message.oauthPrepareFailed"
-  | "message.oauthCallbackFailed"
-  | "message.sharedJsonParseFailed"
-  | "message.oauthCompleted"
-  | "message.indexAutoRestored"
-  | "message.indexRecoveryFailed"
-  | "message.indexWriteBlocked"
-  | "message.restoreFromBackupSuccess"
-  | "message.restoreFromBackupFailed"
-  | "message.restoreFromAuthSuccess"
-  | "message.restoreFromAuthFailed"
-  | "message.restoreFromSharedSuccess"
-  | "message.restoreFromSharedFailed"
-  | "message.batchRemoveConfirm"
-  | "message.refreshAllSummary"
-  | "message.batchRefreshSummary"
-  | "message.batchResyncSummary"
-  | "message.batchRemoveSummary"
-  | "message.batchTagsSummary"
-  // Confirm
-  | "confirm.removeAccount"
-  | "confirm.removeButton"
-  // Status
-  | "status.title"
-  | "status.noAccounts"
-  | "status.tooltip"
-  | "status.inStatus"
-  | "status.addToStatus"
-  | "status.limitTip"
-  // Picker
-  | "picker.pickActivateAccount"
-  | "picker.pickRefreshAccount"
-  | "picker.pickRemoveAccount"
-  | "picker.pickInspectAccount"
-  | "picker.pickStatusAccount"
-  | "picker.noAccounts"
-  // Button
-  | "button.reloadNow"
-  | "button.later"
-  | "button.remove"
-  | "button.switch"
-  | "button.refresh"
-  | "button.details"
-  | "button.cancel"
-  | "button.pasteCallbackUrl"
-  // Panel
-  | "panel.quotaSummary.title"
-  | "panel.details.title"
-  | "panel.dashboard.title"
-  // Local Account
-  | "localAccount.detected.title"
-  | "localAccount.detected.message"
-  | "localAccount.detected.action"
-  | "localAccount.bound.success"
-  | "localAccount.bound.partial"
-  | "localAccount.bound.failed"
-  | "externalAuth.changed.message"
-  | "externalAuth.changed.reload"
-  | "externalAuth.changed.later"
-  // Codex App restart
-  | "codexApp.restart.preference.auto"
-  | "codexApp.restart.preference.manual"
-  | "codexApp.restart.preference.message"
-  | "codexApp.restart.manual.message"
-  | "codexApp.restart.manual.action"
-  | "codexApp.restart.manual.later"
-  // Quota warning
-  | "quotaWarning.hourlyLabel"
-  | "quotaWarning.weeklyLabel"
-  | "quotaWarning.reviewLabel"
-  | "quotaWarning.balanceLabel"
-  | "quotaWarning.message"
-  | "quotaWarning.dismiss"
-  | "quotaWarning.switchNow"
-  | "quotaWarning.switchAccount"
-  | "quotaWarning.resetAccount"
-  | "quotaWarning.selectAccount"
-  | "quotaWarning.autoSelect"
-  | "quotaWarning.later"
-  // Status Toggle
-  | "statusToggle.alwaysShown"
-  | "statusToggle.added"
-  | "statusToggle.removed"
-  | "statusToggle.limitReached";
+
 
 /**
  * 翻译参数类型
@@ -225,7 +73,7 @@ export function interpolate(text: string, params?: TranslationParams): string {
  * @returns 支持的语言类型
  */
 export function getLanguage(): SupportedLanguage {
-  const configured = vscode.workspace.getConfiguration("codexManager").get<string>("displayLanguage", "en");
+  const configured = sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get<string>("displayLanguage", "en");
   return resolveDashboardLanguage(configured, vscode.env.language);
 }
 

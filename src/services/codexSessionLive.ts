@@ -3,6 +3,10 @@ import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from 
 import { CodexSessionLiveReducer } from "../domain/codexSessionLive";
 import type { CodexAppServerRpc } from "./codexAppServerRpc";
 import { publishDashboardRealtime } from "./dashboardRealtime";
+import { captureSessionAccount, recordSessionLive } from "./sessionRecording";
+import { getSqliteStateStore } from "../storage/sqliteState";
+import { listStoredSessionLive, readStoredSessionLive } from "../storage/sqliteSessions";
+import { getCodexHome } from "../codex/authFile";
 
 const MAX_STREAMS = 30;
 const TERMINAL_TTL_MS = 5 * 60_000;
@@ -11,12 +15,18 @@ const streams = new Map<string, { reducer: CodexSessionLiveReducer; timer?: Node
 
 export function getCodexSessionLiveState(sessionId: string): DashboardCodexSessionLiveState | undefined {
   prune();
-  return streams.get(sessionId.toLowerCase())?.reducer.snapshot();
+  const current = streams.get(sessionId.toLowerCase())?.reducer.snapshot();
+  if (current) return current;
+  const store = getSqliteStateStore();
+  return store ? readStoredSessionLive(store,getCodexHome(),sessionId.toLowerCase()) : undefined;
 }
 
 export function listCodexSessionLiveStates(): DashboardCodexSessionLiveState[] {
   prune();
-  return [...streams.values()].map((stream) => stream.reducer.snapshot());
+  const store = getSqliteStateStore();
+  const states = new Map((store ? listStoredSessionLive(store,getCodexHome()) : []).map(state=>[state.sessionId,state]));
+  for (const [id,stream] of streams) states.set(id,stream.reducer.snapshot());
+  return [...states.values()];
 }
 
 /** Reserve capacity before thread/start or turn/start can mutate the provider. */
@@ -24,6 +34,7 @@ export function reserveCodexSessionLive() {
   prune();
   if (activeSlots.size >= MAX_STREAMS) throw new Error("Codex Manager is already managing 30 turns. Stop a turn or wait for it to finish before starting another.");
   const streamId = randomUUID();
+  const accountId = captureSessionAccount();
   activeSlots.add(streamId);
   let sessionId: string | undefined;
   let entry: ReturnType<typeof streams.get>;
@@ -34,7 +45,9 @@ export function reserveCodexSessionLive() {
     if (!entry) return;
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = undefined;
-    publishDashboardRealtime({ type: "dashboard:codex-session-live", state: entry.reducer.snapshot() });
+    const state = entry.reducer.snapshot();
+    recordSessionLive(state,accountId);
+    publishDashboardRealtime({ type: "dashboard:codex-session-live", state });
   };
   return {
     attach(id: string, rpc: CodexAppServerRpc, parseItems: (value: unknown) => DashboardCliSessionMessage[], isCancellingBeforeStart = () => false) {

@@ -1,3 +1,4 @@
+import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { needsTokenRefresh, refreshTokens } from "../auth/oauth";
 import { CodexManagerAccountRecord, CodexDailyUsageBreakdown, CodexDailyUsagePoint } from "../core/types";
@@ -116,7 +117,7 @@ export function openDetailsPanel(
       }
     });
 
-    detailsPanelConfigWatcher = vscode.workspace.onDidChangeConfiguration((event) => {
+    detailsPanelConfigWatcher = onDidChangeConfiguration((event) => {
       if (
         !detailsPanel ||
         (!event.affectsConfiguration("codexManager.displayLanguage") &&

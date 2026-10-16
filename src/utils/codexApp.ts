@@ -1,3 +1,4 @@
+import { sqliteConfiguration } from "../storage/sqliteContext";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -70,7 +71,7 @@ export async function getCodexAppState(): Promise<{
 
 export async function resolveCodexAppLaunchPath(customPathInput?: string): Promise<string | undefined> {
   const customPath =
-    customPathInput?.trim() ?? vscode.workspace.getConfiguration("codexManager").get<string>("codexAppPath")?.trim();
+    customPathInput?.trim() ?? sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get<string>("codexAppPath")?.trim();
   const cacheKey = `${process.platform}:${customPath ?? ""}`;
   if (launchPathCache?.key === cacheKey && Date.now() - launchPathCache.checkedAt < CODEX_APP_PATH_CACHE_TTL_MS) {
     return launchPathCache.value;

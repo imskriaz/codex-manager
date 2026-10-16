@@ -140,7 +140,7 @@ export class AnnouncementService {
   }
 
   private async ensureAnnouncementDir(): Promise<void> {
-    await fs.mkdir(this.announcementDir, { recursive: true });
+    if (!sqliteStoreForFile(this.cachePath)) await fs.mkdir(this.announcementDir, { recursive: true });
   }
 
   private async saveCache(payload: unknown): Promise<void> {
@@ -528,7 +528,8 @@ async function readJsonSafe<T>(filePath: string, fallback: T): Promise<unknown> 
   try {
     const raw = sqliteStoreForFile(filePath) ? readSqliteStateFile(filePath) : await fs.readFile(filePath, "utf8");
     return JSON.parse(raw) as unknown;
-  } catch {
+  } catch (error) {
+    if (sqliteStoreForFile(filePath) && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return fallback;
   }
 }

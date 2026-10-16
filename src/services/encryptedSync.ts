@@ -1,3 +1,4 @@
+import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -306,7 +307,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     this.currentClaimTimer.unref?.();
     this.context.globalState.setKeysForSync(this.isEnabled() ? [SYNC_KEY] : []);
     this.context.subscriptions.push(this);
-    this.configurationSubscription = vscode.workspace.onDidChangeConfiguration((event) => {
+    this.configurationSubscription = onDidChangeConfiguration((event) => {
       const claimSyncChanged = event.affectsConfiguration("codexManager.encryptedSyncEnabled");
       const fullAccountSyncChanged = event.affectsConfiguration("codexManager.fullCrossPcAccountSyncEnabled");
       if (event.affectsConfiguration("codexManager.encryptedSyncVsCodeHeartbeatMinutes")) {
@@ -1569,7 +1570,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         )
       : allAccounts;
 
-    await fs.mkdir(this.durableAccountsDirectory, { recursive: true, mode: 0o700 });
+    if (!sqliteStoreForFile(this.durableAccountsDirectory)) await fs.mkdir(this.durableAccountsDirectory, { recursive: true, mode: 0o700 });
     const writtenPaths = new Set<string>();
     const writtenAccountIds = new Set<string>();
     const enablement = this.readLocalEnablement();

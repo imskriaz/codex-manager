@@ -1,3 +1,5 @@
+import { registerSessionRecording, disposeSessionRecording } from "./services/sessionRecording";
+import { onDidChangeConfiguration } from "./storage/configurationEvents";
 import * as vscode from "vscode";
 import { AccountsWorkbench } from "./presentation/workbench/accountsWorkbench";
 import {
@@ -13,6 +15,7 @@ import { scheduleAutomaticExtensionHostRefresh } from "./utils/extensionHostReco
 import { scheduleExtensionHostReload } from "./application/accounts/switchEffects";
 import {
   initializeCrossWindowAccountMode,
+  isCrossWindowAccountModeEnabled,
   disposeCrossWindowAccountMode
 } from "./services/windowAccountMode";
 import { registerWorkspaceTerminalMonitoring } from "./services/workspaceTools";
@@ -40,7 +43,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const detail = error instanceof Error ? error.message : String(error);
     console.error("[codexManager] persistent logging initialization failed", error);
     void vscode.window.showWarningMessage(
-      `Codex Manager could not initialize persistent diagnostics. Operations will continue without file logs: ${detail}`
+      `Codex Manager could not initialize persistent diagnostics. Operations will continue without persistent logs: ${detail}`
     );
   }
   // Configure the process-safe coordinator before any managed-window registry
@@ -51,9 +54,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error("[codexManager] parallel window initialization failed", error);
+    if (isCrossWindowAccountModeEnabled()) {
+      const message = `Parallel window isolation could not initialize: ${detail}. Account actions were stopped to protect the shared Codex home. Reload the window to retry.`;
+      void vscode.window.showErrorMessage(message);
+      const manifest = context.extension.packageJSON as { contributes: { commands: Array<{ command: string }> } };
+      for (const { command } of manifest.contributes.commands)
+        context.subscriptions.push(vscode.commands.registerCommand(command, () => vscode.window.showErrorMessage(message)));
+      return;
+    }
     void vscode.window.showWarningMessage(`Parallel window accounts could not initialize: ${detail}`);
   }
-  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+  context.subscriptions.push(onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration("codexManager.crossWindowAccountModeEnabled")) {
       // Configuration changes reach every extension host, including windows
       // without an open dashboard. Apply isolation consistently in all of them.
@@ -63,6 +74,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Build the status entry before the remaining asynchronous setup so every
   // window has immediate visual feedback.
   workbench = new AccountsWorkbench(context);
+  registerSessionRecording(context);
   try {
     await initializeCodexProxyEnvironment();
   } catch (error) {
@@ -98,12 +110,14 @@ function resolveExtensionVersion(context: vscode.ExtensionContext): string {
  * 停用扩展
  */
 export async function deactivate(): Promise<void> {
-  workbench?.shutdown();
+  try { await workbench?.shutdown(); }
+  catch (error) { console.error("[codexManager] final account save failed during shutdown", error); }
   workbench = undefined;
   transientNotices?.dispose();
   transientNotices = undefined;
   disposeCodexProxyEnvironment();
   await disposeCrossWindowAccountMode();
+  disposeSessionRecording();
   await disposePersistentLogging();
   disposeSqliteContext();
 }

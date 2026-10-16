@@ -111,7 +111,7 @@ Open the Command Palette and search for `Codex Manager`.
 | Keyboard Shortcuts & Help | View dashboard shortcuts and help. |
 | Open Latest Session in VS Code | Open the newest local CLI session. |
 | Sync Cross-PC Claims Now | Synchronize encrypted account ownership claims using the shared password configured in General. |
-| Open Persistent Logs | Open the current redacted JSONL diagnostic log. |
+| Open Persistent Logs | View the latest 1,000 redacted diagnostic records from SQLite. |
 
 ## Browser dashboard and Cloudflare
 
@@ -150,7 +150,7 @@ Important combinations:
 
 ## Privacy and security
 
-- Account tokens remain in local VS Code SecretStorage and the Codex credential file. Password-encrypted recovery records are stored in `~/.codex-manager/codex-manager.sqlite`. They are not sent to a Codex Manager server.
+- Account tokens remain in local VS Code SecretStorage and the Codex credential file. Password-encrypted recovery records are stored in `~/.codex/manager.sqlite`. They are not sent to a Codex Manager server.
 - Account metadata, settings, session recovery, usage history, and other extension state share that SQLite database, using WAL and full synchronous commits. Existing state is migrated without deleting its source files. VS Code Settings remains the editing interface and stays synchronized with SQLite. Process locks, diagnostic logs, Codex-owned files, and browser offline caches keep their platform formats.
 - Auto Sync synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Full cross-PC account sync** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
@@ -159,7 +159,7 @@ Important combinations:
 
 ## Troubleshooting
 
-- **No accounts appear after reinstall:** enter the same shared Password so Codex Manager can unlock the encrypted account records in `~/.codex-manager/codex-manager.sqlite`. Earlier account files under `~/.codex-manager/accounts` are imported automatically.
+- **No accounts appear after reinstall:** enter the same shared Password so Codex Manager can unlock the encrypted account records in `~/.codex/manager.sqlite`. Existing data under `~/.codex-manager` is migrated automatically and the old folder is removed only after verification. See [storage and migration](STORAGE.md).
 - **Quota refresh fails:** run **Refresh Quota**, check your network/proxy settings, and inspect **Open Persistent Logs** for the operation ID.
 - **Switch did not affect Codex:** close/restart the Codex desktop app or enable the extension’s app-restart setting. Verify the active `auth.json` in **Open Codex Home**.
 - **Browser dashboard cannot connect:** confirm Web dashboard is enabled, the shared Password is configured in General, and the Cloudflare route points to `http://127.0.0.1:39875`.
