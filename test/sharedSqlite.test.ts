@@ -143,12 +143,16 @@ describe("safe cleanup and credential read races",()=>{
   it("removes only retired data and verified duplicate recovery copies",()=>{
     const archive=(name:string,text:string)=>{const bytes=Buffer.from(text);store.set("legacy-files",name,{path:name,base64:bytes.toString("base64"),sha256:createHash("sha256").update(bytes).digest("hex")});};
     store.set("files","announcements/announcement_cache.json",{text:"retired"});archive("announcements/announcement_cache.json","retired");
+    store.set("legacy-database-conflicts",JSON.stringify(["files","announcements/announcement_cache.json"]),{text:"retired conflict"});
+    store.set("legacy-database-conflicts",JSON.stringify(["files","accounts/recovery.json"]),{text:"keep recovery"});
+    store.set("legacy-database-conflicts","malformed",{text:"keep unknown"});
     store.set("files","logging-settings.json",{text:'{"enabled":true}'});archive("logging-settings.json",'{"enabled":true}');
     archive("accounts-index.json.tmp-unverified",'{"accounts":[]}');archive("unknown.bin","unknown");
     store.set("files","accounts/deleted.json",{text:null});archive("accounts/deleted.json","stale secret");
     const key="codexManager.dashboardUsageHistory.v1",samples=[{accountId:"a",at:1,hourly:20}];
     store.set("global",key,samples);replaceUsageRows(store,samples,key);
-    expect(cleanupManagerStorage(store)).toEqual({retired:2,duplicates:3});
+    expect(cleanupManagerStorage(store)).toEqual({retired:3,duplicates:3});
+    expect(store.keys("legacy-database-conflicts").sort()).toEqual([JSON.stringify(["files","accounts/recovery.json"]),"malformed"]);
     expect(store.keys("legacy-files").sort()).toEqual(["accounts-index.json.tmp-unverified","unknown.bin"]);
     expect(store.get("legacy-state",key)).toBeUndefined();
   });

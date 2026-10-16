@@ -15,6 +15,13 @@ export function cleanupManagerStorage(store: SqliteStateStore): { retired: numbe
         store.set("files",key,undefined); retired++;
       }
     }
+    for (const key of store.keys("legacy-database-conflicts")) {
+      let entry: unknown;
+      try { entry = JSON.parse(key); } catch { continue; }
+      if (Array.isArray(entry) && entry.length === 2 && entry[0] === "files" && typeof entry[1] === "string" && (entry[1] === "announcements" || entry[1].startsWith("announcements/"))) {
+        store.set("legacy-database-conflicts",key,undefined); retired++;
+      }
+    }
     for (const key of store.keys("legacy-files")) {
       let record: { path?:string; sha256?:string; base64?:string } | undefined;
       try { record = store.get("legacy-files",key); } catch { continue; }
