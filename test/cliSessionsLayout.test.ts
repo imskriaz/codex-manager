@@ -193,11 +193,12 @@ describe("sessions sidebar layout", () => {
     expect(settings).toContain('"Enable workspace (Experimental)"');
     expect(settings).toContain("Add chats and terminals to this dashboard.");
     const dashboardStart = settings.indexOf(': "Web Dashboard"');
-    const dashboardEnd = settings.indexOf("</SettingsToggleBlock>", settings.indexOf("Shared dashboard address"));
+    const dashboardEnd = settings.indexOf("</SettingsToggleBlock>", settings.indexOf("Web Socket Server"));
     expect(dashboardStart).toBeGreaterThan(-1);
     expect(dashboardEnd).toBeGreaterThan(dashboardStart);
     expect(settings.slice(dashboardStart, dashboardEnd)).toContain("Keep connections online");
-    expect(settings.slice(dashboardStart, dashboardEnd)).toContain("Shared dashboard address");
+    expect(settings.slice(dashboardStart, dashboardEnd)).toContain("Web Socket Server");
+    expect(settings).toContain('class="settings-block settings-block-wide settings-dashboard-server"');
   });
 
   it("keeps the removed CLI path out while retaining restart and parallel settings", () => {

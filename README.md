@@ -120,7 +120,7 @@ The browser dashboard is disabled by default and listens on `http://127.0.0.1:39
 1. Turn on **Web dashboard**.
 2. Set the shared **Password** in General; remote dashboard login and optional cross-PC claim checks use that same password.
 3. If the dashboard must remain available after VS Code closes, turn on **Keep connections online** on one always-on PC.
-4. For a public HTTPS address, set **Shared dashboard address** to the final URL (for example `https://codex.example.com`) and configure the tunnel to forward to `http://127.0.0.1:39875`.
+4. For a public HTTPS address, set **Web Socket Server** to the final URL (for example `https://codex.example.com`) and configure the tunnel to forward to `http://127.0.0.1:39875`.
 
 Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/), [downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/), [remotely-managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/), and [Quick Tunnels guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) first.
 
@@ -146,7 +146,7 @@ Important combinations:
 - **Encrypted sync** uses authenticated peer WebSockets when available and VS Code Settings Sync as its durable cross-PC fallback. Use the same password value on each machine; the password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
 - **Always-online host** is optional and requires cross-PC claim checks before it can relay signed peer state.
-- **Shared dashboard address** is the canonical HTTPS origin for cross-PC WebSocket connections. Cross-PC connections require a valid domain; local dashboard WebSockets work without one. The `cloudflared` process and DNS route are managed by you.
+- **Web Socket Server** is the canonical HTTPS origin for cross-PC WebSocket connections. Cross-PC connections require a valid domain; local dashboard WebSockets work without one. The `cloudflared` process and DNS route are managed by you.
 
 ## Privacy and security
 

@@ -276,7 +276,6 @@ export function SettingsOverlay(props: {
                               ? "已停用。工作區入口與工作階段讀取均關閉。"
                               : "Workspace is off."}
                       </div>
-                    </SettingsToggleBlock>
                     {props.settings.cliIntegrationEnabled && (
                       <SettingsSegmentBlock
                         title="Workspace connection"
@@ -302,8 +301,48 @@ export function SettingsOverlay(props: {
                         <div class="settings-note">Uses the selected connection only.</div>
                       </SettingsSegmentBlock>
                     )}
-                  </div>
-                  <div class="settings-integration-grid">
+                    </SettingsToggleBlock>
+                  <div class="settings-block settings-block-wide settings-dashboard-server">
+                    <div class="settings-block-head">
+                      <div class="settings-block-title">
+                        {props.lang === "zh"
+                          ? "Cloudflared 域名"
+                          : props.lang === "zh-hant"
+                            ? "Cloudflared 網域"
+                            : "Web Socket Server"}
+                      </div>
+                      <div class="settings-block-sub">
+                        {props.lang === "zh"
+                          ? "可选：输入 Cloudflared 的 HTTPS 域名以便从其他电脑访问。"
+                          : props.lang === "zh-hant"
+                            ? "可選：輸入 Cloudflared 的 HTTPS 網域，從其他電腦存取。"
+                            : "Optional address for access from other PCs."}
+                      </div>
+                    </div>
+                    <input
+                      class="settings-text-input"
+                      type="text"
+                      name="cloudflared-domain"
+                      autoComplete="url"
+                      spellcheck={false}
+                      value={props.settings.cloudflaredDomain ?? ""}
+                      placeholder="codex.example.com"
+                      onInput={(event) => props.onPatchSettings({ cloudflaredDomain: event.currentTarget.value })}
+                      onBlur={(event) => props.onSendSetting("cloudflaredDomain", event.currentTarget.value.trim())}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.currentTarget.blur();
+                        }
+                      }}
+                    />
+                    <div class="settings-note">
+                      {props.lang === "zh"
+                        ? "简要设置：cloudflared tunnel --url http://127.0.0.1:39875；先设置面板密码，再把此 HTTPS 域名分享给其他电脑。"
+                        : props.lang === "zh-hant"
+                          ? "簡要設定：cloudflared tunnel --url http://127.0.0.1:39875；先設定面板密碼，再將此 HTTPS 網域分享給其他電腦。"
+                          : "Set a password before sharing this dashboard."}
+                    </div>
+
                     <SettingsToggleBlock
                       title={
                         props.lang === "zh"
@@ -342,46 +381,6 @@ export function SettingsOverlay(props: {
                             : "Connections close with VS Code."}
                     </div>
                   </SettingsToggleBlock>
-                  <div class="settings-block settings-block-wide">
-                    <div class="settings-block-head">
-                      <div class="settings-block-title">
-                        {props.lang === "zh"
-                          ? "Cloudflared 域名"
-                          : props.lang === "zh-hant"
-                            ? "Cloudflared 網域"
-                            : "Shared dashboard address"}
-                      </div>
-                      <div class="settings-block-sub">
-                        {props.lang === "zh"
-                          ? "可选：输入 Cloudflared 的 HTTPS 域名以便从其他电脑访问。"
-                          : props.lang === "zh-hant"
-                            ? "可選：輸入 Cloudflared 的 HTTPS 網域，從其他電腦存取。"
-                            : "Optional address for access from other PCs."}
-                      </div>
-                    </div>
-                    <input
-                      class="settings-text-input"
-                      type="text"
-                      name="cloudflared-domain"
-                      autoComplete="url"
-                      spellcheck={false}
-                      value={props.settings.cloudflaredDomain ?? ""}
-                      placeholder="codex.example.com"
-                      onInput={(event) => props.onPatchSettings({ cloudflaredDomain: event.currentTarget.value })}
-                      onBlur={(event) => props.onSendSetting("cloudflaredDomain", event.currentTarget.value.trim())}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.currentTarget.blur();
-                        }
-                      }}
-                    />
-                    <div class="settings-note">
-                      {props.lang === "zh"
-                        ? "简要设置：cloudflared tunnel --url http://127.0.0.1:39875；先设置面板密码，再把此 HTTPS 域名分享给其他电脑。"
-                        : props.lang === "zh-hant"
-                          ? "簡要設定：cloudflared tunnel --url http://127.0.0.1:39875；先設定面板密碼，再將此 HTTPS 網域分享給其他電腦。"
-                          : "Set a password before sharing this dashboard."}
-                    </div>
                   </div>
                 </div>
                 </SettingsToggleBlock>

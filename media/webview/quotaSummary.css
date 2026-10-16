@@ -10380,6 +10380,15 @@ html[data-theme="dark"] .cli-terminal-panel {
   height: auto;
 }
 
+.settings-layout .settings-toggle-title-inline > .settings-toggle-head {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.settings-layout .settings-dashboard-server {
+  grid-column: auto;
+}
+
 .settings-layout .settings-switch-options > .settings-block:last-child {
   grid-column: 2;
 }
@@ -10411,6 +10420,10 @@ html[data-theme="dark"] .cli-terminal-panel {
 
   .settings-layout .settings-switch-options > .settings-block:nth-child(3) {
     grid-row: auto;
+  }
+
+  .settings-layout .settings-dashboard-server {
+    grid-column: auto;
   }
 
   .settings-layout .settings-note-list {
