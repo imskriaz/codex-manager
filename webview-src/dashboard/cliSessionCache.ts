@@ -216,13 +216,17 @@ export async function writeCliSessionMessagesCache(
 export async function readDashboardStateCache(): Promise<DashboardState | undefined> {
   const cached = await readFreshRecord<unknown>(DASHBOARD_CACHE_KEY, MAX_DASHBOARD_CACHE_AGE_MS);
   if (!cached?.value || typeof cached.value !== "object" || !("state" in cached.value)) return undefined;
-  return (cached.value as { state: DashboardState }).state;
+  const state = { ...(cached.value as { state: DashboardState }).state };
+  delete state.usageHistory;
+  delete state.dailyUsageCache;
+  return state;
 }
 
 export function writeDashboardStateCache(state: DashboardState): Promise<void> {
-  // Quota history can grow over time; keep the browser cache bounded and never
-  // let a burst of WebSocket snapshots create parallel IndexedDB writes.
-  pendingDashboardState = { ...state, usageHistory: (state.usageHistory ?? []).slice(-500) };
+  // Keep recovery metadata, while graph history stays in the host database.
+  pendingDashboardState = { ...state };
+  delete pendingDashboardState.usageHistory;
+  delete pendingDashboardState.dailyUsageCache;
   dashboardWrite ??= flushDashboardStateWrites().finally(() => {
     dashboardWrite = undefined;
   });

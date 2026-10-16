@@ -43,9 +43,8 @@ export function cleanupManagerStorage(store: SqliteStateStore): { retired: numbe
       ["codexManager.dashboardDailyUsageCache.v1","daily-usage-rows-v1",()=>readDailyUsageRows(store)]
     ] as const) {
       if (!store.get("migrations",marker)) continue;
-      const rows = read();
       const previous = store.get("legacy-state",key);
-      if (previous !== undefined && equalJson(JSON.stringify(previous),JSON.stringify(rows))) {
+      if (previous !== undefined && equalJson(JSON.stringify(previous),JSON.stringify(read()))) {
         store.set("legacy-state",key,undefined); duplicates++;
       }
     }

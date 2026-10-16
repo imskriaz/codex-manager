@@ -34,7 +34,8 @@ import { getCodexManagerConfiguration } from "../../infrastructure/config/extens
 import { respondCodexAppServerPrompt } from "../../services/codexAppServerPrompts";
 import { getCodexSessionLiveState } from "../../services/codexSessionLive";
 import { unloadAuthFile } from "../../codex";
-import { upsertDashboardDailyUsageCache } from "../../services/dashboardUsageHistory";
+import { queryDashboardUsage } from "../../services/dashboardUsageHistory";
+import { loadDailyTokenUsage } from "../../services/dailyTokenUsage";
 import {
   cancelWorkspaceTerminalCommand,
   commitWorkspaceChanges,
@@ -116,6 +117,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "reloadPrompt",
   "getResetCredits",
   "getDailyUsage",
+  "getUsageGraph",
   "openNewCodexWebview",
   "startCodexCliSession",
   "listCodexCliSessions",
@@ -776,7 +778,12 @@ async function runDashboardAction(
     case "getResetCredits":
       return handleGetResetCredits(ctx.repo, account);
     case "getDailyUsage":
+      if (payload?.automatic === true && !getCodexManagerConfiguration().get<boolean>("dailyTokenUsageEnabled", false)) {
+        return { notice: { level: "warning", message: "Automatic token history is disabled. Saved history remains available." } };
+      }
       return handleGetDailyUsage(ctx.context, ctx.repo, account, payload?.days);
+    case "getUsageGraph":
+      return { usageGraph: queryDashboardUsage(ctx.context, payload?.usageGraph) };
     case "openNewCodexWebview":
       return handleOpenNewCodexWebview();
     case "startCodexCliSession":
@@ -1261,6 +1268,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "autoRefreshMinutes",
     "autoRefreshCurrentMinutes",
     "usageHistoryRetentionDays",
+    "dailyTokenUsageEnabled",
     "autoSwitchEnabled",
     "autoSwitchWaitForSessionsEnabled",
     "autoSwitchReloadWindowEnabled",
@@ -1681,17 +1689,18 @@ async function handleGetDailyUsage(
   if (!account) {
     throw new Error("Account not found");
   }
-  const tokens = await repo.getTokens(account.id, { bypassCache: true });
-  if (!tokens?.accessToken) {
-    throw new Error("No access token is available for usage history.");
-  }
-  const days = Math.min(30, Math.max(1, Math.round(requestedDays ?? 30)));
-  const dailyUsage = await fetchDailyUsageBreakdown(tokens, days);
-  if (!dailyUsage) {
-    throw new Error("The usage endpoint returned no readable data.");
-  }
-  await upsertDashboardDailyUsageCache(context, account.id, dailyUsage);
-  return { dailyUsage };
+  const days = Math.min(30, Math.max(1, Math.round(typeof requestedDays === "number" && Number.isFinite(requestedDays) ? requestedDays : 30)));
+  const entry = await loadDailyTokenUsage(context, account.id, async signal => {
+    const tokens = await repo.getTokens(account.id, { bypassCache: true });
+    if (!tokens?.accessToken) throw new Error("No access token is available for usage history.");
+    if (account.accountId && tokens.accountId && account.accountId !== tokens.accountId) {
+      throw new Error("The saved usage credentials belong to a different account. Reauthorize this account before retrying.");
+    }
+    const usage = await fetchDailyUsageBreakdown(tokens, days, signal);
+    if (!await repo.getAccount(account.id)) throw new Error("The account was removed while loading usage. The result was not saved.");
+    return usage;
+  });
+  return { dailyUsage: entry.usage, dailyUsageFetchedAt: entry.fetchedAt };
 }
 
 function ensureCliIntegrationEnabled(): void {

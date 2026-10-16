@@ -18,6 +18,7 @@ snapshot.settings.autoSwitchEnabled = true;
 snapshot.settings.autoResetEnabled = true;
 snapshot.settings.autoResumeEnabled = true;
 snapshot.settings.privacyMode = true;
+snapshot.settings.dailyTokenUsageEnabled = false;
 const parentId = "01a04882-d037-7a42-ad24-9afb61901188";
 const runningId = "01a04882-d037-7a42-ad24-9afb61901189";
 const agentId = "01a04882-d037-7a42-ad24-9afb61901190";
@@ -59,7 +60,8 @@ const mockHost = `(() => {
         dispatch({type:'dashboard:snapshot',state});
       } else if(message.type === 'dashboard:action') {
         let payload = {}, error;
-        if(message.action === 'listCodexCliSessions') payload = {cliSessions:sessions,cliComposerConfig:config};
+        if(message.action === 'getUsageGraph') payload = {usageGraph:{...message.payload.usageGraph,history:[],dailyUsageCache:[],truncated:false}};
+        else if(message.action === 'listCodexCliSessions') payload = {cliSessions:sessions,cliComposerConfig:config};
         else if(message.action === 'startCodexCliSession') {
           const session = {id:'01a04882-d037-7a42-ad24-9afb61901198',title:'New smoke chat',status:'idle',projectPath:message.payload.projectPath};
           if(!sessions.some(row=>row.id===session.id)) sessions.push(session);
@@ -607,8 +609,8 @@ try {
       if (await tab.getAttribute("id") === "settings-tab-automation") {
         const switchToggle = page.getByRole("button", { name: snapshot.copy.autoSwitchTitle, exact: true });
         const switchCard = switchToggle.locator("../..");
-        const options = switchCard.locator(".settings-integration-grid > .settings-block");
-        assert.equal(await options.count(), 4, "Switching contains reset, wait, resume, and refresh options");
+        const options = switchCard.locator(":scope > .settings-stack > .settings-integration-grid > .settings-block");
+        assert.equal(await options.count(), 5, "Switching contains reset, wait, resume, refresh, and reload options");
         const bounds = await options.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
         assert.ok(bounds.every(rect => Math.abs(rect.width - bounds[0].width) <= 2), "Switching options use equal-width cards");
         if (width > 560) assert.ok(Math.abs(bounds[0].y - bounds[1].y) <= 2 && Math.abs(bounds[2].y - bounds[3].y) <= 2, "Switching options form two rows of two");
@@ -620,8 +622,8 @@ try {
         await goalOnly.waitFor({ state: "visible" });
         await switchToggle.click();
         await options.first().waitFor({ state: "hidden" });
-        assert.equal(await options.count(), 0, "Switching off hides all four dependent controls");
-        assert.equal(await page.getByRole("button", { name: snapshot.copy.autoSwitchReloadTitle, exact: true }).isVisible(), true, "Reload remains independent of automatic switching");
+        assert.equal(await options.count(), 0, "Switching off hides all dependent controls");
+        assert.equal(await page.getByRole("button", { name: snapshot.copy.autoSwitchReloadTitle, exact: true }).isVisible(), false, "Reload settings follow their switching parent");
         await switchToggle.click();
         await options.first().waitFor({ state: "visible" });
         assert.equal(await resumeToggle.getAttribute("aria-pressed"), "true", "Hiding switching options preserves auto resume");

@@ -205,10 +205,9 @@ export function configureSqliteStateStore(store: SqliteStateStore | undefined): 
 
 export function createSqliteMemento(store: SqliteStateStore, namespace: string, legacy: vscode.Memento & { setKeysForSync?(keys: readonly string[]): void }): vscode.Memento & { setKeysForSync(keys: readonly string[]): void } {
   if (!store.get<boolean>("migrations", namespace)) {
-    const entries = legacy.keys().map(key => [key, legacy.get(key)] as const);
     store.transaction(() => {
       if (store.get<boolean>("migrations", namespace)) return;
-      for (const [key, value] of entries) if (store.get(namespace, key) === undefined) store.set(namespace, key, value);
+      for (const key of legacy.keys()) if (store.get(namespace, key) === undefined) store.set(namespace, key, legacy.get(key));
       store.set("migrations", namespace, true);
     });
   }

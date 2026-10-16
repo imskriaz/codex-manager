@@ -40,3 +40,4 @@ out/**/*.d.ts.map
 out/services/announcements.*
 
 tools/benchmark-sqlite.mjs
+tools/check-usage-ui.mjs

@@ -3,6 +3,16 @@ import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
 
 describe("handleDashboardSettingUpdate", () => {
+  it("persists the opt-in token history toggle and rejects non-boolean values", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update,
+      inspect: vi.fn(() => ({ key: "codexManager.dailyTokenUsageEnabled", defaultValue: false })) } as never);
+    await expect(handleDashboardSettingUpdate("dailyTokenUsageEnabled", true)).resolves.toBe(true);
+    expect(update).toHaveBeenCalledWith("dailyTokenUsageEnabled", true, vscode.ConfigurationTarget.Global);
+    update.mockClear();
+    await expect(handleDashboardSettingUpdate("dailyTokenUsageEnabled", "true")).resolves.toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
   it("always stores privacy mode globally so every surface shares it", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

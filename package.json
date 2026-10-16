@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "publisher": "imskriaz",
   "preview": true,
   "icon": "media/product-icons/codex-openai.png",
@@ -91,6 +91,11 @@
           "multipleOf": 1,
           "default": 1,
           "markdownDescription": "Automatically refresh only the current active account quota every N minutes. Set to `0` to disable periodic polling, or choose any interval from `1` to `60` minutes. Quota reset countdowns still trigger a refresh. Cross-PC ownership prevents duplicate background polling of the same account."
+        },
+        "codexManager.dailyTokenUsageEnabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Collect daily token usage when the current account loads, at most once every 24 hours per account. Inactive accounts are never polled. Saved usage remains available when disabled."
         },
         "codexManager.usageHistoryRetentionDays": {
           "type": "number",

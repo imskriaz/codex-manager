@@ -9,7 +9,8 @@ type UnknownRecord = Record<string, unknown>;
 
 export async function fetchDailyUsageBreakdown(
   tokens: CodexTokens,
-  days = 30
+  days = 30,
+  signal?: AbortSignal
 ): Promise<CodexDailyUsageBreakdown | undefined> {
   const claims = extractClaims(tokens.idToken, tokens.accessToken);
   const headers = new Headers({
@@ -29,7 +30,8 @@ export async function fetchDailyUsageBreakdown(
     url.toString(),
     {
       method: "GET",
-      headers
+      headers,
+      signal
     },
     15000,
     "Daily usage request"
@@ -45,9 +47,12 @@ export async function fetchDailyUsageBreakdown(
     bodyPreview: summarizeNetworkBody(raw)
   });
   if (!response.ok) {
+    const retryAfter = response.headers.get("retry-after");
+    const retryAt = retryAfter === null ? NaN : /^\d+$/.test(retryAfter.trim()) ? Date.now() + Number(retryAfter) * 1000 : Date.parse(retryAfter);
     throw new APIError(`Daily usage breakdown API returned ${response.status}: ${raw.slice(0, 200)}`, {
       statusCode: response.status,
-      responseBody: raw.slice(0, 200)
+      responseBody: raw.slice(0, 200),
+      context: Number.isFinite(retryAt) && retryAt > Date.now() ? { retryAt } : undefined
     });
   }
 
@@ -61,8 +66,10 @@ function parseDailyUsageBreakdown(payload: unknown, fallbackDays: number): Codex
   }
 
   const records = collectUsageRecords(payload);
+  if (!records) return undefined;
   const parsedPoints = records.map((record) => parseUsagePoint(record));
   const points = parsedPoints.filter(isUsagePoint);
+  if (points.length !== records.length) return undefined;
   points.sort((a, b) => a.date.localeCompare(b.date));
 
   const days = readNumber(payload, ["days", "range_days", "window_days"]) ?? fallbackDays;
@@ -73,7 +80,7 @@ function parseDailyUsageBreakdown(payload: unknown, fallbackDays: number): Codex
   };
 }
 
-function collectUsageRecords(payload: UnknownRecord): UnknownRecord[] {
+function collectUsageRecords(payload: UnknownRecord): UnknownRecord[] | undefined {
   const candidates = [
     payload["daily_usage"],
     payload["daily_token_usage_breakdown"],
@@ -85,17 +92,11 @@ function collectUsageRecords(payload: UnknownRecord): UnknownRecord[] {
 
   for (const candidate of candidates) {
     if (Array.isArray(candidate)) {
-      return candidate.filter(isRecord);
+      return candidate.length <= 31 && candidate.every(isRecord) ? candidate : undefined;
     }
   }
 
-  for (const value of Object.values(payload)) {
-    if (Array.isArray(value) && value.every((item) => isRecord(item) || item == null)) {
-      return value.filter(isRecord);
-    }
-  }
-
-  return [];
+  return undefined;
 }
 
 function parseUsagePoint(value: UnknownRecord): CodexDailyUsagePoint | undefined {
@@ -138,6 +139,7 @@ function normalizeTimestamp(value: number | undefined): string | undefined {
   }
 
   const epochMs = value > 1_000_000_000_000 ? value : value * 1000;
+  if (!Number.isFinite(epochMs) || Math.abs(epochMs) > 8_640_000_000_000_000) return undefined;
   return new Date(epochMs).toISOString().slice(0, 10);
 }
 

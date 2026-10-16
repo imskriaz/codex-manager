@@ -6,6 +6,7 @@ import type {
   DashboardActionName,
   DashboardClientMessage,
   DashboardHostMessage,
+  DashboardState,
   DashboardSettingKey
 } from "../../domain/dashboard/types";
 import { ExtensionSettingsStore, getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
@@ -21,7 +22,7 @@ import {
 import { DashboardOAuthCoordinator } from "./oauthCoordinator";
 import { backfillMissingResetCreditExpiries } from "./resetCreditsBackfill";
 import { consumeDashboardActionPrompts, withDashboardNotificationSuppression } from "../../utils/notificationPolicy";
-import { readDashboardDailyUsageCache, saveDashboardUsageHistory } from "../../services/dashboardUsageHistory";
+import { appendDashboardUsageSnapshot, readDashboardUsageSummary, saveDashboardUsageHistory } from "../../services/dashboardUsageHistory";
 import { handleDashboardSettingUpdate, pickDashboardCodexAppPath, pickDashboardCodexCliPath } from "./settings";
 import { scheduleExtensionHostReload } from "../../application/accounts/switchEffects";
 import { resolveOnboardingCompleted } from "../../services/onboarding";
@@ -67,11 +68,12 @@ export async function publishDashboardSnapshot(params: PublishDashboardSnapshotP
     params.settingsStore,
     params.logoUri
   );
-  const state = {
+  const state: DashboardState = {
     ...baseState,
-    onboardingCompleted: await resolveOnboardingCompleted(params.context, baseState),
-    dailyUsageCache: readDashboardDailyUsageCache(params.context)
+    onboardingCompleted: await resolveOnboardingCompleted(params.context, baseState)
   };
+  await appendDashboardUsageSnapshot(params.context, state);
+  state.usageSummary = readDashboardUsageSummary(params.context);
   void backfillMissingResetCreditExpiries(params.repo, state.accounts, params.schedulePublishState).catch(
     () => undefined
   );
@@ -240,6 +242,7 @@ export class DashboardPanelController {
           onUsageHistory: async (samples) => {
             await saveDashboardUsageHistory(this.context, samples);
             if (!samples.length) await this.postNotice("warning", "Usage history cleared. New quota changes will start a fresh history.");
+            this.schedulePublishState();
           }
         }).catch((error) => {
           const detail = error instanceof Error ? error.message : String(error);

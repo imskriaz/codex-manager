@@ -1857,7 +1857,7 @@ describe("executeDashboardActionMessage", () => {
     const context = createContext();
     context.context = {
       globalState: {
-        get: vi.fn().mockReturnValue([]),
+        get: vi.fn(),
         update: vi.fn().mockResolvedValue(undefined)
       }
     } as unknown as DashboardActionContext["context"];
@@ -1893,6 +1893,7 @@ describe("executeDashboardActionMessage", () => {
 
   it("returns a visible failure when daily usage has no access token", async () => {
     const context = createContext();
+    context.context = { globalState: { get: vi.fn(), update: vi.fn().mockResolvedValue(undefined) } } as never;
     context.repo = {
       getAccount: vi.fn().mockResolvedValue({ id: "usage-account", email: "usage@example.com" }),
       getTokens: vi.fn().mockResolvedValue(undefined)
@@ -1907,6 +1908,26 @@ describe("executeDashboardActionMessage", () => {
 
     expect(result.status).toBe("failed");
     expect(result.errorMessage).toMatch(/access token/i);
+  });
+
+  it("does not read credentials or collect usage when automatic history is disabled", async () => {
+    const context = createContext();
+    context.repo = { getAccount: vi.fn().mockResolvedValue({ id: "a" }), getTokens: vi.fn() } as never;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    const result = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "getDailyUsage", accountId: "a", requestId: "disabled-usage", payload: { automatic: true } });
+    expect(result.status).toBe("completed");
+    expect(result.payload?.notice?.message).toMatch(/disabled/);
+    expect(context.repo.getTokens).not.toHaveBeenCalled();
+  });
+
+  it("rejects usage credentials for a different account before making a request", async () => {
+    const context = createContext();
+    context.context = { globalState: { get: vi.fn(), update: vi.fn().mockResolvedValue(undefined) } } as never;
+    context.repo = { getAccount: vi.fn().mockResolvedValue({ id: "a", accountId: "expected" }),
+      getTokens: vi.fn().mockResolvedValue({ accessToken: "token", accountId: "different" }) } as never;
+    const result = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "getDailyUsage", accountId: "a", requestId: "wrong-usage-account" });
+    expect(result.status).toBe("failed");
+    expect(result.errorMessage).toMatch(/different account/);
   });
 });
 

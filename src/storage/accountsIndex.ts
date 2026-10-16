@@ -173,13 +173,22 @@ export function cloneIndex(index: CodexManagerIndex): CodexManagerIndex {
 }
 
 export function parseAccountsIndex(raw: string, filePath: string): CodexManagerIndex {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isValidAccountsIndex(parsed)) {
+    parsed = JSON.parse(raw) as unknown;
+  } catch (cause) {
+    throw createError.storageIndexCorrupted(filePath, cause);
+  }
+  return parseAccountsIndexValue(parsed, filePath);
+}
+
+export function parseAccountsIndexValue(value: unknown, filePath: string): CodexManagerIndex {
+  try {
+    if (!isValidAccountsIndex(value)) {
       throw new Error("Invalid accounts index structure");
     }
 
-    return cloneIndex(parsed);
+    return cloneIndex(value);
   } catch (cause) {
     throw createError.storageIndexCorrupted(filePath, cause);
   }
@@ -224,7 +233,9 @@ function isValidAccountsIndex(value: unknown): value is CodexManagerIndex {
       typeof record.id === "string" &&
       typeof record.email === "string" &&
       typeof record.createdAt === "number" &&
+      Number.isFinite(record.createdAt) &&
       typeof record.updatedAt === "number" &&
+      Number.isFinite(record.updatedAt) &&
       (record.sessionStartedAt === undefined ||
         (typeof record.sessionStartedAt === "number" && Number.isFinite(record.sessionStartedAt))) &&
       (record.lastSelectedAt === undefined ||

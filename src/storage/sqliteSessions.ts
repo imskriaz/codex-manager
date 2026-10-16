@@ -136,8 +136,12 @@ export function readStoredSessionLive(store: SqliteStateStore, home: string, id:
 
 export function listStoredSessionLive(store: SqliteStateStore, home: string): DashboardCodexSessionLiveState[] {
   initializeSessionStorage(store);
-  return store.prepare(`SELECT * FROM (SELECT *,ROW_NUMBER() OVER(PARTITION BY device_id,session_id ORDER BY updated_at DESC) AS latest
-    FROM session_turns WHERE home=? AND device_id='') WHERE latest=1 AND (status IN ('starting','running') OR updated_at>=?) ORDER BY updated_at DESC LIMIT 30`)
+  return store.prepare(`SELECT candidate.* FROM session_turns AS candidate
+    WHERE home=? AND device_id='' AND (status IN ('starting','running') OR updated_at>=?)
+    AND NOT EXISTS (SELECT 1 FROM session_turns AS newer WHERE newer.home=candidate.home
+      AND newer.device_id=candidate.device_id AND newer.session_id=candidate.session_id
+      AND (newer.updated_at>candidate.updated_at OR (newer.updated_at=candidate.updated_at AND newer.rowid>candidate.rowid)))
+    ORDER BY updated_at DESC LIMIT 30`)
     .all(getCodexHomeStateKey(home),Date.now()-5*60_000).map(restored)
     .filter(state=>state.status === "running" || state.status === "starting" || state.updatedAt>=Date.now()-5*60_000);
 }

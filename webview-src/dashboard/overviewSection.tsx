@@ -1,11 +1,14 @@
 import { createPortal } from "preact/compat";
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type {
   DashboardAccountViewModel,
   DashboardCopy,
   DashboardSettings,
-  DashboardState
+  DashboardState,
+  DashboardDailyUsageCacheEntry,
+  DashboardUsageGraphData,
+  DashboardUsageGraphQuery
 } from "../../src/domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../../src/core/types";
 import type { DashboardUsageSample } from "../../src/domain/dashboard/types";
@@ -67,11 +70,15 @@ export function OverviewSection(props: {
   consumeResetCreditPending: boolean;
   emptyAccountContent?: ComponentChildren;
   metricPriority?: string;
-  usageHistory?: DashboardUsageSample[];
-  dailyUsage?: CodexDailyUsageBreakdown;
+  usageGraphData?: DashboardUsageGraphData;
+  usageGraphPending?: boolean;
+  usageGraphError?: string;
+  usageGraphRevision?: string;
+  usageGraphSource?: string;
+  usageGraphPaused?: boolean;
+  onLoadUsageGraph?: (query: DashboardUsageGraphQuery) => void;
   dailyUsagePending?: boolean;
   dailyUsageError?: string;
-  onLoadDailyUsage?: () => void;
   onSetAutoSwitchLock: (minutes: number) => void;
   onAddAccount: () => void;
   onSetPassword: () => void;
@@ -283,15 +290,20 @@ export function OverviewSection(props: {
         <div class="overview-main">
           {account ? (
             <UsageGraph
-              history={props.usageHistory ?? []}
               accounts={props.accounts ?? []}
               now={now}
               privacyMode={privacyMode}
               lang={props.lang}
-              dailyUsage={props.dailyUsage}
+              usageGraphData={props.usageGraphData}
+              usageGraphPending={props.usageGraphPending}
+              usageGraphError={props.usageGraphError}
+              usageGraphRevision={props.usageGraphRevision}
+              usageGraphSource={props.usageGraphSource}
+              usageGraphPaused={props.usageGraphPaused}
+              onLoadUsageGraph={props.onLoadUsageGraph}
+              automaticTokenHistory={props.settings.dailyTokenUsageEnabled === true}
               dailyUsagePending={props.dailyUsagePending}
               dailyUsageError={props.dailyUsageError}
-              onLoadDailyUsage={props.onLoadDailyUsage}
             />
           ) : null}
           <div class="overview-bottom-row">
@@ -676,26 +688,28 @@ const USAGE_GRAPH_BASELINE = 52;
 const USAGE_GRAPH_MAX_BAR_HEIGHT = 42;
 
 function UsageGraph(props: {
-  history: DashboardUsageSample[];
+  automaticTokenHistory: boolean;
   accounts: DashboardAccountViewModel[];
   now: number;
   privacyMode: boolean;
   lang: DashboardState["lang"];
-  dailyUsage?: CodexDailyUsageBreakdown;
+  usageGraphData?: DashboardUsageGraphData;
+  usageGraphPending?: boolean;
+  usageGraphError?: string;
+  usageGraphRevision?: string;
+  usageGraphSource?: string;
+  usageGraphPaused?: boolean;
+  onLoadUsageGraph?: (query: DashboardUsageGraphQuery) => void;
   dailyUsagePending?: boolean;
   dailyUsageError?: string;
-  onLoadDailyUsage?: () => void;
 }) {
   const [range, setRange] = useState<UsageGraphRange>("1h");
   const [windowOffset, setWindowOffset] = useState(0);
   const [graphMode, setGraphMode] = useState<"quota" | "tokens">("quota");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hoveredEvent, setHoveredEvent] = useState<{ event: UsageEvent; label: string; left: number; top: number }>();
-  useEffect(() => {
-    if (graphMode === "tokens" && !props.dailyUsage && !props.dailyUsagePending && !props.dailyUsageError) {
-      props.onLoadDailyUsage?.();
-    }
-  }, [graphMode, props.dailyUsage, props.dailyUsagePending, props.dailyUsageError, props.onLoadDailyUsage]);
+  const loadQueryRef = useRef(props.onLoadUsageGraph);
+  loadQueryRef.current = props.onLoadUsageGraph;
   const graphStageRef = useRef<HTMLDivElement>(null);
   const accountMap = new Map(
     props.accounts.map((account, index) => [
@@ -708,7 +722,7 @@ function UsageGraph(props: {
       }
     ])
   );
-  const availableRanges = USAGE_GRAPH_RANGES;
+  const availableRanges = graphMode === "tokens" ? USAGE_GRAPH_RANGES.filter(candidate => candidate.key.endsWith("d")) : USAGE_GRAPH_RANGES;
   const activeRange = availableRanges.some((candidate) => candidate.key === range)
     ? range
     : graphMode === "tokens"
@@ -716,31 +730,31 @@ function UsageGraph(props: {
       : "1h";
   const rangeDuration =
     USAGE_GRAPH_RANGES.find((candidate) => candidate.key === activeRange)?.durationMs ?? 60 * 60 * 1000;
-  const tokenEvents: UsageEvent[] = (props.dailyUsage?.points ?? []).flatMap((point) => {
-    const at = Date.parse(`${point.date}T12:00:00Z`);
-    const accountId = props.accounts.find((account) => account.isActive)?.id ?? props.accounts[0]?.id;
-    return Number.isFinite(at) && accountId && point.totalTokens >= 0
-      ? [{ at, accountId, used: point.totalTokens, segments: buildDailyUsageSegments(point) }]
-      : [];
-  });
-  const sourceEvents = graphMode === "tokens" ? tokenEvents : buildUsageEvents(props.history);
-  const oldestHistoryAt = sourceEvents.reduce(
-    (oldest, sample) => Math.min(oldest, sample.at),
-    Number.POSITIVE_INFINITY
-  );
-  const graphEndAt = props.now - windowOffset * rangeDuration;
-  const graphStartAt = graphEndAt - rangeDuration;
+  const queryWindow = useMemo(() => {
+    const end = graphMode === "tokens" ? (Math.floor(props.now / 86_400_000) + 1) * 86_400_000 : props.now;
+    return { mode: graphMode, from: end - (windowOffset + 1) * rangeDuration, to: end - windowOffset * rangeDuration };
+  }, [graphMode, rangeDuration, windowOffset, props.usageGraphRevision, props.usageGraphSource]);
+  useEffect(() => { if (!props.usageGraphPaused) loadQueryRef.current?.(queryWindow); }, [queryWindow, props.usageGraphPaused]);
+  const data = props.usageGraphData?.mode === graphMode ? props.usageGraphData : undefined;
+  const matchingResult = data?.from === queryWindow.from && data?.to === queryWindow.to;
+  const history = data?.history ?? [];
+  const dailyUsageCache = (data?.dailyUsageCache ?? []).filter(entry => accountMap.has(entry.accountId));
+  const tokenEvents = useMemo(() => buildDailyTokenUsageEvents(dailyUsageCache), [data, props.accounts]);
+  const tokenBreakdown = useMemo(() => ({ days: 30, points: dailyUsageCache.flatMap(entry => entry.usage.points) }), [data, props.accounts]);
+  const graphEndAt = data?.to ?? queryWindow.to;
+  const graphStartAt = data?.from ?? queryWindow.from;
+  const oldestHistoryAt = data?.oldestAt ?? Number.POSITIVE_INFINITY;
   const graphAxisMode: "time" | "date" = activeRange.endsWith("h") ? "time" : "date";
-  const visibleHistory = selectUsageHistoryWindow(props.history, graphStartAt, graphEndAt);
   const bucketCount = resolveUsageGraphBucketCount(activeRange);
-  const events = aggregateUsageEvents(
-    (graphMode === "tokens" ? tokenEvents : buildUsageEvents(visibleHistory)).filter(
+  const events = useMemo(() => aggregateUsageEvents(
+    (graphMode === "tokens" ? tokenEvents : buildUsageEvents(selectUsageHistoryWindow(history, graphStartAt, graphEndAt),
+      { from: graphStartAt, to: graphEndAt, buckets: bucketCount })).filter(
       (event) => event.at >= graphStartAt && event.at <= graphEndAt
     ),
     graphStartAt,
     rangeDuration,
     bucketCount
-  );
+  ), [data, graphMode, tokenEvents, graphStartAt, graphEndAt, rangeDuration, bucketCount]);
   const eventAccountIds = new Set(events.map((event) => event.accountId));
   const legendSource = props.accounts.filter((account) => !eventAccountIds.size || eventAccountIds.has(account.id));
   const legendAccounts = legendSource
@@ -756,11 +770,12 @@ function UsageGraph(props: {
   const eventOffsets = buildUsageEventOffsets(events, barWidth);
   const canGoOlder = Number.isFinite(oldestHistoryAt) && oldestHistoryAt < graphStartAt;
   const canGoNewer = windowOffset > 0;
-  const axisTop = `${formatUsageValue(maxUsage)}`;
+  const formatValue = (value: number) => graphMode === "tokens" ? new Intl.NumberFormat().format(Math.round(value)) : formatUsageValue(value);
+  const axisTop = formatValue(maxUsage);
   // A few large drops can otherwise flatten all of the smaller changes. Use a
   // gentle square-root lift for bar heights while retaining the real values in
   // the axis labels and hover details.
-  const axisMid = `${formatUsageValue(maxUsage / 4)}`;
+  const axisMid = formatValue(maxUsage / 4);
   return (
     <div class="usage-graph-card">
       <div class="usage-graph-head">
@@ -769,7 +784,7 @@ function UsageGraph(props: {
             {graphMode === "tokens"
               ? props.lang === "zh"
                 ? "每日用量"
-                : "Daily usage"
+                : "Daily token usage · All accounts"
               : props.lang === "zh"
                 ? "配额"
                 : "Quota"}
@@ -888,6 +903,24 @@ function UsageGraph(props: {
           </div>
         </div>
       </div>
+      {graphMode === "tokens" ? (
+        <div class="usage-graph-breakdown" role="status" aria-live="polite">
+          <span>{props.automaticTokenHistory ? "Saved history · Checks on account load, at most once per 24 hours" : "Saved history · Automatic collection is off"}</span>
+          {props.accounts.map(account => {
+            const entry = dailyUsageCache.find(entry => entry.accountId === account.id);
+            return <span key={account.id} title={entry ? `Last successful update: ${formatTimestamp(entry.fetchedAt, props.lang)}` : "No saved token history"}>
+              <strong>{accountMap.get(account.id)?.label}</strong> {entry ? `${props.now - entry.fetchedAt >= 86_400_000 ? "Stale · " : ""}${formatRelativeTimestamp(entry.fetchedAt, props.now, "Unknown", props.lang)}` : "Not collected"}
+            </span>;
+          })}
+        </div>
+      ) : null}
+      {props.usageGraphPending || props.dailyUsagePending ? <div class="usage-graph-breakdown" role="status">Loading saved usage…{data && !matchingResult ? " Showing the previous result." : ""}</div> : null}
+      {props.usageGraphError || props.dailyUsageError || data?.truncated ? (
+        <div class="usage-graph-breakdown" role="alert">
+          <span>{props.usageGraphError ?? props.dailyUsageError ?? "This range contains more than 10,000 records. The latest records are shown; choose a shorter range for complete detail."}</span>
+          {props.usageGraphError ? <button type="button" disabled={props.usageGraphPending} onClick={() => loadQueryRef.current?.(queryWindow)}>Retry saved graph</button> : null}
+        </div>
+      ) : null}
       <div class="usage-graph-stage" ref={graphStageRef} onMouseLeave={() => setHoveredEvent(undefined)}>
         <div class="usage-graph-axis" aria-hidden="true">
           <span>{axisTop}</span>
@@ -901,7 +934,7 @@ function UsageGraph(props: {
               viewBox={`0 0 ${graphWidth} ${USAGE_GRAPH_VIEWBOX_HEIGHT}`}
               preserveAspectRatio="none"
               role="img"
-              aria-label={props.lang === "zh" ? "配额使用" : "Quota usage"}
+              aria-label={graphMode === "tokens" ? "Daily token usage for all saved accounts" : props.lang === "zh" ? "配额使用" : "Quota usage"}
             >
               {[10, 31, 52].map((y) => (
                 <line key={y} x1="0" y1={y} x2={graphWidth} y2={y} class="usage-graph-gridline" />
@@ -925,9 +958,9 @@ function UsageGraph(props: {
                 const y = USAGE_GRAPH_BASELINE - height;
                 const ariaLabel =
                   graphMode === "tokens"
-                    ? `${props.lang === "zh" ? "每日 token 用量" : "Daily token usage"}: ${formatUsageValue(event.used)} tokens, ${formatGraphTime(event.at, props.lang, graphAxisMode)}`
+                    ? `${account.label}: ${formatValue(event.used)} tokens, ${formatGraphTime(event.at, props.lang, graphAxisMode)}`
                     : `${account.label}: ${formatUsageValue(event.used)} ${props.lang === "zh" ? "配额使用" : "quota used"}, ${formatGraphTime(event.at, props.lang, graphAxisMode)}`;
-                const segments = event.segments?.length
+                const segments = graphMode !== "tokens" && event.segments?.length
                   ? event.segments
                   : [{ key: "quota", used: event.used, color: account.color }];
                 let segmentOffset = 0;
@@ -946,7 +979,7 @@ function UsageGraph(props: {
                           width={barWidth}
                           height={Math.max(1, segmentHeight)}
                           rx={barWidth * 0.18}
-                          fill={segment.color}
+                          fill={graphMode === "tokens" ? account.color : segment.color}
                         />
                       );
                     })}
@@ -1013,11 +1046,11 @@ function UsageGraph(props: {
               {graphMode === "tokens"
                 ? props.lang === "zh"
                   ? "每日 token 用量"
-                  : "Daily token usage"
+                  : hoveredEvent.label
                 : hoveredEvent.label}
             </strong>
             <span>
-              {formatUsageValue(hoveredEvent.event.used)}{" "}
+              {formatValue(hoveredEvent.event.used)}{" "}
               {graphMode === "tokens" ? "tokens" : props.lang === "zh" ? "配额使用" : "quota used"}
             </span>
             {graphMode === "tokens" && hoveredEvent.event.segments?.length ? (
@@ -1025,7 +1058,7 @@ function UsageGraph(props: {
                 {hoveredEvent.event.segments.map((segment) => (
                   <span key={segment.key}>
                     <i style={{ background: segment.color }} />
-                    {segment.key}: {formatUsageValue(segment.used)}
+                    {segment.key}: {formatValue(segment.used)}
                   </span>
                 ))}
               </div>
@@ -1035,11 +1068,11 @@ function UsageGraph(props: {
         ) : null}
         {!events.length ? (
           <div class="usage-graph-empty">
-            {props.lang === "zh" ? "尚未检测到配额下降" : "No quota decrease detected yet"}
+            {graphMode === "tokens" ? "No saved token usage in this period" : props.lang === "zh" ? "尚未检测到配额下降" : "No quota decrease detected yet"}
           </div>
         ) : null}
       </div>
-      {graphMode === "tokens" && props.dailyUsage ? <DailyUsageBreakdown usage={props.dailyUsage} /> : null}
+      {graphMode === "tokens" ? <DailyUsageBreakdown usage={tokenBreakdown} /> : null}
     </div>
   );
 }
@@ -1062,11 +1095,22 @@ function DailyUsageBreakdown(props: { usage: CodexDailyUsageBreakdown }) {
     <div class="usage-graph-breakdown" aria-label="Daily token usage breakdown">
       {items.map(([label, value]) => (
         <span key={label}>
-          <strong>{label}</strong> {formatUsageValue(value)}
+          <strong>{label}</strong> {new Intl.NumberFormat().format(value)}
         </span>
       ))}
     </div>
   ) : null;
+}
+
+export function buildDailyTokenUsageEvents(entries: readonly DashboardDailyUsageCacheEntry[]): UsageEvent[] {
+  const points = new Map<string, UsageEvent>();
+  for (const entry of [...entries].sort((a, b) => a.fetchedAt - b.fetchedAt)) for (const point of entry.usage.points) {
+    const at = Date.parse(`${point.date}T00:00:00Z`);
+    if (Number.isFinite(at) && Number.isFinite(point.totalTokens) && point.totalTokens >= 0) {
+      points.set(`${entry.accountId}:${point.date}`, { at, accountId: entry.accountId, used: point.totalTokens, segments: buildDailyUsageSegments(point) });
+    }
+  }
+  return [...points.values()].sort((a, b) => a.at - b.at);
 }
 
 function buildDailyUsageSegments(point: CodexDailyUsageBreakdown["points"][number]): UsageSegment[] {
@@ -1121,9 +1165,19 @@ function selectUsageHistoryWindow(
   return [...baselineByAccount.values(), ...selected].sort((left, right) => left.at - right.at);
 }
 
-export function buildUsageEvents(history: DashboardUsageSample[]): UsageEvent[] {
+export function buildUsageEvents(history: DashboardUsageSample[], window?: { from: number; to: number; buckets: number }): UsageEvent[] {
   const previousByAccount = new Map<string, DashboardUsageSample>();
   const events: UsageEvent[] = [];
+  const grouped = new Map<string, UsageEvent>();
+  const add = (event: UsageEvent): void => {
+    if (!window) { events.push(event); return; }
+    if (event.at < window.from || event.at > window.to) return;
+    const bucket = Math.min(window.buckets - 1, Math.floor((event.at - window.from) / ((window.to - window.from) / window.buckets)));
+    const key = `${event.accountId}:${bucket}`;
+    const previous = grouped.get(key);
+    if (previous) { previous.used += event.used; previous.at = Math.max(previous.at, event.at); }
+    else grouped.set(key, event);
+  };
   for (const sample of [...history].sort((left, right) => left.at - right.at)) {
     const previous = previousByAccount.get(sample.accountId);
     previousByAccount.set(sample.accountId, sample);
@@ -1140,7 +1194,7 @@ export function buildUsageEvents(history: DashboardUsageSample[]): UsageEvent[] 
 
     const elapsedMinutes = Math.max(1, Math.round((sample.at - previous.at) / USAGE_GRAPH_MINUTE_MS));
     if (elapsedMinutes > USAGE_GRAPH_MAX_DISTRIBUTION_MINUTES) {
-      events.push({ at: sample.at, accountId: sample.accountId, used });
+      add({ at: sample.at, accountId: sample.accountId, used });
       continue;
     }
 
@@ -1150,14 +1204,14 @@ export function buildUsageEvents(history: DashboardUsageSample[]): UsageEvent[] 
     const usedPerMinute = used / elapsedMinutes;
     const elapsedMs = sample.at - previous.at;
     for (let minute = 1; minute <= elapsedMinutes; minute += 1) {
-      events.push({
+      add({
         at: previous.at + (elapsedMs * minute) / elapsedMinutes,
         accountId: sample.accountId,
         used: usedPerMinute
       });
     }
   }
-  return events;
+  return window ? [...grouped.values()].sort((a, b) => a.at - b.at) : events;
 }
 
 function aggregateUsageEvents(

@@ -16,13 +16,12 @@ import type {
   DashboardHostMessage,
   DashboardNotice,
   DashboardPeerView,
-  DashboardUsageSample,
+  DashboardUsageGraphData,
   DashboardWorkspaceEnvironment,
   DashboardWorkspaceFile,
   DashboardWorkspaceFileEntry,
   DashboardWorkspaceTerminalInfo
 } from "../../src/domain/dashboard/types";
-import type { CodexDailyUsageBreakdown } from "../../src/core/types";
 import { createAutoQueuePolicy, type AutoQueuePolicy } from "../../src/domain/autoQueuePolicy";
 import { BatchSelectionBar, OverviewSection, RecoveryPanel } from "./components";
 import { postMessageToHost } from "./host";
@@ -98,7 +97,6 @@ import { clampWebviewZoom, nextWebviewZoom } from "./webviewZoom";
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 const USAGE_HISTORY_STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
-const DAY_MS = 24 * 60 * 60 * 1000;
 type AccountSort =
   | "auto-queue"
   | "quota"
@@ -214,7 +212,13 @@ function App() {
   });
   const [uiPreferences, setUiPreferences] = useState<UiPreferences>(loadUiPreferences);
   const [shareExportCount, setShareExportCount] = useState(0);
-  const [usageHistory, setUsageHistory] = useState<DashboardUsageSample[]>(loadUsageHistory);
+  const [usageGraphData, setUsageGraphData] = useState<DashboardUsageGraphData>();
+  const [usageGraphError, setUsageGraphError] = useState<string>();
+  const [usageGraphVersion, setUsageGraphVersion] = useState(0);
+  const usageGraphRequestRef = useRef<string>();
+  const usageGraphSourceRef = useRef<string>();
+  const usageGraphDataSourceRef = useRef<string>();
+  const loadedUsageAccountRef = useRef<string>();
   const [accountInfoAccountId, setAccountInfoAccountId] = useState<string>();
   const [browserPath, setBrowserPath] = useState(() => (isBrowserDashboard ? window.location.pathname : "/"));
   const [onboardingOpen, setOnboardingOpen] = useState(false);
@@ -300,7 +304,6 @@ function App() {
     if (!route) return undefined;
     return route.deviceId ? route : { ...route, deviceId: selectedCliSessionRef.current?.id === route.id ? selectedCliSessionRef.current.deviceId : undefined };
   };
-  const [dailyUsageByAccount, setDailyUsageByAccount] = useState<Record<string, CodexDailyUsageBreakdown>>({});
   const [dailyUsageErrorByAccount, setDailyUsageErrorByAccount] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<DashboardToast>();
   const noticeControllerRef = useRef<ReturnType<typeof createDashboardToastController>>();
@@ -409,6 +412,10 @@ function App() {
             ? "Starting the Codex session timed out. Refresh sessions before trying again."
             : "The request timed out and may still be running. Your draft is saved. Refresh this session before deciding whether to send it again."
         });
+      }
+      if (action === "getUsageGraph" && usageGraphRequestRef.current === requestId) {
+        usageGraphRequestRef.current = undefined;
+        setUsageGraphError("Loading saved graph data timed out. Retry to query the database again.");
       }
       if (!onboardingOpen) return;
       const isPendingStep = onboardingPendingRef.current.has(action);
@@ -666,9 +673,17 @@ function App() {
           confirmLabel: "Reload"
         });
       }
+      if (message.type === "dashboard:action-result" && message.action === "getUsageGraph" && message.requestId === usageGraphRequestRef.current) {
+        usageGraphRequestRef.current = undefined;
+        if (message.status === "completed" && message.payload?.usageGraph) {
+          usageGraphDataSourceRef.current = usageGraphSourceRef.current;
+          setUsageGraphData(message.payload.usageGraph);
+          setUsageGraphError(undefined);
+        } else setUsageGraphError(message.error ?? "Saved graph data could not be loaded. Retry to query the database again.");
+      }
       if (message.type === "dashboard:action-result" && message.action === "getDailyUsage" && message.accountId) {
         if (message.status === "completed" && message.payload?.dailyUsage) {
-          setDailyUsageByAccount((current) => ({ ...current, [message.accountId!]: message.payload!.dailyUsage! }));
+          setUsageGraphVersion(current => current + 1);
           setDailyUsageErrorByAccount((current) => {
             const next = { ...current };
             delete next[message.accountId!];
@@ -1150,21 +1165,13 @@ function App() {
     },
     handleEscape: () => modals.handleEscape(isActionPending("completeOAuthSession"))
   });
-  useEffect(() => {
-    if (!snapshot?.dailyUsageCache?.length) return;
-    setDailyUsageByAccount((current) => {
-      const next = { ...current };
-      for (const entry of snapshot.dailyUsageCache ?? []) next[entry.accountId] = entry.usage;
-      return next;
-    });
-  }, [snapshot?.dailyUsageCache]);
-
   const workspaceRootsKey = cliComposerConfig?.projects?.map((project) => project.path).join("\n") ?? "";
+  const viewingBrowserWorkspace = isBrowserDashboard && isCliSessionsPath(browserPath) && snapshot?.settings.cliIntegrationEnabled === true;
   useEffect(() => {
-    if (isBrowserDashboard && realtimeConnected && hasBrowserWorkspaceShell(browserPath)) requestWorkspaceTerminals();
-  }, [isBrowserDashboard, realtimeConnected, requestWorkspaceTerminals]);
+    if (viewingBrowserWorkspace && realtimeConnected) requestWorkspaceTerminals();
+  }, [viewingBrowserWorkspace, realtimeConnected, requestWorkspaceTerminals]);
   useEffect(() => {
-    if (!isBrowserDashboard || !hasBrowserWorkspaceShell(browserPath)) return;
+    if (!viewingBrowserWorkspace) return;
     const projectPath = selectedCliSession?.projectPath ?? cliComposerConfig?.projects?.[0]?.path;
     const loadKey = `${selectedPeerId}:${browserPath}\n${projectPath ?? ""}:${workspaceRootsKey}`;
     // Object-valued composer/session state can be replaced by every realtime
@@ -1183,7 +1190,7 @@ function App() {
   }, [
     browserPath,
     cliComposerConfig?.projects?.[0]?.path,
-    isBrowserDashboard,
+    viewingBrowserWorkspace,
     requestWorkspaceEnvironment,
     requestWorkspaceTerminals,
     selectedCliSession?.projectPath,
@@ -1193,7 +1200,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!isBrowserDashboard || !realtimeConnected || !hasBrowserWorkspaceShell(browserPath)) return;
+    if (!viewingBrowserWorkspace || !realtimeConnected) return;
     const announce = (viewing: boolean): void => {
       postMessageToHost({ type: "dashboard:workspace-presence", viewing });
     };
@@ -1207,7 +1214,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       announce(false);
     };
-  }, [browserPath, isBrowserDashboard, realtimeConnected]);
+  }, [viewingBrowserWorkspace, realtimeConnected]);
 
   useEffect(() => {
     const session = selectedCliSession;
@@ -1326,60 +1333,6 @@ function App() {
   }, [uiPreferences]);
 
   useEffect(() => {
-    if (!snapshot?.usageHistory?.length) return;
-    setUsageHistory((current) => {
-      const next = isBrowserDashboard
-        ? [...(snapshot.usageHistory ?? [])]
-        : mergeUsageHistory(snapshot.usageHistory ?? [], current);
-      return sameUsageHistory(current, next) ? current : next;
-    });
-  }, [snapshot?.usageHistory]);
-
-  useEffect(() => {
-    if (isBrowserDashboard || !usageHistory.length) return;
-    postMessageToHost({ type: "dashboard:usage-history", samples: usageHistory.slice(-10_000) });
-  }, [usageHistory]);
-
-  useEffect(() => {
-    if (!snapshot?.accounts.length) return;
-    const at = Date.now();
-    const samples: DashboardUsageSample[] = snapshot.accounts.map((account) => ({
-      at,
-      accountId: account.id,
-      hourly: account.metrics.find((metric) => metric.key.includes("hourly"))?.percentage,
-      weekly: account.metrics.find((metric) => metric.key.includes("weekly"))?.percentage,
-      review: account.metrics.find((metric) => metric.key.includes("review"))?.percentage
-    }));
-    setUsageHistory((current) => {
-      const retentionDays = snapshot.settings.usageHistoryRetentionDays;
-      const cutoff = retentionDays > 0 ? at - retentionDays * DAY_MS : Number.NEGATIVE_INFINITY;
-      const next = current.filter((sample) => sample.at >= cutoff);
-      const latestByAccount = new Map<string, DashboardUsageSample>();
-      for (const sample of next) latestByAccount.set(sample.accountId, sample);
-      let changed = false;
-      for (const sample of samples) {
-        const previous = latestByAccount.get(sample.accountId);
-        const valuesChanged =
-          !previous ||
-          previous.hourly !== sample.hourly ||
-          previous.weekly !== sample.weekly ||
-          previous.review !== sample.review;
-        if (previous && !valuesChanged) continue;
-        next.push(sample);
-        latestByAccount.set(sample.accountId, sample);
-        changed = true;
-      }
-      if (!changed && next.length === current.length) return current;
-      try {
-        window.localStorage.setItem(USAGE_HISTORY_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        /* optional */
-      }
-      return next;
-    });
-  }, [snapshot?.accounts, snapshot?.settings.usageHistoryRetentionDays]);
-
-  useEffect(() => {
     const handleKeyboardShortcut = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -1409,6 +1362,22 @@ function App() {
     window.addEventListener("keydown", handleKeyboardShortcut);
     return () => window.removeEventListener("keydown", handleKeyboardShortcut);
   }, [snapshot, hasGlobalPendingAction, sendAction, modals]);
+
+  const usageAccounts = selectedPeerId === "local" || snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && peer.local)
+    ? snapshot?.accounts : snapshot?.peerAccounts?.[selectedPeerId];
+  const currentUsageAccountId = usageAccounts?.find(account => account.isActive)?.id;
+  useEffect(() => {
+    if (usageGraphSourceRef.current !== selectedPeerId) {
+      usageGraphSourceRef.current = selectedPeerId;
+      usageGraphRequestRef.current = undefined;
+      setUsageGraphData(undefined);
+      setUsageGraphError(undefined);
+    }
+    const key = snapshot?.settings.dailyTokenUsageEnabled && currentUsageAccountId ? `${selectedPeerId}:${currentUsageAccountId}` : undefined;
+    if (loadedUsageAccountRef.current === key) return;
+    loadedUsageAccountRef.current = key;
+    if (key && currentUsageAccountId) sendAction("getDailyUsage", currentUsageAccountId, { days: 30, automatic: true });
+  }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled]);
 
   if (!snapshot) {
     const connectionFailed = isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline");
@@ -2207,13 +2176,19 @@ function App() {
             )}
             emptyAccountContent={!overviewAccount ? renderAddAccount(true, true) : undefined}
             metricPriority={uiPreferences.metricPriority}
-            dailyUsage={overviewAccount ? dailyUsageByAccount[overviewAccount.id] : undefined}
+            usageGraphData={usageGraphDataSourceRef.current === selectedPeerId ? usageGraphData : undefined}
+            usageGraphError={usageGraphError}
+            usageGraphPending={isActionPending("getUsageGraph")}
+            usageGraphRevision={`${snapshot.usageSummary?.revision ?? 0}:${usageGraphVersion}`}
+            usageGraphSource={selectedPeerId}
+            usageGraphPaused={isBrowserDashboard && isCliSessionsPath(browserPath)}
+            onLoadUsageGraph={(query) => {
+              setUsageGraphError(undefined);
+              usageGraphSourceRef.current = selectedPeerId;
+              usageGraphRequestRef.current = sendAction("getUsageGraph", undefined, { usageGraph: query });
+            }}
             dailyUsagePending={Boolean(overviewAccount && isActionPending("getDailyUsage", overviewAccount.id))}
             dailyUsageError={overviewAccount ? dailyUsageErrorByAccount[overviewAccount.id] : undefined}
-            onLoadDailyUsage={() => {
-              if (overviewAccount) sendAction("getDailyUsage", overviewAccount.id, { days: 30 });
-            }}
-            usageHistory={usageHistory}
             onSetAutoSwitchLock={handleAutoSwitchLock}
             onAddAccount={
               overviewAccount
@@ -2518,7 +2493,7 @@ function App() {
         tokenAutomation={snapshot.tokenAutomation}
         encryptedSyncNeedsConfiguration={Boolean(snapshot.encryptedSyncNeedsConfiguration)}
         encryptedSyncNeedsSettingsSync={Boolean(snapshot.encryptedSyncNeedsSettingsSync)}
-        usageHistoryCount={usageHistory.length}
+        usageHistoryCount={snapshot.usageSummary?.count ?? 0}
         onClose={() => dispatch({ type: "close-settings" })}
         onPatchSettings={patchSettings}
         onSendSetting={sendSetting}
@@ -2533,7 +2508,6 @@ function App() {
         onPickCodexCliPath={() => postMessageToHost({ type: "dashboard:pickCodexCliPath" })}
         onClearCodexCliPath={() => postMessageToHost({ type: "dashboard:clearCodexCliPath" })}
         onClearUsageHistory={() => {
-          setUsageHistory([]);
           postMessageToHost({ type: "dashboard:usage-history", samples: [] });
           try {
             window.localStorage.removeItem(USAGE_HISTORY_STORAGE_KEY);
@@ -3059,52 +3033,6 @@ function sortAccounts(
       return direction * leftValue.localeCompare(rightValue);
     }
     return direction * ((leftValue as number) - (rightValue as number));
-  });
-}
-
-function loadUsageHistory(): DashboardUsageSample[] {
-  try {
-    const raw = window.localStorage.getItem(USAGE_HISTORY_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is DashboardUsageSample =>
-          Boolean(
-            item &&
-            typeof item === "object" &&
-            typeof (item as DashboardUsageSample).at === "number" &&
-            typeof (item as DashboardUsageSample).accountId === "string"
-          )
-        )
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function mergeUsageHistory(
-  authoritative: readonly DashboardUsageSample[],
-  local: readonly DashboardUsageSample[]
-): DashboardUsageSample[] {
-  const merged = new Map<string, DashboardUsageSample>();
-  for (const sample of [...authoritative, ...local]) {
-    merged.set(`${sample.accountId}:${sample.at}`, sample);
-  }
-  return [...merged.values()].sort((left, right) => left.at - right.at).slice(-10_000);
-}
-
-function sameUsageHistory(left: readonly DashboardUsageSample[], right: readonly DashboardUsageSample[]): boolean {
-  if (left.length !== right.length) return false;
-  return left.every((sample, index) => {
-    const other = right[index];
-    return Boolean(
-      other &&
-      sample.at === other.at &&
-      sample.accountId === other.accountId &&
-      sample.hourly === other.hourly &&
-      sample.weekly === other.weekly &&
-      sample.review === other.review
-    );
   });
 }
 

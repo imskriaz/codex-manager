@@ -1,5 +1,5 @@
 import type { CodexManagerAccountRecord, CodexManagerIndex } from "../core/types";
-import { parseAccountsIndex } from "./accountsIndex";
+import { parseAccountsIndex, parseAccountsIndexValue } from "./accountsIndex";
 import type { SqliteStateStore } from "./sqliteState";
 
 const initialized = new WeakSet<SqliteStateStore>();
@@ -24,14 +24,14 @@ export function readAccountIndex(store: SqliteStateStore): CodexManagerIndex {
   const header = store.get<Omit<CodexManagerIndex, "accounts">>("account-index", "header");
   if (!header) throw Object.assign(new Error("Accounts index does not exist."), { code: "ENOENT" });
   const accounts = store.prepare("SELECT data FROM accounts ORDER BY position").all().map(row => JSON.parse(String(row["data"])) as CodexManagerAccountRecord);
-  return parseAccountsIndex(JSON.stringify({ ...header, accounts }), store.file);
+  return parseAccountsIndexValue({ ...header, accounts }, store.file);
 }
 
 export function readAccountRow(store: SqliteStateStore, id: string, home: string): CodexManagerAccountRecord | undefined {
   if (!hasAccountRows(store)) return undefined;
   const row = store.prepare("SELECT data FROM accounts WHERE id = ?").get(id);
   if (!row) return undefined;
-  const account = parseAccountsIndex(JSON.stringify({ accounts: [JSON.parse(String(row["data"]))] }), store.file).accounts[0]!;
+  const account = parseAccountsIndexValue({ accounts: [JSON.parse(String(row["data"]))] }, store.file).accounts[0]!;
   if (account.id !== id) throw new Error("Stored account identity does not match its database key.");
   const header = store.get<Omit<CodexManagerIndex, "accounts">>("account-index", "header");
   const active = header?.activeAccountStateVersion === 1 ? header.activeAccountIdsByCodexHome?.[home] : header?.currentAccountId;
@@ -40,7 +40,7 @@ export function readAccountRow(store: SqliteStateStore, id: string, home: string
 
 /** Account rows and rotating recovery snapshots commit together; unchanged rows are not rewritten. */
 export function saveAccountIndex(store: SqliteStateStore, value: CodexManagerIndex, backupCount = 0, onlyIfMissing = false): void {
-  const index = parseAccountsIndex(JSON.stringify(value), store.file);
+  const index = parseAccountsIndexValue(value, store.file);
   const ids = new Set(index.accounts.map(account => account.id));
   if (ids.size !== index.accounts.length) throw new Error("The accounts index contains duplicate account IDs.");
   schema(store);

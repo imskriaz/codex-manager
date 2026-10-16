@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildUsageEvents, resolveUsageGraphBucketCount } from "../webview-src/dashboard/overviewSection";
+import { buildUsageEvents, buildDailyTokenUsageEvents, resolveUsageGraphBucketCount } from "../webview-src/dashboard/overviewSection";
 
 describe("quota usage graph", () => {
   it("distributes a quota change observed after five minutes across those minutes", () => {
@@ -32,5 +32,23 @@ describe("quota usage graph", () => {
 
   it("uses one bucket per minute in the one-hour view", () => {
     expect(resolveUsageGraphBucketCount("1h")).toBe(60);
+  });
+
+  it("aggregates quota interpolation without retaining every minute's event", () => {
+    const start = Date.now() - 10 * 60_000;
+    const history = [{ at: start, accountId: "a", hourly: 90 }, { at: start + 10 * 60_000, accountId: "a", hourly: 80 }];
+    const events = buildUsageEvents(history, { from: start, to: start + 10 * 60_000, buckets: 2 });
+    expect(events).toHaveLength(2);
+    expect(events.reduce((sum, event) => sum + event.used, 0)).toBe(10);
+  });
+
+  it("consolidates daily tokens by their saved account and date without double counting", () => {
+    const events = buildDailyTokenUsageEvents([
+      { accountId: "a", fetchedAt: 1, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 10 }] } },
+      { accountId: "b", fetchedAt: 2, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 20 }] } },
+      { accountId: "a", fetchedAt: 3, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 15 }] } }
+    ]);
+    expect(events.map(event => [event.accountId, event.used])).toEqual([["a", 15], ["b", 20]]);
+    expect(events.every(event => event.at === Date.parse("2026-10-15T00:00:00Z"))).toBe(true);
   });
 });

@@ -18,6 +18,7 @@ export type DashboardSettingKey =
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
+  | "dailyTokenUsageEnabled"
   | "autoSwitchEnabled"
   | "autoSwitchWaitForSessionsEnabled"
   | "autoSwitchReloadWindowEnabled"
@@ -63,6 +64,7 @@ export interface DashboardSettings {
   /** Shared candidate freshness bound in milliseconds. */
   quotaFreshnessMs?: number;
   usageHistoryRetentionDays: number;
+  dailyTokenUsageEnabled?: boolean;
   autoSwitchEnabled: boolean;
   autoSwitchWaitForSessionsEnabled?: boolean;
   hourlyQuotaControlEnabled: boolean;
@@ -364,6 +366,24 @@ export interface DashboardDailyUsageCacheEntry {
   usage: CodexDailyUsageBreakdown;
 }
 
+export interface DashboardUsageGraphQuery {
+  mode: "quota" | "tokens";
+  from: number;
+  to: number;
+}
+
+export interface DashboardUsageGraphData extends DashboardUsageGraphQuery {
+  history: DashboardUsageSample[];
+  dailyUsageCache: DashboardDailyUsageCacheEntry[];
+  oldestAt?: number;
+  truncated: boolean;
+}
+
+export interface DashboardUsageSummary {
+  revision: number;
+  count: number;
+}
+
 export interface DashboardAccountViewModel {
   id: string;
   /** Last durable account-record change, used to order authenticated peer events. */
@@ -474,6 +494,7 @@ export interface DashboardState {
   /** Shared by the VS Code panel and browser dashboard; omitted by older hosts. */
   usageHistory?: DashboardUsageSample[];
   dailyUsageCache?: DashboardDailyUsageCacheEntry[];
+  usageSummary?: DashboardUsageSummary;
   connectedPeers?: DashboardPeerView[];
   /** Account/card state published by connected PCs over the peer WebSocket. */
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
@@ -536,6 +557,7 @@ export type DashboardActionName =
   | "setAccountTokenRefreshEnabled"
   | "refreshToken"
   | "getDailyUsage"
+  | "getUsageGraph"
   | "openNewCodexWebview"
   | "startCodexCliSession"
   | "listCodexCliSessions"
@@ -590,6 +612,8 @@ export interface DashboardActionPayload {
   tokenRefreshEnabled?: boolean;
   enabled?: boolean;
   days?: number;
+  automatic?: boolean;
+  usageGraph?: DashboardUsageGraphQuery;
   sessionId?: string;
   /** Fence steering to the active turn observed by this client. */
   expectedTurnId?: string;
@@ -854,6 +878,8 @@ export interface DashboardActionResultPayload {
   restoredCount?: number;
   resetCredits?: import("../../core/types").CodexResetCreditsSnapshot;
   dailyUsage?: CodexDailyUsageBreakdown;
+  dailyUsageFetchedAt?: number;
+  usageGraph?: DashboardUsageGraphData;
   cliSessions?: DashboardCliSessionSummary[];
   cliSession?: DashboardCliSessionSummary;
   cliSessionMessages?: DashboardCliSessionMessage[];

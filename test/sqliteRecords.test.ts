@@ -42,6 +42,7 @@ describe("account and statistics rows", () => {
     expect(readAccountIndex(store).accounts[0]?.enabled).toBe(false);
     expect(JSON.parse(store.get<{text:string}>("files", "accounts-index.backup-1.json")!.text).accounts[0].enabled).toBeUndefined();
     expect(() => saveAccountIndex(store, { accounts: [account, account] })).toThrow(/duplicate/i);
+    expect(() => saveAccountIndex(store, { accounts: [{ ...account, updatedAt: NaN }] })).toThrow();
     expect(readAccountIndex(store).accounts).toHaveLength(1);
     const peer = new DatabaseSync(store.file);
     try {
@@ -72,6 +73,14 @@ describe("account and statistics rows", () => {
 });
 
 describe("durable session recording", () => {
+  it("queries the newest session state without reviving an older running turn", () => {
+    const old = Date.now() - 10 * 60_000;
+    saveSessionLive(store, root, live({ updatedAt: old }));
+    saveSessionLive(store, root, live({ streamId: "cccccccc-cccc-cccc-cccc-cccccccccccc", updatedAt: old + 1, status: "completed" }));
+    expect(listStoredSessionLive(store, root)).toEqual([]);
+    saveSessionLive(store, root, live({ streamId: "dddddddd-dddd-dddd-dddd-dddddddddddd", updatedAt: Date.now(), status: "completed" }));
+    expect(listStoredSessionLive(store, root)).toHaveLength(1);
+  });
   it("rejects duplicate and stale events, retains each turn's totals, and keeps the account captured at start", () => {
     const first = live(), second = live({ streamId: "cccccccc-cccc-cccc-cccc-cccccccccccc", updatedAt: first.updatedAt + 20 });
     expect(saveSessionLive(store, root, first, "a")).toBe(true);

@@ -72,6 +72,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.autoRefreshCurrentMinutes,
     state.settings.quotaFreshnessMs ?? "",
     state.settings.usageHistoryRetentionDays,
+    state.settings.dailyTokenUsageEnabled ? "1" : "0",
     state.settings.persistentLoggingEnabled ? "1" : "0",
     state.settings.persistentLogRetentionDays ?? 3,
     state.settings.encryptedSyncEnabled ? "1" : "0",
@@ -114,6 +115,8 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.terminalNotice?.message ?? "",
     state.terminalNotice?.createdAt ?? "",
     dailyUsageSignature,
+    state.usageSummary?.revision ?? "",
+    state.usageSummary?.count ?? "",
     accountSignature
   ].join("||");
 }

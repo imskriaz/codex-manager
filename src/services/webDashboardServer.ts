@@ -50,7 +50,7 @@ import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import {
   appendDashboardUsageSnapshot,
-  readDashboardDailyUsageCache,
+  readDashboardUsageSummary,
   saveDashboardUsageHistory
 } from "./dashboardUsageHistory";
 import { publishDashboardRealtime, subscribeDashboardRealtime } from "./dashboardRealtime";
@@ -1233,6 +1233,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
+    if (request.type === "dashboard:action" && ["getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -2583,13 +2584,13 @@ export class WebDashboardServer implements vscode.Disposable {
     );
     const peerSessions = [...this.peerSessions.values()];
     const accounts = mergeFreshPeerAccountStates(state.accounts, peerSessions);
-    return {
+    const dashboardState = {
       ...state,
       accounts,
-      usageHistory: await appendDashboardUsageSnapshot(this.context, { ...state, accounts }),
-      dailyUsageCache: readDashboardDailyUsageCache(this.context),
       peerAccounts: Object.fromEntries(peerSessions.map((peer) => [peer.deviceId, peer.accounts ?? []]))
     };
+    await appendDashboardUsageSnapshot(this.context, dashboardState);
+    return { ...dashboardState, usageSummary: readDashboardUsageSummary(this.context) };
   }
 
 

@@ -61,6 +61,7 @@ export async function handleDashboardSettingUpdate(
     case "autoResetEnabled":
     case "cliIntegrationEnabled":
     case "quotaWarningEnabled":
+    case "dailyTokenUsageEnabled":
     case "encryptedSyncEnabled":
     case "encryptedSyncClaimAllAccountsEnabled":
     case "fullCrossPcAccountSyncEnabled":

@@ -45,7 +45,7 @@ export function noticeFromActionResult(
     };
   }
 
-  if (["getDailyUsage", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "startCodexCliSession", "sendCodexCliSessionMessage", "cancelCodexCliSessionTurn"].includes(message.action)) {
+  if (["getDailyUsage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "startCodexCliSession", "sendCodexCliSessionMessage", "cancelCodexCliSessionTurn"].includes(message.action)) {
     return undefined;
   }
 

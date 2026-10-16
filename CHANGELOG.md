@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2
+
+- Consolidate saved daily token usage across accounts with an opt-in check on account load, limited to one attempt per account every 24 hours. Preserve history and report failed or incomplete checks.
+- Query quota and token graph ranges from SQLite instead of copying full histories into dashboards. Write changed usage rows incrementally and keep only the visible graph result in memory.
+- Reduce account validation copies, stream legacy-state migration, skip unnecessary cleanup reads, and query recent session state without loading historical turns. Avoid rebuilding account snapshots after read-only graph, conversation, or workspace queries. Pause automatic workspace inspection and viewer heartbeats while viewing the dashboard. Preserve runtime caches and recovery records.
+
 ## 1.3.1
 
 - Recover quota-interrupted parents even after native running status stops, including usage-limited goals. Atomically transfer Auto Resume snapshots into SQLite recovery, preserve peer captures during acknowledgement, and react to committed status changes. Retain recovery when the Codex home changes or storage fails.

@@ -2,6 +2,30 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); });
 describe("browser cache recovery", () => {
+  it("keeps recovery metadata while omitting graph histories from saved and restored dashboard caches", async () => {
+    const records = new Map<string, unknown>();
+    const db = { transaction: () => {
+      const transaction = { oncomplete: undefined as undefined | (() => void), objectStore: () => ({
+        put: (record: { key: string }) => { records.set(record.key, record); queueMicrotask(() => transaction.oncomplete?.()); },
+        get: (key: string) => { const request = { result: records.get(key), onsuccess: undefined as undefined | (() => void) }; queueMicrotask(() => request.onsuccess?.()); return request; }
+      }) };
+      return transaction;
+    } };
+    vi.stubGlobal("indexedDB", { open: () => {
+      const request = { result: db, onsuccess: undefined as undefined | (() => void) };
+      queueMicrotask(() => request.onsuccess?.());
+      return request;
+    } });
+    const cache = await import("../webview-src/dashboard/cliSessionCache");
+    await cache.writeDashboardStateCache({ accounts: [], settings: {}, brandSub: "saved metadata", usageHistory: [{ at: 1 }], dailyUsageCache: [{ accountId: "a" }] } as never);
+    const result = await cache.readDashboardStateCache();
+    expect(result?.brandSub).toBe("saved metadata");
+    expect(result).not.toHaveProperty("usageHistory");
+    expect(result).not.toHaveProperty("dailyUsageCache");
+    const record = records.get("dashboard-state") as { value: { state: Record<string, unknown> } };
+    record.value.state["usageHistory"] = [{ at: 1 }];
+    expect(await cache.readDashboardStateCache()).not.toHaveProperty("usageHistory");
+  });
   it("bounds stalled cache writes and invalidations and allows a later write", async () => {
     vi.resetModules();
     vi.useFakeTimers();

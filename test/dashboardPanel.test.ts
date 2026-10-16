@@ -156,7 +156,7 @@ describe("publishDashboardSnapshot", () => {
     expect(setPanelTitle).toHaveBeenCalledWith("Quota Summary");
     expect(postMessage).toHaveBeenCalledWith({
       type: "dashboard:snapshot",
-      state: { ...state, onboardingCompleted: true, dailyUsageCache: [] }
+      state: { ...state, onboardingCompleted: true, usageSummary: { revision: 0, count: 0 } }
     });
     expect(schedulePublishState).not.toHaveBeenCalled();
 
@@ -188,7 +188,7 @@ describe("publishDashboardSnapshot", () => {
     expect(schedulePublishState).toHaveBeenCalledTimes(1);
   });
 
-  it("hydrates persisted daily usage into the published snapshot", async () => {
+  it("publishes only usage metadata and leaves daily history in storage", async () => {
     const state = createState();
     const dailyUsageCache = [
       {
@@ -213,7 +213,7 @@ describe("publishDashboardSnapshot", () => {
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "dashboard:snapshot",
-      state: { ...state, onboardingCompleted: true, dailyUsageCache }
+      state: { ...state, onboardingCompleted: true, usageSummary: { revision: 0, count: 0 } }
     });
   });
 });

@@ -27,6 +27,23 @@ it("allows remote batches and sync to reach the same deadline as their local act
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 import { normalizeCloudflaredDomain } from "../src/presentation/dashboard/settings";
 
+it("avoids rebuilding account snapshots for read-only graph, conversation, and workspace queries", async () => {
+  const server = Object.create(WebDashboardServer.prototype) as {
+    buildState: ReturnType<typeof vi.fn>;
+    appendClientSnapshot: (messages: unknown[], request: unknown) => Promise<void>;
+  };
+  server.buildState = vi.fn().mockResolvedValue({ accounts: [] });
+  for (const action of ["getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"]) {
+    const messages: unknown[] = [];
+    await server.appendClientSnapshot(messages, { type: "dashboard:action", action });
+    expect(messages).toEqual([]);
+  }
+  expect(server.buildState).not.toHaveBeenCalled();
+  const messages: unknown[] = [];
+  await server.appendClientSnapshot(messages, { type: "dashboard:action", action: "refreshView" });
+  expect(messages).toEqual([{ type: "dashboard:snapshot", state: { accounts: [] } }]);
+});
+
 it("invalidates browser assets when a build changes within the requested release version", () => {
   const folder = mkdtempSync(join(tmpdir(), "codex-assets-"));
   try {

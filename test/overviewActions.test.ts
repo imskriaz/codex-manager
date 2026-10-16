@@ -253,7 +253,7 @@ describe("overview actions", () => {
     expect(overview).toContain("usage-graph-tooltip");
     expect(overview).toContain("onMouseEnter");
     expect(overview).toContain("usage-graph-settings-popover");
-    expect(overview).toContain("onLoadDailyUsage");
+    expect(overview).toContain("onLoadUsageGraph");
     expect(overview).toContain('graphMode === "tokens"');
     expect(state).toContain("availableMetrics");
     expect(state).toContain('"login-date"');
