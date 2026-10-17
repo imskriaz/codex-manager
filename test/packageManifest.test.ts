@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.3.2");
+    expect(manifest.version).toBe("3.1.3");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });

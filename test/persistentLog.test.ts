@@ -284,13 +284,17 @@ it("downloads redacted retained logs even after logging is disabled and bounds e
   expect(exported.filename).toMatch(/^codex-manager-logs-.*\.json$/);
   expect(exported.text).not.toContain("secret-value"); expect(exported.text).not.toContain("dev@example.com");
   expect(JSON.parse(exported.text)).toMatchObject({ format: "codex-manager-logs", level: "info", limited: false });
-  const log = logger(directory);
+  let eventTime = Date.now();
+  const log = logger(directory, 3, () => new Date(eventTime++));
   for (let i = 0; i < 1050; i++) { log.write("info", "test", `event-${i}`); if (i % 100 === 0) await log.flush(); }
   const result = await log.readExport();
   expect(result.limited).toBe(true); expect(result.records).toHaveLength(1000);
+  expect(result.records[0]).toMatchObject({ message: "event-50" });
+  expect(result.records.at(-1)).toMatchObject({ message: "event-1049" });
   for (let i = 0; i < 20; i++) log.write("info", "test", "x".repeat(60000));
   const large = await log.readExport();
   expect(large.limited).toBe(true); expect(Buffer.byteLength(JSON.stringify(large))).toBeLessThan(600000);
+  expect(large.records.at(-1)).toMatchObject({ message: "x".repeat(60000) });
 });
 
 it("reports export storage errors and bounds an unresponsive flush", async () => {

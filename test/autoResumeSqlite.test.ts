@@ -57,9 +57,9 @@ it("captures quota-stopped parents, survives a fresh connection, verifies native
   store.close();store=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(store);
   const result=await resumePersistedCodexSessions(context());
   expect(result).toEqual({attempted:2,opened:2,failed:[]});
-  expect(tabs.map(tab=>tab.input.uri.path)).toEqual(ids.map(id=>`/local/${id}`));
-  expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
-  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith").map(([, uri]) => (uri as {path:string}).path)).toEqual(ids.slice(0,2).map(id=>`/local/${id}`));
+  expect(tabs.map(tab=>tab.input.uri.path)).toEqual(ids.slice(0,2).map(id=>`/local/${id}`));
+  expect(vscode.window.tabGroups.close).toHaveBeenCalledOnce();
+  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith").map(([, uri]) => (uri as {path:string}).path)).toEqual([...ids,...ids.slice(0,2)].map(id=>`/local/${id}`));
   expect(store.get(namespace,queue)).toBeUndefined();expect(store.get(namespace,snapshot)).toBeUndefined();
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
 });

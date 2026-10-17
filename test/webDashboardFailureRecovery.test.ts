@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { createServer as createHttpServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import * as vscode from "vscode";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardClientMessage, DashboardHostMessage } from "../src/domain/dashboard/types";
 
@@ -7,6 +10,7 @@ vi.mock("../src/application/dashboard/buildDashboardState", () => ({ buildDashbo
 vi.mock("../src/presentation/dashboard/actionHandlers", () => ({ executeDashboardActionMessage: executeAction }));
 import { WebDashboardServer } from "../src/services/webDashboardServer";
 import * as sessionEditor from "../src/services/codexSessionResume";
+import * as usageHistory from "../src/services/dashboardUsageHistory";
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -20,6 +24,115 @@ function createServer() {
 }
 
 describe("browser action completion during state failure", () => {
+  it("serves HTTP pages, assets and account state while local session discovery never responds", async () => {
+    const { server } = createServer();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+    Reflect.set(server, "hasWorkspaceViewer", () => true);
+    Reflect.set(server, "isAuthorized", async () => true);
+    vi.spyOn(sessionEditor, "readCodexCliSessions").mockReturnValue(new Promise(() => undefined));
+    vi.spyOn(usageHistory, "appendDashboardUsageSnapshot").mockResolvedValue([]);
+    vi.spyOn(usageHistory, "readDashboardUsageSummary").mockReturnValue({ revision: 0, count: 0 });
+    buildState.mockResolvedValue({ accounts: [{ id: "saved-account" }], settings: {} });
+    const host = createHttpServer((request, response) => {
+      void Reflect.get(server, "handle").call(server, request, response).catch(() => { response.statusCode = 500; response.end(); });
+    });
+    await new Promise<void>(resolve => host.listen(0, "127.0.0.1", resolve));
+    const origin = `http://127.0.0.1:${(host.address() as AddressInfo).port}`;
+    try {
+      const start = Date.now();
+      const stateRequest = fetch(`${origin}/api/state`);
+      const html = await fetch(origin);
+      expect(html.status).toBe(200);
+      expect(await html.text()).toContain('id="app"');
+      const asset = await fetch(`${origin}/assets/browserHost.js`);
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toContain("acquireVsCodeApi");
+      const state = await stateRequest;
+      expect(state.status).toBe(200);
+      expect(await state.json()).toMatchObject({ accounts: [{ id: "saved-account" }] });
+      expect(Date.now() - start).toBeLessThan(5_000);
+    } finally {
+      await new Promise<void>(resolve => { host.close(() => resolve()); host.closeAllConnections(); });
+      server.dispose();
+    }
+  });
+
+  it("does not block a dashboard state build on local session discovery", async () => {
+    vi.useFakeTimers();
+    const { server } = createServer();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback
+    } as never);
+    Reflect.set(server, "hasWorkspaceViewer", () => true);
+    vi.spyOn(sessionEditor, "readCodexCliSessions").mockReturnValue(new Promise(() => undefined));
+    try {
+      const work = Reflect.get(server, "getConnectedPeers").call(server) as Promise<unknown[]>;
+      await vi.advanceTimersByTimeAsync(750);
+      await expect(work).resolves.toEqual([expect.objectContaining({ local: true, sessionCount: 0 })]);
+    } finally {
+      server.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses cached session counts while discovery is slow and updates them after completion", async () => {
+    vi.useFakeTimers();
+    const { server } = createServer();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+    Reflect.set(server, "hasWorkspaceViewer", () => true);
+    Reflect.set(server, "localCliSessions", [{ id: "saved", status: "idle" }]);
+    let finish!: (sessions: never[]) => void;
+    const read = vi.spyOn(sessionEditor, "readCodexCliSessions").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    try {
+      const first = Reflect.get(server, "getConnectedPeers").call(server);
+      const duplicate = Reflect.get(server, "getConnectedPeers").call(server);
+      await vi.advanceTimersByTimeAsync(750);
+      expect((await first)[0].sessionCount).toBe(1);
+      expect((await duplicate)[0].sessionCount).toBe(1);
+      expect(read).toHaveBeenCalledOnce();
+      finish([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await Reflect.get(server, "getConnectedPeers").call(server))[0].sessionCount).toBe(0);
+    } finally { server.dispose(); vi.useRealTimers(); }
+  });
+
+  it("returns a retryable HTTP failure within 5 seconds and recovers without a reload", async () => {
+    vi.useFakeTimers();
+    const { server } = createServer();
+    let finish!: (state: unknown) => void;
+    buildState.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ accounts: [], settings: {} });
+    const end = vi.fn(), response = { statusCode: 200, setHeader: vi.fn(), end };
+    try {
+      const work = Reflect.get(server, "sendState").call(server, response);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await work;
+      expect(response.statusCode).toBe(503);
+      expect(response.setHeader).toHaveBeenCalledWith("Retry-After", "2");
+      expect(JSON.parse(end.mock.calls[0]![0])).toMatchObject({ error: expect.stringContaining("still loading") });
+      vi.spyOn(usageHistory, "appendDashboardUsageSnapshot").mockResolvedValue([]);
+      vi.spyOn(usageHistory, "readDashboardUsageSummary").mockReturnValue({ revision: 0, count: 0 });
+      finish({ accounts: [], settings: {} });
+      await vi.advanceTimersByTimeAsync(0);
+      response.statusCode = 200;
+      await Reflect.get(server, "sendState").call(server, response);
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(end.mock.calls.at(-1)![0])).toHaveProperty("accounts");
+    } finally { server.dispose(); vi.useRealTimers(); }
+  });
+
+  it("renders accounts when the optional usage history write stalls", async () => {
+    vi.useFakeTimers();
+    const { server } = createServer();
+    buildState.mockResolvedValue({ accounts: [], settings: {} });
+    vi.spyOn(usageHistory, "appendDashboardUsageSnapshot").mockReturnValue(new Promise(() => undefined));
+    vi.spyOn(usageHistory, "readDashboardUsageSummary").mockReturnValue({ revision: 4, count: 2 });
+    try {
+      const work = Reflect.get(server, "buildState").call(server);
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(work).resolves.toMatchObject({ accounts: [], usageSummary: { revision: 4, count: 2 } });
+    } finally { server.dispose(); vi.useRealTimers(); }
+  });
+
   it("does not serve a revoked snapshot when revocation finishes during live message discovery",async()=>{
     const {server}=createServer();
     Reflect.set(server,"settingsStore",{getDashboardSettings:()=>({})});

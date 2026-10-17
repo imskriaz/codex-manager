@@ -65,6 +65,31 @@ describe("buildDashboardState token recovery", () => {
     await vi.waitFor(() => expect(repo.updateTokens).toHaveBeenCalledOnce());
   });
 
+  it("reports stalled required storage without returning an empty account list", async () => {
+    vi.useFakeTimers();
+    const repo = { getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy" }), listAccounts: vi.fn().mockReturnValue(new Promise(() => undefined)) };
+    const settings = { resolveLanguage: () => "en", getDashboardSettings: () => ({ dashboardTheme: "dark" }) };
+    try {
+      const work = expect(buildDashboardState(repo as never, settings as never, "logo")).rejects.toThrow("Saved accounts were preserved");
+      await vi.advanceTimersByTimeAsync(4_000);
+      await work;
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("renders available accounts while a credential read is stalled, then recovers", async () => {
+    vi.useFakeTimers();
+    const account = { id: "slow-credentials", email: "slow@example.com", createdAt: 1, updatedAt: 1 };
+    const getTokens = vi.fn().mockReturnValueOnce(new Promise(() => undefined)).mockResolvedValue({ accessToken: "valid", idToken: "id" });
+    const repo = { getIndexHealthSummary: vi.fn().mockResolvedValue({ status: "healthy", availableBackups: 0 }), listAccounts: vi.fn().mockResolvedValue([account]), getTokens };
+    const settings = { resolveLanguage: () => "en", getDashboardSettings: () => ({ dashboardTheme: "dark", displayLanguage: "en" }) };
+    try {
+      const work = buildDashboardState(repo as never, settings as never, "logo");
+      await vi.advanceTimersByTimeAsync(500);
+      expect((await work).accounts[0]).toMatchObject({ id: "slow-credentials", healthKind: "refresh_failed", healthMessage: expect.stringContaining("still loading") });
+      expect((await buildDashboardState(repo as never, settings as never, "logo")).accounts[0]?.healthKind).toBe("healthy");
+    } finally { vi.useRealTimers(); }
+  });
+
   it("isolates a credential read failure and recovers that account on the next snapshot", async () => {
     const accounts = ["storage-unavailable", "storage-healthy"].map((id) => ({ id, email: `${id}@example.com`, createdAt: 1, updatedAt: 1 }));
     const tokens = { idToken: "id", accessToken: "valid", refreshToken: "refresh" };

@@ -221,13 +221,13 @@ export class PersistentSqliteLogger {
     const rows = (await this.database()).recent<unknown>("logs", 1001);
     const records: unknown[] = [];
     let bytes = 0;
-    for (const row of rows.slice(0, 1000)) {
+    for (const row of rows.slice(-1000).reverse()) {
       const record = sanitizeLogValue(row);
       bytes += Buffer.byteLength(JSON.stringify(record));
       if (bytes > 512 * 1024) break;
       records.push(record);
     }
-    return { records, limited: records.length < rows.length };
+    return { records: records.reverse(), limited: records.length < rows.length };
   }
 
   async close(): Promise<void> {

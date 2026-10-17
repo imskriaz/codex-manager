@@ -1365,6 +1365,40 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
   }
 }
 
+/** Resolve restored custom documents before closing them to avoid provider restore races. */
+export async function closeOpenCodexSessionTabs(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const readTabs = () => (vscode.window.tabGroups?.all ?? []).flatMap(group => group.tabs)
+    .filter(tab => (tab.input as { viewType?: string })?.viewType === CODEX_CONVERSATION_VIEW_TYPE);
+  if (!readTabs().length) return;
+  const requireSavedTabs = () => {
+    if (readTabs().some(tab => tab.isDirty)) throw new Error("A Codex conversation has unsaved changes. Save or close it, then retry Auto Resume.");
+  };
+  requireSavedTabs();
+  await activateOfficialCodexExtension();
+  signal?.throwIfAborted();
+  const tabs = readTabs();
+  for (const tab of tabs) {
+    signal?.throwIfAborted();
+    const input = tab.input as { uri?: vscode.Uri };
+    if (!input.uri) throw new Error("A restored Codex tab has no conversation address. Close it before retrying Auto Resume.");
+    // openWith joins VS Code's restored-editor resolution before we dispose its document.
+    try {
+      await vscode.commands.executeCommand("vscode.openWith", input.uri, CODEX_CONVERSATION_VIEW_TYPE,
+        { viewColumn: tab.group?.viewColumn ?? vscode.ViewColumn.Active, preserveFocus: true, preview: tab.isPreview });
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("No custom document found")) throw error;
+      recordPersistentEvent("warning", "auto-resume", "Closing a restored tab with a missing custom document", undefined, error);
+    }
+  }
+  signal?.throwIfAborted();
+  requireSavedTabs();
+  if (readTabs().some(tab => !tabs.includes(tab))) throw new Error("Codex tabs changed during recovery. Saved sessions were retained; retry after opening finishes.");
+  const closed = await vscode.window.tabGroups.close(tabs, true);
+  signal?.throwIfAborted();
+  if (!closed || readTabs().length) throw new Error("VS Code could not close all previous Codex conversation tabs. Saved recovery was retained; close them and retry.");
+}
+
 export function readOpenCodexSessionIds(includePreview = true): string[] {
   const ids = (vscode.window.tabGroups?.all ?? [])
     .flatMap((group) => group.tabs)

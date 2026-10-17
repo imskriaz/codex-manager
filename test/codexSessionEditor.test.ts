@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareCodexSessionsForExtensionHostRestart, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
-import { openCodexSessionInVsCode, readOpenCodexSessionIds } from "../src/services/codexSessionResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds } from "../src/services/codexSessionResume";
 
 describe("Codex VS Code session editor", () => {
   let activateExtension: ReturnType<typeof vi.fn>;
@@ -32,6 +32,47 @@ describe("Codex VS Code session editor", () => {
       }
       return undefined;
     });
+  });
+
+  it("resolves restored editors across groups, then closes only conversation tabs", async () => {
+    const groups = vscode.window.tabGroups.all as unknown as Array<{ tabs: Array<{ input: unknown; isDirty?: boolean; group?: { viewColumn: number } }> }>;
+    const native = (id: string, column: number) => ({ input: { viewType: "chatgpt.conversationEditor", uri: { scheme: "openai-codex", authority: "route", path: `/local/${id}` } }, group: { viewColumn: column } });
+    const first = native("first", 1), second = native("second", 2), file = { input: { uri: { scheme: "file" } } };
+    groups[0]!.tabs.push(first, file); groups.push({ tabs: [second] });
+    const resolved: unknown[] = [];
+    vi.mocked(vscode.commands.executeCommand).mockImplementation(async (_name, uri) => { resolved.push(uri); });
+    vi.mocked(vscode.window.tabGroups.close).mockImplementation(async closing => {
+      expect(resolved).toEqual([first.input.uri, second.input.uri]);
+      for (const group of groups) group.tabs = group.tabs.filter(tab => !(closing as unknown[]).includes(tab));
+      return true;
+    });
+    await closeOpenCodexSessionTabs();
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("vscode.openWith", second.input.uri, "chatgpt.conversationEditor", expect.objectContaining({ viewColumn: 2, preserveFocus: true }));
+    expect(groups.flatMap(group => group.tabs)).toEqual([file]);
+  });
+
+  it.each(["dirty", "new dirty", "refused", "unchanged", "resolution failed", "cancelled", "new tab"])("preserves recovery when closing is %s", async failure => {
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    await openCodexSessionInVsCode(id);
+    const tab = vscode.window.tabGroups.all[0]!.tabs[0]!;
+    const controller = new AbortController();
+    if (failure === "dirty") Object.assign(tab, { isDirty: true });
+    if (failure === "refused") vi.mocked(vscode.window.tabGroups.close).mockResolvedValue(false);
+    if (failure === "unchanged") vi.mocked(vscode.window.tabGroups.close).mockResolvedValue(true);
+    if (failure === "resolution failed") vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error("provider unavailable"));
+    if (failure === "cancelled") activateExtension.mockImplementation(async () => { controller.abort(); });
+    if (failure === "new dirty") vi.mocked(vscode.commands.executeCommand).mockImplementation(async () => { Object.assign(tab, { isDirty: true }); });
+    if (failure === "new tab") vi.mocked(vscode.commands.executeCommand).mockImplementation(async () => { (vscode.window.tabGroups.all[0]!.tabs as unknown[]).push({ input: { viewType: "chatgpt.conversationEditor" } }); });
+    await expect(closeOpenCodexSessionTabs(controller.signal)).rejects.toThrow();
+    if (!["refused", "unchanged"].includes(failure)) expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+  });
+
+  it("closes a broken restored custom document so recovery can reopen it", async () => {
+    await openCodexSessionInVsCode("01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3");
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValue(new Error("No custom document found"));
+    await closeOpenCodexSessionTabs();
+    expect(vscode.window.tabGroups.close).toHaveBeenCalledOnce();
+    expect(readOpenCodexSessionIds()).toEqual([]);
   });
 
   it("promotes an existing preview tab before acknowledging automatic recovery", async () => {

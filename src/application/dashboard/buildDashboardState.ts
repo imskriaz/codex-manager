@@ -63,9 +63,9 @@ export async function buildDashboardState(
   const lang = settingsStore.resolveLanguage();
   const baseSettings = settingsStore.getDashboardSettings();
   const [resolvedCodexAppPath, indexHealth, accounts] = await Promise.all([
-    resolveCodexAppLaunchPath(baseSettings.codexAppPath),
-    repo.getIndexHealthSummary(),
-    repo.listAccounts()
+    waitWithin(resolveCodexAppLaunchPath(baseSettings.codexAppPath), 500, "Desktop app discovery is still loading").catch(() => undefined),
+    waitWithin(repo.getIndexHealthSummary(), 4_000, "Account storage did not respond within 4 seconds. Saved accounts were preserved; retry shortly."),
+    waitWithin(repo.listAccounts(), 4_000, "Account storage did not respond within 4 seconds. Saved accounts were preserved; retry shortly.")
   ]);
   const settings = {
     ...baseSettings,
@@ -87,7 +87,7 @@ export async function buildDashboardState(
         // Dashboard rendering is read-heavy. The scheduler and explicit token
         // actions invalidate this cache when credentials actually change; do
         // not make every snapshot wait on Secret Storage.
-        tokens = await repo.getTokens(account.id);
+        tokens = await waitWithin(repo.getTokens(account.id), 500, "Stored credentials are still loading; retry when storage responds");
       } catch (error) {
         markTokenAutomationRefreshFailure(account.id, `Stored credentials could not be read: ${toDashboardRefreshFailureMessage(error)}`);
         return [account.id, undefined] as const;

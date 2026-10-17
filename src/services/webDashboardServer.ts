@@ -83,6 +83,7 @@ const PEER_OFFLINE_AFTER_MS = 15_000;
 const PEER_RECONNECT_DELAY_MS = 1_000;
 const PEER_HTTP_HEARTBEAT_TIMEOUT_MS = 10_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
+const DASHBOARD_LOCAL_SESSION_WAIT_MS = 750;
 const CLI_SESSION_RECONCILE_MS = SESSION_DISCOVERY_RETRY_GAP_MS;
 
 export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
@@ -1025,7 +1026,13 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async sendState(response: http.ServerResponse): Promise<void> {
-    this.sendJson(response, await this.buildState());
+    try {
+      this.sendJson(response, await waitWithin(this.buildState(), 5_000, "Dashboard state is still loading. Retry shortly."));
+    } catch (error) {
+      response.statusCode = 503;
+      response.setHeader("Retry-After", "2");
+      this.sendJson(response, { error: error instanceof Error ? error.message : "Dashboard state is unavailable. Retry shortly." });
+    }
   }
 
   private async handleClientMessage(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -1247,7 +1254,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["viewLogs", "downloadLogs", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -1839,7 +1846,16 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async getConnectedPeers(): Promise<DashboardPeerView[]> {
     const cliEnabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
-    const localSessionCount = cliEnabled && this.hasWorkspaceViewer() ? filterCliSessionsBySection(await this.readLocalCliSessions(), "active").length : 0;
+    const localSessionCount = cliEnabled && this.hasWorkspaceViewer()
+      ? filterCliSessionsBySection(
+          await waitWithin(
+            this.readLocalCliSessions(),
+            DASHBOARD_LOCAL_SESSION_WAIT_MS,
+            "Local session discovery is still loading"
+          ).catch(() => this.localCliSessions ?? []),
+          "active"
+        ).length
+      : 0;
     return [
       {
         id: this.deviceId,
@@ -2606,7 +2622,8 @@ export class WebDashboardServer implements vscode.Disposable {
       accounts,
       peerAccounts: Object.fromEntries(peerSessions.map((peer) => [peer.deviceId, peer.accounts ?? []]))
     };
-    await appendDashboardUsageSnapshot(this.context, dashboardState);
+    await waitWithin(appendDashboardUsageSnapshot(this.context, dashboardState), 250, "Usage history is still saving")
+      .catch(error => recordPersistentEvent("debug", "dashboard-state", "Optional usage history save delayed", undefined, error));
     return { ...dashboardState, usageSummary: readDashboardUsageSummary(this.context) };
   }
 

@@ -15,6 +15,7 @@ vi.mock("../src/presentation/dashboard/resetCreditsBackfill", () => ({
   backfillMissingResetCreditExpiries: backfillMissingResetCreditExpiriesMock
 }));
 
+import * as usageHistory from "../src/services/dashboardUsageHistory";
 import { DashboardPanelController, publishDashboardSnapshot } from "../src/presentation/dashboard/panel";
 
 beforeEach(()=>{
@@ -103,6 +104,20 @@ describe("publishDashboardSnapshot", () => {
     }) as {publishState(force?:boolean):Promise<void>;panel:unknown;panelRevision:number};
     return{instance,panel,postMessage};
   }
+
+  it("publishes the webview when optional usage history is still saving", async () => {
+    vi.useFakeTimers();
+    const write = vi.spyOn(usageHistory, "appendDashboardUsageSnapshot").mockReturnValue(new Promise(() => undefined));
+    const postMessage = vi.fn(async () => true);
+    buildDashboardStateMock.mockResolvedValue(createState());
+    backfillMissingResetCreditExpiriesMock.mockResolvedValue(false);
+    try {
+      const work = publishDashboardSnapshot({ context: createContext(), repo: {} as never, settingsStore: {} as never, logoUri: "logo", setPanelTitle: vi.fn(), postMessage, schedulePublishState: vi.fn() });
+      await vi.advanceTimersByTimeAsync(250);
+      await work;
+      expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "dashboard:snapshot" }));
+    } finally { write.mockRestore(); vi.useRealTimers(); }
+  });
 
   it("joins concurrent refreshes and publishes only the newest requested snapshot",async()=>{
     const {instance,postMessage}=controller();let release!:(state:DashboardState)=>void;

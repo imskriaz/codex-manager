@@ -33,6 +33,7 @@ import { publishDashboardRealtime, subscribeDashboardRealtime } from "../../serv
 import { listPendingCodexAppServerPrompts } from "../../services/codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "../../services/codexSessionLive";
 import { recordPersistentEvent } from "../../utils/persistentLog";
+import { waitWithin } from "../../utils/concurrency";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
 const REOPEN_AFTER_HOST_RESTART_KEY = "codexManager.reopenDashboardAfterHostRestart";
@@ -73,7 +74,8 @@ export async function publishDashboardSnapshot(params: PublishDashboardSnapshotP
     ...baseState,
     onboardingCompleted: await resolveOnboardingCompleted(params.context, baseState)
   };
-  await appendDashboardUsageSnapshot(params.context, state);
+  await waitWithin(appendDashboardUsageSnapshot(params.context, state), 250, "Usage history is still saving")
+    .catch(error => recordPersistentEvent("debug", "dashboard-state", "Optional usage history save delayed", undefined, error));
   state.usageSummary = readDashboardUsageSummary(params.context);
   void backfillMissingResetCreditExpiries(params.repo, state.accounts, params.schedulePublishState).catch(
     () => undefined

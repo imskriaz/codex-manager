@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.3
+
+- Keep dashboard startup responsive when local session discovery, desktop app detection, credential reads, or optional usage-history saving is slow. Return a retryable error instead of leaving the state endpoint pending indefinitely.
+- Resolve restored conversation editors before closing all existing Codex session tabs, then reopen saved active and quota-paused goal sessions sequentially. Preserve unsaved tabs and durable recovery on cancellation, timeout, or failure.
+- Capture tab and sidebar goal recovery directly before reload instead of scanning the entire running-session history within the short reload budget.
+
+- Keep the newest diagnostic records when downloads hit their count or byte limit, and avoid rebuilding account state while polling the log console.
+
 ## 1.3.2
 
 - Preserve restored Codex custom documents during Auto Resume to avoid editor-load races, focus each recovered conversation, and restore the dashboard without stealing focus.

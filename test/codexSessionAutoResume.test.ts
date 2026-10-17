@@ -42,6 +42,7 @@ beforeEach(() => {
   Object.assign(vscode.window, { tabGroups: { all: [{ tabs: ids.map(id => ({ input: {
     viewType: "chatgpt.conversationEditor", uri: { scheme: "openai-codex", authority: "route", path: `/local/${id}` }
   } })) }] } });
+  vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
   vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockImplementation(readNativeTabs);
   vi.spyOn(sessionEditor, "readRunningCodexSessionIds").mockImplementation(async (_home, _signal, open) => open ?? []).mockClear();
   vi.spyOn(autoResumeSelection, "readAutoResumeGoalCandidateIds").mockResolvedValue([]);
@@ -399,20 +400,54 @@ describe("durable open conversation recovery", () => {
     }
   });
 
-  it("persists selected recovery and opens sessions sequentially without closing restored documents", async () => {
+  it("persists selected recovery, closes existing tabs, then opens sessions sequentially", async () => {
     const state = createContext([first]);
     state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
-    const close = vi.fn();
-    Object.assign(vscode.window.tabGroups, { close });
     const order: string[] = [];
+    const close = vi.mocked(sessionEditor.closeOpenCodexSessionTabs).mockClear().mockImplementation(async () => {
+      expect(state.read()).toEqual([first, second]);
+      order.push("close");
+    });
     const open = vi.fn(async (id: string) => {
       expect(state.read()).toContain(id);
       order.push(id);
     });
     expect((await resumePersistedCodexSessions(state.context, open)).opened).toBe(2);
-    expect(order).toEqual([first, second]);
-    expect(close).not.toHaveBeenCalled();
+    expect(order).toEqual(["close", first, second]);
+    expect(close).toHaveBeenCalledOnce();
     expect(state.read()).toBeUndefined();
+  });
+
+  it("keeps every saved ID and opens none when closing is refused", async () => {
+    const state = createContext([first, second]);
+    const open = vi.fn();
+    const close = vi.fn(async () => { throw new Error("close refused"); });
+    const result = await resumePersistedCodexSessions(state.context, open, close);
+    expect(result).toMatchObject({ attempted: 2, opened: 0 });
+    expect(result.failed).toHaveLength(2);
+    expect(open).not.toHaveBeenCalled();
+    expect(state.read()).toEqual([first, second]);
+  });
+
+  it("bounds a stalled close and never reopens after a late close result", async () => {
+    vi.useFakeTimers();
+    const state = createContext([first]);
+    let finish!: () => void;
+    let closeSignal: AbortSignal | undefined;
+    const open = vi.fn();
+    try {
+      const work = resumePersistedCodexSessions(state.context, open, async signal => {
+        closeSignal = signal;
+        await new Promise<void>(resolve => { finish = resolve; });
+      });
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect((await work).failed).toHaveLength(1);
+      expect(closeSignal?.aborted).toBe(true);
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(open).not.toHaveBeenCalled();
+      expect(state.read()).toEqual([first]);
+    } finally { vi.useRealTimers(); }
   });
 
   it("removes closed tabs while preserving failed restoration in its independent queue", async () => {

@@ -9,7 +9,7 @@ import { readCodexSessionGoals } from "../src/services/codexSessionGoals";
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readAutoResumeGoalCandidateIds } from "../src/services/codexSessionAutoResumeSelection";
-import { AUTO_RESUME_OPEN_SESSION_IDS_KEY, persistOpenCodexSessions, AUTO_RESUME_SESSION_IDS_KEY, persistRunningCodexSessions, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
+import { AUTO_RESUME_OPEN_SESSION_IDS_KEY, persistOpenCodexSessions, AUTO_RESUME_SESSION_IDS_KEY, persistRunningCodexSessions, resumePersistedCodexSessions, prepareCodexSessionsForExtensionHostRestart } from "../src/services/codexSessionAutoResume";
 
 let home: string, db: DatabaseSync;
 let goalOnly: boolean;
@@ -20,6 +20,7 @@ beforeEach(async () => {
   home = await mkdtemp(path.join(tmpdir(), "goal-resume-integration-"));
   process.env.CODEX_HOME = home;
   goalOnly = true;
+  vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
     get: (key: string, fallback: unknown) => key === "autoResumeGoalOnlyEnabled" ? goalOnly :
       ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : fallback
@@ -98,6 +99,16 @@ it("captures a running sidebar goal without any conversation tab, then restores 
   expect(await resumePersistedCodexSessions(state.context, open)).toMatchObject({ opened: 2, failed: [] });
   expect(open.mock.calls.map(call => call[0])).toEqual(ids.slice(0, 2));
   expect(events).toHaveBeenCalledWith("info", "auto-resume", "Startup recovery loaded", { savedCount: 2, goalOnly: true });
+});
+
+it("captures reload recovery from tabs and sidebar goals without scanning running history", async () => {
+  const state = context();
+  vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([ids[0]!]);
+  vi.spyOn(sessionEditor, "readRecentRunningCodexSessionIds").mockReturnValue([ids[0]!]);
+  const scan = vi.spyOn(sessionEditor, "readRunningCodexSessionIds").mockReturnValue(new Promise(() => undefined));
+  await prepareCodexSessionsForExtensionHostRestart(state.context, true);
+  expect(scan).not.toHaveBeenCalled();
+  expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual(ids.slice(0, 2));
 });
 
 it("excludes idle active goals, child goals, and archived goals from the background snapshot", async () => {

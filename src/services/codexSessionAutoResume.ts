@@ -2,7 +2,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
@@ -282,6 +282,11 @@ export async function prepareCodexSessionsForExtensionHostRestart(
   readOpenParents?: (signal?: AbortSignal) => Promise<string[]>,
   signal?: AbortSignal
 ): Promise<void> {
+  if (autoResume && !readRunningSessionIds && !readOpenParents) {
+    // Reuse tab/sidebar goal capture; a full history scan cannot fit the reload budget.
+    await persistOpenCodexSessions(context, undefined, signal);
+    return;
+  }
   const running = await persistRunningCodexSessions(context, readRunningSessionIds, signal);
   signal?.throwIfAborted();
   if (autoResume) await persistOpenCodexSessions(context, async signal => {
@@ -451,7 +456,8 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
   openSession: (sessionId: string, signal?: AbortSignal) => Promise<void> = (sessionId, signal) =>
-    openCodexSessionInVsCode(sessionId, signal, true)
+    openCodexSessionInVsCode(sessionId, signal, true),
+  closeSessions: (signal?: AbortSignal) => Promise<void> = closeOpenCodexSessionTabs
 ): Promise<AutoResumeResult> {
   const controller = new AbortController();
   restoreControllers.add(controller);
@@ -491,7 +497,19 @@ export function resumePersistedCodexSessions(
       unrestoredOpenSnapshots.delete(context.workspaceState);
       let remaining = [...ids];
       const result: AutoResumeResult = { attempted: ids.length, opened: 0, failed: [] };
-      // Keep restored custom documents alive while Codex resolves them during activation.
+      try {
+        controller.signal.throwIfAborted();
+        await bounded(() => closeSessions(controller.signal), Math.min(8_000, deadline - Date.now()),
+          "Previous Codex tabs did not finish closing within 8 seconds. Saved recovery was retained.", controller.signal);
+        controller.signal.throwIfAborted();
+        recordPersistentEvent("info", "auto-resume", "Previous conversation tabs closed before recovery", { count: ids.length });
+      } catch (error) {
+        controller.abort(error);
+        result.failed = ids.map(sessionId => ({ sessionId, message: error instanceof Error ? error.message : String(error) }));
+        recordPersistentEvent("warning", "auto-resume", "Previous tabs could not close; recovery retained", { count: ids.length }, error);
+        if (!isAutoResumeAvailable()) await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
+        return result;
+      }
       for (const id of ids) {
         if (!isAutoResumeAvailable())
           controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
