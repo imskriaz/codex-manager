@@ -114,6 +114,6 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(source).toContain("createDashboardToastController(setNotice)");
     expect(source).not.toContain(".slice(-4)");
     expect(feedback).toContain('"listCodexCliSessions"');
-    expect(feedback).toContain("completed.`");
+    expect(feedback).toContain("done.`");
   });
 });

@@ -18,9 +18,6 @@ function warn(error: unknown): void {
   console.warn("[codexManager] session recording delayed",error);
   if (warned) return;
   warned = true;
-  const message = `Session recording is delayed; the latest snapshots will retry automatically. ${error instanceof Error ? error.message : String(error)}`;
-  publishDashboardRealtime({ type:"dashboard:notice",level:"warning",message });
-  void vscode.window.showWarningMessage(message);
 }
 
 export function captureSessionAccount(): string | undefined {

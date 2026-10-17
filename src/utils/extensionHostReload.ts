@@ -84,7 +84,7 @@ export function reloadExtensionHostWithSessionCapture(
     const preserveSessions = autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false);
     let captureCompleted = false;
     let captureWarning: string | undefined;
-    void vscode.window.showInformationMessage("Preparing to reload Codex Manager.");
+    if (!inFlightAutomatic) void vscode.window.showInformationMessage("Preparing to reload Codex Manager.");
     try {
       // Session discovery is recovery work. A stalled Windows lock probe or
       // session store must never prevent the account switch reload itself.
@@ -106,7 +106,7 @@ export function reloadExtensionHostWithSessionCapture(
         console.warn("[codexManager] could not clear VS Code notifications before reload", error);
       }
     }
-    if (captureWarning) void vscode.window.showWarningMessage(captureWarning);
+    if (captureWarning && !inFlightAutomatic) void vscode.window.showWarningMessage(captureWarning);
     verifyAutomaticPreference();
     const config = getCodexManagerConfiguration();
     let interruptDelivery: (() => void) | undefined;
@@ -123,7 +123,7 @@ export function reloadExtensionHostWithSessionCapture(
     } finally {
       if (interruptDelivery) manual.signal.removeEventListener("abort", interruptDelivery);
     }
-    if (!delivered) {
+    if (!delivered && !inFlightAutomatic) {
       void vscode.window.showWarningMessage("Reload will continue, but browser notification delivery could not be confirmed. Review the dashboard once reconnected.");
     }
     verifyAutomaticPreference();
@@ -134,7 +134,7 @@ export function reloadExtensionHostWithSessionCapture(
       ], false);
     } catch (error) {
       console.warn("[codexManager] editor cleanup did not complete before reload", error);
-      void vscode.window.showWarningMessage(`Reload will continue, but some Codex or Codex Manager tabs could not close: ${error instanceof Error ? error.message : String(error)}`);
+      if (!inFlightAutomatic) void vscode.window.showWarningMessage(`Reload will continue, but some Codex or Codex Manager tabs could not close: ${error instanceof Error ? error.message : String(error)}`);
     } finally { closing.abort(new Error("Reload editor cleanup ended.")); }
     verifyAutomaticPreference();
     if (typeof config.inspect === "function" && ["autoSwitchWaitForSessionsEnabled", "encryptedSyncClaimAllAccountsEnabled"].some(key => !config.inspect(key))) {
@@ -157,7 +157,7 @@ export function reloadExtensionHostWithSessionCapture(
       await command("codexManager.restoreDashboardAfterExtensionHostRestart", 500, [], false);
     } catch (restoreError) {
       console.warn("[codexManager] dashboard recovery after reload failure did not complete", restoreError);
-      void vscode.window.showWarningMessage("The dashboard could not be reopened. Run Codex Manager: Show Quota Summary to reopen it.");
+      if (!inFlightAutomatic) void vscode.window.showWarningMessage("The dashboard could not be reopened. Run Codex Manager: Show Quota Summary to reopen it.");
     }
     throw error;
   });
@@ -167,6 +167,7 @@ export function reloadExtensionHostWithSessionCapture(
       if (inFlight === work) {
         inFlight = undefined;
         manualReload = undefined;
+        inFlightAutomatic = false;
       }
     })
     .catch(() => undefined);

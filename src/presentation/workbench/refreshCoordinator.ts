@@ -64,9 +64,7 @@ export class WorkbenchRefreshCoordinator {
         this.refreshTimer = setTimeout(() => {
           this.refreshTimer = undefined;
           void this.refreshViewsIfNeeded().catch((error: unknown) => {
-            const detail = getErrorMessage(error);
             console.error("[codexManager] scheduled workbench refresh failed", error);
-            void vscode.window.showWarningMessage(`Account view refresh failed: ${detail}`);
           });
         }, 0);
       },
@@ -267,8 +265,9 @@ export class WorkbenchRefreshCoordinator {
       try {
         await autoReloadWindowForAccount(nextActive.id);
       } catch (error) {
-        void vscode.window.showErrorMessage(
-          `This window could not reload after the active account changed in another window. Reload VS Code manually to sync it: ${getErrorMessage(error)}`
+        console.warn(
+          "[codexManager] background account reload did not complete; the next refresh will retry",
+          getErrorMessage(error)
         );
       }
     } finally {

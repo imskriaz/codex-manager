@@ -146,7 +146,7 @@ describe("manual account switch command", () => {
     await expect(service.switchAccount(item)).resolves.toMatchObject({ status: "already-active" });
 
     expect(repo.switchAccount).not.toHaveBeenCalled();
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(`${current.email} is already the active account`);
+    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(`${current.email} is already active`);
   });
 
   it("password-enables Rescue before a Command Palette switch to a claimed account", async () => {

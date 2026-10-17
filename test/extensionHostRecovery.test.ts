@@ -114,7 +114,7 @@ describe("automatic extension host recovery", () => {
     await vi.advanceTimersByTimeAsync(50);
 
     expect(execute).not.toHaveBeenCalled();
-    expect(showError).toHaveBeenCalledWith(expect.stringContaining("could not safely retry activation"));
+    expect(showError).not.toHaveBeenCalledWith(expect.stringContaining("could not safely retry activation"));
     vi.useRealTimers();
   });
 

@@ -151,7 +151,7 @@ describe("account switch reload effects", () => {
     await expect(automatic).resolves.toBe(false);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.restartExtensionHost");
     expect(getQueuedAccountSwitch()?.toAccountId).toBe("next-account");
-    expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
+    expect(vscode.window.showInformationMessage).not.toHaveBeenCalledWith(
       expect.stringContaining("Automatic reload is disabled")
     );
   });
@@ -191,9 +191,7 @@ describe("account switch reload effects", () => {
       await vi.advanceTimersByTimeAsync(10);
       expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
       expect(getQueuedAccountSwitch()?.toAccountId).toBe("next-account");
-      expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-        expect.stringContaining("Automatic reload is disabled")
-      );
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

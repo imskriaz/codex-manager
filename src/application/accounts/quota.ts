@@ -553,8 +553,12 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
   }
   deferredForSessions = waiting;
   if (message && message !== sessionWaitNotice) {
-    recordAutoSwitchDashboardNotice(message, "warning");
-    void vscode.window.showWarningMessage(message);
+    if (userInitiated) {
+      recordAutoSwitchDashboardNotice(message, "warning");
+      void vscode.window.showWarningMessage(message);
+    } else {
+      console.info("[codexManager] automatic switch waiting for running sessions", message);
+    }
   }
   sessionWaitNotice = message;
   return deferredForSessions;
@@ -872,17 +876,17 @@ async function evaluateAutoSwitchForActiveQuota(
       `candidates:${accounts.length - 1}`,
       unverifiedCandidates.length || failedCandidateVerification ? "unverified" : "unavailable"
     ].join("|");
-    if (options.userInitiated || blockedKey !== lastBlockedAutoSwitchKey) {
+    if (options.userInitiated) {
       lastBlockedAutoSwitchKey = blockedKey;
       const message =
         unverifiedCandidates.length || failedCandidateVerification
           ? "Auto Select could not verify quota for an available account. Refresh its quota and retry."
           : "No account to switch — no capable account has enough quota remaining.";
-      // Persist the terminal outcome so a browser dashboard that reconnects
-      // after the native toast still receives the same warning (and can emit
-      // its OS push notification).
       recordAutoSwitchDashboardNotice(message, "warning");
       void vscode.window.showWarningMessage(message);
+    } else if (blockedKey !== lastBlockedAutoSwitchKey) {
+      lastBlockedAutoSwitchKey = blockedKey;
+      console.info("[codexManager] automatic account switch deferred until a safe candidate is available", { blockedKey });
     }
     return false;
   }
@@ -1624,13 +1628,17 @@ function showAutoSwitchFailure(error: unknown, userInitiated = false): void {
   const key = detail.trim().toLowerCase();
   const now = Date.now();
   if (
-    !userInitiated && lastAutoSwitchFailure?.key === key &&
+    lastAutoSwitchFailure?.key === key &&
     now - lastAutoSwitchFailure.shownAt < AUTO_SWITCH_FAILURE_NOTICE_COOLDOWN_MS
   ) {
     return;
   }
   lastAutoSwitchFailure = { key, shownAt: now };
   const message = `Auto switch failed: ${detail}. Check the account and retry.`;
+  if (!userInitiated) {
+    console.warn("[codexManager] automatic account switch failed; it will retry", detail);
+    return;
+  }
   recordAutoSwitchDashboardNotice(message, "error");
   void vscode.window.showErrorMessage(message);
 }

@@ -14,7 +14,7 @@ describe("dashboard action feedback", () => {
   it("shows a warning when the cross-PC sync toggle times out", () => {
     expect(noticeFromActionTimeout("setCrossPcSyncEnabled")).toMatchObject({
       level: "warning",
-      message: expect.stringMatching(/outcome is unknown.*verify before retrying/i)
+      message: expect.stringMatching(/still running.*refresh to check/i)
     });
   });
   it("surfaces the host error from every failed action result", () => {
@@ -58,7 +58,7 @@ describe("dashboard action feedback", () => {
   it("turns a client-side action timeout into an actionable warning", () => {
     expect(noticeFromActionTimeout("configureEncryptedSync")).toEqual({
       level: "warning",
-      message: "Configure encrypted sync was not confirmed in time. Its outcome is unknown; refresh and verify before retrying."
+      message: "Configure encrypted sync is still running. Refresh to check before trying again."
     });
   });
 
@@ -85,7 +85,7 @@ describe("dashboard action feedback", () => {
         action: "refreshView",
         status: "completed"
       })
-    ).toEqual({ level: "info", message: "Refresh view completed." });
+    ).toEqual({ level: "info", message: "Refresh view done." });
   });
 
   it("does not bombard users for background data reads whose result is visible inline", () => {
@@ -131,7 +131,7 @@ describe("dashboard action feedback", () => {
       })
     ).toEqual({
       level: "warning",
-      message: "Batch refresh finished with 2 succeeded and 1 failed. First error: Session expired."
+      message: "Batch refresh: 2 done, 1 failed. Session expired."
     });
   });
 
@@ -153,7 +153,7 @@ describe("dashboard action feedback", () => {
       })
     ).toEqual({
       level: "warning",
-      message: "Disable all finished with 2 succeeded and 1 failed. First error: Account is claimed by another PC."
+      message: "Disable all: 2 done, 1 failed. Account is claimed by another PC."
     });
   });
 });

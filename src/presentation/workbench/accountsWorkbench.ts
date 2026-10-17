@@ -145,16 +145,14 @@ export class AccountsWorkbench {
           return;
         }
         if (result.failed.length) {
-          void vscode.window.showWarningMessage(`${message} Open Codex conversation history to retry.`);
+          console.warn("[codexManager] automatic session resume incomplete", message);
         } else {
-          void vscode.window.showInformationMessage(message);
+          console.info("[codexManager] automatic session resume complete", message);
         }
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         console.warn("[codexManager] auto resume failed", error);
-        void vscode.window.showWarningMessage(
-          `Auto resume could not restore running Codex sessions: ${detail}. Open Codex conversation history to retry.`
-        );
+        console.warn("[codexManager] automatic session resume could not restore running sessions", detail);
       }
     }).finally(() => {
       if (this.disposed) return;
@@ -171,9 +169,7 @@ export class AccountsWorkbench {
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         console.warn("[codexManager] encrypted sync startup failed; continuing locally", error);
-        void vscode.window.showWarningMessage(
-          `Encrypted Sync could not start. Local account management will continue; retry Sync later. ${detail}`
-        );
+        console.info("[codexManager] encrypted sync remains unavailable; local account management continues", detail);
       }
     });
     const relayHandoff = measureStep("alwaysOnlineServer.prepare", async () => {
@@ -345,9 +341,6 @@ export class AccountsWorkbench {
       await this.webDashboard.start();
     } catch (error) {
       console.warn("[codexManager] Web Dashboard startup failed", error);
-      void vscode.window.showWarningMessage(
-        `Web Dashboard could not start on port 39875: ${error instanceof Error ? error.message : String(error)}`
-      );
     }
   }
 
@@ -381,11 +374,6 @@ export class AccountsWorkbench {
         this.alwaysOnlineServer.applyConfiguration()
       ).catch((error) => {
         console.warn("[codexManager] Always-online relay startup failed", error);
-        if (getAlwaysOnlineEnabled()) {
-          void vscode.window.showWarningMessage(
-            `Always-online WebSocket host could not start: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
       });
     }, 1_000);
     this.alwaysOnlinePreparationTimer.unref?.();

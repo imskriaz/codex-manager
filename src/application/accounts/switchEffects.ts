@@ -47,7 +47,7 @@ export function scheduleExtensionHostReload(
     reloadFailureListeners.clear();
     if (automaticOnly && !isAutomaticWindowReloadEnabled()) {
       const message = "Automatic reload is disabled. Reload VS Code to apply the queued account change.";
-      void vscode.window.showInformationMessage(message);
+      console.info("[codexManager] automatic reload skipped", message);
       for (const listener of failureListeners) {
         try {
           listener(message);
@@ -63,7 +63,7 @@ export function scheduleExtensionHostReload(
       })
       .catch((error: unknown) => {
         if (error instanceof AutomaticReloadCancelledError) {
-          void vscode.window.showInformationMessage(error.message);
+          if (!automaticOnly) void vscode.window.showInformationMessage(error.message);
           for (const listener of failureListeners) {
             try {
               listener(error.message);
@@ -76,7 +76,7 @@ export function scheduleExtensionHostReload(
         const detail = error instanceof Error ? error.message : String(error);
         const message = `${changeDescription}, but VS Code could not reload: ${detail}. Run Developer: Reload Window and try again.`;
         console.error("[codexManager] unable to reload after Codex credentials changed", error);
-        void vscode.window.showErrorMessage(message);
+        if (!automaticOnly) void vscode.window.showErrorMessage(message);
         for (const listener of failureListeners) {
           try {
             listener(message);
@@ -206,7 +206,7 @@ export async function autoReloadWindowForAccount(accountId?: string, automatic =
     return true;
   } catch (error) {
     if (error instanceof AutomaticReloadCancelledError) {
-      void vscode.window.showInformationMessage(error.message);
+      if (!automatic) console.info("[codexManager] automatic reload skipped", error.message);
       return false;
     }
     throw error;

@@ -291,7 +291,7 @@ describe("workbench external account synchronization", () => {
       () => false
     );
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("restart unavailable"));
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining("restart unavailable"));
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
 });

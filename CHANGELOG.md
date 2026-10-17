@@ -15,6 +15,7 @@
 - Close Codex conversation tabs, extra Codex panels, and restored Codex Manager duplicates before managed reloads; seal eligible recovery before tab-close events can replace it.
 
 - Keep the newest diagnostic records when downloads hit their count or byte limit, and avoid rebuilding account state while polling the log console.
+- Keep notices short and plain, and send recoverable background failures to logs while automatic retries continue quietly.
 
 ## 1.3.2
 

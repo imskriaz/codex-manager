@@ -103,6 +103,7 @@ describe("bounded shared extension host reload", () => {
     vi.useFakeTimers();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
       key === "autoSwitchReloadWindowEnabled" ? true : fallback } as never);
+    const warningCount = vi.mocked(vscode.window.showWarningMessage).mock.calls.length;
     const delivery = subscribeToNotificationDelivery(() => new Promise(() => undefined));
     vi.mocked(vscode.commands.executeCommand).mockImplementation(name =>
       name === "codexManager.prepareDashboardForExtensionHostRestart" || name === "notifications.clearAll"
@@ -112,7 +113,9 @@ describe("bounded shared extension host reload", () => {
       await vi.advanceTimersByTimeAsync(500);
       await work;
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
-      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("could not be fully preserved"));
+      expect(vscode.window.showWarningMessage.mock.calls.slice(warningCount)).not.toContainEqual(
+        expect.arrayContaining([expect.stringContaining("could not be fully preserved")])
+      );
     } finally { delivery.dispose(); vi.useRealTimers(); }
   });
 

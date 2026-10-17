@@ -215,7 +215,7 @@ describe("persistent browser push", () => {
     }));
     stored.set("codexManager.browserPush.v1", JSON.stringify(raw));
     await expect(service.subscribe(subscription("full"), "device", "https://dashboard.example")).rejects.toThrow(
-      "full"
+      "devices"
     );
     stored.set("codexManager.browserPush.v1", "partial");
     await expect(service.publicKey()).rejects.toThrow();

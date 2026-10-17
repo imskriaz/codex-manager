@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import {
   enableTransientVscodeNotices,
+  compactNotificationMessage,
   resolveMirroredNotification,
   runWithNativeCommandWarnings,
   subscribeToVscodeNotifications,
@@ -14,6 +15,13 @@ describe("VS Code notification mirror", () => {
     vi.mocked(vscode.window.showWarningMessage).mockReset();
     vi.mocked(vscode.window.showErrorMessage).mockReset();
     vi.mocked(vscode.window.setStatusBarMessage).mockReset();
+  });
+
+  it("keeps system details out of user notices", () => {
+    expect(compactNotificationMessage("Codex Manager could not initialize persistent diagnostics: sqlite is locked.")).toBe(
+      "Logs are unavailable. The app will continue."
+    );
+    expect(compactNotificationMessage("x".repeat(200))).toHaveLength(180);
   });
 
   it("mirrors ordinary native notices while preserving the native call", async () => {
@@ -61,8 +69,8 @@ describe("VS Code notification mirror", () => {
     expect(nativeInfo).not.toHaveBeenCalled();
     expect(nativeWarning).not.toHaveBeenCalled();
     expect(first.dispose).toHaveBeenCalledOnce();
-    expect(vscode.window.setStatusBarMessage).toHaveBeenNthCalledWith(1, "$(info) Codex Manager: Quota refreshed.", 10_000);
-    expect(vscode.window.setStatusBarMessage).toHaveBeenNthCalledWith(2, "$(warning) Codex Manager: Quota is low.", 10_000);
+    expect(vscode.window.setStatusBarMessage).toHaveBeenNthCalledWith(1, "$(info) Quota refreshed.", 10_000);
+    expect(vscode.window.setStatusBarMessage).toHaveBeenNthCalledWith(2, "$(warning) Quota is low.", 10_000);
 
     quietNotices.dispose();
     expect(second.dispose).toHaveBeenCalledOnce();

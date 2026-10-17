@@ -40,9 +40,6 @@ async function persistRecoveryVersion(context: vscode.ExtensionContext, version:
     return true;
   } catch (error) {
     console.error("[codexManager] could not persist automatic recovery marker", error);
-    void vscode.window.showErrorMessage(
-      "Codex Manager could not safely retry activation automatically. Run Developer: Reload Window to retry."
-    );
     return false;
   }
 }
@@ -51,10 +48,6 @@ async function restartExtensionHostAutomatically(): Promise<void> {
   try {
     await reloadExtensionHostWithSessionCapture(true);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
     console.error("[codexManager] automatic extension recovery failed", error);
-    void vscode.window.showErrorMessage(
-      `${detail} Run Developer: Reload Window after storage and pending commands settle.`
-    );
   }
 }

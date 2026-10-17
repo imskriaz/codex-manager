@@ -22,7 +22,7 @@ export function noticeFromActionResult(
     }
     return {
       level: "error",
-      message: errorMessage
+      message: compactDashboardNotice(errorMessage)
     };
   }
 
@@ -41,7 +41,7 @@ export function noticeFromActionResult(
     const firstFailure = batch.failures[0]?.message?.trim();
     return {
       level: "warning",
-      message: `${formatActionName(message.action)} finished with ${batch.successCount} succeeded and ${batch.failedCount} failed.${firstFailure ? ` First error: ${firstFailure}` : ""}`
+      message: `${formatActionName(message.action)}: ${batch.successCount} done, ${batch.failedCount} failed.${firstFailure ? ` ${compactDashboardNotice(firstFailure)}` : ""}`
     };
   }
 
@@ -49,14 +49,19 @@ export function noticeFromActionResult(
     return undefined;
   }
 
-  return { level: "info", message: `${formatActionName(message.action)} completed.` };
+  return { level: "info", message: `${formatActionName(message.action)} done.` };
 }
 
 export function noticeFromActionTimeout(action: DashboardActionName): DashboardNotice {
   return {
     level: "warning",
-    message: `${formatActionName(action)} was not confirmed in time. Its outcome is unknown; refresh and verify before retrying.`
+    message: `${formatActionName(action)} is still running. Refresh to check before trying again.`
   };
+}
+
+function compactDashboardNotice(message: string): string {
+  const value = message.trim().replace(/\s+/g, " ");
+  return value.length > 180 ? `${value.slice(0, 179).trimEnd()}…` : value;
 }
 
 function formatActionName(action: DashboardActionName): string {

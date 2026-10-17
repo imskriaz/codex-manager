@@ -224,7 +224,7 @@ describe("sessions sidebar layout", () => {
     expect(toggle).toContain('onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}');
     expect(toggle).not.toContain("cliIntegrationEnabled");
     expect(toggle).not.toContain("disabled=");
-    expect(workbench).toContain("Open Codex conversation history to retry.");
+    expect(workbench).toContain("automatic session resume incomplete");
     expect(workbench).not.toContain("Open Sessions and retry");
   });
 

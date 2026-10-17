@@ -1,6 +1,6 @@
 import type webPush from "web-push";
 import type * as vscode from "vscode";
-import type { MirroredNotification } from "../utils/notificationMirror";
+import { compactNotificationMessage, type MirroredNotification } from "../utils/notificationMirror";
 
 const STORAGE_KEY = "codexManager.browserPush.v1";
 const MAX_SUBSCRIPTIONS = 64;
@@ -18,7 +18,7 @@ function loadWebPush(): Promise<typeof import("web-push")> {
 
 /** Restrict outbound requests to browser push services, never arbitrary dashboard-supplied URLs. */
 export function validateBrowserPushSubscription(value: unknown): webPush.PushSubscription {
-  if (!value || typeof value !== "object") throw new Error("Invalid push subscription. Enable notifications again.");
+  if (!value || typeof value !== "object") throw new Error("Invalid subscription. Enable notifications again.");
   const entry = value as Partial<webPush.PushSubscription>;
   const url = new URL(typeof entry.endpoint === "string" ? entry.endpoint : "invalid:");
   const host = url.hostname.toLowerCase();
@@ -65,7 +65,7 @@ export class BrowserPushService {
     if (!raw) return { keys: (await loadWebPush()).generateVAPIDKeys(), subscriptions: [] };
     const state = JSON.parse(raw) as PushState;
     if (!state.keys?.publicKey || !state.keys.privateKey || !Array.isArray(state.subscriptions))
-      throw new Error("Push notification storage could not be read. Retry after Secret Storage is available.");
+        throw new Error("Notification storage is unavailable. Try again.");
     return state;
   }
 
@@ -97,14 +97,14 @@ export class BrowserPushService {
           existing.keys.auth !== subscription.keys.auth)
       )
         throw new Error(
-          "This subscription belongs to another dashboard login. Disable notifications before subscribing again."
+          "This device belongs to another login. Disable notifications first."
         );
       state.subscriptions = state.subscriptions.filter(
         (item) => item.endpoint !== subscription.endpoint && item.expiresAt > Date.now()
       );
       if (state.subscriptions.length >= MAX_SUBSCRIPTIONS)
         throw new Error(
-          "The notification subscription queue is full. Disable notifications on an unused device first."
+          "Too many devices are connected. Disable one first."
         );
       state.subscriptions.push({ ...subscription, owner, origin, password, expiresAt: Date.now() + SUBSCRIPTION_TTL });
     });
@@ -164,7 +164,7 @@ export class BrowserPushService {
         const expired = new Set<string>();
         const payload = JSON.stringify({
           title: "Codex Manager",
-          body: notice.message.slice(0, 900),
+          body: compactNotificationMessage(notice.message, 180),
           tag: `codex-manager-${key.slice(0, 150)}`,
           notificationId: notice.notificationId,
           actions: notice.actions?.slice(0, 2),
@@ -223,7 +223,7 @@ export class BrowserPushService {
         subscription.expiresAt > Date.now() && (subscription.password === undefined || subscription.password === password));
       const result = { subscriptions: subscriptions.length, accepted: 0, failed: 0 };
       const expired = new Set<string>();
-      const payload = JSON.stringify({ title: "Codex Manager", body: "Test notification: notifications are enabled on this device. Open Codex Manager to review your dashboard.", tag: "codex-manager-delivery-test", url: "/dash", createdAt: Date.now() });
+      const payload = JSON.stringify({ title: "Codex Manager", body: "Test notification: this device is connected.", tag: "codex-manager-delivery-test", url: "/dash", createdAt: Date.now() });
       await Promise.all(subscriptions.map(async subscription => {
         try {
           await webPush.sendNotification(validateBrowserPushSubscription(subscription), payload, {

@@ -11,6 +11,26 @@ export interface MirroredNotification {
   actions?: string[];
 }
 
+/** Keep passive notifications readable in VS Code, the dashboard, and push. */
+export function compactNotificationMessage(message: string, maxLength = 180): string {
+  let value = message.trim().replace(/\s+/g, " ");
+  const replacements: Array<[RegExp, string]> = [
+    [/^Codex Manager could not initialize persistent diagnostics[.:].*$/i, "Logs are unavailable. The app will continue."],
+    [/^Parallel window isolation could not initialize\..*$/i, "Multi-window mode is unavailable. Reload and try again."],
+    [/^Parallel window accounts could not initialize:.*$/i, "Multi-window mode is unavailable."],
+    [/^Codex Manager proxy setup failed\..*$/i, "Proxy setup failed. The app will continue."],
+    [/^The dashboard could not be reopened\..*$/i, "The dashboard could not reopen. Open it again from Codex Manager."],
+    [/^(.+) was not confirmed in time\..*$/i, "$1 is still running. Refresh to check before trying again."],
+    [/^Cross-PC claim sync did not complete\..*$/i, "Sync did not finish. Try again."],
+    [/^Dashboard login expired\..*$/i, "Your session expired. Sign in again."],
+    [/^Notification setup was not confirmed in time\..*$/i, "Notifications took too long. Check your connection and try again."]
+  ];
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(value)) { value = value.replace(pattern, replacement); break; }
+  }
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1).trimEnd()}…` : value;
+}
+
 type NotificationListener = (notification: MirroredNotification) => void;
 type NotificationResolutionListener = (notificationId: string) => void;
 type NotificationMethod = (...args: unknown[]) => Thenable<unknown>;
@@ -125,7 +145,8 @@ function uninstall(): void {
 
 function wrap(level: MirroredNotificationLevel, original: NotificationMethod): NotificationMethod {
   return (...args: unknown[]) => {
-    const message = extractMessage(args[0]);
+    const rawMessage = extractMessage(args[0]);
+    const message = rawMessage ? compactNotificationMessage(rawMessage) : undefined;
     const actions = extractActions(args);
     if (!message) return original.apply(vscode.window, args);
 
@@ -144,12 +165,13 @@ function wrap(level: MirroredNotificationLevel, original: NotificationMethod): N
     // VS Code does not expose a handle for closing native message pop-ups. A
     // status-bar message can be replaced and disposed without clearing notices
     // from VS Code itself or from other extensions.
+    const compactArgs = args.length && typeof args[0] === "string" ? [message, ...args.slice(1)] : args;
     if (transientNoticeUsers && level !== "error" && args.length === 1 &&
         !(level === "warning" && commandNotificationContext.getStore())) {
       try {
         activeStatusMessage?.dispose();
         activeStatusMessage = vscode.window.setStatusBarMessage(
-          `${level === "warning" ? "$(warning)" : "$(info)"} Codex Manager: ${message}`,
+          `${level === "warning" ? "$(warning)" : "$(info)"} ${message}`,
           TRANSIENT_NOTICE_DURATION_MS
         );
         return Promise.resolve(undefined);
@@ -164,8 +186,8 @@ function wrap(level: MirroredNotificationLevel, original: NotificationMethod): N
     }
 
     const nativeResult = actions.length && transientNoticeUsers
-      ? showLatestNativeChoice(original, args)
-      : Promise.resolve(original.apply(vscode.window, args));
+      ? showLatestNativeChoice(original, compactArgs)
+      : Promise.resolve(original.apply(vscode.window, compactArgs));
     if (!notificationId) return nativeResult;
     const mirroredNativeResult = nativeResult.finally(() => {
       for (const listener of resolutionListeners) {

@@ -600,7 +600,7 @@ describe("refreshSingleQuota token automation state", () => {
     } finally { release(["running"]); }
   });
 
-  it("pauses automatic switching with a warning on inconclusive session inspection", async () => {
+  it("pauses automatic switching quietly on inconclusive session inspection", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback: unknown) => ["autoSwitchEnabled", "autoSwitchWaitForSessionsEnabled"].includes(key) ? true : fallback } as never);
     const active = createAccount("inspection-active", true, 0, 0);
     const next = createAccount("inspection-next", false, 90, 90);
@@ -610,7 +610,7 @@ describe("refreshSingleQuota token automation state", () => {
     expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
     expect(repo.switchAccount).not.toHaveBeenCalled();
     expect(isAutoSwitchWaitingForSessions()).toBe(true);
-    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("Manual switching is still available"));
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(expect.stringContaining("Manual switching is still available"));
   });
 
   it("does not hold automatic selection on an unanswered reload prompt", async () => {
@@ -1143,7 +1143,7 @@ describe("refreshSingleQuota token automation state", () => {
     });
   });
 
-  it("shows a warning when the threshold is crossed but no safe candidate exists", async () => {
+  it("logs when the threshold is crossed but no safe candidate exists", async () => {
     vi.mocked(vscode.window.showWarningMessage).mockClear();
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {
@@ -1166,13 +1166,12 @@ describe("refreshSingleQuota token automation state", () => {
       maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
     ).resolves.toBe(false);
 
-    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(
       "No account to switch — no capable account has enough quota remaining."
     );
-    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice).toMatchObject({
-      level: "warning",
-      message: "No account to switch — no capable account has enough quota remaining."
-    });
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).not.toBe(
+      "No account to switch — no capable account has enough quota remaining."
+    );
   });
 
   it("refreshes a dashboard-capable candidate whose snapshot predates its session before switching", async () => {
@@ -1247,13 +1246,12 @@ describe("refreshSingleQuota token automation state", () => {
     ).resolves.toBe(false);
 
     expect(repo.switchAccount).not.toHaveBeenCalled();
-    expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+    expect(vscode.window.showWarningMessage).not.toHaveBeenCalledWith(
       "Auto Select could not verify quota for an available account. Refresh its quota and retry."
     );
-    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice).toMatchObject({
-      level: "warning",
-      message: "Auto Select could not verify quota for an available account. Refresh its quota and retry."
-    });
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).not.toBe(
+      "Auto Select could not verify quota for an available account. Refresh its quota and retry."
+    );
   });
 
   it("refreshes non-current quotas before a warning selects a switch target", async () => {
@@ -1405,7 +1403,7 @@ describe("refreshSingleQuota token automation state", () => {
     ).resolves.toBe(false);
 
     expect(repo.switchAccount).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Auto switch failed"));
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining("Auto switch failed"));
   });
 
   it("does not switch past a reset candidate to a below-threshold account", async () => {
@@ -1436,10 +1434,10 @@ describe("refreshSingleQuota token automation state", () => {
     ).resolves.toBe(false);
 
     expect(repo.switchAccount).not.toHaveBeenCalled();
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining("Auto switch failed"));
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining("Auto switch failed"));
   });
 
-  it("surfaces automatic switch failures instead of only logging them", async () => {
+  it("logs automatic switch failures instead of surfacing them", async () => {
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {
         const values: Record<string, unknown> = {
@@ -1464,13 +1462,12 @@ describe("refreshSingleQuota token automation state", () => {
       maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })
     ).resolves.toBe(false);
 
-    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(
+    expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(
       "Auto switch failed: lease conflict. Check the account and retry."
     );
-    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice).toMatchObject({
-      level: "error",
-      message: "Auto switch failed: lease conflict. Check the account and retry."
-    });
+    expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).not.toBe(
+      "Auto switch failed: lease conflict. Check the account and retry."
+    );
   });
 
   it("coalesces concurrent auto-switch checks to prevent duplicate switches and reloads", async () => {
@@ -1538,7 +1535,7 @@ describe("quota warning window validation", () => {
     await maybeWarnForAccount(repo as unknown as AccountsRepository, account.id);
 
     expect(showWarning).toHaveBeenCalledTimes(2);
-    expect(showWarning.mock.calls[0]?.[0]).toContain("active@example.com 5h quota is at 0%");
+    expect(showWarning.mock.calls[0]?.[0]).toContain("active@example.com 5h quota is low: 0%");
     expect(showWarning.mock.calls[0]?.[0]).toContain("Weekly 5% Balance");
     expect(showWarning.mock.calls[0]?.[0]).not.toContain("Switch recommended@example.com");
     expect(showWarning.mock.calls[0]?.slice(1)).toEqual(["Switch recommended@example.com", "Select Account", "Later"]);
@@ -1644,7 +1641,7 @@ describe("quota warning window validation", () => {
     await maybeWarnForAccount(repo as unknown as AccountsRepository, account.id);
 
     expect(showWarning).toHaveBeenCalledWith(
-      "balance-warning@example.com 5h quota is at 7%, below your configured threshold of 10%. Weekly 64% Balance.",
+      "balance-warning@example.com 5h quota is low: 7%. Weekly 64% Balance.",
       "Select Account",
       "Later"
     );
@@ -1677,7 +1674,7 @@ describe("quota warning window validation", () => {
     await maybeWarnForAccount(repo as unknown as AccountsRepository, account.id);
 
     expect(showWarning.mock.calls[0]?.[0]).toBe(
-      "reset-action@example.com 5h quota is at 6%, below your configured threshold of 10%. Weekly 95% Balance."
+      "reset-action@example.com 5h quota is low: 6%. Weekly 95% Balance."
     );
     expect(showWarning.mock.calls[0]?.slice(1)).toEqual([
       "Switch reset-target@example.com",
@@ -1745,7 +1742,7 @@ describe("quota warning window validation", () => {
 
     expect(showWarning).toHaveBeenCalledTimes(1);
     expect(showWarning.mock.calls[0]?.[0]).toContain(
-      "separate-weekly-warning@example.com Weekly quota is at 25%, below your configured threshold of 30%."
+      "separate-weekly-warning@example.com Weekly quota is low: 25%."
     );
     expect(showWarning.mock.calls[0]?.[0]).not.toContain("5h quota");
   });

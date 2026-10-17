@@ -20,8 +20,8 @@ export async function browserPushRequest(path: string, body?: unknown): Promise<
     if (!response.ok)
       throw new Error(
         response.status === 401
-          ? "Dashboard login expired. Sign in again before enabling notifications."
-          : (result.error ?? "Notification request failed. Retry when connected.")
+          ? "Your session expired. Sign in again."
+          : (result.error ?? "Could not update notifications. Try again.")
       );
     return result;
   } finally {
@@ -39,7 +39,7 @@ async function notificationDeadline<T>(work: Promise<T>): Promise<T> {
           () =>
             reject(
               new Error(
-                "Notification setup was not confirmed in time. Check browser permissions and reconnect before retrying."
+                "Notifications took too long. Check your connection and try again."
               )
             ),
           15_000
@@ -58,7 +58,7 @@ async function workerReady(): Promise<ServiceWorkerRegistration> {
       navigator.serviceWorker.ready,
       new Promise<never>((_, reject) => {
         timer = window.setTimeout(
-          () => reject(new Error("The installed app is not ready. Reload while connected, then retry.")),
+          () => reject(new Error("The app is not ready. Reload and try again.")),
           15_000
         );
       })
@@ -121,8 +121,8 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
       if (permission !== "granted")
         throw new Error(
           permission === "denied"
-            ? "Notifications are blocked. Allow them in browser settings, then retry."
-            : "Notification permission was cancelled. You can enable it later."
+            ? "Notifications are blocked. Allow them in browser settings."
+            : "Notification permission cancelled."
         );
       const worker = await workerReady();
       let subscription = await notificationDeadline(worker.pushManager.getSubscription());
@@ -130,15 +130,15 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
         await browserPushRequest("unsubscribe", { endpoint: subscription.endpoint });
         if (!(await notificationDeadline(subscription.unsubscribe())))
           throw new Error(
-            "The server stopped notifications, but the browser subscription could not be removed. Retry disabling it."
+            "Notifications stopped, but this device could not be cleared. Try again."
           );
         setEnabled(false);
         document.documentElement.dataset["pushSubscribed"] = "false";
         window.dispatchEvent(new Event("codex:push-subscription-changed"));
-        setFeedback("Notifications disabled on this device.");
+        setFeedback("Notifications are off.");
       } else {
         const { publicKey } = await browserPushRequest("key");
-        if (!publicKey) throw new Error("The dashboard returned no notification key. Retry when connected.");
+        if (!publicKey) throw new Error("Notification setup is unavailable. Try again.");
         const encoded = atob(publicKey.replace(/-/g, "+").replace(/_/g, "/"));
         const applicationServerKey = Uint8Array.from(encoded, (character) => character.charCodeAt(0));
         let created = false;
@@ -158,12 +158,12 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
         document.documentElement.dataset["pushSubscribed"] = "true";
         window.dispatchEvent(new Event("codex:push-subscription-changed"));
         setFeedback(
-          "Subscribed on this device. Major changes and available actions will notify you even when the app is closed."
+          "Notifications are on for this device."
         );
       }
     } catch (error) {
       setFailed(true);
-      setFeedback(error instanceof Error ? error.message : "Notification setup failed. Retry when connected.");
+      setFeedback(error instanceof Error ? error.message : "Could not update notifications. Try again.");
     } finally {
       setBusy(false);
     }
@@ -178,14 +178,14 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
       const result = await notificationDeadline(install.userChoice);
       setFeedback(
         result.outcome === "accepted"
-          ? "App installation accepted. Open Codex Manager from your apps."
-          : "App installation cancelled. You can install it later from your browser menu."
+          ? "App installed."
+          : "Installation cancelled."
       );
       (window as InstallWindow).codexInstallPrompt = undefined;
       setInstall(undefined);
     } catch {
       setFailed(true);
-      setFeedback("App installation failed. Try Add to Home Screen from the browser menu.");
+      setFeedback("Installation failed. Try your browser menu.");
     } finally {
       setBusy(false);
     }
@@ -197,15 +197,15 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     try {
       const result = await browserPushRequest("test", {});
       if (![result.subscriptions, result.accepted, result.failed].every(value => Number.isSafeInteger(value) && value! >= 0 && value! <= 64) || result.accepted! + result.failed! !== result.subscriptions)
-        throw new Error("Delivery was not confirmed. Check your phone before retrying.");
+        throw new Error("Delivery was not confirmed. Try again.");
       const accepted = result.accepted!;
       const failures = result.failed!;
       setFailed(!accepted || failures > 0);
-      setFeedback(!result.subscriptions ? "No subscribed devices were found. Enable notifications on your phone, then retry." :
-        `Push service accepted the test for ${accepted} device${accepted === 1 ? "" : "s"}.${failures ? ` ${failures} failed; reconnect or enable notifications again on those devices.` : " Check your phone’s notifications."}`);
+      setFeedback(!result.subscriptions ? "No devices are connected." :
+        `${accepted} device${accepted === 1 ? " is" : "s are"} connected.${failures ? ` ${failures} failed.` : ""}`);
     } catch (error) {
       setFailed(true);
-      setFeedback(error instanceof Error && error.name !== "AbortError" ? error.message : "Delivery was not confirmed in time. Check your phone before retrying.");
+      setFeedback(error instanceof Error && error.name !== "AbortError" ? error.message : "Test timed out. Check your phone.");
     } finally { setBusy(false); }
   };
 
@@ -219,9 +219,9 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   </aside>;
   return <div class="settings-block settings-block-wide browser-notification-settings">
     <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><div class="settings-block-title">Browser notifications</div><p class="settings-block-sub" title="Get account switches and alerts on this device.">{enabled ? "Notifications are on for this device." : "Get account switches and alerts on this device."}</p></div><span class={`browser-notification-badge ${enabled ? "is-enabled" : ""}`}>{enabled ? "On" : "Off"}</span></div>
-    {!supported ? <p class="settings-note">Push is unavailable here. Use an HTTPS dashboard in a supported browser or installed app.</p> : null}
+    {!supported ? <p class="settings-note">Notifications are unavailable in this browser.</p> : null}
     <div class="browser-notification-actions"><button type="button" class={`browser-notification-button ${enabled ? "" : "is-primary"}`} aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? "Please wait…" : enabled ? "Disable notifications" : "Enable notifications"}</button><button type="button" class="browser-notification-button" disabled={busy || !supported} onClick={() => void sendTest()}>Send test notification</button>{install ? <button type="button" class="browser-notification-button" disabled={busy} onClick={() => void installApp()}>Install app</button> : null}</div>
     {feedbackView}
-    <details class="browser-notification-help"><summary>Install & offline help</summary><p class="settings-note">On iPhone or iPad, use Share → Add to Home Screen, then enable notifications in the installed app. Offline, the app keeps drafts and shows a recovery screen until the host returns.</p></details>
+    <details class="browser-notification-help"><summary>Install & offline help</summary><p class="settings-note">On iPhone or iPad, use Share → Add to Home Screen. Drafts stay saved while offline.</p></details>
   </div>;
 }
