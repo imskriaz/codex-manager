@@ -185,18 +185,22 @@ export function isDailyUsageBreakdown(value: unknown, maxPoints = 31): value is 
     usage.points.every(
       (point) =>
         point &&
+        (point.unit === undefined || point.unit === "tokens") &&
         typeof point.date === "string" &&
         /^\d{4}-\d{2}-\d{2}$/.test(point.date) &&
         Number.isFinite(Date.parse(`${point.date}T00:00:00Z`)) &&
         new Date(`${point.date}T00:00:00Z`).toISOString().slice(0, 10) === point.date &&
         typeof point.totalTokens === "number" &&
         Number.isFinite(point.totalTokens) &&
+        (point.unit !== "tokens" || Number.isSafeInteger(point.totalTokens)) &&
         point.totalTokens >= 0 &&
+        (point.unit !== "tokens" || point.extensionTokens === undefined || (point.extensionTokens <= point.totalTokens &&
+          (point.otherTokens === undefined || point.extensionTokens + point.otherTokens === point.totalTokens))) &&
         [point.extensionTokens, point.otherTokens, point.inputTokens, point.outputTokens, point.cachedTokens]
-          .every(value => value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0)) &&
+          .every(value => value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0 && (point.unit !== "tokens" || Number.isSafeInteger(value)))) &&
         (point.surfaceValues === undefined || (point.surfaceValues && typeof point.surfaceValues === "object" &&
           !Array.isArray(point.surfaceValues) && Object.keys(point.surfaceValues).length <= 64 &&
-          Object.entries(point.surfaceValues).every(([key, value]) => key.length <= 128 && typeof value === "number" && Number.isFinite(value) && value >= 0)))
+          Object.entries(point.surfaceValues).every(([key, value]) => key.length <= 128 && typeof value === "number" && Number.isFinite(value) && value >= 0 && (point.unit !== "tokens" || Number.isSafeInteger(value)))))
     )
   );
 }

@@ -433,6 +433,8 @@ export interface UsageCreditsInfo {
  * 每日 token 使用量
  */
 export interface CodexDailyUsagePoint {
+  /** Only verified absolute counts may be plotted as tokens; absent on legacy percentage history. */
+  unit?: "tokens";
   /** 日期标识，优先 YYYY-MM-DD */
   date: string;
   /** 当日总 token 数 */

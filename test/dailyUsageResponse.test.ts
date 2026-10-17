@@ -15,6 +15,37 @@ describe("daily usage response validation", () => {
     await expect(fetchDailyUsageBreakdown(tokens)).resolves.toEqual({ days: 30, points: [] });
     expect((await fetchDailyUsageBreakdown(tokens))?.points).toMatchObject([{ totalTokens: 0 }]);
   });
+  it("reads verified client token counts and rejects percentage or unsafe attribution", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ date: "2026-10-15", totals: { text_total_tokens: 1000 }, clients: [
+      { client_id: "CODEX_IDE_VSCODE", text_total_tokens: 240 },
+      { client_id: "CODEX_WORK_WEB", text_total_tokens: 760 }
+    ] }] })));
+    vi.stubGlobal("fetch", fetch);
+    await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({ points: [{ unit: "tokens", totalTokens: 1000, extensionTokens: 240, otherTokens: 760 }] });
+    const request = new URL(String(fetch.mock.calls[0]?.[0]));
+    expect(request.pathname).toContain("/wham/analytics/daily-workspace-usage-counts");
+    expect(request.searchParams.get("group_by")).toBe("day");
+    expect(request.searchParams.get("workspace_user")).toBe("true");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ units: "percent", data: [{ date: "2026-10-15", total_tokens: 23 }] }))));
+    await expect(fetchDailyUsageBreakdown(tokens)).resolves.toBeUndefined();
+  });
+  it("preserves the known total without inventing a VS Code share when clients are absent", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ date: "2026-10-15", totals: { text_total_tokens: 1000 } }] }))));
+    await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({ points: [{ unit: "tokens", totalTokens: 1000, extensionTokens: undefined }] });
+  });
+  it.each([{ clients: [] }, { clients: [{ client_id: "CODEX_IDE_VSCODE", text_total_tokens: 240 }] }])("does not invent attribution when the client list is incomplete: %j", async ({ clients }) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ date: "2026-10-15", totals: { text_total_tokens: 1000 }, clients }] }))));
+    await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({ points: [{ unit: "tokens", totalTokens: 1000, extensionTokens: undefined, otherTokens: undefined }] });
+  });
+  it.each([
+    { totals: { text_total_tokens: 23.5 }, clients: [] },
+    { totals: { text_total_tokens: 23 }, clients: [{ client_id: "CODEX_IDE_VSCODE", text_total_tokens: 24 }] },
+    { totals: { text_total_tokens: 23 }, clients: [{ client_id: "CONSTRUCTOR", text_total_tokens: 1 }] },
+    { totals: { text_total_tokens: 23 }, clients: [{ client_id: "CODEX_IDE_VSCODE", text_total_tokens: -1 }] }
+  ])("rejects unsafe counts or invalid attribution: %j", async point => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ date: "2026-10-15", ...point }] }))));
+    await expect(fetchDailyUsageBreakdown(tokens)).resolves.toBeUndefined();
+  });
   it("forwards cancellation and keeps provider errors visible", async () => {
     const controller = new AbortController();
     const fetch = vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 }));

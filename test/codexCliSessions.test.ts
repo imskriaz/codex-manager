@@ -621,7 +621,6 @@ describe("Codex session integration", () => {
       { role: "assistant", text: "Second" }
     ]);
   });
-
   it("hydrates ImageView file URLs into renderable image data for the dashboard", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-image-view-"));
     roots.push(root);

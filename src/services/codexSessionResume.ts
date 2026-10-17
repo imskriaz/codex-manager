@@ -116,6 +116,11 @@ const cliTranscriptMetadataCache = new Map<
   }
 >();
 const CLI_TRANSCRIPT_METADATA_CACHE_TTL_MS = 60_000;
+// Summary and message reads commonly arrive together. Reusing the bounded
+// directory index avoids rescanning a large session tree for each read while
+// keeping new transcripts visible after a short refresh window.
+const CLI_TRANSCRIPT_PATH_CACHE_TTL_MS = 3_000;
+const cliTranscriptPathCache = new Map<string, { checkedAt: number; signature: string; complete: boolean; covered: Set<string>; paths: Map<string, string> }>();
 let cliExecutableCache: { signature: string; executable: CodexCliExecutable; resolvedAt: number } | undefined;
 
 export class CodexCliTurnCancelledError extends Error {
@@ -3193,8 +3198,18 @@ export async function findCliSessionTranscripts(
 ): Promise<Map<string, string>> {
   const found = new Map<string, string>();
   if (sessionIds?.size === 0) return found;
-  const canonical = new Map((await readStateSessionRecords(codexHome)).flatMap((record) =>
+  const cacheKey = path.resolve(codexHome);
+  const stateRecords = await readStateSessionRecords(codexHome);
+  const canonical = new Map(stateRecords.flatMap((record) =>
     record.rolloutPath && path.isAbsolute(record.rolloutPath) ? [[record.id, path.resolve(record.rolloutPath)] as const] : []));
+  const canonicalSignature = JSON.stringify([...canonical.entries()].sort(([left], [right]) => left.localeCompare(right)));
+  const cachedPaths = cliTranscriptPathCache.get(cacheKey);
+  const cacheFresh = cachedPaths && cachedPaths.signature === canonicalSignature && Date.now() - cachedPaths.checkedAt >= 0 && Date.now() - cachedPaths.checkedAt < CLI_TRANSCRIPT_PATH_CACHE_TTL_MS;
+  const cacheCoversRequest = cachedPaths?.complete || Boolean(sessionIds && [...sessionIds].every(id => cachedPaths?.covered.has(id)));
+  if (!signal?.aborted && cacheFresh && cacheCoversRequest) {
+    for (const [id, transcript] of cachedPaths.paths) if (!sessionIds || sessionIds.has(id)) found.set(id, transcript);
+    return found;
+  }
   const selected = new Map<string, { mtimeMs: number; active: boolean; canonical: boolean }>();
   const activeRoot = path.resolve(codexHome, SESSION_DIRECTORY) + path.sep;
   const pending = [path.join(codexHome, "archived_sessions"), path.join(codexHome, SESSION_DIRECTORY)];
@@ -3232,6 +3247,24 @@ export async function findCliSessionTranscripts(
   }
   if (pending.length || scanned > MAX_SESSION_SCAN_ENTRIES)
     throw new Error("Session discovery reached its safety limit. Running state could not be fully verified; retry after reducing local session history.");
+  const reusable = cachedPaths && cachedPaths.signature === canonicalSignature && Date.now() - cachedPaths.checkedAt >= 0 && Date.now() - cachedPaths.checkedAt < CLI_TRANSCRIPT_PATH_CACHE_TTL_MS
+    ? cachedPaths
+    : undefined;
+  const paths = reusable ? new Map(reusable.paths) : new Map<string, string>();
+  for (const [id, transcript] of found) paths.set(id, transcript);
+  const covered = new Set<string>();
+  if (sessionIds) {
+    for (const id of reusable?.covered ?? []) covered.add(id);
+    for (const id of sessionIds) covered.add(id);
+  }
+  cliTranscriptPathCache.set(cacheKey, {
+    checkedAt: Date.now(),
+    signature: canonicalSignature,
+    complete: !sessionIds || Boolean(reusable?.complete),
+    covered,
+    paths
+  });
+  if (cliTranscriptPathCache.size > 8) cliTranscriptPathCache.delete(cliTranscriptPathCache.keys().next().value!);
   return found;
 }
 

@@ -11,7 +11,7 @@ export const CODEX_API_BASE = "https://chatgpt.com";
 export const QUOTA_USAGE_URL = `${CODEX_API_BASE}/backend-api/wham/usage`;
 
 /** 每日 token 使用量明细 API */
-export const DAILY_USAGE_BREAKDOWN_URL = `${CODEX_API_BASE}/backend-api/wham/usage/daily-token-usage-breakdown`;
+export const DAILY_USAGE_BREAKDOWN_URL = `${CODEX_API_BASE}/backend-api/wham/analytics/daily-workspace-usage-counts`;
 
 /** 账号检查 API */
 export const ACCOUNT_CHECK_URL = `${CODEX_API_BASE}/backend-api/wham/accounts/check`;

@@ -1,6 +1,11 @@
 # Changelog
 
-## 3.1.3
+## 1.3.3
+
+- Read verified absolute token counts from daily analytics, consolidate accounts into a VS Code + Other stacked chart, and exclude legacy percentage values from token totals.
+- Reposition chart tooltips when their size changes and keep them within the viewport.
+- Reuse the bounded local transcript index during session list and chat opens, while invalidating on Codex state changes.
+- Stable repackaging of the audited dashboard, reload recovery, chart persistence, zero-token tooltip filtering, logging, and non-blocking operation fixes.
 
 - Hide accounts with zero tokens in chart tooltips while preserving totals and missing-data indicators.
 - Remember chart mode, time ranges, and period navigation on this device across reloads. Show each day's combined token total above its per-account usage, including missing and stale data.

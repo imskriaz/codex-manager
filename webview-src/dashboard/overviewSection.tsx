@@ -725,10 +725,34 @@ export function layoutUsageGraphBars(events: readonly UsageEvent[], from: number
 }
 
 export function positionUsageGraphTooltip(anchor: UsageGraphAnchor, width: number, height: number, viewportWidth: number, viewportHeight: number): { left: number; top: number } {
-  const left = Math.max(8, Math.min(viewportWidth - width - 8, (anchor.left + anchor.right - width) / 2));
-  const above = anchor.top - height - 10;
-  const top = above >= 8 ? above : Math.max(8, Math.min(viewportHeight - height - 8, anchor.bottom + 10));
+  const safeWidth = Number.isFinite(width) ? Math.max(0, width) : 0;
+  const safeHeight = Number.isFinite(height) ? Math.max(0, height) : 0;
+  const safeViewportWidth = Number.isFinite(viewportWidth) ? Math.max(16, viewportWidth) : 16;
+  const safeViewportHeight = Number.isFinite(viewportHeight) ? Math.max(16, viewportHeight) : 16;
+  const maxLeft = Math.max(8, safeViewportWidth - safeWidth - 8);
+  const left = Math.max(8, Math.min(maxLeft, (anchor.left + anchor.right - safeWidth) / 2));
+  const above = anchor.top - safeHeight - 10;
+  const maxTop = Math.max(8, safeViewportHeight - safeHeight - 8);
+  const top = above >= 8 ? Math.min(maxTop, above) : Math.max(8, Math.min(maxTop, anchor.bottom + 10));
   return { left, top };
+}
+
+function readTooltipViewport(): { width: number; height: number } {
+  const viewport = window.visualViewport;
+  return { width: viewport?.width ?? window.innerWidth, height: viewport?.height ?? window.innerHeight };
+}
+
+function observeTooltipLayout(element: HTMLDivElement, update: () => void): () => void {
+  update();
+  const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(update);
+  observer?.observe(element);
+  window.addEventListener("resize", update);
+  window.visualViewport?.addEventListener("resize", update);
+  return () => {
+    observer?.disconnect();
+    window.removeEventListener("resize", update);
+    window.visualViewport?.removeEventListener("resize", update);
+  };
 }
 
 export function summarizeUsageSegments(segments: readonly UsageSegment[]): UsageSegment[] {
@@ -796,8 +820,9 @@ function UsageGraph(props: {
     const menu = menuRef.current?.getBoundingClientRect();
     const anchor = menuButtonRef.current?.getBoundingClientRect();
     if (menu && anchor) {
-      const position = positionUsageGraphTooltip(anchor, menu.width, menu.height, window.innerWidth, window.innerHeight);
-      const left = Math.max(8, Math.min(window.innerWidth - menu.width - 8, anchor.right - menu.width));
+      const viewport = readTooltipViewport();
+      const position = positionUsageGraphTooltip(anchor, menu.width, menu.height, viewport.width, viewport.height);
+      const left = Math.max(8, Math.min(Math.max(8, viewport.width - menu.width - 8), anchor.right - menu.width));
       setMenuPosition(previous => previous?.left === left && previous.top === position.top ? previous : { left, top: position.top });
     }
   }, [settingsOpen, graphMode, props.accounts.length, props.tokenHistoryRefresh?.statuses]);
@@ -836,7 +861,10 @@ function UsageGraph(props: {
     return totals;
   }, [events]);
   const cacheByAccount = useMemo(() => new Map(dailyUsageCache.map(entry => [entry.accountId, entry])), [dailyUsageCache]);
-  const missingUsageAccounts = props.accounts.filter(account => !cacheByAccount.has(account.id));
+  const missingUsageAccounts = props.accounts.filter(account => {
+    const entry = cacheByAccount.get(account.id);
+    return !entry || entry.usage.points.some(point => point.unit !== "tokens" || point.extensionTokens === undefined);
+  });
   useEffect(() => {
     if (!props.automaticTokenHistory || graphMode !== "tokens" || !data || props.usageGraphPending || props.usageGraphError) return;
     const missing = missingUsageAccounts.filter(account => !props.tokenHistoryRefresh?.statuses[account.id]);
@@ -845,13 +873,14 @@ function UsageGraph(props: {
   useEffect(() => { setAccountSummary(undefined); }, [graphMode, activeRange, windowOffset, props.usageGraphSource]);
   useEffect(() => { if (settingsOpen) setAccountSummary(undefined); }, [settingsOpen]);
   const refreshErrors = Object.entries(props.tokenHistoryRefresh?.statuses ?? {}).filter(([, status]) => status.state === "error");
-  const maximum = resolveUsageAxisMaximum(Math.max(0, ...events.map(event => event.used)));
-  const bars = useMemo(() => layoutUsageGraphBars(events, graphStartAt, graphEndAt, bucketCount, maximum), [events, graphStartAt, graphEndAt, bucketCount, maximum]);
+  const plotEvents = useMemo(() => graphMode === "tokens" ? consolidateDailyUsageEvents(events) : events, [events, graphMode]);
+  const maximum = resolveUsageAxisMaximum(Math.max(0, ...plotEvents.map(event => event.used)));
+  const bars = useMemo(() => layoutUsageGraphBars(plotEvents, graphStartAt, graphEndAt, bucketCount, maximum), [plotEvents, graphStartAt, graphEndAt, bucketCount, maximum]);
   const accountIds = new Set(events.map(event => event.accountId));
   const legend = props.accounts.filter(account => !accountIds.size || accountIds.has(account.id));
   const total = events.reduce((sum, event) => sum + event.used, 0);
   const staleCount = dailyUsageCache.filter(entry => props.now - entry.fetchedAt >= 3_600_000).length;
-  const missingCount = Math.max(0, props.accounts.length - dailyUsageCache.length);
+  const missingCount = missingUsageAccounts.length;
   const pending = props.usageGraphPending || (graphMode === "tokens" && props.dailyUsagePending);
   const error = props.usageGraphError ?? (graphMode === "tokens" ? props.dailyUsageError : undefined);
   const previousPeriod = data && (data.from !== queryWindow.from || data.to !== queryWindow.to);
@@ -859,7 +888,7 @@ function UsageGraph(props: {
   const status = pending ? "Updating" : error ? "Failed" : data?.truncated ? "Limited" : graphMode === "tokens"
     ? !dailyUsageCache.length ? "No data" : missingCount ? "Partial" : staleCount ? "Stale" : "Saved" : undefined;
   const statusDetail = error ?? (data?.truncated ? feedback : graphMode === "tokens"
-    ? `${dailyUsageCache.length} of ${props.accounts.length} accounts saved${staleCount ? ` · ${staleCount} stale` : ""}. ${props.automaticTokenHistory ? "Checked on account load, at most once per hour." : "Automatic token history is off."}`
+    ? `${dailyUsageCache.length} of ${props.accounts.length} accounts saved${staleCount ? ` · ${staleCount} stale` : ""}.${missingCount ? " Some verified usage or source details are missing." : ""} ${props.automaticTokenHistory ? "Checked on account load, at most once per hour." : "Automatic token history is off."}`
     : "Changes in each account's quota. Timing is estimated between refreshes.");
   const formatAxis = (value: number) => graphMode === "tokens" ? USAGE_COMPACT_NUMBER.format(value) : formatUsageValue(value);
   const showBar = (bar: UsageGraphBar, target: SVGRectElement): void => {
@@ -869,7 +898,7 @@ function UsageGraph(props: {
     setAccountSummary(undefined);
     setHovered({ bar, anchor: target.getBoundingClientRect() });
   };
-  useEffect(() => { setHovered(undefined); }, [data, graphMode, props.usageGraphSource]);
+  useLayoutEffect(() => { setHovered(undefined); }, [data, graphMode, props.usageGraphSource]);
   useEffect(() => {
     if (!settingsOpen && !hovered && !accountSummary) return;
     const dismiss = (event: PointerEvent): void => {
@@ -896,11 +925,11 @@ function UsageGraph(props: {
   }, [settingsOpen, Boolean(hovered), Boolean(accountSummary)]);
   const bucketTotal = hovered ? bars.filter(bar => bar.bucketStart === hovered.bar.bucketStart).reduce((sum, bar) => sum + bar.event.used, 0) : 0;
   const dayUsageByAccount = new Map<string, number>();
-  if (hovered && graphMode === "tokens") for (const bar of bars) {
-    if (bar.bucketStart === hovered.bar.bucketStart) dayUsageByAccount.set(bar.event.accountId, (dayUsageByAccount.get(bar.event.accountId) ?? 0) + bar.event.used);
+  if (hovered && graphMode === "tokens") for (const event of events) {
+    if (event.at >= hovered.bar.bucketStart && event.at < hovered.bar.bucketEnd) dayUsageByAccount.set(event.accountId, (dayUsageByAccount.get(event.accountId) ?? 0) + event.used);
   }
   return (
-    <div class="usage-graph-card" ref={cardRef} data-mode={graphMode} aria-label={graphMode === "tokens" ? "VS Code token usage chart" : "Quota usage chart"}>
+    <div class="usage-graph-card" ref={cardRef} data-mode={graphMode} aria-label={graphMode === "tokens" ? "Token usage chart" : "Quota usage chart"}>
       <div class="usage-graph-head">
         <div class="usage-graph-title">
           <strong>{graphMode === "tokens" ? "Tokens" : "Quota"}</strong>
@@ -913,12 +942,13 @@ function UsageGraph(props: {
           <span class="usage-graph-summary">
             {graphMode === "tokens" ? events.length ? `${USAGE_COMPACT_NUMBER.format(total)} total` : "No data" : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"}`}
           </span>
-          <span class="usage-graph-color-key" aria-label="Account color key">
-            {legend.slice(0, USAGE_GRAPH_MAX_COLOR_KEYS).map(account => {
+          <span class="usage-graph-color-key" aria-label={graphMode === "tokens" ? "Usage sources" : "Account color key"}>
+            {graphMode === "tokens" ? <><i class="usage-graph-color-chip" style={{ background: "#58a6ff" }} title="VS Code" /><small>VS Code</small><i class="usage-graph-color-chip" style={{ background: "#f0883e" }} title="Other" /><small>Other</small></> : legend.slice(0, USAGE_GRAPH_MAX_COLOR_KEYS).map(account => {
               const entry = accountMap.get(account.id)!;
               return <i key={account.id} class="usage-graph-color-chip" style={{ background: entry.color }} role="img" aria-label={entry.label} title={entry.label} />;
             })}
-            {legend.length > USAGE_GRAPH_MAX_COLOR_KEYS ? <small>+{legend.length - USAGE_GRAPH_MAX_COLOR_KEYS}</small> : null}
+            {graphMode === "tokens" && events.some(event => event.segments?.some(segment => segment.key === "Unknown source")) ? <><i class="usage-graph-color-chip" style={{ background: "#8b949e" }} /><small>Unknown source</small></> : null}
+            {graphMode !== "tokens" && legend.length > USAGE_GRAPH_MAX_COLOR_KEYS ? <small>+{legend.length - USAGE_GRAPH_MAX_COLOR_KEYS}</small> : null}
           </span>
           </button>
         </div>
@@ -934,8 +964,8 @@ function UsageGraph(props: {
             {settingsOpen ? createPortal(<div ref={menuRef} class="usage-graph-settings-popover" role="dialog" aria-label="Graph settings" style={{ left: menuPosition?.left ?? 8, top: menuPosition?.top ?? 8, visibility: menuPosition ? "visible" : "hidden" }}>
               <strong>Chart data</strong>
               <button type="button" class={graphMode === "quota" ? "active" : ""} aria-pressed={graphMode === "quota"} onClick={() => { updatePreferences({ mode: "quota", windowOffset: 0 }); setSettingsOpen(false); }}>Quota changes</button>
-              <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { updatePreferences({ mode: "tokens", windowOffset: 0 }); setSettingsOpen(false); }}>VS Code token usage</button>
-              <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved daily VS Code totals across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at most once every hour. Missing history loads automatically." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
+              <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { updatePreferences({ mode: "tokens", windowOffset: 0 }); setSettingsOpen(false); }}>Token usage</button>
+              <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved daily tokens: VS Code + Other across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at most once every hour. Missing history loads automatically." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
               <div class="usage-graph-cache-head"><span>{graphMode === "tokens" ? "Saved accounts" : "Account usage"}</span>
                 {graphMode === "tokens" ? <button type="button" disabled={props.tokenHistoryRefresh?.busy || !props.accounts.length} onClick={() => props.tokenHistoryRefresh?.refresh(props.accounts.map(account => account.id))}>{renderRefreshIcon()} Refresh all</button> : <small>Used · last checked</small>}
               </div>
@@ -975,15 +1005,19 @@ function UsageGraph(props: {
         </div>
         <div class="usage-graph-scroll">
           <div class="usage-graph-scroll-content">
-            <svg class="usage-graph" viewBox={`0 0 100 ${USAGE_GRAPH_VIEWBOX_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={graphMode === "tokens" ? "VS Code token usage for all saved accounts" : "Quota used by account"}>
+            <svg class="usage-graph" viewBox={`0 0 100 ${USAGE_GRAPH_VIEWBOX_HEIGHT}`} preserveAspectRatio="none" role="img" aria-label={graphMode === "tokens" ? "Token usage for all saved accounts" : "Quota used by account"}>
               {[10, 31, 52].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} class="usage-graph-gridline" />)}
               {hovered ? <rect class="usage-graph-cursor" x={((hovered.bar.bucketStart - graphStartAt) / duration) * 100} y="4" width={100 / bucketCount} height="48" /> : null}
               {bars.map((bar, index) => {
-                const account = accountMap.get(bar.event.accountId) ?? { label: "Unknown account", color: "#8b949e" };
+                const account = (graphMode === "tokens" ? { label: "All accounts", color: "#58a6ff" } : accountMap.get(bar.event.accountId)) ?? { label: "Unknown account", color: "#8b949e" };
                 const selected = hovered?.bar === bar;
                 const label = `${account.label}: ${USAGE_EXACT_NUMBER.format(bar.event.used)} ${graphMode === "tokens" ? "tokens" : "percent quota used"}, ${formatGraphTime(bar.event.at, props.lang, graphMode === "tokens" || displayedRange.endsWith("d") ? "date" : "time")}`;
                 return <g key={`${bar.event.accountId}:${bar.bucketStart}`}>
-                  <rect class={`usage-graph-bar${selected ? " is-active" : ""}`} x={bar.x} y={USAGE_GRAPH_BASELINE - bar.height} width={bar.width} height={bar.height} rx={Math.min(bar.width * 0.2, 0.3)} fill={account.color} />
+                  {graphMode === "tokens" ? (bar.event.segments ?? []).map((segment, segmentIndex, segments) => {
+                    const height = segment.used / maximum * USAGE_GRAPH_MAX_BAR_HEIGHT;
+                    const below = segments.slice(0, segmentIndex).reduce((sum, row) => sum + row.used, 0) / maximum * USAGE_GRAPH_MAX_BAR_HEIGHT;
+                    return <rect key={segment.key} class={`usage-graph-bar${selected ? " is-active" : ""}`} data-source={segment.key} x={bar.x} y={USAGE_GRAPH_BASELINE - below - height} width={bar.width} height={height} fill={segment.color} />;
+                  }) : <rect class={`usage-graph-bar${selected ? " is-active" : ""}`} x={bar.x} y={USAGE_GRAPH_BASELINE - bar.height} width={bar.width} height={bar.height} rx={Math.min(bar.width * 0.2, 0.3)} fill={account.color} />}
                   <rect class="usage-graph-bar-hitarea" x={Math.max(0, bar.x - bar.width * 0.18)} y="4" width={bar.width * 1.36} height="48" fill="transparent" role="img" tabIndex={index === Math.min(focusedIndex, bars.length - 1) ? 0 : -1} aria-label={label} aria-describedby={selected ? tooltipId : undefined}
                     onMouseEnter={event => showBar(bar, event.currentTarget)}
                     onFocus={event => { setFocusedIndex(index); showBar(bar, event.currentTarget); }}
@@ -1002,7 +1036,7 @@ function UsageGraph(props: {
             </div>
           </div>
         </div>
-        {!events.length && !pending && !error ? <div class="usage-graph-empty"><strong>{graphMode === "tokens" ? "No saved VS Code tokens in this period" : "No quota changes yet"}</strong><span>{graphMode === "tokens" ? "VS Code daily totals appear here" : "Changes appear after quota refreshes"}</span></div> : null}
+        {!events.length && !pending && !error ? <div class="usage-graph-empty"><strong>{graphMode === "tokens" ? "No verified token usage in this period" : "No quota changes yet"}</strong><span>{graphMode === "tokens" ? "Daily totals appear here" : "Changes appear after quota refreshes"}</span></div> : null}
         {events.length > 0 && total === 0 ? <div class="usage-graph-empty"><strong>No token use recorded</strong><span>Saved daily total: 0 tokens</span></div> : null}
         {feedback ? <div class="usage-graph-feedback" data-warning={Boolean(error || data?.truncated)} role={error || data?.truncated ? "alert" : "status"}>
           <span title={feedback}>{feedback}{previousPeriod ? " Showing the previous period." : ""}</span>
@@ -1025,17 +1059,21 @@ function UsageGraphAccountsTooltip(props: {
 }) {
   const [position, setPosition] = useState<{ left: number; top: number }>();
   useLayoutEffect(() => {
-    const bounds = props.panelRef.current?.getBoundingClientRect();
-    if (bounds) {
-      const next = positionUsageGraphTooltip(props.anchor, bounds.width, bounds.height, window.innerWidth, window.innerHeight);
-      setPosition(previous => previous?.left === next.left && previous.top === next.top ? previous : next);
-    }
+    const panel = props.panelRef.current;
+    if (!panel) return;
+    const update = () => {
+      const bounds = panel.getBoundingClientRect();
+      const viewport = readTooltipViewport();
+      const next = positionUsageGraphTooltip(props.anchor, bounds.width, bounds.height, viewport.width, viewport.height);
+      setPosition(previous => previous?.left === next.left && previous?.top === next.top ? previous : next);
+    };
+    return observeTooltipLayout(panel, update);
   }, [props.anchor, props.rows, props.pending, props.error]);
   const tokens = props.mode === "tokens";
   const format = (value: number): string => tokens ? `${USAGE_EXACT_NUMBER.format(value)} tokens` : formatUsageValue(value);
   const errors = [...new Set(props.rows.filter(row => row.refresh?.state === "error").map(row => row.refresh!.message))];
   return createPortal(<div id={props.id} ref={props.panelRef} class="usage-graph-tooltip usage-graph-accounts-tooltip" role="tooltip" aria-label="Account usage stats" onMouseEnter={props.onMouseEnter} onMouseLeave={props.onMouseLeave} style={{ left: position?.left ?? 8, top: position?.top ?? 8, visibility: position ? "visible" : "hidden" }}>
-    <div class="usage-graph-accounts-heading"><strong>{tokens ? "VS Code tokens" : "Quota usage"}</strong><span>{props.rows.some(row => row.used !== undefined) ? format(props.total) : "No data"}</span></div>
+    <div class="usage-graph-accounts-heading"><strong>{tokens ? "Tokens · VS Code + Other" : "Quota usage"}</strong><span>{props.rows.some(row => row.used !== undefined) ? format(props.total) : "No data"}</span></div>
     <time>{formatGraphTime(props.from, props.lang, "date")} – {formatGraphTime(props.to - 1, props.lang, "date")}{tokens ? " · UTC" : ""}</time>
     <div class="usage-graph-accounts-list" tabIndex={0} aria-label="Usage by account">
       {props.rows.filter(row => !tokens || row.used !== 0).map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.checkedAt ? ` · Last checked ${formatTimestamp(row.checkedAt, "Unknown")}` : ""}${row.refresh ? ` · ${row.refresh.message}` : ""}`}>
@@ -1043,7 +1081,7 @@ function UsageGraphAccountsTooltip(props: {
       </div>)}
       {!props.rows.length ? <span>No saved accounts.</span> : null}
     </div>
-    <div class="usage-graph-tooltip-meta"><span>{tokens ? "VS Code only · daily totals" : "Estimated between quota checks"}</span>{props.pending ? <span role="status">Loading saved usage…</span> : null}</div>
+    <div class="usage-graph-tooltip-meta"><span>{tokens ? "VS Code + Other · daily totals" : "Estimated between quota checks"}</span>{props.pending ? <span role="status">Loading saved usage…</span> : null}</div>
     {props.error || errors.length ? <div class="usage-graph-settings-error" role="alert">{props.error ?? errors.join("\n")}</div> : null}
   </div>, document.body);
 }
@@ -1064,8 +1102,15 @@ function UsageGraphTooltip(props: {
 }) {
   const [position, setPosition] = useState<{ left: number; top: number }>();
   useLayoutEffect(() => {
-    const bounds = props.panelRef.current?.getBoundingClientRect();
-    if (bounds) setPosition(positionUsageGraphTooltip(props.anchor, bounds.width, bounds.height, window.innerWidth, window.innerHeight));
+    const panel = props.panelRef.current;
+    if (!panel) return;
+    const update = () => {
+      const bounds = panel.getBoundingClientRect();
+      const viewport = readTooltipViewport();
+      const next = positionUsageGraphTooltip(props.anchor, bounds.width, bounds.height, viewport.width, viewport.height);
+      setPosition(previous => previous?.left === next.left && previous?.top === next.top ? previous : next);
+    };
+    return observeTooltipLayout(panel, update);
   }, [props.anchor, props.bar, props.account?.label, props.dayAccounts]);
   const tokens = props.mode === "tokens";
   const date = new Intl.DateTimeFormat(props.lang === "zh" ? "zh-CN" : props.lang === "zh-hant" ? "zh-TW" : "en", {
@@ -1077,6 +1122,7 @@ function UsageGraphTooltip(props: {
     <time dateTime={new Date(props.bar.event.at).toISOString()}>{date}</time>
     {tokens ? <>
       <div class="usage-graph-tooltip-value"><strong>{USAGE_EXACT_NUMBER.format(props.bucketTotal)}</strong><span>tokens · All accounts this day</span></div>
+      <div class="usage-graph-tooltip-breakdown" aria-label="Usage by source">{(props.bar.event.segments ?? []).filter(segment => segment.used > 0).map(segment => <div key={segment.key}><span>{segment.key}</span><strong>{USAGE_EXACT_NUMBER.format(segment.used)} tokens</strong></div>)}</div>
       <div class="usage-graph-accounts-list" tabIndex={0} aria-label="Daily usage by account">
         {props.dayAccounts.filter(row => row.used !== 0).map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.fetchedAt ? ` · Updated ${formatTimestamp(row.fetchedAt, "Unknown")}${props.now - row.fetchedAt >= 3_600_000 ? " · Stale" : ""}` : ""}`}>
           <i style={{ background: row.color }} /><span>{row.label}</span><strong>{row.used === undefined ? "No data" : `${USAGE_EXACT_NUMBER.format(row.used)} tokens`}</strong>
@@ -1097,13 +1143,32 @@ function UsageGraphTooltip(props: {
 export function buildDailyTokenUsageEvents(entries: readonly DashboardDailyUsageCacheEntry[]): UsageEvent[] {
   const points = new Map<string, UsageEvent>();
   for (const entry of [...entries].sort((a, b) => a.fetchedAt - b.fetchedAt)) for (const point of entry.usage.points) {
+    if (point.unit !== "tokens") continue;
     const at = Date.parse(`${point.date}T00:00:00Z`);
-    const used = point.extensionTokens ?? point.surfaceValues?.["vscode"] ?? point.surfaceValues?.["vs_code"] ?? point.surfaceValues?.["visual_studio_code"];
-    if (Number.isFinite(at) && typeof used === "number" && Number.isFinite(used) && used >= 0) {
-      points.set(`${entry.accountId}:${point.date}`, { at, accountId: entry.accountId, used, segments: [{ key: "Visual Studio Code", used, color: USAGE_GRAPH_COLORS[0]! }] });
+    const vscode = point.extensionTokens ?? 0;
+    const other = point.totalTokens - vscode;
+    if (Number.isFinite(at) && [point.totalTokens, vscode, other].every(value => Number.isSafeInteger(value) && value >= 0)) {
+      points.set(`${entry.accountId}:${point.date}`, { at, accountId: entry.accountId, used: point.totalTokens,
+        segments: point.extensionTokens === undefined ? [{ key: "Unknown source", used: point.totalTokens, color: "#8b949e" }]
+          : [{ key: "VS Code", used: vscode, color: "#58a6ff" }, { key: "Other", used: other, color: "#f0883e" }] });
     }
   }
   return [...points.values()].sort((a, b) => a.at - b.at);
+}
+
+export function consolidateDailyUsageEvents(events: readonly UsageEvent[]): UsageEvent[] {
+  const days = new Map<number, UsageEvent>();
+  for (const event of events) {
+    let day = days.get(event.at);
+    if (!day) { day = { at: event.at, accountId: "all", used: 0, segments: [{ key: "VS Code", used: 0, color: "#58a6ff" }, { key: "Other", used: 0, color: "#f0883e" }] }; days.set(event.at, day); }
+    day.used += event.used;
+    for (const segment of event.segments ?? []) {
+      const target = day.segments!.find(row => row.key === segment.key);
+      if (target) target.used += segment.used;
+      else day.segments!.push({ ...segment });
+    }
+  }
+  return [...days.values()].sort((a, b) => a.at - b.at);
 }
 
 function selectUsageHistoryWindow(

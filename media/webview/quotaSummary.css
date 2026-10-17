@@ -10997,7 +10997,9 @@ html[data-theme="dark"] .cli-terminal-panel {
   width: 264px;
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
-  overflow: hidden;
+  overflow: auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 12px;
   border: 1px solid var(--border-accent);
   border-radius: 9px;
@@ -11009,7 +11011,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   line-height: 1.35;
   pointer-events: none;
 }
-.usage-graph-accounts-tooltip { width: 320px; gap: 5px; padding: 10px; overflow-y: auto; pointer-events: auto; }
+.usage-graph-accounts-tooltip { width: min(320px, calc(100vw - 16px)); gap: 5px; padding: 10px; overflow-y: auto; pointer-events: auto; }
 .usage-graph-accounts-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .usage-graph-accounts-heading span { color: var(--text-secondary); font-size: 10px; }
 .usage-graph-accounts-list { display: grid; max-height: min(240px, 45vh); overflow-y: auto; border-top: 1px solid var(--border-default); border-bottom: 1px solid var(--border-default); padding: 4px 0; }
@@ -11020,7 +11022,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 .usage-graph-tooltip time { color: var(--text-secondary); font-size: 10px; }
 .usage-graph-tooltip-account { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .usage-graph-tooltip-account strong { overflow-wrap: anywhere; font-weight: 600; }
-.usage-graph-tooltip-value { display: flex; align-items: baseline; gap: 5px; }
+.usage-graph-tooltip-value { display: flex; align-items: baseline; gap: 5px; min-width: 0; flex-wrap: wrap; }
 .usage-graph-tooltip-value > strong { font-size: 20px; letter-spacing: -0.5px; }
 .usage-graph-tooltip-value > span { color: var(--text-secondary); font-size: 10px; }
 .usage-graph-tooltip-breakdown { display: grid; gap: 5px; padding-top: 8px; border-top: 1px solid var(--border-default); font-size: 10px; }

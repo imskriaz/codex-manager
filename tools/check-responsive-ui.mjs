@@ -53,7 +53,7 @@ const mockHost = `(() => {
   let messageReads = 0;
   let logReads = 0;
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
-  window.__uiActions = []; window.__uiSessions = sessions;
+  window.__uiActions = []; window.__uiSessions = sessions; window.__uiSettingResults = [];
   window.__setUiPaths = customPath => {
     Object.assign(state.settings, {codexCliPath:customPath,codexAppPath:customPath,resolvedCodexAppPath:customPath});
     dispatch({type:'dashboard:snapshot',state});
@@ -67,6 +67,7 @@ const mockHost = `(() => {
       } else if(message.type === 'dashboard:setting') {
         state.settings[message.key] = message.value;
         dispatch({type:'dashboard:snapshot',state});
+        window.__uiSettingResults.push({key:message.key,value:message.value});
       } else if(message.type === 'dashboard:action') {
         let payload = {}, error;
         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
@@ -689,7 +690,9 @@ try {
         assert.equal(await goalOnly.getAttribute("aria-pressed"), previousGoalOnly === "true" ? "false" : "true", "Goal-only preference can be changed");
         await goalOnly.click();
         assert.equal(await goalOnly.getAttribute("aria-pressed"), previousGoalOnly, "Goal-only preference can be restored");
+        const settingResultsBeforeOff = await page.evaluate(() => window.__uiSettingResults.length);
         await switchToggle.click();
+        await page.waitForFunction(before => window.__uiSettingResults.slice(before).some(result => result.key === "autoSwitchEnabled" && result.value === false), settingResultsBeforeOff);
         await page.waitForFunction(() => document.querySelectorAll("#settings-panel-automation .settings-integration-grid > .settings-block").length === 0);
         assert.equal(await options.count(), 0, "Switching off hides all dependent controls");
         assert.equal(await page.getByRole("button", { name: snapshot.copy.autoSwitchReloadTitle, exact: true }).isVisible(), false, "Reload settings follow their switching parent");

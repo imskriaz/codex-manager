@@ -13,7 +13,7 @@ import { fetchWithTimeout } from "../src/utils/network";
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
-const usage = { days: 30, points: [{ date: "2026-10-15", totalTokens: 42 }] };
+const usage = { days: 30, points: [{ unit: "tokens" as const, date: "2026-10-15", totalTokens: 42, extensionTokens: 21, otherTokens: 21 }] };
 let root: string;
 let store: SqliteStateStore;
 let now: number;
@@ -82,6 +82,30 @@ describe("daily token usage on account load", () => {
     expect(fetchUsage).toHaveBeenCalledOnce();
   });
 
+  it("rechecks legacy unverified history once and replaces it with verified tokens", async () => {
+    const legacy = { days: 30, points: [{ date: "2026-10-15", totalTokens: 23, surfaceValues: { vscode: 23 } }] };
+    await upsertDashboardDailyUsageCache(context(), "a", legacy, now - 1000);
+    const verified = { days: 30, points: [{ unit: "tokens" as const, date: "2026-10-15", totalTokens: 100, extensionTokens: 40, otherTokens: 60 }] };
+    const fetchUsage = vi.fn().mockResolvedValue(verified);
+    await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).resolves.toMatchObject({ usage: verified });
+    expect(fetchUsage).toHaveBeenCalledOnce();
+    expect(readDashboardDailyUsage(context(), "a")?.usage.points).toEqual(verified.points);
+    now += 1000;
+    await loadDailyTokenUsage(context(), "a", fetchUsage);
+    expect(fetchUsage).toHaveBeenCalledOnce();
+  });
+
+  it("preserves legacy history on an empty correction and throttles subsequent checks", async () => {
+    const legacy = { days: 30, points: [{ date: "2026-10-15", totalTokens: 23, surfaceValues: { vscode: 23 } }] };
+    await upsertDashboardDailyUsageCache(context(), "a", legacy, now - 1000);
+    const fetchUsage = vi.fn().mockResolvedValue({ days: 30, points: [] });
+    await loadDailyTokenUsage(context(), "a", fetchUsage);
+    expect(readDashboardDailyUsage(context(), "a")?.usage.points).toEqual(legacy.points);
+    now += 1000;
+    await loadDailyTokenUsage(context(), "a", fetchUsage);
+    expect(fetchUsage).toHaveBeenCalledOnce();
+  });
+
   it("preserves old data on failure and persists the failed attempt without automatic retries", async () => {
     await upsertDashboardDailyUsageCache(context(), "a", usage, now - 2 * DAY);
     const fetchUsage = vi.fn().mockRejectedValue(new Error("offline"));
@@ -117,6 +141,9 @@ describe("daily token usage on account load", () => {
   });
 
   it.each([undefined, { days: 30, points: [{ date: "2026-02-30", totalTokens: 4 }] },
+    { days: 30, points: [{ unit: "tokens", date: "2026-10-15", totalTokens: 4, extensionTokens: 5 }] },
+    { days: 30, points: [{ unit: "tokens", date: "2026-10-15", totalTokens: 4, extensionTokens: 2, otherTokens: 3 }] },
+    { days: 30, points: [{ unit: "tokens", date: "2026-10-15", totalTokens: 4.5 }] },
     { days: 30, points: [{ date: "2026-10-15", totalTokens: -1 }] },
     { days: 30, points: [{ date: "2026-10-15", totalTokens: 1, surfaceValues: { cli: Infinity } }] }])(
     "rejects an unreadable response without replacing history: %j", async invalid => {
@@ -191,7 +218,7 @@ describe("daily token usage on account load", () => {
     const fetchUsage = vi.fn().mockResolvedValue(usage);
     await loadDailyTokenUsage(ctx, "a", fetchUsage);
     now += 1000;
-    fetchUsage.mockResolvedValue({ ...usage, points: [{ ...usage.points[0], totalTokens: 99 }] });
+    fetchUsage.mockResolvedValue({ ...usage, points: [{ ...usage.points[0], totalTokens: 99, otherTokens: 78 }] });
     await expect(loadDailyTokenUsage(ctx, "a", fetchUsage, { manual: true })).resolves.toMatchObject({ usage: { points: [{ totalTokens: 99 }] } });
     await loadDailyTokenUsage(ctx, "a", fetchUsage);
     expect(fetchUsage).toHaveBeenCalledTimes(2);

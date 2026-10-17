@@ -1888,7 +1888,9 @@ describe("executeDashboardActionMessage", () => {
 
     expect(result.status).toBe("completed");
     expect(result.payload?.dailyUsage?.points[0]?.totalTokens).toBe(42);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("days=30");
+    const request = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(Date.parse(request.searchParams.get("end_date")!) - Date.parse(request.searchParams.get("start_date")!)).toBe(30 * 86_400_000);
+    expect(request.searchParams.get("workspace_user")).toBe("true");
     vi.unstubAllGlobals();
   });
 

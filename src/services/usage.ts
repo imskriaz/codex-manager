@@ -12,6 +12,7 @@ export async function fetchDailyUsageBreakdown(
   days = 30,
   signal?: AbortSignal
 ): Promise<CodexDailyUsageBreakdown | undefined> {
+  if (!Number.isInteger(days) || days < 1 || days > 30) throw new Error("Choose a daily usage range from 1 to 30 days.");
   const claims = extractClaims(tokens.idToken, tokens.accessToken);
   const headers = new Headers({
     Authorization: `Bearer ${tokens.accessToken}`,
@@ -24,7 +25,13 @@ export async function fetchDailyUsageBreakdown(
   }
 
   const url = new URL(DAILY_USAGE_BREAKDOWN_URL);
-  url.searchParams.set("days", String(days));
+  const end = new Date();
+  end.setUTCHours(0, 0, 0, 0);
+  end.setUTCDate(end.getUTCDate() + 1);
+  url.searchParams.set("start_date", new Date(end.getTime() - days * 86_400_000).toISOString().slice(0, 10));
+  url.searchParams.set("end_date", end.toISOString().slice(0, 10));
+  url.searchParams.set("group_by", "day");
+  url.searchParams.set("workspace_user", "true");
 
   const response = await fetchWithTimeout(
     url.toString(),
@@ -64,12 +71,13 @@ function parseDailyUsageBreakdown(payload: unknown, fallbackDays: number): Codex
   if (!isRecord(payload)) {
     return undefined;
   }
+  if (payload["units"] !== undefined && payload["units"] !== "tokens") return undefined;
 
   const records = collectUsageRecords(payload);
   if (!records) return undefined;
   const parsedPoints = records.map((record) => parseUsagePoint(record));
   const points = parsedPoints.filter(isUsagePoint);
-  if (points.length !== records.length) return undefined;
+  if (points.length !== records.length || new Set(points.map(point => point.date)).size !== points.length) return undefined;
   points.sort((a, b) => a.date.localeCompare(b.date));
 
   const days = readNumber(payload, ["days", "range_days", "window_days"]) ?? fallbackDays;
@@ -103,34 +111,35 @@ function parseUsagePoint(value: UnknownRecord): CodexDailyUsagePoint | undefined
   const date =
     readString(value, ["date", "day", "usage_date", "bucket_date", "time_bucket_start"]) ??
     normalizeTimestamp(readNumber(value, ["timestamp", "start_time", "bucket_start", "epoch_seconds"]));
-  const surfaceValues =
-    parseSurfaceValues(value["product_surface_usage_values"]) ??
-    parseSurfaceValues(value["surface_usage_values"]) ??
-    parseSurfaceValues(value["usage_values"]);
-  const extensionTokens = surfaceValues?.["vscode"];
-  const otherTokens = sumSurfaceValues(surfaceValues, ["vscode"]);
-  const totalTokens =
-    readNumber(value, ["total_tokens", "token_count", "tokens", "total", "total_token_count", "num_tokens"]) ??
-    sumSurfaceValues(surfaceValues) ??
-    extensionTokens ??
-    sumNestedNumbers(value["product_surface_usage_values"]) ??
-    sumNestedNumbers(value["surface_usage_values"]) ??
-    sumNestedNumbers(value["usage_values"]);
-
-  if (!date || typeof totalTokens !== "number") {
-    return undefined;
+  const totals = isRecord(value["totals"]) ? value["totals"] : value;
+  const totalTokens = readNumber(totals, ["text_total_tokens", "total_tokens", "token_count", "total_token_count", "num_tokens"]);
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date || !Number.isSafeInteger(totalTokens) || totalTokens! < 0) return undefined;
+  const clients = value["clients"];
+  const surfaceValues: Record<string, number> = Object.create(null) as Record<string, number>;
+  if (clients !== undefined) {
+    if (!Array.isArray(clients) || clients.length > 64) return undefined;
+    for (const client of clients) {
+      if (!isRecord(client) || typeof client["client_id"] !== "string" || client["client_id"].length > 128) return undefined;
+      const used = readNumber(client, ["text_total_tokens", "total_tokens"]);
+      if (!Number.isSafeInteger(used) || used! < 0) return undefined;
+      const id = client["client_id"].toLowerCase();
+      if (["__proto__", "constructor", "prototype"].includes(id)) return undefined;
+      const key = ["codex_ide_vscode", "vscode", "vs_code", "visual_studio_code"].includes(id) ? "vscode" : id;
+      surfaceValues[key] = (surfaceValues[key] ?? 0) + used!;
+    }
   }
-
-  return {
-    date,
-    totalTokens,
-    extensionTokens,
-    otherTokens,
-    surfaceValues,
-    inputTokens: readNumber(value, ["input_tokens", "prompt_tokens", "input", "prompt_token_count"]),
-    outputTokens: readNumber(value, ["output_tokens", "completion_tokens", "output", "completion_token_count"]),
-    cachedTokens: readNumber(value, ["cached_tokens", "cache_tokens", "cached"])
-  };
+  const classified = Object.values(surfaceValues).reduce((sum, used) => sum + used, 0);
+  if (!Number.isSafeInteger(classified) || classified > totalTokens!) return undefined;
+  const inputTokens = readNumber(totals, ["uncached_text_input_tokens", "input_tokens", "prompt_tokens"]);
+  const outputTokens = readNumber(totals, ["text_output_tokens", "output_tokens", "completion_tokens"]);
+  const cachedTokens = readNumber(totals, ["cached_text_input_tokens", "cached_tokens", "cache_tokens"]);
+  if (![inputTokens, outputTokens, cachedTokens].every(count => count === undefined || (Number.isSafeInteger(count) && count >= 0))) return undefined;
+  // Incomplete client attribution cannot safely establish VS Code's share.
+  const extensionTokens = clients === undefined || classified !== totalTokens ? undefined : surfaceValues["vscode"] ?? 0;
+  return { date, unit: "tokens", totalTokens: totalTokens!, extensionTokens,
+    otherTokens: extensionTokens === undefined ? undefined : totalTokens! - extensionTokens,
+    surfaceValues: clients === undefined ? undefined : surfaceValues,
+    inputTokens, outputTokens, cachedTokens };
 }
 
 function normalizeTimestamp(value: number | undefined): string | undefined {
@@ -175,77 +184,6 @@ function readNumber(record: UnknownRecord, keys: string[]): number | undefined {
     }
   }
   return undefined;
-}
-
-function sumNestedNumbers(value: unknown): number | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  let total = 0;
-  let hasNumeric = false;
-  for (const nestedValue of Object.values(value)) {
-    if (typeof nestedValue === "number" && Number.isFinite(nestedValue)) {
-      total += nestedValue;
-      hasNumeric = true;
-      continue;
-    }
-    if (typeof nestedValue === "string" && nestedValue.trim()) {
-      const parsed = Number(nestedValue);
-      if (Number.isFinite(parsed)) {
-        total += parsed;
-        hasNumeric = true;
-      }
-    }
-  }
-
-  return hasNumeric ? total : undefined;
-}
-
-function parseSurfaceValues(value: unknown): Record<string, number> | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  const result: Record<string, number> = {};
-  for (const [key, nestedValue] of Object.entries(value)) {
-    if (typeof nestedValue === "number" && Number.isFinite(nestedValue)) {
-      result[key] = nestedValue;
-      continue;
-    }
-
-    if (typeof nestedValue === "string" && nestedValue.trim()) {
-      const parsed = Number(nestedValue);
-      if (Number.isFinite(parsed)) {
-        result[key] = parsed;
-      }
-    }
-  }
-
-  return Object.keys(result).length ? result : undefined;
-}
-
-function sumSurfaceValues(
-  surfaceValues: Record<string, number> | undefined,
-  excludedKeys: string[] = []
-): number | undefined {
-  if (!surfaceValues) {
-    return undefined;
-  }
-
-  const excluded = new Set(excludedKeys);
-  let total = 0;
-  let hasValue = false;
-
-  for (const [key, value] of Object.entries(surfaceValues)) {
-    if (excluded.has(key)) {
-      continue;
-    }
-    total += value;
-    hasValue = true;
-  }
-
-  return hasValue ? total : undefined;
 }
 
 function parseJson(raw: string): unknown {

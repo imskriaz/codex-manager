@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildUsageEvents, buildDailyTokenUsageEvents, resolveUsageGraphBucketCount, resolveUsageAxisMaximum, layoutUsageGraphBars, positionUsageGraphTooltip, summarizeUsageSegments } from "../webview-src/dashboard/overviewSection";
+import { buildUsageEvents, buildDailyTokenUsageEvents, consolidateDailyUsageEvents, resolveUsageGraphBucketCount, resolveUsageAxisMaximum, layoutUsageGraphBars, positionUsageGraphTooltip, summarizeUsageSegments } from "../webview-src/dashboard/overviewSection";
 
 describe("quota usage graph", () => {
   it("distributes a quota change observed after five minutes across those minutes", () => {
@@ -44,21 +44,32 @@ describe("quota usage graph", () => {
 
   it("consolidates daily tokens by their saved account and date without double counting", () => {
     const events = buildDailyTokenUsageEvents([
-      { accountId: "a", fetchedAt: 1, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 110, extensionTokens: 10 }] } },
-      { accountId: "b", fetchedAt: 2, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 220, surfaceValues: { vscode: 20, cli: 200 } }] } },
-      { accountId: "a", fetchedAt: 3, usage: { days: 30, points: [{ date: "2026-10-15", totalTokens: 115, extensionTokens: 15 }] } }
+      { accountId: "a", fetchedAt: 1, usage: { days: 30, points: [{ unit: "tokens", date: "2026-10-15", totalTokens: 110, extensionTokens: 10 }] } },
+      { accountId: "b", fetchedAt: 2, usage: { days: 30, points: [{ unit: "tokens", date: "2026-10-15", totalTokens: 220, extensionTokens: 20, surfaceValues: { vscode: 20, cli: 200 } }] } },
+      { accountId: "a", fetchedAt: 3, usage: { days: 30, points: [{ unit: "tokens", date: "2026-10-15", totalTokens: 115, extensionTokens: 15 }] } }
     ]);
-    expect(events.map(event => [event.accountId, event.used])).toEqual([["a", 15], ["b", 20]]);
+    expect(events.map(event => [event.accountId, event.used])).toEqual([["a", 115], ["b", 220]]);
+    const consolidated = consolidateDailyUsageEvents(events);
+    expect(consolidated).toMatchObject([{ accountId: "all", used: 335, segments: [{ key: "VS Code", used: 35 }, { key: "Other", used: 300 }] }]);
     expect(events.every(event => event.at === Date.parse("2026-10-15T00:00:00Z"))).toBe(true);
   });
-  it("excludes CLI and unknown totals while preserving an explicit VS Code zero", () => {
+  it("excludes unverified legacy values while preserving verified Other usage", () => {
     const events = buildDailyTokenUsageEvents([{ accountId: "a", fetchedAt: 1, usage: { days: 3, points: [
       { date: "2026-10-13", totalTokens: 900, surfaceValues: { cli: 900 } },
       { date: "2026-10-14", totalTokens: 700 },
-      { date: "2026-10-15", totalTokens: 500, extensionTokens: 0 }
+      { unit: "tokens", date: "2026-10-15", totalTokens: 500, extensionTokens: 0 }
     ] } }]);
-    expect(events).toMatchObject([{ accountId: "a", used: 0 }]);
+    expect(events).toMatchObject([{ accountId: "a", used: 500, segments: [{ key: "VS Code", used: 0 }, { key: "Other", used: 500 }] }]);
     expect(events).toHaveLength(1);
+  });
+
+  it("includes known totals with missing attribution without claiming they are VS Code or Other", () => {
+    const events = buildDailyTokenUsageEvents([{ accountId: "a", fetchedAt: 1, usage: { days: 1, points: [
+      { unit: "tokens", date: "2026-10-15", totalTokens: 500 }
+    ] } }]);
+    expect(consolidateDailyUsageEvents(events)).toMatchObject([{ used: 500, segments: [
+      { key: "VS Code", used: 0 }, { key: "Other", used: 0 }, { key: "Unknown source", used: 500 }
+    ] }]);
   });
 
 });
@@ -88,6 +99,12 @@ describe("compact usage chart layout", () => {
     const anchor = { left: 310, right: 320, top: 15, bottom: 50 };
     expect(positionUsageGraphTooltip(anchor, 264, 200, 320, 600)).toEqual({ left: 48, top: 60 });
     expect(positionUsageGraphTooltip({ ...anchor, left: 0, right: 10, top: 590, bottom: 600 }, 264, 200, 320, 600)).toEqual({ left: 8, top: 380 });
+  });
+
+  it("clamps tooltips at the viewport edges even with oversized content", () => {
+    const anchor = { left: 380, right: 390, top: 900, bottom: 920 };
+    expect(positionUsageGraphTooltip(anchor, 300, 200, 390, 600)).toEqual({ left: 82, top: 392 });
+    expect(positionUsageGraphTooltip(anchor, 500, 700, 390, 600)).toEqual({ left: 8, top: 8 });
   });
 
   it("bounds source detail while preserving the complete total", () => {

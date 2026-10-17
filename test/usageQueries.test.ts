@@ -63,10 +63,10 @@ describe("database-driven usage graphs", () => {
     const context = ctx();
     const now = Date.now();
     await upsertDashboardDailyUsageCache(context, "a", { days: 30, points: [
-      { date: "2026-10-13", totalTokens: 10 }, { date: "2026-10-14", totalTokens: 20 }
+      { unit: "tokens", date: "2026-10-13", totalTokens: 10, extensionTokens: 5 }, { unit: "tokens", date: "2026-10-14", totalTokens: 20, extensionTokens: 10 }
     ] }, now - 1);
-    await upsertDashboardDailyUsageCache(context, "a", { days: 30, points: [{ date: "2026-10-14", totalTokens: 25 }] }, now);
-    await upsertDashboardDailyUsageCache(context, "b", { days: 30, points: [{ date: "2026-10-14", totalTokens: 30 }] }, now);
+    await upsertDashboardDailyUsageCache(context, "a", { days: 30, points: [{ unit: "tokens", date: "2026-10-14", totalTokens: 25, extensionTokens: 12 }] }, now);
+    await upsertDashboardDailyUsageCache(context, "b", { days: 30, points: [{ unit: "tokens", date: "2026-10-14", totalTokens: 30, extensionTokens: 15 }] }, now);
     await upsertDashboardDailyUsageCache(context, "a", { days: 30, points: [{ date: "2026-10-14", totalTokens: 999 }] }, now - 2);
     expect(readDailyUsageRow(store, "a")?.usage.points.map(point => point.totalTokens)).toEqual([10, 25]);
     const result = queryDashboardUsage(context, { mode: "tokens", from: Date.parse("2026-10-14T00:00:00Z"), to: Date.parse("2026-10-15T00:00:00Z") });

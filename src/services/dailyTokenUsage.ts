@@ -8,7 +8,7 @@ import { runWithBulkProviderRequests } from "../utils/network";
 import { isDailyUsageBreakdown, readDashboardDailyUsage, upsertDashboardDailyUsageCache } from "./dashboardUsageHistory";
 
 const HOUR_MS = 3_600_000;
-type Check = { at: number; error?: string; retryAt?: number };
+type Check = { at: number; error?: string; retryAt?: number; verifiedTokens?: true };
 const inFlight = new WeakMap<vscode.Memento, Map<string, Promise<DashboardDailyUsageCacheEntry>>>();
 
 function readCheck(context: vscode.ExtensionContext, accountId: string): Check | undefined {
@@ -17,6 +17,7 @@ function readCheck(context: vscode.ExtensionContext, accountId: string): Check |
     : context.globalState.get<Check>(`codexManager.dailyUsageCheck.v1.${accountId}`);
   if (value === undefined) return;
   if (!value || !Number.isFinite(value.at) || value.at <= 0 || (value.error !== undefined && typeof value.error !== "string") ||
+    (value.verifiedTokens !== undefined && value.verifiedTokens !== true) ||
     (value.retryAt !== undefined && (!Number.isFinite(value.retryAt) || value.retryAt < value.at))) {
     throw new Error("The saved usage check is invalid. Existing history was preserved.");
   }
@@ -46,8 +47,10 @@ export function loadDailyTokenUsage(
     const previous = readDashboardDailyUsage(context, accountId);
     const check = readCheck(context, accountId);
     const at = Date.now();
-    const lastCheckedAt = Math.max(check?.at ?? 0, previous?.fetchedAt ?? 0);
-    if (lastCheckedAt > at + 5 * 60_000) throw new Error("The system clock changed. Saved usage was preserved; check the clock before retrying.");
+    const legacy = previous?.usage.points.some(point => point.unit !== "tokens");
+    const savedAt = Math.max(check?.at ?? 0, previous?.fetchedAt ?? 0);
+    if (savedAt > at + 5 * 60_000) throw new Error("The system clock changed. Saved usage was preserved; check the clock before retrying.");
+    const lastCheckedAt = legacy && !check?.verifiedTokens && !check?.error ? 0 : savedAt;
     if (options.manual && at < (check?.retryAt ?? 0)) throw new Error("The usage provider requested a retry delay. Saved history was kept; retry after the server cooldown.");
     if (!options.manual && at < Math.max(lastCheckedAt + HOUR_MS, check?.retryAt ?? 0)) {
       if (check?.error) throw new Error(`${check.error} Automatic usage checks wait at least one hour and respect server retry delays.`);
@@ -63,7 +66,7 @@ export function loadDailyTokenUsage(
       const entries = await upsertDashboardDailyUsageCache(context, accountId, usage, at);
       const entry = entries.find(entry => entry.accountId === accountId);
       if (!entry) throw new Error("Daily usage could not be saved.");
-      await saveCheck(context, accountId, { at });
+      await saveCheck(context, accountId, { at, verifiedTokens: true });
       return entry;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
