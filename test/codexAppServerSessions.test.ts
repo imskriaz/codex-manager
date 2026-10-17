@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn(), spawn: vi.fn() }));
 vi.mock("child_process", async (original) => ({ ...await original<typeof import("child_process")>(), spawn: mocks.spawn }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { startCodexCliSession, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn } from "../src/services/codexSessionResume";
+import { startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
 
 const id = "01a04882-d037-7a42-ad24-9afb61901199";
@@ -27,6 +27,24 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it("uses the selected App Server transport to continue a closed transcript-only project with composer settings", async () => {
+    const project = path.join(root, "closed-project"), workspace = path.join(root, "open-project");
+    await Promise.all([project, workspace, path.join(root, "sessions")].map(directory => mkdir(directory)));
+    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: project } }) + "\n");
+    const previousFolders = vscode.workspace.workspaceFolders;
+    Object.assign(vscode.workspace, { workspaceFolders: [{ name: "open-project", uri: { fsPath: workspace } }] });
+    const rpc = { request: vi.fn(async () => ({})), onServerRequest: () => () => undefined, onNotification: () => () => undefined, close: vi.fn(), startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started("resumed-turn"); }) };
+    mocks.open.mockResolvedValue(rpc);
+    try {
+      await sendCodexCliSessionMessage({ sessionId: id, text: "continue", projectPath: project, model: "gpt-5", reasoningEffort: "high", sandboxMode: "read-only" });
+      expect(mocks.open).toHaveBeenCalledWith(expect.anything(), project);
+      expect(rpc.request).toHaveBeenCalledWith("thread/resume", { threadId: id, cwd: project });
+      expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ cwd: project, model: "gpt-5", effort: "high", sandboxPolicy: expect.objectContaining({ type: "readOnly" }), input: [expect.objectContaining({ type: "text", text: "continue" })] }), expect.any(Number), expect.any(Function));
+      expect(getCodexSessionLiveState(id)?.status).toBe("completed");
+      expect(mocks.spawn).not.toHaveBeenCalled();
+      expect(rpc.close).toHaveBeenCalled();
+    } finally { Object.assign(vscode.workspace, { workspaceFolders: previousFolders }); }
+  });
   it("steers only the expected owned turn through its existing connection", async () => {
     let finish!: () => void;
     const completed = new Promise<void>((resolve) => { finish = resolve; });

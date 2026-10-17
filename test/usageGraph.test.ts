@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildUsageEvents, buildDailyTokenUsageEvents, consolidateDailyUsageEvents, resolveUsageGraphBucketCount, resolveUsageAxisMaximum, layoutUsageGraphBars, positionUsageGraphTooltip, summarizeUsageSegments } from "../webview-src/dashboard/overviewSection";
+import { buildUsageEvents, buildDailyTokenUsageEvents, consolidateDailyUsageEvents, resolveUsageGraphBucketCount, resolveUsageAxisMaximum, layoutUsageGraphBars, positionUsageGraphTooltip, summarizeUsageSegments, formatTokenCount } from "../webview-src/dashboard/overviewSection";
 
 describe("quota usage graph", () => {
   it("distributes a quota change observed after five minutes across those minutes", () => {
@@ -76,6 +76,10 @@ describe("quota usage graph", () => {
 
 
 describe("compact usage chart layout", () => {
+  it("abbreviates token counts consistently across the chart and tooltips", () => {
+    expect([0, 999, 1_000, 1_234, 1_000_000, 1_234_567, 1_000_000_000, 1_234_567_890].map(formatTokenCount))
+      .toEqual(["0", "999", "1K", "1.2K", "1M", "1.2M", "1B", "1.2B"]);
+  });
   it("uses readable linear scales for small quota changes and large token totals", () => {
     expect([0, 0.03, 0.4, 2, 2345, Infinity].map(resolveUsageAxisMaximum)).toEqual([1, 0.05, 0.5, 2, 5000, 1]);
     expect(Number.isFinite(resolveUsageAxisMaximum(Number.MAX_VALUE))).toBe(true);

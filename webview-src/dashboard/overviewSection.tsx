@@ -693,7 +693,7 @@ const USAGE_GRAPH_MAX_BAR_HEIGHT = 42;
 
 type UsageGraphBar = { event: UsageEvent; x: number; width: number; height: number; bucketStart: number; bucketEnd: number };
 type UsageGraphAnchor = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
-const USAGE_COMPACT_NUMBER = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+export const formatTokenCount = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format;
 const USAGE_EXACT_NUMBER = new Intl.NumberFormat("en", { maximumFractionDigits: 3 });
 
 export function resolveUsageAxisMaximum(value: number): number {
@@ -884,7 +884,7 @@ function UsageGraph(props: {
   const total = events.reduce((sum, event) => sum + event.used, 0);
   const error = props.usageGraphError ?? (graphMode === "tokens" ? props.dailyUsageError : undefined);
   const feedback = error ?? (data?.truncated ? "Only the latest 10,000 records are shown. Choose a shorter range for complete detail." : props.usageGraphPending || (graphMode === "tokens" && props.dailyUsagePending) ? "Updating saved usage…" : undefined);
-  const formatAxis = (value: number) => graphMode === "tokens" ? USAGE_COMPACT_NUMBER.format(value) : formatUsageValue(value);
+  const formatAxis = (value: number) => graphMode === "tokens" ? formatTokenCount(value) : formatUsageValue(value);
   const showBar = (bar: UsageGraphBar, target: SVGRectElement): void => {
     keepBarTooltipOpen();
     setSettingsOpen(false);
@@ -934,7 +934,7 @@ function UsageGraph(props: {
             onBlur={dismissSummaryLater}
             onClick={event => { keepSummaryOpen(); setHovered(undefined); setSettingsOpen(false); const anchor = event.currentTarget.getBoundingClientRect(); setAccountSummary(current => current?.pinned ? undefined : { anchor, pinned: true }); }}>
           <span class="usage-graph-summary">
-            {graphMode === "tokens" ? events.length ? `${USAGE_COMPACT_NUMBER.format(total)} total` : "No data" : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"}`}
+            {graphMode === "tokens" ? events.length ? `${formatTokenCount(total)} total` : "No data" : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"}`}
           </span>
           <span class="usage-graph-color-key" aria-label={graphMode === "tokens" ? "Usage sources" : "Account color key"}>
             {graphMode === "tokens" ? <><i class="usage-graph-color-chip" style={{ background: "#58a6ff" }} title="VS Code" /><small>VS Code</small><i class="usage-graph-color-chip" style={{ background: "#f0883e" }} title="Other" /><small>Other</small></> : legend.slice(0, USAGE_GRAPH_MAX_COLOR_KEYS).map(account => {
@@ -1058,7 +1058,7 @@ function UsageGraphAccountsTooltip(props: {
     return observeTooltipLayout(panel, update);
   }, [props.anchor, props.rows, props.pending, props.error]);
   const tokens = props.mode === "tokens";
-  const format = (value: number): string => tokens ? `${USAGE_EXACT_NUMBER.format(value)} tokens` : formatUsageValue(value);
+  const format = (value: number): string => tokens ? `${formatTokenCount(value)} tokens` : formatUsageValue(value);
   return createPortal(<div id={props.id} ref={props.panelRef} class="usage-graph-tooltip usage-graph-accounts-tooltip" role="tooltip" aria-label="Account usage stats" onMouseEnter={props.onMouseEnter} onMouseLeave={props.onMouseLeave} style={{ left: position?.left ?? 8, top: position?.top ?? 8, visibility: position ? "visible" : "hidden" }}>
     <div class="usage-graph-accounts-heading"><strong>{tokens ? "Tokens · VS Code + Other" : "Quota usage"}</strong><span>{props.rows.some(row => row.used !== undefined) ? format(props.total) : "No data"}</span></div>
     <time>{formatGraphTime(props.from, props.lang, "date")} – {formatGraphTime(props.to - 1, props.lang, "date")}{tokens ? " · UTC" : ""}</time>
@@ -1107,11 +1107,11 @@ function UsageGraphTooltip(props: {
   return createPortal(<div id={props.id} ref={props.panelRef} onFocus={props.onMouseEnter} onMouseEnter={props.onMouseEnter} onMouseLeave={props.onMouseLeave} onBlur={event => { if (!(event.relatedTarget instanceof Node && props.panelRef.current?.contains(event.relatedTarget))) props.onMouseLeave(); }} class={`usage-graph-tooltip${tokens ? " usage-graph-accounts-tooltip" : ""}`} role="tooltip" style={{ left: position?.left ?? 8, top: position?.top ?? 8, visibility: position ? "visible" : "hidden" }}>
     <time dateTime={new Date(props.bar.event.at).toISOString()}>{date}</time>
     {tokens ? <>
-      <div class="usage-graph-tooltip-value"><strong>{USAGE_EXACT_NUMBER.format(props.bucketTotal)}</strong><span>tokens · All accounts this day</span></div>
-      <div class="usage-graph-tooltip-breakdown" aria-label="Usage by source">{(props.bar.event.segments ?? []).filter(segment => segment.used > 0).map(segment => <div key={segment.key}><span>{segment.key}</span><strong>{USAGE_EXACT_NUMBER.format(segment.used)} tokens</strong></div>)}</div>
+      <div class="usage-graph-tooltip-value"><strong title={USAGE_EXACT_NUMBER.format(props.bucketTotal)}>{formatTokenCount(props.bucketTotal)}</strong><span>tokens · All accounts this day</span></div>
+      <div class="usage-graph-tooltip-breakdown" aria-label="Usage by source">{(props.bar.event.segments ?? []).filter(segment => segment.used > 0).map(segment => <div key={segment.key}><span>{segment.key}</span><strong title={USAGE_EXACT_NUMBER.format(segment.used)}>{formatTokenCount(segment.used)} tokens</strong></div>)}</div>
       <div class="usage-graph-accounts-list" tabIndex={0} aria-label="Daily usage by account">
-        {props.dayAccounts.filter(row => row.used !== 0).map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.fetchedAt ? ` · Updated ${formatTimestamp(row.fetchedAt, "Unknown")}${props.now - row.fetchedAt >= 3_600_000 ? " · Stale" : ""}` : ""}`}>
-          <i style={{ background: row.color }} /><span>{row.label}</span><strong>{row.used === undefined ? "No data" : `${USAGE_EXACT_NUMBER.format(row.used)} tokens`}</strong>
+        {props.dayAccounts.filter(row => row.used !== undefined && row.used > 0).map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.fetchedAt ? ` · Updated ${formatTimestamp(row.fetchedAt, "Unknown")}${props.now - row.fetchedAt >= 3_600_000 ? " · Stale" : ""}` : ""}`}>
+          <i style={{ background: row.color }} /><span>{row.label}</span><strong title={USAGE_EXACT_NUMBER.format(row.used!)}>{formatTokenCount(row.used!)} tokens</strong>
         </div>)}
       </div>
     </> : <>

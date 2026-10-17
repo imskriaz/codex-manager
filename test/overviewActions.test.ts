@@ -71,6 +71,7 @@ describe("overview actions", () => {
     expect(main).toContain("session.interrupted === true");
     expect(main).toContain('"resumeCodexSessions", session, { openInVsCode: true }');
     expect(main).toContain("session.deviceName || peer?.name");
+    expect(main).toContain('projectDisplayName(session.projectPath?.trim() || "Workspace")');
     expect(main).toContain('session.model || "Model unavailable"');
     expect(main).toContain(': "Session dashboard"');
     expect(main).toMatch(/setCliSessionsMenuOpen\(false\);\r?\n\s+openCliSessions\(\);/);
@@ -89,6 +90,7 @@ describe("overview actions", () => {
     expect(overview).not.toContain("props.onSwitchAccount(switchTarget.id)");
     expect(main).toContain("openBrowserSwitchPicker()");
     expect(main).toContain('setBrowserActionRequest({ kind: "switch"');
+    expect(main).toContain('targetDeviceId: resolvedTarget');
     expect(
       resolveOverviewContextAction(
         {

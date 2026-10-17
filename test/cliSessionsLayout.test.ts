@@ -295,7 +295,7 @@ describe("sessions sidebar layout", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
 
     expect(source).toContain("SwitchAccountIcon");
-    expect(source).toContain("props.onSwitchAccount()");
+    expect(source).toContain('props.onSwitchAccount(pc.local ? "local" : pc.id)');
     expect(source).toContain('session.canStop ? <IconButton label={`Stop ${session.title}`}');
     expect(source).toContain('label={`Open ${session.title} in Codex`}');
     expect(source).toContain("props.onOpenInCodex(session)");
@@ -360,25 +360,17 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain('.cli-workspace .cli-project-sessions .cli-session-row { min-height: 24px;');
     expect(css).toContain('.cli-workspace .cli-project-group .cli-project-row { min-height: 21px; }');
     expect(css).toContain('.cli-workspace .cli-pc-group-toggle { min-height: 24px;');
-    expect(source).toContain('aria-label="Accounts by PC"');
-    expect(source).toContain('class="cli-account-submenu"');
-    expect(source).toContain("const enabledCount = accounts.filter((account) => account.enabled).length;");
-    expect(source).toContain("Running ${quotaDescription(runningAccount)}");
-    expect(source).toContain("${account.enabled ? \"Enabled\" : \"Disabled\"}");
-    expect(source).toContain("aria-current={selected ? \"true\" : undefined}");
-    expect(css).toContain('.cli-account-submenu');
+    expect(source).toContain('aria-label="Account center"');
+    expect(source).toContain('aria-label="Account system"');
+    expect(source).toContain('aria-label="Search accounts on selected system"');
+    expect(source).toContain('aria-current={active ? "true" : undefined}');
+    expect(source).toContain('props.onSwitchAccount(peer.local ? "local" : peer.id, accountId)');
+    expect(source).not.toContain('class="cli-account-submenu"');
+    expect(css).toContain('.cli-account-center-header');
     expect(css).toContain('width: min(360px, calc(100vw - 16px));');
-    expect(css).toMatch(/\.cli-account-parent \{\r?\n  position: relative;\r?\n  width: 100%;/);
-    expect(css).toContain('.cli-account-menu > .cli-account-parent');
-    expect(css).toContain('display: block;');
-    expect(css).toContain('.cli-account-menu .cli-account-parent > button > span');
-    expect(css).toContain('padding: 0;');
-    expect(css).toMatch(/top: auto;\r?\n  bottom: 0;/);
-    expect(css).toContain('flex-direction: column;');
-    expect(css).toContain('min-height: 34px;');
-    expect(css).toContain('.cli-account-entry > span:first-child:last-child');
-    expect(css).toContain('.cli-account-parent > button small');
-    expect(source).toContain('Switch account on ${getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}');
+    expect(css).toContain('.cli-account-choice');
+    expect(css).toContain('.cli-account-quota-track');
+    expect(css).toContain('.cli-account-navigation');
     expect(source).toContain('class="cli-session-search-line"');
     expect(source).toContain('class="cli-session-search-wrap"><SearchIcon />');
     expect(source).not.toContain('aria-label="Session state"');
@@ -392,7 +384,6 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("width: 30px;");
     expect(css).toContain("height: 30px;");
     expect(css).toContain(":has(.cli-environment-popover) .cli-workspace-feedback");
-    expect(source).toContain("</button>})}");
     expect(css).toMatch(/\.cli-workspace \.cli-context-add-menu\s*\{[\s\S]*?right:\s*0;[\s\S]*?left:\s*auto;/);
     expect(css).toContain("width: min(124px, calc(100vw - 16px));");
     expect(css).toContain('.cli-account-popover-wide');
@@ -424,7 +415,6 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-workspace .cli-context-tab-scroll");
     expect(css).toContain(".cli-workspace .cli-context-tab-scroll > span.is-active::after");
     expect(css).toContain(".cli-workspace .cli-context-tab-scroll > span > button[aria-selected=\"true\"]");
-    expect(css).toMatch(/top: auto;\r?\n  bottom: 0;/);
     expect(css).toContain("flex: 0 0 auto; min-width: 0; border-radius: 6px;");
     expect(css).toContain(".cli-context-tab-scroll::-webkit-scrollbar");
     expect(source).toContain("WorkspaceCodeEditor");
@@ -505,7 +495,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('showLogout={document.documentElement.dataset["dashboardRemote"] === "true"}');
     expect(source).toContain('class="cli-account-logout-form"');
     expect(source).toContain('action="/logout"');
-    expect(source).toContain('role="menuitem" class="cli-account-logout"');
+    expect(source).toContain('type="submit" class="cli-account-logout"');
   });
 
   it("guards the workspace against narrow viewport overflow", () => {
@@ -514,8 +504,8 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-workspace .cli-composer-controls {");
     expect(css).toContain("flex-wrap: wrap;");
     expect(css).toContain(".cli-account-logout-form {");
-    expect(css).toContain(".cli-account-menu .cli-account-submenu {");
-    expect(css).toMatch(/\.cli-account-menu \.cli-account-submenu\s*\{[\s\S]*?width: 100%;/);
+    expect(css).toContain(".cli-account-menu {");
+    expect(css).not.toContain(".cli-account-menu .cli-account-submenu {");
   });
 
   it("keeps transport selection authoritative and uses supported app-server methods", () => {

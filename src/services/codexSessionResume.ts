@@ -146,13 +146,8 @@ export async function readCodexCliSessions(
   codexHome = resolveCodexHome(),
   limit = MAX_VISIBLE_CLI_SESSIONS
 ): Promise<DashboardCliSessionSummary[]> {
-  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli") {
-    try {
-      return await readResilientSessionList(codexHome, limit);
-    } catch (error) {
-      recordPersistentEvent("error", "session-list", "App-server session list unavailable", { reason: error instanceof Error ? error.message : String(error) });
-    }
-  }
+  // Keep discovery local so dashboard load never starts a second app-server
+  // that can compete with Codex while it is opening and replaying history.
   return readLocalSessionList(codexHome, limit);
 }
 
@@ -598,7 +593,8 @@ async function toCliSessionSummary(
     ...(metadata.projectPath ? { projectPath: metadata.projectPath } : {}),
     ...(metadata.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {}),
     locked: running || state.status === "unknown",
-    ...(running ? { runningBy: canStop ? "Codex Manager" : "another Codex process", canStop } : {}),
+    runningBy: running ? (canStop ? "Codex Manager" : "another Codex process") : undefined,
+    canStop,
     archived
   };
 }
@@ -759,9 +755,27 @@ export async function sendCodexCliSessionMessage(options: {
   if (options.sandboxMode && !isCliSandboxMode(options.sandboxMode)) {
     throw new Error("The selected access mode is invalid.");
   }
-  await readKnownProjectRoots(resolveCodexHome());
+  const home = resolveCodexHome();
+  const recordedProject = (await readCliSessionMetadata(home, options.sessionId)).projectPath
+    ?? (await readStateSessionRecords(home, options.sessionId))[0]?.cwd
+    ?? recentNewSessions.get(options.sessionId)?.summary.projectPath;
+  let cwd: string;
+  if (recordedProject && path.isAbsolute(recordedProject)) {
+    const canonical = async (value: string): Promise<string> => {
+      const resolved = await fs.realpath(path.resolve(value)).catch(() => path.resolve(value));
+      return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+    };
+    if (options.projectPath && await canonical(options.projectPath) !== await canonical(recordedProject)) {
+      throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
+    }
+    cwd = path.resolve(recordedProject);
+  } else {
+    await readKnownProjectRoots(home);
+    cwd = resolveCliProjectPath(options.projectPath);
+  }
+  await assertUsableCliProjectPath(cwd);
   if (configuredSessionTransport() !== "cli") {
-    await sendAppServerSessionMessage(options);
+    await sendAppServerSessionMessage(options, cwd);
     return;
   }
   await withCliImageAttachments(options.attachments, async (imagePaths) => {
@@ -770,8 +784,6 @@ export async function sendCodexCliSessionMessage(options: {
       throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
     }
     const executable = await resolveCodexCliExecutable();
-    const cwd = resolveCliProjectPath(options.projectPath);
-    await assertUsableCliProjectPath(cwd);
     const startedAt = Date.now();
     await claimTrackedCliTurn({ id: options.sessionId, projectPath: cwd, startedAt, ownerPid: process.pid });
     const sessionRef = toSessionLogRef(options.sessionId);
@@ -1242,10 +1254,8 @@ async function sendAppServerSessionMessage(options: {
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
-}): Promise<void> {
+}, cwd: string): Promise<void> {
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
-  const cwd = resolveCliProjectPath(options.projectPath);
-  await assertUsableCliProjectPath(cwd);
   if (await isCliSessionRunning(resolveCodexHome(), options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
   const live = reserveCodexSessionLive();
   let rpc: CodexAppServerRpc | undefined;
@@ -1549,7 +1559,11 @@ export async function readCodexCliSessionMessages(
   }
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli" && !(await findCliSessionTranscript(codexHome, sessionId))) {
     try {
-      const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), resolveCliProjectPath(undefined));
+      const recordedProject = (await readCliSessionMetadata(codexHome, sessionId)).projectPath
+        ?? (await readStateSessionRecords(codexHome, sessionId))[0]?.cwd;
+      const projectPath = recordedProject && path.isAbsolute(recordedProject) ? path.resolve(recordedProject) : resolveCliProjectPath(undefined);
+      await assertUsableCliProjectPath(projectPath);
+      const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), projectPath);
       try {
         const result = await rpc.request("thread/read", { threadId: sessionId, includeTurns: true }, APP_SERVER_REQUEST_TIMEOUT_MS);
         const messages = parseCodexAppServerThreadItems(result);

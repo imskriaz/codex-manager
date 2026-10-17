@@ -89,6 +89,33 @@ describe("Codex session integration", () => {
       Object.assign(vscode.workspace, { workspaceFolders: previousFolders });
     }
   });
+  it("continues a transcript-only project outside the open workspace and rejects missing or changed folders", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "codex-project-resume-")); roots.push(home);
+    const current = path.join(home, "current"), recorded = path.join(home, "recorded");
+    await Promise.all([current, recorded, path.join(home, "sessions")].map(directory => mkdir(directory)));
+    await writeFile(path.join(home, "sessions", `rollout-${sessionId}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id: sessionId, cwd: recorded } }) + "\n");
+    const script = path.join(home, "codex.js"), marker = path.join(home, "cwd.txt");
+    await writeFile(script, `process.stdin.resume(); process.stdin.on('end',()=>{require('node:fs').writeFileSync(${JSON.stringify(marker)},process.cwd()); console.log(JSON.stringify({type:'turn.completed'}));});`);
+    const previousHome = process.env["CODEX_HOME"], previousFolders = vscode.workspace.workspaceFolders;
+    process.env["CODEX_HOME"] = home;
+    Object.assign(vscode.workspace, { workspaceFolders: [{ name: "current", uri: { fsPath: current } }] });
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "codexCliPath" ? script : key === "codexSessionTransport" ? "cli" : fallback } as never);
+    try {
+      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue", projectPath: current })).rejects.toThrow("different project");
+      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue" })).resolves.toBeUndefined();
+      expect(await readFile(marker, "utf8")).toBe(recorded);
+      await rm(recorded, { recursive: true });
+      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue" })).rejects.toThrow("project folder is unavailable");
+      await writeFile(recorded, "not a directory");
+      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue" })).rejects.toThrow("not a folder");
+      await rm(recorded); await mkdir(recorded);
+      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue", projectPath: recorded })).resolves.toBeUndefined();
+    } finally {
+      if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
+      Object.assign(vscode.workspace, { workspaceFolders: previousFolders });
+    }
+  });
+
   it("keeps a bounded transcript window and unique sequence IDs across large appends", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-bounded-window-"));
     roots.push(root);

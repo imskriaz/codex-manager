@@ -42,3 +42,4 @@ out/services/announcements.*
 
 tools/benchmark-sqlite.mjs
 tools/check-usage-ui.mjs
+tools/check-session-continue-ui.mjs

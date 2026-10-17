@@ -1,21 +1,21 @@
 # Changelog
 
-## 1.3.5-pre3
-- Move system switching into the dashboard icon, show the system count, and hide that icon for a single system.
-- Show running parent sessions as compact rows with their title, system, elapsed turn time, and recorded model. Retain goal and thinking details in the tooltip and session dashboard navigation below the list.
-- Keep automatic session reads and their timeouts out of startup toasts while preserving inline errors and explicit action feedback.
-- Move privacy into More, remove password configuration from More, and highlight Settings and its Password block until a shared password is set.
-- Add Codex, Resume, and Show All Sessions to More. Keep interrupted conversations available after reload with View or Resume actions that open the owning VS Code editor.
-- Share connected systems, account dashboards, and authenticated remote actions with the VS Code dashboard.
+## 1.3.5
 
-## 1.3.5-pre2
-
-- Remove usage-chart message overlays and badges; keep diagnostics and retries in Graph settings. Silence token-history and unverified-session read toasts.
-- Default Automatic token history to off, place it last in Automation, and add a persisted 1-minute to 1-day collection gap for successful and failed checks, respecting provider retry delays.
-
-## 1.3.5-pre1
-
-- Show the account dashboard at the home URL, redirect old dashboard bookmarks to home, and use `/workspace/<session-id>` for chats while preserving old bookmarks and remote-device links.
+- Open the account dashboard at the home URL and chats under `/workspace/<session-id>`, preserving existing bookmarks and remote-session links.
+- Switch systems from the dashboard icon in both the browser and VS Code. Show the system count and hide the icon when only one system is available.
+- Show compact running-session rows with their title, system, project, elapsed time, and recorded model; keep goal and thinking details in the tooltip. Count only confirmed running parent sessions and retain interrupted conversations after reload with View or Resume actions for the owning VS Code editor.
+- Add Codex, Resume, and Show All Sessions to More, alongside the privacy control. Open all sessions in the browser workspace.
+- Keep password configuration in Settings and highlight its icon and Password block until a shared password is set.
+- Redesign the sidebar account center with quota meters, system selection, account search, direct account choices, and Dashboard and Settings shortcuts. Keep switching confirmation, offline states, keyboard navigation, and browser sign-out accessible.
+- Keep mobile account controls compact with a horizontal quota strip and dense account rows. Fit the panel to the visible viewport as the keyboard opens and preserve drawer focus and navigation in portrait and landscape.
+- Continue stopped conversations in their recorded project even when its VS Code folder is closed or native project metadata is unavailable. Preserve the chosen App Server or CLI transport and composer settings, and report missing folders without silently changing projects.
+- Keep session discovery on the local index so opening Codex Manager does not start a competing App Server or replay large histories while Codex is loading.
+- Open App Server backed conversations from their recorded project folder and fail clearly when that folder is unavailable.
+- Keep startup and background session or token-history failures out of toasts. Preserve inline errors, retry controls, diagnostics, and feedback for explicit actions.
+- Remove usage-chart message overlays and badges; keep diagnostics and retries in Graph settings.
+- Hide accounts without data from daily token tooltips and abbreviate large token totals as K, M, or B, keeping exact values available on hover.
+- Default Automatic token history to off, place it last in Automation, and persist a collection interval from one minute to one day for successful and failed checks while respecting provider retry delays.
 
 ## 1.3.4
 

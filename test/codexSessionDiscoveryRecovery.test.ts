@@ -31,41 +31,35 @@ describe("session discovery recovery", () => {
     expect(SESSION_DISCOVERY_RETRY_GAP_MS).toBeGreaterThanOrEqual(30_000);
   });
 
-  it("merges locally running parents omitted by a successful live discovery", async () => {
+  it("reads locally running parents without starting a second app-server", async () => {
     const second = "01a04882-d037-7a42-ad24-9afb61901189";
     const third = "01a04882-d037-7a42-ad24-9afb61901190";
-    mocks.open.mockResolvedValue({ request: vi.fn(async (_method: string, params: { archived: boolean; sourceKinds?: string[] }) => ({ data: params.archived || params.sourceKinds ? [] : [{ id, name: "First", source: "vscode", status: { type: "idle" } }, { id: second, name: "Second", source: "vscode", status: { type: "idle" } }] })), close: vi.fn() });
     for (const sessionId of [id, second, third]) await writeFile(path.join(root, "sessions", `rollout-${sessionId}.jsonl`), JSON.stringify({ type: "session_meta", payload: { source: "vscode", cwd: root } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: sessionId } }) + "\n");
     expect(new Set((await readCodexCliSessions(root)).filter((row) => row.status === "running").map((row) => row.id))).toEqual(new Set([id, second, third]));
+    expect(mocks.open).not.toHaveBeenCalled();
   });
 
-  it("returns local sessions after initialize failure and backs off repeated refreshes", async () => {
-    mocks.open.mockRejectedValue(new Error("initialize timed out"));
+  it("returns local sessions without initialize failure or retry work", async () => {
     const sessions = await readCodexCliSessions();
     expect(sessions[0]?.title).toBe("Recovered chat");
     expect((await readCodexCliSessions())[0]?.id).toBe(id);
     expect(getCodexSessionReadNotice(sessions)).toBeUndefined();
-    expect(mocks.open).toHaveBeenCalledTimes(1);
+    expect(mocks.open).not.toHaveBeenCalled();
   });
-  it("coalesces slow startup while local history stays accessible", async () => {
-    mocks.open.mockImplementation(() => new Promise(() => undefined));
+  it("coalesces local startup while history stays accessible", async () => {
     const lists = await Promise.all([readCodexCliSessions(), readCodexCliSessions()]);
     expect(lists.map((sessions) => sessions[0]?.id)).toEqual([id, id]);
-    expect(mocks.open).toHaveBeenCalledTimes(1);
+    expect(mocks.open).not.toHaveBeenCalled();
   });
   it("enriches complete live rows from child transcript metadata before showing them as parents", async () => {
-    mocks.open.mockResolvedValue({ request: vi.fn(async (_method: string, params: { archived: boolean }) => ({ data: params.archived ? [] : [{ id, name: "Inherited title", cwd: "D:/demo", source: "cli", status: { type: "idle" } }] })), close: vi.fn() });
     await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { source: { subagent: { thread_spawn: { parent_thread_id: "parent", agent_nickname: "Reviewer" } } } } }) + "\n");
     expect((await readCodexCliSessions())[0]).toMatchObject({ subAgent: true, parentSessionId: "parent", agentName: "Reviewer" });
   });
   it("requests excluded child sources without letting them crowd out parents", async () => {
     const childId = "01a04882-d037-7a42-ad24-9afb61901189";
-    const request = vi.fn(async (_method: string, params: { archived: boolean; sourceKinds?: string[] }) => ({ data: params.archived ? [] : params.sourceKinds ? [{ id: childId, name: "Inherited title", source: { subAgent: { threadSpawn: { parentThreadId: id, agentNickname: "Reviewer" } } }, status: { type: "active" } }] : [{ id, name: "Parent", cwd: "D:/demo", source: "cli" }] }));
-    mocks.open.mockResolvedValue({ request, close: vi.fn() });
     const sessions = await readCodexCliSessions();
-    expect(sessions.find(session => session.id === childId)).toMatchObject({ subAgent: true, parentSessionId: id, agentName: "Reviewer", status: "running" });
-    expect(sessions.find(session => session.id === id)?.subAgent).not.toBe(true);
-    expect(request).toHaveBeenCalledWith("thread/list", expect.objectContaining({ sourceKinds: expect.arrayContaining(["subAgentThreadSpawn"]), useStateDbOnly: true }));
+    expect(sessions.find(session => session.id === childId)).toBeUndefined();
+    expect(mocks.open).not.toHaveBeenCalled();
   });
   it("reads appended messages directly even while the live server cannot initialize", async () => {
     mocks.open.mockRejectedValue(new Error("offline"));

@@ -79,7 +79,7 @@ import { formatSessionReadError } from "./actionFeedback";
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
-import { formatElapsed, type CliSessionFeedback } from "./cliSessionsModal";
+import { formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
 import { filterCliSessionsBySection, mergeDashboardPeers } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
@@ -1737,11 +1737,18 @@ function App() {
     sendAction("exportBackup");
   };
 
-  const openBrowserSwitchPicker = (targetDeviceId?: string): void => {
-    const accountsForTarget = targetDeviceId ? (snapshot.peerAccounts?.[targetDeviceId] ?? []) : displayedAccounts;
+  const openBrowserSwitchPicker = (targetDeviceId?: string, preferredAccountId?: string): void => {
+    const targetPeer = targetDeviceId === "local" ? pcOptions.find(peer => peer.local) : targetDeviceId ? pcOptions.find(peer => peer.id === targetDeviceId) : selectedPeer;
+    if ((targetDeviceId && !targetPeer) || targetPeer?.connected === false) {
+      showNotice({ level: "warning", message: "This system is offline. Reconnect it before switching accounts." });
+      return;
+    }
+    const resolvedTarget = targetPeer && !targetPeer.local ? targetPeer.id : undefined;
+    const accountsForTarget = resolvedTarget ? (snapshot.peerAccounts?.[resolvedTarget] ?? []) : snapshot.accounts;
     const accountIds = accountsForTarget
       .filter(
         (account) =>
+          (!preferredAccountId || account.id === preferredAccountId) &&
           !account.isActive &&
           !account.switchQueued &&
           account.enabled &&
@@ -1758,11 +1765,11 @@ function App() {
             ? "没有可切换的账号——所有账号配额都已用完。"
             : snapshot.lang === "zh-hant"
               ? "沒有可切換的帳號——所有帳號配額都已用完。"
-              : "No account to switch — no capable account has enough quota remaining."
+                : preferredAccountId ? "This account is not ready to switch. Check its status and quota on the dashboard." : "No account to switch — no capable account has enough quota remaining."
       });
       return;
     }
-    setBrowserActionRequest({ kind: "switch", accountIds, targetDeviceId });
+    setBrowserActionRequest({ kind: "switch", accountIds, targetDeviceId: resolvedTarget });
   };
 
   const confirmBrowserAction = (request: BrowserActionRequest, submittedValues?: string[]): void => {
@@ -1802,7 +1809,7 @@ function App() {
       const accountId = request.accountIds[0];
       if (accountId) {
         const account = (
-          request.targetDeviceId ? (snapshot.peerAccounts?.[request.targetDeviceId] ?? []) : displayedAccounts
+          request.targetDeviceId ? (snapshot.peerAccounts?.[request.targetDeviceId] ?? []) : snapshot.accounts
         ).find((candidate) => candidate.id === accountId);
         const claimedElsewhere = Boolean(account?.runningDeviceName && !account.runningOnThisDevice);
         if (claimedElsewhere && !snapshot.settings.encryptedSyncRegistryOverrideEnabled) {
@@ -2628,8 +2635,8 @@ function App() {
         <BrowserActionModal
           request={browserActionRequest}
           accounts={
-            browserActionRequest?.kind === "switch" && browserActionRequest.targetDeviceId
-              ? (snapshot.peerAccounts?.[browserActionRequest.targetDeviceId] ?? [])
+            browserActionRequest?.kind === "switch"
+              ? browserActionRequest.targetDeviceId ? (snapshot.peerAccounts?.[browserActionRequest.targetDeviceId] ?? []) : snapshot.accounts
               : displayedAccounts
           }
           lang={snapshot.lang}
@@ -2699,6 +2706,8 @@ function App() {
               account={overviewAccount}
               localAccounts={snapshot.accounts}
               onSwitchAccount={openBrowserSwitchPicker}
+              onSettings={() => dispatch({ type: "open-settings" })}
+              switchingAccount={state.pendingActions.some(request => request.action === "switch")}
               peers={pcOptions}
               selectedPeerId={selectedPeer?.id ?? selectedPeerId}
               peerAccounts={snapshot.peerAccounts}
@@ -3346,6 +3355,7 @@ function CliSessionsMenu(props: {
                 {props.sessions.map((session) => {
                   const peer = props.peers.find(peer => session.remote ? peer.id === session.deviceId : peer.local);
                   const system = getSensitiveDisplayValue(session.deviceName || peer?.name || (session.remote ? "Remote PC" : "This PC"), props.privacyMode, "name");
+                  const project = projectDisplayName(session.projectPath?.trim() || "Workspace");
                   const time = typeof session.runningSince === "number" && Number.isFinite(session.runningSince) && session.runningSince > 0 && session.runningSince <= now + 5 * 60_000 ? formatElapsed(Math.max(0, now - session.runningSince)) : "Time unavailable";
                   const detail = `Goal: ${session.goal?.objective || (session.goal === null ? "No goal" : "Unavailable")}\nThinking: ${session.reasoningEffort || "Unavailable"}`;
                   const running = session.status === "running";
@@ -3353,7 +3363,7 @@ function CliSessionsMenu(props: {
                   return <article class="cli-sessions-running-row" role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
                     <div class="cli-sessions-running-copy">
                     <strong class="cli-sessions-running-title">{session.title}</strong>
-                    <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span aria-label={`Running time: ${time}`}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
+                    <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <button type="button" class="cli-icon-button" disabled={props.actionPending || session.status === "unknown" || offline} aria-label={`${running ? "View" : "Resume"} ${session.title} in VS Code`} title={offline ? "System offline" : session.status === "unknown" ? "Refresh to verify this session" : running ? "View in VS Code" : "Resume in VS Code"} onClick={() => props.onOpen(session)}>{running ? <EyeIcon /> : <span aria-hidden="true">↻</span>}</button>
                   </article>;

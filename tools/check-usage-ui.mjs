@@ -45,7 +45,7 @@ const mockHost = `(() => {
       let payload = {}, error;
       if (message.action === 'getUsageGraph') {
         const query = message.payload.usageGraph;
-        const tokens = query.to - query.from <= 7 * day ? 700 : 100;
+        const tokens = (query.to - query.from <= 7 * day ? 700 : 100) * (window.__tokenScale || 1);
         payload.usageGraph = {...query, truncated:false, oldestAt:query.from - day,
           history: query.mode === 'quota' ? state.accounts.flatMap(account => [
             {accountId:account.id,at:query.from + 60000,hourly:90},
@@ -139,6 +139,20 @@ try {
     assert.ok(box.x >= 0 && box.x + box.width <= width && box.y >= 0 && box.y + box.height <= 900, "Tooltip stays inside viewport");
     await page.screenshot({ path: path.join(output, `tokens-${width}.png`) });
     await page.keyboard.press("Escape");
+
+    await page.evaluate(() => { window.__tokenScale = 10_000_000; });
+    await page.getByRole("combobox", { name: "Graph time range" }).selectOption("7d");
+    await page.locator('.usage-graph-bar-hitarea[aria-label*="21,000,000,000 tokens"]').click();
+    await tooltip.waitFor();
+    assert.equal(await tooltip.locator(".usage-graph-tooltip-value strong").innerText(), "21B");
+    assert.equal(await tooltip.locator(".usage-graph-tooltip-value strong").getAttribute("title"), "21,000,000,000", "Exact token totals remain available on hover");
+    assert.deepEqual(await tooltip.locator(".usage-graph-account-stat").allTextContents(), ["a@example.invalid7B tokens", "b@example.invalid14B tokens"]);
+    assert.ok(await tooltip.evaluate(element => { const bounds = element.getBoundingClientRect(); return bounds.left >= 0 && bounds.right <= innerWidth; }), "Compact token counts fit narrow tooltips");
+    await page.screenshot({ path: path.join(output, `tokens-large-${width}.png`) });
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.__tokenScale = 1; });
+    await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");
+    await page.locator('.usage-graph-bar-hitarea[aria-label*="300 tokens"]').waitFor();
 
     const statsTrigger = page.getByRole("button", { name: "View account usage stats", exact: true });
     await statsTrigger.click();
@@ -347,8 +361,8 @@ try {
       await page.getByRole("combobox", { name: "Graph time range" }).selectOption("7d");
       await page.locator(".usage-graph-bar-hitarea").last().focus();
       await tooltip.waitFor();
-      assert.equal(await tooltip.locator(".usage-graph-account-stat").count(), 12, "Daily tooltip includes every account");
-      await tooltip.locator(".usage-graph-account-stat").filter({ hasText: "j@example.invalid" }).getByText("No data", { exact: true }).waitFor();
+      assert.equal(await tooltip.locator(".usage-graph-account-stat").count(), 11, "Daily tooltip includes only accounts with data for that day");
+      assert.equal(await tooltip.locator(".usage-graph-account-stat").filter({ hasText: "j@example.invalid" }).count(), 0, "Missing daily data stays out of the day tooltip");
       await tooltip.getByLabel("Daily usage by account", { exact: true }).focus();
       await tooltip.getByLabel("Daily usage by account", { exact: true }).evaluate(element => { element.scrollTop = element.scrollHeight; });
       await tooltip.waitFor();

@@ -162,9 +162,11 @@ export type CliSessionsPageProps = {
   workspaceFileSaving: boolean;
   logoUri?: string;
   onDashboard: () => void;
+  onSettings: () => void;
+  switchingAccount: boolean;
   account?: DashboardAccountViewModel;
   localAccounts?: DashboardAccountViewModel[];
-  onSwitchAccount: (targetDeviceId?: string) => void;
+  onSwitchAccount: (targetDeviceId?: string, accountId?: string) => void;
   peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
   selectedPeerId?: string;
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
@@ -449,7 +451,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         event.preventDefault();
         setRailCollapsed(true);
       } else if (event.key === "Tab") {
-        const controls = [sidebarToggleRef.current, ...Array.from(sidebar?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex="0"]') ?? []), ...Array.from(document.querySelectorAll<HTMLElement>('.cli-account-menu button:not([disabled]), .cli-account-menu a[href]'))]
+        const controls = [sidebarToggleRef.current, ...Array.from(sidebar?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], [tabindex="0"]') ?? []), ...Array.from(document.querySelectorAll<HTMLElement>('.cli-account-menu button:not([disabled]), .cli-account-menu input, .cli-account-menu select, .cli-account-menu a[href]'))]
           .filter((element): element is HTMLElement => Boolean(element && element.getClientRects().length && getComputedStyle(element).visibility !== "hidden"));
         const first = controls[0];
         const last = controls[controls.length - 1];
@@ -805,7 +807,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                      <button type="button" class={`cli-pc-group-toggle ${props.selectedPeerId === pc.id ? "is-selected" : ""}`} aria-expanded={!pcCollapsed} onClick={() => { props.onPeerChange?.(pc.id); toggleGroup(`pc:${pc.id}`); }}>
                      <ChevronIcon /><span><strong>{getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}</strong><small>{`${pc.sessions.length} session${pc.sessions.length === 1 ? "" : "s"} · ${pc.connected ? "online" : "offline"}`}</small></span>
                    </button>
-                   <button type="button" class="cli-pc-switch" aria-label={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} title={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} onClick={(event) => { event.stopPropagation(); if (pc.local) props.onSwitchAccount(); else props.onSwitchAccount(pc.id); }}><SwitchAccountIcon /></button>
+                   <button type="button" class="cli-pc-switch" aria-label={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} title={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} onClick={(event) => { event.stopPropagation(); props.onSwitchAccount(pc.local ? "local" : pc.id); }}><SwitchAccountIcon /></button>
                  </div>
                 {!pcCollapsed ? <div class="cli-pc-group-children">
                   {projectGroups.map(({ project, sessions }) => {
@@ -843,7 +845,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             peers={props.peers}
             peerAccounts={props.peerAccounts}
             selectedPeerId={props.selectedPeerId}
-            onSwitchAccount={(peerId) => { if (mobileLayout) setRailCollapsed(true); props.onSwitchAccount(peerId); }}
+            switching={props.switchingAccount}
+            onDashboard={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}
+            onSettings={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}
+            onSwitchAccount={(peerId, accountId) => { if (mobileLayout) setRailCollapsed(true); props.onSwitchAccount(peerId, accountId); }}
           />
         </aside>
         <PanelResizeHandle
@@ -1977,138 +1982,125 @@ function SessionAccountFooter(props: {
   peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
   selectedPeerId?: string;
-  onSwitchAccount: (targetDeviceId?: string) => void;
+  switching: boolean;
+  onSwitchAccount: (targetDeviceId?: string, accountId?: string) => void;
+  onDashboard: () => void;
+  onSettings: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [hoveredPeerId, setHoveredPeerId] = useState<string>();
-  const [popoverPosition, setPopoverPosition] = useState({ left: 8, bottom: 8 });
+  const [systemId, setSystemId] = useState(props.selectedPeerId);
+  const [search, setSearch] = useState("");
+  const [position, setPosition] = useState({ left: 8, bottom: 8, maxHeight: 420, width: 360 });
   const rootRef = useRef<HTMLElement>(null);
-  const closeTimer = useRef<number>();
-  const rawAccountLabel = props.account?.displayName?.trim() || props.account?.email?.trim();
-  const accountLabel = rawAccountLabel
-    ? getSensitiveDisplayValue(rawAccountLabel, props.privacyMode, rawAccountLabel.includes("@") ? "email" : "name")
-    : "No active account";
-  const quotaMetrics = props.account?.metrics.filter((item) => item.visible && typeof item.percentage === "number") ?? [];
-  const overall = quotaMetrics.length ? Math.min(...quotaMetrics.map((metric) => metric.percentage ?? 100)) : undefined;
-  const fallbackPeer = { id: "local", name: "This PC", connected: true, local: true };
-  const peers = props.peers?.length ? props.peers : [fallbackPeer];
-  const accountGroups = peers.map((peer) => ({
-    peer,
-    accounts: peer.local ? (props.localAccounts ?? props.accounts ?? (props.account ? [props.account] : [])) : (props.peerAccounts?.[peer.id] ?? [])
-  }));
-  const quotaDescription = (account: DashboardAccountViewModel): string => {
-    const metric = account.metrics.find((item) => item.visible && item.period === "hourly")
-      ?? account.metrics.find((item) => item.visible && typeof item.percentage === "number")
-      ?? account.metrics.find((item) => item.visible);
-    if (!metric) return "Quota unavailable";
-    return `${metric.label} ${metric.percentage != null ? `${Math.round(metric.percentage)}%` : "—"}`;
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const focusSearchOnOpen = useRef(false);
+  const peers = props.peers?.length ? props.peers : [{ id: "local", name: "This PC", connected: true, local: true }];
+  const peer = peers.find(item => item.id === systemId) ?? peers.find(item => item.local) ?? peers[0]!;
+  const accounts = peer.local ? (props.localAccounts ?? props.accounts ?? (props.account ? [props.account] : [])) : (props.peerAccounts?.[peer.id] ?? []);
+  const name = (account: DashboardAccountViewModel | undefined, emailFirst = false): string => {
+    const raw = (emailFirst ? account?.email : account?.displayName)?.trim() || account?.email?.trim() || account?.displayName?.trim();
+    return raw ? getSensitiveDisplayValue(raw, props.privacyMode, raw.includes("@") ? "email" : "name") : account ? "Unnamed account" : "No active account";
   };
-  const accountDescription = (account: DashboardAccountViewModel): string => {
-    const accountType = account.planTypeLabel?.trim() || account.accountStructureLabel?.trim() || "Account";
-    return `${account.enabled ? "Enabled" : "Disabled"} · ${accountType} · ${quotaDescription(account)}`;
+  const metrics = (account: DashboardAccountViewModel | undefined) => (account?.metrics ?? [])
+    .filter(metric => metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage))
+    .map(metric => ({ ...metric, value: Math.max(0, Math.min(100, Math.round(metric.percentage!))) }));
+  const footerMetrics = metrics(props.account);
+  const overall = footerMetrics.length ? Math.min(...footerMetrics.map(metric => metric.value)) : undefined;
+  const footerName = name(props.account);
+  const currentAccount = accounts.find(account => account.isCurrentWindowAccount || account.runningOnThisDevice) ?? accounts.find(account => account.isActive);
+  const currentMetrics = metrics(currentAccount);
+  const currentName = name(currentAccount);
+  const filtered = accounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  useEffect(() => {
+    if (systemId !== peer.id) { setSystemId(peer.id); setSearch(""); }
+  }, [peer.id, systemId]);
+  const closeMenu = (restoreFocus = false): void => {
+    setOpen(false);
+    if (restoreFocus) triggerRef.current?.focus();
   };
-  const clearCloseTimer = (): void => {
-    if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current);
-    closeTimer.current = undefined;
-  };
-  const updatePopoverPosition = (): void => {
-    const rect = rootRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const menuWidth = Math.min(360, Math.max(228, window.innerWidth - 16));
-    setPopoverPosition({
-      left: Math.max(8, Math.min(window.innerWidth - menuWidth - 8, rect.left)),
-      bottom: Math.max(8, window.innerHeight - rect.top + 8)
-    });
-  };
-  const openMenu = (): void => {
-    clearCloseTimer();
-    updatePopoverPosition();
+  const openMenu = (focusSearch: boolean): void => {
+    focusSearchOnOpen.current = focusSearch;
+    setSystemId(props.selectedPeerId);
+    setSearch("");
     setOpen(true);
   };
-  const closeMenu = (): void => {
-    clearCloseTimer();
-    setOpen(false);
-    setHoveredPeerId(undefined);
-  };
-  const scheduleClose = (): void => {
-    clearCloseTimer();
-    closeTimer.current = window.setTimeout(closeMenu, 140);
-  };
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
-    updatePopoverPosition();
-    const reposition = (): void => updatePopoverPosition();
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") closeMenu();
+    const reposition = (): void => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const viewport = window.visualViewport;
+      const viewportTop = viewport?.offsetTop ?? 0, viewportLeft = viewport?.offsetLeft ?? 0;
+      const viewportWidth = viewport?.width ?? window.innerWidth, viewportHeight = viewport?.height ?? window.innerHeight;
+      const width = Math.max(0, Math.min(360, viewportWidth - 16));
+      const bottomEdge = Math.max(viewportTop + Math.min(160, Math.max(0, viewportHeight - 16)), Math.min(rect.top - 8, viewportTop + viewportHeight - 8));
+      const left = window.innerWidth <= 760 ? viewportLeft + (viewportWidth - width) / 2 : Math.max(viewportLeft + 8, Math.min(rect.left, viewportLeft + viewportWidth - width - 8));
+      setPosition({ left, bottom: window.innerHeight - bottomEdge, maxHeight: Math.min(560, Math.max(0, bottomEdge - viewportTop - 8)), width });
     };
+    const outside = (event: Event): void => {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu();
+    };
+    const keydown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); closeMenu(true); }
+    };
+    reposition();
+    const frame = window.requestAnimationFrame(() => { if (focusSearchOnOpen.current) searchRef.current?.focus({ preventScroll: true }); });
     window.addEventListener("resize", reposition);
     window.addEventListener("scroll", reposition, true);
-    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("focusin", outside);
+    window.addEventListener("keydown", keydown, true);
+    window.visualViewport?.addEventListener("resize", reposition);
+    window.visualViewport?.addEventListener("scroll", reposition);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("pointerdown", outside);
+      window.removeEventListener("focusin", outside);
+      window.removeEventListener("keydown", keydown, true);
+      window.visualViewport?.removeEventListener("resize", reposition);
+      window.visualViewport?.removeEventListener("scroll", reposition);
     };
   }, [open]);
-
-  useEffect(() => () => clearCloseTimer(), []);
-
-  return <footer class="cli-account-footer" ref={rootRef} onMouseEnter={openMenu} onMouseLeave={scheduleClose} onFocus={openMenu} onBlur={scheduleClose}>
-    <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={openMenu}>
-      <span class="cli-account-avatar">{accountLabel.slice(0, 1).toUpperCase()}</span>
-      <span><strong>{accountLabel}</strong><small>{overall != null ? `${Math.round(overall)}% overall quota available` : "Account details"}</small></span>
+  const choose = (accountId?: string): void => { closeMenu(); props.onSwitchAccount(peer.local ? "local" : peer.id, accountId); };
+  return <footer class="cli-account-footer" ref={rootRef}>
+    <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerName} aria-haspopup="dialog" aria-expanded={open} onClick={event => open ? closeMenu() : openMenu(event.detail === 0)}>
+      <span class="cli-account-avatar" aria-hidden="true">{props.account ? footerName.slice(0, 1).toUpperCase() : "?"}</span>
+      <span class="cli-account-footer-copy"><span><strong>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><small>{overall !== undefined ? `${overall}% quota available` : "Manage your accounts"}</small>{overall !== undefined ? <span class="cli-account-quota-track" data-level={overall < 20 ? "low" : "normal"}><i style={{ width: `${overall}%` }} /></span> : null}</span>
       <ChevronIcon />
     </button>
-    {open ? createPortal(
-      <nav
-        class="cli-account-popover cli-account-popover-wide cli-account-menu"
-        role="menu"
-        aria-label="Accounts by PC"
-        style={{ left: `${popoverPosition.left}px`, bottom: `${popoverPosition.bottom}px` }}
-        onMouseEnter={openMenu}
-        onMouseLeave={scheduleClose}
-        onFocus={openMenu}
-        onBlur={scheduleClose}
-      >
-        {accountGroups.map(({ peer, accounts }) => {
-          const hasChildren = accounts.length > 0;
-          const expanded = hoveredPeerId === peer.id;
-          const enabledCount = accounts.filter((account) => account.enabled).length;
-          const runningAccount = accounts.find((account) => account.runningOnThisDevice || account.isActive || account.isCurrentWindowAccount);
-          return <div class={`cli-account-parent ${expanded ? "is-expanded" : ""}`} key={peer.id} onMouseEnter={() => { openMenu(); setHoveredPeerId(peer.id); }} onFocus={() => { openMenu(); setHoveredPeerId(peer.id); }}>
-            <button
-              type="button"
-              role="menuitem"
-              aria-label={`Switch account on ${getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}`}
-              aria-haspopup={hasChildren ? "menu" : undefined}
-              aria-expanded={hasChildren ? expanded : undefined}
-              onClick={() => {
-                if (hasChildren) {
-                  setHoveredPeerId(peer.id);
-                  return;
-                }
-                closeMenu();
-                props.onSwitchAccount(peer.local ? undefined : peer.id);
-              }}
-            >
-              <span><strong>{getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}</strong><small>{enabledCount} enabled · {runningAccount ? `Running ${quotaDescription(runningAccount)}` : "No running account"}</small></span><ChevronIcon />
-            </button>
-            {hasChildren && expanded ? <div class="cli-account-submenu" role="menu" aria-label={`Accounts on ${getSensitiveDisplayValue(peer.name, props.privacyMode, "name")}`} onMouseEnter={openMenu} onFocus={openMenu}>
-              {accounts.map((account) => { const selected = account.isActive || account.isCurrentWindowAccount; return <button type="button" role="menuitem" aria-current={selected ? "true" : undefined} class={`cli-account-entry ${selected ? "is-active" : ""}`} key={account.id} onClick={() => { closeMenu(); props.onSwitchAccount(peer.local ? undefined : peer.id); }}>
-                <span><strong>{getSensitiveDisplayValue(account.email || account.displayName, props.privacyMode, account.email ? "email" : "name", "Unnamed account")}</strong><small>{accountDescription(account)}</small></span>
-              </button>})}
-    </div> : null}
-          </div>;
+    {open ? createPortal(<div ref={menuRef} class="cli-account-menu cli-account-center" role="dialog" aria-label="Account center" style={{ left: `${position.left}px`, bottom: `${position.bottom}px`, maxHeight: `${position.maxHeight}px`, width: `${position.width}px` }}>
+      <header class="cli-account-center-header"><span>Account center</span><button type="button" class="cli-icon-button" aria-label="Close account menu" onClick={() => closeMenu(true)}><CloseIcon /></button></header>
+      <section class="cli-account-current" aria-label="Current account">
+        <span class="cli-account-avatar is-large" aria-hidden="true">{currentAccount ? currentName.slice(0, 1).toUpperCase() : "?"}</span>
+        <div><strong title={currentName}>{currentName}</strong><small title={name(currentAccount, true)}>{currentAccount ? name(currentAccount, true) : "Add an account from the dashboard"}</small></div>
+        {currentAccount?.planTypeLabel ? <span class="cli-account-plan">{currentAccount.planTypeLabel}</span> : null}
+      </section>
+      <div class="cli-account-quota-grid" aria-label="Current account quota">
+        {currentMetrics.length ? currentMetrics.slice(0, 2).map(metric => <div key={metric.key}><span>{metric.label}<strong>{metric.value}%</strong></span><span class="cli-account-quota-track" data-level={metric.value < 20 ? "low" : "normal"} role="meter" aria-label={`${metric.label} quota remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}><i style={{ width: `${metric.value}%` }} /></span></div>) : <small>Quota has not been checked yet.</small>}
+      </div>
+      <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { setSystemId(event.currentTarget.value); setSearch(""); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={peer.connected ? "is-online" : "is-offline"}>{peer.connected ? "Online" : "Offline"}</span></div>
+      {!peer.connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
+      <div class="cli-account-list-heading"><strong>Accounts <span>{accounts.length}</span></strong><small>{accounts.filter(account => account.enabled).length} enabled</small></div>
+      <label class="cli-account-search"><SearchIcon /><input ref={searchRef} type="search" aria-label="Search accounts on selected system" placeholder="Find an account..." value={search} onInput={event => setSearch(event.currentTarget.value)} /></label>
+      <div class="cli-account-list" role="group" aria-label="Saved accounts">
+        {filtered.map(account => {
+          const active = account.isActive || account.isCurrentWindowAccount;
+          const accountName = name(account, true);
+          const quota = metrics(account);
+          return <button type="button" class={`cli-account-choice ${active ? "is-current" : ""}`} key={account.id} aria-label={`Switch to ${accountName}`} aria-current={active ? "true" : undefined} disabled={active || !account.enabled || !peer.connected || props.switching} title={active ? "Current account" : !peer.connected ? "System offline" : !account.enabled ? "Enable this account from the dashboard" : `Choose ${accountName}`} onClick={() => choose(account.id)}>
+            <span class="cli-account-choice-avatar" aria-hidden="true">{accountName.slice(0, 1).toUpperCase()}</span><span class="cli-account-choice-copy"><strong title={accountName}>{accountName}</strong><small>{account.planTypeLabel || "Account"} · {quota.length ? quota.slice(0, 2).map(metric => `${metric.label} ${metric.value}%`).join(" · ") : "Quota unavailable"}</small></span><span class={`cli-account-choice-status ${active ? "is-current" : ""}`}>{active ? <><CheckIcon />Active</> : !account.enabled ? "Disabled" : <SwitchAccountIcon />}</span>
+          </button>;
         })}
-        {props.showLogout ? (
-          <form method="post" action="/logout" class="cli-account-logout-form" role="none">
-            <button type="submit" role="menuitem" class="cli-account-logout">Sign out</button>
-          </form>
-        ) : null}
-      </nav>,
-      document.body
-    ) : null}
+        {!filtered.length ? <div class="cli-account-empty" role="status"><strong>{search.trim() ? "No matching accounts" : "No saved accounts"}</strong><small>{search.trim() ? "Try another name or email." : "Add an account from the dashboard to get started."}</small></div> : null}
+      </div>
+      <button type="button" class="cli-account-switch-action" disabled={!peer.connected || props.switching || !accounts.length} onClick={() => choose()}><SwitchAccountIcon />{props.switching ? "Switching account..." : "Switch account"}</button>
+      <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { closeMenu(); props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout">Sign out</button></form> : null}</nav>
+    </div>, document.body) : null}
   </footer>;
 }
 
@@ -2229,7 +2221,7 @@ function formatTerminalDuration(durationMs: number): string { return durationMs 
 export function formatElapsed(durationMs: number): string { if (durationMs < 60_000) return `${Math.floor(Math.max(0, durationMs) / 1000)}s`; return `${Math.floor(durationMs / 60_000)}m ${Math.floor((durationMs % 60_000) / 1000)}s`; }
 function relativeTime(value: string | undefined): string { if (!value) return "Unknown"; const parsed = Date.parse(value); if (!Number.isFinite(parsed)) return "Unknown"; const minutes = Math.max(0, Math.round((Date.now() - parsed) / 60_000)); if (minutes < 1) return "Just now"; if (minutes < 60) return `${minutes}m`; const hours = Math.round(minutes / 60); return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`; }
 function capitalize(value: string): string { return value.charAt(0).toUpperCase() + value.slice(1); }
-function projectDisplayName(value: string): string {
+export function projectDisplayName(value: string): string {
   const normalized = value.replace(/[\\/]+$/, "");
   return normalized.split(/[\\/]/).at(-1) || value;
 }
