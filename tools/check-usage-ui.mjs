@@ -51,7 +51,7 @@ const mockHost = `(() => {
             {accountId:account.id,at:query.from + 60000,hourly:90},
             {accountId:account.id,at:query.to - 60000,hourly:80}]) : [],
           dailyUsageCache: query.mode === 'tokens' ? state.accounts.filter(account => !window.__missingUsageIds.includes(account.id)).map((account,index) => ({accountId:account.id,
-            fetchedAt:Date.now() - (index ? 60000 : 2 * 3600000),usage:{days:30,points:window.__emptyUsage ? [] : window.__richUsage ? Array.from({length:30},(_,i) => ({date:new Date(query.to-(30-i)*day).toISOString().slice(0,10),totalTokens:window.__zeroUsage ? 0 : (1+(i*7)%11)*1234*(index+1),surfaceValues:{cli:1000,vscode:window.__zeroUsage ? 0 : 234}})) : [{date:query.to-query.from===day ? new Date(query.to-day).toISOString().slice(0,10) : date,totalTokens:tokens * (index + 1) + 500,extensionTokens:tokens * (index + 1)}]}})) : []};
+            fetchedAt:Date.now() - (index ? 60000 : 2 * 3600000),usage:{days:30,points:window.__emptyUsage ? [] : window.__richUsage ? Array.from({length:30},(_,i) => ({date:new Date(query.to-(30-i)*day).toISOString().slice(0,10),totalTokens:window.__zeroUsage ? 0 : (1+(i*7)%11)*1234*(index+1),surfaceValues:{cli:1000,vscode:window.__zeroUsage || (window.__mixedZeroUsage && index === 0) ? 0 : 234}})) : [{date:query.to-query.from===day ? new Date(query.to-day).toISOString().slice(0,10) : date,totalTokens:tokens * (index + 1) + 500,extensionTokens:tokens * (index + 1)}]}})) : []};
         if (window.__failUsage) { window.__failUsage = false; error = 'Saved graph database is temporarily unavailable.'; }
       } else if (message.action === 'getDailyUsage') {
         payload = {dailyUsage:{days:30,points:[{date,totalTokens:600,extensionTokens:100}]},dailyUsageFetchedAt:Date.now()};
@@ -159,12 +159,14 @@ try {
     assert.equal((await chart.boundingBox()).height, quotaHeight);
     await page.getByRole("button", { name: "Older period", exact: true }).click();
     await page.waitForFunction(() => JSON.parse(localStorage.getItem("codexManager.usageGraphPreferences.v1")).windowOffset === 1);
-    const olderQuery = await page.evaluate(() => window.__usageActions.filter(action => action.action === "getUsageGraph").at(-1).payload.usageGraph);
     await page.reload();
     await page.locator('.usage-graph-bar-hitarea[aria-label*="700 tokens"]').waitFor();
     assert.equal(await chart.getAttribute("data-mode"), "tokens", "Reload keeps the selected mode");
     assert.equal(await page.getByRole("combobox", { name: "Graph time range" }).inputValue(), "24h", "Reload keeps the selected range");
-    assert.deepEqual(await page.evaluate(() => window.__usageActions.find(action => action.action === "getUsageGraph").payload.usageGraph), olderQuery, "The first reload query restores the historical period");
+    const restoredQuery = await page.evaluate(() => window.__usageActions.find(action => action.action === "getUsageGraph").payload.usageGraph);
+    assert.equal(restoredQuery.mode, "tokens");
+    assert.equal(restoredQuery.to - restoredQuery.from, 86_400_000);
+    assert.equal(restoredQuery.to, await page.evaluate(() => Math.floor(Date.now() / 86_400_000) * 86_400_000), "The first reload query restores the saved historical period");
     await page.getByRole("button", { name: "Newer period", exact: true }).click();
     await page.getByRole("button", { name: "Newer period", exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Graph settings", exact: true }).click();
@@ -212,18 +214,38 @@ try {
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");
     await page.waitForFunction(() => document.querySelectorAll(".usage-graph-bar").length === 60);
     assert.equal((await chart.boundingBox()).height, quotaHeight, "A full month stays compact");
-    await page.locator(".usage-graph-bar-hitarea").last().focus();
+    await page.locator(".usage-graph-bar-hitarea").first().focus();
     await page.getByRole("tooltip").waitFor();
     assert.deepEqual(await tooltip.locator(".usage-graph-account-stat strong").allTextContents(), ["234 tokens", "234 tokens"], "Daily rows use only the hovered UTC day, not the monthly total");
     await page.screenshot({ path: path.join(output, `month-${width}.png`) });
     await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.__mixedZeroUsage = true; });
+    await page.getByRole("combobox", { name: "Graph time range" }).selectOption("24h");
+    await page.waitForFunction(() => document.querySelectorAll(".usage-graph-bar-hitarea").length === 2);
+    await page.locator('.usage-graph-bar-hitarea[aria-label*="234 tokens"]').first().waitFor();
+    await page.locator(".usage-graph-bar-hitarea").last().focus();
+    await tooltip.waitFor();
+    assert.deepEqual(await tooltip.locator(".usage-graph-account-stat").allTextContents(), ["b@example.invalid234 tokens"], "Daily tooltips omit zero-token accounts");
+    assert.equal(await tooltip.locator(".usage-graph-tooltip-value strong").innerText(), "234", "Hiding zero rows preserves the daily total");
+    assert.equal(await tooltip.locator('[data-stale="true"]').count(), 0, "Hidden zero-token rows do not add stale notices");
+    await page.keyboard.press("Escape");
+    await statsTrigger.click();
+    await accountStats.waitFor();
+    assert.deepEqual(await accountStats.locator(".usage-graph-account-stat").allTextContents(), ["b@example.invalid234 tokens"], "Period tooltips also omit zero-token accounts");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { window.__mixedZeroUsage = false; });
     await page.evaluate(() => { window.__zeroUsage = true; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("7d");
     await chart.getByText("No token use recorded", { exact: true }).waitFor();
     assert.equal((await chart.boundingBox()).height, quotaHeight);
     await page.locator(".usage-graph-bar-hitarea").first().focus();
     await tooltip.waitFor();
-    assert.deepEqual(await tooltip.locator(".usage-graph-account-stat strong").allTextContents(), ["0 tokens", "0 tokens"], "Saved zero remains distinct from missing data");
+    assert.equal(await tooltip.locator(".usage-graph-account-stat").count(), 0, "All-zero days show no account rows");
+    assert.equal(await tooltip.locator(".usage-graph-tooltip-value strong").innerText(), "0", "The zero daily total remains visible");
+    await page.keyboard.press("Escape");
+    await statsTrigger.click();
+    await accountStats.waitFor();
+    assert.equal(await accountStats.locator(".usage-graph-account-stat").count(), 0, "All-zero periods show no account rows");
     await page.keyboard.press("Escape");
     await page.evaluate(() => { window.__emptyUsage = true; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");

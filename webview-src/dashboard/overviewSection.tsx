@@ -1038,7 +1038,7 @@ function UsageGraphAccountsTooltip(props: {
     <div class="usage-graph-accounts-heading"><strong>{tokens ? "VS Code tokens" : "Quota usage"}</strong><span>{props.rows.some(row => row.used !== undefined) ? format(props.total) : "No data"}</span></div>
     <time>{formatGraphTime(props.from, props.lang, "date")} – {formatGraphTime(props.to - 1, props.lang, "date")}{tokens ? " · UTC" : ""}</time>
     <div class="usage-graph-accounts-list" tabIndex={0} aria-label="Usage by account">
-      {props.rows.map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.checkedAt ? ` · Last checked ${formatTimestamp(row.checkedAt, "Unknown")}` : ""}${row.refresh ? ` · ${row.refresh.message}` : ""}`}>
+      {props.rows.filter(row => !tokens || row.used !== 0).map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.checkedAt ? ` · Last checked ${formatTimestamp(row.checkedAt, "Unknown")}` : ""}${row.refresh ? ` · ${row.refresh.message}` : ""}`}>
         <i style={{ background: row.color }} /><span>{row.label}</span><strong>{row.used !== undefined ? format(row.used) : row.refresh?.state === "pending" || row.refresh?.state === "queued" ? "Loading…" : row.refresh?.state === "error" ? "Failed" : props.pending ? "Loading…" : "No data"}</strong>
       </div>)}
       {!props.rows.length ? <span>No saved accounts.</span> : null}
@@ -1078,7 +1078,7 @@ function UsageGraphTooltip(props: {
     {tokens ? <>
       <div class="usage-graph-tooltip-value"><strong>{USAGE_EXACT_NUMBER.format(props.bucketTotal)}</strong><span>tokens · All accounts this day</span></div>
       <div class="usage-graph-accounts-list" tabIndex={0} aria-label="Daily usage by account">
-        {props.dayAccounts.map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.fetchedAt ? ` · Updated ${formatTimestamp(row.fetchedAt, "Unknown")}${props.now - row.fetchedAt >= 3_600_000 ? " · Stale" : ""}` : ""}`}>
+        {props.dayAccounts.filter(row => row.used !== 0).map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.fetchedAt ? ` · Updated ${formatTimestamp(row.fetchedAt, "Unknown")}${props.now - row.fetchedAt >= 3_600_000 ? " · Stale" : ""}` : ""}`}>
           <i style={{ background: row.color }} /><span>{row.label}</span><strong>{row.used === undefined ? "No data" : `${USAGE_EXACT_NUMBER.format(row.used)} tokens`}</strong>
         </div>)}
       </div>
@@ -1088,7 +1088,7 @@ function UsageGraphTooltip(props: {
     </>}
     <div class="usage-graph-tooltip-meta">
       <span>{tokens ? today ? "Today so far · UTC" : "Saved daily total · UTC" : "Estimated between quota checks"}</span>
-      {tokens && props.dayAccounts.some(row => row.used !== undefined && row.fetchedAt && props.now - row.fetchedAt >= 3_600_000) ? <span data-stale="true">Some saved usage is stale</span> : null}
+      {tokens && props.dayAccounts.some(row => row.used !== undefined && row.used > 0 && row.fetchedAt && props.now - row.fetchedAt >= 3_600_000) ? <span data-stale="true">Some saved usage is stale</span> : null}
       {!tokens && props.account?.device ? <span>{props.account.device}</span> : null}
     </div>
   </div>, document.body);

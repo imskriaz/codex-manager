@@ -2,6 +2,7 @@
 
 ## 3.1.3
 
+- Hide accounts with zero tokens in chart tooltips while preserving totals and missing-data indicators.
 - Remember chart mode, time ranges, and period navigation on this device across reloads. Show each day's combined token total above its per-account usage, including missing and stale data.
 - Keep dashboard startup responsive when local session discovery, desktop app detection, credential reads, or optional usage-history saving is slow. Return a retryable error instead of leaving the state endpoint pending indefinitely.
 - Resolve restored conversation editors before closing all existing Codex session tabs, then reopen saved active and quota-paused goal sessions sequentially. Preserve unsaved tabs and durable recovery on cancellation, timeout, or failure.
