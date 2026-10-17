@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.4
+
+- Keep recoverable daily usage check failures in logs instead of showing them as dashboard or push notices.
+
 ## 1.3.3
 
 - Read verified absolute token counts from daily analytics, consolidate accounts into a VS Code + Other stacked chart, and exclude legacy percentage values from token totals.

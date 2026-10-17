@@ -33,6 +33,20 @@ describe("daily usage response validation", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ date: "2026-10-15", totals: { text_total_tokens: 1000 } }] }))));
     await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({ points: [{ unit: "tokens", totalTokens: 1000, extensionTokens: undefined }] });
   });
+  it("accepts API date timestamps, keyed daily rows, and component token totals", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      daily_usage: {
+        "2026-10-15": { totals: { uncached_text_input_tokens: 10, cached_text_input_tokens: 5, text_output_tokens: 2 } }
+      }
+    }))));
+    await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({
+      points: [{ date: "2026-10-15", totalTokens: 17 }]
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: [{ date: "2026-10-15T00:00:00.000Z", total_tokens: 17 }]
+    }))));
+    await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({ points: [{ date: "2026-10-15", totalTokens: 17 }] });
+  });
   it.each([{ clients: [] }, { clients: [{ client_id: "CODEX_IDE_VSCODE", text_total_tokens: 240 }] }])("does not invent attribution when the client list is incomplete: %j", async ({ clients }) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ date: "2026-10-15", totals: { text_total_tokens: 1000 }, clients }] }))));
     await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({ points: [{ unit: "tokens", totalTokens: 1000, extensionTokens: undefined, otherTokens: undefined }] });

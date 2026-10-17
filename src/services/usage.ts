@@ -102,17 +102,31 @@ function collectUsageRecords(payload: UnknownRecord): UnknownRecord[] | undefine
     if (Array.isArray(candidate)) {
       return candidate.length <= 31 && candidate.every(isRecord) ? candidate : undefined;
     }
+    if (isRecord(candidate)) {
+      const rows: Array<UnknownRecord | undefined> = Object.entries(candidate).map(([date, value]) =>
+        isRecord(value) ? { date, ...value } : undefined
+      );
+      if (rows.length > 0 && rows.length <= 31 && rows.every((row): row is UnknownRecord => isRecord(row))) return rows;
+    }
   }
+
+  if (readDate(payload) && (isRecord(payload["totals"]) || payload["total_tokens"] !== undefined)) return [payload];
 
   return undefined;
 }
 
 function parseUsagePoint(value: UnknownRecord): CodexDailyUsagePoint | undefined {
   const date =
-    readString(value, ["date", "day", "usage_date", "bucket_date", "time_bucket_start"]) ??
+    readDate(value) ??
     normalizeTimestamp(readNumber(value, ["timestamp", "start_time", "bucket_start", "epoch_seconds"]));
   const totals = isRecord(value["totals"]) ? value["totals"] : value;
-  const totalTokens = readNumber(totals, ["text_total_tokens", "total_tokens", "token_count", "total_token_count", "num_tokens"]);
+  const reportedTotal = readNumber(totals, ["text_total_tokens", "total_tokens", "token_count", "total_token_count", "num_tokens"]);
+  const components = [
+    readNumber(totals, ["uncached_text_input_tokens"]),
+    readNumber(totals, ["cached_text_input_tokens"]),
+    readNumber(totals, ["text_output_tokens"])
+  ];
+  const totalTokens = reportedTotal ?? (components.every(value => value !== undefined) ? components.reduce((sum, value) => sum + value!, 0) : undefined);
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date || !Number.isSafeInteger(totalTokens) || totalTokens! < 0) return undefined;
   const clients = value["clients"];
   const surfaceValues: Record<string, number> = Object.create(null) as Record<string, number>;
@@ -140,6 +154,13 @@ function parseUsagePoint(value: UnknownRecord): CodexDailyUsagePoint | undefined
     otherTokens: extensionTokens === undefined ? undefined : totalTokens! - extensionTokens,
     surfaceValues: clients === undefined ? undefined : surfaceValues,
     inputTokens, outputTokens, cachedTokens };
+}
+
+function readDate(record: UnknownRecord): string | undefined {
+  const raw = readString(record, ["date", "day", "usage_date", "bucket_date", "time_bucket_start"]);
+  if (!raw) return undefined;
+  const date = raw.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined;
 }
 
 function normalizeTimestamp(value: number | undefined): string | undefined {

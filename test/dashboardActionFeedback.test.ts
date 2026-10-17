@@ -44,6 +44,21 @@ describe("dashboard action feedback", () => {
     ).toBeUndefined();
   });
 
+  it("keeps recoverable automatic usage checks out of notices", () => {
+    for (const error of [
+      "The usage endpoint returned no readable daily data.",
+      "The previous daily usage check did not complete. Automatic usage checks wait at least one hour and respect server retry delays."
+    ]) {
+      expect(noticeFromActionResult({
+        type: "dashboard:action-result",
+        requestId: "usage-check",
+        action: "getDailyUsage",
+        status: "failed",
+        error
+      })).toBeUndefined();
+    }
+  });
+
   it("provides fallback feedback when a failed result has no message", () => {
     expect(
       noticeFromActionResult({

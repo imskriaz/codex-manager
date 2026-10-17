@@ -11,6 +11,7 @@ export function noticeFromActionResult(
   }
   if (message.status === "failed") {
     let errorMessage = message.error?.trim();
+    if (message.action === "getDailyUsage" && isQuietDailyUsageError(errorMessage)) return undefined;
     if (
       message.action === "syncNow" &&
       errorMessage?.startsWith("Cross-PC claim sync did not complete.")
@@ -50,6 +51,11 @@ export function noticeFromActionResult(
   }
 
   return { level: "info", message: `${formatActionName(message.action)} done.` };
+}
+
+function isQuietDailyUsageError(message: string | undefined): boolean {
+  return message === "The usage endpoint returned no readable daily data." ||
+    message === "The previous daily usage check did not complete. Automatic usage checks wait at least one hour and respect server retry delays.";
 }
 
 export function noticeFromActionTimeout(action: DashboardActionName): DashboardNotice {
