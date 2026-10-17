@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.5-pre1
+
+- Show the account dashboard at the home URL, redirect old dashboard bookmarks to home, and use `/workspace/<session-id>` for chats while preserving old bookmarks and remote-device links.
+
 ## 1.3.4
 
 - Keep recoverable daily usage check failures in logs instead of showing them as dashboard or push notices.

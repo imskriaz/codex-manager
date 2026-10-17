@@ -67,7 +67,7 @@ describe("sessions sidebar layout", () => {
 
     expect(brand).toContain("!props.dashboardMode");
     expect(brand).toContain("<strong>Codex</strong>");
-    expect(missingRoute).toContain('navigateDashboardPath("/", setBrowserPath)');
+    expect(missingRoute).toContain('navigateDashboardPath("/workspace", setBrowserPath)');
     expect(missingRoute).not.toContain("requestCliSessionMessages(routeId");
   });
 
@@ -260,7 +260,7 @@ describe("sessions sidebar layout", () => {
     const mutationBlock = main.slice(mutationBlockStart, mutationBlockStart + 350);
 
     expect(mutationBlockStart).toBeGreaterThan(-1);
-    expect(mutationBlock).toContain('navigateDashboardPath("/", setBrowserPath)');
+    expect(mutationBlock).toContain('navigateDashboardPath("/workspace", setBrowserPath)');
   });
 
   it("keeps archived deep links in the workspace with restore guidance", () => {
@@ -271,7 +271,7 @@ describe("sessions sidebar layout", () => {
     expect(branchStart).toBeGreaterThan(-1);
     expect(branch).toContain("setSelectedCliSession(reconcileCliSessionStatus(routeSession, cliLiveStatesRef.current))");
     expect(branch).toContain("This session is archived. Restore it below");
-    expect(branch).not.toContain('navigateDashboardPath("/dash", setBrowserPath)');
+    expect(branch).not.toContain('navigateDashboardPath("/", setBrowserPath)');
   });
 
   it("keeps workspace conversation and rail spacing compact", () => {
@@ -479,7 +479,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('document.body.classList.toggle("is-cli-workspace-route", workspaceRoute)');
     expect(main).toContain('document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute)');
     expect(main).toContain("hasBrowserWorkspaceShell(browserPath)");
-    expect(main).toContain('dashboardMode={browserPath === "/dash"}');
+    expect(main).toContain('dashboardMode={browserPath === "/"}');
     expect(main).toContain("is-dashboard-workspace-route");
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain(
       'props.dashboardMode ? "is-dashboard-mode"'
@@ -626,13 +626,15 @@ describe("sessions sidebar layout", () => {
     expect(stateEffect).not.toContain("if (props.selectedSession)");
   });
 
-  it("uses the root route for the session workspace and keeps the account dashboard at /dash", () => {
+  it("shows the dashboard at home and keeps session navigation in the workspace", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
-    expect(source).toContain('return pathname === "/" || pathname === "/workspace"');
-    expect(source).toContain('sendAction("openWebDashboard", undefined, { path: "/" })');
-    expect(source).toContain('onDashboard={() => navigateDashboardPath("/dash", setBrowserPath)}');
+    expect(source).toContain('return pathname === "/workspace" || Boolean(cliSessionTargetFromLocation(pathname, ""))');
+    expect(source).not.toContain('return pathname === "/" || pathname === "/workspace"');
+    expect(source).not.toContain('browserPath === "/dash"');
+    expect(source).toContain('sendAction("openWebDashboard", undefined, { path: "/workspace" })');
+    expect(source).toContain('onDashboard={() => navigateDashboardPath("/", setBrowserPath)}');
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
-    expect(source).toContain('return pathname === "/dash" || isCliSessionsPath(pathname);');
+    expect(source).toContain('return pathname === "/" || isCliSessionsPath(pathname);');
     expect(source).toContain("if (!hasBrowserWorkspaceShell(browserPath)) return;");
     expect(source).toContain("if (sessionId || hasBrowserWorkspaceShell(path)) requestCliSessions(true);");
     expect(source).toContain("window.setInterval(announceCurrentVisibility, 15_000)");

@@ -125,7 +125,7 @@
     failUnconfirmedSocketActions();
     publishConnection();
     dispatch({ type: "dashboard:notice", level: "warning", message: "Dashboard session expired. Sign in again, then verify account state before retrying. Pending actions will not be replayed." });
-    window.location.assign(`/login?returnTo=${encodeURIComponent(window.location.pathname || "/")}`);
+    window.location.assign(`/login?returnTo=${encodeURIComponent(`${window.location.pathname || "/"}${window.location.search || ""}`)}`);
   };
 
   const scheduleReconnect = () => {

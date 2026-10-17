@@ -48,6 +48,7 @@ describe("persistent browser push", () => {
     send.mockClear();
     expect(await service.sendTest()).toEqual({ subscriptions: 1, accepted: 1, failed: 0 });
     expect(send).toHaveBeenCalledOnce();
+    expect(JSON.parse(send.mock.calls[0][1]).url).toBe("/");
   });
   it("does not claim delivery with no subscribers, a changed password, or a provider failure", async () => {
     expect(await service.sendTest()).toEqual({ subscriptions: 0, accepted: 0, failed: 0 });

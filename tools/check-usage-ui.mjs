@@ -83,7 +83,7 @@ try {
       await page.route(`**/assets/${url}*`, route => route.fulfill({ contentType, path: path.resolve(file) }));
     }
     const started = Date.now();
-    await page.goto(`${origin}/dash`);
+    await page.goto(`${origin}/`);
     await page.locator(".usage-graph-bar-hitarea").first().waitFor({ timeout: 8000 }).catch(async error => {
       console.log(JSON.stringify({ errors, debug: await page.evaluate(() => ({ actions: window.__usageActions?.map(action => ({ type: action.type, action: action.action })), graph: document.querySelector(".usage-graph-card")?.textContent, loading: document.querySelector(".loading-section")?.textContent })) }));
       await page.screenshot({ path: path.join(output, `failure-${width}.png`) });

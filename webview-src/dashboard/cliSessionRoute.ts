@@ -8,7 +8,7 @@ export function sameCliSessionTarget(left?: CliSessionTarget, right?: CliSession
 }
 
 export function cliSessionTargetFromLocation(pathname: string, search: string): CliSessionTarget | undefined {
-  const id = pathname.match(/^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
+  const id = pathname.match(/^\/workspace\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1];
   if (!id) return undefined;
   return { id, deviceId: new URLSearchParams(search).get("device") || undefined };
 }
@@ -16,5 +16,5 @@ export function cliSessionTargetFromLocation(pathname: string, search: string): 
 export function buildCliSessionPath(session: CliSessionTarget): string {
   const query = new URLSearchParams();
   if (session.deviceId) query.set("device", session.deviceId);
-  return `/${session.id}${query.size ? `?${query.toString()}` : ""}`;
+  return `/workspace/${session.id}${query.size ? `?${query.toString()}` : ""}`;
 }

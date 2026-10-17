@@ -6,13 +6,16 @@ describe("conversation routing", () => {
   it("keeps copied session links compact and device-scoped", () => {
     const url = new URL(buildCliSessionPath({ id, deviceId: "pc:a & b" }), "http://localhost");
     expect(cliSessionTargetFromLocation(url.pathname, url.search)).toEqual({ id, deviceId: "pc:a & b" });
+    expect(url.pathname).toBe(`/workspace/${id}`);
     expect(url.searchParams.has("project")).toBe(false);
     expect(sameCliSessionTarget({ id, deviceId: "pc-a" }, { id, deviceId: "pc-b" })).toBe(false);
   });
-  it("rejects stale responses when no chat is selected and supports local legacy links", () => {
+  it("rejects stale responses when no chat is selected and supports local workspace links", () => {
     expect(sameCliSessionTarget({ id }, undefined)).toBe(false);
     expect(sameCliSessionTarget({ id }, { id, deviceId: "local" })).toBe(true);
-    expect(cliSessionTargetFromLocation("/", "")).toBeUndefined();
-    expect(cliSessionTargetFromLocation(`/${id}`, "?project=demo")).toEqual({ id, deviceId: undefined });
+    for (const pathname of ["/", "/workspace", `/workspace/${id}/extra`, "/workspace/not-a-session", `/${id}`]) {
+      expect(cliSessionTargetFromLocation(pathname, "")).toBeUndefined();
+    }
+    expect(cliSessionTargetFromLocation(`/workspace/${id}`, "?project=demo")).toEqual({ id, deviceId: undefined });
   });
 });

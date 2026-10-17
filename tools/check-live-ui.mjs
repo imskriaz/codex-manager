@@ -46,11 +46,15 @@ try {
       });
     });
     const start = Date.now();
-    await page.goto(`${origin}/dash`);
-    await page.locator("#settingsOpenButton").waitFor({ state: "attached" });
+    await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
+    await page.locator("#dashboard-main").waitFor({ state: "visible" });
+    assert.equal(new URL(page.url()).pathname, "/", "Home keeps the root URL");
+    await page.locator(".cli-workspace.is-dashboard-mode").waitFor();
     await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:connection" && event.connected));
     const loadMs = Date.now() - start;
     console.log(`${width}px: real host connected in ${loadMs}ms`);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "Home dashboard fits viewport");
+    await page.screenshot({ path: path.join(output, `dashboard-${width}.png`) });
     if (width === 390) {
       await page.locator(".dashboard-mobile-actions > summary").click();
       await page.locator(".dashboard-mobile-actions-menu [role=menuitem]").nth(3).click();

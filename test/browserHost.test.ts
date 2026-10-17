@@ -429,7 +429,7 @@ describe("browser dashboard bridge", () => {
     const assign = vi.fn();
     const fetchMock = vi.fn(async () => ({ ok: false, status: 401 }));
     const windowMock = { dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
-      location: { pathname: "/dash", assign }, acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+      location: { pathname: "/", assign }, acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
     class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
     runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock, MessageEvent: Event, fetch: fetchMock, console, Error, Array, JSON, Date, Map });
     const post = windowMock.acquireVsCodeApi!().postMessage;
@@ -438,17 +438,17 @@ describe("browser dashboard bridge", () => {
     expect(events).toContainEqual(expect.objectContaining({ requestId: "expired", status: "failed", error: expect.stringContaining("was not performed") }));
     expect(events).toContainEqual(expect.objectContaining({ requestId: "retry", status: "failed", error: expect.stringContaining("was not sent") }));
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2Fdash");
+    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2F");
   });
 
   it("redirects an expired initial snapshot while preserving the conversation return path", async () => {
     const assign = vi.fn();
-    const windowMock = { dispatchEvent: vi.fn(), location: { pathname: "/12345678-1234-1234-1234-123456789abc", assign },
+    const windowMock = { dispatchEvent: vi.fn(), location: { pathname: "/workspace/12345678-1234-1234-1234-123456789abc", search: "?device=remote", assign },
       acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
     class Event { constructor(_type: string, public options: unknown) {} }
     runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock, MessageEvent: Event, fetch: vi.fn(async () => ({ ok: false, status: 401 })), console, Error, Array, JSON, Date, Map });
     await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:ready" });
-    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2F12345678-1234-1234-1234-123456789abc");
+    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2Fworkspace%2F12345678-1234-1234-1234-123456789abc%3Fdevice%3Dremote");
   });
 
   it("stops reconnecting and preserves uncertain outcomes when an authenticated socket expires", async () => {
@@ -463,7 +463,7 @@ describe("browser dashboard bridge", () => {
     }
     const assign = vi.fn();
     const windowMock = { dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data), setTimeout: vi.fn(), clearTimeout: vi.fn(),
-      location: { protocol: "https:", host: "dashboard.example", pathname: "/dash", assign }, WebSocket: Socket,
+      location: { protocol: "https:", host: "dashboard.example", pathname: "/", assign }, WebSocket: Socket,
       acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
     class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
     const fetchMock = vi.fn();
@@ -472,7 +472,7 @@ describe("browser dashboard bridge", () => {
     await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", requestId: "uncertain", action: "switch" });
     socket.listeners.get("close")!({ code: 4001 });
     expect(events).toContainEqual(expect.objectContaining({ requestId: "uncertain", status: "failed", error: expect.stringContaining("outcome is unknown") }));
-    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2Fdash");
+    expect(assign).toHaveBeenCalledExactlyOnceWith("/login?returnTo=%2F");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(socket.send).toHaveBeenCalledOnce();
   });

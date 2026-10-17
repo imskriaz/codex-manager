@@ -785,9 +785,10 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       return;
     }
-    if (method === "GET" && path === "/workspace/") {
+    if (method === "GET" && (path === "/workspace/" || path === "/dash" || path === "/dash/" || /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path))) {
       response.statusCode = 302;
-      response.setHeader("Location", "/workspace");
+      const target = path === "/workspace/" ? "/workspace" : path.startsWith("/dash") ? "/" : `/workspace${path}`;
+      response.setHeader("Location", `${target}${requestUrl.search}`);
       response.end();
       return;
     }
@@ -839,7 +840,7 @@ export class WebDashboardServer implements vscode.Disposable {
         this.sendJson(response, { error: "Dashboard session expired" });
         return;
       }
-      const returnPath = normalizeWebDashboardReturnPath(path);
+      const returnPath = normalizeWebDashboardReturnPath(`${path}${requestUrl.search}`);
       this.sendHtml(response, loginPage(Boolean(await this.encryptedSync?.hasDashboardPassphrase()), "", returnPath));
       return;
     }
@@ -2723,11 +2724,16 @@ export function normalizePersistedWebDashboardSessions(
 }
 
 export function isWebDashboardPagePath(pathname: string): boolean {
-  return pathname === "/" || pathname === "/dash" || pathname === "/workspace" || /^\/[0-9a-f-]{36}$/i.test(pathname);
+  return pathname === "/" || pathname === "/dash" || pathname === "/workspace" || /^\/(?:workspace\/)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathname);
 }
 
 export function normalizeWebDashboardReturnPath(pathname: string): string {
-  return isWebDashboardPagePath(pathname) ? pathname : "/";
+  try {
+    const url = new URL(pathname, "http://localhost");
+    if (!pathname.startsWith("/") || url.origin !== "http://localhost" || !isWebDashboardPagePath(url.pathname)) return "/";
+    const target = url.pathname === "/dash" ? "/" : url.pathname === "/" || url.pathname.toLowerCase().startsWith("/workspace") ? url.pathname : `/workspace${url.pathname}`;
+    return `${target}${url.search}`;
+  } catch { return "/"; }
 }
 
 export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes: number): Promise<string> {

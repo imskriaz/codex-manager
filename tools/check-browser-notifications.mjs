@@ -50,7 +50,7 @@ try {
     for (const [asset, file, contentType] of [["dashboard.js", "media/webview/dashboard/dashboard.js", "text/javascript"], ["dashboard.css", "media/webview/quotaSummary.css", "text/css"], ["shared.css", "media/webview/shared.css", "text/css"]])
       await page.route(`**/assets/${asset}*`, route => route.fulfill({ contentType, path: path.resolve(file) }));
     console.log(`${scenario}: opening dashboard`);
-    await page.goto(`${origin}/dash`);
+    await page.goto(`${origin}/`);
     console.log(`${scenario}: dashboard loaded`);
     await page.locator(".dashboard-mobile-actions").waitFor();
     console.log(`${scenario}: dashboard ready`);

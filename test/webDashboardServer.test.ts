@@ -203,16 +203,23 @@ describe("isWebDashboardPagePath", () => {
     expect(isWebDashboardPagePath("/workspace")).toBe(true);
     expect(isWebDashboardPagePath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(true);
     expect(isWebDashboardPagePath("/workspace/not-a-session")).toBe(false);
-    expect(isWebDashboardPagePath("/workspace/01a04882-d037-7a42-ad24-9afb61901188")).toBe(false);
+    expect(isWebDashboardPagePath("/workspace/01a04882-d037-7a42-ad24-9afb61901188")).toBe(true);
+    expect(isWebDashboardPagePath("/------------------------------------")).toBe(false);
+    expect(isWebDashboardPagePath("/workspace/01a04882-d037-7a42-ad24-9afb61901188/extra")).toBe(false);
   });
 
   it("preserves safe session routes after login and rejects redirect paths", () => {
     expect(normalizeWebDashboardReturnPath("/")).toBe("/");
+    expect(normalizeWebDashboardReturnPath("/dash")).toBe("/");
     expect(normalizeWebDashboardReturnPath("/workspace")).toBe("/workspace");
     expect(normalizeWebDashboardReturnPath("/01a04882-d037-7a42-ad24-9afb61901188")).toBe(
-      "/01a04882-d037-7a42-ad24-9afb61901188"
+      "/workspace/01a04882-d037-7a42-ad24-9afb61901188"
     );
-    expect(normalizeWebDashboardReturnPath("//example.com/steal")).toBe("/");
+    const session = "/workspace/01a04882-d037-7a42-ad24-9afb61901188";
+    expect(normalizeWebDashboardReturnPath(`${session}?device=pc%3Aremote`)).toBe(`${session}?device=pc%3Aremote`);
+    for (const unsafe of ["//example.com/steal", "/\\example.com/steal", "https://external.example", "http://localhost/workspace", "/workspace/not-a-session"]) {
+      expect(normalizeWebDashboardReturnPath(unsafe)).toBe("/");
+    }
   });
 });
 
@@ -299,6 +306,21 @@ describe("browser PWA routes", () => {
       expect(worker.body).toContain("codex-manager-static-");
       const privateState = await get("/api/state", true);
       expect(privateState.status).toBe(401);
+      for (const path of ["/dash", "/dash/", "/dash?from=bookmark"]) {
+        const legacy = await get(path, true);
+        expect(legacy.status).toBe(302);
+        expect(legacy.headers.get("location")).toBe(path.includes("?") ? "/?from=bookmark" : "/");
+        expect(legacy.body).toBe("");
+      }
+      const id = "01a04882-d037-7a42-ad24-9afb61901188";
+      const oldSession = await get(`/${id}?device=pc%3Aremote`, true);
+      expect(oldSession.status).toBe(302);
+      expect(oldSession.headers.get("location")).toBe(`/workspace/${id}?device=pc%3Aremote`);
+      const lockedSession = await get(`/workspace/${id}?device=pc%3Aremote`, true);
+      expect(lockedSession.body).toContain(encodeURIComponent(`/workspace/${id}?device=pc%3Aremote`));
+      const session = await get(`/workspace/${id}`);
+      expect(session.status).toBe(200);
+      expect(session.body).toContain('id="app"');
       const dashboard = await get("/");
       const assetVersion = getWebDashboardAssetVersion(process.cwd(), "1.2.10-pre1");
       expect(dashboard.body).toContain(`rel="manifest" href="/manifest.webmanifest?v=${assetVersion}"`);

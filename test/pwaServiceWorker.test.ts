@@ -59,7 +59,7 @@ describe("browser PWA cache boundary", () => {
     await work;
     expect(fetchMock).toHaveBeenCalledWith("/api/push/action", expect.objectContaining({ method: "POST", credentials: "same-origin", body: JSON.stringify({ notificationId: "notice", action: "Switch" }) }));
     expect(worker.self.registration.showNotification).toHaveBeenLastCalledWith("Codex Manager", expect.objectContaining({ body: expect.stringContaining("accepted") }));
-    expect(worker.self.clients.openWindow).toHaveBeenCalledWith("https://dashboard.example/dash");
+    expect(worker.self.clients.openWindow).toHaveBeenCalledWith("https://dashboard.example/");
   });
 
   it("makes expired, failed, offline, and unauthorized push actions visible without retrying them", async () => {
@@ -83,7 +83,7 @@ describe("browser PWA cache boundary", () => {
     const worker = createWorker(async () => new Response("busy", { status: 503 }));
     worker.entries.set(worker.key("/offline.html"), new Response("Recovery screen"));
     let work: Promise<Response> | undefined;
-    worker.handlers.get("fetch")?.({ request: { method: "GET", mode: "navigate", url: "https://dashboard.example/dash" }, respondWith: (promise) => { work = promise; } });
+    worker.handlers.get("fetch")?.({ request: { method: "GET", mode: "navigate", url: "https://dashboard.example/" }, respondWith: (promise) => { work = promise; } });
     expect(await work?.then((response) => response.text())).toBe("Recovery screen");
   });
 
@@ -132,7 +132,7 @@ describe("browser PWA cache boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(before);
     let navigation: Promise<Response> | undefined;
     worker.handlers.get("fetch")?.({
-      request: { method: "GET", mode: "navigate", url: "https://dashboard.example/01a04882-d037-7a42-ad24-9afb61901188" },
+      request: { method: "GET", mode: "navigate", url: "https://dashboard.example/workspace/01a04882-d037-7a42-ad24-9afb61901188" },
       respondWith: (response) => { navigation = response; }
     });
     expect(await navigation?.then((response) => response.text())).toBe("/offline.html");

@@ -142,6 +142,10 @@ try {
     for (const [url, file, contentType] of [["dashboard.js", "media/webview/dashboard/dashboard.js", "text/javascript"], ["dashboard.css", "media/webview/quotaSummary.css", "text/css"], ["shared.css", "media/webview/shared.css", "text/css"]]) {
       await page.route(`**/assets/${url}*`, (route) => route.fulfill({ contentType, path: path.resolve(file) }));
     }
+    await page.route(`${origin}/workspace/*`, async route => {
+      const response = await route.fetch({ url: `${origin}/workspace` });
+      await route.fulfill({ response });
+    });
     await page.goto(`${origin}/workspace`);
     await page.locator(".cli-workspace").waitFor();
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
@@ -472,7 +476,7 @@ try {
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldMessageResult })));
-    assert.equal(new URL(page.url()).pathname, "/", "A late transcript read cannot reopen an old conversation");
+    assert.equal(new URL(page.url()).pathname, "/workspace", "A late transcript read cannot reopen an old conversation");
     assert.equal(await composer.inputValue(), "Separate new chat draft");
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
@@ -485,12 +489,12 @@ try {
     await composer.fill("Keep this new draft");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldSendResult })));
     assert.equal(await page.getByText("Codex completed the turn in the original chat.", { exact: true }).count(), 0, "Routine completion feedback stays out of the toast stack");
-    assert.equal(new URL(page.url()).pathname, "/", "A completed turn cannot pull the user back to its conversation");
+    assert.equal(new URL(page.url()).pathname, "/workspace", "A completed turn cannot pull the user back to its conversation");
     assert.equal(await composer.inputValue(), "Keep this new draft");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     assert.equal(await page.getByText("New Codex chat is ready.", { exact: true }).count(), 0, "Routine chat feedback stays out of the toast stack");
     await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === "");
-    assert.equal(new URL(page.url()).pathname, "/01a04882-d037-7a42-ad24-9afb61901198", "A new-session acknowledgement opens the accepted thread without requiring another list/catalog payload");
+    assert.equal(new URL(page.url()).pathname, "/workspace/01a04882-d037-7a42-ad24-9afb61901198", "A new-session acknowledgement opens the accepted thread without requiring another list/catalog payload");
     assert.equal(await composer.inputValue(), "", "A newly accepted chat clears only its submitted project draft");
     await page.getByRole("button", { name: "Session actions", exact: true }).click();
     const menuBounds = await page.locator(".cli-session-menu").boundingBox();
@@ -513,7 +517,16 @@ try {
     assert.equal(await page.locator(".dashboard-connection-banner").count(), 0, "Chat uses its inline reconnect status without a floating notice");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } })));
     console.log(`Checking ${width}x${height}: dashboard and settings`);
-    await page.goto(`${origin}/dash`);
+    if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    await page.getByRole("button", { name: "Open dashboard", exact: true }).click();
+    assert.equal(new URL(page.url()).pathname, "/", "Dashboard navigation opens home without /dash");
+    await page.locator("#dashboard-main").waitFor({ state: "visible" });
+    await page.goBack();
+    await page.locator(".cli-conversation.has-session").waitFor({ state: "visible" });
+    await page.goForward();
+    await page.reload();
+    await page.locator("#dashboard-main").waitFor({ state: "visible" });
+    assert.equal(new URL(page.url()).pathname, "/", "Reload preserves the home dashboard");
     await page.locator(".hero").waitFor();
     if (width > 760) {
       await page.locator("#donateButton").click();

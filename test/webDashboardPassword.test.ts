@@ -161,14 +161,19 @@ describe("Web Dashboard forwarded protocol", () => {
 
 
 describe("expired dashboard sign-in recovery", () => {
-  it.each(["/dash", "/12345678-1234-1234-1234-123456789abc", "https://external.example"])('keeps return path %s within this dashboard', async path => {
+  it.each([
+    ["/dash", "/"],
+    ["/12345678-1234-1234-1234-123456789abc", "/workspace/12345678-1234-1234-1234-123456789abc"],
+    ["/workspace/12345678-1234-1234-1234-123456789abc?device=remote", "/workspace/12345678-1234-1234-1234-123456789abc?device=remote"],
+    ["https://external.example", "/"]
+  ])('keeps return path %s within this dashboard', async (path, expected) => {
     const server = new WebDashboardServer({ extensionUri: { fsPath: "extension" }, secrets: { get: vi.fn(async () => undefined) } } as never, {} as never,
       { hasDashboardPassphrase: vi.fn(async () => true), setOnlineDeviceIds: vi.fn() } as never);
     let body = "";
     const response = { statusCode: 200, setHeader: vi.fn(), end: (value: string) => { body = value; } };
     await (server as any).handle({ method: "GET", url: `/login?returnTo=${encodeURIComponent(path)}`, headers: { host: "dashboard.example", "x-forwarded-proto": "https" } }, response);
     expect(body).toContain("Your dashboard session expired");
-    expect(body).toContain(`action="/login?returnTo=${encodeURIComponent(path.startsWith("/") ? path : "/")}"`);
+    expect(body).toContain(`action="/login?returnTo=${encodeURIComponent(expected)}"`);
     server.dispose();
   });
 });

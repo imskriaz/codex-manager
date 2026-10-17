@@ -116,18 +116,15 @@ type MetricPriority = string;
 const DEFAULT_ACCOUNT_SORT: AccountSort = "time-left";
 
 function isCliSessionsPath(pathname: string): boolean {
-  // The root URL is the canonical session workspace/home. Keep /workspace as
-  // a backwards-compatible alias for existing bookmarks and tunnel links.
-  return pathname === "/" || pathname === "/workspace" || /^\/[0-9a-f-]{36}$/i.test(pathname);
+  return pathname === "/workspace" || Boolean(cliSessionTargetFromLocation(pathname, ""));
 }
 
 function hasBrowserWorkspaceShell(pathname: string): boolean {
-  return pathname === "/dash" || isCliSessionsPath(pathname);
+  return pathname === "/" || isCliSessionsPath(pathname);
 }
 
 function getCliSessionIdFromPath(pathname: string): string | undefined {
-  const match = pathname.match(/^\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
-  return match?.[1];
+  return cliSessionTargetFromLocation(pathname, "")?.id;
 }
 
 function navigateDashboardPath(path: string, setPath: (value: string) => void): void {
@@ -810,7 +807,7 @@ function App() {
                 // The refreshed index is authoritative. Do not request a route
                 // that is already gone; that only turns a stale link into a
                 // noisy “session not found” error.
-                navigateDashboardPath("/", setBrowserPath);
+                navigateDashboardPath("/workspace", setBrowserPath);
                 messageViewRevision.current++;
                 selectedCliSessionRef.current = undefined;
                 setSelectedCliSession(undefined);
@@ -1205,7 +1202,7 @@ function App() {
         ) {
           if (target) void invalidateCliSessionCache(target.id, target.deviceId);
           if (!applyToCurrentChat) return;
-          navigateDashboardPath("/", setBrowserPath);
+          navigateDashboardPath("/workspace", setBrowserPath);
           messageViewRevision.current++;
           selectedCliSessionRef.current = undefined;
           setSelectedCliSession(undefined);
@@ -1365,7 +1362,7 @@ function App() {
 
   useEffect(() => {
     const workspaceRoute = isBrowserDashboard && isCliSessionsPath(browserPath);
-    const dashboardWorkspaceRoute = isBrowserDashboard && browserPath === "/dash";
+    const dashboardWorkspaceRoute = isBrowserDashboard && browserPath === "/";
     document.body.classList.toggle("is-cli-workspace-route", workspaceRoute);
     document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute);
     return () => {
@@ -1478,10 +1475,10 @@ function App() {
     : undefined;
   const openCliSessions = (): void => {
     if (!isBrowserDashboard) {
-      sendAction("openWebDashboard", undefined, { path: "/" });
+      sendAction("openWebDashboard", undefined, { path: "/workspace" });
       return;
     }
-    navigateDashboardPath("/", setBrowserPath);
+    navigateDashboardPath("/workspace", setBrowserPath);
     setSelectedCliSession(undefined);
     setCliSessionMessages([]);
     setCliSessionsError(undefined);
@@ -2661,7 +2658,7 @@ function App() {
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
-              dashboardMode={browserPath === "/dash"}
+              dashboardMode={browserPath === "/"}
               showLogout={document.documentElement.dataset["dashboardRemote"] === "true"}
               privacyMode={state.privacyMode}
               sessions={cliSessions}
@@ -2720,13 +2717,13 @@ function App() {
               selectedPeerId={selectedPeer?.id ?? selectedPeerId}
               peerAccounts={snapshot.peerAccounts}
               onPeerChange={setSelectedPeerId}
-              onDashboard={() => navigateDashboardPath("/dash", setBrowserPath)}
+              onDashboard={() => navigateDashboardPath("/", setBrowserPath)}
               onRefresh={() => {
                 explicitCliRefreshRef.current = requestCliSessions(true);
               }}
               onSelect={selectCliSession}
               onBackToList={() => {
-                navigateDashboardPath("/", setBrowserPath);
+                navigateDashboardPath("/workspace", setBrowserPath);
                 messageViewRevision.current++;
                 selectedCliSessionRef.current = undefined;
                 setSelectedCliSession(undefined);

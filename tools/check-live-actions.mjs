@@ -84,7 +84,7 @@ const menu = async name => {
   await page.getByRole("menuitem", { name, exact: true }).click();
 };
 const open = async id => {
-  await page.goto(`${origin}/${id}`);
+  await page.goto(`${origin}/workspace/${id}`);
   await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "getCodexCliSessionMessages" && event.status === "completed" && event.payload?.cliSession?.id === id), id, { timeout: 95_000 });
 };
 const waitIdle = async id => {
@@ -387,7 +387,7 @@ try {
     assert.deepEqual(errors, []);
   });
   await record("live account filter counts, search, card/table views and quota metrics", async () => {
-    await page.goto(`${origin}/dash`);
+    await page.goto(`${origin}/`);
     await page.locator(".header-count-link").first().waitFor();
     await page.locator('input[name="account-search"]').fill("");
     for (const filter of await page.locator(".header-count-link").all()) {

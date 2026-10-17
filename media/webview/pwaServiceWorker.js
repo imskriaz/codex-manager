@@ -126,7 +126,7 @@ self.addEventListener("notificationclick", (event) => {
       finally { clearTimeout(timer); }
       await self.registration.showNotification("Codex Manager", { body: feedback, tag: "codex-manager-action-result" });
     }
-    const target = new URL("/dash", self.location.origin).href;
+    const target = new URL("/", self.location.origin).href;
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     const existing = clients.find((client) => new URL(client.url).origin === self.location.origin);
     if (existing) { await existing.navigate(target); await existing.focus(); }

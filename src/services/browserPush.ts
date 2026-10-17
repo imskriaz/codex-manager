@@ -168,7 +168,7 @@ export class BrowserPushService {
           tag: `codex-manager-${key.slice(0, 150)}`,
           notificationId: notice.notificationId,
           actions: notice.actions?.slice(0, 2),
-          url: "/dash",
+          url: "/",
           createdAt: now
         });
         await Promise.all(state.subscriptions.slice(0, MAX_SUBSCRIPTIONS).map(async subscription => {
@@ -223,7 +223,7 @@ export class BrowserPushService {
         subscription.expiresAt > Date.now() && (subscription.password === undefined || subscription.password === password));
       const result = { subscriptions: subscriptions.length, accepted: 0, failed: 0 };
       const expired = new Set<string>();
-      const payload = JSON.stringify({ title: "Codex Manager", body: "Test notification: this device is connected.", tag: "codex-manager-delivery-test", url: "/dash", createdAt: Date.now() });
+      const payload = JSON.stringify({ title: "Codex Manager", body: "Test notification: this device is connected.", tag: "codex-manager-delivery-test", url: "/", createdAt: Date.now() });
       await Promise.all(subscriptions.map(async subscription => {
         try {
           await webPush.sendNotification(validateBrowserPushSubscription(subscription), payload, {
