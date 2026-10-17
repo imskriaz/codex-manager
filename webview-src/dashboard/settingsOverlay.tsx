@@ -190,7 +190,7 @@ export function SettingsOverlay(props: {
                   props.onSendSetting("displayLanguage", value);
                 }}
               />
-              <div class="settings-block settings-block-wide" data-setting="shared-password">
+              <div class={`settings-block settings-block-wide ${props.encryptedSyncNeedsConfiguration ? "settings-password-required" : ""}`} data-setting="shared-password">
                 <div class="settings-block-head">
                   <div class="settings-block-title">{passwordCopy.title}</div>
                   <div class="settings-block-sub" title={passwordCopy.sub}>{passwordCopy.sub}</div>

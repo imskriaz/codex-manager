@@ -44,6 +44,7 @@ export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1
     case "unarchiveCodexCliSession":
     case "deleteCodexCliSession":
     case "openCodexCliSession":
+    case "resumeCodexSessions":
       return 75_000;
     case "details":
     case "reloadPrompt":
@@ -95,9 +96,11 @@ export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1
   }
 }
 
-export function createActionRequestId(): string {
-  return `dashboard-action-${crypto.randomUUID()}`;
+export function createActionRequestId(automatic = false): string {
+  return `dashboard-${automatic ? "auto" : "action"}-${crypto.randomUUID()}`;
 }
+
+export function isAutomaticRequest(requestId: string): boolean { return requestId.startsWith("dashboard-auto-") || requestId.startsWith("realtime-cli-"); }
 
 export function postMessageToHost(message: DashboardClientMessage): void {
   vscodeApi.postMessage(message);

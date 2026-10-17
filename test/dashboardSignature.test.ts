@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { buildDashboardStateSignature } from "../src/presentation/dashboard/signature";
 import type { DashboardState } from "../src/domain/dashboard/types";
 
+it("refreshes both dashboards when peer presence or remote accounts change", () => {
+  const state = createState();
+  const peers = [{ id: "other", name: "Other system", connected: true, sessionCount: 1 }];
+  const connected = { ...state, connectedPeers: peers, peerAccounts: { other: state.accounts } };
+  expect(buildDashboardStateSignature(connected)).not.toBe(buildDashboardStateSignature(state));
+  expect(buildDashboardStateSignature({ ...connected, connectedPeers: [{ ...peers[0]!, connected: false }] })).not.toBe(buildDashboardStateSignature(connected));
+  expect(buildDashboardStateSignature({ ...connected, peerAccounts: { other: [] } })).not.toBe(buildDashboardStateSignature(connected));
+});
+
 function createState(overrides?: {
   resetCreditsAvailable?: number;
   resetCreditsNextExpiresAt?: number;

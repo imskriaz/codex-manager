@@ -567,6 +567,7 @@ export type DashboardActionName =
   | "getDailyUsage"
   | "getUsageGraph"
   | "openNewCodexWebview"
+  | "resumeCodexSessions"
   | "startCodexCliSession"
   | "listCodexCliSessions"
   | "getCodexSubAgentMessages"
@@ -623,6 +624,8 @@ export interface DashboardActionPayload {
   automatic?: boolean;
   usageGraph?: DashboardUsageGraphQuery;
   sessionId?: string;
+  /** Open the official VS Code editor even when initiated from a browser. */
+  openInVsCode?: boolean;
   /** Fence steering to the active turn observed by this client. */
   expectedTurnId?: string;
   model?: string;
@@ -666,6 +669,12 @@ export interface DashboardCodexSessionGoal {
 export interface DashboardCliSessionSummary {
   id: string;
   title: string;
+  model?: string;
+  reasoningEffort?: string;
+  /** Start of the currently running turn, in epoch milliseconds, when recorded. */
+  runningSince?: number;
+  /** A recorded unfinished turn or retained reload recovery can be reopened. */
+  interrupted?: boolean;
   updatedAt?: string;
   status: "running" | "idle" | "unknown";
   /** Inspection failure retained while read-only history remains available. */

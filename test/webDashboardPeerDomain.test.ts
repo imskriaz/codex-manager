@@ -50,6 +50,40 @@ afterEach(async () => {
 });
 
 describe("canonical cross-PC WebSocket domain", () => {
+  it("publishes an aggregate once so system selection survives heartbeat refreshes", async () => {
+    const changed = vi.fn();
+    const listener = server.onDidChangeDashboardPeers(changed);
+    domain = "dashboard.example";
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ type: "peer:aggregate", peers: [peer(), { ...peer(), deviceId: "second-pc" }] }) });
+    await internal.publishPeerHeartbeatHttp();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(server.getDashboardPeerState().connectedPeers).toHaveLength(3);
+    listener.dispose();
+  });
+  it("shares signed peer state with VS Code and retains the authenticated relay's failure outcome", async () => {
+    const changed = vi.fn();
+    const listener = server.onDidChangeDashboardPeers(changed);
+    await internal.acceptPeerSession({ ...peer(), sessions: [{ id: "running", title: "Remote task", status: "running", interrupted: false }] });
+    expect(changed).toHaveBeenCalled();
+    expect(server.getDashboardPeerState().connectedPeers).toEqual(expect.arrayContaining([expect.objectContaining({ id: "other-pc", connected: true })]));
+    expect(server.getRemoteCliSessions()[0]).toMatchObject({ deviceId: "other-pc", remote: true });
+    await expect(server.relayWebviewAction({ type: "dashboard:action", action: "resumeCodexSessions", requestId: "desktop-remote", payload: { targetDeviceId: "other-pc" } })).resolves.toMatchObject({ status: "failed", errorMessage: "The selected PC is offline." });
+    await expect(server.relayWebviewAction({ type: "dashboard:action", action: "resumeCodexSessions", requestId: "desktop-local", payload: {} })).resolves.toMatchObject({ status: "failed" });
+    const relay = vi.spyOn(internal, "relayPeerAction").mockResolvedValue({ status: "completed", payload: { notice: { level: "info", message: "Opened." } } });
+    const request = { type: "dashboard:action" as const, action: "resumeCodexSessions" as const, requestId: "desktop-success", payload: { targetDeviceId: "other-pc" } };
+    expect(await server.relayWebviewAction(request)).toMatchObject({ status: "completed", payload: { notice: { message: "Opened." } } });
+    expect(relay).toHaveBeenCalledWith(request, "other-pc");
+    listener.dispose();
+  });
+  it("accepts bounded session settings and rejects invalid peer model metadata", async () => {
+    const session = { id: "session", title: "Task", status: "running", model: "gpt-5", reasoningEffort: "high", runningSince: Date.now() - 1000 };
+    for (const invalid of [{ ...session, model: {} }, { ...session, model: "x".repeat(257) }, { ...session, reasoningEffort: 1 }, { ...session, reasoningEffort: "x".repeat(65) }, { ...session, runningSince: "now" }, { ...session, runningSince: Infinity }, { ...session, runningSince: Date.now() + 600_000 }, { ...session, interrupted: "yes" }]) {
+      await expect(internal.acceptPeerSession({ ...peer(), sessions: [invalid] })).resolves.toBe(false);
+    }
+    expect(sync.verifyRealtimePeerPayload).not.toHaveBeenCalled();
+    await expect(internal.acceptPeerSession({ ...peer(), sessions: [session] })).resolves.toBe(true);
+    expect(internal.peerSessions.get("other-pc").sessions[0]).toMatchObject(session);
+  });
   it.each(["", "   ", "http://dashboard.example", "https://user:password@dashboard.example", "https://dashboard.example/path", "https://dashboard.example/?q=1", "https://dashboard.example/#fragment", "not a host"])("avoids outgoing peer connections and loopback fallback with %j", async value => {
     domain = value;
     internal.connectPeerSocket();

@@ -49,7 +49,6 @@ import {
 import { useDashboardActions, useDashboardHostSync, useDashboardModals } from "./hooks";
 import {
   CodexSessionsIcon,
-  DropdownChevronIcon,
   EyeIcon,
   EyeOffIcon,
   GridViewIcon,
@@ -76,11 +75,12 @@ import { DonationDetails } from "./donationDetails";
 import { ModalShell } from "./primitives";
 import { onboardingFailureMessage } from "./onboardingFeedback";
 import { classifyCliSessionListResult } from "./cliSessionListResult";
+import { formatSessionReadError } from "./actionFeedback";
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
-import { countPeerSessions, type CliSessionFeedback } from "./cliSessionsModal";
-import { mergeDashboardPeers } from "../../src/domain/codexSessionState";
+import { formatElapsed, type CliSessionFeedback } from "./cliSessionsModal";
+import { filterCliSessionsBySection, mergeDashboardPeers } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import {
@@ -403,6 +403,7 @@ function App() {
         agentRequests.current.delete(requestId);
         if (id) setAgentMessages((current) => ({ ...current, [id]: { ...current[id], loading: false, error: "Agent messages timed out. Try Refresh." } }));
       }
+      if (action === "listCodexCliSessions") setCliSessionsError("Sessions did not refresh in time. Try again.");
       if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
         explicitCliRefreshRef.current = undefined;
         showCliSessionFeedback({
@@ -504,12 +505,12 @@ function App() {
       const now = Date.now();
       if (!force && now - lastCliListRequestAtRef.current < 2_000) return;
       lastCliListRequestAtRef.current = now;
-      return sendAction("listCodexCliSessions");
+      return sendAction("listCodexCliSessions", undefined, { automatic: true, targetDeviceId: undefined });
     },
     [sendAction]
   );
   const requestCliSessionMessages = useCallback(
-    (sessionId: string, targetDeviceId?: string, force = false): void => {
+    (sessionId: string, targetDeviceId?: string, force = false, automatic = true): void => {
       const target = { id: sessionId, deviceId: targetDeviceId };
       if ([...messageRequests.current.values()].some((pending) => sameCliSessionTarget(pending, target))) return;
       const now = Date.now();
@@ -517,7 +518,7 @@ function App() {
       if (!force && sameCliSessionTarget(previous?.target, target) && previous && now - previous.at < 2_000) return;
       lastCliMessageRequestRef.current = { target, at: now };
       const projectPath = cliSessionsRef.current.find((session) => sameCliSessionTarget(session, target))?.projectPath;
-      const requestId = sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath });
+      const requestId = sendAction("getCodexCliSessionMessages", undefined, { sessionId, targetDeviceId, projectPath, automatic });
       if (requestId) {
         messageRequests.current.set(requestId, target);
         messageRequestStreams.current.set(requestId, cliLiveStatesRef.current[cliSessionTargetKey(target)]?.streamId);
@@ -893,7 +894,7 @@ function App() {
               message: "This session is archived. Restore it below to continue the conversation."
             });
           } else {
-            setCliSessionMessagesError(error);
+            setCliSessionMessagesError(formatSessionReadError(message.action, error));
           }
         }
       }
@@ -1138,6 +1139,7 @@ function App() {
         message.type === "dashboard:action-result" &&
         [
           "openNewCodexWebview",
+          "resumeCodexSessions",
           "openCodexCliSession",
           "renameCodexCliSession",
           "forkCodexCliSession",
@@ -1465,8 +1467,9 @@ function App() {
       : [{ id: "local", name: "This PC", sessionCount: 0, connected: true, local: true }];
   const selectedPeer =
     pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
-  const pcSessionCounts = countPeerSessions(cliSessions, pcOptions);
-  const runningCliSessionCount = pcSessionCounts.reduce((sum, peer) => sum + peer.running, 0);
+  const runningCliSessions = filterCliSessionsBySection(cliSessions, "active").filter((session) =>
+    (session.status === "running" && (!session.remote || pcOptions.some(peer => peer.id === session.deviceId && peer.connected))) || session.interrupted === true
+  );
   const displayedAccounts =
     selectedPeer && !selectedPeer.local ? (snapshot.peerAccounts?.[selectedPeer.id] ?? []) : snapshot.accounts;
   const overviewAccount = resolveOverviewAccount(displayedAccounts);
@@ -1475,7 +1478,7 @@ function App() {
     : undefined;
   const openCliSessions = (): void => {
     if (!isBrowserDashboard) {
-      sendAction("openWebDashboard", undefined, { path: "/workspace" });
+      sendAction("openWebDashboard", undefined, { path: "/workspace", targetDeviceId: undefined });
       return;
     }
     navigateDashboardPath("/workspace", setBrowserPath);
@@ -1503,7 +1506,7 @@ function App() {
     void readCliSessionMessagesCache(session.id, session.deviceId).then((cached) => {
       if (cached && revision === messageViewRevision.current && sameCliSessionTarget(session, currentSessionTarget())) setCliSessionMessages(cached);
     });
-    requestCliSessionMessages(session.id, session.deviceId);
+    requestCliSessionMessages(session.id, session.deviceId, false, false);
   };
   const sortedAccounts = useMemo(
     () =>
@@ -1592,6 +1595,11 @@ function App() {
   const selectedAccountIds = new Set(state.selectedAccountIds);
   const selectedCount = state.selectedAccountIds.length;
   const privacyToggleLabel = state.privacyMode ? snapshot.copy.showSensitive : snapshot.copy.hideSensitive;
+  const handlePrivacyToggle = (): void => {
+    const privacyMode = !state.privacyMode;
+    dispatch({ type: "toggle-privacy" });
+    sendAction("setPrivacyMode", undefined, { privacyMode });
+  };
   const prepareOAuthPending = isActionPending("prepareOAuthSession");
   const startOAuthAutoPending = isActionPending("startOAuthAutoFlow");
   const completeOAuthPending = isActionPending("completeOAuthSession");
@@ -2053,13 +2061,15 @@ function App() {
         ) : null}
         <section class="section">
           <div class="hero">
-            <div class={`brand ${isBrowserDashboard ? "has-pc-picker" : ""}`}>
+            <div class="brand">
               <img class="brand-logo" src={snapshot.logoUri} alt="" aria-hidden="true" width="28" height="28" />
               <div class="brand-copy">
                 <h1>Codex Manager</h1>
                 <p>{brandSubtitle}</p>
               </div>
-              {isBrowserDashboard && selectedPeer ? (
+            </div>
+            <div class="hero-settings">
+              {selectedPeer && pcOptions.length > 1 ? (
                 <PcPickerControl
                   peers={pcOptions}
                   accountsByPeerId={Object.fromEntries(
@@ -2068,7 +2078,6 @@ function App() {
                       peer.local ? snapshot.accounts : (snapshot.peerAccounts?.[peer.id] ?? [])
                     ])
                   )}
-                  selectedPeer={selectedPeer}
                   selectedPeerId={selectedPeer.id}
                   lang={snapshot.lang}
                   privacyMode={state.privacyMode}
@@ -2078,73 +2087,47 @@ function App() {
                     setPcPickerOpen((current) => !current);
                   }}
                   onClose={() => setPcPickerOpen(false)}
-                  onChange={setSelectedPeerId}
+                  onChange={(peerId) => {
+                    setSelectedPeerId(peerId);
+                    const peer = pcOptions.find(peer => peer.id === peerId)!;
+                    const name = getSensitiveDisplayValue(peer.name, state.privacyMode, "name");
+                    showNotice({ level: peer.connected ? "info" : "warning", message: peer.connected ? `Showing ${name} dashboard.` : `${name} is offline. Showing saved dashboard data.` });
+                  }}
+                  onOpenBrowser={!isBrowserDashboard ? () => sendAction("openWebDashboard") : undefined}
                 />
               ) : null}
-            </div>
-            <div class="hero-settings">
               {isBrowserDashboard && realtimeConnected ? (
                 <span class="dashboard-live-status" role="status" title="Live updates are active">
                   <span aria-hidden="true"></span>
                   Live
                 </span>
               ) : null}
-              {!isBrowserDashboard ? (
-                <button
-                  id="codexDashboardButton"
-                  class="settings-btn action-btn"
-                  type="button"
-                  title={snapshot.lang === "zh" ? "在浏览器中打开面板" : "Open dashboard in browser"}
-                  aria-label={snapshot.lang === "zh" ? "在浏览器中打开面板" : "Open dashboard in browser"}
-                  onClick={() => sendAction("openWebDashboard")}
-                >
-                  <span class="button-face">
-                    <span class="button-icon">
-                      <GridViewIcon />
-                    </span>
-                  </span>
-                </button>
-              ) : null}
               {snapshot.settings.cliIntegrationEnabled === true ? (
                 <CliSessionsMenu
-                  counts={pcSessionCounts}
-                  countsReady={liveSessionListReceived.current || cliSessions.length > 0}
-                  countsNote={cliSessionsError ? "Refresh failed" : !liveSessionListReceived.current && cliSessions.length ? "Cached" : undefined}
+                  sessions={runningCliSessions}
                   peers={pcOptions}
-                  runningCount={runningCliSessionCount}
+                  ready={liveSessionListReceived.current}
+                  error={cliSessionsError}
+                  connected={!isBrowserDashboard || realtimeConnected}
+                  loading={isActionPending("listCodexCliSessions")}
+                  actionPending={isActionPending("resumeCodexSessions") || isActionPending("openCodexCliSession")}
+                  onOpen={(session) => requestSessionAction(session.status === "running" ? "openCodexCliSession" : "resumeCodexSessions", session, { openInVsCode: true })}
                   lang={snapshot.lang}
                   privacyMode={state.privacyMode}
                   open={cliSessionsMenuOpen}
                   onToggle={() => {
                     setPcPickerOpen(false);
                     setCliSessionsMenuOpen((current) => !current);
+                    if (!cliSessionsMenuOpen) requestCliSessions();
                   }}
                   onClose={() => setCliSessionsMenuOpen(false)}
+                  onRetry={() => { setCliSessionsError(undefined); requestCliSessions(true); }}
                   onManage={() => {
                     setCliSessionsMenuOpen(false);
                     openCliSessions();
                   }}
                 />
               ) : null}
-              <button
-                id="privacyToggleButton"
-                class={`settings-btn action-btn icon-only ${state.privacyMode ? "is-active" : ""}`}
-                type="button"
-                title={privacyToggleLabel}
-                aria-label={privacyToggleLabel}
-                aria-pressed={state.privacyMode}
-                aria-busy={isActionPending("setPrivacyMode")}
-                disabled={isActionPending("setPrivacyMode")}
-                onClick={() => {
-                  const privacyMode = !state.privacyMode;
-                  dispatch({ type: "toggle-privacy" });
-                  sendAction("setPrivacyMode", undefined, { privacyMode });
-                }}
-              >
-                <span class="button-face">
-                  <span class="button-icon">{state.privacyMode ? <EyeOffIcon /> : <EyeIcon />}</span>
-                </span>
-              </button>
               <button
                 id="donateButton"
                 class="settings-btn refresh-view-btn action-btn icon-only"
@@ -2159,15 +2142,17 @@ function App() {
               </button>
               <button
                 id="settingsOpenButton"
-                class="settings-btn action-btn icon-only"
+                class="settings-btn action-btn icon-only settings-alert-trigger"
                 type="button"
                 title={snapshot.copy.settingsTitle}
                 aria-label={snapshot.copy.settingsTitle}
+                aria-description={snapshot.encryptedSyncNeedsConfiguration ? "Password required" : undefined}
                 onClick={() => dispatch({ type: "open-settings" })}
               >
                 <span class="button-face">
                   <span class="button-icon">⚙</span>
                 </span>
+                {snapshot.encryptedSyncNeedsConfiguration ? <span class="settings-alert-badge" aria-hidden="true">!</span> : null}
               </button>
               <button
                 id="aboutOpenButton"
@@ -2190,17 +2175,14 @@ function App() {
                 privacyPending={isActionPending("setPrivacyMode")}
                 syncPending={syncPending}
                 settingsTitle={snapshot.copy.settingsTitle}
+                passwordRequired={snapshot.encryptedSyncNeedsConfiguration === true}
                 aboutTitle={resolveAboutTitle(snapshot.lang)}
                 onSessions={() => {
                   setPcPickerOpen(false);
                   setCliSessionsMenuOpen(true);
                   requestCliSessions();
                 }}
-                onPrivacyToggle={() => {
-                  const privacyMode = !state.privacyMode;
-                  dispatch({ type: "toggle-privacy" });
-                  sendAction("setPrivacyMode", undefined, { privacyMode });
-                }}
+                onPrivacyToggle={handlePrivacyToggle}
                 onSync={handleSyncNow}
                 onSettings={() => dispatch({ type: "open-settings" })}
                 onAbout={() => setAboutOpen(true)}
@@ -2216,6 +2198,8 @@ function App() {
             settings={snapshot.settings}
             now={state.now}
             privacyMode={state.privacyMode}
+            privacyPending={isActionPending("setPrivacyMode")}
+            onPrivacyToggle={handlePrivacyToggle}
             disabled={snapshot.indexHealth.status === "corrupted_unrecoverable"}
             addPending={prepareOAuthPending}
             refreshAllPending={isActionPending("refreshAll")}
@@ -2244,8 +2228,6 @@ function App() {
                 ? modals.openAddAccountModal
                 : () => document.querySelector<HTMLInputElement>("#inline-add-account-panel .oauth-link-input")?.focus()
             }
-            onSetPassword={handleConfigureEncryptedSync}
-            passwordConfigured={snapshot.encryptedSyncNeedsConfiguration !== true}
             onOnboard={() => {
               setOnboardingError(undefined);
               setOnboardingStep("agreement");
@@ -2278,6 +2260,10 @@ function App() {
             onDisableAll={() => sendAction("disableAll")}
             showCliSessions={snapshot.settings.cliIntegrationEnabled === true}
             onOpenCliSessions={openCliSessions}
+            onOpenCodex={() => sendAction("openNewCodexWebview")}
+            onResumeSessions={() => sendAction("resumeCodexSessions")}
+            resumeSessionsPending={isActionPending("resumeCodexSessions")}
+            codexOpenPending={isActionPending("openNewCodexWebview")}
           />
         </section>
         {displayedAccounts.length > 0 ? (
@@ -2732,7 +2718,7 @@ function App() {
               }}
               onRefreshMessages={() =>
                 selectedCliSession &&
-                requestCliSessionMessages(selectedCliSession.id, selectedCliSession.deviceId, true)
+                requestCliSessionMessages(selectedCliSession.id, selectedCliSession.deviceId, true, false)
               }
               onRefreshEnvironment={(projectPath, includeBranchDiff) => {
                 if (includeBranchDiff) setWorkspaceEnvironment((current) => current ? { ...current, branchDiff: undefined, branchDiffBase: undefined, branchDiffTruncated: undefined } : current);
@@ -2909,6 +2895,7 @@ function DashboardMobileActions(props: {
   privacyPending: boolean;
   syncPending: boolean;
   settingsTitle: string;
+  passwordRequired: boolean;
   aboutTitle: string;
   onSessions: () => void;
   onPrivacyToggle: () => void;
@@ -2922,8 +2909,9 @@ function DashboardMobileActions(props: {
   const menuLabel = props.lang === "zh" ? "更多操作" : props.lang === "zh-hant" ? "更多操作" : "More actions";
   return (
     <details class="dashboard-mobile-actions">
-      <summary class="settings-btn action-btn icon-only" aria-label={menuLabel} title={menuLabel}>
+      <summary class="settings-btn action-btn icon-only settings-alert-trigger" aria-label={menuLabel} title={menuLabel} aria-description={props.passwordRequired ? "Password required" : undefined}>
         <span class="button-face"><span class="button-icon" aria-hidden="true">•••</span></span>
+        {props.passwordRequired ? <span class="settings-alert-badge" aria-hidden="true">!</span> : null}
       </summary>
       <div class="dashboard-mobile-actions-menu" role="menu" aria-label={menuLabel}>
         <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSessions(); }}>
@@ -3100,7 +3088,6 @@ function sortAccounts(
 function PcPickerControl(props: {
   peers: DashboardPeerView[];
   accountsByPeerId: Record<string, DashboardAccountViewModel[]>;
-  selectedPeer: DashboardPeerView;
   selectedPeerId: string;
   lang: string;
   privacyMode: boolean;
@@ -3108,9 +3095,11 @@ function PcPickerControl(props: {
   onToggle: () => void;
   onClose: () => void;
   onChange: (peerId: string) => void;
+  onOpenBrowser?: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0 });
   const isZh = props.lang === "zh";
   const isHant = props.lang === "zh-hant";
@@ -3121,7 +3110,7 @@ function PcPickerControl(props: {
   const enabledLabel = isZh ? "已启用" : isHant ? "已啟用" : "enabled";
   const disabledLabel = isZh ? "已停用" : isHant ? "已停用" : "disabled";
   const sessionsLabel = isZh ? "个会话" : isHant ? "個工作階段" : "sessions";
-  const pickerLabel = isZh ? "选择电脑" : isHant ? "選擇電腦" : "Select PC";
+  const pickerLabel = isZh ? "切换系统面板" : isHant ? "切換系統面板" : "Switch system dashboard";
   const peerName = (peer: DashboardPeerView): string => {
     const name = peer.name.trim() || (peer.local ? localLabel : pickerLabel);
     return getSensitiveDisplayValue(name, props.privacyMode, "name");
@@ -3143,9 +3132,11 @@ function PcPickerControl(props: {
       setPopoverPosition({ top: rect.bottom + 7, left: Math.max(8, Math.min(rect.left, window.innerWidth - 258)) });
     };
     updatePosition();
+    const frame = window.requestAnimationFrame(() => (popoverRef.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]') ?? popoverRef.current?.querySelector<HTMLButtonElement>('[role="option"]'))?.focus());
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
@@ -3158,7 +3149,7 @@ function PcPickerControl(props: {
       if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) props.onClose();
     };
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") props.onClose();
+      if (event.key === "Escape") { props.onClose(); triggerRef.current?.focus(); }
     };
     window.addEventListener("pointerdown", closeOutside);
     window.addEventListener("keydown", closeOnEscape);
@@ -3171,31 +3162,37 @@ function PcPickerControl(props: {
   return (
     <div class="dashboard-pc-picker" ref={rootRef}>
       <button
+        ref={triggerRef}
+        id="codexDashboardButton"
         type="button"
-        class={`dashboard-pc-picker-trigger ${props.open ? "active" : ""}`}
-        aria-haspopup="listbox"
+        class={`settings-btn action-btn icon-only ${props.open ? "is-active" : ""}`}
+        aria-haspopup="dialog"
         aria-expanded={props.open}
         aria-label={pickerLabel}
         title={pickerLabel}
         onClick={props.onToggle}
       >
-        <span class="dashboard-pc-picker-copy">
-          <strong>{peerName(props.selectedPeer)}</strong>
-          <small title={peerStatus(props.selectedPeer)}>{peerStatus(props.selectedPeer)}</small>
-        </span>
-        <DropdownChevronIcon open={props.open} />
+        <span class="button-face"><span class="button-icon"><GridViewIcon /></span></span>
+        <span class="cli-running-count dashboard-system-count" aria-label={`${props.peers.length} systems`}>{props.peers.length}</span>
       </button>
       {props.open
         ? createPortal(
             <div
               ref={popoverRef}
               class="dashboard-pc-picker-popover"
-              role="listbox"
+              role="dialog"
               aria-label={pickerLabel}
+              onKeyDown={(event) => {
+                const options = Array.from(popoverRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+                const index = options.indexOf(document.activeElement as HTMLButtonElement);
+                const next = event.key === "ArrowDown" ? (index + 1) % options.length : event.key === "ArrowUp" ? (index - 1 + options.length) % options.length : event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : undefined;
+                if (next !== undefined) { event.preventDefault(); options[next]?.focus(); }
+              }}
               style={{ top: `${popoverPosition.top}px`, left: `${popoverPosition.left}px` }}
             >
+              <div role="listbox" aria-label={pickerLabel}>
               <div class="dashboard-pc-picker-heading">
-                {isZh ? "已连接的电脑" : isHant ? "已連線的電腦" : "Connected PCs"}
+                {isZh ? "系统面板" : isHant ? "系統面板" : "System dashboards"}
               </div>
               {props.peers.map((peer) => (
                 <button
@@ -3207,6 +3204,7 @@ function PcPickerControl(props: {
                   onClick={() => {
                     props.onChange(peer.id);
                     props.onClose();
+                    triggerRef.current?.focus();
                   }}
                 >
                   <span class={`dashboard-pc-picker-status ${peer.connected ? "is-online" : ""}`} aria-hidden="true" />
@@ -3216,6 +3214,8 @@ function PcPickerControl(props: {
                   </span>
                 </button>
               ))}
+              </div>
+              {props.onOpenBrowser ? <button type="button" class="cli-sessions-manage" onClick={() => { props.onClose(); props.onOpenBrowser?.(); }}>Open dashboard in browser <span aria-hidden="true">↗</span></button> : null}
             </div>,
             document.body
           )
@@ -3225,43 +3225,39 @@ function PcPickerControl(props: {
 }
 
 function CliSessionsMenu(props: {
-  counts: ReturnType<typeof countPeerSessions>;
-  countsReady: boolean;
-  countsNote?: string;
+  sessions: DashboardCliSessionSummary[];
   peers: DashboardPeerView[];
-  runningCount: number;
+  ready: boolean;
+  error?: string;
+  connected: boolean;
+  loading: boolean;
+  actionPending: boolean;
+  onOpen: (session: DashboardCliSessionSummary) => void;
   lang: string;
   privacyMode: boolean;
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
+  onRetry: () => void;
   onManage: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0 });
+  const [now, setNow] = useState(Date.now());
   const isZh = props.lang === "zh";
   const isHant = props.lang === "zh-hant";
-  const menuLabel = isZh ? "电脑和会话" : isHant ? "電腦和工作階段" : "PCs and sessions";
-  const heading = isZh ? "电脑状态" : isHant ? "電腦狀態" : "PC status";
-  const localLabel = isZh ? "本机" : isHant ? "本機" : "This PC";
-  const onlineLabel = isZh ? "在线" : isHant ? "線上" : "Online";
-  const offlineLabel = isZh ? "离线" : isHant ? "離線" : "Offline";
-  const manageLabel = isZh ? "管理会话" : isHant ? "管理工作階段" : "Manage sessions";
-  const peerName = (peer: DashboardPeerView): string => {
-    const name = peer.name.trim() || (peer.local ? localLabel : "PC");
-    return getSensitiveDisplayValue(name, props.privacyMode, "name");
-  };
-  const sessionLabel = (count: number): string => {
-    if (isZh) {
-      return `${count} 个会话`;
-    }
-    if (isHant) {
-      return `${count} 個工作階段`;
-    }
-    return `${count} ${count === 1 ? "session" : "sessions"}`;
-  };
+  const menuLabel = isZh ? "运行中的会话" : isHant ? "執行中的工作階段" : "Running sessions";
+  const manageLabel = isZh ? "会话面板" : isHant ? "工作階段面板" : "Session dashboard";
+  const runningCount = props.sessions.filter(session => session.status === "running" && (!session.remote || props.peers.some(peer => peer.id === session.deviceId && peer.connected))).length;
+
+  useEffect(() => {
+    if (!props.open) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [props.open]);
 
   useEffect(() => {
     if (!props.open) {
@@ -3272,7 +3268,7 @@ function CliSessionsMenu(props: {
       if (!rect) {
         return;
       }
-      const width = Math.min(280, window.innerWidth - 16);
+      const width = Math.min(380, window.innerWidth - 16);
       setPopoverPosition({
         top: rect.bottom + 7,
         left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
@@ -3317,7 +3313,7 @@ function CliSessionsMenu(props: {
       <button
         ref={triggerRef}
         id="cliSessionsButton"
-        class={`settings-btn action-btn icon-only cli-sessions-entry ${props.runningCount > 0 ? "has-running" : ""} ${props.open ? "is-active" : ""}`}
+        class={`settings-btn action-btn icon-only cli-sessions-entry ${runningCount > 0 ? "has-running" : ""} ${props.open ? "is-active" : ""}`}
         type="button"
         title={menuLabel}
         aria-label={menuLabel}
@@ -3330,11 +3326,9 @@ function CliSessionsMenu(props: {
             <CodexSessionsIcon />
           </span>
         </span>
-        {props.runningCount > 0 ? (
-          <span class="cli-running-count" aria-label={`${props.runningCount} running sessions`}>
-            {props.runningCount}
-          </span>
-        ) : null}
+        <span class="cli-running-count" aria-label={`${runningCount} running sessions`}>
+            {runningCount}
+        </span>
       </button>
       {props.open
         ? createPortal(
@@ -3345,20 +3339,25 @@ function CliSessionsMenu(props: {
               aria-label={menuLabel}
               style={{ top: `${popoverPosition.top}px`, left: `${popoverPosition.left}px` }}
             >
-              <div class="cli-sessions-popover-heading">{heading}</div>
-              <div class="cli-sessions-pc-list" role="list">
-                {props.peers.map((peer) => (
-                  <div class="cli-sessions-pc-row" role="listitem" key={peer.id}>
-                    <span class={`cli-sessions-pc-status ${peer.connected ? "is-online" : ""}`} aria-hidden="true" />
-                    <span class="cli-sessions-pc-copy">
-                      <strong>{peerName(peer)}</strong>
-                      <small>{props.countsReady ? sessionLabel(props.counts.find((count) => count.id === peer.id)?.total ?? 0) + " · " + (props.counts.find((count) => count.id === peer.id)?.running ?? 0) + " running" + (props.countsNote ? " · " + props.countsNote : "") : props.countsNote ? "Sessions unavailable · refresh to retry" : "Loading sessions…"}</small>
-                    </span>
-                    <span class={`cli-sessions-pc-state ${peer.connected ? "is-online" : ""}`}>
-                      {peer.connected ? onlineLabel : offlineLabel}
-                    </span>
-                  </div>
-                ))}
+              <div class="cli-sessions-popover-heading">{menuLabel} · {runningCount}{props.sessions.length > runningCount ? ` · ${props.sessions.length - runningCount} interrupted` : ""}</div>
+              {props.error || !props.connected || (!props.ready && props.sessions.length > 0) ? <div class="cli-sessions-list-status" role="status">{props.error ? "Sessions could not refresh. Saved results may be out of date." : !props.connected ? "Connection lost. Running status may be out of date." : "Saved sessions. Checking running status…"}<button type="button" onClick={props.onRetry} disabled={props.loading}>{props.loading ? "Refreshing…" : "Retry"}</button></div> : null}
+              <div class="cli-sessions-running-list" role="list" aria-busy={props.loading}>
+                {props.sessions.length === 0 ? <p class="cli-sessions-empty" role="status">{props.error ? "Running sessions are unavailable." : !props.connected ? "Reconnect to check running sessions." : !props.ready ? "Loading running sessions…" : "No running sessions."}</p> : null}
+                {props.sessions.map((session) => {
+                  const peer = props.peers.find(peer => session.remote ? peer.id === session.deviceId : peer.local);
+                  const system = getSensitiveDisplayValue(session.deviceName || peer?.name || (session.remote ? "Remote PC" : "This PC"), props.privacyMode, "name");
+                  const time = typeof session.runningSince === "number" && Number.isFinite(session.runningSince) && session.runningSince > 0 && session.runningSince <= now + 5 * 60_000 ? formatElapsed(Math.max(0, now - session.runningSince)) : "Time unavailable";
+                  const detail = `Goal: ${session.goal?.objective || (session.goal === null ? "No goal" : "Unavailable")}\nThinking: ${session.reasoningEffort || "Unavailable"}`;
+                  const running = session.status === "running";
+                  const offline = session.remote && !props.peers.some(peer => peer.id === session.deviceId && peer.connected);
+                  return <article class="cli-sessions-running-row" role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
+                    <div class="cli-sessions-running-copy">
+                    <strong class="cli-sessions-running-title">{session.title}</strong>
+                    <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span aria-label={`Running time: ${time}`}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
+                    </div>
+                    <button type="button" class="cli-icon-button" disabled={props.actionPending || session.status === "unknown" || offline} aria-label={`${running ? "View" : "Resume"} ${session.title} in VS Code`} title={offline ? "System offline" : session.status === "unknown" ? "Refresh to verify this session" : running ? "View in VS Code" : "Resume in VS Code"} onClick={() => props.onOpen(session)}>{running ? <EyeIcon /> : <span aria-hidden="true">↻</span>}</button>
+                  </article>;
+                })}
               </div>
               <button type="button" class="cli-sessions-manage" onClick={props.onManage}>
                 <span class="cli-sessions-manage-icon" aria-hidden="true">

@@ -7,6 +7,15 @@ const message = (id: string, text: string, turnId?: string, role: "user" | "assi
 const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): DashboardCodexSessionLiveState => ({ sessionId: "chat", streamId: "stream", sequence: 1, updatedAt: 100, status: "running", turnId: "turn", messages: [], ...changes });
 
 describe("shared browser/native live turn reconciliation", () => {
+  it("keeps failed turns resumable and clears recovery when running or completed", () => {
+    const row = { id: "chat", title: "Task", status: "idle" as const, interrupted: true, runningSince: 10 };
+    const reconcile = (status: DashboardCodexSessionLiveState["status"]) => reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status }) });
+    expect(reconcile("running")).toMatchObject({ status: "running", interrupted: false });
+    expect(reconcile("completed")).toMatchObject({ status: "idle", interrupted: false, runningSince: undefined });
+    expect(reconcile("cancelled").interrupted).toBe(false);
+    expect(reconcile("failed")).toMatchObject({ status: "idle", interrupted: true, runningSince: undefined });
+    expect(reconcile("disconnected")).toBe(row);
+  });
   it("uses a newer verified idle row over an old running snapshot for counts, spinners, and steering", () => {
     const row = { id: "chat", title: "Task", status: "idle" as const, locked: false, updatedAt: new Date(2000).toISOString() };
     const live = snapshot({ updatedAt: 1000 });

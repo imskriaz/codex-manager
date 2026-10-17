@@ -16,7 +16,8 @@ import {
   persistRunningCodexSessions,
   persistOpenCodexSessions,
   registerCodexSessionAutoResumeTracking,
-  resumePersistedCodexSessions
+  resumePersistedCodexSessions,
+  withCodexSessionRecovery
 } from "../src/services/codexSessionAutoResume";
 
 function createContext(initial?: unknown) {
@@ -38,6 +39,35 @@ function createContext(initial?: unknown) {
 }
 
 const readNativeTabs = sessionEditor.readOpenCodexSessionIds;
+
+describe("dashboard recovery list", () => {
+  const id = "01a04882-d037-7a42-ad24-9afb61901181";
+  it("retains interrupted reload recovery without changing running or completed state or consuming storage", () => {
+    const state = createContext([id]);
+    const session = { id, title: "Saved task", status: "idle" as const };
+    expect(withCodexSessionRecovery(state.context, [session])[0]?.interrupted).toBe(true);
+    expect(withCodexSessionRecovery(state.context, [{ ...session, interrupted: false }])[0]?.interrupted).toBe(false);
+    expect(withCodexSessionRecovery(state.context, [{ ...session, status: "running" }])[0]).toEqual({ ...session, status: "running" });
+    expect(withCodexSessionRecovery(state.context, [{ ...session, archived: true }])[0]?.interrupted).toBeUndefined();
+    expect(withCodexSessionRecovery(state.context, [{ ...session, subAgent: true }])[0]?.interrupted).toBeUndefined();
+    expect(state.context.workspaceState.update).not.toHaveBeenCalled();
+    expect(state.read()).toEqual([id]);
+  });
+  it("retains native interruption evidence and quota-paused goals after saved recovery was consumed", () => {
+    const state = createContext([]);
+    const session = { id, title: "Interrupted", status: "idle" as const };
+    expect(withCodexSessionRecovery(state.context, [{ ...session, interrupted: true }])[0]?.interrupted).toBe(true);
+    expect(withCodexSessionRecovery(state.context, [{ ...session, goal: { objective: "Finish work", status: "usage_limited" } }])[0]?.interrupted).toBe(true);
+    expect(withCodexSessionRecovery(state.context, [session])[0]?.interrupted).toBe(false);
+  });
+  it("keeps malformed recovery intact, shows native sessions, and fails an explicit restore", () => {
+    const state = createContext("broken");
+    const sessions = [{ id, title: "Native task", status: "running" as const }];
+    expect(withCodexSessionRecovery(state.context, sessions)).toEqual(sessions);
+    expect(() => withCodexSessionRecovery(state.context, sessions, true)).toThrow(/malformed/);
+    expect(state.read()).toBe("broken");
+  });
+});
 beforeEach(() => {
   const ids = ["01a04882-d037-7a42-ad24-9afb61901181", "01a04882-d037-7a42-ad24-9afb61901182"];
   Object.assign(vscode.window, { tabGroups: { all: [{ tabs: ids.map(id => ({ input: {

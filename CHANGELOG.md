@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.5-pre3
+- Move system switching into the dashboard icon, show the system count, and hide that icon for a single system.
+- Show running parent sessions as compact rows with their title, system, elapsed turn time, and recorded model. Retain goal and thinking details in the tooltip and session dashboard navigation below the list.
+- Keep automatic session reads and their timeouts out of startup toasts while preserving inline errors and explicit action feedback.
+- Move privacy into More, remove password configuration from More, and highlight Settings and its Password block until a shared password is set.
+- Add Codex, Resume, and Show All Sessions to More. Keep interrupted conversations available after reload with View or Resume actions that open the owning VS Code editor.
+- Share connected systems, account dashboards, and authenticated remote actions with the VS Code dashboard.
+
 ## 1.3.5-pre2
 
 - Remove usage-chart message overlays and badges; keep diagnostics and retries in Graph settings. Silence token-history and unverified-session read toasts.

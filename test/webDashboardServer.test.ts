@@ -467,7 +467,7 @@ describe("browser dashboard request boundaries", () => {
   it("does not probe the model catalog during realtime session reconciliation", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
     expect(source).not.toContain("readCodexCliComposerConfig");
-    expect(source).toContain("stabilizeSessionProjectPaths(this.context, sessions)");
+    expect(source).toContain("stabilizeSessionProjectPaths(this.context, withCodexSessionRecovery(this.context, sessions))");
   });
 
   it("starts CLI realtime monitoring only for active workspace viewers", () => {

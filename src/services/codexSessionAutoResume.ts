@@ -8,6 +8,7 @@ import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoR
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexHomeStateKey } from "../codex/authFile";
+import type { DashboardCliSessionSummary } from "../domain/dashboard/types";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
 export const AUTO_RESUME_OPEN_SESSION_IDS_KEY = "codexManager.autoResumeOpenSessionIds";
@@ -87,6 +88,22 @@ function readPersistedSessionIds(context: AutoResumeContext, open = false): stri
     ...normalizeIds(context.workspaceState.get<unknown>(open ? AUTO_RESUME_OPEN_SESSION_IDS_KEY : AUTO_RESUME_SESSION_IDS_KEY)),
     ...((open ? openRecoveryIds : recoveryIds).get(context.workspaceState) ?? [])
   ]);
+}
+
+/** Read retained reload recovery without consuming it or depending on automatic startup restoration. */
+export function withCodexSessionRecovery(context: AutoResumeContext, sessions: DashboardCliSessionSummary[], strict = false): DashboardCliSessionSummary[] {
+  let saved = new Set<string>();
+  try {
+    if (context.workspaceState) saved = new Set([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
+  } catch (error) {
+    recordPersistentEvent("warning", "session-list", "Saved recovery could not be read; native session metadata remains available", undefined, error);
+    if (strict) throw error;
+  }
+  return sessions.map(session => session.archived || session.subAgent || session.parentSessionId || session.status === "running" ? session : {
+    ...session,
+    interrupted: session.interrupted === true || session.goal?.status === "usage_limited" ||
+      (session.interrupted !== false && saved.has(session.id))
+  });
 }
 
 async function bounded<T>(

@@ -58,7 +58,7 @@ export class AccountsWorkbench {
   }
 
   async activate(): Promise<void> {
-    this.context.subscriptions.push(registerDashboardPanelSerializer(this.context, this.repo));
+    this.context.subscriptions.push(registerDashboardPanelSerializer(this.context, this.repo, this.webDashboard));
     const activationStartedAt = Date.now();
     const activationSteps: Array<{ name: string; durationMs: number }> = [];
     const measureStep = async <T>(name: string, task: () => T | Promise<T>): Promise<T> => {

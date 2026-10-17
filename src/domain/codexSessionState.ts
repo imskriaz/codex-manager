@@ -56,7 +56,7 @@ export function countPeerSessions(
   });
 }
 
-/** Keep the PC picker complete when a session action arrives before the next state snapshot. */
+/** Keep cached PCs selectable without treating saved sessions as proof they are online. */
 export function mergeDashboardPeers(
   peers: readonly DashboardPeerView[],
   sessions: readonly DashboardCliSessionSummary[]
@@ -66,7 +66,7 @@ export function mergeDashboardPeers(
   for (const session of sessions) {
     if (!session.remote || !session.deviceId || known.has(session.deviceId)) continue;
     known.add(session.deviceId);
-    merged.push({ id: session.deviceId, name: session.deviceName?.trim() || "Remote PC", sessionCount: 0, connected: true, local: false });
+    merged.push({ id: session.deviceId, name: session.deviceName?.trim() || "Remote PC", sessionCount: 0, connected: false, local: false });
   }
   return merged;
 }

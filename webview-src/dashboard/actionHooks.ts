@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "preact/hooks";
 import type { DashboardActionName, DashboardNotice, DashboardSettingKey, DashboardSettings } from "../../src/domain/dashboard/types";
 import { noticeFromActionTimeout } from "./actionFeedback";
-import { createActionRequestId, getActionTimeoutMs, postMessageToHost } from "./host";
+import { createActionRequestId, getActionTimeoutMs, isAutomaticRequest, postMessageToHost } from "./host";
 import type { AppDispatch, SendAction } from "./hookTypes";
 import type { AppState } from "./state";
 
@@ -38,7 +38,7 @@ export function useDashboardActions(
 
       const timeoutId = window.setTimeout(() => {
         dispatch({ type: "resolve-action", requestId: request.requestId });
-        if (request.action !== "getDailyUsage" && request.action !== "getUsageGraph") onNotice(noticeFromActionTimeout(request.action));
+        if (!isAutomaticRequest(request.requestId) && request.action !== "getDailyUsage" && request.action !== "getUsageGraph") onNotice(noticeFromActionTimeout(request.action));
         onActionTimeoutRef.current?.(request.action, request.requestId);
       }, request.timeoutMs ?? getActionTimeoutMs(request.action));
 
@@ -53,7 +53,7 @@ export function useDashboardActions(
       window.clearTimeout(timeoutId);
       actionTimeoutsRef.current.delete(requestId);
     });
-  }, [dispatch, onNotice, state.pendingActions]);
+  }, [dispatch, isAutomaticRequest, onNotice, state.pendingActions]);
 
   useEffect(() => {
     return () => {
@@ -69,7 +69,7 @@ export function useDashboardActions(
   }, [dispatch]);
 
   const sendAction = useCallback<SendAction>((action, accountId, payload) => {
-    const requestId = createActionRequestId();
+    const requestId = createActionRequestId(payload?.automatic);
     dispatch({
       type: "request-action",
       request: {
@@ -88,7 +88,7 @@ export function useDashboardActions(
         requestId,
         payload: action === "setPrivacyMode" || action === "setCrossPcSyncEnabled"
           ? payload
-          : payload?.targetDeviceId
+          : payload && Object.hasOwn(payload, "targetDeviceId")
             ? payload
             : targetDeviceId && targetDeviceId !== "local"
               ? { ...(payload ?? {}), targetDeviceId }

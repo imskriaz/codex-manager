@@ -187,7 +187,7 @@ describe("sessions sidebar layout", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
 
-    expect(main).toContain('"PCs and sessions"');
+    expect(main).toContain('"Running sessions"');
     expect(main).not.toContain('"PCs and CLI sessions"');
     expect(main).toContain("mergeCachedCliSessions");
     expect(settings).toContain('"Enable workspace (Experimental)"');
@@ -466,7 +466,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain("classifyCliSessionListResult");
     expect(main).toContain("sessionChanged");
     expect(panel).not.toContain("readCodexCliComposerConfig");
-    expect(panel).toMatch(/\{\s*cliSessions: stabilized,\s*realtimeRevision:/);
+    expect(panel).toMatch(/\{\s*cliSessions: \[\.\.\.stabilized, .*getRemoteCliSessions\(\).*\],\s*realtimeRevision:/);
   });
 
   it("keeps realtime action callbacks stable and isolates the browser workspace route", () => {
@@ -631,7 +631,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('return pathname === "/workspace" || Boolean(cliSessionTargetFromLocation(pathname, ""))');
     expect(source).not.toContain('return pathname === "/" || pathname === "/workspace"');
     expect(source).not.toContain('browserPath === "/dash"');
-    expect(source).toContain('sendAction("openWebDashboard", undefined, { path: "/workspace" })');
+    expect(source).toContain('sendAction("openWebDashboard", undefined, { path: "/workspace", targetDeviceId: undefined })');
     expect(source).toContain('onDashboard={() => navigateDashboardPath("/", setBrowserPath)}');
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
     expect(source).toContain('return pathname === "/" || isCliSessionsPath(pathname);');

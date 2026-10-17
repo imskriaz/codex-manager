@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
+import { formatSessionReadError, noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
   it.each(["failed", "cancelled", "completed"] as const)("keeps token history %s outcomes out of toasts", status => {
@@ -22,6 +22,15 @@ describe("dashboard action feedback", () => {
         error: "Session Integration is disabled. Enable it in Settings before opening sessions." })).toBeUndefined();
     }
     expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "send", action: "sendCodexCliSessionMessage", status: "failed", error: "Session running state could not be verified." })?.level).toBe("error");
+  });
+  it("keeps startup session failures, warnings and late results out of toasts", () => {
+    for (const status of ["failed", "cancelled", "completed"] as const) {
+      expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "startup", action: "getCodexCliSessionMessages", status,
+        error: "The session transcript was not found on this PC.", payload: { notice: { level: "warning", message: "Technical inspection failed" } } }, true)).toBeUndefined();
+    }
+    expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "manual", action: "getCodexCliSessionMessages", status: "failed",
+      error: "The session transcript was not found on this PC." })?.message).toBe("This conversation is unavailable. Refresh the session list or choose another conversation.");
+    expect(formatSessionReadError("getCodexCliSessionMessages", "Permission denied.")).toBe("Permission denied.");
   });
   it("does not duplicate embedded turn completion with an internal CLI action-name toast", () => {
     expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "turn", action: "sendCodexCliSessionMessage", status: "completed" })).toBeUndefined();

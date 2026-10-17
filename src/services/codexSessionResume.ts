@@ -191,12 +191,15 @@ async function readLocalSessionListInternal(codexHome: string, limit: number): P
     const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id),
       statusError ? { status: "unknown", statusError } : transcriptPaths.has(entry.id) || runningIds.has(entry.id) ? { status: runningIds.has(entry.id) ? "running" : "idle" } : undefined);
     const record = records.get(entry.id);
-    summaries[index] = { ...summary, ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
+    const turnState = cliTranscriptTurnStateCache.get(transcriptPaths.get(entry.id) ?? "")?.state;
+    summaries[index] = { ...summary, model: summary.model ?? record?.model, reasoningEffort: summary.reasoningEffort ?? record?.reasoningEffort,
+      interrupted: turnState && turnState !== "unknown" ? summary.status !== "running" && ["active", "failed", "quota-paused"].includes(turnState) : undefined,
+      ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
   });
   return summaries;
 }
 
-type StateSessionRecord = { id: string; title?: string; updatedAt?: string; archived: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
+type StateSessionRecord = { id: string; title?: string; model?: string; reasoningEffort?: string; updatedAt?: string; archived: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
 async function readStateSessionRecords(home: string, id?: string, projectRoots?: string[]): Promise<StateSessionRecord[]> {
   let db: { prepare(sql: string): { all(...args: string[]): Record<string, unknown>[] }; close(): void } | undefined;
   try {
@@ -213,7 +216,7 @@ async function readStateSessionRecords(home: string, id?: string, projectRoots?:
       } catch { /* Older Codex stores projects only in thread metadata. */ }
     }
     const available = new Set(db.prepare("PRAGMA table_info(threads)").all().map(row => row["name"]));
-    const columns = ["id", "title", "updated_at", "archived", "source", "cwd", "rollout_path"].filter(column => available.has(column));
+    const columns = ["id", "title", "model", "reasoning_effort", "updated_at", "archived", "source", "cwd", "rollout_path"].filter(column => available.has(column));
     if (!available.has("id")) return [];
     const query = `SELECT ${columns.join(", ")} FROM threads`;
     const rows = id ? db.prepare(`${query} WHERE id = ?`).all(id)
@@ -221,6 +224,8 @@ async function readStateSessionRecords(home: string, id?: string, projectRoots?:
     return rows.flatMap((row) => {
       if (typeof row["id"] !== "string" || !SESSION_ID_PATTERN.test(row["id"])) return [];
       return [{ id: row["id"], title: typeof row["title"] === "string" ? row["title"] : undefined,
+        model: typeof row["model"] === "string" ? row["model"].slice(0, 256) : undefined,
+        reasoningEffort: typeof row["reasoning_effort"] === "string" ? row["reasoning_effort"].slice(0, 64) : undefined,
         updatedAt: typeof row["updated_at"] === "number" && Number.isFinite(row["updated_at"]) ? new Date(row["updated_at"] * 1000).toISOString() : undefined,
         archived: row["archived"] === 1, source: row["source"], cwd: typeof row["cwd"] === "string" ? row["cwd"] : undefined,
         rolloutPath: typeof row["rollout_path"] === "string" && row["rollout_path"].length <= 4096 ? row["rollout_path"] : undefined }];
@@ -258,7 +263,7 @@ export async function readCodexCliSessionSummary(
   ]);
   const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id) || Boolean(state?.archived), transcriptPaths.get(entry.id));
   const goals = await readCodexSessionGoals(codexHome, [sessionId]);
-  return { ...summary, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
+  return { ...summary, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
@@ -495,6 +500,8 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
         : undefined;
       const withMetadata = {
         ...session,
+        model: stateRecords.get(session.id)?.model ?? session.model,
+        reasoningEffort: stateRecords.get(session.id)?.reasoningEffort ?? session.reasoningEffort,
         ...(goals ? { goal: goals.get(session.id) ?? null } : {}),
         ...readSubAgentMetadata(session),
         ...readSubAgentMetadata(stateRecords.get(session.id)?.source),
@@ -506,12 +513,19 @@ async function readAppServerSessions(limit: number): Promise<DashboardCliSession
       const canStop = activeCliTurns.has(session.id) || activeAppServerTurns.has(session.id);
       const state = await readCliSessionStatus(codexHome, session.id, transcriptPaths.get(session.id), session.status === "running");
       const running = state.status === "running";
+      const startedAt = await readCliRunningSince(transcriptPaths.get(session.id));
+      const runningSince = running ? startedAt : undefined;
+      const turnState = cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.state;
       const transcriptUpdatedAt = cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.mtimeMs;
       const updatedAt = transcriptUpdatedAt && transcriptUpdatedAt > (Date.parse(session.updatedAt ?? "") || 0)
         ? new Date(transcriptUpdatedAt).toISOString() : session.updatedAt;
       enriched[index] = {
         ...withMetadata,
+        model: cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.model ?? withMetadata.model,
+        reasoningEffort: cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.reasoningEffort ?? withMetadata.reasoningEffort,
         updatedAt,
+        runningSince,
+        interrupted: turnState && turnState !== "unknown" ? !running && ["active", "failed", "quota-paused"].includes(turnState) : undefined,
         ...state,
         locked: running || state.status === "unknown",
         runningBy: running ? (canStop ? "Codex Manager" : "another Codex process") : undefined,
@@ -542,6 +556,8 @@ function mapAppServerThread(value: unknown, archived: boolean): DashboardCliSess
     id,
     ...readSubAgentMetadata(thread),
     title: normalizeSessionTitle(title, id),
+    model: typeof thread["model"] === "string" ? thread["model"].slice(0, 256) : undefined,
+    reasoningEffort: typeof thread["reasoningEffort"] === "string" ? thread["reasoningEffort"].slice(0, 64) : undefined,
     ...(updatedAt ? { updatedAt } : {}),
     status: running ? "running" : "idle",
     ...(cwd ? { projectPath: cwd } : {}),
@@ -562,12 +578,20 @@ async function toCliSessionSummary(
   const state = archived ? { status: "idle" as const } : knownStatus ?? await readCliSessionStatus(codexHome, entry.id, transcriptPath);
   const running = state.status === "running";
   const canStop = running && (activeCliTurns.has(entry.id) || activeAppServerTurns.has(entry.id));
+  const startedAt = archived ? undefined : await readCliRunningSince(transcriptPath);
+  const runningSince = running ? startedAt : undefined;
+  const turnMetadata = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath) : undefined;
+  const turnState = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath)?.state : undefined;
   const transcriptUpdatedAt = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath)?.mtimeMs : undefined;
   const updatedAt = transcriptUpdatedAt && transcriptUpdatedAt > (Date.parse(entry.updated_at ?? "") || 0)
     ? new Date(transcriptUpdatedAt).toISOString() : normalizeTimestamp(entry.updated_at);
   return {
     id: entry.id,
     title: normalizeSessionTitle(entry.thread_name, entry.id),
+    model: turnMetadata?.model,
+    reasoningEffort: turnMetadata?.reasoningEffort,
+    runningSince,
+    interrupted: turnState && turnState !== "unknown" ? !running && ["active", "failed", "quota-paused"].includes(turnState) : undefined,
     updatedAt,
     ...state,
     ...(metadata.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
@@ -998,7 +1022,7 @@ export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSe
     void runNewCodexCliSession(options, (id) => {
       createdId = id;
       newSessionFailures.delete(id);
-      recentNewSessions.set(id, { summary: { id, title: options.text.trim().slice(0, 80) || "New Codex chat", status: "running", canStop: true, runningBy: "Codex Manager", projectPath: resolveCliProjectPath(options.projectPath), updatedAt: new Date().toISOString(), archived: false }, text: options.text });
+      recentNewSessions.set(id, { summary: { id, title: options.text.trim().slice(0, 80) || "New Codex chat", model: options.model, reasoningEffort: options.reasoningEffort, runningSince: Date.now(), status: "running", canStop: true, runningBy: "Codex Manager", projectPath: resolveCliProjectPath(options.projectPath), updatedAt: new Date().toISOString(), archived: false }, text: options.text });
       if (recentNewSessions.size > 30) recentNewSessions.delete(recentNewSessions.keys().next().value!);
       resolve(id);
     }).then(resolve, (error: unknown) => {
@@ -3111,7 +3135,17 @@ const cliTranscriptTurnStateCache = new Map<string, {
   size: number; mtimeMs: number; offset: number;
   state: RecentTranscriptTurnState; resumeState: RecentTranscriptTurnState;
   turnId?: string; resumeTurnId?: string;
+  startedAt?: number; resumeStartedAt?: number;
+  model?: string; reasoningEffort?: string; resumeModel?: string; resumeReasoningEffort?: string;
 }>();
+
+async function readCliRunningSince(transcriptPath: string | undefined): Promise<number | undefined> {
+  if (!transcriptPath) return undefined;
+  try {
+    await readRecentTranscriptTurnState(transcriptPath);
+    return cliTranscriptTurnStateCache.get(transcriptPath)?.startedAt;
+  } catch { return undefined; } // Optional timing must not make the session unreadable.
+}
 
 async function readRecentTranscriptTurnState(transcriptPath: string | undefined): Promise<RecentTranscriptTurnState> {
   if (!transcriptPath) return "unknown";
@@ -3134,15 +3168,25 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     if (previous?.size === snapshot.size && previous.mtimeMs === snapshot.mtimeMs) return previous.state;
     let state: RecentTranscriptTurnState = incremental ? previous!.resumeState : "unknown";
     let turnId = incremental ? previous!.resumeTurnId : undefined;
+    let startedAt = incremental ? previous!.resumeStartedAt : undefined;
+    let model = incremental ? previous!.resumeModel : undefined;
+    let reasoningEffort = incremental ? previous!.resumeReasoningEffort : undefined;
     const lines = snapshot.buffer.toString("utf8").split("\n");
     // A bounded initial read may begin in the middle of a JSON record.
     if (!incremental && snapshot.startOffset > 0) lines.shift();
     let resumeState = state;
     let resumeTurnId = turnId;
+    let resumeStartedAt = startedAt;
+    let resumeModel = model, resumeReasoningEffort = reasoningEffort;
     for (const [index, line] of lines.entries()) {
-      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; }
+      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; }
       try {
-        const record = JSON.parse(line) as { type?: string; turn_id?: string; error?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; message?: unknown; reason?: unknown } };
+        const record = JSON.parse(line) as { type?: string; timestamp?: string; turn_id?: string; error?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; message?: unknown; reason?: unknown; model?: unknown; effort?: unknown; reasoning_effort?: unknown } };
+        if (record?.type === "turn_context") {
+          if (typeof record.payload?.model === "string" && record.payload.model.trim()) model = record.payload.model.slice(0, 256);
+          const effort = record.payload?.effort ?? record.payload?.reasoning_effort;
+          if (typeof effort === "string" && effort.trim()) reasoningEffort = effort.slice(0, 64);
+        }
         const type = record?.type === "event_msg" ? record.payload?.type : record?.type;
         const eventTurnId = record?.type === "event_msg" ? record.payload?.turn_id : record?.turn_id;
         if (["task_complete", "task_completed", "task_failed", "turn_aborted", "turn_failed", "turn/completed", "turn.completed"].includes(type ?? "")) {
@@ -3156,7 +3200,12 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
           state = "quota-paused";
           turnId = eventTurnId ?? turnId;
         } else if (["task_started", "turn_started", "turn/started", "turn.started"].includes(type ?? "")) {
-          if (!["terminal","failed","quota-paused"].includes(state) || !eventTurnId || eventTurnId !== turnId) { state = "active"; turnId = eventTurnId; }
+          if (!["terminal","failed","quota-paused"].includes(state) || !eventTurnId || eventTurnId !== turnId) {
+            if (eventTurnId !== turnId || state !== "active") startedAt = undefined;
+            const timestamp = Date.parse(typeof record.timestamp === "string" ? record.timestamp : "");
+            if (startedAt === undefined && Number.isFinite(timestamp) && timestamp > 0 && timestamp <= Date.now() + 5 * 60_000) startedAt = timestamp;
+            state = "active"; turnId = eventTurnId;
+          }
         }
       } catch { /* Ignore partial records and quoted event text. */ }
     }
@@ -3166,7 +3215,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     }
     cliTranscriptTurnStateCache.set(transcriptPath, {
       size: snapshot.size, mtimeMs: snapshot.mtimeMs,
-      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId
+      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, startedAt, resumeStartedAt, model, reasoningEffort, resumeModel, resumeReasoningEffort
     });
     if (cliTranscriptTurnStateCache.size > MAX_VISIBLE_CLI_SESSIONS * 3) cliTranscriptTurnStateCache.delete(cliTranscriptTurnStateCache.keys().next().value!);
     return state;

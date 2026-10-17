@@ -28,7 +28,7 @@ const runningId = "01a04882-d037-7a42-ad24-9afb61901189";
 const agentId = "01a04882-d037-7a42-ad24-9afb61901190";
 const sessions = [
   { id: parentId, title: "Evaluate stack beyond expectations", status: "idle", goal: { objective: "Build the compact workspace from native goal metadata", status: "active", elapsedMs: 125000 }, projectPath: "D:/demo", updatedAt: new Date().toISOString() },
-  { id: runningId, title: "Running workspace task", status: "running", projectPath: "D:/demo", updatedAt: new Date().toISOString(), canStop: true, runningBy: "another Codex process" },
+  { id: runningId, title: "Running workspace task", model: "gpt-5", reasoningEffort: "high", runningSince: Date.now() - 125000, goal: { objective: "Finish the running task", status: "active", elapsedMs: 125000 }, status: "running", projectPath: "D:/demo", updatedAt: new Date().toISOString(), canStop: true, runningBy: "another Codex process" },
   { id: agentId, title: "Evaluate stack beyond expectations", status: "running", projectPath: "D:/demo", parentSessionId: parentId, agentName: "Reviewer" },
   { id: "01a04882-d037-7a42-ad24-9afb61901191", title: "Archived task", status: "idle", projectPath: "D:/demo", archived: true }
 ];
@@ -53,7 +53,7 @@ const mockHost = `(() => {
   let messageReads = 0;
   let logReads = 0;
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
-  window.__uiActions = []; window.__uiSessions = sessions; window.__uiSettingResults = [];
+  window.__uiActions = []; window.__uiSessions = sessions; window.__uiSnapshot = state; window.__uiSettingResults = [];
   window.__setUiPaths = customPath => {
     Object.assign(state.settings, {codexCliPath:customPath,codexAppPath:customPath,resolvedCodexAppPath:customPath});
     dispatch({type:'dashboard:snapshot',state});
@@ -72,12 +72,15 @@ const mockHost = `(() => {
         let payload = {}, error;
         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
           if(message.action === 'viewLogs') logReads++;
-          if(window.__failNextLogRead) { window.__failNextLogRead = false; error = 'Simulated log storage failure.'; }
-          else payload = {logDownload:{filename:'codex-manager-logs-fixture.json',text:window.__invalidNextLogRead ? '{' : JSON.stringify({format:'codex-manager-logs',records:[{message:'live record '+logReads},{message:'old record'}]})},notice:{level:'info',message:'Logs refreshed.'}};
+          if(window.__failLogReads || window.__failNextLogRead) { window.__failNextLogRead = false; error = 'Simulated log storage failure.'; }
+          else payload = {logDownload:{filename:'codex-manager-logs-fixture.json',text:window.__invalidLogReads || window.__invalidNextLogRead ? '{' : JSON.stringify({format:'codex-manager-logs',records:[{message:'live record '+logReads},{message:'old record'}]})},notice:{level:'info',message:'Logs refreshed.'}};
           window.__invalidNextLogRead = false;
         }
         else if(message.action === 'getUsageGraph') payload = {usageGraph:{...message.payload.usageGraph,history:[],dailyUsageCache:[],truncated:false}};
-        else if(message.action === 'listCodexCliSessions') payload = {cliSessions:sessions,cliComposerConfig:config};
+        else if(message.action === 'listCodexCliSessions') {
+          if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }
+          else payload = {cliSessions:sessions,cliComposerConfig:config};
+        }
         else if(message.action === 'startCodexCliSession') {
           const session = {id:'01a04882-d037-7a42-ad24-9afb61901198',title:'New smoke chat',status:'idle',projectPath:message.payload.projectPath};
           if(!sessions.some(row=>row.id===session.id)) sessions.push(session);
@@ -85,6 +88,7 @@ const mockHost = `(() => {
         }
         else if(message.action === 'getCodexCliSessionMessages') {
           messageReads++;
+          if(location.search.includes('missing-transcript')) error = 'The session transcript was not found on this PC.';
           payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages};
         } else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:[{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
         else if(message.action === 'getWorkspaceEnvironment') {
@@ -95,6 +99,7 @@ const mockHost = `(() => {
         }
         else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:[]};
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:[]};
+        else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
         if(message.action === 'archiveCodexCliSession') {
@@ -561,14 +566,141 @@ try {
       assert.ok(brandBounds.x >= sidebarToggle.x + sidebarToggle.width, "Compact header leaves room for the sidebar button");
     }
 
+    const previousNotice = page.getByRole("button", { name: "Dismiss notification", exact: true });
+    if (await previousNotice.count()) await previousNotice.click();
     if (width <= 760) {
       await page.locator(".dashboard-mobile-actions > summary").click();
       await page.getByRole("menuitem", { name: "Sessions", exact: true }).click();
     } else await page.locator("#cliSessionsButton").click();
     await page.locator(".cli-sessions-popover").waitFor();
-    assert.equal(await page.locator(".cli-running-count").first().textContent(), "1", "Badge excludes running child agents");
-    await page.getByText("2 sessions · 1 running", { exact: true }).waitFor();
+    assert.equal(await page.locator("#cliSessionsButton .cli-running-count").textContent(), "1", "Badge excludes running child agents");
+    assert.equal(await page.locator(".cli-sessions-running-row").count(), 1);
+    await page.locator(".cli-sessions-running-row").filter({ hasText: "Running workspace task" }).waitFor();
+    const runningMeta = page.locator(".cli-sessions-running-row .cli-session-row-meta");
+    assert.ok((await runningMeta.textContent()).includes("gpt-5"));
+    assert.match(await runningMeta.textContent(), /\d+m \d+s/);
+    assert.ok((await page.locator(".cli-sessions-running-row").getAttribute("title")).includes("Thinking: high"));
+    assert.ok((await page.locator(".cli-sessions-running-row").getAttribute("title")).includes("Finish the running task"));
+    assert.ok((await runningMeta.boundingBox()).height < 20, "Session metadata stays on one compact line");
+    assert.equal(await page.getByRole("button", { name: "Session dashboard", exact: true }).count(), 1);
+    await page.screenshot({ path: path.join(output, `running-sessions-${width}x${height}.png`) });
+    await page.getByRole("button", { name: "View Running workspace task in VS Code", exact: true }).click();
+    await page.waitForFunction(() => window.__uiActions.some(message => message.action === "openCodexCliSession" && message.payload?.openInVsCode === true));
+    await page.evaluate(() => {
+      window.__uiSessions.push({ id: "recovery", title: "Interrupted workspace task", status: "idle", interrupted: true, model: "gpt-5" });
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", requestId: "dashboard-auto-fixture", action: "listCodexCliSessions", status: "completed", payload: { cliSessions: window.__uiSessions } } }));
+    });
+    await page.getByRole("button", { name: "Resume Interrupted workspace task in VS Code", exact: true }).click();
+    await page.waitForFunction(() => window.__uiActions.some(message => message.action === "resumeCodexSessions" && message.payload?.sessionId === "recovery"));
+    assert.equal(await page.locator("#cliSessionsButton .cli-running-count").textContent(), "1", "Interrupted sessions do not inflate the running count");
+    await page.evaluate(() => {
+      window.__uiSessions.splice(window.__uiSessions.findIndex(session => session.id === "recovery"), 1);
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", requestId: "dashboard-auto-fixture", action: "listCodexCliSessions", status: "completed", payload: { cliSessions: window.__uiSessions } } }));
+    });
+    await page.waitForFunction(() => document.querySelectorAll(".cli-sessions-running-row").length === 1);
+    // Dismissing outside a flyout closes it; reopen before checking retry states.
+    const openNotice = page.getByRole("button", { name: "Dismiss notification", exact: true });
+    if (await openNotice.count()) await openNotice.click();
+    if (!await page.locator(".cli-sessions-popover").count()) await page.locator("#cliSessionsButton").click();
+    await page.evaluate(() => {
+      window.__uiSnapshot.connectedPeers ??= [];
+      window.__heldRunningSessions = window.__uiSessions.slice();
+      const unknown = { id: "unknown", title: "Unverified session", status: "unknown", locked: true };
+      const offline = { id: "offline-session", title: "Offline session", status: "running", remote: true, deviceId: "offline-pc" };
+      window.__uiSessions.push(window.__uiSessions.find(session => session.status === "running"), unknown, offline);
+      window.__uiSnapshot.connectedPeers.push({ id: "offline-pc", name: "Offline PC", connected: false, sessionCount: 1 });
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", requestId: "dashboard-auto-fixture", action: "listCodexCliSessions", status: "completed", payload: { cliSessions: window.__uiSessions } } }));
+    });
+    await page.waitForFunction(() => document.querySelectorAll(".cli-sessions-running-row").length === 1);
+    assert.equal(await page.locator("#cliSessionsButton .cli-running-count").textContent(), "1", "Unknown, offline, child and duplicate sessions do not inflate the count");
+    await page.evaluate(() => {
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", requestId: "dashboard-auto-fixture", action: "listCodexCliSessions", status: "failed", error: "Technical inspection failed" } }));
+      window.__uiSessions.splice(0, window.__uiSessions.length, ...window.__heldRunningSessions);
+      window.__failNextSessionList = true;
+    });
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await page.getByRole("button", { name: "Retry", exact: true }).waitFor();
+    assert.equal(await page.locator(".dashboard-notice-stack").count(), 0, "Failed automatic list reads remain inline");
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector(".cli-sessions-list-status"));
+    await page.evaluate(() => {
+      window.__uiSessions.splice(0, window.__uiSessions.length);
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", requestId: "dashboard-auto-fixture", action: "listCodexCliSessions", status: "completed", payload: { cliSessions: [] } } }));
+    });
+    await page.getByText("No running sessions.", { exact: true }).waitFor();
+    assert.equal(await page.locator("#cliSessionsButton .cli-running-count").textContent(), "0");
+    await page.evaluate(() => {
+      window.__uiSessions.splice(0, window.__uiSessions.length, ...window.__heldRunningSessions);
+      window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "offline-pc");
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", requestId: "dashboard-auto-fixture", action: "listCodexCliSessions", status: "completed", payload: { cliSessions: window.__uiSessions } } }));
+    });
     await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".brand .dashboard-pc-picker").count(), 0, "The marked header selector is removed");
+    await page.evaluate(() => {
+      window.__savedPeers = window.__uiSnapshot.connectedPeers;
+      window.__uiSnapshot.connectedPeers = [{ id: "local", name: "This PC", connected: true, local: true, sessionCount: 2 }];
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
+    });
+    await page.waitForFunction(() => !document.querySelector("#codexDashboardButton"));
+    assert.equal(await page.locator("#cliSessionsButton").isVisible(), true, "Sessions stay visible on a single system");
+    await page.evaluate(() => {
+      window.__uiSnapshot.connectedPeers.push({ id: "fixture-remote", name: "Other system", connected: false, sessionCount: 0 });
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
+    });
+    await page.locator("#codexDashboardButton").click();
+    assert.equal(await page.locator(".dashboard-system-count").textContent(), "2");
+    assert.equal(await page.locator(".dashboard-pc-picker-popover").getByRole("option").count(), 2);
+    await page.locator(".dashboard-pc-picker-popover").getByRole("option").nth(1).click();
+    await page.locator(".dashboard-notice.is-warning").filter({ hasText: "is offline" }).waitFor();
+    await page.locator("#codexDashboardButton").click();
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Enter");
+    await page.evaluate(() => {
+      window.__uiSnapshot.connectedPeers = window.__savedPeers;
+      window.__uiSnapshot.encryptedSyncNeedsConfiguration = true;
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
+    });
+    await page.locator("#settingsOpenButton .settings-alert-badge").waitFor({ state: "attached" });
+    if (width <= 760) {
+      await page.locator(".dashboard-mobile-actions > summary").click();
+      await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    } else await page.locator("#settingsOpenButton").click();
+    const passwordBlock = page.locator('[data-setting="shared-password"].settings-password-required');
+    await passwordBlock.waitFor();
+    assert.equal(await passwordBlock.evaluate(element => getComputedStyle(element).backgroundImage), "none", "The password highlight overrides the normal card background");
+    await page.screenshot({ path: path.join(output, `password-required-${width}x${height}.png`), animations: "disabled" });
+    await page.evaluate(() => {
+      window.__uiSnapshot.encryptedSyncNeedsConfiguration = false;
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
+    });
+    await page.waitForFunction(() => !document.querySelector(".settings-password-required") && !document.querySelector(".settings-alert-badge"));
+    await page.keyboard.press("Escape");
+    await page.goto(`${origin}/workspace/${parentId}?missing-transcript`);
+    await page.getByText("This conversation is unavailable. Refresh the session list or choose another conversation.", { exact: true }).waitFor();
+    assert.equal(await page.locator(".dashboard-notice-stack").count(), 0, "Startup transcript failures do not toast");
+    if (width <= 760) {
+      await page.getByRole("button", { name: "Session actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Refresh conversation", exact: true }).click();
+    } else await page.getByRole("button", { name: "Refresh conversation", exact: true }).click();
+    await page.locator(".dashboard-notice-stack").filter({ hasText: "This conversation is unavailable" }).waitFor();
+    await page.goto(`${origin}/`);
+    await page.locator(".hero").waitFor();
+    assert.equal(await page.locator("#privacyToggleButton").count(), 0);
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.waitForFunction(() => { const bounds = document.querySelector(".overview-more-menu")?.getBoundingClientRect(); return bounds && bounds.top >= 0 && bounds.bottom <= innerHeight; });
+    assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Password/ }).count(), 0);
+    assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: snapshot.copy.showSensitive, exact: true }).count(), 1);
+    await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Codex$/ }).click();
+    await page.waitForFunction(() => window.__uiActions.some(message => message.action === "openNewCodexWebview"));
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Resume$/ }).click();
+    await page.waitForFunction(() => window.__uiActions.some(message => message.action === "resumeCodexSessions" && !message.payload?.sessionId));
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Show All Sessions$/ }).click();
+    await page.waitForURL(`${origin}/workspace`);
+    await page.goto(`${origin}/`);
+    await page.locator(".hero").waitFor();
     console.log(`Checking ${width}: account filters`);
     for (const name of ["Within quota", "Over quota"]) {
       const filter = page.getByRole("button", { name: new RegExp("^" + name + " \\d+$") });
@@ -654,18 +786,20 @@ try {
         const consoleOutput = page.locator(".log-console-output");
         const initialLogs = await consoleOutput.innerText();
         await page.waitForFunction(text => document.querySelector(".log-console-output")?.textContent !== text, initialLogs);
-        await page.evaluate(() => { window.__failNextLogRead = true; });
+        await page.evaluate(() => { window.__failLogReads = true; });
         const consoleDialog = page.getByRole("dialog", { name: "Diagnostic logs", exact: true });
         await page.waitForFunction(() => !(document.querySelector('.log-console-modal button[aria-busy="true"]')?.disabled));
         await consoleDialog.getByRole("button", { name: "Refresh", exact: true }).click();
         await consoleDialog.getByText("Simulated log storage failure.", { exact: true }).waitFor();
         assert.ok((await consoleOutput.innerText()).includes("old record"), "Storage failures preserve previous logs");
+        await page.evaluate(() => { window.__failLogReads = false; });
         await consoleDialog.getByText("Simulated log storage failure.", { exact: true }).waitFor({ state: "hidden" });
-        await page.evaluate(() => { window.__invalidNextLogRead = true; });
+        await page.evaluate(() => { window.__invalidLogReads = true; });
         await page.waitForFunction(() => !(document.querySelector('.log-console-modal button[aria-busy="true"]')?.disabled));
         await consoleDialog.getByRole("button", { name: "Refresh", exact: true }).click();
         await consoleDialog.getByText("The log response was unreadable. Retry refresh.", { exact: true }).waitFor();
         assert.ok((await consoleOutput.innerText()).includes("old record"), "Malformed responses preserve previous logs");
+        await page.evaluate(() => { window.__invalidLogReads = false; });
         await consoleDialog.getByRole("button", { name: "Close", exact: true }).click();
         const logReadsAfterClose = await page.evaluate(() => window.__uiActions.filter(action => action.action === "viewLogs").length);
         await page.waitForTimeout(2_100);
@@ -724,5 +858,13 @@ try {
     results.push({ width, height, checks: "parent list, running icon, chat, live messages, Agent tabs, share, session menu, Environment, Files, Reviews, quote, attachment, failed send, settings" });
     await context.close();
   }
+} catch (error) {
+  for (const [index, context] of browser.contexts().entries()) {
+    for (const [pageIndex, page] of context.pages().entries()) {
+      await page.screenshot({ path: path.join(output, `failure-${index}-${pageIndex}.png`) }).catch(() => undefined);
+      console.log("Failure state", await page.evaluate(() => ({ url: location.href, buttons: [...document.querySelectorAll('button')].filter(button => button.getBoundingClientRect().height > 0).map(button => ({ text: button.textContent, disabled: button.disabled })), actions: window.__uiActions?.slice(-8) })).catch(() => undefined));
+    }
+  }
+  throw error;
 } finally { await browser.close(); }
 console.log(JSON.stringify({ results, screenshots: output }, null, 2));

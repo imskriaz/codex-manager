@@ -120,6 +120,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     dailyUsageSignature,
     state.usageSummary?.revision ?? "",
     state.usageSummary?.count ?? "",
+    JSON.stringify([state.connectedPeers, state.peerAccounts]),
     accountSignature
   ].join("||");
 }

@@ -25,8 +25,8 @@ export function reconcileCliSessionStatus(
   const live = liveStates[cliSessionTargetKey(session)];
   // A later index update can describe a new turn started outside this host.
   if (!live || !isCliLiveStateCurrent(session, live)) return session;
-  if (isCliTurnActive(live)) return { ...session, status: "running" };
-  if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", locked: false, canStop: false, runningBy: undefined };
+  if (isCliTurnActive(live)) return { ...session, status: "running", interrupted: false };
+  if (["completed", "cancelled", "failed"].includes(live.status)) return { ...session, status: "idle", locked: false, canStop: false, runningBy: undefined, runningSince: undefined, interrupted: live.status === "failed" };
   return session;
 }
 

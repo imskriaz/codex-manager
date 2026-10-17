@@ -6,6 +6,7 @@ import type {
   DashboardActionName,
   DashboardClientMessage,
   DashboardHostMessage,
+  DashboardCliSessionSummary,
   DashboardState,
   DashboardSettingKey
 } from "../../domain/dashboard/types";
@@ -34,6 +35,7 @@ import { listPendingCodexAppServerPrompts } from "../../services/codexAppServerP
 import { listCodexSessionLiveStates } from "../../services/codexSessionLive";
 import { recordPersistentEvent } from "../../utils/persistentLog";
 import { waitWithin } from "../../utils/concurrency";
+import { withCodexSessionRecovery } from "../../services/codexSessionAutoResume";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
 const REOPEN_AFTER_HOST_RESTART_KEY = "codexManager.reopenDashboardAfterHostRestart";
@@ -52,6 +54,14 @@ function isLocalCliSessionWatchPath(filename: string | Buffer | null): boolean {
 let dashboardPanelController: DashboardPanelController | undefined;
 let reopenAfterRestart = false;
 
+export interface DashboardPeerHost {
+  getDashboardPeerState(): Pick<DashboardState, "connectedPeers" | "peerAccounts">;
+  getRemoteCliSessions(): DashboardCliSessionSummary[];
+  relayWebviewAction(message: Extract<DashboardClientMessage, { type: "dashboard:action" }>): ReturnType<typeof executeDashboardActionMessage>;
+  onDidChangeDashboardPeers(listener: () => void): vscode.Disposable;
+}
+let dashboardPeerHost: DashboardPeerHost | undefined;
+
 type PublishDashboardSnapshotParams = {
   context: vscode.ExtensionContext;
   repo: AccountsRepository;
@@ -62,6 +72,7 @@ type PublishDashboardSnapshotParams = {
   schedulePublishState: () => void;
   lastPublishedStateSignature?: string;
   force?: boolean;
+  peerHost?: DashboardPeerHost;
 };
 
 export async function publishDashboardSnapshot(params: PublishDashboardSnapshotParams): Promise<string | undefined> {
@@ -72,6 +83,7 @@ export async function publishDashboardSnapshot(params: PublishDashboardSnapshotP
   );
   const state: DashboardState = {
     ...baseState,
+    ...params.peerHost?.getDashboardPeerState(),
     onboardingCompleted: await resolveOnboardingCompleted(params.context, baseState)
   };
   await waitWithin(appendDashboardUsageSnapshot(params.context, state), 250, "Usage history is still saving")
@@ -142,11 +154,15 @@ export class DashboardPanelController {
         void this.panel?.webview.postMessage(message);
       }
     });
+    const peersChanged = dashboardPeerHost?.onDidChangeDashboardPeers(() => {
+      this.schedulePublishState();
+      void this.publishCliSessionsRealtime();
+    });
     let stopStorage: (() => void) | undefined;
     try { stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => this.schedulePublishState()); }
-    catch (error) { stopRealtime(); this.oauth.dispose(); throw error; }
+    catch (error) { stopRealtime(); peersChanged?.dispose(); this.oauth.dispose(); throw error; }
     context.subscriptions.push({ dispose: () => {
-      stopRealtime(); stopStorage?.();
+      stopRealtime(); stopStorage?.(); peersChanged?.dispose();
       this.panelRevision++;
       this.panel = undefined;
       this.webviewReady = false;
@@ -325,6 +341,7 @@ export class DashboardPanelController {
           this.forcePublish = false;
           const logoUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "product-icons", "codex-openai.svg")).toString();
           const signature = await publishDashboardSnapshot({
+            peerHost: dashboardPeerHost,
             context: this.context, repo: this.repo, settingsStore: this.settingsStore, logoUri,
             setPanelTitle: title => { if (this.panel === panel && this.panelRevision === revision && !this.publishAgain) panel.title = title; },
             postMessage: message => this.panel === panel && this.panelRevision === revision && !this.publishAgain ? panel.webview.postMessage(message) : Promise.resolve(false),
@@ -343,7 +360,11 @@ export class DashboardPanelController {
     message: Extract<DashboardClientMessage, { type: "dashboard:action" }>
   ): Promise<void> {
     const collected = await withDashboardNotificationSuppression(async () => {
-      const result = await executeDashboardActionMessage(
+      const target = message.payload?.targetDeviceId;
+      const local = dashboardPeerHost?.getDashboardPeerState().connectedPeers?.find(peer => peer.local)?.id;
+      const remote = target && target !== "local" && target !== local;
+      const result = remote ? dashboardPeerHost ? await dashboardPeerHost.relayWebviewAction(message) :
+        { status: "failed" as const, errorMessage: "The selected system is unavailable. Reconnect and try again." } : await executeDashboardActionMessage(
         {
           context: this.context,
           repo: this.repo,
@@ -351,11 +372,12 @@ export class DashboardPanelController {
           schedulePublishState: () => this.schedulePublishState(),
           publishState: async (force = false) => this.publishState(force),
           oauth: this.oauth,
-          hostKind: "webview"
+          hostKind: "webview",
+          getRemoteCliSessions: () => dashboardPeerHost?.getRemoteCliSessions() ?? []
         },
         message
       );
-      return { result, actionPrompts: consumeDashboardActionPrompts() };
+      return { result, remote, actionPrompts: consumeDashboardActionPrompts() };
     });
     const result = collected.result;
     const payload = collected.actionPrompts.length
@@ -385,7 +407,7 @@ export class DashboardPanelController {
       });
     }
     if (
-      result.status === "completed" &&
+      !collected.remote && result.status === "completed" &&
       (message.action === "unloadAuth" || result.payload?.reloadScheduled === true)
     ) {
       scheduleExtensionHostReload(
@@ -518,11 +540,11 @@ export class DashboardPanelController {
     this.cliSessionPublish = (async () => {
       const sessions = await readCodexCliSessions();
       if (sessions.some(session => session.status === "unknown")) delayMs = SESSION_DISCOVERY_RETRY_GAP_MS;
-      const stabilized = await stabilizeSessionProjectPaths(this.context, sessions);
+      const stabilized = await stabilizeSessionProjectPaths(this.context, withCodexSessionRecovery(this.context, sessions));
       if (this.panel !== panel || panel.visible === false || !this.webviewReady ||
         !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
       await this.postActionResult(`realtime-cli-${Date.now()}`, "listCodexCliSessions", "completed", undefined, {
-        cliSessions: stabilized,
+        cliSessions: [...stabilized, ...(dashboardPeerHost?.getRemoteCliSessions() ?? [])],
         realtimeRevision: ++this.cliSessionRealtimeRevision,
         notice: getCodexSessionReadNotice(stabilized)
       });
@@ -553,8 +575,9 @@ export function openQuotaSummaryPanel(context: vscode.ExtensionContext, repo: Ac
 }
 
 export function registerDashboardPanelSerializer(
-  context: vscode.ExtensionContext, repo: AccountsRepository
+  context: vscode.ExtensionContext, repo: AccountsRepository, peerHost?: DashboardPeerHost
 ): vscode.Disposable {
+  dashboardPeerHost = peerHost;
   return vscode.window.registerWebviewPanelSerializer(DASHBOARD_VIEW_TYPE, {
     async deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
       dashboardPanelController ??= new DashboardPanelController(context, repo);

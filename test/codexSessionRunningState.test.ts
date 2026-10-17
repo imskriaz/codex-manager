@@ -60,6 +60,50 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it("reads the recorded model and thinking from native turn context across partial appends", async () => {
+    const context = (model: unknown, effort: unknown) => JSON.stringify({ type: "turn_context", payload: { model, effort } });
+    await appendFile(transcript, context("gpt-native", "high"));
+    expect((await readCodexCliSessions(home))[0]).toMatchObject({ model: "gpt-native", reasoningEffort: "high" });
+    await appendFile(transcript, "\n" + context("gpt-next", "medium").slice(0, -3));
+    expect((await readCodexCliSessionSummary(id, home))).toMatchObject({ model: "gpt-native", reasoningEffort: "high" });
+    await appendFile(transcript, context("gpt-next", "medium").slice(-3) + "\n");
+    expect((await readCodexCliSessions(home))[0]).toMatchObject({ model: "gpt-next", reasoningEffort: "medium" });
+    await appendFile(transcript, context({}, 42) + "\n");
+    expect((await readCodexCliSessions(home))[0]).toMatchObject({ model: "gpt-next", reasoningEffort: "medium" });
+  });
+  it("retains an interrupted native turn after the writer disappears and clears recovery on completion", async () => {
+    await rm(lock);
+    const old = new Date(Date.now() - 10 * 60_000);
+    await utimes(transcript, old, old);
+    expect((await readCodexCliSessions(home))[0]).toMatchObject({ status: "idle", interrupted: true });
+    await appendFile(transcript, event("task_failed"));
+    expect((await readCodexCliSessions(home))[0]).toMatchObject({ status: "idle", interrupted: true });
+    await appendFile(transcript, event("task_started", "next") + event("task_complete", "next"));
+    expect((await readCodexCliSessions(home))[0]).toMatchObject({ status: "idle", interrupted: false, runningSince: undefined });
+  });
+  it("keeps the current turn start across partial appends and duplicate starts, then resets for the next turn", async () => {
+    mocks.heldLocks.add(lock);
+    const first = Date.now() - 125_000, second = first + 60_000;
+    const start = (timestamp: number, turn = "turn-1") => JSON.stringify({ timestamp: new Date(timestamp).toISOString(), type: "event_msg", payload: { type: "task_started", turn_id: turn } });
+    await writeFile(transcript, start(first));
+    await expect(readCodexCliSessionSummary(id, home)).resolves.toMatchObject({ status: "running", runningSince: first });
+    await appendFile(transcript, "\n" + start(second) + "\n");
+    await expect(readCodexCliSessionSummary(id, home)).resolves.toMatchObject({ runningSince: first });
+    await appendFile(transcript, event("task_complete") + start(second, "turn-2"));
+    await expect(readCodexCliSessionSummary(id, home)).resolves.toMatchObject({ runningSince: second });
+    await appendFile(transcript, "\n" + event("task_complete", "turn-2"));
+    const complete = await readCodexCliSessionSummary(id, home);
+    expect(complete?.status).toBe("idle");
+    expect(complete?.runningSince).toBeUndefined();
+  });
+
+  it("leaves missing, invalid and future turn times unavailable", async () => {
+    mocks.heldLocks.add(lock);
+    for (const timestamp of [undefined, "invalid", new Date(Date.now() + 10 * 60_000).toISOString()]) {
+      await writeFile(transcript, JSON.stringify({ timestamp, type: "event_msg", payload: { type: "task_started", turn_id: String(timestamp) } }) + "\n");
+      expect((await readCodexCliSessionSummary(id, home))?.runningSince).toBeUndefined();
+    }
+  });
   it("retains recent verified checks for recovery while safety checks remain fresh", async () => {
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
     const checked = vi.fn();

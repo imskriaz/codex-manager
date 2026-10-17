@@ -25,9 +25,16 @@ describe("overview actions", () => {
 
     expect(overview).toContain("overview-more-menu");
     expect(overview).not.toContain('resolveOverviewMenuLabel("onboard", props.lang)');
+    expect(overview).not.toContain("onSetPassword");
+    expect(overview).toContain("props.onPrivacyToggle()");
+    expect(overview).toContain("props.onOpenCodex()");
+    expect(overview).toContain("props.onResumeSessions()");
+    expect(overview).toContain("Show All Sessions");
+    expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).not.toContain('id="privacyToggleButton"');
+    expect(readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8")).toContain('configured ? "Change Password" : "Set Password"');
   });
 
-  it("places the connected-PC picker beside Codex Manager and removes duplicate selectors", () => {
+  it("moves system switching to the dashboard icon and hides it for a single system", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const overview = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
@@ -38,27 +45,39 @@ describe("overview actions", () => {
     expect(main).toContain("${accounts.length - enabledCount} ${disabledLabel}");
     expect(main).toContain("Number.isFinite(peer.sessionCount)");
     expect(main).toContain("${disabledLabel}${sessionSummary}");
-    expect(main).toContain('class={`brand ${isBrowserDashboard ? "has-pc-picker" : ""}`}');
+    expect(main).toContain('class="brand"');
+    expect(main).toContain("selectedPeer && pcOptions.length > 1");
+    expect(main).toContain('id="codexDashboardButton"');
+    expect(main).toContain("dashboard-system-count");
+    expect(main).not.toContain("dashboard-pc-picker-trigger");
     expect(main).not.toContain('class="dashboard-select-control dashboard-pc-control"');
     expect(overview).not.toContain(
       'class="overview-session-meta overview-meta-item overview-meta-item-wide" role="status"'
     );
-    expect(css).toContain(".dashboard-pc-picker-trigger");
+    expect(css).toContain(".dashboard-pc-picker");
     expect(css).toContain(".dashboard-pc-picker-popover");
   });
 
-  it("shows PC status before opening session management", () => {
+  it("lists running sessions with metadata and a session dashboard link", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
 
     expect(main).toContain("<CliSessionsMenu");
     expect(main).toContain('aria-haspopup="dialog"');
-    expect(main).toContain('const heading = isZh ? "电脑状态"');
-    expect(main).toContain(': "Manage sessions"');
+    expect(main).toContain("sessions={runningCliSessions}");
+    expect(main).toContain('session.status === "running"');
+    expect(main).toContain('class="cli-session-row-meta"');
+    expect(main).toContain("session.runningSince");
+    expect(main).toContain("session.interrupted === true");
+    expect(main).toContain('"resumeCodexSessions", session, { openInVsCode: true }');
+    expect(main).toContain("session.deviceName || peer?.name");
+    expect(main).toContain('session.model || "Model unavailable"');
+    expect(main).toContain(': "Session dashboard"');
     expect(main).toMatch(/setCliSessionsMenuOpen\(false\);\r?\n\s+openCliSessions\(\);/);
     expect(main).not.toContain("onClick={openCliSessions}");
     expect(css).toContain(".cli-sessions-popover");
-    expect(css).toContain(".cli-sessions-pc-state.is-online");
+    expect(css).toContain(".cli-sessions-running-row");
+    expect(main).not.toContain("cli-sessions-pc-list");
     expect(css).toContain(".cli-sessions-manage");
   });
 
@@ -145,8 +164,9 @@ describe("overview actions", () => {
   });
 
   it("positions the More menu in the viewport-level layer below its trigger", () => {
-    expect(resolveOverviewPopoverPosition({ bottom: 80, right: 334 }, 357)).toEqual({ top: 85, right: 23 });
-    expect(resolveOverviewPopoverPosition({ bottom: 80, right: 355 }, 357)).toEqual({ top: 85, right: 8 });
+    expect(resolveOverviewPopoverPosition({ bottom: 80, right: 334 }, 357, 667, 240)).toEqual({ top: 85, right: 23 });
+    expect(resolveOverviewPopoverPosition({ bottom: 80, right: 355 }, 357, 667, 240)).toEqual({ top: 85, right: 8 });
+    expect(resolveOverviewPopoverPosition({ bottom: 360, right: 355 }, 844, 390, 240).top).toBe(142);
 
     const source = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
     expect(source).toContain('class="claim-popover claim-popover-portal overview-more-menu"');

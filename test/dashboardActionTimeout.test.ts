@@ -1,14 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { getActionTimeoutMs } from "../webview-src/dashboard/host";
+import { createActionRequestId, getActionTimeoutMs, isAutomaticRequest } from "../webview-src/dashboard/host";
 import fs from "node:fs";
 import path from "node:path";
+import { getPeerActionTimeoutMs } from "../src/services/webDashboardServer";
 
 describe("dashboard action timeouts", () => {
+  it("keeps manual resume within both browser and remote action deadlines", () => {
+    expect(getActionTimeoutMs("resumeCodexSessions")).toBe(75_000);
+    expect(getPeerActionTimeoutMs("resumeCodexSessions")).toBe(75_000);
+  });
   it("keeps token history timeouts in chart settings", () => {
     const source = fs.readFileSync(path.resolve(__dirname, "../webview-src/dashboard/actionHooks.ts"), "utf8");
     expect(source).toContain('request.action !== "getDailyUsage"');
     expect(source).toContain('request.action !== "getUsageGraph"');
     expect(source).toContain("onActionTimeoutRef.current?.(request.action, request.requestId)");
+  });
+  it("keeps automatic timeouts quiet while still updating the initiating session view", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../webview-src/dashboard/actionHooks.ts"), "utf8");
+    expect(source).toMatch(/if \(!isAutomaticRequest\(request\.requestId\)[^;]*onNotice\(noticeFromActionTimeout\(request\.action\)\);/);
+    expect(source).toContain("onActionTimeoutRef.current?.(request.action, request.requestId)");
+    expect(source).toContain("createActionRequestId(payload?.automatic)");
+    expect(isAutomaticRequest(createActionRequestId(true))).toBe(true);
+    expect(isAutomaticRequest(createActionRequestId())).toBe(false);
+    expect(isAutomaticRequest("realtime-cli-123")).toBe(true);
   });
   it("does not show a banner for optional live-channel reconnects", () => {
     const source = fs.readFileSync(path.resolve(__dirname, "../webview-src/dashboard/main.tsx"), "utf8");

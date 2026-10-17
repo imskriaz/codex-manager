@@ -14,8 +14,14 @@ it("keeps remote PCs in the picker when session data arrives before peer metadat
     [{ id: "remote-session", title: "Remote", status: "running", remote: true, deviceId: "remote", deviceName: "LAPTOP" }]
   )).toEqual([
     { id: "local", name: "This PC", sessionCount: 1, connected: true, local: true },
-    { id: "remote", name: "LAPTOP", sessionCount: 0, connected: true, local: false }
+    { id: "remote", name: "LAPTOP", sessionCount: 0, connected: false, local: false }
   ]);
+});
+it("uses confirmed peer presence over cached session data", () => {
+  const peers = [{ id: "remote", name: "Laptop", sessionCount: 1, connected: true }];
+  const sessions = [{ ...row("remote-session", "remote"), remote: true, status: "running" as const }];
+  expect(mergeDashboardPeers(peers, sessions)).toEqual(peers);
+  expect(mergeDashboardPeers([], sessions)[0]?.connected).toBe(false);
 });
 it("prepends new rows once and preserves positions across partial reconnects", () => {
   const order = new Map<string, number>();

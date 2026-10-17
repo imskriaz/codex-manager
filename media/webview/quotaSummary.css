@@ -3745,6 +3745,23 @@ html[data-theme="auto"] body.vscode-light .overlay {
   border-color: color-mix(in srgb, var(--warning) 65%, var(--border-default));
   background: color-mix(in srgb, var(--warning) 12%, transparent);
 }
+.settings-alert-trigger { position: relative; }
+.settings-alert-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: grid;
+  place-items: center;
+  min-width: 14px;
+  height: 14px;
+  border: 2px solid var(--bg-page);
+  border-radius: 50%;
+  background: var(--warning);
+  color: #181818;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
 .settings-note-list {
   display: grid;
   gap: 8px;
@@ -5153,13 +5170,7 @@ html[data-theme="dark"] .cli-terminal-panel {
     flex: 1 1 auto;
     min-width: 0;
   }
-  .dashboard-density-compact .brand.has-pc-picker { gap: 6px; }
   .dashboard-density-compact .dashboard-pc-picker { min-width: 0; }
-  .dashboard-density-compact .dashboard-pc-picker-trigger {
-    width: min(156px, 42vw);
-    min-width: 0;
-    max-width: 156px;
-  }
   .dashboard-density-compact .hero-settings {
     width: auto;
     flex: 0 0 auto;
@@ -5167,7 +5178,6 @@ html[data-theme="dark"] .cli-terminal-panel {
     padding: 0;
   }
   .dashboard-density-compact .hero-settings > .settings-btn,
-  .dashboard-density-compact .hero-settings > .cli-sessions-menu,
   .dashboard-density-compact .hero-settings > .dashboard-live-status { display: none; }
   .dashboard-mobile-actions { position: relative; display: block; }
   .dashboard-mobile-actions > summary { list-style: none; cursor: pointer; }
@@ -5567,6 +5577,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   width: min(520px, calc(100vw - 28px));
 }
 
+.dashboard-pc-picker,
 .cli-sessions-menu,
 .cli-sessions-entry {
   position: relative;
@@ -5593,7 +5604,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   position: fixed;
   z-index: 10020;
   display: grid;
-  width: min(280px, calc(100vw - 16px));
+  width: min(380px, calc(100vw - 16px));
   box-sizing: border-box;
   overflow: hidden;
   border: 1px solid var(--border-default);
@@ -5611,81 +5622,22 @@ html[data-theme="dark"] .cli-terminal-panel {
   text-transform: uppercase;
 }
 
-.cli-sessions-pc-list {
+.cli-sessions-running-list {
   display: grid;
-  max-height: min(300px, calc(100vh - 150px));
+  max-height: min(420px, calc(100dvh - 190px));
   overflow-y: auto;
-  padding: 0 6px 6px;
+  padding: 0 12px;
 }
 
-.cli-sessions-pc-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 9px;
-  min-height: 44px;
-  padding: 6px 7px;
-  border-radius: 8px;
-}
-
-.cli-sessions-pc-row + .cli-sessions-pc-row {
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 72%, transparent);
-  border-radius: 0;
-}
-
-.cli-sessions-pc-status {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 13%, transparent);
-}
-
-.cli-sessions-pc-status.is-online {
-  background: var(--accent-green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-green) 15%, transparent);
-}
-
-.cli-sessions-pc-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.cli-sessions-pc-copy strong,
-.cli-sessions-pc-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cli-sessions-pc-copy strong {
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 760;
-  line-height: 1.2;
-}
-
-.cli-sessions-pc-copy small {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.25;
-}
-
-.cli-sessions-pc-state {
-  padding: 3px 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--danger);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-}
-
-.cli-sessions-pc-state.is-online {
-  background: color-mix(in srgb, var(--accent-green) 12%, transparent);
-  color: var(--accent-green);
-}
+.cli-sessions-running-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 8px 0; }
+.cli-sessions-running-copy { min-width: 0; }
+.cli-sessions-running-row .cli-icon-button { display: grid; place-items: center; width: 28px; height: 28px; }
+.cli-sessions-running-row + .cli-sessions-running-row { border-top: 1px solid var(--border-default); }
+.cli-sessions-running-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 11px; font-weight: 600; }
+.cli-sessions-running-copy > .cli-session-row-meta { display: flex; margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.cli-sessions-running-row .cli-session-row-meta > span:nth-child(3) { flex: none; }
+.cli-sessions-list-status, .cli-sessions-empty { margin: 0; padding: 8px 12px 12px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.cli-sessions-list-status button { display: block; margin-top: 5px; }
 
 .cli-sessions-manage {
   display: grid;
@@ -11165,43 +11117,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   }
 }
 
-/* The current PC is a dashboard-level context, so its picker lives beside the
-   product title instead of competing with account filters below. */
-.brand.has-pc-picker {
-  align-items: center;
-  gap: 11px;
-  min-width: 0;
-}
-
-.dashboard-pc-picker {
-  position: relative;
-  flex: none;
-}
-
-.dashboard-pc-picker-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 170px;
-  max-width: 330px;
-  min-height: 32px;
-  padding: 4px 8px 4px 10px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--bg-elevated);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.dashboard-pc-picker-trigger:hover,
-.dashboard-pc-picker-trigger:focus-visible,
-.dashboard-pc-picker-trigger.active {
-  border-color: var(--border-accent);
-  background: color-mix(in srgb, var(--accent-blue) 9%, var(--bg-elevated));
-  outline: none;
-}
+.dashboard-pc-picker { position: relative; flex: none; }
 
 .dashboard-pc-picker-copy {
   display: grid;
@@ -11230,19 +11146,14 @@ html[data-theme="dark"] .cli-terminal-panel {
   line-height: 1.2;
 }
 
-.dashboard-pc-picker-trigger .dropdown-chevron {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  color: var(--muted);
-}
-
 .dashboard-pc-picker-popover {
   position: fixed;
   z-index: 10020;
   display: grid;
   gap: 3px;
   width: min(250px, calc(100vw - 16px));
+  max-height: calc(100dvh - 90px);
+  overflow-y: auto;
   box-sizing: border-box;
   padding: 6px;
   border: 1px solid var(--border-default);
@@ -11295,28 +11206,6 @@ html[data-theme="dark"] .cli-terminal-panel {
 .dashboard-pc-picker-status.is-online {
   background: var(--accent-green);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-green) 16%, transparent);
-}
-
-@media (max-width: 560px) {
-  .brand.has-pc-picker {
-    gap: 7px;
-  }
-
-  .dashboard-pc-picker-trigger {
-    min-width: 106px;
-    max-width: min(156px, calc(100vw - 310px));
-  }
-}
-
-@media (max-width: 420px) {
-  .dashboard-pc-picker-trigger {
-    min-width: 88px;
-    max-width: 112px;
-  }
-
-  .dashboard-pc-picker-copy small {
-    display: none;
-  }
 }
 
 /* True table view: one account per dense row, while grid view keeps full cards. */
@@ -12280,6 +12169,12 @@ select:focus-visible,
 
 .settings-layout > .settings-block:hover {
   border-color: color-mix(in srgb, var(--border-default) 82%, var(--accent-blue));
+}
+
+.settings-layout > .settings-block.settings-password-required {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 9%, var(--bg-surface));
+  box-shadow: inset 3px 0 var(--warning);
 }
 
 .settings-layout .settings-block-title {
@@ -14952,10 +14847,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 @media (max-width: 600px) {
   .dashboard-density-compact .hero { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 8px; }
   .dashboard-density-compact .brand { width: auto; flex: 1 1 auto; min-width: 0; }
-  .dashboard-density-compact .brand.has-pc-picker { gap: 6px; }
   .dashboard-density-compact .hero-settings { width: auto; flex: 0 0 auto; overflow: visible; padding: 0; }
   .dashboard-density-compact .hero-settings > .settings-btn,
-  .dashboard-density-compact .hero-settings > .cli-sessions-menu,
   .dashboard-density-compact .hero-settings > .dashboard-live-status { display: none; }
   .dashboard-mobile-actions { display: block; position: relative; }
   .dashboard-mobile-actions > summary { list-style: none; cursor: pointer; }

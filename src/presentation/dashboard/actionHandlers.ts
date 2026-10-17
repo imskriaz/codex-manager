@@ -122,6 +122,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "getDailyUsage",
   "getUsageGraph",
   "openNewCodexWebview",
+  "resumeCodexSessions",
   "startCodexCliSession",
   "listCodexCliSessions",
   "getCodexCliSessionMessages",
@@ -160,6 +161,8 @@ import {
 import { consumeDashboardActionNotice, shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 import { runWithPersistentOperation } from "../../utils/persistentLog";
 import { markOnboardingCompleted } from "../../services/onboarding";
+import { withCodexSessionRecovery } from "../../services/codexSessionAutoResume";
+import { filterCliSessionsBySection } from "../../domain/codexSessionState";
 import {
   clearTokenAutomationError,
   markTokenAutomationRefreshFailure,
@@ -222,7 +225,7 @@ export async function executeDashboardActionMessage(
     { hostKind: ctx.hostKind ?? "webview" },
     (result) => ({ status: result.status, errorMessage: result.errorMessage })
   );
-  if (!["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn"].includes(message.action)) return execute();
+  if (!["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "resumeCodexSessions"].includes(message.action)) return execute();
   if (typeof message.requestId !== "string" || !message.requestId.trim() || message.requestId.length > 256)
     return { status: "failed", errorMessage: "The session request identifier is invalid. Refresh the session and try again." };
   let sessionActionRequests = sessionActionRequestsByContext.get(ctx.context);
@@ -802,6 +805,8 @@ async function runDashboardAction(
       return { usageGraph: queryDashboardUsage(ctx.context, payload?.usageGraph) };
     case "openNewCodexWebview":
       return handleOpenNewCodexWebview();
+    case "resumeCodexSessions":
+      return handleResumeCodexSessions(ctx.context, payload?.sessionId);
     case "startCodexCliSession":
       return handleStartCodexCliSession(payload);
     case "listCodexCliSessions":
@@ -826,7 +831,7 @@ async function runDashboardAction(
       respondCodexAppServerPrompt(payload.codexRequestId, payload.codexDecision, payload.codexAnswers);
       return { notice: { level: "info" as const, message: payload.codexDecision === "approve" ? "Response sent to Codex." : "Codex request declined." } };
     case "openCodexCliSession":
-      return handleOpenCodexCliSession(payload?.sessionId, ctx.hostKind === "browser");
+      return handleOpenCodexCliSession(payload?.sessionId, ctx.hostKind === "browser" && payload?.openInVsCode !== true);
     case "renameCodexCliSession":
       return handleRenameCodexCliSession(payload?.sessionId, payload?.text);
     case "forkCodexCliSession":
@@ -1681,7 +1686,7 @@ async function handleListCodexCliSessions(
   const remoteSessions = getRemoteCliSessions?.() ?? [];
   const stabilizedLocalSessions = await stabilizeSessionProjectPaths(
     context,
-    localSessions,
+    withCodexSessionRecovery(context, localSessions),
     cliComposerConfig.projects
   );
   return {
@@ -1846,6 +1851,30 @@ async function handleOpenNewCodexWebview() {
   ensureCliIntegrationEnabled();
   await openNewCodexWebview();
   return { notice: { level: "info" as const, message: "Opened a new chat in the Codex Webview." } };
+}
+
+async function handleResumeCodexSessions(context: vscode.ExtensionContext, sessionId?: string) {
+  ensureCliIntegrationEnabled();
+  const sessions = sessionId ? [await ensureCliSessionIsActive(sessionId)] :
+    filterCliSessionsBySection(withCodexSessionRecovery(context, await readCodexCliSessions(), true), "active")
+      .filter(session => session.status === "running" || session.interrupted);
+  if (!sessions.length) return { notice: { level: "info" as const, message: "No running or interrupted sessions to reopen." } };
+  const deadline = Date.now() + 30_000;
+  const failures: string[] = [];
+  let opened = 0;
+  for (const session of sessions) {
+    if (session.subAgent || session.parentSessionId || session.archived || session.status === "unknown") { failures.push(session.title); continue; }
+    if (Date.now() >= deadline) { failures.push("Remaining sessions timed out"); break; }
+    const controller = new AbortController();
+    try {
+      await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), Math.min(8_000, deadline - Date.now()), "Opening the conversation timed out");
+      opened++;
+    } catch (error) {
+      failures.push(`${session.title}: ${toFailureMessage(error)}`);
+    } finally { controller.abort(); }
+  }
+  return { notice: { level: failures.length ? "warning" as const : "info" as const,
+    message: `${opened} conversation${opened === 1 ? "" : "s"} opened in VS Code.${failures.length ? ` Some could not open; recovery was kept. ${failures[0]}` : ""}` } };
 }
 
 async function handleRenameCodexCliSession(sessionId: string | undefined, name: string | undefined) {

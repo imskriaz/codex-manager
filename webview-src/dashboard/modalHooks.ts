@@ -1,5 +1,6 @@
 import type { DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
 import { noticeFromActionResult } from "./actionFeedback";
+import { isAutomaticRequest } from "./host";
 import type { AppDispatch, SendAction } from "./hookTypes";
 import { useCopyFeedback } from "./copyFeedbackHook";
 import { useAccountSessionModal } from "./accountSessionModalHook";
@@ -31,7 +32,7 @@ export function useDashboardModals(params: {
         return;
       case "dashboard:action-result":
         params.dispatch({ type: "resolve-action", requestId: message.requestId });
-        const notice = noticeFromActionResult(message);
+        const notice = noticeFromActionResult(message, isAutomaticRequest(message.requestId));
         if (notice) {
           params.onNotice(notice);
         }

@@ -76,6 +76,19 @@ function createState(): DashboardState {
   };
 }
 
+it("publishes authenticated peer systems and accounts in the VS Code dashboard snapshot", async () => {
+  const state = createState();
+  buildDashboardStateMock.mockResolvedValue(state);
+  backfillMissingResetCreditExpiriesMock.mockResolvedValue(false);
+  const connectedPeers = [{ id: "local", name: "This PC", connected: true, local: true, sessionCount: 0 }, { id: "remote", name: "Other PC", connected: true, sessionCount: 1 }];
+  const peerAccounts = { remote: state.accounts };
+  const postMessage = vi.fn(async () => true);
+  await publishDashboardSnapshot({ context: createContext(), repo: {} as never, settingsStore: {} as never, logoUri: "logo",
+    setPanelTitle: vi.fn(), postMessage, schedulePublishState: vi.fn(),
+    peerHost: { getDashboardPeerState: () => ({ connectedPeers, peerAccounts }), getRemoteCliSessions: () => [], relayWebviewAction: vi.fn(), onDidChangeDashboardPeers: vi.fn() } });
+  expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ state: expect.objectContaining({ connectedPeers, peerAccounts, logoUri: "logo" }) }));
+});
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | "timeout"> {
   return Promise.race([
     promise,

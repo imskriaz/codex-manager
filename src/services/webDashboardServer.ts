@@ -35,6 +35,7 @@ import {
 } from "../utils/notificationMirror";
 import { clearDashboardCodexAppPath, clearDashboardCodexCliPath } from "../presentation/dashboard/messageDispatcher";
 import { buildDashboardStateSignature } from "../presentation/dashboard/signature";
+import { withCodexSessionRecovery } from "./codexSessionAutoResume";
 import { DashboardOAuthCoordinator } from "../presentation/dashboard/oauthCoordinator";
 import {
   handleDashboardSettingUpdate,
@@ -94,7 +95,7 @@ export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount
   if (action === "syncNow" || action === "configureEncryptedSync") return 135_000;
   if (action === "commitWorkspaceChanges") return 75_000;
   if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(action)) return 90_000;
-  if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession"].includes(action)) return 75_000;
+  if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession", "resumeCodexSessions"].includes(action)) return 75_000;
   if (action === "cancelCodexCliSessionTurn") return 40_000;
   if (action === "steerCodexCliSessionTurn") return 40_000;
   if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession") {
@@ -350,6 +351,34 @@ export function getWebDashboardAssetVersion(extensionPath: string, version: stri
 }
 
 export class WebDashboardServer implements vscode.Disposable {
+  private readonly dashboardPeerListeners = new Set<() => void>();
+
+  private notifyDashboardPeers(): void {
+    for (const listener of this.dashboardPeerListeners ?? []) {
+      try { listener(); }
+      catch (error) { recordPersistentEvent("warning", "dashboard-peer", "Dashboard peer update failed", undefined, error); }
+    }
+  }
+
+  onDidChangeDashboardPeers(listener: () => void): vscode.Disposable {
+    this.dashboardPeerListeners.add(listener);
+    return { dispose: () => { this.dashboardPeerListeners.delete(listener); } };
+  }
+
+  getDashboardPeerState(): Pick<DashboardState, "connectedPeers" | "peerAccounts"> {
+    return {
+      connectedPeers: [{ id: this.deviceId, name: os.hostname(), local: true, connected: true, sessionCount: filterCliSessionsBySection(this.localCliSessions ?? [], "active").length },
+        ...[...this.peerSessions.values()].map(peer => ({ id: peer.deviceId, name: peer.deviceName, connected: true, sessionCount: filterCliSessionsBySection(peer.sessions, "active").length }))],
+      peerAccounts: Object.fromEntries([...this.peerSessions.values()].map(peer => [peer.deviceId, peer.accounts ?? []]))
+    };
+  }
+
+  async relayWebviewAction(message: Extract<DashboardClientMessage, { type: "dashboard:action" }>): ReturnType<typeof executeDashboardActionMessage> {
+    const target = message.payload?.targetDeviceId;
+    if (!target || target === this.deviceId || target === "local") return { status: "failed", errorMessage: "Choose a remote system before forwarding this action." };
+    const result = await this.relayPeerAction(message, target);
+    return { status: result.status, errorMessage: result.error, payload: result.payload as import("../domain/dashboard/types").DashboardActionResultPayload | undefined };
+  }
   private server: http.Server | undefined;
   private readonly webSocketClients = new Set<WebSocket>();
   private readonly webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_DASHBOARD_MESSAGE_BYTES });
@@ -603,6 +632,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (this.peerHttpHeartbeatTimer) clearInterval(this.peerHttpHeartbeatTimer);
     this.peerHttpHeartbeatTimer = undefined;
     this.peerSessions.clear();
+    this.notifyDashboardPeers();
     this.peerLastSeenAt.clear();
     this.peerLastSignedAt.clear();
     for (const timer of this.peerDisconnectTimers.values()) clearTimeout(timer);
@@ -677,6 +707,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (this.peerHttpHeartbeatTimer) clearInterval(this.peerHttpHeartbeatTimer);
     this.peerHttpHeartbeatTimer = undefined;
     this.peerSessions.clear();
+    this.notifyDashboardPeers();
     this.peerLastSeenAt.clear();
     this.peerLastSignedAt.clear();
     for (const timer of this.peerDisconnectTimers.values()) clearTimeout(timer);
@@ -1795,7 +1826,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   /** Sessions received from other PCs; the local PC always reads its own CLI directly. */
-  private getRemoteCliSessions(): import("../domain/dashboard/types").DashboardCliSessionSummary[] {
+  getRemoteCliSessions(): import("../domain/dashboard/types").DashboardCliSessionSummary[] {
     return [...this.peerSessions.values()].flatMap((peer) =>
       peer.sessions.map((session) => ({
         ...session,
@@ -1823,7 +1854,7 @@ export class WebDashboardServer implements vscode.Disposable {
     // cold and belongs to the explicit composer-config action instead.
     const revision = this.peerConnectionRevision;
     const pending = readCodexCliSessions()
-      .then((sessions) => stabilizeSessionProjectPaths(this.context, sessions))
+      .then((sessions) => stabilizeSessionProjectPaths(this.context, withCodexSessionRecovery(this.context, sessions)))
       .then((sessions) => {
         if (revision !== this.peerConnectionRevision) return sessions;
         this.localCliSessions = sessions;
@@ -1908,6 +1939,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.peerDisconnectTimers.delete(deviceId);
     this.peerLastSeenAt.delete(deviceId);
     this.peerSessions.delete(deviceId);
+    this.notifyDashboardPeers();
     this.peerLastSignedAt.delete(deviceId);
   }
 
@@ -1951,7 +1983,7 @@ export class WebDashboardServer implements vscode.Disposable {
     }
   }
 
-  private async acceptPeerSession(message: Partial<PeerSessionMessage>): Promise<boolean> {
+  private async acceptPeerSession(message: Partial<PeerSessionMessage>, notify = true): Promise<boolean> {
     const revision = this.peerConnectionRevision;
     if (
       message.type !== "peer:sessions" ||
@@ -1966,6 +1998,10 @@ export class WebDashboardServer implements vscode.Disposable {
       return false;
     }
     if (message.sessions.some(session => session?.goal !== undefined && normalizeCodexSessionGoal(session.goal) === undefined)) return false;
+    if (message.sessions.some(session => (session?.model !== undefined && (typeof session.model !== "string" || session.model.length > 256)) ||
+      (session?.reasoningEffort !== undefined && (typeof session.reasoningEffort !== "string" || session.reasoningEffort.length > 64)))) return false;
+    if (message.sessions.some(session => session?.runningSince !== undefined && (typeof session.runningSince !== "number" || !Number.isFinite(session.runningSince) || session.runningSince <= 0 || session.runningSince > Date.now() + 5 * 60_000))) return false;
+    if (message.sessions.some(session => session?.interrupted !== undefined && typeof session.interrupted !== "boolean")) return false;
     if (Math.abs(Date.now() - message.sentAt) > 2 * 60_000) return false;
     const lastSignedAt = this.peerLastSignedAt.get(message.deviceId) ?? 0;
     if (message.sentAt <= lastSignedAt) return false;
@@ -2009,6 +2045,7 @@ export class WebDashboardServer implements vscode.Disposable {
       signature: message.signature
     };
     this.peerSessions.set(normalized.deviceId, normalized);
+    if (notify) this.notifyDashboardPeers();
     const disconnectTimer = this.peerDisconnectTimers.get(normalized.deviceId);
     if (disconnectTimer) {
       clearTimeout(disconnectTimer);
@@ -2438,9 +2475,10 @@ export class WebDashboardServer implements vscode.Disposable {
             this.peerLastSignedAt.clear();
             for (const peer of message.peers) {
               if (this.peerSocket !== socket) return;
-              await this.acceptPeerSession(peer);
+              await this.acceptPeerSession(peer, false);
             }
             if (this.peerSocket !== socket) return;
+            this.notifyDashboardPeers();
             this.markPeerPresenceHealthy();
             this.publishRealtimeState();
           }
@@ -2587,9 +2625,10 @@ export class WebDashboardServer implements vscode.Disposable {
       this.peerLastSignedAt.clear();
       for (const peer of aggregate.peers) {
         if (revision !== this.peerConnectionRevision) return;
-        await this.acceptPeerSession(peer);
+        await this.acceptPeerSession(peer, false);
       }
       if (revision !== this.peerConnectionRevision) return;
+      this.notifyDashboardPeers();
       this.markPeerPresenceHealthy();
       this.publishRealtimeState();
     } catch (error) {

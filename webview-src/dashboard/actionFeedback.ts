@@ -1,8 +1,10 @@
 import type { DashboardActionName, DashboardHostMessage, DashboardNotice } from "../../src/domain/dashboard/types";
 
 export function noticeFromActionResult(
-  message: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>
+  message: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>,
+  automatic = false
 ): DashboardNotice | undefined {
+  if (automatic) return undefined;
   if (message.action === "getDailyUsage" || message.action === "getUsageGraph") return undefined;
   if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(message.action) &&
     message.error?.startsWith("Session Integration is disabled.")) return undefined;
@@ -25,7 +27,7 @@ export function noticeFromActionResult(
     }
     return {
       level: "error",
-      message: compactDashboardNotice(errorMessage)
+      message: compactDashboardNotice(formatSessionReadError(message.action, errorMessage))
     };
   }
 
@@ -55,6 +57,12 @@ export function noticeFromActionResult(
   }
 
   return { level: "info", message: `${formatActionName(message.action)} done.` };
+}
+
+export function formatSessionReadError(action: DashboardActionName, message: string): string {
+  return action === "getCodexCliSessionMessages" && /(?:session|transcript).*not found/i.test(message)
+    ? "This conversation is unavailable. Refresh the session list or choose another conversation."
+    : message;
 }
 
 export function noticeFromActionTimeout(action: DashboardActionName): DashboardNotice {

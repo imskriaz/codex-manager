@@ -16,7 +16,7 @@ import { formatRelativeTimestamp, formatTimestamp, getSensitiveDisplayValue, res
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
 import { ActionButton } from "./primitives";
 import { MetricGauge } from "./accountMetricPrimitives";
-import { AccountAccessIcon, renderRefreshIcon, ResetCreditIcon } from "./icons";
+import { AccountAccessIcon, EyeIcon, EyeOffIcon, renderRefreshIcon, ResetCreditIcon } from "./icons";
 import { loadUsageGraphPreferences, saveUsageGraphPreferences, type UsageGraphPreferences, type UsageGraphRange } from "./preferences";
 
 export type { DashboardUsageSample } from "../../src/domain/dashboard/types";
@@ -65,6 +65,8 @@ export function OverviewSection(props: {
   settings: DashboardSettings;
   now: number;
   privacyMode: boolean;
+  privacyPending: boolean;
+  onPrivacyToggle: () => void;
   disabled: boolean;
   addPending: boolean;
   refreshAllPending: boolean;
@@ -83,8 +85,6 @@ export function OverviewSection(props: {
   tokenHistoryRefresh?: ReturnType<typeof useTokenHistoryRefresh>;
   onSetAutoSwitchLock: (minutes: number) => void;
   onAddAccount: () => void;
-  onSetPassword: () => void;
-  passwordConfigured?: boolean;
   onOnboard: () => void;
   onRefreshAll: () => void;
   onConfigureSync: () => void;
@@ -102,6 +102,10 @@ export function OverviewSection(props: {
   onDisableAll: () => void;
   showCliSessions?: boolean;
   onOpenCliSessions?: () => void;
+  onOpenCodex: () => void;
+  onResumeSessions: () => void;
+  resumeSessionsPending: boolean;
+  codexOpenPending: boolean;
 }) {
   const { account: providedAccount, copy, settings, now, hasAccounts, privacyMode } = props;
   const account = providedAccount ?? createBlankOverviewAccount(copy);
@@ -142,7 +146,7 @@ export function OverviewSection(props: {
   const toggleMoreMenu = (): void => {
     if (!moreOpen) {
       const rect = moreRef.current?.getBoundingClientRect();
-      if (rect) setMorePopoverPosition(resolveOverviewPopoverPosition(rect, window.innerWidth));
+      if (rect) setMorePopoverPosition(resolveOverviewPopoverPosition(rect, window.innerWidth, window.innerHeight, 0));
     }
     setMoreOpen((open) => !open);
   };
@@ -150,7 +154,7 @@ export function OverviewSection(props: {
     if (!moreOpen) return;
     const updatePosition = (): void => {
       const rect = moreRef.current?.getBoundingClientRect();
-      if (rect) setMorePopoverPosition(resolveOverviewPopoverPosition(rect, window.innerWidth));
+      if (rect) setMorePopoverPosition(resolveOverviewPopoverPosition(rect, window.innerWidth, window.innerHeight, morePopoverContentRef.current?.getBoundingClientRect().height ?? 0));
     };
     updatePosition();
     window.addEventListener("resize", updatePosition);
@@ -410,15 +414,8 @@ export function OverviewSection(props: {
                           style={{ top: `${morePopoverPosition.top}px`, right: `${morePopoverPosition.right}px` }}
                         >
                           <div class="claim-popover-title">{resolveOverviewToolbarLabel("more", props.lang)}</div>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setMoreOpen(false);
-                              props.onSetPassword();
-                            }}
-                          >
-                            🔑 {resolveOverviewMenuLabel("setPassword", props.lang, props.passwordConfigured === true)}
+                          <button type="button" role="menuitem" disabled={props.privacyPending} onClick={() => { setMoreOpen(false); props.onPrivacyToggle(); }}>
+                            {privacyMode ? <EyeOffIcon /> : <EyeIcon />}{privacyMode ? copy.showSensitive : copy.hideSensitive}
                           </button>
                           {providedAccount && contextAction !== "switch" ? (
                             <button
@@ -515,7 +512,11 @@ export function OverviewSection(props: {
                               {resolveOverviewMenuLabel(account.autoSwitchLockedUntil ? "unlock" : "lock", props.lang)}
                             </button>
                           ) : null}
-                          {providedAccount && props.showCliSessions && props.onOpenCliSessions ? (
+                          {props.showCliSessions ? <>
+                            <button type="button" role="menuitem" disabled={props.codexOpenPending} onClick={() => { setMoreOpen(false); props.onOpenCodex(); }}>◈ Codex</button>
+                            <button type="button" role="menuitem" disabled={props.resumeSessionsPending} onClick={() => { setMoreOpen(false); props.onResumeSessions(); }}>↻ Resume</button>
+                          </> : null}
+                          {props.showCliSessions && props.onOpenCliSessions ? (
                             <button
                               type="button"
                               role="menuitem"
@@ -524,7 +525,7 @@ export function OverviewSection(props: {
                                 props.onOpenCliSessions!();
                               }}
                             >
-                              ◉ Sessions
+                              ◉ Show All Sessions
                             </button>
                           ) : null}
                         </div>,
@@ -650,10 +651,12 @@ function LockDialog(props: {
 
 export function resolveOverviewPopoverPosition(
   triggerRect: Pick<DOMRect, "bottom" | "right">,
-  viewportWidth: number
+  viewportWidth: number,
+  viewportHeight: number,
+  menuHeight: number
 ): { top: number; right: number } {
   return {
-    top: triggerRect.bottom + 5,
+    top: Math.max(8, Math.min(triggerRect.bottom + 5, viewportHeight - menuHeight - 8)),
     right: Math.max(8, viewportWidth - triggerRect.right)
   };
 }
@@ -1379,10 +1382,8 @@ function resolveOverviewMenuLabel(
     | "rescueOff"
     | "lock"
     | "unlock"
-    | "setPassword"
     | "onboard",
-  lang: DashboardState["lang"],
-  passwordConfigured = false
+  lang: DashboardState["lang"]
 ): string {
   const values = {
     en: {
@@ -1396,7 +1397,6 @@ function resolveOverviewMenuLabel(
       rescueOff: "Rescue off",
       lock: "Lock",
       unlock: "Unlock",
-      setPassword: passwordConfigured ? "Change Password" : "Set Password",
       onboard: "Onboard"
     },
     zh: {
@@ -1410,7 +1410,6 @@ function resolveOverviewMenuLabel(
       rescueOff: "关闭救援",
       lock: "锁定",
       unlock: "解锁",
-      setPassword: passwordConfigured ? "更改密码" : "设置密码",
       onboard: "引导设置"
     },
     "zh-hant": {
@@ -1424,7 +1423,6 @@ function resolveOverviewMenuLabel(
       rescueOff: "關閉救援",
       lock: "鎖定",
       unlock: "解鎖",
-      setPassword: passwordConfigured ? "變更密碼" : "設定密碼",
       onboard: "導覽設定"
     }
   } as const;

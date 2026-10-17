@@ -7,6 +7,7 @@ import type { DashboardActionContext } from "../src/presentation/dashboard/actio
 import * as diagnostics from "../src/utils/persistentLog";
 import * as encryptedSync from "../src/services/encryptedSync";
 import type { CodexManagerAccountRecord } from "../src/core/types";
+import * as sessionEditors from "../src/services/codexSessionResume";
 
 const { consumeResetCreditMock, fetchResetCreditsMock, refreshQuotaMock } = vi.hoisted(() => ({
   consumeResetCreditMock: vi.fn().mockResolvedValue(undefined),
@@ -90,6 +91,62 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 afterAll(async () => {
   await removeTestDirectory(operationDirectory);
+});
+
+describe("manual Codex navigation and recovery", () => {
+  const id = "01a04882-d037-7a42-ad24-9afb61901181";
+  const enableSessions = () => vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+  it("opens the official Codex panel from the More action", async () => {
+    enableSessions();
+    const open = vi.spyOn(sessionEditors, "openNewCodexWebview").mockResolvedValue(undefined);
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "more-codex", action: "openNewCodexWebview" });
+    expect(result.status).toBe("completed");
+    expect(open).toHaveBeenCalledOnce();
+  });
+  it("opens a running conversation in VS Code when requested by the browser", async () => {
+    enableSessions();
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Running", status: "running" });
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "view-editor", action: "openCodexCliSession", payload: { sessionId: id, openInVsCode: true } });
+    expect(result.status).toBe("completed");
+    expect(open).toHaveBeenCalledWith(id);
+    expect(result.payload?.cliSessionMessages).toBeUndefined();
+  });
+  it("reopens running and interrupted parents without closing existing tabs and acknowledges duplicate requests", async () => {
+    enableSessions();
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+    const close = vi.spyOn(sessionEditors, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
+    readCodexCliSessionsMock.mockResolvedValue([{ id, title: "Running", status: "running" }, { id: "interrupted", title: "Interrupted", status: "idle", interrupted: true }, { id: "completed", title: "Done", status: "idle", interrupted: false }, { id: "child", title: "Agent", status: "running", parentSessionId: id }, { id: "archived", title: "Archive", status: "running", archived: true }]);
+    const ctx = createContext();
+    const request = { type: "dashboard:action" as const, requestId: "resume-all", action: "resumeCodexSessions" as const };
+    expect((await executeDashboardActionMessage(ctx, request)).payload?.notice?.message).toContain("2 conversations opened");
+    expect((await executeDashboardActionMessage(ctx, request)).status).toBe("completed");
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(close).not.toHaveBeenCalled();
+  });
+  it("preserves uncertain sessions and reports partial opens and missing sessions", async () => {
+    enableSessions();
+    readCodexCliSessionsMock.mockResolvedValue([{ id, title: "Unverified", status: "unknown", interrupted: true }, { id: "failed", title: "Interrupted", status: "idle", interrupted: true }]);
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockRejectedValue(new Error("Editor unavailable"));
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "resume-failed", action: "resumeCodexSessions" });
+    expect(result.payload?.notice).toMatchObject({ level: "warning", message: expect.stringContaining("recovery was kept") });
+    expect(open).toHaveBeenCalledTimes(1);
+    readCodexCliSessionSummaryMock.mockResolvedValue(undefined);
+    expect((await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "resume-missing", action: "resumeCodexSessions", payload: { sessionId: id } })).status).toBe("failed");
+  });
+  it("bounds an editor timeout, aborts its late open and keeps recovery for retry", async () => {
+    enableSessions();
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Interrupted", status: "idle", interrupted: true });
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockImplementation(() => new Promise(() => undefined));
+    vi.useFakeTimers();
+    try {
+      const result = executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "resume-timeout", action: "resumeCodexSessions", payload: { sessionId: id } });
+      await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(8_001);
+      expect((await result).payload?.notice).toMatchObject({ level: "warning", message: expect.stringContaining("timed out") });
+      expect(open.mock.calls[0]?.[1]?.aborted).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 describe("isSafeExternalUrl", () => {

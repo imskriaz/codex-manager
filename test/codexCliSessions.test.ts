@@ -36,6 +36,16 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it("reads recorded model and thinking settings without requiring newer native columns", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "codex-session-settings-")); roots.push(home);
+    const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
+    try {
+      db.exec("CREATE TABLE threads (id TEXT, title TEXT, model TEXT, reasoning_effort TEXT)");
+      db.prepare("INSERT INTO threads VALUES (?, ?, ?, ?)").run(sessionId, "Recorded task", "gpt-5", "high");
+    } finally { db.close(); }
+    await expect(readCodexCliSessions(home)).resolves.toMatchObject([{ id: sessionId, model: "gpt-5", reasoningEffort: "high" }]);
+    await expect(readCodexCliSessionSummary(sessionId, home)).resolves.toMatchObject({ id: sessionId, model: "gpt-5", reasoningEffort: "high" });
+  });
   it("lists existing native projects without requiring a running session or an open workspace", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "codex-project-picker-")); roots.push(home);
     const first = path.join(home, "first"), second = path.join(home, "second"), empty = path.join(home, "empty");
