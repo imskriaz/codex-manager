@@ -68,6 +68,13 @@ function createState(overrides?: {
 }
 
 describe("buildDashboardStateSignature", () => {
+  it("publishes changes to the automatic token history gap", () => {
+    const state = createState();
+    const before = buildDashboardStateSignature(state);
+    state.settings.dailyTokenUsageIntervalMinutes = 1440;
+    expect(buildDashboardStateSignature(state)).not.toBe(before);
+  });
+
   it("publishes queue fairness and pending reset changes", () => {
     const state = createState();
     const initial = buildDashboardStateSignature(state);

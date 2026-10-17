@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.3.5-pre1",
+  "version": "1.3.5-pre2",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -100,10 +100,18 @@
           "default": 30,
           "markdownDescription": "Choose how many days of daily token usage to keep."
         },
+        "codexManager.dailyTokenUsageIntervalMinutes": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1440,
+          "multipleOf": 1,
+          "default": 60,
+          "markdownDescription": "Minimum minutes between automatic token history checks; server retry delays still apply."
+        },
         "codexManager.dailyTokenUsageEnabled": {
           "type": "boolean",
-          "default": true,
-          "markdownDescription": "Save daily usage hourly and fill missing chart history; saved usage stays when off."
+          "default": false,
+          "markdownDescription": "Save daily usage at the selected interval and fill missing chart history; saved usage stays when off."
         },
         "codexManager.usageHistoryRetentionDays": {
           "type": "number",

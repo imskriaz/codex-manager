@@ -124,7 +124,7 @@ try {
     await page.locator('.usage-graph-bar-hitarea[aria-label*="300 tokens"]').waitFor();
     assert.equal(await page.locator(".usage-graph-bar-hitarea").count(), 1, "All accounts share one daily stacked bar");
     assert.deepEqual(new Set(await page.locator(".usage-graph-bar").evaluateAll(bars => bars.map(bar => bar.getAttribute("data-source")))), new Set(["VS Code", "Other"]), "The daily bar stacks VS Code and Other");
-    assert.ok(await page.locator(".usage-graph-card").getByText(/Stale/).count(), "Stale history is labelled");
+    assert.equal(await chart.locator(".usage-graph-status, .usage-graph-feedback, .usage-graph-empty").count(), 0, "Chart has no message overlays or badges");
     assert.equal(await page.locator('.usage-graph-bar-hitarea[aria-label*="% tokens"]').count(), 0, "Token totals are not percentages");
     assert.equal((await chart.boundingBox()).height, quotaHeight, "Both chart modes keep the same height");
     await page.locator('.usage-graph-bar-hitarea[aria-label*="300 tokens"]').click();
@@ -195,11 +195,14 @@ try {
 
     await page.evaluate(() => { window.__failUsage = true; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("7d");
+    await page.getByRole("button", { name: "Graph settings", exact: true }).click();
     await page.getByRole("button", { name: "Retry saved graph", exact: true }).waitFor();
     assert.equal(await page.locator(".usage-graph-bar-hitarea").count(), 1, "A failed query preserves the last result");
     assert.equal((await chart.boundingBox()).height, quotaHeight, "A failure does not resize the chart");
-    assert.match(await chart.innerText(), /temporarily unavailable/);
+    assert.doesNotMatch(await chart.innerText(), /temporarily unavailable/);
+    assert.match(await page.getByRole("dialog", { name: "Graph settings", exact: true }).innerText(), /temporarily unavailable/);
     await page.getByRole("button", { name: "Retry saved graph", exact: true }).click();
+    await page.keyboard.press("Escape");
     await page.locator('.usage-graph-bar-hitarea[aria-label*="2,100 tokens"]').waitFor();
 
     await page.evaluate(() => { window.__deferUsage = true; });
@@ -246,7 +249,8 @@ try {
     await page.evaluate(() => { window.__mixedZeroUsage = false; });
     await page.evaluate(() => { window.__zeroUsage = true; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("7d");
-    await chart.getByText("No token use recorded", { exact: true }).waitFor();
+    await page.locator('.usage-graph-bar-hitarea[aria-label*="0 tokens"]').first().waitFor();
+    assert.equal(await chart.locator(".usage-graph-empty").count(), 0);
     assert.equal((await chart.boundingBox()).height, quotaHeight);
     await page.locator(".usage-graph-bar-hitarea").first().focus();
     await tooltip.waitFor();
@@ -259,20 +263,31 @@ try {
     await page.keyboard.press("Escape");
     await page.evaluate(() => { window.__emptyUsage = true; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");
-    await chart.getByText("No verified token usage in this period", { exact: true }).waitFor();
+    await page.waitForFunction(() => document.querySelectorAll(".usage-graph-bar-hitarea").length === 0);
+    assert.equal(await chart.locator(".usage-graph-empty").count(), 0);
     assert.equal((await chart.boundingBox()).height, quotaHeight);
 
     if (width === 1440) {
       await page.locator("#settingsOpenButton").click();
-      await page.locator("#settings-tab-data").click();
+      await page.locator("#settings-tab-automation").click();
       const toggle = page.getByRole("button", { name: "Automatic token history", exact: true });
       assert.equal(await toggle.getAttribute("aria-pressed"), "false");
+      assert.equal(await toggle.locator("../..").evaluate(block => block === block.parentElement.lastElementChild), true, "Automatic token history is last in Automation");
       await toggle.click();
       await page.waitForFunction(() => window.__usageActions.some(action => action.action === "getDailyUsage"));
       const checks = await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage"));
       assert.equal(checks.length, 1, "Enabling collection checks the current account once");
       assert.equal(checks[0].accountId, "a");
       assert.equal(checks[0].payload.automatic, true);
+      const gap = page.getByRole("slider", { name: "Gap between automatic checks; server retry delays still apply.", exact: true });
+      assert.equal(await gap.getAttribute("min"), "1");
+      assert.equal(await gap.getAttribute("max"), "1440");
+      for (const value of [1, 1440, 60]) {
+        await gap.evaluate((element, value) => { element.value = String(value); element.dispatchEvent(new Event("input", { bubbles: true })); element.dispatchEvent(new Event("change", { bubbles: true })); }, value);
+        await page.waitForFunction(value => window.__usageActions.some(action => action.type === "dashboard:setting" && action.key === "dailyTokenUsageIntervalMinutes" && action.value === value), value);
+      }
+      await gap.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(output, `automation-gap-${width}.png`) });
       await toggle.click();
       await page.keyboard.press("Escape");
     }
@@ -284,7 +299,9 @@ try {
     await menu.getByText("Updated", { exact: true }).waitFor();
     await page.evaluate(() => { window.__failDaily = "b"; });
     await page.getByRole("button", { name: "Refresh token history for b@example.invalid", exact: true }).click();
-    await menu.getByRole("alert").filter({ hasText: "Token endpoint temporarily unavailable." }).waitFor();
+    await menu.getByRole("alert").filter({ hasText: "Token endpoint temporarily unavailable." }).first().waitFor();
+    assert.equal(await page.locator(".dashboard-notice-stack").count(), 0, "Token failures stay out of toasts");
+    assert.doesNotMatch(await chart.innerText(), /Token endpoint temporarily unavailable/);
     assert.ok((await menu.locator(".usage-graph-cache-row").first().boundingBox()).height <= 24, "Each account stays on one compact line");
     await page.screenshot({ path: path.join(output, `menu-${width}.png`) });
     if (width === 1440) {
@@ -307,7 +324,7 @@ try {
       const startedBeforeOff = await page.evaluate(() => window.__usageActions.filter(action => action.action === "getDailyUsage" && ["i","j","k","l"].includes(action.accountId)).length);
       await page.evaluate(() => window.__setUsageAutomatic(false));
       await page.locator("#settingsOpenButton").click();
-      await page.locator("#settings-tab-data").click();
+      await page.locator("#settings-tab-automation").click();
       const automaticToggle = page.getByRole("button", { name: "Automatic token history", exact: true });
       await automaticToggle.waitFor();
       assert.equal(await automaticToggle.getAttribute("aria-pressed"), "false");
@@ -340,11 +357,14 @@ try {
     await page.keyboard.press("Escape");
     await page.evaluate(() => { window.__originalStorageSet = Storage.prototype.setItem; Storage.prototype.setItem = () => { throw new DOMException("Storage full", "QuotaExceededError"); }; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("24h");
-    await chart.getByRole("alert").filter({ hasText: "Chart choices could not be saved on this device." }).waitFor();
+    assert.equal(await chart.getByRole("alert").count(), 0);
+    await page.getByRole("button", { name: "Graph settings", exact: true }).click();
+    await menu.getByRole("alert").filter({ hasText: "Chart choices could not be saved on this device." }).waitFor();
     assert.equal(await page.getByRole("combobox", { name: "Graph time range" }).inputValue(), "24h", "Storage failures never block chart controls");
     await page.evaluate(() => { Storage.prototype.setItem = window.__originalStorageSet; });
     await page.getByRole("combobox", { name: "Graph time range" }).selectOption("30d");
-    await chart.getByText("Chart choices could not be saved on this device.", { exact: true }).waitFor({ state: "detached" });
+    await menu.getByText("Chart choices could not be saved on this device.", { exact: true }).waitFor({ state: "detached" });
+    await page.keyboard.press("Escape");
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "The graph fits the viewport");
     assert.deepEqual(errors, [], "No browser runtime errors");
     results.push({ width, loadMs, consolidatedAccounts: 2, staleHistory: "visible", failedQuery: "preserved", outOfOrder: "ignored", savedPreferences: "restored", dailyAccountTotals: "verified", storageFailure: "non-blocking" });

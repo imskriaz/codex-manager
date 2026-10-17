@@ -2,6 +2,27 @@ import { describe, expect, it } from "vitest";
 import { noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
+  it.each(["failed", "cancelled", "completed"] as const)("keeps token history %s outcomes out of toasts", status => {
+    for (const action of ["getDailyUsage", "getUsageGraph"] as const) for (const error of [undefined, "offline", "storage full", "The usage provider requested a retry delay.",
+      "The usage endpoint returned no readable daily data. Automatic usage checks wait at least one hour and respect server retry delay",
+      "Failed to get tokens for codex_test Automatic usage checks wait at least one hour and respect server retry delays."]) {
+      expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "usage", action, status, error,
+        payload: { notice: { level: "warning", message: "Automatic token history is disabled. Saved history remains available." } } })).toBeUndefined();
+    }
+  });
+  it("keeps unverified and disabled session reads inline, preserving send failures", () => {
+    for (const action of ["listCodexCliSessions", "getCodexCliSessionMessages"] as const) {
+      for (const detail of ["Session inspection timed out.", "The file did not respond within 5 seconds. Try again after the other app finishes writing it."]) {
+        expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "busy-history", action, status: "completed",
+          payload: { notice: { level: "warning", message: `Session history is available, but running state could not be verified. Refresh before sending. ${detail}` } } })).toBeUndefined();
+      }
+      expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "sessions", action, status: "completed",
+        payload: { notice: { level: "warning", message: "Session history is available, but running state could not be verified. Refresh before sending. Session inspection timed out." } } })).toBeUndefined();
+      expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "sessions", action, status: "failed",
+        error: "Session Integration is disabled. Enable it in Settings before opening sessions." })).toBeUndefined();
+    }
+    expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "send", action: "sendCodexCliSessionMessage", status: "failed", error: "Session running state could not be verified." })?.level).toBe("error");
+  });
   it("does not duplicate embedded turn completion with an internal CLI action-name toast", () => {
     expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "turn", action: "sendCodexCliSessionMessage", status: "completed" })).toBeUndefined();
   });

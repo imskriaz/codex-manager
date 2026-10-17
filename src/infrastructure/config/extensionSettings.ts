@@ -39,7 +39,8 @@ export class ExtensionSettingsStore {
       ),
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
       tokenHistoryRetentionDays: normalizeTokenHistoryRetentionDays(config.get<number>("tokenHistoryRetentionDays", 30)),
-      dailyTokenUsageEnabled: config.get<boolean>("dailyTokenUsageEnabled", true),
+      dailyTokenUsageIntervalMinutes: normalizeDailyTokenUsageIntervalMinutes(config.get<number>("dailyTokenUsageIntervalMinutes", 60)),
+      dailyTokenUsageEnabled: config.get<boolean>("dailyTokenUsageEnabled", false),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
       autoSwitchWaitForSessionsEnabled: config.get<boolean>("autoSwitchWaitForSessionsEnabled", false),
       // The 5-hour quota is always part of automatic quota control. Keep the
@@ -116,6 +117,10 @@ export function normalizeSyncHeartbeatMinutes(value: number): number {
 
 export function getSyncHeartbeatMinutes(): number {
   return normalizeSyncHeartbeatMinutes(getCodexManagerConfiguration().get<number>("encryptedSyncVsCodeHeartbeatMinutes", 5));
+}
+
+export function normalizeDailyTokenUsageIntervalMinutes(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.min(1440, Math.round(value))) : 60;
 }
 
 export function normalizeAutoRefreshMinutes(value: number): number {

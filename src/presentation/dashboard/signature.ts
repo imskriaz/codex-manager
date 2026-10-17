@@ -74,6 +74,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
     state.settings.usageHistoryRetentionDays,
     state.settings.tokenHistoryRetentionDays ?? 30,
     state.settings.dailyTokenUsageEnabled ? "1" : "0",
+    state.settings.dailyTokenUsageIntervalMinutes ?? 60,
     state.settings.persistentLoggingEnabled ? "1" : "0",
     state.settings.persistentLogRetentionDays ?? 3,
     state.settings.persistentLogLevel ?? "info",

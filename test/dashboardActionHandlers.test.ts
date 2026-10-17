@@ -1913,10 +1913,10 @@ describe("executeDashboardActionMessage", () => {
     expect(result.errorMessage).toMatch(/access token/i);
   });
 
-  it("does not read credentials or collect usage when automatic history is disabled", async () => {
+  it.each([false, undefined])("does not collect automatic usage with enabled=%s", async enabled => {
     const context = createContext();
     context.repo = { getAccount: vi.fn().mockResolvedValue({ id: "a" }), getTokens: vi.fn() } as never;
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageEnabled" ? false : fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageEnabled" ? enabled ?? fallback : fallback } as never);
     const result = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "getDailyUsage", accountId: "a", requestId: "disabled-usage", payload: { automatic: true } });
     expect(result.status).toBe("completed");
     expect(result.payload?.notice?.message).toMatch(/disabled/);

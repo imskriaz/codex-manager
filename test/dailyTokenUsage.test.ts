@@ -20,6 +20,7 @@ let now: number;
 const context = () => ({ globalState: { get: vi.fn(), update: vi.fn().mockResolvedValue(undefined) } }) as never;
 
 beforeEach(async () => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
   root = await fs.mkdtemp(path.join(os.tmpdir(), "daily-token-usage-"));
   store = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
   configureSqliteStateStore(store);
@@ -35,6 +36,35 @@ afterEach(async () => {
 });
 
 describe("daily token usage on account load", () => {
+  it.each([1, 1440])("waits the full %i-minute gap after an account fails, without delaying other accounts", async gap => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageIntervalMinutes" ? gap : fallback } as never);
+    const failed = vi.fn().mockRejectedValue(new Error("offline"));
+    await expect(loadDailyTokenUsage(context(), "failed", failed)).rejects.toThrow("offline");
+    const healthy = vi.fn().mockResolvedValue(usage);
+    await loadDailyTokenUsage(context(), "healthy", healthy);
+    expect(healthy).toHaveBeenCalledOnce();
+    now += gap * 60_000 - 1;
+    await expect(loadDailyTokenUsage(context(), "failed", failed)).rejects.toThrow("offline");
+    expect(failed).toHaveBeenCalledOnce();
+    now++;
+    failed.mockResolvedValue(usage);
+    await loadDailyTokenUsage(context(), "failed", failed);
+    expect(failed).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([1, 1440])("uses a saved %i-minute gap across restarts and manual refreshes", async gap => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageIntervalMinutes" ? gap : fallback } as never);
+    const fetchUsage = vi.fn().mockResolvedValue(usage);
+    await loadDailyTokenUsage(context(), "a", fetchUsage);
+    now += gap * 60_000 - 1;
+    await loadDailyTokenUsage(context(), "a", fetchUsage);
+    expect(fetchUsage).toHaveBeenCalledTimes(1);
+    now++;
+    await loadDailyTokenUsage(context(), "a", fetchUsage);
+    expect(fetchUsage).toHaveBeenCalledTimes(2);
+    await loadDailyTokenUsage(context(), "a", fetchUsage, { manual: true });
+    expect(fetchUsage).toHaveBeenCalledTimes(3);
+  });
   it("uses the shared bulk budget for automatic history and foreground capacity for a manual check", async () => {
     const budgets: boolean[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
@@ -111,7 +141,7 @@ describe("daily token usage on account load", () => {
     const fetchUsage = vi.fn().mockRejectedValue(new Error("offline"));
     await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow("offline");
     expect(readDashboardDailyUsage(context(), "a")?.usage).toEqual(usage);
-    await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow(/offline.*one hour/);
+    await expect(loadDailyTokenUsage(context(), "a", fetchUsage)).rejects.toThrow(/offline.*60 minutes/);
     expect(fetchUsage).toHaveBeenCalledTimes(1);
     now += HOUR;
     fetchUsage.mockResolvedValue(usage);

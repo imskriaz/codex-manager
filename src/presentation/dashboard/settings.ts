@@ -5,6 +5,7 @@ import {
   ExtensionSettingsStore,
   getCodexManagerConfiguration,
   normalizeAutoRefreshMinutes,
+  normalizeDailyTokenUsageIntervalMinutes,
   normalizeCurrentAutoRefreshMinutes,
   normalizeAutoSwitchLockMinutes,
   normalizeAutoSwitchThreshold,
@@ -180,6 +181,12 @@ export async function handleDashboardSettingUpdate(
     case "tokenHistoryRetentionDays":
       if (typeof value === "number") {
         await updateDashboardConfiguration(config, key, normalizeTokenHistoryRetentionDays(value), target);
+        updated = true;
+      }
+      break;
+    case "dailyTokenUsageIntervalMinutes":
+      if (typeof value === "number") {
+        await updateDashboardConfiguration(config, key, normalizeDailyTokenUsageIntervalMinutes(value), target);
         updated = true;
       }
       break;

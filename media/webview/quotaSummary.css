@@ -10953,20 +10953,6 @@ html[data-theme="dark"] .cli-terminal-panel {
 .usage-graph-summary-trigger { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; padding: 2px 0; border: 0; border-radius: 3px; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
 .usage-graph-summary-trigger:hover .usage-graph-summary { color: var(--text-primary); }
 .usage-graph-summary-trigger:focus-visible { outline: 1px solid var(--accent-blue); outline-offset: 2px; }
-.usage-graph-status {
-  max-width: 55px;
-  padding: 2px 0;
-  overflow: hidden;
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 8px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-.usage-graph-status[data-warning="true"] { color: var(--accent-orange); }
 .usage-graph-details-note {
   margin: 3px 4px;
   color: var(--text-secondary);
@@ -11033,36 +11019,6 @@ html[data-theme="dark"] .cli-terminal-panel {
 .usage-graph-tooltip-combined span { color: var(--text-secondary); }
 .usage-graph-tooltip-meta { display: grid; gap: 3px; color: var(--text-secondary); font-size: 9px; overflow-wrap: anywhere; }
 .usage-graph-tooltip-meta [data-stale="true"] { color: var(--accent-orange); }
-.usage-graph-empty {
-  position: absolute;
-  inset: 0 0 16px 32px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 4px;
-  color: var(--text-secondary);
-  font-size: 9px;
-  text-align: center;
-  pointer-events: none;
-}
-.usage-graph-empty strong { font-weight: 600; }
-.usage-graph-feedback {
-  position: absolute;
-  inset: 0 0 auto 32px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border: 1px solid var(--border-default);
-  border-radius: 5px;
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  font-size: 9px;
-}
-.usage-graph-feedback[data-warning="true"] { color: var(--accent-orange); }
-.usage-graph-feedback > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-graph-feedback button { flex-shrink: 0; border: 0; background: transparent; color: var(--accent-blue); font: inherit; cursor: pointer; }
 @media (max-width: 440px) {
   .usage-graph-color-key { display: none; }
   .usage-graph-head { gap: 4px; }

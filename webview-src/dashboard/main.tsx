@@ -216,7 +216,6 @@ function App() {
   const usageGraphRequestRef = useRef<string>();
   const usageGraphSourceRef = useRef<string>();
   const usageGraphDataSourceRef = useRef<string>();
-  const loadedUsageAccountRef = useRef<string>();
   const [accountInfoAccountId, setAccountInfoAccountId] = useState<string>();
   const [browserPath, setBrowserPath] = useState(() => (isBrowserDashboard ? window.location.pathname : "/"));
   const [onboardingOpen, setOnboardingOpen] = useState(false);
@@ -444,7 +443,7 @@ function App() {
     selectedPeerId,
     handleActionTimeout
   );
-  const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled !== false);
+  const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
   const snapshot = state.snapshot;
   useEffect(() => {
     if (isBrowserDashboard || !snapshot || onboardingVisibilityResolvedRef.current) {
@@ -1424,11 +1423,12 @@ function App() {
       setUsageGraphData(undefined);
       setUsageGraphError(undefined);
     }
-    const key = snapshot && snapshot.settings.dailyTokenUsageEnabled !== false && currentUsageAccountId ? `${selectedPeerId}:${currentUsageAccountId}` : undefined;
-    if (loadedUsageAccountRef.current === key) return;
-    loadedUsageAccountRef.current = key;
-    if (key && currentUsageAccountId) tokenHistoryRefresh.refresh([currentUsageAccountId], true);
-  }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled]);
+    if (snapshot?.settings.dailyTokenUsageEnabled !== true || !currentUsageAccountId) return;
+    const refresh = () => tokenHistoryRefresh.refresh([currentUsageAccountId], true);
+    refresh();
+    const timer = window.setInterval(refresh, (snapshot.settings.dailyTokenUsageIntervalMinutes ?? 60) * 60_000);
+    return () => window.clearInterval(timer);
+  }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled, snapshot?.settings.dailyTokenUsageIntervalMinutes]);
 
   if (!snapshot) {
     const connectionFailed = isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline");

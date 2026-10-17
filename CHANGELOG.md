@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.5-pre2
+
+- Remove usage-chart message overlays and badges; keep diagnostics and retries in Graph settings. Silence token-history and unverified-session read toasts.
+- Default Automatic token history to off, place it last in Automation, and add a persisted 1-minute to 1-day collection gap for successful and failed checks, respecting provider retry delays.
+
 ## 1.3.5-pre1
 
 - Show the account dashboard at the home URL, redirect old dashboard bookmarks to home, and use `/workspace/<session-id>` for chats while preserving old bookmarks and remote-device links.

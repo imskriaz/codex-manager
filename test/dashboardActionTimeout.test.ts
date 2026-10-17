@@ -4,6 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 describe("dashboard action timeouts", () => {
+  it("keeps token history timeouts in chart settings", () => {
+    const source = fs.readFileSync(path.resolve(__dirname, "../webview-src/dashboard/actionHooks.ts"), "utf8");
+    expect(source).toContain('request.action !== "getDailyUsage"');
+    expect(source).toContain('request.action !== "getUsageGraph"');
+    expect(source).toContain("onActionTimeoutRef.current?.(request.action, request.requestId)");
+  });
   it("does not show a banner for optional live-channel reconnects", () => {
     const source = fs.readFileSync(path.resolve(__dirname, "../webview-src/dashboard/main.tsx"), "utf8");
     expect(source).toContain('(browserHostStage === "unreachable" || browserHostStage === "offline")');

@@ -6,8 +6,7 @@ import { getSqliteStateStore } from "../storage/sqliteState";
 import { CrossWindowOperationBusyError, runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { runWithBulkProviderRequests } from "../utils/network";
 import { isDailyUsageBreakdown, readDashboardDailyUsage, upsertDashboardDailyUsageCache } from "./dashboardUsageHistory";
-
-const HOUR_MS = 3_600_000;
+import { getCodexManagerConfiguration, normalizeDailyTokenUsageIntervalMinutes } from "../infrastructure/config/extensionSettings";
 type Check = { at: number; error?: string; retryAt?: number; verifiedTokens?: true };
 const inFlight = new WeakMap<vscode.Memento, Map<string, Promise<DashboardDailyUsageCacheEntry>>>();
 
@@ -30,7 +29,7 @@ async function saveCheck(context: vscode.ExtensionContext, accountId: string, ch
   else await context.globalState.update(`codexManager.dailyUsageCheck.v1.${accountId}`, check);
 }
 
-/** Persist attempts before I/O; manual refresh bypasses only the automatic hourly schedule. */
+/** Persist attempts before I/O; manual refresh bypasses only the automatic check interval. */
 export function loadDailyTokenUsage(
   context: vscode.ExtensionContext,
   accountId: string,
@@ -47,15 +46,17 @@ export function loadDailyTokenUsage(
     const previous = readDashboardDailyUsage(context, accountId);
     const check = readCheck(context, accountId);
     const at = Date.now();
+    const gapMinutes = normalizeDailyTokenUsageIntervalMinutes(getCodexManagerConfiguration().get<number>("dailyTokenUsageIntervalMinutes", 60));
+    const gapMs = gapMinutes * 60_000;
     const legacy = previous?.usage.points.some(point => point.unit !== "tokens");
     const savedAt = Math.max(check?.at ?? 0, previous?.fetchedAt ?? 0);
     if (savedAt > at + 5 * 60_000) throw new Error("The system clock changed. Saved usage was preserved; check the clock before retrying.");
     const lastCheckedAt = legacy && !check?.verifiedTokens && !check?.error ? 0 : savedAt;
     if (options.manual && at < (check?.retryAt ?? 0)) throw new Error("The usage provider requested a retry delay. Saved history was kept; retry after the server cooldown.");
-    if (!options.manual && at < Math.max(lastCheckedAt + HOUR_MS, check?.retryAt ?? 0)) {
-      if (check?.error) throw new Error(`${check.error} Automatic usage checks wait at least one hour and respect server retry delays.`);
+    if (!options.manual && at < Math.max(lastCheckedAt + gapMs, check?.retryAt ?? 0)) {
+      if (check?.error) throw new Error(`${check.error} Automatic usage checks wait at least ${gapMinutes} minutes and respect server retry delays.`);
       if (previous) return previous;
-      throw new Error("A recent usage check did not produce saved data. The next automatic check is available after one hour.");
+      throw new Error(`A recent usage check did not produce saved data. The next automatic check is available after ${gapMinutes} minutes.`);
     }
     await saveCheck(context, accountId, { at, error: "The previous daily usage check did not complete." });
     try {

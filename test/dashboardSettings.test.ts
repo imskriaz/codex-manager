@@ -3,10 +3,21 @@ import * as vscode from "vscode";
 import { handleDashboardSettingUpdate, pickDashboardCodexCliPath } from "../src/presentation/dashboard/settings";
 
 describe("handleDashboardSettingUpdate", () => {
+  it("persists a bounded token history gap and rejects text", async () => {
+    const update = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update, inspect: vi.fn() } as never);
+    for (const [value, expected] of [[1, 1], [1440, 1440], [2000, 1440], [0, 1], [NaN, 60]]) {
+      await expect(handleDashboardSettingUpdate("dailyTokenUsageIntervalMinutes", value)).resolves.toBe(true);
+      expect(update).toHaveBeenLastCalledWith("dailyTokenUsageIntervalMinutes", expected, vscode.ConfigurationTarget.Global);
+    }
+    update.mockClear();
+    await expect(handleDashboardSettingUpdate("dailyTokenUsageIntervalMinutes", "1")).resolves.toBe(false);
+    expect(update).not.toHaveBeenCalled();
+  });
   it("persists the token history toggle and rejects non-boolean values", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: vi.fn(), update,
-      inspect: vi.fn(() => ({ key: "codexManager.dailyTokenUsageEnabled", defaultValue: true })) } as never);
+      inspect: vi.fn(() => ({ key: "codexManager.dailyTokenUsageEnabled", defaultValue: false })) } as never);
     await expect(handleDashboardSettingUpdate("dailyTokenUsageEnabled", true)).resolves.toBe(true);
     expect(update).toHaveBeenCalledWith("dailyTokenUsageEnabled", true, vscode.ConfigurationTarget.Global);
     update.mockClear();

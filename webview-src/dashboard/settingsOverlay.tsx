@@ -25,6 +25,7 @@ const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
 const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
 const CURRENT_AUTO_REFRESH_VALUES = Array.from({ length: 60 }, (_, index) => index + 1);
 const CURRENT_AUTO_REFRESH_SCALE_VALUES = [1, 15, 30, 45, 60];
+const TOKEN_HISTORY_GAP_VALUES = Array.from({ length: 1440 }, (_, index) => index + 1);
 const USAGE_HISTORY_RETENTION_VALUES = [1, 3, 7, 14, 30, 60, 90];
 const AUTO_SWITCH_VALUES = Array.from({ length: 21 }, (_, index) => index);
 const AUTO_RESET_VALUES = Array.from({ length: 101 }, (_, index) => index);
@@ -633,6 +634,24 @@ export function SettingsOverlay(props: {
                 onPreview={props.onThresholdPreview}
                 onCommit={props.onThresholdCommit}
               />
+              <SettingsToggleBlock
+                title="Automatic token history"
+                sub="Save daily usage; existing history stays when off."
+                enabled={props.settings.dailyTokenUsageEnabled === true}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}
+              >
+                <SettingsDiscreteSlider
+                  value={props.settings.dailyTokenUsageIntervalMinutes ?? 60}
+                  values={TOKEN_HISTORY_GAP_VALUES}
+                  accent="sky"
+                  scaleValues={[1, 360, 720, 1080, 1440]}
+                  valueLabel={(value) => value === 1440 ? "1D" : value < 60 ? `${value}M` : `${Math.floor(value / 60)}H${value % 60 ? ` ${value % 60}M` : ""}`}
+                  description={() => "Gap between automatic checks; server retry delays still apply."}
+                  onPreview={(value) => props.onPatchSettings({ dailyTokenUsageIntervalMinutes: value })}
+                  onCommit={(value) => patchAndSend("dailyTokenUsageIntervalMinutes", value)}
+                />
+              </SettingsToggleBlock>
             </div>
           </div>
           <div
@@ -644,13 +663,6 @@ export function SettingsOverlay(props: {
           >
             <SettingsPanelIntro tab={tabs[2]!} />
             <div class="settings-layout">
-              <SettingsToggleBlock
-                title="Automatic token history"
-                sub="Save daily usage; existing history stays when off."
-                enabled={props.settings.dailyTokenUsageEnabled !== false}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}
-              />
               <div class="settings-block settings-block-wide settings-history-block">
                 <div class="settings-toggle-head">
                   <div class="settings-block-head">

@@ -38,7 +38,7 @@ export function useDashboardActions(
 
       const timeoutId = window.setTimeout(() => {
         dispatch({ type: "resolve-action", requestId: request.requestId });
-        onNotice(noticeFromActionTimeout(request.action));
+        if (request.action !== "getDailyUsage" && request.action !== "getUsageGraph") onNotice(noticeFromActionTimeout(request.action));
         onActionTimeoutRef.current?.(request.action, request.requestId);
       }, request.timeoutMs ?? getActionTimeoutMs(request.action));
 

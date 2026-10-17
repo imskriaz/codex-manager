@@ -162,18 +162,18 @@ describe("SQLite extension context and settings migration", () => {
 });
 
 
-it("enables token collection for untouched defaults and preserves an explicit Off choice", async () => {
+it("disables token collection for untouched defaults and preserves an explicit On choice", async () => {
   await initializeSqliteContext(context());
   const store = getSqliteStateStore()!;
-  const namespace = store.keys("migrations").find(key => key.endsWith(":token-history-default-on"))!.replace(":token-history-default-on", "");
-  store.set(namespace, "dailyTokenUsageEnabled", false);
-  store.set("migrations", `${namespace}:token-history-default-on`, undefined);
-  disposeSqliteContext();
-  await initializeSqliteContext(context());
-  expect(getCodexManagerConfiguration().get("dailyTokenUsageEnabled")).toBe(true);
-  await getCodexManagerConfiguration().update("dailyTokenUsageEnabled", false, vscode.ConfigurationTarget.Global);
-  getSqliteStateStore()!.set("migrations", `${namespace}:token-history-default-on`, undefined);
+  const namespace = store.keys("migrations").find(key => key.endsWith(":token-history-default-off"))!.replace(":token-history-default-off", "");
+  store.set(namespace, "dailyTokenUsageEnabled", true);
+  store.set("migrations", `${namespace}:token-history-default-off`, undefined);
   disposeSqliteContext();
   await initializeSqliteContext(context());
   expect(getCodexManagerConfiguration().get("dailyTokenUsageEnabled")).toBe(false);
+  await getCodexManagerConfiguration().update("dailyTokenUsageEnabled", true, vscode.ConfigurationTarget.Global);
+  getSqliteStateStore()!.set("migrations", `${namespace}:token-history-default-off`, undefined);
+  disposeSqliteContext();
+  await initializeSqliteContext(context());
+  expect(getCodexManagerConfiguration().get("dailyTokenUsageEnabled")).toBe(true);
 });

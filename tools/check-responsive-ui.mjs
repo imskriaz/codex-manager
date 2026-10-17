@@ -670,14 +670,11 @@ try {
         const logReadsAfterClose = await page.evaluate(() => window.__uiActions.filter(action => action.action === "viewLogs").length);
         await page.waitForTimeout(2_100);
         assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "viewLogs").length), logReadsAfterClose, "Closing the console stops polling");
-        const tokenToggle = page.getByRole("button", { name: "Automatic token history", exact: true });
-        const block = tokenToggle.locator("../..");
-        const layout = page.locator("#settings-panel-data > .settings-layout");
-        assert.ok(Math.abs((await block.boundingBox()).width - (await layout.boundingBox()).width) <= 2, "Automatic token history fills the Data & Sync width");
         assert.equal(await page.getByText("Token history retention", { exact: true }).count(), 1);
-        assert.equal(await page.locator("#settings-panel-automation").getByText("Automatic token history", { exact: true }).count(), 0);
       }
       if (await tab.getAttribute("id") === "settings-tab-automation") {
+        const tokenBlock = page.getByRole("button", { name: "Automatic token history", exact: true }).locator("../..");
+        assert.equal(await tokenBlock.evaluate(block => block === block.parentElement.lastElementChild), true, "Automatic token history is last in Automation");
         const switchToggle = page.getByRole("button", { name: snapshot.copy.autoSwitchTitle, exact: true });
         const switchCard = switchToggle.locator("../..");
         const options = switchCard.locator(":scope > .settings-stack > .settings-integration-grid > .settings-block");

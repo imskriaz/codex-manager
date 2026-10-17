@@ -21,6 +21,7 @@ export type DashboardSettingKey =
   | "usageHistoryRetentionDays"
   | "tokenHistoryRetentionDays"
   | "dailyTokenUsageEnabled"
+  | "dailyTokenUsageIntervalMinutes"
   | "autoSwitchEnabled"
   | "autoSwitchWaitForSessionsEnabled"
   | "autoSwitchReloadWindowEnabled"
@@ -69,6 +70,7 @@ export interface DashboardSettings {
   usageHistoryRetentionDays: number;
   tokenHistoryRetentionDays?: number;
   dailyTokenUsageEnabled?: boolean;
+  dailyTokenUsageIntervalMinutes?: number;
   autoSwitchEnabled: boolean;
   autoSwitchWaitForSessionsEnabled?: boolean;
   hourlyQuotaControlEnabled: boolean;
