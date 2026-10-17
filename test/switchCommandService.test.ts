@@ -82,7 +82,7 @@ describe("manual account switch command", () => {
       expect.objectContaining({ autoResume: true })
     );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(4, "workbench.action.restartExtensionHost");
   });
 
   it("reports partial completion when the account switches but Codex cannot reload", async () => {

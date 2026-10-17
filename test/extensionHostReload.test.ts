@@ -40,7 +40,8 @@ describe("bounded shared extension host reload", () => {
       await expect(pending).resolves.toBeUndefined();
       expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("could not be fully preserved"));
       expect(execute).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
-      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute).toHaveBeenCalledTimes(3);
+      expect(execute).toHaveBeenCalledWith("codexManager.closeEditorsForExtensionHostRestart", expect.objectContaining({ closeSessions: false }));
       expect((execute.mock.calls[0][1] as { signal: AbortSignal }).signal.aborted).toBe(true);
       finish?.();
       await vi.advanceTimersByTimeAsync(0);
@@ -130,7 +131,36 @@ describe("bounded shared extension host reload", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined } as never);
     vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
     await reloadExtensionHostWithSessionCapture(true);
-    expect(vscode.commands.executeCommand.mock.calls.map(call => call[0])).toEqual(["codexManager.prepareDashboardForExtensionHostRestart", "workbench.action.reloadWindow"]);
+    expect(vscode.commands.executeCommand.mock.calls.map(call => call[0])).toEqual(["codexManager.prepareDashboardForExtensionHostRestart", "codexManager.closeEditorsForExtensionHostRestart", "workbench.action.reloadWindow"]);
+  });
+
+  it("closes editors after saving recovery and before restarting", async () => {
+    vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+    await reloadExtensionHostWithSessionCapture(true);
+    expect(vscode.commands.executeCommand.mock.calls.map(call => call[0])).toEqual([
+      "codexManager.prepareDashboardForExtensionHostRestart", "codexManager.closeEditorsForExtensionHostRestart", "workbench.action.restartExtensionHost"
+    ]);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("codexManager.closeEditorsForExtensionHostRestart", expect.objectContaining({ closeSessions: true }));
+  });
+
+  it.each(["refused", "timeout"])("continues visibly when editor cleanup is %s and aborts late work", async failure => {
+    vi.useFakeTimers();
+    let closingSignal: AbortSignal | undefined;
+    vi.mocked(vscode.commands.executeCommand).mockImplementation(async (name, options) => {
+      if (name !== "codexManager.closeEditorsForExtensionHostRestart") return;
+      closingSignal = (options as { signal: AbortSignal }).signal;
+      if (failure === "refused") throw new Error("Tabs could not close");
+      await new Promise<void>(() => undefined);
+    });
+    try {
+      const work = reloadExtensionHostWithSessionCapture(true);
+      await vi.advanceTimersByTimeAsync(8_000);
+      await work;
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("some Codex or Codex Manager tabs could not close"));
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+      expect(closingSignal?.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 
   it("joins automatic and explicit reload callers into one shared workflow", async () => {

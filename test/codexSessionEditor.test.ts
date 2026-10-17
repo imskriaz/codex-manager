@@ -75,6 +75,23 @@ describe("Codex VS Code session editor", () => {
     expect(readOpenCodexSessionIds()).toEqual([]);
   });
 
+  it("includes extra Codex webview panels across groups only during reload cleanup", async () => {
+    const first = { input: { viewType: "chatgpt.panelView" } };
+    const second = { input: { viewType: "mainThreadWebview-chatgpt.panelView" } };
+    const other = { input: { viewType: "other.extension" } };
+    const groups = [{ tabs: [first, other] }, { tabs: [second] }];
+    Object.assign(vscode.window.tabGroups, { all: groups });
+    vi.mocked(vscode.window.tabGroups.close).mockImplementation(async closing => {
+      for (const group of groups) group.tabs = group.tabs.filter(tab => !(closing as unknown[]).includes(tab));
+      return true;
+    });
+    await closeOpenCodexSessionTabs();
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
+    await closeOpenCodexSessionTabs(undefined, true);
+    expect(groups.flatMap(group => group.tabs)).toEqual([other]);
+    expect(activateExtension).not.toHaveBeenCalled();
+  });
+
   it("promotes an existing preview tab before acknowledging automatic recovery", async () => {
     const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
     await openCodexSessionInVsCode(id);

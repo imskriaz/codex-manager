@@ -17,8 +17,8 @@ const OPERATION_TIMEOUT_MS = 30_000;
 const PER_SESSION_OPEN_TIMEOUT_MS = 8_000;
 const STORAGE_TIMEOUT_MS = 5_000;
 type AutoResumeContext = Pick<vscode.ExtensionContext, "workspaceState">;
-type OperationKind = "capture" | "restore" | "track";
-type Operations = { tail: Promise<unknown>; capture?: Promise<unknown>; restore?: Promise<unknown>; track?: Promise<unknown> };
+type OperationKind = "capture" | "restore" | "track" | "close";
+type Operations = { tail: Promise<unknown>; capture?: Promise<unknown>; restore?: Promise<unknown>; track?: Promise<unknown>; close?: Promise<unknown> };
 const operations = new WeakMap<object, Operations>();
 const pendingWrites = new WeakMap<object, Promise<void>>();
 const recoveryIds = new WeakMap<object, string[]>();
@@ -31,7 +31,7 @@ export function cancelCodexSessionAutoResume(): void {
   for (const controller of restoreControllers) controller.abort(new Error("Auto Resume was cancelled because the account is changing."));
 }
 
-// At most one capture and one restore: repeated requests join the original.
+// Repeated requests for the same operation join; different operations run in order.
 function serialize<T>(context: AutoResumeContext, kind: OperationKind, operation: () => Promise<T>): Promise<T> {
   let state = operations.get(context.workspaceState);
   if (!state) {
@@ -52,7 +52,7 @@ function serialize<T>(context: AutoResumeContext, kind: OperationKind, operation
   void next
     .finally(() => {
       delete owner[kind];
-      if (!owner.capture && !owner.restore && !owner.track) operations.delete(context.workspaceState);
+      if (!owner.capture && !owner.restore && !owner.track && !owner.close) operations.delete(context.workspaceState);
     })
     .catch(() => undefined);
   return next;
@@ -300,6 +300,23 @@ export type AutoResumeResult = {
   opened: number;
   failed: Array<{ sessionId: string; message: string }>;
 };
+
+/** Seal recovery before tab-close events can replace the open-tab snapshot. */
+export async function closeCodexSessionsForExtensionHostRestart(context: AutoResumeContext, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  cancelCodexSessionAutoResume();
+  await serialize(context, "close", async () => {
+    signal?.throwIfAborted();
+    if (isAutoResumeAvailable()) {
+      const ids = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
+      await writeIds(context, ids, Date.now() + STORAGE_TIMEOUT_MS);
+      recordPersistentEvent("info", "auto-resume", "Recovery sealed before closing reload tabs", { count: ids.length });
+    }
+    signal?.throwIfAborted();
+    await closeOpenCodexSessionTabs(signal, true);
+    recordPersistentEvent("info", "auto-resume", "Codex tabs closed before extension host restart");
+  });
+}
 
 /** Replace the open-tab snapshot; failed restoration remains in its separate recovery queue. */
 export function persistOpenCodexSessions(

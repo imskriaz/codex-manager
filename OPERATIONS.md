@@ -52,7 +52,7 @@ Registered commands use the same services and native notifications for explicit 
 - Navigation: `openDetails`, `openCodexHome`, `showQuotaSummary`, `showShortcuts`.
 - Sync: `configureEncryptedSync`, `syncNow`, `setEncryptedSyncRegistryOverride`.
 
-Command names above have the `codexManager.` prefix. Internal reload/recovery commands retain their existing cancellation and bounded preparation. Automatic quota/token/history refresh, Settings Sync, peer presence, claim renewal/cleanup and session recovery run independently; manual account changes can interrupt background ownership renewal.
+Command names above have the `codexManager.` prefix. Managed reloads allow 500 ms for recovery capture, then up to 8 seconds to close Codex and Manager tabs before restarting. Eligible recovery is saved before closing; incomplete capture preserves conversation tabs, and cleanup failures warn while reload continues. Automatic quota/token/history refresh, Settings Sync, peer presence, claim renewal/cleanup and session recovery run independently; manual account changes can interrupt background ownership renewal.
 
 ## Failure and recovery limits
 

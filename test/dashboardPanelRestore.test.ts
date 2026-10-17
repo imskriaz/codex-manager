@@ -40,6 +40,7 @@ describe("dashboard tab persistence", () => {
     created = panel();
     Object.assign(vscode.Uri, { joinPath: vi.fn(() => ({ fsPath: "/fixture/media" })) });
     Object.assign(vscode.window, {
+      tabGroups: { all: [], close: vi.fn(async () => true) },
       createWebviewPanel: vi.fn(() => created),
       registerWebviewPanelSerializer: vi.fn((_type: string, serializer: { deserializeWebviewPanel: typeof deserialize }) => {
         deserialize = serializer.deserializeWebviewPanel;
@@ -120,6 +121,41 @@ describe("dashboard tab persistence", () => {
     module.openQuotaSummaryPanel(state as never, {} as never);
     expect(await module.prepareQuotaSummaryPanelForExtensionHostRestart()).toBe(true);
     expect(state.workspaceState.update).toHaveBeenCalledWith(key, true);
+  });
+
+  it("closes every restored Manager tab across editor groups and reopens only one dashboard", async () => {
+    const module = await import("../src/presentation/dashboard/panel");
+    const state = context();
+    const first = { input: { viewType: "codexQuotaSummary" } };
+    const second = { input: { viewType: "mainThreadWebview-codexQuotaSummary" } };
+    const other = { input: { viewType: "another.extension" } };
+    const groups = [{ tabs: [first, other] }, { tabs: [second] }];
+    Object.assign(vscode.window.tabGroups, { all: groups });
+    vi.mocked(vscode.window.tabGroups.close).mockImplementation(async closing => {
+      expect(state.workspaceState.update).toHaveBeenCalledWith(key, true);
+      for (const group of groups) group.tabs = group.tabs.filter(tab => !(closing as unknown[]).includes(tab));
+      return true;
+    });
+    await module.closeQuotaSummaryTabsForExtensionHostRestart(state as never);
+    expect(groups.flatMap(group => group.tabs)).toEqual([other]);
+    await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
+  });
+
+  it.each(["dirty", "new dirty", "new tab", "refused", "storage full", "cancelled"])("reports %s during restored Manager tab cleanup", async failure => {
+    const module = await import("../src/presentation/dashboard/panel");
+    const state = context();
+    const controller = new AbortController();
+    const tabs: Array<{ input: { viewType: string }; isDirty?: boolean }> = [{ input: { viewType: "codexQuotaSummary" } }];
+    Object.assign(vscode.window.tabGroups, { all: [{ tabs }] });
+    if (failure === "dirty") tabs[0]!.isDirty = true;
+    if (failure === "new dirty") state.workspaceState.update.mockImplementationOnce(async () => { tabs[0]!.isDirty = true; });
+    if (failure === "new tab") state.workspaceState.update.mockImplementationOnce(async () => { tabs.push({ input: { viewType: "codexQuotaSummary" } }); });
+    if (failure === "storage full") state.workspaceState.update.mockRejectedValueOnce(new Error("storage full"));
+    if (failure === "cancelled") state.workspaceState.update.mockImplementationOnce(async () => { controller.abort(new Error("cancelled")); });
+    if (failure === "refused") vi.mocked(vscode.window.tabGroups.close).mockResolvedValue(false);
+    await expect(module.closeQuotaSummaryTabsForExtensionHostRestart(state as never, controller.signal)).rejects.toThrow();
+    if (failure !== "refused") expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
   });
 
   it("does not create a dashboard when no managed recovery exists", async () => {

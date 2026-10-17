@@ -6,7 +6,7 @@ import * as vscode from "vscode";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { configureSqliteStateStore, createSqliteMemento, SqliteStateStore } from "../src/storage/sqliteState";
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
-import { AUTO_RESUME_SESSION_IDS_KEY as queue, AUTO_RESUME_OPEN_SESSION_IDS_KEY as snapshot, persistOpenCodexSessions, persistRunningCodexSessions, registerCodexSessionAutoResumeTracking, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
+import { AUTO_RESUME_SESSION_IDS_KEY as queue, AUTO_RESUME_OPEN_SESSION_IDS_KEY as snapshot, closeCodexSessionsForExtensionHostRestart, persistOpenCodexSessions, persistRunningCodexSessions, registerCodexSessionAutoResumeTracking, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
 import { saveSessionStatus } from "../src/storage/sqliteSessions";
 import { disposeSessionRecording } from "../src/services/sessionRecording";
 import { removeTestDirectory } from "./testFilesystem";
@@ -62,6 +62,18 @@ it("captures quota-stopped parents, survives a fresh connection, verifies native
   expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith").map(([, uri]) => (uri as {path:string}).path)).toEqual([...ids,...ids.slice(0,2)].map(id=>`/local/${id}`));
   expect(store.get(namespace,queue)).toBeUndefined();expect(store.get(namespace,snapshot)).toBeUndefined();
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
+});
+
+it("seals goal recovery before reload cleanup and restores after the open-tab snapshot is replaced", async () => {
+  await persistOpenCodexSessions(context());
+  await closeCodexSessionsForExtensionHostRestart(context());
+  expect(tabs).toEqual([]);
+  expect(store.get(namespace, queue)).toEqual(ids.slice(0, 2));
+  store.set(namespace, snapshot, undefined);
+  store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
+  expect(await resumePersistedCodexSessions(context())).toEqual({ attempted: 2, opened: 2, failed: [] });
+  expect(tabs.map(tab => tab.input.uri.path)).toEqual(ids.slice(0, 2).map(id => `/local/${id}`));
+  expect(store.get(namespace, queue)).toBeUndefined();
 });
 
 it("captures quota-interrupted open tabs even when native running inspection is offline",async()=>{

@@ -81,6 +81,8 @@ export function reloadExtensionHostWithSessionCapture(
     const deadline = Date.now() + 45_000;
     const preparationDeadline = Date.now() + 500;
     const capture = new AbortController();
+    const preserveSessions = autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false);
+    let captureCompleted = false;
     let captureWarning: string | undefined;
     void vscode.window.showInformationMessage("Preparing to reload Codex Manager.");
     try {
@@ -88,8 +90,9 @@ export function reloadExtensionHostWithSessionCapture(
       // session store must never prevent the account switch reload itself.
       // Cancellation prevents a late discovery result from replacing recovery.
       await command("codexManager.prepareDashboardForExtensionHostRestart", preparationDeadline - Date.now(), [
-        { autoResume: autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false), signal: capture.signal }
+        { autoResume: preserveSessions, signal: capture.signal }
       ], false, manual.signal);
+      captureCompleted = true;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       console.warn("[codexManager] session capture did not complete before reload", error);
@@ -123,6 +126,16 @@ export function reloadExtensionHostWithSessionCapture(
     if (!delivered) {
       void vscode.window.showWarningMessage("Reload will continue, but browser notification delivery could not be confirmed. Review the dashboard once reconnected.");
     }
+    verifyAutomaticPreference();
+    const closing = new AbortController();
+    try {
+      await command("codexManager.closeEditorsForExtensionHostRestart", Math.min(8_000, deadline - Date.now()), [
+        { closeSessions: !preserveSessions || captureCompleted, signal: closing.signal }
+      ], false);
+    } catch (error) {
+      console.warn("[codexManager] editor cleanup did not complete before reload", error);
+      void vscode.window.showWarningMessage(`Reload will continue, but some Codex or Codex Manager tabs could not close: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { closing.abort(new Error("Reload editor cleanup ended.")); }
     verifyAutomaticPreference();
     if (typeof config.inspect === "function" && ["autoSwitchWaitForSessionsEnabled", "encryptedSyncClaimAllAccountsEnabled"].some(key => !config.inspect(key))) {
       await command("workbench.action.reloadWindow", deadline - Date.now());

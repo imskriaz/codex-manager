@@ -10,6 +10,7 @@ import {
   AUTO_RESUME_OPEN_SESSION_IDS_KEY,
   MAX_AUTO_RESUME_SESSIONS,
   cancelCodexSessionAutoResume,
+  closeCodexSessionsForExtensionHostRestart,
   formatAutoResumeResult,
   prepareCodexSessionsForExtensionHostRestart,
   persistRunningCodexSessions,
@@ -42,7 +43,7 @@ beforeEach(() => {
   Object.assign(vscode.window, { tabGroups: { all: [{ tabs: ids.map(id => ({ input: {
     viewType: "chatgpt.conversationEditor", uri: { scheme: "openai-codex", authority: "route", path: `/local/${id}` }
   } })) }] } });
-  vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
+  vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockReset().mockResolvedValue(undefined);
   vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockImplementation(readNativeTabs);
   vi.spyOn(sessionEditor, "readRunningCodexSessionIds").mockImplementation(async (_home, _signal, open) => open ?? []).mockClear();
   vi.spyOn(autoResumeSelection, "readAutoResumeGoalCandidateIds").mockResolvedValue([]);
@@ -53,6 +54,55 @@ beforeEach(() => {
 describe("durable open conversation recovery", () => {
   const first = "01a04882-d037-7a42-ad24-9afb61901181";
   const second = "01a04882-d037-7a42-ad24-9afb61901182";
+  it("seals recovery before closing so background tab tracking cannot erase it", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+    const state = createContext([first]);
+    state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+    vi.mocked(sessionEditor.closeOpenCodexSessionTabs).mockImplementationOnce(async () => {
+      expect(state.read()).toEqual([first, second]);
+    });
+    await closeCodexSessionsForExtensionHostRestart(state.context);
+    expect(sessionEditor.closeOpenCodexSessionTabs).toHaveBeenCalledWith(undefined, true);
+    await persistOpenCodexSessions(state.context, async () => []);
+    expect(state.read()).toEqual([first, second]);
+  });
+
+  it("closes existing editors with Auto Resume off without adding recovery", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => false } as never);
+    const state = createContext();
+    await closeCodexSessionsForExtensionHostRestart(state.context);
+    expect(sessionEditor.closeOpenCodexSessionTabs).toHaveBeenCalledWith(undefined, true);
+    expect(state.context.workspaceState.update).not.toHaveBeenCalled();
+  });
+
+  it("queues cleanup after an in-flight capture instead of joining it and skipping close", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+    const state = createContext();
+    let release!: (ids: string[]) => void;
+    const capture = persistRunningCodexSessions(state.context, () => new Promise(resolve => { release = resolve; }));
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    const closing = closeCodexSessionsForExtensionHostRestart(state.context);
+    expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();
+    release([first]);
+    await Promise.all([capture, closing]);
+    expect(sessionEditor.closeOpenCodexSessionTabs).toHaveBeenCalledOnce();
+    expect(state.read()).toEqual([first]);
+  });
+
+  it("retains existing tabs when recovery cannot be saved before closing", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+    const state = createContext([first]);
+    state.context.workspaceState.update.mockRejectedValueOnce(new Error("storage full"));
+    await expect(closeCodexSessionsForExtensionHostRestart(state.context)).rejects.toThrow("storage full");
+    expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();
+  });
+
+  it("never closes editors after reload cleanup was cancelled", async () => {
+    const state = createContext([first]);
+    const controller = new AbortController(); controller.abort(new Error("cleanup ended"));
+    await expect(closeCodexSessionsForExtensionHostRestart(state.context, controller.signal)).rejects.toThrow("cleanup ended");
+    expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();
+  });
   it("leaves disabled Auto Resume idle with no tab subscription, timer, discovery, or empty storage writes", async () => {
     vi.useFakeTimers();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => false } as never);

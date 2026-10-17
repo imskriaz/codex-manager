@@ -98,7 +98,7 @@ describe("account switch reload effects", () => {
       expect.objectContaining({ autoResume: true })
     );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(4, "workbench.action.restartExtensionHost");
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.reloadWindow");
   });
 
@@ -235,8 +235,8 @@ describe("account switch reload effects", () => {
       expect.objectContaining({ autoResume: true })
     );
     expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(2, "notifications.clearAll");
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(3, "workbench.action.restartExtensionHost");
-    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(4, "workbench.action.reloadWindow");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(4, "workbench.action.restartExtensionHost");
+    expect(vscode.commands.executeCommand).toHaveBeenNthCalledWith(5, "workbench.action.reloadWindow");
   });
 
   it("captures goal-filtered sessions for the manual Reload button", async () => {

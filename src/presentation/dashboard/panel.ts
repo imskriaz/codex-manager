@@ -569,6 +569,26 @@ export async function prepareQuotaSummaryPanelForExtensionHostRestart(signal?: A
   return dashboardPanelController?.prepareForExtensionHostRestart(signal) ?? false;
 }
 
+/** Include restored duplicates that have not reached the panel serializer yet. */
+export async function closeQuotaSummaryTabsForExtensionHostRestart(context: vscode.ExtensionContext, signal?: AbortSignal): Promise<void> {
+  await prepareQuotaSummaryPanelForExtensionHostRestart(signal);
+  signal?.throwIfAborted();
+  const readTabs = () => (vscode.window.tabGroups?.all ?? []).flatMap(group => group.tabs).filter(tab => {
+    const type = (tab.input as { viewType?: string })?.viewType;
+    return type === DASHBOARD_VIEW_TYPE || type === `mainThreadWebview-${DASHBOARD_VIEW_TYPE}`;
+  });
+  const tabs = readTabs();
+  if (!tabs.length) return;
+  if (tabs.some(tab => tab.isDirty)) throw new Error("A Codex Manager tab has unsaved changes. Save or close it before retrying.");
+  reopenAfterRestart = true;
+  await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, true);
+  signal?.throwIfAborted();
+  if (readTabs().some(tab => !tabs.includes(tab) || tab.isDirty)) throw new Error("Codex Manager tabs changed during reload cleanup. Close them and retry.");
+  const closed = await vscode.window.tabGroups.close(tabs, true);
+  signal?.throwIfAborted();
+  if (!closed || readTabs().length) throw new Error("VS Code could not close all previous Codex Manager tabs. Close them and retry.");
+}
+
 export async function restoreQuotaSummaryPanelAfterExtensionHostRestart(
   context: vscode.ExtensionContext,
   repo: AccountsRepository

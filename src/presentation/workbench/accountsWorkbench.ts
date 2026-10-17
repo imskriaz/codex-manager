@@ -13,6 +13,7 @@ import { AlwaysOnlineServer } from "../../services/alwaysOnlineServer";
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import { waitWithin } from "../../utils/concurrency";
 import {
+  closeQuotaSummaryTabsForExtensionHostRestart,
   prepareQuotaSummaryPanelForExtensionHostRestart,
   registerDashboardPanelSerializer,
   restoreQuotaSummaryPanelAfterExtensionHostRestart
@@ -23,6 +24,7 @@ import {
 } from "../../services/windowAccountMode";
 import {
   cancelCodexSessionAutoResume,
+  closeCodexSessionsForExtensionHostRestart,
   formatAutoResumeResult,
   prepareCodexSessionsForExtensionHostRestart,
   registerCodexSessionAutoResumeTracking,
@@ -113,6 +115,17 @@ export class AccountsWorkbench {
           return reopenDashboard;
         }
       ),
+      vscode.commands.registerCommand("codexManager.closeEditorsForExtensionHostRestart", async (options?: { closeSessions?: boolean; signal?: AbortSignal }) => {
+        const failures: string[] = [];
+        for (const close of [
+          () => closeQuotaSummaryTabsForExtensionHostRestart(this.context, options?.signal),
+          () => options?.closeSessions === false ? Promise.resolve() : closeCodexSessionsForExtensionHostRestart(this.context, options?.signal)
+        ]) {
+          try { await close(); }
+          catch (error) { failures.push(error instanceof Error ? error.message : String(error)); }
+        }
+        if (failures.length) throw new Error(failures.join(" "));
+      }),
       vscode.commands.registerCommand("codexManager.restoreDashboardAfterExtensionHostRestart", () =>
         restoreQuotaSummaryPanelAfterExtensionHostRestart(this.context, this.repo)
       )

@@ -102,3 +102,40 @@ describe("dashboard preferences", () => {
       expect(loadUiPreferences()).toMatchObject({ filter: "all", view: "cards", metricPriority: "hourly", accountSearch: "" });
     });
 });
+
+describe("saved chart preferences", () => {
+  it("remembers both modes' ranges and the selected historical period", async () => {
+    const storage = createStorage();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: storage } });
+    const { loadUsageGraphPreferences, saveUsageGraphPreferences } = await import("../webview-src/dashboard/preferences");
+    const preferences = { mode: "tokens", quotaRange: "6h", tokenRange: "7d", windowOffset: 3 } as const;
+    expect(saveUsageGraphPreferences(preferences)).toBe(true);
+    expect(loadUsageGraphPreferences()).toEqual(preferences);
+  });
+
+  it.each([undefined, "bad-json", "null", "[]", "42", JSON.stringify({ mode: "unknown", quotaRange: "1y", tokenRange: "1h", windowOffset: -1 }),
+    JSON.stringify({ mode: [], quotaRange: {}, tokenRange: [], windowOffset: 0.5 }), JSON.stringify({ windowOffset: 10001 }), JSON.stringify({ windowOffset: "3" })])
+    ("uses defaults for missing or invalid saved choices: %s", async raw => {
+      const { loadUsageGraphPreferences, USAGE_GRAPH_PREFERENCES_STORAGE_KEY } = await import("../webview-src/dashboard/preferences");
+      Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: createStorage(raw === undefined ? {} : { [USAGE_GRAPH_PREFERENCES_STORAGE_KEY]: raw }) } });
+      expect(loadUsageGraphPreferences()).toEqual({ mode: "quota", quotaRange: "1h", tokenRange: "30d", windowOffset: 0 });
+    });
+
+  it("preserves valid choices in a partial saved record", async () => {
+    const { loadUsageGraphPreferences, USAGE_GRAPH_PREFERENCES_STORAGE_KEY } = await import("../webview-src/dashboard/preferences");
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: createStorage({
+      [USAGE_GRAPH_PREFERENCES_STORAGE_KEY]: JSON.stringify({ mode: "tokens", tokenRange: "24h" })
+    }) } });
+    expect(loadUsageGraphPreferences()).toEqual({ mode: "tokens", quotaRange: "1h", tokenRange: "24h", windowOffset: 0 });
+  });
+
+  it("keeps charts usable when browser storage is denied or full", async () => {
+    const { loadUsageGraphPreferences, saveUsageGraphPreferences } = await import("../webview-src/dashboard/preferences");
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { get localStorage() { throw new Error("Storage denied"); } } });
+    expect(loadUsageGraphPreferences().mode).toBe("quota");
+    expect(saveUsageGraphPreferences({ mode: "tokens", quotaRange: "1h", tokenRange: "30d", windowOffset: 0 })).toBe(false);
+    const storage = createStorage();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { ...storage, setItem() { throw new Error("Storage full"); } } } });
+    expect(saveUsageGraphPreferences({ mode: "quota", quotaRange: "6h", tokenRange: "7d", windowOffset: 0 })).toBe(false);
+  });
+});
