@@ -301,7 +301,6 @@ function App() {
     if (!route) return undefined;
     return route.deviceId ? route : { ...route, deviceId: selectedCliSessionRef.current?.id === route.id ? selectedCliSessionRef.current.deviceId : undefined };
   };
-  const [dailyUsageErrorByAccount, setDailyUsageErrorByAccount] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<DashboardToast>();
   const noticeControllerRef = useRef<ReturnType<typeof createDashboardToastController>>();
   noticeControllerRef.current ??= createDashboardToastController(setNotice);
@@ -751,16 +750,6 @@ function App() {
         tokenHistoryRefresh.finish(message.requestId, message.status === "completed" && Boolean(message.payload?.dailyUsage), message.error ?? (message.status === "cancelled" ? "Refresh cancelled. Saved history was kept." : "No token history was returned. Saved history was kept."));
         if (message.status === "completed" && message.payload?.dailyUsage) {
           setUsageGraphVersion(current => current + 1);
-          setDailyUsageErrorByAccount((current) => {
-            const next = { ...current };
-            delete next[message.accountId!];
-            return next;
-          });
-        } else if (message.status === "failed") {
-          setDailyUsageErrorByAccount((current) => ({
-            ...current,
-            [message.accountId!]: message.error ?? "Daily usage could not be loaded."
-          }));
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "listCodexCliSessions") {
@@ -2238,7 +2227,6 @@ function App() {
               usageGraphRequestRef.current = sendAction("getUsageGraph", undefined, { usageGraph: query });
             }}
             dailyUsagePending={Boolean(overviewAccount && isActionPending("getDailyUsage", overviewAccount.id))}
-            dailyUsageError={overviewAccount ? dailyUsageErrorByAccount[overviewAccount.id] : undefined}
             tokenHistoryRefresh={tokenHistoryRefresh}
             onSetAutoSwitchLock={handleAutoSwitchLock}
             onAddAccount={

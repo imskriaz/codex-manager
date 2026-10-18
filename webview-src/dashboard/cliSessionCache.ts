@@ -34,7 +34,9 @@ function cliSessionKey(session: DashboardCliSessionSummary): string {
   return `${session.deviceId ?? "local"}:${session.id}`;
 }
 
-/** Preserve known folder metadata when a short/partial refresh omits it. */
+const SESSION_METADATA = ["model","reasoningEffort","goal","sessionSurface","subAgent","parentSessionId","agentName"] as const;
+
+/** Missing metadata is inconclusive; explicit goal removal and runtime status remain authoritative. */
 export function mergeCachedCliSessions(
   incoming: DashboardCliSessionSummary[],
   previous: DashboardCliSessionSummary[]
@@ -42,7 +44,7 @@ export function mergeCachedCliSessions(
   const previousByKey = new Map(previous.map((session) => [cliSessionKey(session), session]));
   return incoming.map((session) => {
     const prior = previousByKey.get(cliSessionKey(session));
-    return prior?.projectPath && !session.projectPath ? { ...session, projectPath: prior.projectPath } : session;
+    return mergeCachedCliSession(session,prior);
   });
 }
 
@@ -50,7 +52,13 @@ export function mergeCachedCliSession(
   incoming: DashboardCliSessionSummary,
   previous?: DashboardCliSessionSummary
 ): DashboardCliSessionSummary {
-  return sameCliSessionTarget(incoming, previous) && previous?.projectPath && !incoming.projectPath ? { ...incoming, projectPath: previous.projectPath } : incoming;
+  if (!previous || !sameCliSessionTarget(incoming,previous) ||
+      !(previous.projectPath && !incoming.projectPath || SESSION_METADATA.some(key=>incoming[key]===undefined && previous[key]!==undefined))) return incoming;
+  return { ...incoming,projectPath:incoming.projectPath || previous.projectPath,
+    model:incoming.model ?? previous.model,reasoningEffort:incoming.reasoningEffort ?? previous.reasoningEffort,
+    goal:incoming.goal === undefined ? previous.goal : incoming.goal,
+    sessionSurface:incoming.sessionSurface ?? previous.sessionSurface,subAgent:incoming.subAgent ?? previous.subAgent,
+    parentSessionId:incoming.parentSessionId ?? previous.parentSessionId,agentName:incoming.agentName ?? previous.agentName };
 }
 
 let cacheDatabase: Promise<IDBDatabase | undefined> | undefined;

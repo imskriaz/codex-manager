@@ -16,7 +16,6 @@ const readinessWaiters = new Map<string, number>();
 let socket: net.Socket | undefined;
 let connecting: Promise<void> | undefined;
 let clientId = "initializing-client";
-let idleTimer: ReturnType<typeof setTimeout> | undefined;
 let connectionRevision = 0;
 const requests = new Map<string, { resolve: (message: NativeMessage) => void; reject: (error: Error) => void; cleanup: () => void }>();
 
@@ -115,14 +114,16 @@ function receive(message: NativeMessage): void {
 }
 
 export function getNativeCodexSessionRunning(home: string, id: string): boolean | undefined {
-  return socket ? observations.get(`${path.resolve(home)}:${id}`)?.running : undefined;
+  const entry = socket ? observations.get(`${path.resolve(home)}:${id}`) : undefined;
+  if (entry) entry.usedAt = Date.now();
+  return entry?.running;
 }
 
 /** A published tab can still be loading; wait for its verified native runtime before recovery. */
-export async function waitForNativeCodexSessionReady(home: string, id: string, signal?: AbortSignal): Promise<boolean | undefined> {
+export async function waitForNativeCodexSessionReady(home: string, id: string, signal?: AbortSignal, timeoutMs = 40_000): Promise<boolean | undefined> {
   const key = `${path.resolve(home)}:${id}`;
   readinessWaiters.set(key, (readinessWaiters.get(key) ?? 0) + 1);
-  const deadline = Date.now() + 40_000;
+  const deadline = Date.now() + timeoutMs;
   let rediscoverAt = 0;
   try {
     while (Date.now() < deadline) {
@@ -154,8 +155,6 @@ export async function waitForNativeCodexSessionReady(home: string, id: string, s
 
 export function disposeNativeCodexSessionStatus(): void {
   connectionRevision++;
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = undefined;
   const old = socket; socket = undefined; clientId = "initializing-client";
   for (const request of requests.values()) { request.cleanup(); request.reject(new Error("The Codex owner disconnected. The request outcome is unconfirmed; check the conversation before retrying.")); }
   requests.clear();
@@ -270,7 +269,8 @@ export async function readNativeCodexSessionRunning(home: string, id: string, si
     entry = observations.get(key);
     if (!entry) {
       if (observations.size >= 256) {
-        const oldest = [...observations].filter(([key, value]) => !value.waiters.size && !readinessWaiters.has(key)).sort((a, b) => a[1].usedAt - b[1].usedAt)[0];
+        const oldest = [...observations].filter(([key, value]) => !value.waiters.size && !readinessWaiters.has(key))
+          .sort((a, b) => Number(a[1].running === true)-Number(b[1].running === true) || a[1].usedAt-b[1].usedAt)[0];
         if (!oldest) return undefined;
         follow(oldest[1], false); observations.delete(oldest[0]);
       }
@@ -279,8 +279,6 @@ export async function readNativeCodexSessionRunning(home: string, id: string, si
     if (clientId !== "initializing-client") follow(entry, true);
   }
   entry.usedAt = Date.now();
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(disposeNativeCodexSessionStatus, 30_000); idleTimer.unref();
   await connect(home);
   if (revision !== connectionRevision) return undefined;
   if (!socket) { observations.delete(key); return undefined; }

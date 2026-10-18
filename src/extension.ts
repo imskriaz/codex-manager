@@ -3,6 +3,7 @@ import { waitWithin } from "./utils/concurrency";
 import { maintainManagerDatabases } from "./storage/storageCleanup";
 import { getSqliteStateStore } from "./storage/sqliteState";
 import { registerSessionRecording, disposeSessionRecording } from "./services/sessionRecording";
+import { disposeNativeCodexSessionStatus } from "./services/codexNativeSessionStatus";
 import { onDidChangeConfiguration } from "./storage/configurationEvents";
 import * as vscode from "vscode";
 import { AccountsWorkbench } from "./presentation/workbench/accountsWorkbench";
@@ -140,6 +141,7 @@ export async function deactivate(): Promise<void> {
   transientNotices = undefined;
   disposeCodexProxyEnvironment();
   await disposeCrossWindowAccountMode();
+  disposeNativeCodexSessionStatus();
   disposeSessionRecording();
   await disposePersistentLogging(true);
   disposeSqliteContext();

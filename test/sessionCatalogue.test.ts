@@ -8,16 +8,51 @@ import { SqliteStateStore, configureSqliteStateStore } from "../src/storage/sqli
 import { getCodexHomeStateKey } from "../src/codex/authFile";
 import { invalidateSessionCatalogue, readSessionCatalogue, saveSessionCatalogue, pruneSessionCache, removeDeletedSessionCache, saveSessionStatus } from "../src/storage/sqliteSessions";
 import { readCodexCliSessions } from "../src/services/codexSessionResume";
+import { getNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 import type { DashboardCliSessionSummary } from "../src/domain/dashboard/types";
 let root: string, store: SqliteStateStore;
 const row: DashboardCliSessionSummary = { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", title: "Older project work", projectPath: "D:/project", status: "idle", archived: false };
 beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "session-catalogue-")); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store); });
-afterEach(async () => { configureSqliteStateStore(undefined); store.close(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { configureSqliteStateStore(undefined); store.close(); vi.useRealTimers(); vi.mocked(fs.access).mockReset(); vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
 it("shows persisted metadata immediately after reopening without scanning history", async () => {
   const generation = invalidateSessionCatalogue(store, root); saveSessionCatalogue(store, root, generation, [row], Date.now());
   store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
   const scan = vi.spyOn(fs, "readdir").mockClear();
   expect(await readCodexCliSessions(root)).toEqual([row]); expect(scan).not.toHaveBeenCalled();
+});
+it("keeps verified running rows through stale metadata refresh using one batch status query", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const generation = invalidateSessionCatalogue(store, root);
+  const rows = Array.from({length:100},(_,n) => ({...row,id:`${n.toString(16).padStart(8,"0")}-aaaa-aaaa-aaaa-aaaaaaaaaaaa`,status:"running" as const}));
+  saveSessionCatalogue(store,root,generation,rows,Date.now());
+  vi.setSystemTime(Date.now()+6_000);
+  for (const item of rows) saveSessionStatus(store,root,item.id,"running");
+  vi.spyOn(fs,"access").mockRejectedValue(new Error("history drive offline"));
+  const query = vi.spyOn(store,"prepare");
+  const result = await readCodexCliSessions(root);
+  expect(result.every(item => item.status === "running" && !item.statusError)).toBe(true);
+  expect(query.mock.calls.filter(([sql]) => sql.startsWith("SELECT session_id,status FROM session_status"))).toHaveLength(1);
+  expect(query.mock.calls.filter(([sql]) => sql.includes("session_status WHERE home=? AND session_id=?"))).toHaveLength(0);
+});
+it.each(["running","idle","unknown"] as const)("overlays fresh %s status without rescanning cached history", async status => {
+  const generation = invalidateSessionCatalogue(store,root);
+  saveSessionCatalogue(store,root,generation,[{...row,status:"unknown",locked:true,statusError:"Previous scan failed"}],Date.now());
+  saveSessionStatus(store,root,row.id,status);
+  const scan = vi.spyOn(fs,"readdir").mockClear();
+  expect((await readCodexCliSessions(root))[0]).toMatchObject({status,locked:status!=="idle",canStop:false});
+  if (status !== "unknown") expect((await readCodexCliSessions(root))[0]?.statusError).toBeUndefined();
+  expect(scan).not.toHaveBeenCalled();
+});
+it("uses native transitions before their buffered write, and never promotes expired status", async () => {
+  vi.useFakeTimers({toFake:["Date"]});
+  const generation = invalidateSessionCatalogue(store,root);
+  saveSessionCatalogue(store,root,generation,[{...row,status:"running"}],Date.now());
+  saveSessionStatus(store,root,row.id,"running");
+  vi.mocked(getNativeCodexSessionRunning).mockReturnValueOnce(false);
+  expect((await readCodexCliSessions(root))[0]?.status).toBe("idle");
+  vi.setSystemTime(Date.now()+31_000);
+  vi.spyOn(fs,"access").mockRejectedValue(new Error("native storage offline"));
+  expect((await readCodexCliSessions(root))[0]).toMatchObject({status:"unknown",locked:true,canStop:false});
 });
 it("prevents an old scan from restoring deleted metadata and isolates Codex homes", () => {
   const old = invalidateSessionCatalogue(store, root); saveSessionCatalogue(store, root, old, [row], Date.now());

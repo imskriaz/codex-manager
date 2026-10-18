@@ -71,12 +71,14 @@ describe("session discovery recovery", () => {
       db.prepare("INSERT INTO threads VALUES (?, ?, ?)").run(id, "Database title", process.platform === "win32" ? `\\\\?\\${root}` : root);
     } finally { db.close(); }
     const read = vi.spyOn(fs, "readdir").mockClear();
+    const index = vi.spyOn(fs,"open").mockClear();
     expect(await readCodexCliSessionRecoveryMetadata([id], root)).toEqual({ [id]: { title: "Database title", projectPath: root, updatedAt: expect.any(Number) } });
     expect(read.mock.calls.every(([folder]) => String(folder) === root)).toBe(true);
+    expect(index.mock.calls.some(([file]) => String(file).endsWith("session_index.jsonl"))).toBe(false);
     expect(mocks.open).not.toHaveBeenCalled();
   });
   it("reads a database-only session directly without launching App Server or walking unrelated history", async () => {
-    await rm(path.join(root, "session_index.jsonl"));
+    await writeFile(path.join(root,"session_index.jsonl"),"x".repeat(6*1024*1024));
     const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`);
     await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: { id, cwd: root, source: "vscode" } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } }) + "\n");
     const db = new DatabaseSync(path.join(root, "state_5.sqlite"));
@@ -141,6 +143,17 @@ describe("session discovery recovery", () => {
     expect((await readCodexCliSessionMessages(id)).map((message) => message.text)).toContain("First update");
     await appendFile(transcript, JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Live update" }] } }) + "\n");
     expect((await readCodexCliSessionMessages(id)).map((message) => message.text)).toContain("Live update");
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+  it("resolves each transcript path once per read and keeps unchanged message polls byte-free",async()=>{
+    const transcript=path.join(root,"sessions",`rollout-${id}.jsonl`);
+    await writeFile(transcript,JSON.stringify({type:"response_item",payload:{type:"message",role:"assistant",content:[{type:"output_text",text:"Stable messages"}]}})+"\n");
+    const directories=vi.spyOn(fs,"readdir").mockClear();
+    expect((await readCodexCliSessionMessages(id))[0]?.text).toBe("Stable messages");
+    expect(directories.mock.calls.filter(([folder])=>String(folder)===root)).toHaveLength(1);
+    directories.mockClear();
+    expect((await readCodexCliSessionMessages(id))[0]?.text).toBe("Stable messages");
+    expect(directories.mock.calls.filter(([folder])=>String(folder)===root)).toHaveLength(1);
     expect(mocks.open).not.toHaveBeenCalled();
   });
 });

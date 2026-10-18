@@ -302,6 +302,24 @@ describe("durable open conversation recovery", () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it("keeps tracking after manual work cancels the delayed startup restore", async () => {
+    vi.useFakeTimers();
+    const state=createContext();
+    const start=vi.fn();
+    const select=vi.spyOn(autoResumeSelection,"readAutoResumeCodexSessionIds").mockResolvedValue([first]);
+    const tracker=registerCodexSessionAutoResumeTracking(state.context);
+    scheduleCodexSessionAutoResume(start);
+    cancelCodexSessionAutoResume();
+    try {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(start).not.toHaveBeenCalled();
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+      select.mockResolvedValue([second]);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([second]);
+    } finally {tracker.dispose();select.mockRestore();vi.useRealTimers();}
+  });
+
   it.each(["metadata", "goals", "storage", "timeout"])(
     "quietly retains saved tabs and automatically retries a background %s failure", async (failure) => {
       vi.useFakeTimers();
@@ -888,12 +906,12 @@ describe("Codex session auto resume", () => {
     expect(state.context.workspaceState.update).toHaveBeenCalledWith(AUTO_RESUME_SESSION_IDS_KEY, ids);
   });
 
-  it("allows a cold native tab forty seconds while preserving its recovery record until opened", async () => {
+  it("allows a hundred-second native startup while preserving recovery until opened", async () => {
     vi.useFakeTimers();
     try {
       const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
-      const work = resumePersistedCodexSessions(state.context, async () => { await new Promise(resolve => setTimeout(resolve, 40_000)); });
-      await vi.advanceTimersByTimeAsync(30_000); expect(state.read()).toEqual([id]);
+      const work = resumePersistedCodexSessions(state.context, async () => { await new Promise(resolve => setTimeout(resolve, 100_000)); });
+      await vi.advanceTimersByTimeAsync(90_000); expect(state.read()).toEqual([id]);
       await vi.advanceTimersByTimeAsync(10_001); expect((await work).opened).toBe(1); expect(state.read()).toBeUndefined();
     } finally { vi.useRealTimers(); }
   });
@@ -905,11 +923,11 @@ describe("Codex session auto resume", () => {
         id === "01a04882-d037-7a42-ad24-9afb61901181" ? new Promise<void>(() => {}) : Promise.resolve()
       );
       const pending = resumePersistedCodexSessions(state.context, open);
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(180_000);
       const result = await pending;
       expect(result.opened).toBe(1);
       expect(result.failed).toHaveLength(1);
-      expect(result.failed[0]?.message).toContain("45 seconds");
+      expect(result.failed[0]?.message).toContain("135 seconds");
       expect(open).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -1050,7 +1068,7 @@ describe("Codex session auto resume", () => {
         signal = token;
         await new Promise(() => {});
       });
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(135_001);
       expect((await result).failed).toHaveLength(1);
       expect(signal?.aborted).toBe(true);
       expect(state.read()).toEqual(["01a04882-d037-7a42-ad24-9afb61901181"]);
@@ -1058,6 +1076,28 @@ describe("Codex session auto resume", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("bounds repeated slow editors by the whole recovery deadline and aborts for manual work", async () => {
+    vi.useFakeTimers();
+    try {
+      const ids=["01a04882-d037-7a42-ad24-9afb61901181","01a04882-d037-7a42-ad24-9afb61901182","01a04882-d037-7a42-ad24-9afb61901183"];
+      const state=createContext(ids);
+      const signals:AbortSignal[]=[];
+      const open=vi.fn(async (_id:string,signal?:AbortSignal)=>{signals.push(signal!);await new Promise(()=>{});});
+      const work=resumePersistedCodexSessions(state.context,open);
+      await vi.advanceTimersByTimeAsync(180_001);
+      expect((await work).failed).toHaveLength(3);
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(signals.every(signal=>signal.aborted)).toBe(true);
+      expect(state.read()).toEqual(ids);
+      const retry=resumePersistedCodexSessions(state.context,open);
+      await vi.advanceTimersByTimeAsync(0);
+      cancelCodexSessionAutoResume("manual action");
+      expect((await retry).failed).toHaveLength(3);
+      expect(state.read()).toEqual(ids);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {vi.useRealTimers();}
   });
 
   it("trims and deduplicates persisted state and produces visible completion copy", async () => {
@@ -1107,4 +1147,22 @@ it("does not log unchanged background recovery snapshots", async () => {
     await persistOpenCodexSessions(state.context, async () => [id]);
     expect(event.mock.calls.filter(call => call[2] === "Background recovery snapshot updated")).toHaveLength(0);
   } finally { event.mockRestore(); }
+});
+
+it("avoids title reads and storage writes for reordered unchanged recovery, then refreshes stale titles", async () => {
+  vi.useFakeTimers();
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:()=>true} as never);
+  const ids=["01a04882-d037-7a42-ad24-9afb61901181","01a04882-d037-7a42-ad24-9afb61901182"],state=createContext();
+  const read=vi.mocked(sessionEditor.readCodexCliSessionRecoveryMetadata).mockImplementation(async()=>Object.fromEntries(ids.map(id=>[id,{title:"Current title",updatedAt:Date.now()}])));
+  try {
+    await persistOpenCodexSessions(state.context,async()=>ids);
+    read.mockClear();state.context.workspaceState.update.mockClear();
+    await persistOpenCodexSessions(state.context,async()=>[...ids].reverse());
+    expect(read).not.toHaveBeenCalled();
+    expect(state.context.workspaceState.update).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_001);
+    await persistOpenCodexSessions(state.context,async()=>ids);
+    expect(read).toHaveBeenCalledOnce();
+    expect(state.context.workspaceState.update).toHaveBeenCalledWith(AUTO_RESUME_METADATA_KEY,expect.any(Object));
+  } finally {vi.useRealTimers();}
 });

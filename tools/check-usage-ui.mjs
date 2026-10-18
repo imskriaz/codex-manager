@@ -313,7 +313,8 @@ try {
     await menu.getByText("Updated", { exact: true }).waitFor();
     await page.evaluate(() => { window.__failDaily = "b"; });
     await page.getByRole("button", { name: "Refresh token history for b@example.invalid", exact: true }).click();
-    await menu.getByRole("alert").filter({ hasText: "Token endpoint temporarily unavailable." }).first().waitFor();
+    await menu.locator(".usage-graph-cache-row").filter({hasText:"b@example.invalid"}).getByText("Failed",{exact:true}).waitFor();
+    assert.equal(await menu.getByRole("alert").filter({hasText:"Token endpoint temporarily unavailable."}).count(),0);
     assert.equal(await page.locator(".dashboard-notice-stack").count(), 0, "Token failures stay out of toasts");
     assert.doesNotMatch(await chart.innerText(), /Token endpoint temporarily unavailable/);
     assert.ok((await menu.locator(".usage-graph-cache-row").first().boundingBox()).height <= 24, "Each account stays on one compact line");
@@ -329,6 +330,9 @@ try {
         await page.screenshot({ path: path.join(output, "bulk-failure.png") });
         throw error;
       });
+      assert.equal(await menu.locator(".usage-graph-settings-error").filter({hasText:"Token endpoint temporarily unavailable."}).count(),0,"Daily failures do not add the removed error block");
+      await menu.locator(".usage-graph-cache-row").filter({hasText:"b@example.invalid"}).getByText("Failed",{exact:true}).waitFor();
+      await page.screenshot({path:path.join(output,"usage-refresh-failure-1440.png")});
     }
     if (width === 1440) {
       await page.keyboard.press("Escape");

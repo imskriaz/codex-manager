@@ -46,6 +46,14 @@ describe("Codex VS Code session editor", () => {
     expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
   });
 
+  it("passes the longer automatic readiness budget without changing manual opens", async () => {
+    const id="01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    await openCodexSessionInVsCode(id);
+    expect(waitForNativeCodexSessionReady).toHaveBeenLastCalledWith(expect.any(String),id,undefined,40_000);
+    await openCodexSessionInVsCode(id,undefined,false,120_000);
+    expect(waitForNativeCodexSessionReady).toHaveBeenLastCalledWith(expect.any(String),id,undefined,120_000);
+  });
+
   it("resolves restored editors across groups, then closes only conversation tabs", async () => {
     const groups = vscode.window.tabGroups.all as unknown as Array<{ tabs: Array<{ input: unknown; isDirty?: boolean; group?: { viewColumn: number } }> }>;
     const native = (id: string, column: number) => ({ input: { viewType: "chatgpt.conversationEditor", uri: { scheme: "openai-codex", authority: "route", path: `/local/${id}` } }, group: { viewColumn: column } });

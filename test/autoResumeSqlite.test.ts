@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { configureSqliteStateStore, createSqliteMemento, SqliteStateStore } from "../src/storage/sqliteState";
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
 import { AUTO_RESUME_METADATA_KEY as metadata, AUTO_RESUME_SESSION_IDS_KEY as queue, AUTO_RESUME_OPEN_SESSION_IDS_KEY as snapshot, closeCodexSessionsForExtensionHostRestart, formatAutoResumeResult, persistOpenCodexSessions, persistRunningCodexSessions, registerCodexSessionAutoResumeTracking, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
-import { saveSessionStatus } from "../src/storage/sqliteSessions";
+import { saveSessionDiscovery, saveSessionStatus } from "../src/storage/sqliteSessions";
 import { disposeSessionRecording } from "../src/services/sessionRecording";
 import { removeTestDirectory } from "./testFilesystem";
 import * as sessionEditor from "../src/services/codexSessionResume";
@@ -131,6 +131,48 @@ it("retains previously recorded quota recovery when native running inspection is
 it("does not add idle quota goals without a previously running record",async()=>{
   await persistOpenCodexSessions(context());
   expect(store.get(namespace,snapshot)).toBeUndefined();
+});
+it("records native non-goal sidebar chats without an editor or dashboard and clears confirmed completion",async()=>{
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string)=>key!=="autoResumeGoalOnlyEnabled" && key!=="cliIntegrationEnabled"} as never);
+  tabs=[];
+  const goals=new DatabaseSync(path.join(root,"goals_1.sqlite"));goals.exec("DELETE FROM thread_goals");goals.close();
+  saveSessionStatus(store,root,ids[0]!,"running");
+  saveSessionDiscovery(store,root,[ids[0]!],Date.now());
+  await persistOpenCodexSessions(context());
+  expect(store.get(namespace,snapshot)).toEqual([ids[0]]);
+  store.close();store=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(store);
+  expect(store.get(namespace,snapshot)).toEqual([ids[0]]);
+  const transcript=path.join(root,"sessions",`rollout-${ids[0]}.jsonl`);
+  await writeFile(transcript,JSON.stringify({type:"session_meta",payload:{id:ids[0],source:"vscode",cwd:root}})+"\n"+JSON.stringify({type:"event_msg",payload:{type:"task_complete",turn_id:"quota-turn"}})+"\n");
+  saveSessionStatus(store,root,ids[0]!,"idle",Date.now()+1);
+  await persistOpenCodexSessions(context());
+  expect(store.get(namespace,snapshot)).toBeUndefined();
+});
+it("keeps recording in the same workspace while startup restoration is waiting for a native editor",async()=>{
+  store.set(namespace,snapshot,[ids[0]]);
+  const state=context();
+  let release!:()=>void;
+  const restoring=resumePersistedCodexSessions(state,()=>new Promise<void>(resolve=>{release=resolve;}));
+  await vi.waitFor(()=>expect(release).toBeTypeOf("function"));
+  for(const id of ids)saveSessionStatus(store,root,id,id===ids[1]?"running":"idle");
+  saveSessionDiscovery(store,root,[ids[1]!],Date.now());
+  disposables.push(registerCodexSessionAutoResumeTracking(state));
+  try {
+    await vi.waitFor(()=>expect(store.get<string[]>(namespace,snapshot)).toContain(ids[1]));
+    expect(store.get(namespace,queue)).toEqual([ids[0]]);
+  } finally {release();await restoring;}
+  expect(store.get(namespace,queue)).toBeUndefined();
+});
+it("does not overwrite a newer title committed while a metadata capture was waiting",async()=>{
+  const state=context(),now=Date.now();
+  let finish!:(value:Record<string,{title:string;updatedAt:number}>)=>void;
+  vi.spyOn(sessionEditor,"readCodexCliSessionRecoveryMetadata").mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+  const capture=persistOpenCodexSessions(state,async()=>[ids[0]!]);
+  await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
+  store.set(namespace,metadata,{[ids[0]!]:{title:"Newer native title",updatedAt:now+1}});
+  finish({[ids[0]!]:{title:"Older capture",updatedAt:now}});
+  await capture;
+  expect(store.get<Record<string,{title:string}>>(namespace,metadata)?.[ids[0]!]!.title).toBe("Newer native title");
 });
 
 it("rolls back the snapshot transfer before opening tabs when its second write fails",async()=>{

@@ -81,7 +81,6 @@ export function OverviewSection(props: {
   usageGraphPaused?: boolean;
   onLoadUsageGraph?: (query: DashboardUsageGraphQuery) => void;
   dailyUsagePending?: boolean;
-  dailyUsageError?: string;
   tokenHistoryRefresh?: ReturnType<typeof useTokenHistoryRefresh>;
   onSetAutoSwitchLock: (minutes: number) => void;
   onAddAccount: () => void;
@@ -319,7 +318,6 @@ export function OverviewSection(props: {
               onLoadUsageGraph={props.onLoadUsageGraph}
               automaticTokenHistory={props.settings.dailyTokenUsageEnabled === true}
               dailyUsagePending={props.dailyUsagePending}
-              dailyUsageError={props.dailyUsageError}
               tokenHistoryRefresh={props.tokenHistoryRefresh}
             />
           ) : null}
@@ -778,7 +776,6 @@ function UsageGraph(props: {
   usageGraphPaused?: boolean;
   onLoadUsageGraph?: (query: DashboardUsageGraphQuery) => void;
   dailyUsagePending?: boolean;
-  dailyUsageError?: string;
   tokenHistoryRefresh?: ReturnType<typeof useTokenHistoryRefresh>;
 }) {
   const [preferences, setPreferences] = useState(loadUsageGraphPreferences);
@@ -876,14 +873,13 @@ function UsageGraph(props: {
   }, [props.automaticTokenHistory, data, props.accounts, props.usageGraphPending, props.usageGraphError, props.tokenHistoryRefresh?.statuses]);
   useEffect(() => { setAccountSummary(undefined); }, [graphMode, activeRange, windowOffset, props.usageGraphSource]);
   useEffect(() => { if (settingsOpen) setAccountSummary(undefined); }, [settingsOpen]);
-  const refreshErrors = Object.entries(props.tokenHistoryRefresh?.statuses ?? {}).filter(([, status]) => status.state === "error");
   const plotEvents = useMemo(() => graphMode === "tokens" ? consolidateDailyUsageEvents(events) : events, [events, graphMode]);
   const maximum = resolveUsageAxisMaximum(Math.max(0, ...plotEvents.map(event => event.used)));
   const bars = useMemo(() => layoutUsageGraphBars(plotEvents, graphStartAt, graphEndAt, bucketCount, maximum), [plotEvents, graphStartAt, graphEndAt, bucketCount, maximum]);
   const accountIds = new Set(events.map(event => event.accountId));
   const legend = props.accounts.filter(account => !accountIds.size || accountIds.has(account.id));
   const total = events.reduce((sum, event) => sum + event.used, 0);
-  const error = props.usageGraphError ?? (graphMode === "tokens" ? props.dailyUsageError : undefined);
+  const error = props.usageGraphError;
   const feedback = error ?? (data?.truncated ? "Only the latest 10,000 records are shown. Choose a shorter range for complete detail." : props.usageGraphPending || (graphMode === "tokens" && props.dailyUsagePending) ? "Updating saved usage…" : undefined);
   const formatAxis = (value: number) => graphMode === "tokens" ? formatTokenCount(value) : formatUsageValue(value);
   const showBar = (bar: UsageGraphBar, target: SVGRectElement): void => {
@@ -982,7 +978,6 @@ function UsageGraph(props: {
                   </div>;
                 })}
               </div>
-              {graphMode === "tokens" && refreshErrors.length ? <div class="usage-graph-settings-error" role="alert">{refreshErrors.map(([id, status]) => `${accountMap.get(id)?.label ?? "Account"}: ${status.message}`).join("\n")}</div> : null}
               {feedback ? <div class="usage-graph-settings-error" role={error || data?.truncated ? "alert" : "status"}>{feedback}</div> : null}
               {props.usageGraphError ? <button type="button" disabled={props.usageGraphPending} aria-label="Retry saved graph" onClick={() => loadQueryRef.current?.(queryWindow)}>Retry</button> : null}
               {preferenceSaveFailed ? <div class="usage-graph-settings-error" role="alert">Chart choices could not be saved on this device.</div> : null}

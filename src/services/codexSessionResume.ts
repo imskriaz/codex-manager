@@ -17,7 +17,7 @@ import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./code
 import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
 import { recordNativeSessionStatus, recordSessionLive } from "./sessionRecording";
 import { publishDashboardRealtime } from "./dashboardRealtime";
-import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatus, readSessionCatalogue, saveSessionCatalogue, invalidateSessionCatalogue, removeDeletedSessionCache } from "../storage/sqliteSessions";
+import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatuses, readSessionCatalogue, saveSessionCatalogue, invalidateSessionCatalogue, removeDeletedSessionCache } from "../storage/sqliteSessions";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -29,7 +29,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
-import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile } from "../storage/sqliteState";
+import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, type SqliteStateStore } from "../storage/sqliteState";
 import { normalizeNativePath } from "../utils/nativePaths";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
@@ -186,7 +186,7 @@ export async function readCodexCliSessions(
       const work = fs.access(codexHome).then(() => readLocalSessionList(codexHome, limit, generation)).then(rows => {
         try { saveSessionCatalogue(store, codexHome, generation, rows, startedAt); }
         catch (error) { recordPersistentEvent("warning", "session-list", "Session cache could not be saved; live history remains available", undefined, error); }
-        return rows;
+        return withCurrentSessionStatuses(store,codexHome,rows);
       }).finally(() => { if (catalogueRefreshes.get(key) === work) catalogueRefreshes.delete(key); });
       catalogueRefreshes.set(key, work);
       return work;
@@ -194,13 +194,31 @@ export async function readCodexCliSessions(
     if (!force && cached && !cached.invalidated) {
       const stale = Date.now() - cached.checkedAt >= 5_000 || cached.bootAt < Date.now() - os.uptime() * 1000 - 60_000;
       if (stale) void refresh().catch(error => recordPersistentEvent("warning", "session-list", "Saved history retained while discovery retries", undefined, error));
-      return stale ? cached.rows.map(row => row.status === "running" ? { ...row, status: "unknown", statusError: "Checking saved running activity. Refresh before sending.", locked: true, canStop: false } : row) : cached.rows;
+      return withCurrentSessionStatuses(store,codexHome,cached.rows,stale);
     }
     return refresh();
   } catch (error) {
     recordPersistentEvent("warning", "session-list", "Session cache unavailable; reading local history", undefined, error);
     return readLocalSessionList(codexHome, limit);
   }
+}
+
+function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:DashboardCliSessionSummary[],stale = false): DashboardCliSessionSummary[] {
+  const statuses = readSessionStatuses(store,home);
+  return rows.map(row => {
+    if (row.archived) return row;
+    const native = getNativeCodexSessionRunning(home,row.id);
+    const current = native === undefined ? statuses.get(row.id) : native ? "running" : "idle";
+    if (current === undefined && (!stale || row.status !== "running")) return row;
+    const status = current === "starting" ? "unknown" : current ?? "unknown";
+    if (status !== "running" && status !== "idle" && status !== "unknown") return row;
+    const canStop = status === "running" && ownsSessionTurn(home,row.id);
+    return { ...row,status,canStop,locked:status !== "idle",
+      statusError:status === "unknown" ? row.statusError ?? "Checking saved running activity. Refresh before sending." : undefined,
+      runningBy:status === "running" ? canStop ? "Codex Manager" : "another Codex process" : undefined,
+      runningSince:status === "running" ? row.runningSince : undefined,
+      interrupted:status === "running" ? false : row.interrupted };
+  });
 }
 
 async function readLocalSessionList(codexHome: string, limit: number, generation = ""): Promise<DashboardCliSessionSummary[]> {
@@ -346,7 +364,9 @@ export type CodexSessionRecoveryMetadata = { title?: string; projectPath?: strin
 export async function readCodexCliSessionRecoveryMetadata(ids: string[], home = resolveCodexHome()): Promise<Record<string, CodexSessionRecoveryMetadata>> {
   ids.forEach(validateSessionId);
   if (!ids.length) return {};
-  const [state, index] = await Promise.all([readStateSessionRecords(home, ids), readCodexCliSessionIndex(home)]);
+  const state = await readStateSessionRecords(home, ids);
+  const titled = new Set(state.filter(record => normalizeSessionTitle(record.title,record.id) !== "Untitled conversation").map(record => record.id));
+  const index = ids.every(id => titled.has(id)) ? [] : await readCodexCliSessionIndex(home);
   const wanted = new Set(ids);
   const titles: Record<string, CodexSessionRecoveryMetadata> = {};
   for (const entry of index) {
@@ -369,7 +389,9 @@ export async function readCodexCliSessionSummary(
   const recent = recentNewSessions.get(sessionId)?.summary;
   if (recent && ownsSessionTurn(codexHome, sessionId)) return recent;
   const state = (await readStateSessionRecords(codexHome, sessionId))[0];
-  const entry = (await readCodexCliSessionIndex(codexHome)).find((candidate) => candidate.id === sessionId)
+  const entry = state && normalizeSessionTitle(state.title,sessionId) !== "Untitled conversation"
+    ? { id:state.id,thread_name:state.title,updated_at:state.updatedAt }
+    : (await readCodexCliSessionIndex(codexHome)).find((candidate) => candidate.id === sessionId)
     ?? (state ? { id: state.id, thread_name: state.title, updated_at: state.updatedAt } : undefined);
   if (!entry) {
     const recent = recentNewSessions.get(sessionId)?.summary;
@@ -422,8 +444,9 @@ export function readRecentRunningCodexSessionIds(codexHome = resolveCodexHome(),
     try {
       revision = store.revision("session-status");
       if (sessionIds) {
-        const statuses = sessionIds.map(id => readSessionStatus(store,codexHome,id));
-        if (statuses.every(status => status !== "unknown")) return sessionIds.filter((_id,index) => statuses[index] === "running" || statuses[index] === "starting");
+        const statuses = readSessionStatuses(store,codexHome);
+        if (sessionIds.every(id => statuses.has(id) && statuses.get(id) !== "unknown"))
+          return sessionIds.filter(id => statuses.get(id) === "running" || statuses.get(id) === "starting");
       }
       const shared = readSessionDiscovery(store,codexHome);
       full = shared;
@@ -1151,7 +1174,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
 /** Open a local Codex session in the official VS Code conversation editor. */
 const AUTO_RESUME_EDITOR_SETTLE_MS = 1_000;
 
-export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal, focusWindow = false): Promise<void> {
+export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal, focusWindow = false, readinessTimeoutMs = 40_000): Promise<void> {
   validateSessionId(sessionId);
   signal?.throwIfAborted();
   sessionId = sessionId.toLowerCase();
@@ -1160,7 +1183,7 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
   if (pending) {
     await pending.catch(() => undefined);
     signal?.throwIfAborted();
-    return openCodexSessionInVsCode(sessionId, signal, focusWindow);
+    return openCodexSessionInVsCode(sessionId, signal, focusWindow, readinessTimeoutMs);
   }
   const opening = (async () => {
     await activateOfficialCodexExtension();
@@ -1206,7 +1229,7 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
       signal?.throwIfAborted();
     }
     if (focusWindow) await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
-    const ready = await waitForNativeCodexSessionReady(resolveCodexHome(), sessionId, signal);
+    const ready = await waitForNativeCodexSessionReady(resolveCodexHome(), sessionId, signal, readinessTimeoutMs);
     signal?.throwIfAborted();
     recordPersistentEvent(ready === false ? "warning" : "debug", "session-editor", "Codex conversation readiness checked", { sessionRef: toSessionLogRef(sessionId), ready: ready ?? "unavailable" });
     if (ready === false) throw new Error("The Codex tab opened but is still loading. Wait for it to finish, then retry; saved recovery was kept.");
@@ -1360,10 +1383,11 @@ export async function readCodexCliSessionMessages(
     { id: `initial-${sessionId}`, kind: "message", role: "user", text: recentNewSessions.get(sessionId)?.text ?? "" },
     { id: `initial-error-${sessionId}`, kind: "error", status: "failed", text: `The first response failed: ${firstTurnFailure.message}. Retry your message.` }
   ];
-  if (recentNewSessions.has(sessionId) && !(await findCliSessionTranscript(codexHome, sessionId))) {
+  let transcriptPath = await findCliSessionTranscript(codexHome, sessionId);
+  if (recentNewSessions.has(sessionId) && !transcriptPath) {
     return [{ id: `initial-${sessionId}`, kind: "message", role: "user", text: recentNewSessions.get(sessionId)!.text }];
   }
-  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && !(await findCliSessionTranscript(codexHome, sessionId))) {
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && !transcriptPath) {
     try {
       const projectPath = await resolveRecordedSessionProject(sessionId);
       const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), projectPath);
@@ -1382,7 +1406,8 @@ export async function readCodexCliSessionMessages(
   const sessionRef = toSessionLogRef(sessionId);
   const startedAt = Date.now();
   try {
-    const transcriptPath = await findCliSessionTranscript(codexHome, sessionId);
+    if (!transcriptPath && path.resolve(codexHome) === path.resolve(resolveCodexHome()))
+      transcriptPath = await findCliSessionTranscript(codexHome, sessionId);
     if (!transcriptPath) {
       const recent = recentNewSessions.get(sessionId);
       if (recent) return [{ id: `initial-${sessionId}`, kind: "message", role: "user", text: recent.text }];

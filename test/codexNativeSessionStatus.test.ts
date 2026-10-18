@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn() }));
 vi.unmock("../src/services/codexNativeSessionStatus");
 vi.mock("node:net", () => ({ createConnection: mocks.connect }));
 vi.mock("node:fs/promises", () => ({ lstat: mocks.lstat, realpath: async (file: string) => file }));
-import { cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, readNativeCodexSessionRunning, startNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
+import { cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 
 class FakeSocket extends EventEmitter {
   writable = true;
@@ -92,6 +92,45 @@ it("waits for a cold native owner beyond the earlier twenty-second cutoff", asyn
   await vi.advanceTimersByTimeAsync(28_000); expect(settled).toBe(false);
   message(snapshot("idle")); await vi.advanceTimersByTimeAsync(200);
   expect(await waiting).toBe(true);
+});
+it("keeps background native observations connected without dashboard reads", async () => {
+  const reading = readNativeCodexSessionRunning(home,id); await initialize(); message(snapshot("active")); await reading;
+  await vi.advanceTimersByTimeAsync(90_000);
+  expect(socket.writable).toBe(true);
+  expect(getNativeCodexSessionRunning(home,id)).toBe(true);
+  message(snapshot("idle",2));
+  expect(getNativeCodexSessionRunning(home,id)).toBe(false);
+  expect(mocks.connect).toHaveBeenCalledOnce();
+  disposeNativeCodexSessionStatus();
+  expect(socket.writable).toBe(false);
+  expect(getNativeCodexSessionRunning(home,id)).toBeUndefined();
+});
+it("evicts idle history before active observations while retaining its fixed cache limit", async () => {
+  const reading=readNativeCodexSessionRunning(home,id);await initialize();message(snapshot("active"));await reading;
+  for(let n=0;n<260;n++){
+    const otherId=`01a04882-d037-7a42-ad24-${String(n).padStart(12,"0")}`;
+    const pending=readNativeCodexSessionRunning(home,otherId);
+    for(let turn=0;turn<20;turn++)await Promise.resolve();
+    const value=snapshot("idle");value.params.conversationId=otherId;value.params.change.conversationState.id=otherId;
+    message(value);await pending;
+  }
+  expect(getNativeCodexSessionRunning(home,id)).toBe(true);
+  expect(socket.sent.some(value=>value.params?.conversationId===id && value.params.following===false)).toBe(false);
+  expect(socket.sent.filter(value=>value.params?.following===false).length).toBe(5);
+});
+it("allows automatic recovery to wait for a hundred-second renderer and still bounds and cancels it", async () => {
+  const waiting = waitForNativeCodexSessionReady(home,id,undefined,120_000); await initialize();
+  await vi.advanceTimersByTimeAsync(100_000);
+  message(snapshot("idle")); await vi.advanceTimersByTimeAsync(200);
+  expect(await waiting).toBe(true);
+  message(snapshot("notLoaded",2));
+  const stalled = waitForNativeCodexSessionReady(home,id,undefined,120_000);
+  await vi.advanceTimersByTimeAsync(123_000);
+  expect(await stalled).toBe(false);
+  const controller = new AbortController();
+  const cancelled = expect(waitForNativeCodexSessionReady(home,id,controller.signal,120_000)).rejects.toThrow("manual action");
+  await vi.advanceTimersByTimeAsync(0); controller.abort(new Error("manual action")); await cancelled;
+  expect(socket.sent.some(value => value.method === "thread-follower-start-turn")).toBe(false);
 });
 it("bounds a blank tab readiness wait and cancels it without dispatching a turn", async () => {
   const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("notLoaded")); await reading;

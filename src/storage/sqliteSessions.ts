@@ -92,7 +92,8 @@ export function initializeSessionStorage(store: SqliteStateStore): void {
   CREATE TABLE IF NOT EXISTS session_status (
     home TEXT NOT NULL, session_id TEXT NOT NULL, status TEXT NOT NULL, checked_at REAL NOT NULL,
     PRIMARY KEY(home,session_id)
-  ); CREATE INDEX IF NOT EXISTS session_running ON session_status(home,status,checked_at);`);
+  ); CREATE INDEX IF NOT EXISTS session_running ON session_status(home,status,checked_at);
+  CREATE INDEX IF NOT EXISTS session_status_fresh ON session_status(home,checked_at);`);
   store.database.exec("CREATE TABLE IF NOT EXISTS running_turns (session_id TEXT PRIMARY KEY,started_at REAL NOT NULL,owner_pid INTEGER,child_pid INTEGER,project_path TEXT NOT NULL,data TEXT NOT NULL)");
   store.watchTable("session_turns","sessions");
   store.watchTable("session_status","session-status");
@@ -257,7 +258,16 @@ export function readSessionStatus(store:SqliteStateStore,home:string,id:string):
   initializeSessionStorage(store);
   const row = store.prepare("SELECT status,checked_at FROM session_status WHERE home=? AND session_id=?").get(getCodexHomeStateKey(home),id.toLowerCase());
   const age = row ? Date.now()-Number(row["checked_at"]) : Infinity;
-  return row && age >= -5_000 && age < 30_000 ? String(row["status"]) : "unknown";
+  return row && age >= -5_000 && age < 30_000 && Number(row["checked_at"]) >= Date.now()-os.uptime()*1000-1000 ? String(row["status"]) : "unknown";
+}
+
+/** One bounded status read keeps catalogue age separate from current activity. */
+export function readSessionStatuses(store:SqliteStateStore,home:string): Map<string,string> {
+  initializeSessionStorage(store);
+  const now = Date.now();
+  return new Map(store.prepare("SELECT session_id,status FROM session_status WHERE home=? AND checked_at>? AND checked_at<=?")
+    .all(getCodexHomeStateKey(home),Math.max(now-30_000,now-os.uptime()*1000-1000),now+5_000)
+    .map(row => [String(row["session_id"]),String(row["status"])]));
 }
 
 export function readRunningTurnRows(store:SqliteStateStore):TrackedCliTurn[] {

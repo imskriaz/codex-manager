@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.2
+
+- Record verified native chats in the background even without an open dashboard or conversation tab. Keep tracking active when manual work cancels startup restoration, and preserve pending recovery while slow editors load.
+- Keep running counts stable during metadata refresh by reading fresh native and SQLite activity together. Publish committed status changes to browser and VS Code dashboards, expire unverified activity safely, and keep the native observer connected until extension shutdown.
+- Allow automatic recovery up to two minutes for native readiness within bounded recovery deadlines; preserve pending work on timeout or cancellation and keep manual opening limits unchanged.
+- Batch indexed status reads, skip full history-index reads when native metadata is available, and avoid repeated title reads and unchanged recovery writes. Retain bounded recording queues and existing storage-full, contention, and replay safeguards.
+- Remove the expanded daily-usage error block from Graph settings. Keep compact per-account refresh results, retries, and diagnostics.
+- Preserve known goal, model, and agent metadata during partial UI refreshes while applying confirmed removals and runtime changes. Resolve transcript paths once per normal message read and process goal query batches without an extra full result array.
+
 ## 1.4.1
 
 - Track fresh completion events when native goals resume themselves during editor loading, without sending a duplicate prompt or claiming control of the native turn.

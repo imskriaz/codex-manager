@@ -474,6 +474,9 @@ describe("browser dashboard request boundaries", () => {
     expect(isCliSessionWatchPath("sessions\\2026\\rollout.jsonl")).toBe(true);
     expect(isCliSessionWatchPath("archived_sessions\\2026\\08\\rollout.jsonl")).toBe(true);
     expect(isCliSessionWatchPath("thread-writer-locks/session.lock")).toBe(true);
+    expect(isCliSessionWatchPath("goals_1.sqlite-wal")).toBe(true);
+    expect(isCliSessionWatchPath("state_5.sqlite")).toBe(true);
+    expect(isCliSessionWatchPath("state_5.sqlite-shm")).toBe(false);
     expect(isCliSessionWatchPath("auth.json")).toBe(false);
     expect(isCliSessionWatchPath("models_cache.json")).toBe(false);
   });

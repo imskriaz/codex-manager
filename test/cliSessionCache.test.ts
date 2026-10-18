@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { mergeCachedCliSession, mergeCachedCliSessions } from "../webview-src/dashboard/cliSessionCache";
 
 describe("CLI session cache merging", () => {
+  it("keeps unavailable goal and model metadata without retaining stale runtime status", () => {
+    const prior={id:"session",title:"Task",status:"running" as const,model:"gpt-5",reasoningEffort:"high",goal:{objective:"Finish",status:"active"},subAgent:true,parentSessionId:"parent",agentName:"Reviewer"};
+    const incoming={id:"session",title:"Task",status:"unknown" as const,canStop:false};
+    const merged=mergeCachedCliSessions([incoming],[prior])[0];
+    expect(merged).toMatchObject({...prior,status:"unknown",canStop:false});
+    expect(mergeCachedCliSession({...incoming,goal:null},prior).goal).toBeNull();
+    expect(mergeCachedCliSession({...incoming,goal:{objective:"Finish",status:"paused"}},prior).goal?.status).toBe("paused");
+    expect(mergeCachedCliSession({...incoming,deviceId:"other"},prior).goal).toBeUndefined();
+    expect(prior.status).toBe("running");
+  });
+  it("reuses complete incoming metadata without cloning it or restoring deleted rows",()=>{
+    const incoming={id:"session",title:"New",status:"idle" as const,model:"gpt-5",goal:null};
+    expect(mergeCachedCliSession(incoming,{...incoming,goal:{objective:"Old",status:"active"}})).toBe(incoming);
+    expect(mergeCachedCliSessions([], [incoming])).toEqual([]);
+  });
   it("does not reuse a selected folder for a different session or device", () => {
     const previous = { id: "session-1", title: "Old", status: "idle" as const, deviceId: "pc-a", projectPath: "D:/Secret" };
     expect(mergeCachedCliSession({ ...previous, id: "session-2", projectPath: undefined }, previous).projectPath).toBeUndefined();

@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { getCodexHome } from "../codex/authFile";
 import { getSqliteStateStore } from "../storage/sqliteState";
-import { currentSessionAccountId, initializeSessionStorage, listStoredSessionLive, pruneSessionCache, saveSessionLive, saveSessionStatus } from "../storage/sqliteSessions";
+import { currentSessionAccountId, initializeSessionStorage, listStoredSessionLive, pruneSessionCache, readSessionDiscovery, saveSessionLive, saveSessionStatus } from "../storage/sqliteSessions";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import { publishDashboardRealtime } from "./dashboardRealtime";
@@ -124,10 +124,11 @@ export function registerSessionRecording(context:vscode.ExtensionContext): void 
       }
       const sessions = await import("./codexSessionResume");
       const home = getCodexHome();
-      if (!sessions.readRecentRunningCodexSessionIds(home))
+      const fresh = () => Date.now() - (readSessionDiscovery(store,home)?.checkedAt ?? 0) < 5_000;
+      if (!fresh())
         await runCrossWindowExclusive(`background:session-recording:${getCodexHomeStateKey(home)}`,"Session recording discovery",
           async signal => {
-            if (!sessions.readRecentRunningCodexSessionIds(home))
+            if (!fresh())
               await sessions.readRunningCodexSessionIds(home,AbortSignal.any([controller.signal,signal]));
           },{background:true});
       warnedScan = false;

@@ -11,6 +11,18 @@ beforeEach(async () => { home = await mkdtemp(path.join(os.tmpdir(), "codex-goal
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 
 describe("native browser goal state", () => {
+  it("reads committed goal metadata while the main app holds a WAL write transaction",async()=>{
+    const db=new DatabaseSync(path.join(home,"goals_1.sqlite"));
+    try {
+      db.exec("PRAGMA journal_mode=WAL; CREATE TABLE thread_goals(thread_id TEXT PRIMARY KEY,objective TEXT,status TEXT,time_used_seconds INTEGER)");
+      db.prepare("INSERT INTO thread_goals VALUES ('session',?,'active',1)").run("Goal ".repeat(2000));
+      db.exec("BEGIN IMMEDIATE; UPDATE thread_goals SET status='paused'");
+      const prior=(await readCodexSessionGoals(home,["session"]))?.get("session");
+      expect(prior?.status).toBe("active");expect(prior?.objective.length).toBeLessThanOrEqual(4096);
+      db.exec("COMMIT");
+      expect((await readCodexSessionGoals(home,["session"]))?.get("session")?.status).toBe("paused");
+    } finally {db.close();}
+  });
   it("finds selected goals beyond the history limit and handles multiple query batches", async () => {
     const db = new DatabaseSync(path.join(home, "goals_1.sqlite"));
     try {

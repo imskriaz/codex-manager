@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { SqliteStateStore } = require("../out/storage/sqliteState.js");
 const { saveAccountIndex, readAccountIndex, readAccountRow } = require("../out/storage/sqliteAccounts.js");
-const { initializeSessionStorage, saveSessionLive, readAccountSessionStats } = require("../out/storage/sqliteSessions.js");
+const { initializeSessionStorage, saveSessionLive, readAccountSessionStats, readSessionStatus, readSessionStatuses } = require("../out/storage/sqliteSessions.js");
 const root = await mkdtemp(path.join(os.tmpdir(), "codex-manager-benchmark-"));
 const stores = [];
 const timed = task => { const start = performance.now(); task(); return +(performance.now() - start).toFixed(2); };
@@ -32,7 +32,19 @@ try {
     assert.equal(turns.database.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
     writes.push({ batched, milliseconds, commits: batched ? 4 : 128 });
   }
-  console.log(JSON.stringify({ accountLookups: 1000, accounts: 100, fullReadMs, indexedReadMs, writes, durability: "WAL + synchronous FULL for both write modes" }, null, 2));
+  const statuses=await SqliteStateStore.open(path.join(root,"statuses.sqlite"));stores.push(statuses);initializeSessionStorage(statuses);
+  const ids=Array.from({length:100},()=>randomUUID()), now=Date.now();
+  const {getCodexHomeStateKey}=require("../out/codex/authFile.js");
+  const scope=getCodexHomeStateKey(root);
+  statuses.transaction(()=>{
+    const insert=statuses.prepare("INSERT INTO session_status VALUES(?,?,?,?)");
+    for(let n=0;n<10_000;n++)insert.run(scope,ids[n]??randomUUID(),"running",now-(n<100?0:60_000));
+  });
+  const individualStatusMs=timed(()=>{for(let n=0;n<100;n++)for(const id of ids)assert.equal(readSessionStatus(statuses,root,id),"running");});
+  const batchedStatusMs=timed(()=>{for(let n=0;n<100;n++)assert.equal(readSessionStatuses(statuses,root).size,100);});
+  console.log(JSON.stringify({ accountLookups: 1000, accounts: 100, fullReadMs, indexedReadMs, writes,
+    sessionStatus:{historyRows:10_000,freshRows:100,refreshes:100,individualQueries:10_000,batchedQueries:100,individualStatusMs,batchedStatusMs},
+    durability: "WAL + synchronous FULL for both write modes" }, null, 2));
 } finally {
   for (const store of stores) store.close();
   assert.ok(path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep + "codex-manager-benchmark-"));

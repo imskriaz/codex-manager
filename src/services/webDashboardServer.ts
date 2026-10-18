@@ -304,6 +304,7 @@ export function isCliSessionWatchPath(filename: string | Buffer | null): boolean
   const normalized = String(filename).replace(/\\/g, "/").toLowerCase();
   return (
     normalized === "session_index.jsonl" ||
+    /^(?:state|goals)_\d+\.sqlite(?:-wal)?$/.test(normalized) ||
     normalized.startsWith("sessions/") ||
     normalized.startsWith("archived_sessions/") ||
     normalized.startsWith("thread-writer-locks/")
@@ -534,7 +535,8 @@ export class WebDashboardServer implements vscode.Disposable {
         void this.sendRealtimeSnapshot(socket);
       }
     });
-    this.stopStorageSubscription = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], topics => {
+    this.stopStorageSubscription = getSqliteStateStore()?.subscribe(["accounts", "usage", "state", "session-status"], topics => {
+      if (topics.has("session-status")) { this.cliSessionRefreshAfter = 0; void this.publishCliSessionsRealtime(); }
       if (topics.has("accounts") || (topics.has("state") && this.lastPeerClaimFingerprint !== JSON.stringify(this.encryptedSync?.getRealtimeEnablementRegistry() ?? []))) this.publishLocalPeerState();
       this.publishRealtimeState();
     });

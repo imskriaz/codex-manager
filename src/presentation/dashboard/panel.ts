@@ -45,6 +45,7 @@ function isLocalCliSessionWatchPath(filename: string | Buffer | null): boolean {
   const normalized = String(filename).replace(/\\/g, "/").toLowerCase();
   return (
     normalized === "session_index.jsonl" ||
+    /^(?:state|goals)_\d+\.sqlite(?:-wal)?$/.test(normalized) ||
     normalized.startsWith("sessions/") ||
     normalized.startsWith("archived_sessions/") ||
     normalized.startsWith("thread-writer-locks/")
@@ -159,7 +160,10 @@ export class DashboardPanelController {
       void this.publishCliSessionsRealtime();
     });
     let stopStorage: (() => void) | undefined;
-    try { stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => this.schedulePublishState()); }
+    try { stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state", "session-status"], topics => {
+      if (topics.has("session-status")) { this.cliSessionRefreshAfter = 0; void this.publishCliSessionsRealtime(); }
+      if (topics.has("accounts") || topics.has("usage") || topics.has("state")) this.schedulePublishState();
+    }); }
     catch (error) { stopRealtime(); peersChanged?.dispose(); this.oauth.dispose(); throw error; }
     context.subscriptions.push({ dispose: () => {
       stopRealtime(); stopStorage?.(); peersChanged?.dispose();

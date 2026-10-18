@@ -59,6 +59,8 @@ export class AccountsWorkbench {
 
   async activate(): Promise<void> {
     this.context.subscriptions.push(registerDashboardPanelSerializer(this.context, this.repo, this.webDashboard));
+    this.autoResumeTracking = registerCodexSessionAutoResumeTracking(this.context);
+    this.context.subscriptions.push(this.autoResumeTracking);
     const activationStartedAt = Date.now();
     const activationSteps: Array<{ name: string; durationMs: number }> = [];
     const measureStep = async <T>(name: string, task: () => T | Promise<T>): Promise<T> => {
@@ -286,10 +288,6 @@ export class AccountsWorkbench {
           console.warn("[codexManager] auto resume failed", error);
           console.warn("[codexManager] automatic session resume could not restore running sessions", detail);
         }
-      }).finally(() => {
-        if (this.disposed) return;
-        this.autoResumeTracking = registerCodexSessionAutoResumeTracking(this.context);
-        this.context.subscriptions.push(this.autoResumeTracking);
       }).catch((error) => console.warn("[codexManager] auto resume startup task failed", error));
     });
     this.context.subscriptions.push(recoveryTimer);

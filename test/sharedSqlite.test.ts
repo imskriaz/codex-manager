@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { readAccountRow, saveAccountIndex } from "../src/storage/sqliteAccounts";
-import { initializeSessionStorage, pruneSessionCache, readAccountSessionStats, readSessionDiscovery, saveSessionDiscovery, saveSessionStatus, readSessionStatus } from "../src/storage/sqliteSessions";
+import { initializeSessionStorage, pruneSessionCache, readAccountSessionStats, readSessionDiscovery, saveSessionDiscovery, saveSessionStatus, readSessionStatus, readSessionStatuses } from "../src/storage/sqliteSessions";
 import { recordNativeSessionStatus, recordSessionLive, flushSessionRecording, disposeSessionRecording } from "../src/services/sessionRecording";
 import { readRecentRunningCodexSessionIds } from "../src/services/codexSessionResume";
 import { cleanupManagerStorage } from "../src/storage/storageCleanup";
@@ -92,6 +92,19 @@ describe("shared SQLite reads, writes and subscriptions",()=>{
 });
 
 describe("batched session persistence",()=>{
+  it("reads only fresh statuses for the requested home and rejects expired and future activity",()=>{
+    const now=Date.now(),other="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    saveSessionStatus(store,root,sessionId,"running",now);
+    saveSessionStatus(store,root,other,"idle",now-31_000);
+    saveSessionStatus(store,root,"cccccccc-cccc-cccc-cccc-cccccccccccc","running",now+60_000);
+    saveSessionStatus(store,path.join(root,"other"),other,"running",now);
+    expect([...readSessionStatuses(store,root)]).toEqual([[sessionId,"running"]]);
+    saveSessionStatus(store,root,sessionId,"unknown",now+1);
+    expect(readSessionStatuses(store,root).get(sessionId)).toBe("unknown");
+    const plan=store.prepare("EXPLAIN QUERY PLAN SELECT session_id,status FROM session_status WHERE home=? AND checked_at>? AND checked_at<=?").all(root,now-30_000,now+5_000);
+    expect(plan.some(row=>String(row["detail"]).includes("session_status_fresh"))).toBe(true);
+  });
+
   it("commits many turns and coalesced native status changes once",()=>{
     initializeSessionStorage(store);
     const exec=vi.spyOn(store.database,"exec");
