@@ -2,7 +2,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessionSummary, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
@@ -26,6 +26,7 @@ const recoveryIds = new WeakMap<object, string[]>();
 const openRecoveryIds = new WeakMap<object, string[]>();
 const unrestoredOpenSnapshots = new WeakSet<object>();
 const restoreControllers = new Set<AbortController>();
+const autoResumeTitles = new WeakMap<object, Array<{ sessionId: string; title: string; status: "opened" | "failed" }>>();
 
 /** Stop optional startup restoration before a manual account switch changes auth state. */
 export function cancelCodexSessionAutoResume(): void {
@@ -531,6 +532,8 @@ export function resumePersistedCodexSessions(
       unrestoredOpenSnapshots.delete(context.workspaceState);
       let remaining = [...ids];
       const result: AutoResumeResult = { attempted: ids.length, opened: 0, failed: [] };
+      const titleRecords: Array<{ sessionId: string; title: string; status: "opened" | "failed" }> = [];
+      autoResumeTitles.set(result, titleRecords);
       try {
         controller.signal.throwIfAborted();
         await bounded(() => closeSessions(controller.signal), Math.min(8_000, deadline - Date.now()),
@@ -545,6 +548,7 @@ export function resumePersistedCodexSessions(
         return result;
       }
       for (const id of ids) {
+        let title: string | undefined;
         if (!isAutoResumeAvailable())
           controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
         if (Date.now() >= deadline)
@@ -562,7 +566,8 @@ export function resumePersistedCodexSessions(
             await writeIds(context, remaining, deadline, false, { remove: [id] });
             continue;
           }
-          recordPersistentEvent("debug", "auto-resume", "Opening saved conversation", { sessionId: id });
+          title = (await readCodexCliSessionSummary(id).catch(() => undefined))?.title?.trim() || undefined;
+          recordPersistentEvent("debug", "auto-resume", "Opening saved conversation", { sessionId: id, ...(title ? { title } : {}) });
           const sessionController = new AbortController();
           const stopSession = () => sessionController.abort(controller.signal.reason);
           controller.signal.addEventListener("abort", stopSession, { once: true });
@@ -584,11 +589,13 @@ export function resumePersistedCodexSessions(
           // before activation can dispatch it, and retain uncertain IDs for replay.
           // A single slow editor must not cancel the restore of other sessions.
           // Keep the ID durable so the failed window is retried next activation.
-          recordPersistentEvent("warning", "auto-resume", "Conversation open failed; recovery retained", { sessionId: id }, error);
+          recordPersistentEvent("warning", "auto-resume", "Conversation open failed; recovery retained", { sessionId: id, ...(title ? { title } : {}) }, error);
           result.failed.push({ sessionId: id, message: error instanceof Error ? error.message : String(error) });
+          if (title) titleRecords.push({ sessionId: id, title, status: "failed" });
           continue;
         }
-        recordPersistentEvent("info", "auto-resume", "Conversation reopened", { sessionId: id });
+        recordPersistentEvent("info", "auto-resume", "Conversation reopened", { sessionId: id, ...(title ? { title } : {}) });
+        if (title) titleRecords.push({ sessionId: id, title, status: "opened" });
         result.opened += 1;
         remaining = remaining.filter((candidate) => candidate !== id);
         await writeIds(context, remaining, deadline, false, { remove: [id] });
@@ -619,12 +626,17 @@ function isAutoResumeAvailable(): boolean {
 
 export function formatAutoResumeResult(result: AutoResumeResult): string | undefined {
   if (!result.attempted) return undefined;
+  const titles = autoResumeTitles.get(result) ?? [];
+  const titleText = titles.filter((entry) => entry.status === "opened").slice(0, 3).map((entry) => `“${entry.title}”`).join(", ");
   if (!result.failed.length)
-    return `Auto resume reopened ${result.opened} running VS Code Codex session${result.opened === 1 ? "" : "s"}.`;
+    return `Auto resume reopened ${result.opened} running VS Code Codex session${result.opened === 1 ? "" : "s"}${titleText ? `: ${titleText}` : ""}.`;
   // Bound notification size even when every pending tab failed.
   const failures = result.failed
     .slice(0, 3)
-    .map((failure) => `${failure.sessionId} (${failure.message.slice(0, 300)})`)
+    .map((failure) => {
+      const title = titles.find((entry) => entry.sessionId === failure.sessionId)?.title;
+      return `${title ? `“${title}” ` : ""}${failure.sessionId} (${failure.message.slice(0, 300)})`;
+    })
     .join(", ");
   const extra = result.failed.length > 3 ? `; and ${result.failed.length - 3} more` : "";
   return `Auto resume reopened ${result.opened} of ${result.attempted} running VS Code Codex sessions. Failed to open: ${failures}${extra}.`;

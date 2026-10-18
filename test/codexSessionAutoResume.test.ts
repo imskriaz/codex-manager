@@ -1049,4 +1049,17 @@ describe("Codex session auto resume", () => {
     ).toContain("01a04882-d037-7a42-ad24-9afb61901182 (editor unavailable)");
     expect(formatAutoResumeResult({ attempted: 0, opened: 0, failed: [] })).toBeUndefined();
   });
+
+  it("includes the recovered session title in auto-resume copy", async () => {
+    const id = "01a04882-d037-7a42-ad24-9afb61901190";
+    const state = createContext([id]);
+    vi.spyOn(sessionEditor, "readCodexCliSessionSummary").mockResolvedValue({
+      id,
+      title: "Fix SMS end to end",
+      status: "idle",
+      archived: false
+    });
+    const result = await resumePersistedCodexSessions(state.context, async () => undefined);
+    expect(formatAutoResumeResult(result)).toContain("“Fix SMS end to end”");
+  });
 });

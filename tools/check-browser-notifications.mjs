@@ -83,7 +83,7 @@ try {
       await offer.getByRole("button", { name: "Subscribe to browser notifications", exact: true }).click();
       console.log(`${scenario}: subscribe clicked`);
       if (["subscribe", "revoked"].includes(scenario)) {
-        await offer.getByRole("status").filter({ hasText: "Subscribed on this device" }).waitFor().catch(async error => { console.log("Subscription state", calls, await offer.textContent(), errors); throw error; });
+        await offer.getByRole("status").filter({ hasText: "Notifications are on for this device" }).waitFor().catch(async error => { console.log("Subscription state", calls, await offer.textContent(), errors); throw error; });
         console.log(`${scenario}: subscribed`);
         assert.equal(calls.filter(path => path === "/api/push/subscribe").length, 1);
         await offer.getByRole("button", { name: "Done", exact: true }).click();
@@ -92,14 +92,14 @@ try {
         await page.getByRole("button", { name: "Disable notifications", exact: true }).waitFor();
         const testButton = page.getByRole("button", { name: "Send test notification", exact: true });
         await testButton.click();
-        await page.getByRole("status").filter({ hasText: "Push service accepted the test for 1 device" }).waitFor();
+        await page.getByRole("status").filter({ hasText: "1 device is connected" }).waitFor();
         assert.equal(calls.filter(path => path === "/api/push/test").length, 1);
         windowlessTestResult = { subscriptions: 1, accepted: 0, failed: 1 };
         await testButton.click();
         await page.getByRole("alert").filter({ hasText: "1 failed" }).waitFor();
         windowlessTestResult = { subscriptions: 0, accepted: 0, failed: 0 };
         await testButton.click();
-        await page.getByRole("alert").filter({ hasText: "No subscribed devices were found" }).waitFor();
+        await page.getByRole("alert").filter({ hasText: "No devices are connected" }).waitFor();
         assert.equal(await testButton.isEnabled(), true);
         if (scenario === "subscribe") await page.screenshot({ path: path.join(screenshots, "notification-settings-mobile.png") });
       } else {

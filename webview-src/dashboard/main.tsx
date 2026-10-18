@@ -954,15 +954,17 @@ function App() {
           const sessions = mergeCachedCliSessions([session, ...(message.payload.cliSessions ?? cliSessions).filter((candidate) => !sameCliSessionTarget(candidate, session))], cliSessions);
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           setCliComposerConfig(message.payload.cliComposerConfig ?? cliComposerConfig);
-          if (currentSessionTarget() && !sameCliSessionTarget(currentSessionTarget(), session)) {
+          if (selectedCliSession && !sameCliSessionTarget(selectedCliSession, session)) {
             showCliSessionFeedback({ key: Date.now(), level: "info", message: "New Codex chat is ready. Open it from the session list." });
             return;
           }
           messageViewRevision.current++;
           selectedCliSessionRef.current = session;
           setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(session, selectedCliSession), cliLiveStatesRef.current));
-          setCliSessionMessages(message.payload.cliSessionMessages ?? []);
+          const initialMessages = message.payload.cliSessionMessages ?? [];
+          setCliSessionMessages(initialMessages);
           setCliSessionMessagesError(undefined);
+          if (!initialMessages.length) requestCliSessionMessages(session.id, session.deviceId, true);
           navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
           showCliSessionFeedback({
             key: Date.now(),
@@ -2184,11 +2186,6 @@ function App() {
                 settingsTitle={snapshot.copy.settingsTitle}
                 passwordRequired={snapshot.encryptedSyncNeedsConfiguration === true}
                 aboutTitle={resolveAboutTitle(snapshot.lang)}
-                onSessions={() => {
-                  setPcPickerOpen(false);
-                  setCliSessionsMenuOpen(true);
-                  requestCliSessions();
-                }}
                 onPrivacyToggle={handlePrivacyToggle}
                 onSync={handleSyncNow}
                 onSettings={() => dispatch({ type: "open-settings" })}
@@ -2906,7 +2903,6 @@ function DashboardMobileActions(props: {
   settingsTitle: string;
   passwordRequired: boolean;
   aboutTitle: string;
-  onSessions: () => void;
   onPrivacyToggle: () => void;
   onSync: () => void;
   onSettings: () => void;
@@ -2923,9 +2919,6 @@ function DashboardMobileActions(props: {
         {props.passwordRequired ? <span class="settings-alert-badge" aria-hidden="true">!</span> : null}
       </summary>
       <div class="dashboard-mobile-actions-menu" role="menu" aria-label={menuLabel}>
-        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSessions(); }}>
-          <span aria-hidden="true">▦</span>Sessions
-        </button>
         <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onPrivacyToggle(); }} disabled={props.privacyPending}>
           <span aria-hidden="true">{props.privacyMode ? <EyeOffIcon /> : <EyeIcon />}</span>{props.privacyToggleLabel}
         </button>

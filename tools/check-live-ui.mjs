@@ -61,7 +61,7 @@ try {
     } else {
       await page.locator("#settingsOpenButton").click();
     }
-    for (const tab of await page.locator(".settings-tab").all()) await tab.click();
+    for (const tab of await page.locator(".settings-tab:visible").all()) await tab.click();
     await page.keyboard.press("Escape");
     await page.goto(`${origin}/workspace`);
     await page.locator(".cli-workspace").waitFor();

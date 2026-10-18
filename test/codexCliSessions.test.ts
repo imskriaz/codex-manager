@@ -364,6 +364,17 @@ describe("Codex session integration", () => {
     ]);
   });
 
+  it("shows compaction progress separately from completed compaction", () => {
+    const items = parseCodexAppServerThreadItems({
+      thread: { turns: [{ status: "inProgress", items: [{ type: "contextCompaction", id: "compact-running" }] }] }
+    });
+    expect(items).toMatchObject([{ id: "compact-running", kind: "compaction", title: "Compacting context", status: "inProgress" }]);
+    const completed = parseCodexAppServerThreadItems({
+      thread: { turns: [{ status: "completed", items: [{ type: "contextCompaction", id: "compact-done" }] }] }
+    });
+    expect(completed).toMatchObject([{ id: "compact-done", kind: "compaction", title: "Context compacted", status: "completed" }]);
+  });
+
   it("preserves named agent lifecycle and status detail without treating waits as completion", () => {
     const items = parseCodexAppServerThreadItems({ thread: { turns: [{ status: "completed", items: [
       { type: "collabToolCall", id: "start", tool: "spawn_agent", agentName: "Reviewer", status: "completed", prompt: "Review", agentsStates: { reviewer: "running" } },

@@ -1896,12 +1896,13 @@ function parseAppServerThreadItem(
     };
   }
   if (type === "contextCompaction") {
+    const compacting = status === "inProgress";
     return {
       id,
       kind: "compaction",
-      title: "Compacted conversation",
-      text: "Codex condensed earlier context to continue working.",
-      status: "completed",
+      title: compacting ? "Compacting context" : "Context compacted",
+      text: compacting ? "Codex is condensing earlier context before continuing." : "Codex condensed earlier context to continue working.",
+      status,
       timestamp
     };
   }

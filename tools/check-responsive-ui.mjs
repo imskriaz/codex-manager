@@ -231,7 +231,7 @@ try {
     assert.equal(await status.locator(".cli-session-spinner").evaluate(element => getComputedStyle(element).visibility), "hidden", "Visible actions hide the spinner");
     await page.mouse.move(width - 2, height - 2);
     await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
-    await page.getByText("Running elsewhere · wait to send", { exact: true }).waitFor();
+    await page.getByText("Running elsewhere", { exact: true }).waitFor();
     const lockedStatus = page.locator(".cli-conversation > .cli-composer-unavailable.is-running");
     assert.ok((await lockedStatus.boundingBox()).height <= 34, "Session status stays one compact line");
     assert.equal(await lockedStatus.locator(".cli-live-spinner").count(), 1, "External turns show a spinner beside their status");
@@ -659,10 +659,7 @@ try {
 
     const previousNotice = page.getByRole("button", { name: "Dismiss notification", exact: true });
     if (await previousNotice.count()) await previousNotice.click();
-    if (width <= 760) {
-      await page.locator(".dashboard-mobile-actions > summary").click();
-      await page.getByRole("menuitem", { name: "Sessions", exact: true }).click();
-    } else await page.locator("#cliSessionsButton").click();
+    await page.locator("#cliSessionsButton").click();
     await page.locator(".cli-sessions-popover").waitFor();
     assert.equal(await page.locator("#cliSessionsButton .cli-running-count").textContent(), "1", "Badge excludes running child agents");
     assert.equal(await page.locator(".cli-sessions-running-row").count(), 1);

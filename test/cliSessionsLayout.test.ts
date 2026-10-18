@@ -409,7 +409,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("SessionShareModal");
     expect(source).toContain("cli-session-images");
     expect(source).toContain("composerBlockedByOwner");
-    expect(source).toContain("Running elsewhere · wait to send");
+    expect(source).toContain("Running elsewhere");
+    expect(source).not.toContain("Running elsewhere · wait to send");
     expect(css).toContain("content-visibility: auto");
     expect(css).toContain("contain-intrinsic-size");
     expect(css).toContain(".cli-workspace .cli-context-tab-scroll");

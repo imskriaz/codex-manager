@@ -105,6 +105,20 @@ describe("persistent browser push", () => {
     await service.flush();
     expect(drained).toBe(true);
   });
+  it("uses a session title as the browser push title", async () => {
+    await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
+    service.notify({ level: "info", title: "Fix SMS end to end", message: "Session completed. Open the dashboard to review the turn." });
+    await settle();
+    const payload = JSON.parse(send.mock.calls[0]![1]);
+    expect(payload.title).toBe("Fix SMS end to end");
+    expect(payload.body).toContain("Session completed");
+  });
+  it("uses the first recovered title for an auto-resume push", async () => {
+    await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
+    service.notify({ level: "info", message: "Auto resume reopened 1 running VS Code Codex session: “Fix SMS end to end”." });
+    await settle();
+    expect(JSON.parse(send.mock.calls[0]![1]).title).toBe("Fix SMS end to end");
+  });
   it("rejects arbitrary endpoints, private hosts, credentials, and malformed keys", () => {
     const valid = subscription();
     for (const endpoint of [

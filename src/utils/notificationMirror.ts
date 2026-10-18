@@ -7,6 +7,8 @@ export type MirroredNotificationLevel = "info" | "warning" | "error";
 export interface MirroredNotification {
   notificationId?: string;
   level: MirroredNotificationLevel;
+  /** Optional human-readable subject used as the browser push title. */
+  title?: string;
   message: string;
   actions?: string[];
 }

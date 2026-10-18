@@ -47,7 +47,7 @@ import { recordPeerQuotaChecks } from "./quotaCheckCoordination";
 import { AccountsRepository } from "../storage";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { isValidSyncAccountEnablement, type SyncAccountEnablement } from "./syncEnablementRegistry";
-import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessions, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "./codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessionSummary, readCodexCliSessions, readNewCodexCliSessionSummary, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "./codexSessionResume";
 import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import {
@@ -1514,7 +1514,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private publishSessionLive(state: DashboardCodexSessionLiveState): void {
     if (!isCodexSessionLiveState(state)) return;
-    if (["completed", "failed", "cancelled"].includes(state.status)) this.browserPush.notify({ notificationId: state.streamId, level: state.status === "failed" ? "error" : "info", message: `Session ${state.status}. Open the dashboard to review the turn.` });
+    if (["completed", "failed", "cancelled"].includes(state.status)) void this.notifySessionCompletion(state);
     if (state.deviceId) {
       if (state.updatedAt > Date.now() + 30_000 || Date.now() - state.updatedAt >= 5 * 60_000) return;
       this.currentRemoteSessionLive();
@@ -1542,6 +1542,19 @@ export class WebDashboardServer implements vscode.Disposable {
       if (socket.bufferedAmount > 4 * 1024 * 1024) socket.close(1013, "Live updates need to reconnect");
       else socket.send(peerMessage);
     }
+  }
+
+  private async notifySessionCompletion(state: DashboardCodexSessionLiveState): Promise<void> {
+    const title = (state.deviceId ? this.getRemoteCliSessions().find((session) => session.id === state.sessionId)?.title : undefined)
+      ?? readNewCodexCliSessionSummary(state.sessionId)?.title
+      ?? (await readCodexCliSessionSummary(state.sessionId).catch(() => undefined))?.title
+      ?? `Codex session ${state.sessionId.slice(0, 8)}`;
+    this.browserPush.notify({
+      notificationId: state.streamId,
+      title,
+      level: state.status === "failed" ? "error" : "info",
+      message: `Session ${state.status}. Open the dashboard to review “${title}”.`
+    });
   }
 
   private async sendRealtimeSnapshot(socket: WebSocket): Promise<void> {

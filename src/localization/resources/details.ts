@@ -53,7 +53,7 @@ const en: DetailCopyResource = {
   authErrorTag: "Auth Error",
   quotaErrorTag: "Quota Error",
   showSensitive: "Show sensitive info",
-  hideSensitive: "Hide sensitive info",
+  hideSensitive: "Mask",
   currentlyActive: "Currently active",
   savedAccount: "Saved account",
   teamName: "Team Name",

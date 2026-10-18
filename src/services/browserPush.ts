@@ -137,7 +137,7 @@ export class BrowserPushService {
     if (
       notice.level === "info" &&
       !notice.actions?.length &&
-      !/\b(switch(?:ed|ing)?|reset quota|reload(?:ing|ed)?|restart(?:ed|ing)?|session (completed|failed|cancelled))\b/i.test(notice.message)
+      !/\b(switch(?:ed|ing)?|reset quota|reload(?:ing|ed)?|restart(?:ed|ing)?|auto resume|session (completed|failed|cancelled))\b/i.test(notice.message)
     )
       return;
     const key = notice.notificationId ?? `${notice.level}:${notice.message}`;
@@ -162,8 +162,11 @@ export class BrowserPushService {
         const password = await this.password();
         const webPush = await loadWebPush();
         const expired = new Set<string>();
+        const inferredTitle = !notice.title && /\bauto resume\b/i.test(notice.message)
+          ? notice.message.match(/[“"]([^”"]{1,80})[”"]/)?.[1]
+          : undefined;
         const payload = JSON.stringify({
-          title: "Codex Manager",
+          title: compactNotificationMessage(notice.title ?? inferredTitle ?? "Codex Manager", 80),
           body: compactNotificationMessage(notice.message, 180),
           tag: `codex-manager-${key.slice(0, 150)}`,
           notificationId: notice.notificationId,

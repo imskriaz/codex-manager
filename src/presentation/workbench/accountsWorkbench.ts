@@ -144,6 +144,7 @@ export class AccountsWorkbench {
         if (!message) {
           return;
         }
+        void vscode.window.showInformationMessage(message);
         if (result.failed.length) {
           console.warn("[codexManager] automatic session resume incomplete", message);
         } else {
