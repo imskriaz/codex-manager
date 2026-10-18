@@ -8,6 +8,10 @@ const SUBSCRIPTION_TTL = 30 * 24 * 60 * 60_000;
 type Subscription = webPush.PushSubscription & { owner: string; origin: string; password?: string; expiresAt: number };
 type PushState = { keys: { publicKey: string; privateKey: string }; subscriptions: Subscription[] };
 
+export class BrowserPushRegistrationConflictError extends Error {
+  constructor() { super("Notification registration needs refreshing."); }
+}
+
 let webPushModule: Promise<typeof import("web-push")> | undefined;
 function loadWebPush(): Promise<typeof import("web-push")> {
   return (webPushModule ??= import("web-push").then((module) => {
@@ -64,7 +68,7 @@ export class BrowserPushService {
     const raw = await this.secrets.get(STORAGE_KEY);
     if (!raw) return { keys: (await loadWebPush()).generateVAPIDKeys(), subscriptions: [] };
     const state = JSON.parse(raw) as PushState;
-    if (!state.keys?.publicKey || !state.keys.privateKey || !Array.isArray(state.subscriptions))
+    if (!state || typeof state !== "object" || !state.keys?.publicKey || !state.keys.privateKey || !Array.isArray(state.subscriptions))
         throw new Error("Notification storage is unavailable. Try again.");
     return state;
   }
@@ -74,6 +78,7 @@ export class BrowserPushService {
       .catch(() => undefined)
       .then(async () => {
         const state = await this.read();
+        state.subscriptions = state.subscriptions.filter(item => item && typeof item === "object" && typeof item.endpoint === "string" && item.keys && Number.isFinite(item.expiresAt) && item.expiresAt > Date.now());
         const result = await work(state);
         await this.secrets.store(STORAGE_KEY, JSON.stringify(state));
         return result;
@@ -96,9 +101,7 @@ export class BrowserPushService {
           existing.keys.p256dh !== subscription.keys.p256dh ||
           existing.keys.auth !== subscription.keys.auth)
       )
-        throw new Error(
-          "This device belongs to another login. Disable notifications first."
-        );
+        throw new BrowserPushRegistrationConflictError();
       state.subscriptions = state.subscriptions.filter(
         (item) => item.endpoint !== subscription.endpoint && item.expiresAt > Date.now()
       );

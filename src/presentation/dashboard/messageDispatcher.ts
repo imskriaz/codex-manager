@@ -18,6 +18,10 @@ export async function dispatchDashboardClientMessage(
   message: DashboardClientMessage,
   handlers: DashboardMessageHandlers
 ): Promise<void> {
+  // Actions own their audit records; startup and history synchronization are routine reads.
+  if (message.type === "dashboard:action" || message.type === "dashboard:ready" || message.type === "dashboard:usage-history") {
+    return dispatchDashboardClientMessageCore(message, handlers);
+  }
   await runWithPersistentOperation(
     describeDashboardMessage(message),
     () => dispatchDashboardClientMessageCore(message, handlers),

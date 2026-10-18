@@ -15,9 +15,9 @@ import {
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
-  it("defaults token collection off and bounds its interval from one minute to one day", () => {
+  it("defaults token collection on and bounds its interval from one minute to one day", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
-    expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ dailyTokenUsageEnabled: false, dailyTokenUsageIntervalMinutes: 60 });
+    expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ dailyTokenUsageEnabled: true, dailyTokenUsageIntervalMinutes: 60 });
     expect([NaN, Infinity, -1, 0, 1, 1.6, 60, 1440, 1441].map(normalizeDailyTokenUsageIntervalMinutes)).toEqual([60, 60, 1, 1, 1, 2, 60, 1440, 1440]);
   });
   it.each([[false, false], [false, true], [true, false], [true, true]])(
@@ -189,9 +189,7 @@ describe("5-hour quota control defaults", () => {
       default: 0
     });
     expect(manifest.contributes.configuration.properties["codexManager.codexSessionDefault"]).toBeUndefined();
-    expect(manifest.contributes.configuration.properties["codexManager.codexSessionTransport"].default).toBe(
-      "app-server-stdio"
-    );
+    expect(manifest.contributes.configuration.properties["codexManager.codexSessionTransport"]).toBeUndefined();
     expect(normalizeAutoResetWeeklyThreshold(-1)).toBe(0);
     expect(normalizeAutoResetWeeklyThreshold(0)).toBe(0);
     expect(normalizeAutoResetWeeklyThreshold(101)).toBe(100);

@@ -220,10 +220,10 @@ describe("shared operations across extension hosts", () => {
     store.transaction(() => {
       for (const key of store.keys("shared-reads")) store.set("shared-reads", key, undefined);
     });
-    const set = store.set.bind(store);
-    const failure = vi.spyOn(store, "set").mockImplementation((namespace, key, value) => {
-      if (namespace === "shared-reads") throw new Error("storage full");
-      set(namespace, key, value);
+    const prepare = store.prepare.bind(store);
+    const failure = vi.spyOn(store, "prepare").mockImplementation(sql => {
+      if (sql.startsWith("INSERT INTO state(namespace,key,value) VALUES('shared-reads'")) throw new Error("storage full");
+      return prepare(sql);
     });
     await expect(reader.shareRead("storage", "Read", async () => 2, signal, 0)).resolves.toBe(2);
     failure.mockRestore();

@@ -116,7 +116,7 @@ describe("resetCreditsBackfill", () => {
     warnSpy.mockRestore();
   });
 
-  it("logs when the snapshot still has no expiry", async () => {
+  it("accepts snapshots without optional expiry without success-log noise", async () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
     fetchResetCreditsMock.mockResolvedValue({
       availableCount: 1,
@@ -135,9 +135,8 @@ describe("resetCreditsBackfill", () => {
       1_700_000_000_000
     );
 
-    expect(infoSpy).toHaveBeenCalledWith(
-      "[codexManager] reset credits backfill returned 1 credit(s) without an expiry for dev@example.com"
-    );
+    expect(infoSpy).not.toHaveBeenCalled();
+    expect(repo.updateResetCreditsSnapshot).toHaveBeenCalledWith("account-3", 1, undefined, [], undefined, undefined);
 
     infoSpy.mockRestore();
   });

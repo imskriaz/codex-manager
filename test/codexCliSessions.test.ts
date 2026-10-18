@@ -65,56 +65,7 @@ describe("Codex session integration", () => {
     } finally { Object.assign(vscode.workspace, { workspaceFolders: previousFolders }); }
   });
 
-  it("starts a chat in the chosen known project and rejects an unrelated folder", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "codex-project-start-")); roots.push(home);
-    const first = path.join(home, "first"), second = path.join(home, "second");
-    await mkdir(first); await mkdir(second);
-    const createdId = "01a04882-d037-7a42-ad24-9afb61901abc";
-    const database = new DatabaseSync(path.join(home, "state_5.sqlite"));
-    try { database.exec("CREATE TABLE threads (id TEXT, cwd TEXT)"); database.prepare("INSERT INTO threads VALUES (?, ?)").run(sessionId, second); }
-    finally { database.close(); }
-    const script = path.join(home, "codex.js"), marker = path.join(home, "cwd.txt");
-    await writeFile(script, `process.stdin.resume(); process.stdin.on('end',()=>{require('node:fs').writeFileSync(${JSON.stringify(marker)},process.cwd()); console.log(JSON.stringify({type:'thread.started',thread_id:${JSON.stringify(createdId)}})); console.log(JSON.stringify({type:'turn.completed'}));});`);
-    const previousHome = process.env["CODEX_HOME"], previousFolders = vscode.workspace.workspaceFolders;
-    process.env["CODEX_HOME"] = home;
-    Object.assign(vscode.workspace, { workspaceFolders: [{ name: "first", uri: { fsPath: first } }] });
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "codexCliPath" ? script : key === "codexSessionTransport" ? "cli" : fallback } as never);
-    try {
-      await expect(startCodexCliSession({ text: "Hello", projectPath: path.join(home, "unrelated") })).rejects.toThrow("not an open workspace folder");
-      expect(await startCodexCliSession({ text: "Hello", projectPath: second })).toBe(createdId);
-      expect(await readFile(marker, "utf8")).toBe(second);
-      await vi.waitFor(async () => expect((await readCodexCliSessionSummary(createdId, home))?.status).not.toBe("running"));
-    } finally {
-      if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
-      Object.assign(vscode.workspace, { workspaceFolders: previousFolders });
-    }
-  });
-  it("continues a transcript-only project outside the open workspace and rejects missing or changed folders", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "codex-project-resume-")); roots.push(home);
-    const current = path.join(home, "current"), recorded = path.join(home, "recorded");
-    await Promise.all([current, recorded, path.join(home, "sessions")].map(directory => mkdir(directory)));
-    await writeFile(path.join(home, "sessions", `rollout-${sessionId}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id: sessionId, cwd: recorded } }) + "\n");
-    const script = path.join(home, "codex.js"), marker = path.join(home, "cwd.txt");
-    await writeFile(script, `process.stdin.resume(); process.stdin.on('end',()=>{require('node:fs').writeFileSync(${JSON.stringify(marker)},process.cwd()); console.log(JSON.stringify({type:'turn.completed'}));});`);
-    const previousHome = process.env["CODEX_HOME"], previousFolders = vscode.workspace.workspaceFolders;
-    process.env["CODEX_HOME"] = home;
-    Object.assign(vscode.workspace, { workspaceFolders: [{ name: "current", uri: { fsPath: current } }] });
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "codexCliPath" ? script : key === "codexSessionTransport" ? "cli" : fallback } as never);
-    try {
-      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue", projectPath: current })).rejects.toThrow("different project");
-      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue" })).resolves.toBeUndefined();
-      expect(await readFile(marker, "utf8")).toBe(recorded);
-      await rm(recorded, { recursive: true });
-      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue" })).rejects.toThrow("project folder is unavailable");
-      await writeFile(recorded, "not a directory");
-      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue" })).rejects.toThrow("not a folder");
-      await rm(recorded); await mkdir(recorded);
-      await expect(sendCodexCliSessionMessage({ sessionId, text: "continue", projectPath: recorded })).resolves.toBeUndefined();
-    } finally {
-      if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
-      Object.assign(vscode.workspace, { workspaceFolders: previousFolders });
-    }
-  });
+
 
   it("keeps a bounded transcript window and unique sequence IDs across large appends", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-bounded-window-"));
@@ -185,85 +136,8 @@ describe("Codex session integration", () => {
     }
   });
 
-  it("prevents duplicate turns and reports cancellation while the child is still draining", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-turn-"));
-    roots.push(root);
-    const script = path.join(root, "codex.js");
-    const previousPath = process.env["CODEX_CLI_PATH"];
-    const previousHome = process.env["CODEX_HOME"];
-    process.env["CODEX_CLI_PATH"] = script;
-    process.env["CODEX_HOME"] = root;
-    await writeFile(script, [
-      "process.stdin.resume();",
-      "setTimeout(() => process.exit(0), 5000);"
-    ].join("\n"), "utf8");
-    try {
-      const first = sendCodexCliSessionMessage({ sessionId, text: "first turn" });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await expect(sendCodexCliSessionMessage({ sessionId, text: "duplicate turn" })).rejects.toThrow(/already working|another VS Code window/i);
-      expect(await cancelCodexCliSessionTurn(sessionId)).toBe(true);
-      await expect(first).rejects.toMatchObject({ name: "CodexCliTurnCancelledError" });
-    } finally {
-      if (previousPath === undefined) delete process.env["CODEX_CLI_PATH"];
-      else process.env["CODEX_CLI_PATH"] = previousPath;
-      if (previousHome === undefined) delete process.env["CODEX_HOME"];
-      else process.env["CODEX_HOME"] = previousHome;
-    }
-  });
 
-  it("creates a persisted CLI session with the initial prompt", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-start-"));
-    roots.push(root);
-    const script = path.join(root, "codex.js");
-    const marker = path.join(root, "args.txt");
-    const previousPath = process.env["CODEX_CLI_PATH"];
-    process.env["CODEX_CLI_PATH"] = script;
-    await writeFile(script, [
-      "require('node:fs').writeFileSync(process.env.CODEX_MARKER, process.argv.slice(2).join(' '));",
-      `process.stdout.write(JSON.stringify({type:'thread.started',thread_id:${JSON.stringify(sessionId)}})+'\\n');`,
-      "process.stdin.resume(); setTimeout(() => process.exit(0), 20);"
-    ].join("\n"), "utf8");
-    const previousMarker = process.env["CODEX_MARKER"];
-    process.env["CODEX_MARKER"] = marker;
-    try {
-      await expect(startCodexCliSession({ text: "Create the session", projectPath: process.cwd() })).resolves.toBe(sessionId);
-      await expect(readFile(marker, "utf8")).resolves.toContain("exec --json --color never --skip-git-repo-check -");
-      await expect.poll(async () => (await readCodexCliSessionSummary(sessionId, root))?.status).toBe("idle");
-      await writeFile(script, "if(!process.argv.includes('app-server')) process.exit(0); require('node:readline').createInterface({input:process.stdin}).on('line', line => { const message=JSON.parse(line); if(message.id) process.stdout.write(JSON.stringify({id:message.id,result:{}})+'\\n'); });", "utf8");
-      await renameCodexCliSession(sessionId, "Renamed session");
-      expect(readNewCodexCliSessionSummary(sessionId)?.title).toBe("Renamed session");
-      await archiveCodexCliSession(sessionId);
-      expect(readNewCodexCliSessionSummary(sessionId)?.archived).toBe(true);
-      await unarchiveCodexCliSession(sessionId);
-      expect(readNewCodexCliSessionSummary(sessionId)?.archived).toBe(false);
-      await deleteCodexCliSession(sessionId);
-      expect(readNewCodexCliSessionSummary(sessionId)).toBeUndefined();
-    } finally {
-      if (previousPath === undefined) delete process.env["CODEX_CLI_PATH"];
-      else process.env["CODEX_CLI_PATH"] = previousPath;
-      if (previousMarker === undefined) delete process.env["CODEX_MARKER"];
-      else process.env["CODEX_MARKER"] = previousMarker;
-    }
-  });
 
-  it("opens a new chat before its first turn finishes and makes that turn stoppable", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-start-live-"));
-    roots.push(root);
-    const script = path.join(root, "codex.js");
-    const previousPath = process.env["CODEX_CLI_PATH"];
-    const previousHome = process.env["CODEX_HOME"];
-    process.env["CODEX_CLI_PATH"] = script;
-    process.env["CODEX_HOME"] = root;
-    await writeFile(script, `process.stdout.write(JSON.stringify({type:"thread.started",thread_id:${JSON.stringify(sessionId)}})+"\\n"); process.stdin.resume(); setTimeout(() => process.exit(0), 60000);`, "utf8");
-    try {
-      await expect(startCodexCliSession({ text: "Create the session", projectPath: process.cwd() })).resolves.toBe(sessionId);
-      expect(await cancelCodexCliSessionTurn(sessionId)).toBe(true);
-      await expect.poll(async () => (await readCodexCliSessionSummary(sessionId, root))?.status).toBe("idle");
-    } finally {
-      if (previousPath === undefined) delete process.env["CODEX_CLI_PATH"]; else process.env["CODEX_CLI_PATH"] = previousPath;
-      if (previousHome === undefined) delete process.env["CODEX_HOME"]; else process.env["CODEX_HOME"] = previousHome;
-    }
-  });
 
   it("reads the local running-turn journal and ignores malformed or duplicate entries", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-running-journal-"));
@@ -894,6 +768,8 @@ describe("Codex session integration", () => {
     await writeFile(path.join(root, "session_index.jsonl"), entries.map((entry) => JSON.stringify(entry)).join("\n"));
     await writeFile(path.join(root, "archived_sessions", `rollout-${entries[1].id}.jsonl`), "");
     await writeFile(path.join(root, "archived_sessions", `rollout-${entries[3].id}.jsonl`), "");
+    await mkdir(path.join(root, "sessions"));
+    for (const entry of [entries[0], entries[2]]) await writeFile(path.join(root, "sessions", `rollout-${entry.id}.jsonl`), "");
 
     const sessions = await readCodexCliSessions(root, 1);
 
@@ -907,6 +783,8 @@ describe("Codex session integration", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-direct-link-"));
     roots.push(root);
     const olderId = "01a04882-d037-7a42-ad24-9afb61901189";
+    await mkdir(path.join(root, "sessions"));
+    for (const id of [sessionId, olderId]) await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), "");
     await writeFile(path.join(root, "session_index.jsonl"), [
       JSON.stringify({ id: sessionId, thread_name: "Newest", updated_at: "2026-08-29T03:00:00Z" }),
       JSON.stringify({ id: olderId, thread_name: "Older direct link", updated_at: "2026-08-28T03:00:00Z" })

@@ -85,13 +85,6 @@ async function backfillMissingResetCreditExpiriesInternal(
           nextExpiresAt: snapshot.nextExpiresAt ?? null,
           creditsCount: snapshot.credits.length
         });
-        if (snapshot.availableCount > 0 && snapshot.nextExpiresAt == null) {
-          console.info(
-            `[codexManager] reset credits backfill returned ${snapshot.availableCount} credit(s) without an expiry for ${
-              account.email ?? account.id
-            }`
-          );
-        }
         const accepted = await repo.updateResetCreditsSnapshot(account.id, snapshot.availableCount, snapshot.nextExpiresAt,
           snapshot.credits.filter(credit => credit.status === undefined || credit.status === "available").flatMap(credit => credit.id ? [credit.id] : []), snapshot.requestStartedAt, snapshot.generation);
         if (accepted !== false) updated = true;

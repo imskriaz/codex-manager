@@ -9,11 +9,14 @@ describe("browser dashboard OAuth authorization", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("opens the authorization URL in the remote client browser", () => {
-    const open = vi.fn(() => ({}));
+    const popup = { opener: {} as unknown, location: { replace: vi.fn() } };
+    const open = vi.fn(() => popup);
     vi.stubGlobal("window", { open });
 
     expect(openOAuthAuthorizationWindow("https://auth.example.test/authorize")).toBe(true);
-    expect(open).toHaveBeenCalledWith("https://auth.example.test/authorize", "_blank", "noopener,noreferrer");
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(popup.opener).toBeNull();
+    expect(popup.location.replace).toHaveBeenCalledWith("https://auth.example.test/authorize");
   });
 
   it("reports a blocked authorization window", () => {

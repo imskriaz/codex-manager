@@ -25,7 +25,27 @@ it("allows remote batches and sync to reach the same deadline as their local act
   expect(getPeerActionTimeoutMs("refresh")).toBe(240_000);
 });
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
+import * as sessionMetadata from "../src/services/codexSessionResume";
 import { normalizeCloudflaredDomain } from "../src/presentation/dashboard/settings";
+
+it("uses local title metadata for completion push and never substitutes an ID or another system's title", async () => {
+  const id = "01a04882-d037-7a42-ad24-9afb61901188";
+  const read = vi.spyOn(sessionMetadata, "readCodexCliSessionRecoveryMetadata").mockResolvedValue({ [id]: { title: "Fix startup tabs", updatedAt: Date.now() } });
+  const notify = vi.fn();
+  const server = Object.assign(Object.create(WebDashboardServer.prototype), { browserPush: { notify }, getRemoteCliSessions: () => [{ id, deviceId: "other", title: "Wrong system" }] }) as WebDashboardServer & { notifySessionCompletion: (state: unknown) => Promise<void> };
+  const state = { sessionId: id, streamId: "stream", status: "completed" };
+  try {
+    await server.notifySessionCompletion(state);
+    expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Fix startup tabs", message: expect.stringContaining("Fix startup tabs") }));
+    read.mockRejectedValue(new Error("offline"));
+    await server.notifySessionCompletion(state);
+    expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Codex conversation", message: expect.not.stringContaining(id.slice(0, 8)) }));
+    read.mockClear();
+    await server.notifySessionCompletion({ ...state, deviceId: "target" });
+    expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Codex conversation" }));
+    expect(read).not.toHaveBeenCalled();
+  } finally { read.mockRestore(); }
+});
 
 it("avoids rebuilding account snapshots for read-only graph, conversation, and workspace queries", async () => {
   const server = Object.create(WebDashboardServer.prototype) as {
@@ -519,7 +539,7 @@ describe("peer WebSocket failure handling", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
     expect(source).toContain('socket.addEventListener("error", () => undefined);');
     expect(source).not.toContain('socket.addEventListener("error", () => socket.close());');
-    expect(source).toContain("if (this.peerStopped || !domain || this.peerSocket) return;");
+    expect(source).toContain("if (this.peerStopped || !domain || this.peerSocket || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) return;");
     expect(source).toContain("if (!this.peerReconnectTimer)");
     expect(source).toContain("const PEER_RECONNECT_DELAY_MS = 1_000;");
   });

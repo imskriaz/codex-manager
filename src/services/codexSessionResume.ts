@@ -2,35 +2,35 @@ import { sqliteConfiguration } from "../storage/sqliteContext";
 import { readCodexSessionGoals } from "./codexSessionGoals";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { isCodexQuotaInterruption } from "../domain/codexSessionState";
-import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "./codexNativeSessionStatus";
+import { getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
-import { readCodexSessionTransport } from "../infrastructure/config/extensionSettings";
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "child_process";
-import { createHash } from "crypto";
-import * as readline from "readline";
+import { execFile, spawn } from "child_process";
+import { createHash, randomUUID } from "crypto";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
 import { prepareChatInput, type ChatAttachment } from "../domain/chatAttachments";
-import { appServerChatInput, withCliImageAttachments } from "./codexChatAttachments";
+import { appServerChatInput } from "./codexChatAttachments";
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
-import { reserveCodexSessionLive } from "./codexSessionLive";
-import { recordNativeSessionStatus } from "./sessionRecording";
-import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatus } from "../storage/sqliteSessions";
+import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
+import { recordNativeSessionStatus, recordSessionLive } from "./sessionRecording";
+import { publishDashboardRealtime } from "./dashboardRealtime";
+import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatus, readSessionCatalogue, saveSessionCatalogue, invalidateSessionCatalogue, removeDeletedSessionCache } from "../storage/sqliteSessions";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
   DashboardCliSessionSummary,
   DashboardCliSandboxMode
 } from "../domain/dashboard/types";
-import { CrossWindowOperationBusyError, runCrossWindowExclusive, runCrossWindowSharedRead, sharedResourceKey } from "../utils/crossWindowOperations";
+import { runCrossWindowExclusive, runCrossWindowSharedRead, sharedResourceKey } from "../utils/crossWindowOperations";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile } from "../storage/sqliteState";
+import { normalizeNativePath } from "../utils/nativePaths";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -42,9 +42,10 @@ const SESSION_DIRECTORY = "sessions";
 const SESSION_LOCK_DIRECTORY = "thread-writer-locks";
 const MAX_SESSION_INDEX_BYTES = 5 * 1024 * 1024;
 const MAX_SESSION_TRANSCRIPT_READ_BYTES = 25 * 1024 * 1024;
-const MAX_VISIBLE_CLI_SESSIONS = 200;
+const MAX_VISIBLE_CLI_SESSIONS = 10_000;
+const SESSION_TRANSCRIPT_DETAIL_LIMIT = 200;
 const MAX_VISIBLE_SESSION_MESSAGES = 250;
-const MAX_TRANSCRIPT_CACHE_BYTES = 32 * 1024 * 1024;
+const MAX_TRANSCRIPT_CACHE_BYTES = 8 * 1024 * 1024;
 const MAX_SESSION_MESSAGE_CHARS = 12_000;
 const MAX_SESSION_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_SESSION_IMAGE_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -52,32 +53,54 @@ const MAX_SESSION_SCAN_ENTRIES = 10_000;
 const MAX_MODELS_CACHE_BYTES = 5 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const MAX_CLI_PROMPT_CHARS = 64_000;
-const MAX_CLI_OUTPUT_BYTES = 2 * 1024 * 1024;
 const CLI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 export const SESSION_DISCOVERY_RETRY_GAP_MS = 30_000;
-const MAX_TRACKED_TURN_AGE_MS = 24 * 60 * 60 * 1000;
 const MAX_TRACKED_CLI_TURNS = 30;
 const MAX_RUNNING_TURNS_BYTES = 256 * 1024;
-const JOURNAL_LOCK_RETRIES = 5;
 const APP_SERVER_REQUEST_TIMEOUT_MS = 30_000;
 const APP_SERVER_MODEL_LIST_TIMEOUT_MS = 5_000;
 const CLI_AVAILABILITY_TIMEOUT_MS = 10_000;
-const CLI_UTILITY_TIMEOUT_MS = 30_000;
 const CLI_AVAILABILITY_CACHE_TTL_MS = 60_000;
 const CLI_UNAVAILABLE_CACHE_TTL_MS = 5_000;
 const CLI_MODEL_LIST_CACHE_TTL_MS = 60_000;
 const CLI_MODEL_LIST_FAILURE_TTL_MS = 5_000;
 export const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const editorOpens = new Map<string, Promise<void>>();
+const catalogueRefreshes = new Map<string, Promise<DashboardCliSessionSummary[]>>();
 // Codex model IDs may be provider-qualified (for example 9router's
 // `cx/gpt-5.2-codex`). They are passed as argv values, never shell text.
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,127}$/i;
 const REASONING_EFFORT_PATTERN = /^(minimal|low|medium|high|xhigh|max|ultra)$/;
 const recentNewSessions = new Map<string, { summary: DashboardCliSessionSummary; text: string }>();
 const newSessionFailures = new Map<string, Error>();
-const activeCliTurns = new Map<string, ChildProcessWithoutNullStreams>();
 const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean }>();
-let runningTurnWrite: Promise<void> = Promise.resolve();
+const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean> }>();
+const nativeTurnObservers = new Map<string, Promise<void>>();
+
+function ownedNativeTurn(home: string, id: string) {
+  const turn = activeNativeTurns.get(id);
+  return turn?.home === path.resolve(home) ? turn : undefined;
+}
+
+function ownsSessionTurn(home: string, id: string): boolean {
+  return activeAppServerTurns.has(id) || Boolean(ownedNativeTurn(home, id));
+}
+
+function nativeTurnStarted(home: string, id: string, turnId: string): void {
+  activeNativeTurns.set(id, { home: path.resolve(home), turnId, streamId: randomUUID() });
+  publishNativeTurnState(home, id, "running", turnId);
+}
+
+function publishNativeTurnState(home: string, sessionId: string, status: "running" | "completed" | "cancelled" | "failed" | "disconnected", turnId?: string, streamId?: string): void {
+  if (home !== resolveCodexHome()) return;
+  let updatedAt = Date.now();
+  try { updatedAt = Math.max(updatedAt, (getCodexSessionLiveState(sessionId)?.updatedAt ?? 0) + 1); }
+  catch (error) { recordPersistentEvent("debug", "session-resume", "Earlier live state unavailable for native update", { sessionRef: toSessionLogRef(sessionId) }, error); }
+  const state = { sessionId, streamId: streamId ?? ownedNativeTurn(home, sessionId)?.streamId ?? randomUUID(), sequence: status === "running" ? 1 : 2, status, turnId, updatedAt, messages: [] };
+  try { recordSessionLive(state); }
+  catch (error) { recordPersistentEvent("warning", "session-resume", "Native update could not be saved", { sessionRef: toSessionLogRef(sessionId) }, error); }
+  publishDashboardRealtime({ type: "dashboard:codex-session-live", state });
+}
 let cliAvailabilityCache: { key: string; available: boolean; checkedAt: number } | undefined;
 let cliAvailabilityProbe: Promise<boolean> | undefined;
 let cliAvailabilityProbeKey: string | undefined;
@@ -144,28 +167,59 @@ type CliSessionIndexEntry = { id: string; thread_name?: string; updated_at?: str
 /** Read local Codex session metadata without resuming or subscribing to a thread. */
 export async function readCodexCliSessions(
   codexHome = resolveCodexHome(),
-  limit = MAX_VISIBLE_CLI_SESSIONS
+  limit = MAX_VISIBLE_CLI_SESSIONS,
+  force = false
 ): Promise<DashboardCliSessionSummary[]> {
   // Keep discovery local so dashboard load never starts a second app-server
   // that can compete with Codex while it is opening and replaying history.
-  return readLocalSessionList(codexHome, limit);
+  const store = getSqliteStateStore();
+  if (!store || limit !== MAX_VISIBLE_CLI_SESSIONS) return readLocalSessionList(codexHome, limit);
+  try {
+    const cached = force ? undefined : readSessionCatalogue(store, codexHome);
+    const generation = cached?.generation ?? invalidateSessionCatalogue(store, codexHome, force);
+    const key = `${getCodexHomeStateKey(codexHome)}:${generation}`;
+    const refresh = () => {
+      const pending = catalogueRefreshes.get(key);
+      if (pending) return pending;
+      if (catalogueRefreshes.size >= 8) return Promise.reject(new Error("Session history refresh is busy. Saved history was kept; retry shortly."));
+      const startedAt = Date.now();
+      const work = fs.access(codexHome).then(() => readLocalSessionList(codexHome, limit, generation)).then(rows => {
+        try { saveSessionCatalogue(store, codexHome, generation, rows, startedAt); }
+        catch (error) { recordPersistentEvent("warning", "session-list", "Session cache could not be saved; live history remains available", undefined, error); }
+        return rows;
+      }).finally(() => { if (catalogueRefreshes.get(key) === work) catalogueRefreshes.delete(key); });
+      catalogueRefreshes.set(key, work);
+      return work;
+    };
+    if (!force && cached && !cached.invalidated) {
+      const stale = Date.now() - cached.checkedAt >= 5_000 || cached.bootAt < Date.now() - os.uptime() * 1000 - 60_000;
+      if (stale) void refresh().catch(error => recordPersistentEvent("warning", "session-list", "Saved history retained while discovery retries", undefined, error));
+      return stale ? cached.rows.map(row => row.status === "running" ? { ...row, status: "unknown", statusError: "Checking saved running activity. Refresh before sending.", locked: true, canStop: false } : row) : cached.rows;
+    }
+    return refresh();
+  } catch (error) {
+    recordPersistentEvent("warning", "session-list", "Session cache unavailable; reading local history", undefined, error);
+    return readLocalSessionList(codexHome, limit);
+  }
 }
 
-async function readLocalSessionList(codexHome: string, limit: number): Promise<DashboardCliSessionSummary[]> {
-  return runCrossWindowSharedRead(sharedResourceKey("local-session-list", [getCodexHomeStateKey(codexHome), limit]), "Local session discovery", () => readLocalSessionListInternal(codexHome, limit));
+async function readLocalSessionList(codexHome: string, limit: number, generation = ""): Promise<DashboardCliSessionSummary[]> {
+  return runCrossWindowSharedRead(sharedResourceKey("local-session-list", [getCodexHomeStateKey(codexHome), limit, generation]), "Local session discovery", () => readLocalSessionListInternal(codexHome, limit, generation));
 }
 
-async function readLocalSessionListInternal(codexHome: string, limit: number): Promise<DashboardCliSessionSummary[]> {
-  const state = await readStateSessionRecords(codexHome);
+async function readLocalSessionListInternal(codexHome: string, limit: number, generation: string): Promise<DashboardCliSessionSummary[]> {
+  const startedAt = Date.now();
+  let statusError: string | undefined;
+  const state = await readStateSessionRecords(codexHome, undefined, undefined, MAX_VISIBLE_CLI_SESSIONS, true);
   const index = await readCodexCliSessionIndex(codexHome).catch((error: unknown) => {
-    if (!state.length) throw error;
+    if (!state.length || generation) throw error;
+    statusError = `The session index is unavailable; some history may be missing. ${error instanceof Error ? error.message : String(error)}`;
     recordPersistentEvent("warning", "session-list", "Session index unavailable; reading state metadata", { reason: error instanceof Error ? error.message : String(error) });
     return [] as CliSessionIndexEntry[];
   });
   const records = new Map(state.map((record) => [record.id, record]));
   const entries = new Map(index.map((entry) => [entry.id, entry]));
-  for (const record of state) if (!entries.has(record.id)) entries.set(record.id, { id: record.id, thread_name: record.title, updated_at: record.updatedAt });
-  let statusError: string | undefined;
+  for (const record of state) entries.set(record.id, { ...entries.get(record.id), id: record.id, thread_name: normalizeSessionTitle(record.title, record.id, entries.get(record.id)?.thread_name), updated_at: record.updatedAt ?? entries.get(record.id)?.updated_at });
   const runningIds = new Set(await readRunningCodexSessionIds(codexHome).catch((error: unknown) => {
     statusError = (error instanceof Error ? error.message : String(error)) || "Session inspection failed.";
     recordPersistentEvent("warning", "session-list", "Running state unavailable; showing local history", { reason: statusError });
@@ -174,31 +228,47 @@ async function readLocalSessionListInternal(codexHome: string, limit: number): P
   for (const id of runningIds) if (!entries.has(id)) entries.set(id, { id });
   if (!entries.size) return [];
   const archivedIds = await readArchivedSessionIds(codexHome);
-  for (const record of state) if (record.archived) archivedIds.add(record.id);
+  for (const record of state) { if (record.archived) archivedIds.add(record.id); else if (record.archived === false) archivedIds.delete(record.id); }
   const cappedLimit = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit) || MAX_VISIBLE_CLI_SESSIONS));
   const ordered = [...entries.values()].sort((a, b) => Number(runningIds.has(b.id)) - Number(runningIds.has(a.id)) || String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
   const child = (entry: CliSessionIndexEntry): boolean => Boolean(readSubAgentMetadata(records.get(entry.id)?.source).subAgent);
   const visibleEntries = [...ordered.filter((entry) => !child(entry) && !archivedIds.has(entry.id)).filter((entry, index) => runningIds.has(entry.id) || index < cappedLimit), ...ordered.filter((entry) => !child(entry) && archivedIds.has(entry.id)).slice(0, cappedLimit), ...ordered.filter(child).filter((entry, index) => runningIds.has(entry.id) || index < cappedLimit)];
-  const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(visibleEntries.map((entry) => entry.id)));
+  const detailedIds = new Set(visibleEntries.filter((entry, index) => index < SESSION_TRANSCRIPT_DETAIL_LIMIT || runningIds.has(entry.id) || !records.has(entry.id)).map(entry => entry.id));
+  const transcriptPaths = await findCliSessionTranscripts(codexHome, detailedIds);
+  const deleted = statusError ? [] : visibleEntries.filter(entry => !records.has(entry.id) && !transcriptPaths.has(entry.id) && !runningIds.has(entry.id)).map(entry => entry.id);
+  const deletedIds = new Set(deleted);
   const goals = await readCodexSessionGoals(codexHome, visibleEntries.map(entry => entry.id));
   const summaries: DashboardCliSessionSummary[] = [];
   await runWithConcurrencyLimit(visibleEntries, 32, async (entry, index) => {
+    if (deletedIds.has(entry.id)) return;
+    const record = records.get(entry.id);
+    if (record && !detailedIds.has(entry.id)) {
+      summaries[index] = { id: entry.id, title: normalizeSessionTitle(entry.thread_name, entry.id), projectPath: record.cwd,
+        model: record.model, reasoningEffort: record.reasoningEffort, updatedAt: record.updatedAt, archived: archivedIds.has(entry.id),
+        status: statusError ? "unknown" : "idle", statusError, locked: Boolean(statusError), canStop: false,
+        ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record.source) };
+      return;
+    }
     const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id), transcriptPaths.get(entry.id),
       statusError ? { status: "unknown", statusError } : transcriptPaths.has(entry.id) || runningIds.has(entry.id) ? { status: runningIds.has(entry.id) ? "running" : "idle" } : undefined);
-    const record = records.get(entry.id);
     const turnState = cliTranscriptTurnStateCache.get(transcriptPaths.get(entry.id) ?? "")?.state;
     summaries[index] = { ...summary, model: summary.model ?? record?.model, reasoningEffort: summary.reasoningEffort ?? record?.reasoningEffort,
-      interrupted: turnState && turnState !== "unknown" ? summary.status !== "running" && ["active", "failed", "quota-paused"].includes(turnState) : undefined,
+      interrupted: turnState && turnState !== "unknown" ? summary.status !== "running" && (["active", "failed", "quota-paused"].includes(turnState) || cliTranscriptTurnStateCache.get(transcriptPaths.get(entry.id) ?? "")?.cancelled === true) : undefined,
       ...(goals ? { goal: goals.get(entry.id) ?? null } : {}), ...readSubAgentMetadata(record?.source), ...(!summary.projectPath && record?.cwd ? { projectPath: record.cwd } : {}) };
   });
-  return summaries;
+  const store = getSqliteStateStore();
+  if (!statusError && store && generation && deleted.length) {
+    try { removeDeletedSessionCache(store, codexHome, deleted, generation, startedAt); }
+    catch (error) { recordPersistentEvent("warning", "session-list", "Deleted session cache cleanup deferred", undefined, error); }
+  }
+  return summaries.filter(Boolean);
 }
 
-type StateSessionRecord = { id: string; title?: string; model?: string; reasoningEffort?: string; updatedAt?: string; archived: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
-async function readStateSessionRecords(home: string, id?: string, projectRoots?: string[]): Promise<StateSessionRecord[]> {
+type StateSessionRecord = { id: string; title?: string; model?: string; reasoningEffort?: string; updatedAt?: string; archived?: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
+async function readStateSessionRecords(home: string, id?: string | string[], projectRoots?: string[], limit = MAX_VISIBLE_CLI_SESSIONS, strict = false): Promise<StateSessionRecord[]> {
   let db: { prepare(sql: string): { all(...args: string[]): Record<string, unknown>[] }; close(): void } | undefined;
   try {
-    const names = (await fs.readdir(home)).filter((name) => /^state_[0-9]+\.sqlite$/.test(name));
+    const names = (await fs.readdir(home).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return []; throw error; })).filter((name) => /^state_[0-9]+\.sqlite$/.test(name));
     names.sort((a, b) => Number(b.match(/[0-9]+/)?.[0]) - Number(a.match(/[0-9]+/)?.[0]));
     if (!names[0]) return [];
     const moduleName = "node:sqlite";
@@ -207,26 +277,88 @@ async function readStateSessionRecords(home: string, id?: string, projectRoots?:
     if (projectRoots) {
       try {
         for (const row of db.prepare("SELECT path FROM project_roots ORDER BY project_id, position LIMIT 2000").all())
-          if (typeof row["path"] === "string") projectRoots.push(row["path"]);
+          if (typeof row["path"] === "string") projectRoots.push(normalizeNativePath(row["path"]));
       } catch { /* Older Codex stores projects only in thread metadata. */ }
     }
     const available = new Set(db.prepare("PRAGMA table_info(threads)").all().map(row => row["name"]));
     const columns = ["id", "title", "model", "reasoning_effort", "updated_at", "archived", "source", "cwd", "rollout_path"].filter(column => available.has(column));
-    if (!available.has("id")) return [];
+    if (!available.has("id")) { if (strict) throw new Error("Codex session metadata is unavailable. Saved history was retained."); return []; }
     const query = `SELECT ${columns.join(", ")} FROM threads`;
-    const rows = id ? db.prepare(`${query} WHERE id = ?`).all(id)
-      : db.prepare(`${query}${available.has("updated_at") ? " ORDER BY updated_at DESC" : ""} LIMIT 2000`).all();
+    const rows = Array.isArray(id) ? (id.length ? db.prepare(`${query} WHERE id IN (${id.map(() => "?").join(",")})`).all(...id) : [])
+      : id ? db.prepare(`${query} WHERE id = ?`).all(id)
+      : db.prepare(`${query}${available.has("updated_at") ? " ORDER BY updated_at DESC" : ""} LIMIT ${Math.max(1, Math.min(10001, Math.floor(limit)))}`).all();
     return rows.flatMap((row) => {
       if (typeof row["id"] !== "string" || !SESSION_ID_PATTERN.test(row["id"])) return [];
       return [{ id: row["id"], title: typeof row["title"] === "string" ? row["title"] : undefined,
         model: typeof row["model"] === "string" ? row["model"].slice(0, 256) : undefined,
         reasoningEffort: typeof row["reasoning_effort"] === "string" ? row["reasoning_effort"].slice(0, 64) : undefined,
         updatedAt: typeof row["updated_at"] === "number" && Number.isFinite(row["updated_at"]) ? new Date(row["updated_at"] * 1000).toISOString() : undefined,
-        archived: row["archived"] === 1, source: row["source"], cwd: typeof row["cwd"] === "string" ? row["cwd"] : undefined,
-        rolloutPath: typeof row["rollout_path"] === "string" && row["rollout_path"].length <= 4096 ? row["rollout_path"] : undefined }];
+        archived: row["archived"] === 1 ? true : row["archived"] === 0 ? false : undefined, source: row["source"], cwd: typeof row["cwd"] === "string" ? normalizeNativePath(row["cwd"]) : undefined,
+        rolloutPath: typeof row["rollout_path"] === "string" && row["rollout_path"].length <= 4096 ? normalizeNativePath(row["rollout_path"]) : undefined }];
     });
-  } catch { return []; } // Optional metadata; old hosts and unavailable databases use JSONL.
+  } catch (error) { if (strict) throw error; return []; } // Optional metadata; old hosts and unavailable databases use JSONL.
   finally { db?.close(); }
+}
+
+/** Explicit maintenance reads all native rows before offering a destructive preview. */
+export async function readCodexSessionMaintenanceCandidates(home = resolveCodexHome()): Promise<Array<{ id: string; title: string; archived: boolean; projectPath?: string; transcriptPath?: string; parentSessionId?: string; model?: string; updatedAt?: string }>> {
+  const records = await readStateSessionRecords(home, undefined, undefined, 10001, true);
+  if (records.length > 10000) throw new Error("More than 10,000 chats need cleanup. Reduce the history in Codex before retrying.");
+  const index = await readCodexCliSessionIndex(home);
+  if (index.length > 10000) throw new Error("The session history is too large for one cleanup. Reduce it in Codex before retrying.");
+  const result = new Map(records.map(row => [row.id, { id: row.id, title: normalizeSessionTitle(row.title, row.id), archived: row.archived === true, projectPath: row.cwd, transcriptPath: row.rolloutPath, parentSessionId: readSubAgentMetadata(row.source).parentSessionId, model: row.model, updatedAt: row.updatedAt }]));
+  const missing = index.filter(row => !result.has(row.id));
+  if (result.size + missing.length > 10000) throw new Error("The session history is too large for one cleanup. Reduce it in Codex before retrying.");
+  const archived = missing.length || records.some(row => row.archived === undefined) ? await readArchivedSessionIds(home) : new Set<string>();
+  for (const row of records) if (row.archived === undefined) result.get(row.id)!.archived = archived.has(row.id);
+  const paths = missing.length ? await findCliSessionTranscripts(home, new Set(missing.map(row => row.id))) : new Map<string, string>();
+  for (const row of missing) {
+    const transcriptPath = paths.get(row.id), metadata = await readCliSessionMetadata(home, row.id, transcriptPath);
+    result.set(row.id, { id: row.id, title: normalizeSessionTitle(row.thread_name, row.id), archived: archived.has(row.id), projectPath: metadata.projectPath, transcriptPath, parentSessionId: metadata.parentSessionId, model: undefined, updatedAt: normalizeTimestamp(row.updated_at) });
+  }
+  return [...result.values()];
+}
+
+export async function clearCodexSessionGoal(sessionId: string): Promise<void> {
+  validateSessionId(sessionId);
+  await runCliSessionMutation(sessionId, "Clear Codex goal", async () => {
+    if (await isCliSessionRunning(resolveCodexHome(), sessionId)) throw new Error("This conversation is running. Stop it before clearing its goal.");
+    await runCodexAppServerRequest("thread/goal/clear", { threadId: sessionId });
+  });
+}
+
+/** Explicit goal controls can pause a running owner without waiting for its turn lease. */
+export async function setCodexSessionGoalStatus(sessionId: string, status: "active" | "paused"): Promise<void> {
+  validateSessionId(sessionId);
+  if (status !== "active" && status !== "paused") throw new Error("Choose Pause or Resume for this goal.");
+  await runCrossWindowExclusive(`codex:goal:${sessionId.toLowerCase()}`, "Update Codex goal", async () => {
+    const params = { threadId: sessionId, status, origin: "automatic" };
+    const rpc = activeAppServerTurns.get(sessionId)?.rpc;
+    const result = rpc ? await rpc.request<{ goal?: { status?: string } }>("thread/goal/set", params) :
+      await runCodexAppServerRequest<{ goal?: { status?: string } }>("thread/goal/set", params);
+    if (result.goal?.status !== status) throw new Error("Codex did not confirm the goal change. Refresh before retrying.");
+  });
+}
+
+export type CodexSessionRecoveryMetadata = { title?: string; projectPath?: string; updatedAt: number };
+
+/** Recovery capture reads local metadata without runtime inspection or an app server. */
+export async function readCodexCliSessionRecoveryMetadata(ids: string[], home = resolveCodexHome()): Promise<Record<string, CodexSessionRecoveryMetadata>> {
+  ids.forEach(validateSessionId);
+  if (!ids.length) return {};
+  const [state, index] = await Promise.all([readStateSessionRecords(home, ids), readCodexCliSessionIndex(home)]);
+  const wanted = new Set(ids);
+  const titles: Record<string, CodexSessionRecoveryMetadata> = {};
+  for (const entry of index) {
+    if (wanted.has(entry.id) && entry.thread_name?.trim()) titles[entry.id] = { ...titles[entry.id], title: entry.thread_name.trim().slice(0, 256), updatedAt: Date.now() };
+  }
+  for (const record of state) titles[record.id] = { ...titles[record.id], title: record.title?.trim() && normalizeSessionTitle(record.title, record.id) !== "Untitled conversation" ? record.title.trim().slice(0, 256) : titles[record.id]?.title, projectPath: record.cwd, updatedAt: Date.now() };
+  for (const id of ids) {
+    const recent = recentNewSessions.get(id)?.summary.title;
+    if (recent?.trim() && !titles[id]?.title) titles[id] = { title: recent.trim().slice(0, 256), projectPath: recentNewSessions.get(id)?.summary.projectPath, updatedAt: Date.now() };
+    if (titles[id]?.title) titles[id]!.title = normalizeSessionTitle(titles[id]!.title, id);
+  }
+  return titles;
 }
 
 export async function readCodexCliSessionSummary(
@@ -235,28 +367,18 @@ export async function readCodexCliSessionSummary(
 ): Promise<DashboardCliSessionSummary | undefined> {
   validateSessionId(sessionId);
   const recent = recentNewSessions.get(sessionId)?.summary;
-  if (recent && (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId))) return recent;
-  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli" && !(await readCodexCliSessionIndex(codexHome)).some((entry) => entry.id === sessionId)) {
-    try {
-      const sessions = await readResilientSessionList(codexHome, MAX_VISIBLE_CLI_SESSIONS);
-      const session = sessions.find((candidate) => candidate.id === sessionId);
-      if (session) return session;
-    } catch (error) {
-      recordPersistentEvent("error", "session-read", "App-server session summary unavailable", { reason: error instanceof Error ? error.message : String(error), sessionRef: toSessionLogRef(sessionId) });
-    }
-  }
+  if (recent && ownsSessionTurn(codexHome, sessionId)) return recent;
   const state = (await readStateSessionRecords(codexHome, sessionId))[0];
   const entry = (await readCodexCliSessionIndex(codexHome)).find((candidate) => candidate.id === sessionId)
     ?? (state ? { id: state.id, thread_name: state.title, updated_at: state.updatedAt } : undefined);
   if (!entry) {
     const recent = recentNewSessions.get(sessionId)?.summary;
-    return recent ? { ...recent, status: activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId) ? "running" : "idle", canStop: activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId) } : undefined;
+    return recent ? { ...recent, status: ownsSessionTurn(codexHome, sessionId) ? "running" : "idle", canStop: ownsSessionTurn(codexHome, sessionId) } : (await readCodexCliSessions(codexHome)).find(session => session.id === sessionId);
   }
-  const [archivedIds, transcriptPaths] = await Promise.all([
-    readArchivedSessionIds(codexHome),
-    findCliSessionTranscripts(codexHome, new Set([sessionId]))
-  ]);
-  const summary = await toCliSessionSummary(codexHome, entry, archivedIds.has(entry.id) || Boolean(state?.archived), transcriptPaths.get(entry.id));
+  const transcriptPath = (await findCliSessionTranscripts(codexHome, new Set([sessionId]))).get(sessionId);
+  const archiveRelative = transcriptPath ? path.relative(path.join(codexHome, "archived_sessions"), transcriptPath) : undefined;
+  const archived = state?.archived ?? Boolean(archiveRelative && !path.isAbsolute(archiveRelative) && archiveRelative !== ".." && !archiveRelative.startsWith(`..${path.sep}`));
+  const summary = await toCliSessionSummary(codexHome, { ...entry, thread_name: normalizeSessionTitle(state?.title, sessionId, entry.thread_name) }, archived, transcriptPath);
   const goals = await readCodexSessionGoals(codexHome, [sessionId]);
   return { ...summary, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
 }
@@ -332,7 +454,7 @@ async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSi
     .filter((sessionId) => SESSION_ID_PATTERN.test(sessionId))
     .slice(0, MAX_SESSION_SCAN_ENTRIES);
   const activeIds = path.resolve(codexHome) === path.resolve(resolveCodexHome())
-    ? [...activeCliTurns.keys(), ...activeAppServerTurns.keys()] : [];
+    ? [...activeAppServerTurns.keys()] : [];
   const transcriptPaths = await findCliSessionTranscripts(codexHome, requestedIds ? new Set(requestedIds) : undefined, signal);
   const stateRecords = await readStateSessionRecords(codexHome);
   const sessionIds = requestedIds ? [...new Set(requestedIds)] : [...new Set([...lockedSessionIds, ...activeIds, ...transcriptPaths.keys()])];
@@ -341,9 +463,9 @@ async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSi
   }
 
   const archivedIds = await readArchivedSessionIds(codexHome, signal);
-  for (const record of stateRecords) if (record.archived) archivedIds.add(record.id);
   const archiveRoot = path.join(codexHome, "archived_sessions") + path.sep;
   for (const [id, transcript] of transcriptPaths) if (transcript.startsWith(archiveRoot)) archivedIds.add(id);
+  for (const record of stateRecords) { if (record.archived) archivedIds.add(record.id); else if (record.archived === false) archivedIds.delete(record.id); }
   const running = new Set<string>();
   // Native IPC may wait three seconds for an unloaded thread. Overlap bounded
   // reads so historical sessions cannot each consume the scan's deadline.
@@ -390,176 +512,10 @@ async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIn
   return [...unique.values()];
 }
 
-function configuredSessionTransport(): "app-server-stdio" | "cli" {
-  return readCodexSessionTransport();
-}
-
-// Coalesce refreshes; bounded local reads keep the list usable during startup.
-const sessionListReads = new Map<string, { pending?: Promise<DashboardCliSessionSummary[]>; sessions?: DashboardCliSessionSummary[]; expiresAt: number; retryAt: number; local?: boolean }>();
-async function readResilientSessionList(codexHome: string, limit: number): Promise<DashboardCliSessionSummary[]> {
-  const key = JSON.stringify([path.resolve(codexHome), process.env["CODEX_CLI_PATH"], sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get("codexCliPath")]);
-  let state = sessionListReads.get(key);
-  if (!state) {
-    state = { expiresAt: 0, retryAt: 0 };
-    sessionListReads.set(key, state);
-    if (sessionListReads.size > 8) sessionListReads.delete(sessionListReads.keys().next().value!);
-  }
-  if (state.sessions && state.expiresAt > Date.now()) return capSessionList(state.sessions, limit);
-  if (!state.pending && state.retryAt <= Date.now()) {
-    const current = state;
-    current.pending = readAppServerSessions(MAX_VISIBLE_CLI_SESSIONS).then((sessions) => {
-      current.local = false;
-      current.sessions = sessions;
-      current.expiresAt = Date.now() + 3000;
-      current.retryAt = 0;
-      return sessions;
-    }).catch((error: unknown) => {
-      current.retryAt = Date.now() + SESSION_DISCOVERY_RETRY_GAP_MS;
-      recordPersistentEvent("warning", "session-list", "Live discovery delayed; using local history", { reason: error instanceof Error ? error.message : String(error) });
-      throw error;
-    }).finally(() => { current.pending = undefined; });
-    void current.pending.catch(() => undefined);
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    if (state.pending) {
-      const sessions = await Promise.race([
-        state.pending.catch(() => undefined),
-        new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), 1500); })
-      ]);
-      if (sessions) return capSessionList(sessions, limit);
-    }
-    try {
-      state.local = true;
-      const local = await readLocalSessionList(codexHome, limit);
-      return local.length ? local : capSessionList(state.sessions ?? [], limit);
-    } catch (error) {
-      if (state.sessions) return capSessionList(state.sessions, limit);
-      throw error;
-    }
-  } finally { if (timer) clearTimeout(timer); }
-}
 export function getCodexSessionReadNotice(sessions: DashboardCliSessionSummary[] = []): { level: "warning"; message: string } | undefined {
   const unknown = sessions.find(session => session.status === "unknown");
   if (unknown) return { level: "warning", message: `Session history is available, but running state could not be verified. Refresh before sending. ${unknown.statusError ?? "Session inspection is unavailable."}` };
   return undefined;
-}
-
-function capSessionList(sessions: DashboardCliSessionSummary[], limit: number): DashboardCliSessionSummary[] {
-  const capped = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit) || MAX_VISIBLE_CLI_SESSIONS));
-  const active = sessions.filter((session) => !session.subAgent && !session.archived);
-  const children = sessions.filter((session) => session.subAgent);
-  return [...active.filter((session, index) => session.status === "running" || index < capped), ...sessions.filter((session) => !session.subAgent && session.archived).slice(0, capped), ...children.filter((session, index) => session.status === "running" || index < capped)];
-}
-
-async function readAppServerSessions(limit: number): Promise<DashboardCliSessionSummary[]> {
-  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), resolveCliProjectPath(undefined));
-  try {
-    const capped = Math.max(1, Math.min(MAX_VISIBLE_CLI_SESSIONS, Math.round(limit)));
-    const sessions: DashboardCliSessionSummary[] = [];
-    // Codex defaults to interactive sources, excluding the agents needed by
-    // the inspector. Separate caps keep busy agents from crowding out chats.
-    const childSources = ["subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther"];
-    for (const archived of [false, true]) {
-      for (const sourceKinds of [undefined, childSources]) {
-        try {
-          const result = await rpc.request<{ data?: unknown[]; nextCursor?: string | null }>("thread/list", {
-            archived, limit: capped, sortKey: "updated_at", sortDirection: "desc", useStateDbOnly: true,
-            ...(sourceKinds ? { sourceKinds } : {})
-          });
-          for (const thread of result.data ?? []) {
-            const mapped = mapAppServerThread(thread, archived);
-            if (mapped && !sessions.some((session) => session.id === mapped.id)) sessions.push(mapped);
-          }
-        } catch (error) {
-          if (!sourceKinds) throw error;
-          // Older app-servers can still provide parent chats and local agents.
-          const local = await readLocalSessionList(resolveCodexHome(), capped).catch(() => []);
-          for (const child of local.filter((session) => session.subAgent && session.archived === archived)) {
-            if (!sessions.some((session) => session.id === child.id)) sessions.push(child);
-          }
-        }
-      }
-    }
-    const codexHome = resolveCodexHome();
-    const local = await readLocalSessionList(codexHome, capped);
-    for (const row of local) if (!sessions.some((session) => session.id === row.id)) sessions.push(row);
-    const stateRecords = new Map((await readStateSessionRecords(codexHome)).map((record) => [record.id, record]));
-    const metadataIds = new Set(sessions.filter((session) => !session.subAgent || !session.parentSessionId || !session.projectPath || !session.sessionSurface).map((session) => session.id));
-    const transcriptPaths = await findCliSessionTranscripts(codexHome, new Set(sessions.map((session) => session.id)));
-    const goals = await readCodexSessionGoals(codexHome, sessions.map(session => session.id));
-    const enriched: DashboardCliSessionSummary[] = [];
-    await runWithConcurrencyLimit(sessions, 32, async (session, index) => {
-      const metadata = metadataIds.has(session.id)
-        ? await readCliSessionMetadata(codexHome, session.id, transcriptPaths.get(session.id))
-        : undefined;
-      const withMetadata = {
-        ...session,
-        model: stateRecords.get(session.id)?.model ?? session.model,
-        reasoningEffort: stateRecords.get(session.id)?.reasoningEffort ?? session.reasoningEffort,
-        ...(goals ? { goal: goals.get(session.id) ?? null } : {}),
-        ...readSubAgentMetadata(session),
-        ...readSubAgentMetadata(stateRecords.get(session.id)?.source),
-        ...(metadata?.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
-        ...(!session.projectPath && metadata?.projectPath ? { projectPath: metadata.projectPath } : {}),
-        ...(!session.sessionSurface && metadata?.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {})
-      };
-      if (session.archived) { enriched[index] = withMetadata; return; }
-      const canStop = activeCliTurns.has(session.id) || activeAppServerTurns.has(session.id);
-      const state = await readCliSessionStatus(codexHome, session.id, transcriptPaths.get(session.id), session.status === "running");
-      const running = state.status === "running";
-      const startedAt = await readCliRunningSince(transcriptPaths.get(session.id));
-      const runningSince = running ? startedAt : undefined;
-      const turnState = cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.state;
-      const transcriptUpdatedAt = cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.mtimeMs;
-      const updatedAt = transcriptUpdatedAt && transcriptUpdatedAt > (Date.parse(session.updatedAt ?? "") || 0)
-        ? new Date(transcriptUpdatedAt).toISOString() : session.updatedAt;
-      enriched[index] = {
-        ...withMetadata,
-        model: cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.model ?? withMetadata.model,
-        reasoningEffort: cliTranscriptTurnStateCache.get(transcriptPaths.get(session.id) ?? "")?.reasoningEffort ?? withMetadata.reasoningEffort,
-        updatedAt,
-        runningSince,
-        interrupted: turnState && turnState !== "unknown" ? !running && ["active", "failed", "quota-paused"].includes(turnState) : undefined,
-        ...state,
-        locked: running || state.status === "unknown",
-        runningBy: running ? (canStop ? "Codex Manager" : "another Codex process") : undefined,
-        canStop: running && canStop
-      };
-    });
-    return enriched.sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
-  } finally {
-    rpc.close();
-  }
-}
-
-function mapAppServerThread(value: unknown, archived: boolean): DashboardCliSessionSummary | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const thread = value as Record<string, unknown>;
-  const id = typeof thread["id"] === "string" ? thread["id"] : undefined;
-  if (!id || !SESSION_ID_PATTERN.test(id)) return undefined;
-  const status = thread["status"] as { type?: unknown } | undefined;
-  const running = !archived && status?.type === "active";
-  const updatedAt = typeof thread["updatedAt"] === "number" ? new Date(thread["updatedAt"] * 1000).toISOString() : undefined;
-  const title = typeof thread["name"] === "string" && thread["name"].trim()
-    ? thread["name"]
-    : typeof thread["preview"] === "string" ? thread["preview"] : undefined;
-  const cwd = typeof thread["cwd"] === "string" && thread["cwd"].trim() ? thread["cwd"] : undefined;
-  const source = typeof thread["source"] === "string" ? thread["source"].toLowerCase() : "";
-  const surface: DashboardCliSessionSummary["sessionSurface"] = source.includes("vscode") ? "vscode" : source.includes("cli") || source.includes("exec") ? "cli" : source ? "other" : undefined;
-  return {
-    id,
-    ...readSubAgentMetadata(thread),
-    title: normalizeSessionTitle(title, id),
-    model: typeof thread["model"] === "string" ? thread["model"].slice(0, 256) : undefined,
-    reasoningEffort: typeof thread["reasoningEffort"] === "string" ? thread["reasoningEffort"].slice(0, 64) : undefined,
-    ...(updatedAt ? { updatedAt } : {}),
-    status: running ? "running" : "idle",
-    ...(cwd ? { projectPath: cwd } : {}),
-    ...(surface ? { sessionSurface: surface } : {}),
-    ...(running ? { runningBy: "another Codex process", canStop: false } : {}),
-    archived
-  };
 }
 
 async function toCliSessionSummary(
@@ -572,7 +528,7 @@ async function toCliSessionSummary(
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
   const state = archived ? { status: "idle" as const } : knownStatus ?? await readCliSessionStatus(codexHome, entry.id, transcriptPath);
   const running = state.status === "running";
-  const canStop = running && (activeCliTurns.has(entry.id) || activeAppServerTurns.has(entry.id));
+  const canStop = running && ownsSessionTurn(codexHome, entry.id);
   const startedAt = archived ? undefined : await readCliRunningSince(transcriptPath);
   const runningSince = running ? startedAt : undefined;
   const turnMetadata = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath) : undefined;
@@ -586,7 +542,7 @@ async function toCliSessionSummary(
     model: turnMetadata?.model,
     reasoningEffort: turnMetadata?.reasoningEffort,
     runningSince,
-    interrupted: turnState && turnState !== "unknown" ? !running && ["active", "failed", "quota-paused"].includes(turnState) : undefined,
+    interrupted: turnState && turnState !== "unknown" ? !running && (["active", "failed", "quota-paused"].includes(turnState) || turnMetadata?.cancelled === true) : undefined,
     updatedAt,
     ...state,
     ...(metadata.subAgent ? { subAgent: true, parentSessionId: metadata.parentSessionId, agentName: metadata.agentName } : {}),
@@ -640,7 +596,7 @@ async function readCliSessionMetadata(
         for (const key of ["cwd", "projectPath", "project_path", "workdir", "workspacePath"]) {
           const candidatePath = candidate[key];
           if (!projectPath && typeof candidatePath === "string" && candidatePath.trim()) {
-            projectPath = candidatePath.trim().slice(0, 1024);
+            projectPath = normalizeNativePath(candidatePath.trim().slice(0, 1024));
           }
         }
       }
@@ -654,7 +610,7 @@ async function readCliSessionMetadata(
   if (!projectPath) {
     const match = raw.match(/"(?:cwd|projectPath|project_path|workdir|workspacePath)"\s*:\s*("(?:\\.|[^"\\])*")/);
     if (match) {
-      try { projectPath = (JSON.parse(match[1]!) as string).trim().slice(0, 1024); } catch { /* malformed prefix */ }
+      try { projectPath = normalizeNativePath((JSON.parse(match[1]!) as string).trim().slice(0, 1024)); } catch { /* malformed prefix */ }
     }
   }
   if (!agentMetadata.subAgent && /"source"\s*:\s*(?:\{\s*"sub[_-]?agent"|"sub[_-]?agent)/i.test(raw)) {
@@ -738,7 +694,10 @@ export async function sendCodexCliSessionMessage(options: {
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
+  onStarted?: () => void;
+  signal?: AbortSignal;
 }): Promise<void> {
+  options.signal?.throwIfAborted();
   validateSessionId(options.sessionId);
   newSessionFailures.delete(options.sessionId);
   const prepared = prepareChatInput(options.text, options.attachments);
@@ -755,241 +714,9 @@ export async function sendCodexCliSessionMessage(options: {
   if (options.sandboxMode && !isCliSandboxMode(options.sandboxMode)) {
     throw new Error("The selected access mode is invalid.");
   }
-  const home = resolveCodexHome();
-  const recordedProject = (await readCliSessionMetadata(home, options.sessionId)).projectPath
-    ?? (await readStateSessionRecords(home, options.sessionId))[0]?.cwd
-    ?? recentNewSessions.get(options.sessionId)?.summary.projectPath;
-  let cwd: string;
-  if (recordedProject && path.isAbsolute(recordedProject)) {
-    const canonical = async (value: string): Promise<string> => {
-      const resolved = await fs.realpath(path.resolve(value)).catch(() => path.resolve(value));
-      return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-    };
-    if (options.projectPath && await canonical(options.projectPath) !== await canonical(recordedProject)) {
-      throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
-    }
-    cwd = path.resolve(recordedProject);
-  } else {
-    await readKnownProjectRoots(home);
-    cwd = resolveCliProjectPath(options.projectPath);
-  }
-  await assertUsableCliProjectPath(cwd);
-  if (configuredSessionTransport() !== "cli") {
-    await sendAppServerSessionMessage(options, cwd);
-    return;
-  }
-  await withCliImageAttachments(options.attachments, async (imagePaths) => {
-  await runCliSessionMutation(options.sessionId, "Codex turn", async () => {
-    if (activeCliTurns.has(options.sessionId)) {
-      throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
-    }
-    const executable = await resolveCodexCliExecutable();
-    const startedAt = Date.now();
-    await claimTrackedCliTurn({ id: options.sessionId, projectPath: cwd, startedAt, ownerPid: process.pid });
-    const sessionRef = toSessionLogRef(options.sessionId);
-    recordPersistentEvent("info", "session-resume", "Codex resume command invoked", {
-      sessionRef,
-      source: "dashboard-session-message",
-      projectPath: cwd
-    });
-    const args = ["exec", "--json", "--color", "never", "--skip-git-repo-check"];
-    if (options.model) args.push("--model", options.model);
-    if (options.reasoningEffort) args.push("--config", `model_reasoning_effort=\"${options.reasoningEffort}\"`);
-    if (options.sandboxMode) args.push("--sandbox", options.sandboxMode);
-    args.push("resume", options.sessionId);
-    for (const imagePath of imagePaths) args.push("--image", imagePath);
-    args.push("-");
-
-    await new Promise<void>((resolve, reject) => {
-      let child: ChildProcessWithoutNullStreams;
-      try {
-        child = spawn(executable.command, [...executable.prefixArgs, ...args], {
-          cwd,
-          env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
-          windowsHide: true,
-          shell: executable.shell,
-          stdio: ["pipe", "pipe", "pipe"]
-        });
-      } catch (error) {
-        const launchError = error instanceof Error ? error : new Error(String(error));
-        void forgetTrackedCliTurn(options.sessionId, startedAt).catch(() => undefined);
-        recordPersistentEvent(
-          "error",
-          "session-resume",
-          "Codex resume command failed to start",
-          {
-            sessionRef,
-            reason: launchError.message
-          },
-          launchError
-        );
-        reject(launchError);
-        return;
-      }
-      activeCliTurns.set(options.sessionId, child);
-      if (child.pid) {
-        void rememberTrackedCliTurn({
-          id: options.sessionId,
-          projectPath: cwd,
-          startedAt,
-          ownerPid: process.pid,
-          childPid: child.pid
-        }).catch((journalError) => {
-          console.warn("[codexManager] unable to record the CLI child process", journalError);
-          recordPersistentEvent(
-            "error",
-            "session-resume",
-            "CLI child process could not be recorded in the recovery journal",
-            {
-              sessionRef,
-              reason: journalError instanceof Error ? journalError.message : String(journalError)
-            },
-            journalError
-          );
-        });
-      }
-      let stderr = "";
-      let timedOut = false;
-      let resultSettled = false;
-      const settleResult = (callback: () => void): void => {
-        if (resultSettled) return;
-        resultSettled = true;
-        clearTimeout(timeout);
-        callback();
-      };
-      const cleanupProcess = async (): Promise<void> => {
-        activeCliTurns.delete(options.sessionId);
-        await forgetTrackedCliTurn(options.sessionId, startedAt).catch((cleanupError) => {
-          console.warn("[codexManager] unable to clear the completed CLI turn journal entry", cleanupError);
-          recordPersistentEvent(
-            "error",
-            "session-resume",
-            "Completed CLI recovery record could not be cleared",
-            {
-              sessionRef,
-              reason: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-            },
-            cleanupError
-          );
-        });
-      };
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        child.kill();
-        const error = new Error("Codex did not finish within 15 minutes. The turn was stopped; try a smaller request.");
-        recordPersistentEvent(
-          "error",
-          "session-resume",
-          "Codex resume command timed out",
-          {
-            sessionRef,
-            reason: error.message
-          },
-          error
-        );
-        // Resolve the dashboard action immediately instead of waiting forever
-        // for a misbehaving process to acknowledge the stop signal. The child
-        // stays registered until its close/error event, preventing a new turn.
-        settleResult(() => reject(error));
-      }, CLI_TURN_TIMEOUT_MS);
-      // Keep stdout drained so a verbose JSON event stream cannot block the child process.
-      child.stdout.on("data", () => undefined);
-      child.stderr.on("data", (chunk: Buffer) => {
-        if (Buffer.byteLength(stderr, "utf8") < MAX_CLI_OUTPUT_BYTES) stderr += chunk.toString("utf8");
-      });
-      child.on("error", (error) => {
-        void cleanupProcess().then(() => {
-          if (resultSettled) return;
-          recordPersistentEvent(
-            "error",
-            "session-resume",
-            "Codex resume command failed to start",
-            {
-              sessionRef,
-              reason: error.message
-            },
-            error
-          );
-          settleResult(() => reject(error));
-        });
-      });
-      child.on("close", (code, signal) => {
-        void cleanupProcess().then(() => {
-          if (resultSettled) return;
-          if (signal !== null && !timedOut) {
-            const error = new CodexCliTurnCancelledError();
-            recordPersistentEvent(
-              "warning",
-              "session-resume",
-              "Codex resume command was cancelled",
-              {
-                sessionRef,
-                reason: error.message
-              },
-              error
-            );
-            settleResult(() => reject(error));
-          } else if (code === 0) {
-            recordPersistentEvent("info", "session-resume", "Codex resume command completed successfully", {
-              sessionRef,
-              exitCode: code
-            });
-            settleResult(resolve);
-          } else {
-            const error = new Error(normalizeCliError(stderr) || `Codex exited with code ${code ?? "unknown"}.`);
-            recordPersistentEvent(
-              "error",
-              "session-resume",
-              "Codex resume command failed",
-              {
-                sessionRef,
-                exitCode: code,
-                signal,
-                reason: error.message
-              },
-              error
-            );
-            settleResult(() => reject(error));
-          }
-        });
-      });
-      child.stdin.on("error", (error) => {
-        if (resultSettled) return;
-        child.kill();
-        const writeError = new Error(`Codex could not receive the prompt: ${error.message}`);
-        recordPersistentEvent(
-          "error",
-          "session-resume",
-          "Codex prompt write failed",
-          {
-            sessionRef,
-            reason: writeError.message
-          },
-          error
-        );
-        settleResult(() => reject(writeError));
-      });
-      try {
-        child.stdin.end(text, "utf8");
-      } catch (error) {
-        child.kill();
-        const detail = error instanceof Error ? error.message : String(error);
-        const writeError = new Error(`Codex could not receive the prompt: ${detail}`);
-        recordPersistentEvent(
-          "error",
-          "session-resume",
-          "Codex prompt write failed",
-          {
-            sessionRef,
-            reason: writeError.message
-          },
-          error
-        );
-        settleResult(() => reject(writeError));
-      }
-    });
-  });
-  });
+  const cwd = await resolveRecordedSessionProject(options.sessionId, options.projectPath);
+  options.signal?.throwIfAborted();
+  await sendAppServerSessionMessage(options, cwd);
 }
 
 async function readLiveCliModels(codexHome: string): Promise<DashboardCliComposerConfig["models"]> {
@@ -1050,7 +777,7 @@ export function startCodexCliSession(options: Parameters<typeof runNewCodexCliSe
 export function readNewCodexCliSessionSummary(sessionId: string): DashboardCliSessionSummary | undefined {
   const summary = recentNewSessions.get(sessionId)?.summary;
   if (!summary) return undefined;
-  const running = activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId);
+  const running = ownsSessionTurn(resolveCodexHome(), sessionId);
   return { ...summary, status: running ? "running" : "idle", canStop: running };
 }
 
@@ -1077,116 +804,7 @@ async function runNewCodexCliSession(options: {
     throw new Error("The selected access mode is invalid.");
   }
   await readKnownProjectRoots(resolveCodexHome());
-  if (configuredSessionTransport() !== "cli") {
-    return startAppServerSession(options, onStarted);
-  }
-  return withCliImageAttachments(options.attachments, async (imagePaths) => {
-  const cwd = resolveCliProjectPath(options.projectPath);
-  await assertUsableCliProjectPath(cwd);
-  const executable = await resolveCodexCliExecutable();
-  const args = ["exec", "--json", "--color", "never", "--skip-git-repo-check"];
-  if (options.model) args.push("--model", options.model);
-  if (options.reasoningEffort) args.push("--config", `model_reasoning_effort=\"${options.reasoningEffort}\"`);
-  if (options.sandboxMode) args.push("--sandbox", options.sandboxMode);
-  for (const imagePath of imagePaths) args.push("--image", imagePath);
-  args.push("-");
-  return new Promise<string>((resolve, reject) => {
-    let child: ChildProcessWithoutNullStreams;
-    try {
-      child = spawn(executable.command, [...executable.prefixArgs, ...args], {
-        cwd,
-        env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
-        windowsHide: true,
-        shell: executable.shell,
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let createdId: string | undefined;
-    const startedAt = Date.now();
-    const finish = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (createdId) {
-        if (activeCliTurns.get(createdId) === child) activeCliTurns.delete(createdId);
-        void forgetTrackedCliTurn(createdId, startedAt).catch(() => undefined);
-      }
-      callback();
-    };
-    let timeout = setTimeout(() => {
-      child.kill();
-      finish(() => reject(new Error("Codex did not start the new session within 30 seconds. Try again.")));
-    }, 30_000);
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (Buffer.byteLength(stdout, "utf8") < MAX_CLI_OUTPUT_BYTES) stdout += chunk.toString("utf8");
-      if (createdId) return;
-      for (const line of stdout.split(/\r?\n/)) {
-        try {
-          const event = JSON.parse(line) as Record<string, unknown>;
-          const id = event["thread_id"] ?? event["threadId"] ?? (event["thread"] as Record<string, unknown> | undefined)?.["id"];
-          if (typeof id !== "string" || !SESSION_ID_PATTERN.test(id)) continue;
-          createdId = id;
-          activeCliTurns.set(id, child);
-          void rememberTrackedCliTurn({ id, projectPath: cwd, startedAt, ownerPid: process.pid, childPid: child.pid }).catch(() => undefined);
-          clearTimeout(timeout);
-          timeout = setTimeout(() => { child.kill(); finish(() => reject(new Error("Codex did not finish within 15 minutes. The turn was stopped; try a smaller request."))); }, CLI_TURN_TIMEOUT_MS);
-          onStarted(id);
-          break;
-        } catch { /* Wait for a complete JSON event. */ }
-      }
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      if (Buffer.byteLength(stderr, "utf8") < MAX_CLI_OUTPUT_BYTES) stderr += chunk.toString("utf8");
-    });
-    child.on("error", (error) => finish(() => reject(error)));
-    child.on("close", (code, signal) => {
-      if (signal !== null) {
-        finish(() => reject(new CodexCliTurnCancelledError()));
-        return;
-      }
-      let sessionId: string | undefined;
-      for (const line of stdout.split(/\r?\n/)) {
-        try {
-          const event = JSON.parse(line) as Record<string, unknown>;
-          const candidate =
-            event["thread_id"] ?? event["threadId"] ?? (event["thread"] as Record<string, unknown> | undefined)?.["id"];
-          if (typeof candidate === "string" && SESSION_ID_PATTERN.test(candidate)) {
-            sessionId = candidate;
-            break;
-          }
-        } catch {
-          // Ignore non-JSON diagnostics; the CLI's stderr supplies failures.
-        }
-      }
-      if (code === 0 && sessionId) {
-        finish(() => resolve(sessionId!));
-      } else {
-        const detail = normalizeCliError(stderr) || normalizeCliError(stdout);
-        finish(() => reject(new Error(detail || `Codex exited with code ${code ?? "unknown"}.`)));
-      }
-    });
-    child.stdin.on("error", (error) => {
-      child.kill();
-      finish(() => reject(new Error(`Codex could not receive the prompt: ${error.message}`)));
-    });
-    try {
-      child.stdin.end(text, "utf8");
-    } catch (error) {
-      child.kill();
-      finish(() =>
-        reject(
-          new Error(`Codex could not receive the prompt: ${error instanceof Error ? error.message : String(error)}`)
-        )
-      );
-    }
-  });
-  });
+  return startAppServerSession(options, onStarted);
 }
 
 async function startAppServerSession(options: {
@@ -1254,43 +872,236 @@ async function sendAppServerSessionMessage(options: {
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
   projectPath?: string;
+  onStarted?: () => void;
+  signal?: AbortSignal;
 }, cwd: string): Promise<void> {
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
+  options.signal?.throwIfAborted();
   if (await isCliSessionRunning(resolveCodexHome(), options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
+  const params = {
+    threadId: options.sessionId, input: appServerChatInput(options.text.trim(), options.attachments), cwd,
+    ...(options.model ? { model: options.model } : {}), ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
+    ...(options.sandboxMode ? { sandboxPolicy: toAppServerSandbox(options.sandboxMode, cwd) } : {})
+  };
+  const transcript = await findCliSessionTranscript(resolveCodexHome(), options.sessionId, options.signal);
+  await readRecentTranscriptTurnState(transcript);
+  const previous = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
+  const home = resolveCodexHome();
+  const nativeStarted = (turnId: string) => nativeTurnStarted(home, options.sessionId, turnId);
+  if ((getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase())) && await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) {
+    options.onStarted?.();
+    await waitForNativeSessionTurn(options.sessionId, transcript, previous, ownedNativeTurn(home, options.sessionId)?.turnId, home);
+    return;
+  }
   const live = reserveCodexSessionLive();
   let rpc: CodexAppServerRpc | undefined;
   let detachPrompts: () => void = () => undefined;
+  const abort = () => rpc?.close();
+  options.signal?.addEventListener("abort", abort, { once: true });
   try {
-    rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
+    rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd, options.signal);
+    options.signal?.throwIfAborted();
     live.attach(options.sessionId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
     detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
     activeAppServerTurns.set(options.sessionId, { rpc });
-    await rpc.request("thread/resume", { threadId: options.sessionId, cwd });
-    await rpc.startAndWaitForTurn(options.sessionId, {
-      threadId: options.sessionId,
-      input: appServerChatInput(options.text.trim(), options.attachments),
-      cwd,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.reasoningEffort ? { effort: options.reasoningEffort } : {}),
-      ...(options.sandboxMode ? { sandboxPolicy: toAppServerSandbox(options.sandboxMode, cwd) } : {})
-    }, CLI_TURN_TIMEOUT_MS, (turnId) => {
+    try { await rpc.request("thread/resume", { threadId: options.sessionId, cwd }); }
+    catch (error) {
+      if (!(error instanceof Error) || !/already has an active writer/i.test(error.message) || !await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) throw error;
+      options.signal?.removeEventListener("abort", abort);
+      live.dispose(true);
+      activeAppServerTurns.delete(options.sessionId); rpc.close();
+      options.onStarted?.();
+      await waitForNativeSessionTurn(options.sessionId, transcript, previous, ownedNativeTurn(home, options.sessionId)?.turnId, home);
+      live.finish("completed"); return;
+    }
+    options.signal?.throwIfAborted();
+    await rpc.startAndWaitForTurn(options.sessionId, params, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(options.sessionId);
       if (active) active.turnId = turnId;
       live.started(turnId);
+      options.signal?.removeEventListener("abort", abort);
+      options.onStarted?.();
     });
     live.finish("completed");
   } catch (error) {
-    const cancelled = error instanceof CodexAppServerTurnInterruptedError || (activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
+    const cancelled = error instanceof CodexAppServerTurnInterruptedError || error instanceof CodexCliTurnCancelledError || (activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
     live.finish(cancelled ? "cancelled" : error instanceof CodexAppServerDisconnectedError ? "disconnected" : "failed", error instanceof Error ? error.message : String(error));
     if (cancelled) throw new CodexCliTurnCancelledError();
     throw error;
   } finally {
+    options.signal?.removeEventListener("abort", abort);
     detachPrompts();
     activeAppServerTurns.delete(options.sessionId);
     rpc?.close();
     live.dispose();
   }
   });
+}
+
+/** Resume an existing goal through Codex's lifecycle API, without adding a user message. */
+export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary, signal?: AbortSignal, origin: "user" | "automatic" = "automatic"): Promise<void> {
+  validateSessionId(session.id);
+  signal?.throwIfAborted();
+  const home = resolveCodexHome();
+  const nativeStarted = (turnId: string) => nativeTurnStarted(home, session.id, turnId);
+  const cwd = await resolveRecordedSessionProject(session.id, session.projectPath);
+  signal?.throwIfAborted();
+  const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd, signal);
+  let live: ReturnType<typeof reserveCodexSessionLive>;
+  try { live = reserveCodexSessionLive(); }
+  catch (error) { rpc.close(); throw error; }
+  let accepted = false;
+  let done = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let off = () => undefined as void;
+  let detachPrompts = () => undefined as void;
+  const close = (discardLive = false) => {
+    if (done) return;
+    done = true;
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+    off(); detachPrompts(); activeAppServerTurns.delete(session.id);
+    if (discardLive) live.dispose(true);
+    rpc.close(); live.dispose();
+  };
+  const abort = () => { if (!accepted) close(); };
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    await waitWithin(runCrossWindowExclusive(`codex:goal:${session.id.toLowerCase()}`, "Resume Codex goal", () => runCliSessionMutation(session.id, "Resume Codex goal", async () => {
+      signal?.throwIfAborted();
+      if (await isCliSessionRunning(resolveCodexHome(), session.id)) {
+        observeRunningCodexSession({ ...session, status: "running" });
+        return;
+      }
+      const current = await rpc.request<{ goal?: { status?: string; objective?: string } | null }>("thread/goal/get", { threadId: session.id });
+      signal?.throwIfAborted();
+      if (!current.goal || !["active", "usageLimited", "usage_limited"].includes(current.goal.status ?? "")) throw new Error("The goal is no longer eligible to resume. Refresh the session before retrying.");
+      const transcript = await findCliSessionTranscript(resolveCodexHome(), session.id, signal);
+      await readRecentTranscriptTurnState(transcript);
+      const previous = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
+      const monitorNative = () => {
+        void waitForNativeSessionTurn(session.id, transcript, previous, ownedNativeTurn(home, session.id)?.turnId, home).catch(error =>
+          recordPersistentEvent("warning", "session-resume", "Native goal continuation ended without completion", { sessionRef: toSessionLogRef(session.id), title: session.title }, error));
+        close(true);
+      };
+      if (current.goal.status !== "active") {
+        try { await rpc.request("thread/goal/set", { threadId: session.id, status: "active", origin }); }
+        catch (error) {
+          if (!(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
+          // Codex can commit the goal before its journal append encounters the native writer.
+          let verified = await rpc.request<{ goal?: { status?: string; objective?: string } | null }>("thread/goal/get", { threadId: session.id });
+          if (!current.goal.objective || verified.goal?.objective !== current.goal.objective) throw error;
+          if (origin === "user" && ["usageLimited", "usage_limited"].includes(verified.goal?.status ?? "")) {
+            // Recovery changes status without appending an instruction through another writer.
+            verified = await rpc.request("thread/goal/set", { threadId: session.id, status: "active", origin: "automatic" });
+          }
+          if (verified.goal?.status !== "active" || !current.goal.objective || verified.goal.objective !== current.goal.objective) throw error;
+          recordPersistentEvent("warning", "session-resume", "Goal activation verified after native writer conflict", { sessionRef: toSessionLogRef(session.id), title: session.title }, error);
+        }
+      }
+      if (getNativeCodexSessionRunning(resolveCodexHome(), session.id) === true) { monitorNative(); return; }
+      if (getNativeCodexSessionRunning(home, session.id) !== undefined && await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, nativeStarted)) { monitorNative(); return; }
+      live.attach(session.id, rpc, parseCodexAppServerThreadItems);
+      detachPrompts = attachCodexAppServerPrompts(rpc, session.id);
+      activeAppServerTurns.set(session.id, { rpc });
+      let started!: () => void;
+      let failed!: (error: Error) => void;
+      const running = new Promise<void>((resolve, reject) => { started = resolve; failed = reject; });
+      void running.catch(() => undefined);
+      const disconnected = rpc.onDisconnect(error => { failed(error); close(); });
+      const notification = rpc.onNotification((method, raw) => {
+        const params = raw as { threadId?: string; turn?: { id?: string } } | undefined;
+        if (params?.threadId !== session.id) return;
+        if (method === "turn/started") {
+          const active = activeAppServerTurns.get(session.id);
+          if (active) active.turnId = params.turn?.id;
+          accepted = true;
+          signal?.removeEventListener("abort", abort);
+          started();
+        }
+        if (method === "turn/completed") {
+          if (!accepted) failed(new Error("The goal ended before a resumed turn could be confirmed."));
+          close();
+        }
+      });
+      off = () => { notification(); disconnected(); };
+      try { await rpc.request("thread/resume", { threadId: session.id, cwd }); }
+      catch (error) {
+        if (!(error instanceof Error) || !/already has an active writer/i.test(error.message) || !await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, nativeStarted)) throw error;
+        monitorNative(); return;
+      }
+      signal?.throwIfAborted();
+      if (!accepted) {
+        await rpc.request("turn/start", { threadId: session.id, input: [], cwd });
+        await running;
+      }
+      if (!done) {
+        timer = setTimeout(() => { live.finish("disconnected", "Goal monitoring timed out. Open Codex to check its current state."); close(); }, CLI_TURN_TIMEOUT_MS);
+        timer.unref?.();
+      }
+    })), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", signal);
+  } catch (error) {
+    live.finish("failed", error instanceof Error ? error.message : String(error));
+    close();
+    throw error;
+  } finally { if (!accepted) close(); }
+}
+
+/** Observe work that Codex restored itself without taking ownership or starting another turn. */
+export function observeRunningCodexSession(session: DashboardCliSessionSummary): void {
+  validateSessionId(session.id);
+  const home = resolveCodexHome(), key = `${home}:${session.id}`;
+  if (session.status !== "running" || ownsSessionTurn(home, session.id) || nativeTurnObservers.has(key)) return;
+  if (nativeTurnObservers.size >= MAX_TRACKED_CLI_TURNS) {
+    recordPersistentEvent("warning", "session-resume", "Restored native turn monitoring capacity reached", { sessionRef: toSessionLogRef(session.id), title: session.title });
+    return;
+  }
+  const work = (async () => {
+    const transcript = await findCliSessionTranscript(home, session.id);
+    const startedAt = Date.now(), deadline = startedAt + 5_000;
+    for (;;) {
+      const state = await readRecentTranscriptTurnState(transcript);
+      const current = transcript ? cliTranscriptTurnStateCache.get(transcript) : undefined;
+      // A loading owner can report running before its new task reaches the journal.
+      if (current?.turnId && (state === "active" || (current.startedAt !== undefined &&
+          (current.startedAt === session.runningSince || current.startedAt >= startedAt)))) {
+        const turnId = current.turnId, streamId = randomUUID();
+        publishNativeTurnState(home, session.id, "running", turnId, streamId);
+        await waitForNativeSessionTurn(session.id, transcript, undefined, turnId, home, streamId);
+        return;
+      }
+      if (!transcript || Date.now() >= deadline) throw new Error("The restored native turn could not be verified for completion monitoring.");
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+  })().catch(error => {
+    if (!(error instanceof CodexCliTurnCancelledError)) recordPersistentEvent("warning", "session-resume", "Restored native turn ended without confirmed completion", { sessionRef: toSessionLogRef(session.id), title: session.title }, error);
+  })
+    .finally(() => { if (nativeTurnObservers.get(key) === work) nativeTurnObservers.delete(key); });
+  nativeTurnObservers.set(key, work);
+}
+
+async function waitForNativeSessionTurn(sessionId: string, transcript: string | undefined, previous: string | undefined, expectedTurnId?: string, home = resolveCodexHome(), streamId?: string): Promise<void> {
+  const deadline = Date.now() + CLI_TURN_TIMEOUT_MS;
+  let status: "completed" | "cancelled" | "failed" | "disconnected" = "disconnected";
+  try {
+    while (Date.now() < deadline) {
+      const state = await readRecentTranscriptTurnState(transcript);
+      const turn = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
+      if (turn && turn !== previous) {
+        if (expectedTurnId && turn !== expectedTurnId) throw new Error("The native turn changed before its outcome could be verified. Refresh the conversation.");
+        if (state === "failed" || state === "quota-paused") { status = "failed"; throw new Error("Codex could not finish this turn. Check the conversation before retrying."); }
+        if (transcript && cliTranscriptTurnStateCache.get(transcript)?.cancelled) { status = "cancelled"; throw new CodexCliTurnCancelledError(); }
+        if (state === "terminal") { status = "completed"; return; }
+      }
+      await new Promise(resolve => setTimeout(resolve, 150));
+    }
+    throw new Error("The Codex turn outcome is unconfirmed. Check the conversation before retrying.");
+  } finally {
+    const owned = ownedNativeTurn(home, sessionId);
+    if (!streamId || (transcript && cliTranscriptTurnStateCache.get(transcript)?.turnId === expectedTurnId))
+      publishNativeTurnState(home, sessionId, status, expectedTurnId, streamId);
+    if (!streamId && owned && (!expectedTurnId || owned.turnId === expectedTurnId)) activeNativeTurns.delete(sessionId);
+  }
 }
 
 /** Steering uses the owned active connection, independently of the turn's mutation lock. */
@@ -1315,6 +1126,11 @@ function toAppServerSandbox(mode: DashboardCliSandboxMode, cwd: string): Record<
 
 export async function cancelCodexCliSessionTurn(sessionId: string): Promise<boolean> {
   validateSessionId(sessionId);
+  const native = ownedNativeTurn(resolveCodexHome(), sessionId);
+  if (native) {
+    if (!native.stop) native.stop = cancelNativeCodexSessionTurn(native.home, sessionId, native.turnId).finally(() => { native.stop = undefined; });
+    return native.stop;
+  }
   const activeAppServer = activeAppServerTurns.get(sessionId);
   if (activeAppServer) {
     activeAppServer.cancelRequested = true;
@@ -1329,16 +1145,11 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     }
     return true;
   }
-  const child = activeCliTurns.get(sessionId);
-  if (!child) return false;
-  // Treat an already-exiting process as successfully stopped. Node can emit
-  // `close` a tick after `kill()` returns false, and reporting failure here
-  // would leave the dashboard showing a false error for a completed stop.
-  return child.kill() || child.killed || child.exitCode !== null || child.signalCode !== null;
+  return false;
 }
 
 /** Open a local Codex session in the official VS Code conversation editor. */
-const AUTO_RESUME_EDITOR_SETTLE_MS = 350;
+const AUTO_RESUME_EDITOR_SETTLE_MS = 1_000;
 
 export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal, focusWindow = false): Promise<void> {
   validateSessionId(sessionId);
@@ -1354,6 +1165,19 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
   const opening = (async () => {
     await activateOfficialCodexExtension();
     signal?.throwIfAborted();
+    if (focusWindow) {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => signal?.removeEventListener("abort", abort);
+        const done = () => { cleanup(); resolve(); };
+        const abort = () => { clearTimeout(timer); cleanup(); reject(signal?.reason instanceof Error ? signal.reason : new Error("Auto Resume was cancelled.")); };
+        const timer = setTimeout(done, AUTO_RESUME_EDITOR_SETTLE_MS);
+        if (signal) {
+          if (signal.aborted) abort();
+          else signal.addEventListener("abort", abort, { once: true });
+        }
+      });
+      signal?.throwIfAborted();
+    }
     // Auto Resume runs during extension-host activation. Await the official
     // extension so its custom-editor provider is registered before openWith.
     await vscode.commands.executeCommand(
@@ -1381,20 +1205,11 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
       }
       signal?.throwIfAborted();
     }
-    if (focusWindow) {
-      await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = () => signal?.removeEventListener("abort", abort);
-        const done = () => { cleanup(); resolve(); };
-        const abort = () => { clearTimeout(timer); cleanup(); reject(signal?.reason instanceof Error ? signal.reason : new Error("Auto Resume was cancelled.")); };
-        const timer = setTimeout(done, AUTO_RESUME_EDITOR_SETTLE_MS);
-        if (signal) {
-          if (signal.aborted) abort();
-          else signal.addEventListener("abort", abort, { once: true });
-        }
-      });
-      signal?.throwIfAborted();
-    }
+    if (focusWindow) await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
+    const ready = await waitForNativeCodexSessionReady(resolveCodexHome(), sessionId, signal);
+    signal?.throwIfAborted();
+    recordPersistentEvent(ready === false ? "warning" : "debug", "session-editor", "Codex conversation readiness checked", { sessionRef: toSessionLogRef(sessionId), ready: ready ?? "unavailable" });
+    if (ready === false) throw new Error("The Codex tab opened but is still loading. Wait for it to finish, then retry; saved recovery was kept.");
   })();
   editorOpens.set(sessionId, opening);
   try {
@@ -1477,7 +1292,6 @@ async function activateOfficialCodexExtension(): Promise<vscode.Extension<unknow
   return codexExtension;
 }
 
-/** @deprecated Use openCodexSessionInVsCode; this alias preserves dashboard integrations. */
 export async function renameCodexCliSession(sessionId: string, name: string): Promise<void> {
   validateSessionId(sessionId);
   const normalized = name.trim().replace(/\s+/g, " ");
@@ -1508,9 +1322,7 @@ export async function forkCodexCliSession(sessionId: string): Promise<string> {
 export async function archiveCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
   await runCliSessionMutation(sessionId, "Codex session archive", () =>
-    configuredSessionTransport() === "cli"
-      ? runCodexCliUtility(["archive", sessionId], "archive the session")
-      : runCodexAppServerRequest("thread/archive", { threadId: sessionId }).then(() => undefined)
+    runCodexAppServerRequest("thread/archive", { threadId: sessionId }).then(() => undefined)
   );
   const recent = recentNewSessions.get(sessionId);
   if (recent) recent.summary = { ...recent.summary, archived: true };
@@ -1519,9 +1331,7 @@ export async function archiveCodexCliSession(sessionId: string): Promise<void> {
 export async function unarchiveCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
   await runCliSessionMutation(sessionId, "Codex session restore", () =>
-    configuredSessionTransport() === "cli"
-      ? runCodexCliUtility(["unarchive", sessionId], "restore the session")
-      : runCodexAppServerRequest("thread/unarchive", { threadId: sessionId }).then(() => undefined)
+    runCodexAppServerRequest("thread/unarchive", { threadId: sessionId }).then(() => undefined)
   );
   const recent = recentNewSessions.get(sessionId);
   if (recent) recent.summary = { ...recent.summary, archived: false };
@@ -1529,14 +1339,10 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
 
 export async function deleteCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
-  if (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+  if (ownsSessionTurn(resolveCodexHome(), sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
-    if (activeCliTurns.has(sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
-    if (configuredSessionTransport() === "cli") {
-      await runCodexCliUtility(["delete", "--force", sessionId], "delete the session");
-    } else {
-      await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
-    }
+    if (await isCliSessionRunning(resolveCodexHome(), sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+    await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
   });
   recentNewSessions.delete(sessionId);
   newSessionFailures.delete(sessionId);
@@ -1557,12 +1363,9 @@ export async function readCodexCliSessionMessages(
   if (recentNewSessions.has(sessionId) && !(await findCliSessionTranscript(codexHome, sessionId))) {
     return [{ id: `initial-${sessionId}`, kind: "message", role: "user", text: recentNewSessions.get(sessionId)!.text }];
   }
-  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && configuredSessionTransport() !== "cli" && !(await findCliSessionTranscript(codexHome, sessionId))) {
+  if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && !(await findCliSessionTranscript(codexHome, sessionId))) {
     try {
-      const recordedProject = (await readCliSessionMetadata(codexHome, sessionId)).projectPath
-        ?? (await readStateSessionRecords(codexHome, sessionId))[0]?.cwd;
-      const projectPath = recordedProject && path.isAbsolute(recordedProject) ? path.resolve(recordedProject) : resolveCliProjectPath(undefined);
-      await assertUsableCliProjectPath(projectPath);
+      const projectPath = await resolveRecordedSessionProject(sessionId);
       const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), projectPath);
       try {
         const result = await rpc.request("thread/read", { threadId: sessionId, includeTurns: true }, APP_SERVER_REQUEST_TIMEOUT_MS);
@@ -1578,10 +1381,6 @@ export async function readCodexCliSessionMessages(
   }
   const sessionRef = toSessionLogRef(sessionId);
   const startedAt = Date.now();
-  recordPersistentEvent("info", "session-viewer", "Workspace session read started", {
-    sessionRef,
-    reader: "direct-jsonl"
-  });
   try {
     const transcriptPath = await findCliSessionTranscript(codexHome, sessionId);
     if (!transcriptPath) {
@@ -1590,23 +1389,7 @@ export async function readCodexCliSessionMessages(
       throw new Error("The session transcript was not found on this PC.");
     }
     const result = await readCachedCliTranscriptMessages(transcriptPath);
-    recordPersistentEvent("info", "session-viewer", "Workspace session read completed", {
-      sessionRef,
-      reader: "direct-jsonl",
-      transcriptBytes: result.transcriptBytes,
-      bytesRead: result.bytesRead,
-      messageCount: result.messages.length,
-      cacheHit: result.cacheHit,
-      partialLine: result.partialLine,
-      windowed: result.windowed,
-      durationMs: Date.now() - startedAt
-    });
-    const messages = await hydrateSessionImages(result.messages);
-    recordPersistentEvent("info", "session-viewer", "Workspace session media resolved", {
-      sessionRef,
-      imageCount: messages.reduce((count, message) => count + (message.images?.length ?? 0), 0)
-    });
-    return messages;
+    return await hydrateSessionImages(result.messages);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     recordPersistentEvent(
@@ -2261,14 +2044,44 @@ function validateSessionId(sessionId: string): void {
 }
 
 function runCliSessionMutation<T>(sessionId: string, operationLabel: string, task: () => Promise<T>): Promise<T> {
-  return runCrossWindowExclusive(`codex:session:${sessionId.toLowerCase()}`, operationLabel, task);
+  return runCrossWindowExclusive(`codex:session:${sessionId.toLowerCase()}`, operationLabel, async () => {
+    const result = await task();
+    try { const store = getSqliteStateStore(); if (store) invalidateSessionCatalogue(store, resolveCodexHome()); }
+    catch (error) { recordPersistentEvent("warning", "session-list", "Changed history will refresh when storage recovers", undefined, error); }
+    return result;
+  });
+}
+
+export async function resolveRecordedSessionProject(sessionId: string, requestedProject?: string): Promise<string> {
+  validateSessionId(sessionId);
+  const home = resolveCodexHome();
+  const recorded = (await readCliSessionMetadata(home, sessionId)).projectPath
+    ?? (await readStateSessionRecords(home, sessionId))[0]?.cwd
+    ?? recentNewSessions.get(sessionId)?.summary.projectPath;
+  let cwd: string;
+  if (recorded) {
+    if (!path.isAbsolute(recorded)) throw new Error("The session's recorded project folder is invalid. Open it in Codex and select its project before retrying.");
+    const canonical = async (value: string): Promise<string> => {
+      const normalized = path.resolve(normalizeNativePath(value));
+      const resolved = await fs.realpath(normalized).catch(() => normalized);
+      return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+    };
+    if (requestedProject && await canonical(requestedProject) !== await canonical(recorded)) throw new Error("This session belongs to a different project. Refresh its project details before retrying.");
+    cwd = path.resolve(recorded);
+  } else {
+    if (!requestedProject || !path.isAbsolute(requestedProject)) throw new Error("This session has no project folder. Open it in Codex and select its project before retrying.");
+    await readKnownProjectRoots(home);
+    cwd = resolveCliProjectPath(requestedProject);
+  }
+  await assertUsableCliProjectPath(cwd);
+  return cwd;
 }
 
 function resolveCliProjectPath(projectPath: string | undefined): string {
   const fallback = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   if (!projectPath) return fallback;
-  const requested = path.resolve(projectPath);
-  const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(folder.uri.fsPath));
+  const requested = path.resolve(normalizeNativePath(projectPath));
+  const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(normalizeNativePath(folder.uri.fsPath)));
   const allowed = [...workspaceRoots, ...(knownProjectRoots.get(path.resolve(resolveCodexHome())) ?? [])];
   if (
     workspaceRoots.length === 0 ||
@@ -2575,158 +2388,31 @@ function probeCodexCliAvailability(executable: CodexCliExecutable): Promise<bool
   });
 }
 
-async function runCodexCliUtility(args: string[], label: string): Promise<void> {
-  const executable = await resolveCodexCliExecutable();
-  await new Promise<void>((resolve, reject) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(executable.command, [...executable.prefixArgs, ...args], {
-        cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
-        env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
-        windowsHide: true,
-        shell: executable.shell
-      });
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-    let stderr = "";
-    let settled = false;
-    const finish = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      callback();
-    };
-    const timeout = setTimeout(() => {
-      child.kill();
-      finish(() => reject(new Error(`Codex did not ${label} within 30 seconds. Try again.`)));
-    }, CLI_UTILITY_TIMEOUT_MS);
-    // Some CLI versions write progress to stdout. Drain it even though utility
-    // actions only need the exit code, otherwise a full pipe can deadlock.
-    child.stdout?.on("data", () => undefined);
-    child.stderr?.on("data", (chunk: Buffer) => {
-      if (Buffer.byteLength(stderr, "utf8") < MAX_CLI_OUTPUT_BYTES) stderr += chunk.toString("utf8");
-    });
-    child.on("error", (error) => finish(() => reject(error)));
-    child.on("close", (code) =>
-      finish(() =>
-        code === 0 ? resolve() : reject(new Error(normalizeCliError(stderr) || `Codex could not ${label}.`))
-      )
-    );
-  });
-}
-
 async function runCodexAppServerRequest<T = unknown>(
   method: string,
   params: unknown,
   timeoutMs = APP_SERVER_REQUEST_TIMEOUT_MS
 ): Promise<T> {
   const executable = await resolveCodexCliExecutable();
-  return new Promise<T>((resolve, reject) => {
-    let child: ChildProcessWithoutNullStreams;
-    try {
-      child = spawn(executable.command, [...executable.prefixArgs, "app-server", "--stdio"], {
-        cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
-        env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
-        windowsHide: true,
-        shell: executable.shell,
-        stdio: ["pipe", "pipe", "pipe"]
-      });
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error(String(error)));
-      return;
-    }
-    const lines = readline.createInterface({ input: child.stdout });
-    let stderr = "";
-    let settled = false;
-    const finish = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      lines.close();
-      child.kill();
-      callback();
-    };
-    const write = (value: unknown): void => {
-      try {
-        child.stdin.write(`${JSON.stringify(value)}\n`, "utf8");
-      } catch (error) {
-        finish(() => reject(error instanceof Error ? error : new Error(String(error))));
-      }
-    };
-    const timeout = setTimeout(
-      () => finish(() => reject(new Error("Codex did not respond to the session action in time."))),
-      timeoutMs
-    );
-    child.stderr.on("data", (chunk: Buffer) => {
-      if (Buffer.byteLength(stderr, "utf8") < MAX_CLI_OUTPUT_BYTES) stderr += chunk.toString("utf8");
-    });
-    child.stdin.on("error", (error) => finish(() => reject(error)));
-    child.on("error", (error) => finish(() => reject(error)));
-    child.on("close", (code) => {
-      if (!settled)
-        finish(() =>
-          reject(new Error(normalizeCliError(stderr) || `Codex app server exited with code ${code ?? "unknown"}.`))
-        );
-    });
-    lines.on("line", (line) => {
-      try {
-        const message = JSON.parse(line) as {
-          id?: unknown;
-          method?: unknown;
-          result?: unknown;
-          error?: { message?: unknown };
-        };
-        if (!message || typeof message !== "object" || Array.isArray(message)) return;
-        if (message.id === 1 && message.error) {
-          const detail = typeof message.error.message === "string" ? message.error.message : "Codex rejected initialization.";
-          finish(() => reject(new Error(detail)));
-          return;
-        }
-        if (message.id === 1 && Object.prototype.hasOwnProperty.call(message, "result")) {
-          write({ method: "initialized" });
-          write({ method, id: 2, params });
-        } else if (message.id === 2) {
-          if (message.error) {
-            const detail =
-              typeof message.error.message === "string" ? message.error.message : "Codex rejected the session action.";
-            finish(() => reject(new Error(detail)));
-          } else {
-            finish(() => resolve(message.result as T));
-          }
-        } else if (typeof message.method === "string" && message.id !== undefined) {
-          // Non-interactive requests must not deadlock if a newer app-server
-          // asks for approval or another callback this client cannot service.
-          write({
-            id: message.id,
-            error: { code: -32601, message: `Codex Manager does not support app-server request ${message.method}.` }
-          });
-        }
-      } catch {
-        // Ignore non-protocol diagnostic lines and wait for the requested response.
-      }
-    });
-    write({
-      method: "initialize",
-      id: 1,
-      params: {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.2.18" },
-        capabilities: null
-      }
-    });
-  });
-}
-
-function normalizeCliError(value: string): string {
-  return value
-    .replace(/\x1b\[[0-9;]*m/g, "")
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .slice(-4)
-    .join(" ")
-    .slice(0, 1200);
+  const sessionId = (params as { threadId?: unknown } | null)?.threadId;
+  let cwd: string;
+  try { cwd = typeof sessionId === "string" ? await resolveRecordedSessionProject(sessionId) : resolveCliProjectPath(undefined); }
+  catch (error) {
+    if (typeof sessionId !== "string" || !["thread/name/set", "thread/archive", "thread/unarchive", "thread/delete", "thread/goal/clear"].includes(method)) throw error;
+    const home = resolveCodexHome();
+    const [records, index, transcript, goals] = await Promise.all([
+      readStateSessionRecords(home, sessionId, undefined, 2000, true), readCodexCliSessionIndex(home), findCliSessionTranscript(home, sessionId),
+      method === "thread/goal/clear" ? readCodexSessionGoals(home, [sessionId]) : undefined
+    ]);
+    if (!records.length && !index.some(row => row.id === sessionId) && !transcript && !goals?.has(sessionId)) throw error;
+    // Storage cleanup needs no project tools; a deleted project must not trap its archived data.
+    cwd = home;
+    await assertUsableCliProjectPath(cwd);
+    recordPersistentEvent("debug", "session-maintenance", "Using Codex storage for an unavailable session project", { sessionRef: toSessionLogRef(sessionId), method });
+  }
+  const rpc = await CodexAppServerRpc.open(executable, cwd);
+  try { return await rpc.request<T>(method, params, timeoutMs); }
+  finally { rpc.close(); }
 }
 
 function parseCliSessionEntry(line: string): CliSessionIndexEntry | undefined {
@@ -2742,12 +2428,12 @@ function parseCliSessionEntry(line: string): CliSessionIndexEntry | undefined {
 
 export function resolveCodexHome(): string {
   const configured = process.env["CODEX_HOME"]?.trim().replace(/^['"]|['"]$/g, "");
-  return configured || path.join(os.homedir(), ".codex");
+  return configured ? path.resolve(normalizeNativePath(configured)) : path.join(os.homedir(), ".codex");
 }
 
-function normalizeSessionTitle(value: string | undefined, id: string): string {
+function normalizeSessionTitle(value: string | undefined, id: string, fallback?: string): string {
   const title = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
-  return (title || `Codex session ${id.slice(0, 8)}`).slice(0, 160);
+  return title && title !== id && title !== `Codex session ${id.slice(0, 8)}` ? title.slice(0, 160) : fallback ? normalizeSessionTitle(fallback, id) : "Untitled conversation";
 }
 
 function normalizeTimestamp(value: string | undefined): string | undefined {
@@ -2839,118 +2525,6 @@ async function readTrackedCliTurnsWithDiagnostics(
   }
 }
 
-async function claimTrackedCliTurn(turn: TrackedCliTurn): Promise<void> {
-  if (await isCliSessionRunning(resolveCodexHome(), turn.id)) {
-    throw new Error("Codex is already working in this session. Wait for it to finish before sending another turn.");
-  }
-  await updateTrackedCliTurns((turns) => {
-    const existing = turns.find((candidate) => candidate.id === turn.id);
-    if (
-      existing &&
-      Date.now() - existing.startedAt <= MAX_TRACKED_TURN_AGE_MS &&
-      ((existing.childPid && isProcessAlive(existing.childPid)) ||
-        (!existing.childPid && existing.ownerPid && isProcessAlive(existing.ownerPid)))
-    ) {
-      throw new Error(
-        "Codex is already working in this session (possibly in another VS Code window). Wait for it to finish or stop the current turn."
-      );
-    }
-    return [turn, ...turns.filter((candidate) => candidate.id !== turn.id)].slice(0, MAX_TRACKED_CLI_TURNS);
-  });
-  recordPersistentEvent("info", "session-resume", "Session recorded for recovery", {
-    sessionRef: toSessionLogRef(turn.id),
-    source: "dashboard-started-turn"
-  });
-}
-
-async function rememberTrackedCliTurn(turn: TrackedCliTurn): Promise<void> {
-  await updateTrackedCliTurns((turns) => {
-    const current = turns.find((candidate) => candidate.id === turn.id);
-    if (current && current.startedAt !== turn.startedAt) return turns;
-    return [turn, ...turns.filter((candidate) => candidate.id !== turn.id)].slice(0, MAX_TRACKED_CLI_TURNS);
-  });
-  recordPersistentEvent("info", "session-resume", "CLI recovery record updated with child process", {
-    sessionRef: toSessionLogRef(turn.id),
-    childProcessRecorded: turn.childPid !== undefined
-  });
-}
-
-async function forgetTrackedCliTurn(sessionId: string, startedAt?: number): Promise<void> {
-  await updateTrackedCliTurns((turns) =>
-    turns.filter((turn) => turn.id !== sessionId || (startedAt !== undefined && turn.startedAt !== startedAt))
-  );
-}
-
-async function updateTrackedCliTurns(transform: (turns: TrackedCliTurn[]) => TrackedCliTurn[]): Promise<void> {
-  const storageRoot = getCodexManagerStorageRoot();
-  const filePath = path.join(storageRoot, RUNNING_TURNS_FILE);
-  const legacyPath = path.join(resolveCodexHome(), RUNNING_TURNS_FILE);
-  const operation = runningTurnWrite.then(async () => {
-    await runJournalExclusive(async () => {
-      const tracked = await readTrackedCliTurnsWithDiagnostics(storageRoot, legacyPath);
-      if (tracked.failure) {
-        throw new Error(`Cannot update the recovery journal because it is unreadable: ${tracked.failure}`);
-      }
-      const current = tracked.turns;
-      const next = transform(current);
-      const store = sqliteStoreForFile(filePath);
-      if (store) { saveRunningTurnRows(store,next); return; }
-      await fs.mkdir(storageRoot, { recursive: true, mode: 0o700 });
-      const temporaryPath = `${filePath}.${process.pid}.${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
-      const handle = await fs.open(temporaryPath, "wx", 0o600);
-      let preserveTemporary = false;
-      try {
-        await handle.writeFile(JSON.stringify(next), "utf8");
-        await handle.sync();
-        await handle.close();
-        try {
-          await replaceFile(temporaryPath, filePath);
-        } catch (error) {
-          preserveTemporary = true;
-          throw error;
-        }
-        if (tracked.sourcePath === legacyPath && legacyPath !== filePath) {
-          await fs.unlink(legacyPath).catch(() => undefined);
-        }
-      } finally {
-        await handle.close().catch(() => undefined);
-        if (!preserveTemporary) await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
-      }
-    });
-  });
-  runningTurnWrite = operation.catch(() => undefined);
-  await operation;
-}
-
-async function runJournalExclusive(task: () => Promise<void>): Promise<void> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await runCrossWindowExclusive("codex:running-turn-journal", "Codex CLI recovery journal update", task);
-    } catch (error) {
-      if (!(error instanceof CrossWindowOperationBusyError) || attempt >= JOURNAL_LOCK_RETRIES) throw error;
-      await new Promise<void>((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
-    }
-  }
-}
-
-async function replaceFile(source: string, destination: string): Promise<void> {
-  let lastError: unknown;
-  for (const delayMs of [0, 20, 50, 100, 200, 400]) {
-    if (delayMs) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-    try {
-      await fs.rename(source, destination);
-      return;
-    } catch (error) {
-      lastError = error;
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if (!["EACCES", "EBUSY", "EPERM"].includes(code ?? "")) throw error;
-    }
-  }
-  // Keep the previous live journal intact; the complete temp remains available
-  // for diagnostics when Windows has not released the destination yet.
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
-
 function isTrackedCliTurn(value: unknown): value is TrackedCliTurn {
   if (!value || typeof value !== "object") return false;
   const turn = value as Partial<TrackedCliTurn>;
@@ -2973,17 +2547,8 @@ function isValidPid(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-function toSessionLogRef(sessionIdOrUri: string): string {
+export function toSessionLogRef(sessionIdOrUri: string): string {
   return createHash("sha256").update(sessionIdOrUri).digest("hex").slice(0, 12);
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 async function readCliSessionStatus(
@@ -3024,7 +2589,7 @@ async function inspectCliSessionRunning(
 ): Promise<boolean> {
   signal?.throwIfAborted();
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) &&
-      (activeCliTurns.has(sessionId) || activeAppServerTurns.has(sessionId))) return true;
+      ownsSessionTurn(codexHome, sessionId)) return true;
   const cachedNative = getNativeCodexSessionRunning(codexHome, sessionId);
   if (cachedNative !== undefined) return cachedNative;
   const lockPath = path.join(codexHome, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
@@ -3150,6 +2715,7 @@ const cliTranscriptTurnStateCache = new Map<string, {
   size: number; mtimeMs: number; offset: number;
   state: RecentTranscriptTurnState; resumeState: RecentTranscriptTurnState;
   turnId?: string; resumeTurnId?: string;
+  cancelled?: boolean; resumeCancelled?: boolean;
   startedAt?: number; resumeStartedAt?: number;
   model?: string; reasoningEffort?: string; resumeModel?: string; resumeReasoningEffort?: string;
 }>();
@@ -3157,7 +2723,7 @@ const cliTranscriptTurnStateCache = new Map<string, {
 async function readCliRunningSince(transcriptPath: string | undefined): Promise<number | undefined> {
   if (!transcriptPath) return undefined;
   try {
-    await readRecentTranscriptTurnState(transcriptPath);
+    if (await readRecentTranscriptTurnState(transcriptPath) !== "active") return undefined;
     return cliTranscriptTurnStateCache.get(transcriptPath)?.startedAt;
   } catch { return undefined; } // Optional timing must not make the session unreadable.
 }
@@ -3183,6 +2749,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     if (previous?.size === snapshot.size && previous.mtimeMs === snapshot.mtimeMs) return previous.state;
     let state: RecentTranscriptTurnState = incremental ? previous!.resumeState : "unknown";
     let turnId = incremental ? previous!.resumeTurnId : undefined;
+    let turnCancelled = incremental ? previous!.resumeCancelled : false;
     let startedAt = incremental ? previous!.resumeStartedAt : undefined;
     let model = incremental ? previous!.resumeModel : undefined;
     let reasoningEffort = incremental ? previous!.resumeReasoningEffort : undefined;
@@ -3191,10 +2758,11 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     if (!incremental && snapshot.startOffset > 0) lines.shift();
     let resumeState = state;
     let resumeTurnId = turnId;
+    let resumeCancelled = turnCancelled;
     let resumeStartedAt = startedAt;
     let resumeModel = model, resumeReasoningEffort = reasoningEffort;
     for (const [index, line] of lines.entries()) {
-      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; }
+      if (index === lines.length - 1) { resumeState = state; resumeTurnId = turnId; resumeCancelled = turnCancelled; resumeStartedAt = startedAt; resumeModel = model; resumeReasoningEffort = reasoningEffort; }
       try {
         const record = JSON.parse(line) as { type?: string; timestamp?: string; turn_id?: string; error?: unknown; payload?: { type?: string; turn_id?: string; error?: unknown; message?: unknown; reason?: unknown; model?: unknown; effort?: unknown; reasoning_effort?: unknown } };
         if (record?.type === "turn_context") {
@@ -3208,6 +2776,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
           if (!eventTurnId || !turnId || eventTurnId === turnId) {
             const quota = isCodexQuotaInterruption(JSON.stringify([record.error,record.payload?.error, /failed|aborted/.test(type ?? "") ? record.payload?.message : undefined]));
             const cancelled = typeof record.payload?.reason === "string" && /user|cancel/i.test(record.payload.reason);
+            turnCancelled = cancelled || type === "turn_aborted";
             state = quota || (state === "quota-paused" && !cancelled) ? "quota-paused" : /failed/.test(type ?? "") && !cancelled ? "failed" : "terminal";
             turnId = eventTurnId ?? turnId;
           }
@@ -3220,6 +2789,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
             const timestamp = Date.parse(typeof record.timestamp === "string" ? record.timestamp : "");
             if (startedAt === undefined && Number.isFinite(timestamp) && timestamp > 0 && timestamp <= Date.now() + 5 * 60_000) startedAt = timestamp;
             state = "active"; turnId = eventTurnId;
+            turnCancelled = false;
           }
         }
       } catch { /* Ignore partial records and quoted event text. */ }
@@ -3230,22 +2800,27 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     }
     cliTranscriptTurnStateCache.set(transcriptPath, {
       size: snapshot.size, mtimeMs: snapshot.mtimeMs,
-      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, startedAt, resumeStartedAt, model, reasoningEffort, resumeModel, resumeReasoningEffort
+      offset: snapshot.startOffset + snapshot.buffer.lastIndexOf(0x0a) + 1, state, resumeState, turnId, resumeTurnId, cancelled: turnCancelled, resumeCancelled, startedAt, resumeStartedAt, model, reasoningEffort, resumeModel, resumeReasoningEffort
     });
     if (cliTranscriptTurnStateCache.size > MAX_VISIBLE_CLI_SESSIONS * 3) cliTranscriptTurnStateCache.delete(cliTranscriptTurnStateCache.keys().next().value!);
     return state;
   }
 }
 
-/** Quota-stopped turns are recovery candidates, never native process locks. */
-export async function readQuotaInterruptedCodexSessionIds(home = resolveCodexHome(), ids?: readonly string[], signal?: AbortSignal, limitedGoalIds: readonly string[] = []): Promise<string[]> {
+/** Optionally include all interrupted turns; discovery never changes native writer locks. */
+export async function readQuotaInterruptedCodexSessionIds(home = resolveCodexHome(), ids?: readonly string[], signal?: AbortSignal, limitedGoalIds: readonly string[] = [], includeInterrupted = false): Promise<string[]> {
   signal?.throwIfAborted();
   const transcripts = await findCliSessionTranscripts(home, ids ? new Set(ids) : undefined, signal);
   const interrupted = new Set(limitedGoalIds.filter(id => !ids || ids.includes(id)));
   for (const [id, transcript] of transcripts) {
-    signal?.throwIfAborted();
     const state = await readRecentTranscriptTurnState(transcript);
-    if (state === "quota-paused") interrupted.add(id);
+    const modifiedAt = cliTranscriptTurnStateCache.get(transcript)?.mtimeMs;
+    if (modifiedAt && modifiedAt > Date.now() + 60_000) {
+      interrupted.delete(id);
+      recordPersistentEvent("debug", "auto-resume", "Future-dated recovery skipped", { sessionId: id });
+      continue;
+    }
+    if (state === "quota-paused" || (includeInterrupted && (state === "active" || state === "failed" || cliTranscriptTurnStateCache.get(transcript)?.cancelled))) interrupted.add(id);
     else if (state === "terminal") interrupted.delete(id);
   }
   return [...interrupted];
@@ -3263,7 +2838,7 @@ export async function findCliSessionTranscripts(
   const found = new Map<string, string>();
   if (sessionIds?.size === 0) return found;
   const cacheKey = path.resolve(codexHome);
-  const stateRecords = await readStateSessionRecords(codexHome);
+  const stateRecords = await readStateSessionRecords(codexHome, sessionIds && sessionIds.size <= 30_000 ? [...sessionIds] : undefined);
   const canonical = new Map(stateRecords.flatMap((record) =>
     record.rolloutPath && path.isAbsolute(record.rolloutPath) ? [[record.id, path.resolve(record.rolloutPath)] as const] : []));
   const canonicalSignature = JSON.stringify([...canonical.entries()].sort(([left], [right]) => left.localeCompare(right)));
@@ -3273,6 +2848,21 @@ export async function findCliSessionTranscripts(
   if (!signal?.aborted && cacheFresh && cacheCoversRequest) {
     for (const [id, transcript] of cachedPaths.paths) if (!sessionIds || sessionIds.has(id)) found.set(id, transcript);
     return found;
+  }
+  if (sessionIds && [...sessionIds].every(id => canonical.has(id))) {
+    const direct = new Map<string, string>();
+    const roots = [path.resolve(codexHome, SESSION_DIRECTORY), path.resolve(codexHome, "archived_sessions")];
+    await runWithConcurrencyLimit([...sessionIds], 32, async id => {
+      signal?.throwIfAborted();
+      const transcript = canonical.get(id)!;
+      if (!roots.some(root => { const relative = path.relative(root, transcript); return relative && !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`); })) return;
+      const stat = await fs.lstat(transcript).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+      if (!stat?.isFile() || stat.isSymbolicLink()) return;
+      const [actual, actualHome] = await Promise.all([fs.realpath(transcript), fs.realpath(codexHome)]);
+      const relative = path.relative(actualHome, actual);
+      if (relative && !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`)) direct.set(id, transcript);
+    });
+    if (direct.size === sessionIds.size) return direct;
   }
   const selected = new Map<string, { mtimeMs: number; active: boolean; canonical: boolean }>();
   const activeRoot = path.resolve(codexHome, SESSION_DIRECTORY) + path.sep;

@@ -160,11 +160,13 @@ export class CrossWindowOperationCoordinator {
     const startedAt = Date.now();
     const cacheKey = sharedResourceKey("read", key);
     return this.withStore(async store => {
-      const seenId = store.get<SharedResult<T>>("shared-reads", cacheKey)?.id;
+      const seenId = store.prepare("SELECT CASE WHEN json_valid(value) THEN json_extract(value,'$.id') END AS id FROM state WHERE namespace='shared-reads' AND key=?").get(cacheKey)?.["id"];
       const cached = (): SharedResult<T> | undefined => {
-        const result = store.get<SharedResult<T>>("shared-reads", cacheKey);
-        const age = result ? Date.now() - result.completedAt : Infinity;
-        return result && age >= 0 && (age < maxAgeMs || (result.id !== seenId && result.completedAt >= startedAt)) ? result : undefined;
+        const row = store.prepare(`SELECT value FROM state WHERE namespace='shared-reads' AND key=? AND CASE WHEN json_valid(value) THEN
+          json_type(value,'$.completedAt') IN ('integer','real') AND json_extract(value,'$.completedAt')<=? AND (json_extract(value,'$.completedAt')>? OR
+          (json_extract(value,'$.id') IS NOT ? AND json_extract(value,'$.completedAt')>=?)) ELSE 0 END`)
+          .get(cacheKey, Date.now(), Date.now() - maxAgeMs, typeof seenId === "string" ? seenId : null, startedAt);
+        return row ? JSON.parse(String(row["value"])) as SharedResult<T> : undefined;
       };
       while (true) {
         signal.throwIfAborted();
@@ -180,19 +182,12 @@ export class CrossWindowOperationCoordinator {
             signal.throwIfAborted();
             completed = { value };
             const result = { id: crypto.randomUUID(), completedAt: Date.now(), value };
-            if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new Error(`${label} result is too large to share.`);
+            const serialized = JSON.stringify(result);
+            if (Buffer.byteLength(serialized) > 8 * 1024 * 1024) throw new Error(`${label} result is too large to share.`);
             store.transaction(() => {
-              for (const oldKey of store.keys("shared-reads")) {
-                const old = store.get<SharedResult<unknown>>("shared-reads", oldKey);
-                if (!old || old.completedAt < Date.now() - 60_000 || old.completedAt > Date.now()) store.set("shared-reads", oldKey, undefined);
-              }
-              const keys = store.keys("shared-reads");
-              if (!store.get("shared-reads", cacheKey) && keys.length >= 128) {
-                const oldest = keys.reduce((left, right) => (store.get<SharedResult<unknown>>("shared-reads", left)?.completedAt ?? 0) <=
-                  (store.get<SharedResult<unknown>>("shared-reads", right)?.completedAt ?? 0) ? left : right);
-                store.set("shared-reads", oldest, undefined);
-              }
-              store.set("shared-reads", cacheKey, result);
+              store.prepare("DELETE FROM state WHERE namespace='shared-reads' AND (CASE WHEN json_valid(value) THEN COALESCE(json_extract(value,'$.completedAt'),0) NOT BETWEEN ? AND ? ELSE 1 END)").run(Date.now() - 60_000, Date.now());
+              store.prepare("INSERT INTO state(namespace,key,value) VALUES('shared-reads',?,?) ON CONFLICT(namespace,key) DO UPDATE SET value=excluded.value").run(cacheKey, serialized);
+              store.prepare("DELETE FROM state WHERE namespace='shared-reads' AND key IN (SELECT key FROM state WHERE namespace='shared-reads' AND key!=? ORDER BY json_extract(value,'$.completedAt') DESC,key DESC LIMIT -1 OFFSET 127)").run(cacheKey);
             });
             return value;
           });
@@ -335,12 +330,12 @@ export function runCrossWindowJoined<T>(key: string, label: string, task: () => 
 
 export function runCrossWindowSharedRead<T>(key: string, label: string, task: (signal: AbortSignal) => Promise<T>, options: { signal?: AbortSignal; maxAgeMs?: number; timeoutMs?: number } = {}): Promise<T> {
   const localKey = `${coordinatorRevision}:${key}`;
-  const previous = localReadResults.get(localKey);
+  const previous = sharedCoordinator ? undefined : localReadResults.get(localKey);
   const age = previous ? Date.now() - previous.completedAt : Infinity;
   if (!options.signal?.aborted && previous && age >= 0 && age < (options.maxAgeMs ?? 0)) return Promise.resolve(previous.value as T);
   return createSharedInspection(localKey, async signal => {
     const value = sharedCoordinator ? await sharedCoordinator.shareRead(key, label, task, signal, options.maxAgeMs ?? 0) : await task(signal);
-    if (options.maxAgeMs) {
+    if (options.maxAgeMs && !sharedCoordinator) {
       if (localReadResults.size >= 128) localReadResults.delete(localReadResults.keys().next().value!);
       localReadResults.set(localKey, { id: crypto.randomUUID(), completedAt: Date.now(), value });
     }

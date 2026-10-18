@@ -2,6 +2,9 @@ import { vi } from "vitest";
 
 vi.mock("../src/services/codexNativeSessionStatus", () => ({
   readNativeCodexSessionRunning: vi.fn(async () => undefined),
+  waitForNativeCodexSessionReady: vi.fn(async () => undefined),
+  startNativeCodexSessionTurn: vi.fn(async () => false),
+  cancelNativeCodexSessionTurn: vi.fn(async () => false),
   getNativeCodexSessionRunning: vi.fn(() => undefined),
   disposeNativeCodexSessionStatus: vi.fn()
 }));
@@ -15,7 +18,8 @@ vi.mock("vscode", () => ({
     dispose(): void {}
   },
   env: {
-    language: "en"
+    language: "en",
+    openExternal: vi.fn(async () => true)
   },
   extensions: {
     getExtension: vi.fn(() => undefined)

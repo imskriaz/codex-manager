@@ -790,6 +790,7 @@ describe("auto refresh scheduler", () => {
   );
 
   it("persists an already issued refresh result after disposal and stops the rest of the sweep", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     let releaseRefresh: ((tokens: { accessToken: string; idToken: string; refreshToken: string }) => void) | undefined;
     refreshTokensMock.mockImplementation(
       () =>
@@ -821,6 +822,7 @@ describe("auto refresh scheduler", () => {
     expect(repo.updateTokens).toHaveBeenCalledWith("first", expect.objectContaining({ refreshToken: "rotated" }));
     expect(repo.getTokens).toHaveBeenCalledTimes(1);
     expect(view.refresh).not.toHaveBeenCalled();
+    expect(info.mock.calls.filter(call => String(call[0]).includes("background token refresh sweep"))).toHaveLength(0);
   });
 
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(

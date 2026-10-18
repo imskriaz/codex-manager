@@ -228,6 +228,26 @@
   };
 
   const postMessage = async (message) => {
+    if (message?.type === "dashboard:action" && message.action === "openExternalUrl") {
+      let popup;
+      try {
+        const url = new URL(message.payload?.url?.trim());
+        const localHttp = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+        if (!(url.protocol === "https:" || localHttp) || url.username || url.password)
+          throw new Error("Only HTTPS links or local HTTP links without embedded credentials can be opened.");
+        popup = window.open("about:blank", "_blank");
+        if (!popup) throw new Error("Allow pop-ups for this dashboard, then try the link again.");
+        popup.opener = null;
+        popup.location.replace(url.href);
+        dispatch({ type: "dashboard:action-result", requestId: message.requestId, action: message.action, accountId: message.accountId,
+          status: "completed", payload: { notice: { level: "info", message: "Opened the link in this browser." } } });
+      } catch (error) {
+        popup?.close();
+        dispatch({ type: "dashboard:action-result", requestId: message.requestId, action: message.action, accountId: message.accountId,
+          status: "failed", error: error instanceof TypeError ? "This link could not be opened. Check the address and try again." : error.message });
+      }
+      return;
+    }
     if (message?.type === "dashboard:ready" || message?.type === "dashboard:retry-connection") {
       const manual = message.type === "dashboard:retry-connection";
       // Startup snapshots can arrive before the dashboard installs its listener.

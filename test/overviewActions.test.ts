@@ -29,7 +29,7 @@ describe("overview actions", () => {
     expect(overview).toContain("props.onPrivacyToggle()");
     expect(overview).toContain("props.onOpenCodex()");
     expect(overview).toContain("props.onResumeSessions()");
-    expect(overview).toContain("Show All Sessions");
+    expect(overview).not.toContain("Show All Sessions");
     expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).not.toContain('id="privacyToggleButton"');
     expect(readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8")).toContain('configured ? "Change Password" : "Set Password"');
   });
@@ -178,13 +178,13 @@ describe("overview actions", () => {
     expect(source).toMatch(/overview-more-menu[\s\S]*document\.body/);
   });
 
-  it("keeps Lock and Unlock available in the More menu alongside Sessions", () => {
+  it("keeps Lock and Unlock available alongside the Codex workspace actions", () => {
     const source = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
 
-    expect(source).toContain('account.autoSwitchLockedUntil ? "unlock" : "lock"');
+    expect(source).toContain('account.autoSwitchLockedUntil > props.now ? "unlock" : "lock"');
     expect(source).toContain("openLockDialog(event.currentTarget)");
     expect(source).toContain("props.onSetAutoSwitchLock(0)");
-    expect(source).toContain("props.onOpenCliSessions!");
+    expect(source).toContain("props.onResumeSessions()");
   });
 
   it("refreshes all account quotas from the More menu", () => {
@@ -235,6 +235,7 @@ describe("overview actions", () => {
     expect(css).toMatch(/\.overview-more-menu\s*\{[\s\S]*?display:\s*grid;/);
     expect(css).toMatch(/\.overview-more-menu\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2/);
     expect(css).toContain(".overview-more-menu .claim-popover-title");
+    expect(css).toContain("white-space: nowrap");
   });
 
   it("keeps all four account actions in one icon-only row on mobile", () => {

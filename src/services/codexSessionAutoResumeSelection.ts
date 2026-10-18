@@ -12,6 +12,7 @@ import {
 import { readSubAgentMetadata } from "../domain/sessionSource";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
+import { normalizeNativePath } from "../utils/nativePaths";
 
 type SqliteDatabase = {
   prepare(sql: string): { get(id: string): Record<string, unknown> | undefined; all(): Record<string, unknown>[] };
@@ -23,25 +24,23 @@ export function isAutoResumeGoalOnlyEnabled(): boolean {
   return getCodexManagerConfiguration().get<boolean>("autoResumeGoalOnlyEnabled", true) === true;
 }
 
-/** Goal absence is ineligible; unreadable goal state retains recovery for retry. */
+/** Paused or terminal goals never auto-resume, regardless of the goal-only filter. */
 export async function filterAutoResumeGoalSessionIds(
   ids: string[], home = resolveCodexHome(), signal?: AbortSignal, goalOnly = isAutoResumeGoalOnlyEnabled()
 ): Promise<string[]> {
   signal?.throwIfAborted();
-  if (!goalOnly || !ids.length) return ids;
+  if (!ids.length) return ids;
   let db: SqliteDatabase | undefined;
   try {
     db = await openGoalDatabase(home);
     if (!db) {
-      recordPersistentEvent("debug", "auto-resume", "Goal filter found no native goal database", { count: ids.length });
-      return [];
+      return goalOnly ? [] : ids;
     }
     const statement = db.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
     return ids.filter((id) => {
       signal?.throwIfAborted();
       const status = statement.get(id)?.["status"];
-      const eligible = status === "active" || status === "usage_limited";
-      recordPersistentEvent("debug", "auto-resume", "Goal eligibility checked", { sessionId: id, status: status ?? "missing", eligible });
+      const eligible = status === "active" || status === "usage_limited" || (status === undefined && !goalOnly);
       return eligible;
     });
   } catch (error) {
@@ -103,24 +102,24 @@ export async function readAutoResumeCodexSessionIds(
   selection: "running" | "open" = "running",
   goalOnly = isAutoResumeGoalOnlyEnabled(),
   runningSessionIds?: string[],
-  candidateSessionIds?: string[]
+  candidateSessionIds?: string[],
+  previouslyRunningSessionIds: string[] = []
 ): Promise<string[]> {
   signal?.throwIfAborted();
   let running = openSessionIds;
   if (selection === "running") {
-    const goals = await openMetadataDatabase(home, "goals");
+    const goals = previouslyRunningSessionIds.length ? await openMetadataDatabase(home, "goals") : undefined;
     let limited: string[] = [];
     try {
       limited = goals?.prepare("SELECT thread_id FROM thread_goals WHERE status='usage_limited' LIMIT 10001").all()
-        .map(row => row["thread_id"]).filter((id): id is string => typeof id === "string" && (!candidateSessionIds || candidateSessionIds.includes(id))) ?? [];
+        .map(row => row["thread_id"]).filter((id): id is string => typeof id === "string" && previouslyRunningSessionIds.includes(id)) ?? [];
     } catch { /* Optional goal metadata; transcript evidence remains available. */ }
     finally { goals?.close(); }
     if (limited.length > 10000) throw new Error("Quota recovery exceeded its safe discovery limit. Saved recovery was retained.");
-    const interrupted = await readQuotaInterruptedCodexSessionIds(home, candidateSessionIds, signal, limited);
+    const interrupted = previouslyRunningSessionIds.length ? await readQuotaInterruptedCodexSessionIds(home, previouslyRunningSessionIds, signal, limited, true) : [];
     const inspect = candidateSessionIds?.filter(id => !interrupted.includes(id));
     const live = runningSessionIds ?? (inspect?.length === 0 ? [] : await readRunningCodexSessionIds(home, signal, inspect));
     running = [...new Set([...live, ...interrupted])];
-    recordPersistentEvent("debug", "auto-resume", "Running and quota-interrupted candidates discovered", { live, interrupted, requestedCount: candidateSessionIds?.length });
   }
   signal?.throwIfAborted();
   if (!running.length) return [];
@@ -142,8 +141,7 @@ export async function readAutoResumeCodexSessionIds(
         }
       }
       const transcript = transcripts.get(id);
-      if (metadata?.["archived"] === 1 || transcript?.startsWith(path.join(home,"archived_sessions")+path.sep)) {
-        recordPersistentEvent("debug", "auto-resume", "Session skipped", { sessionId: id, reason: "archived" });
+      if (metadata?.["archived"] === 1 || (metadata?.["archived"] !== 0 && transcript?.startsWith(path.join(home,"archived_sessions")+path.sep))) {
         continue;
       }
       if ((typeof metadata?.["source"] !== "string" || !metadata?.["source"] || !metadata?.["cwd"]) && transcript) {
@@ -181,7 +179,6 @@ export async function readAutoResumeCodexSessionIds(
           continue;
       }
       if (readSubAgentMetadata(metadata?.["source"]).subAgent) {
-        recordPersistentEvent("debug", "auto-resume", "Session skipped", { sessionId: id, reason: "sub-agent" });
         continue;
       }
       if (typeof metadata?.["source"] !== "string" || !metadata["source"].trim()) {
@@ -207,7 +204,6 @@ export async function readAutoResumeCodexSessionIds(
         continue;
       parents.push(id);
     }
-    recordPersistentEvent("debug", "auto-resume", "Parent session selection completed", { candidates: running, parents, goalOnly });
     return filterAutoResumeGoalSessionIds(parents, home, signal, goalOnly);
   } finally {
     state?.close();
@@ -215,9 +211,6 @@ export async function readAutoResumeCodexSessionIds(
 }
 
 function normalizeWorkspacePath(value: string): string {
-  const trimmed = value
-    .trim()
-    .replace(/^\\\\\?\\UNC\\/i, "\\\\")
-    .replace(/^\\\\\?\\/, "");
+  const trimmed = normalizeNativePath(value.trim());
   return /^(?:[a-z]:[\\/]|\\\\)/i.test(trimmed) ? path.win32.resolve(trimmed) : path.resolve(trimmed);
 }

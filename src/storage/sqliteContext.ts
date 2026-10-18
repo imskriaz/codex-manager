@@ -15,6 +15,19 @@ type SettingSchema = { type: string; enum?: unknown[]; minimum?: number; maximum
 let configurationSchema: Record<string, SettingSchema> = {};
 let configurationSnapshot = new Map<string, string | undefined>();
 
+export async function initializeSqliteContextWithRetry(context: vscode.ExtensionContext): Promise<vscode.ExtensionContext> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await initializeSqliteContext(context); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      if (attempt >= 2 || !/SQLITE_BUSY|SQLITE_LOCKED|EAGAIN|EACCES|EPERM|EIO|database is locked|storage migration.*(?:running|progress)|unable to open database|cannot open database/i.test(`${code ?? ""} ${message}`)) throw error;
+      console.warn("[codexManager] storage startup delayed; retrying", { attempt: attempt + 1, code });
+      await new Promise<void>(resolve => setTimeout(resolve, attempt ? 1_000 : 250));
+    }
+  }
+}
+
 export async function initializeSqliteContext(context: vscode.ExtensionContext): Promise<vscode.ExtensionContext> {
   const root = getCodexManagerStorageRoot();
   await migrateManagerStorage(root, context.extensionUri ? () => migrateRelayStartup(root, context.extensionUri.fsPath) : undefined);
@@ -56,15 +69,19 @@ function synchronizeSqliteConfiguration(event?: vscode.ConfigurationChangeEvent)
   if (!store || !namespace) return;
   const config = vscode.workspace.getConfiguration("codexManager");
   store.transaction(() => {
+    for (const retired of ["codexSessionTransport", "webDashboardAlwaysOnlineEnabled"]) {
+      for (const scope of [namespace, `settings-native:${namespace}`, "settings-overrides:global", `settings-overrides:${namespace}`])
+        store.set(scope, retired, undefined);
+    }
     for (const key of configurationKeys) {
       if (event && !event.affectsConfiguration(`codexManager.${key}`)) continue;
       const value = config.get(key);
-      if (!event && key === "dailyTokenUsageEnabled" && !store.get("migrations", `${namespace}:token-history-default-off`)) {
+      if (!event && key === "dailyTokenUsageEnabled" && !store.get("migrations", `${namespace}:token-history-default-on`)) {
         const inspected = config.inspect(key);
         const explicit = inspected?.globalValue !== undefined || inspected?.workspaceValue !== undefined || inspected?.workspaceFolderValue !== undefined ||
           store.get("settings-overrides:global", key) !== undefined || store.get(`settings-overrides:${namespace}`, key) !== undefined || store.get(`settings-native:${namespace}`, key) !== undefined;
         if (!explicit) store.set(namespace, key, value);
-        store.set("migrations", `${namespace}:token-history-default-off`, true);
+        store.set("migrations", `${namespace}:token-history-default-on`, true);
       }
       if (event || store.get(namespace, key) === undefined) store.set(namespace, key, value);
       const inspected = config.inspect(key);

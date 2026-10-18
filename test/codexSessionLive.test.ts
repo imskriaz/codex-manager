@@ -105,6 +105,16 @@ describe("Codex live current turn", () => {
 });
 
 describe("bounded live registry", () => {
+  it("discards an abandoned provider stream without publishing a second completion or retaining its slot", () => {
+    const rpc = { onNotification: () => vi.fn(), onDisconnect: () => vi.fn() } as unknown as CodexAppServerRpc;
+    const events = vi.fn(); const off = subscribeDashboardRealtime(events);
+    const live = reserveCodexSessionLive();
+    try {
+      live.attach(sessionId, rpc, parseCodexAppServerThreadItems);
+      events.mockClear(); live.dispose(true); live.finish("completed"); live.dispose();
+      expect(events).not.toHaveBeenCalled(); expect(getCodexSessionLiveState(sessionId)).toBeUndefined();
+    } finally { off(); live.dispose(true); }
+  });
   it("coalesces updates, flushes terminal state immediately, and replays it until expiry", () => {
     vi.useFakeTimers();
     let notify!: (method: string, params: unknown) => void;

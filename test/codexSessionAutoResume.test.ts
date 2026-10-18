@@ -5,9 +5,11 @@ import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as autoResumeSelection from "../src/services/codexSessionAutoResumeSelection";
 import * as sessionEditor from "../src/services/codexSessionResume";
+import * as diagnostics from "../src/utils/persistentLog";
 import {
   AUTO_RESUME_SESSION_IDS_KEY,
   AUTO_RESUME_OPEN_SESSION_IDS_KEY,
+  AUTO_RESUME_METADATA_KEY,
   MAX_AUTO_RESUME_SESSIONS,
   cancelCodexSessionAutoResume,
   closeCodexSessionsForExtensionHostRestart,
@@ -17,6 +19,7 @@ import {
   persistOpenCodexSessions,
   registerCodexSessionAutoResumeTracking,
   resumePersistedCodexSessions,
+  scheduleCodexSessionAutoResume,
   withCodexSessionRecovery
 } from "../src/services/codexSessionAutoResume";
 
@@ -39,6 +42,21 @@ function createContext(initial?: unknown) {
 }
 
 const readNativeTabs = sessionEditor.readOpenCodexSessionIds;
+
+it("does not let a delayed startup resume override a manual account switch or disposed window", async () => {
+  vi.useFakeTimers();
+  try {
+    const start = vi.fn();
+    scheduleCodexSessionAutoResume(start);
+    cancelCodexSessionAutoResume();
+    scheduleCodexSessionAutoResume(start).dispose();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(start).not.toHaveBeenCalled();
+    scheduleCodexSessionAutoResume(start);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(start).toHaveBeenCalledOnce();
+  } finally { cancelCodexSessionAutoResume(); vi.useRealTimers(); }
+});
 
 describe("dashboard recovery list", () => {
   const id = "01a04882-d037-7a42-ad24-9afb61901181";
@@ -76,6 +94,9 @@ beforeEach(() => {
   vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockReset().mockResolvedValue(undefined);
   vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockImplementation(readNativeTabs);
   vi.spyOn(sessionEditor, "readRunningCodexSessionIds").mockImplementation(async (_home, _signal, open) => open ?? []).mockClear();
+  vi.spyOn(sessionEditor, "readQuotaInterruptedCodexSessionIds").mockResolvedValue([]);
+  vi.spyOn(sessionEditor, "readCodexCliSessionSummary").mockResolvedValue(undefined);
+  vi.spyOn(sessionEditor, "readCodexCliSessionRecoveryMetadata").mockResolvedValue({});
   vi.spyOn(autoResumeSelection, "readAutoResumeGoalCandidateIds").mockResolvedValue([]);
   vi.spyOn(autoResumeSelection, "filterAutoResumeGoalSessionIds").mockImplementation(async (ids) => ids);
 
@@ -243,7 +264,7 @@ describe("durable open conversation recovery", () => {
     try {
       await expect(persistOpenCodexSessions(state.context)).resolves.toEqual([first]);
       expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
-      expect(selection).toHaveBeenCalledWith(undefined, undefined, [first], expect.any(AbortSignal), "running", true, [first], [first]);
+      expect(selection).toHaveBeenCalledWith(undefined, undefined, [first], expect.any(AbortSignal), "running", true, [first], [first], []);
       expect(sessionEditor.readRunningCodexSessionIds).not.toHaveBeenCalled();
     } finally { selection.mockRestore(); recent.mockRestore(); }
   });
@@ -290,6 +311,7 @@ describe("durable open conversation recovery", () => {
       const selection = vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds").mockResolvedValue([second]);
       const open = vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([second]);
       const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const diagnostic = vi.spyOn(diagnostics, "recordPersistentEvent");
       const filter = vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds);
       if (failure === "metadata") selection.mockRejectedValueOnce(detail);
       if (failure === "goals") filter.mockRejectedValueOnce(detail);
@@ -307,7 +329,8 @@ describe("durable open conversation recovery", () => {
       try {
         await vi.advanceTimersByTimeAsync(failure === "timeout" ? 30_000 : 0);
         expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
-        expect(warning).toHaveBeenCalledWith("[codexManager] open Codex tabs could not be saved for auto resume", expect.any(Error));
+        expect(diagnostic).toHaveBeenCalledWith("warning", "auto-resume", "Background recovery capture failed; previous snapshot retained", undefined, expect.any(Error));
+        expect(warning).not.toHaveBeenCalled();
         if (failure === "timeout") {
           expect(captureSignal?.aborted).toBe(true);
           finish?.([first]);
@@ -323,6 +346,7 @@ describe("durable open conversation recovery", () => {
         selection.mockRestore();
         open.mockRestore();
         warning.mockRestore();
+        diagnostic.mockRestore();
         vi.useRealTimers();
       }
     }
@@ -799,25 +823,26 @@ describe("Codex session auto resume", () => {
   it("bounds failure notification size", () => {
     const failed = Array.from({ length: 200 }, () => ({ sessionId: id1, message: "x".repeat(10_000) }));
     expect(formatAutoResumeResult({ attempted: 200, opened: 0, failed })!.length).toBeLessThan(1_200);
-    expect(formatAutoResumeResult({ attempted: 200, opened: 0, failed })).toContain("197 more");
+    expect(formatAutoResumeResult({ attempted: 200, opened: 0, failed })).toContain("200 still need recovery");
   });
 
   it("restores a disk-backed record through fresh contexts and retries only failed tabs", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "codex-resume-storage-"));
     const file = path.join(root, "workspace.json");
     async function newContext() {
-      let saved: unknown;
+      let saved: Record<string, unknown>;
       try {
         saved = JSON.parse(await readFile(file, "utf8"));
       } catch {
-        saved = undefined;
+        saved = {};
       }
       return {
         workspaceState: {
-          get: () => saved,
-          update: async (_key: string, next: unknown) => {
-            await writeFile(file, JSON.stringify(next ?? null));
-            saved = next;
+          get: (key: string) => saved[key],
+          update: async (key: string, next: unknown) => {
+            const replacement = { ...saved, [key]: next };
+            await writeFile(file, JSON.stringify(replacement));
+            saved = replacement;
           }
         }
       } as never;
@@ -834,18 +859,18 @@ describe("Codex session auto resume", () => {
       const retry = vi.fn(async () => undefined);
       expect((await resumePersistedCodexSessions(await newContext(), retry)).opened).toBe(1);
       expect(retry).toHaveBeenCalledWith("01a04882-d037-7a42-ad24-9afb61901182", expect.any(AbortSignal));
-      expect(JSON.parse(await readFile(file, "utf8"))).toBeNull();
+      expect(JSON.parse(await readFile(file, "utf8"))[AUTO_RESUME_SESSION_IDS_KEY]).toBeUndefined();
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("restores tabs before fallible account and dashboard startup", async () => {
+  it("defers optional recovery until account initialization and dashboard restoration finish", async () => {
     const source = await readFile("src/presentation/workbench/accountsWorkbench.ts", "utf8");
-    expect(source.indexOf('measureStep("autoResumeCodexSessions"')).toBeLessThan(
+    expect(source.indexOf('measureStep("autoResumeCodexSessions"')).toBeGreaterThan(
       source.indexOf('measureStep("repo.init"')
     );
-    expect(source.indexOf('measureStep("autoResumeCodexSessions"')).toBeLessThan(
+    expect(source.indexOf('measureStep("autoResumeCodexSessions"')).toBeGreaterThan(
       source.indexOf('measureStep("restoreDashboardAfterExtensionHostRestart"')
     );
   });
@@ -863,6 +888,15 @@ describe("Codex session auto resume", () => {
     expect(state.context.workspaceState.update).toHaveBeenCalledWith(AUTO_RESUME_SESSION_IDS_KEY, ids);
   });
 
+  it("allows a cold native tab forty seconds while preserving its recovery record until opened", async () => {
+    vi.useFakeTimers();
+    try {
+      const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
+      const work = resumePersistedCodexSessions(state.context, async () => { await new Promise(resolve => setTimeout(resolve, 40_000)); });
+      await vi.advanceTimersByTimeAsync(30_000); expect(state.read()).toEqual([id]);
+      await vi.advanceTimersByTimeAsync(10_001); expect((await work).opened).toBe(1); expect(state.read()).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
   it("bounds the whole restoration and retains unattempted tabs after timeout", async () => {
     vi.useFakeTimers();
     try {
@@ -871,11 +905,11 @@ describe("Codex session auto resume", () => {
         id === "01a04882-d037-7a42-ad24-9afb61901181" ? new Promise<void>(() => {}) : Promise.resolve()
       );
       const pending = resumePersistedCodexSessions(state.context, open);
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(60_000);
       const result = await pending;
       expect(result.opened).toBe(1);
       expect(result.failed).toHaveLength(1);
-      expect(result.failed[0]?.message).toContain("8 seconds");
+      expect(result.failed[0]?.message).toContain("45 seconds");
       expect(open).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
@@ -1016,7 +1050,7 @@ describe("Codex session auto resume", () => {
         signal = token;
         await new Promise(() => {});
       });
-      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(60_000);
       expect((await result).failed).toHaveLength(1);
       expect(signal?.aborted).toBe(true);
       expect(state.read()).toEqual(["01a04882-d037-7a42-ad24-9afb61901181"]);
@@ -1038,7 +1072,7 @@ describe("Codex session auto resume", () => {
     expect((await resumePersistedCodexSessions(state.context, open)).opened).toBe(1);
     expect(open).toHaveBeenCalledOnce();
     expect(formatAutoResumeResult({ attempted: 1, opened: 1, failed: [] })).toBe(
-      "Auto resume reopened 1 running VS Code Codex session."
+      "Auto resume reopened 1 Codex conversation."
     );
     expect(
       formatAutoResumeResult({
@@ -1046,20 +1080,31 @@ describe("Codex session auto resume", () => {
         opened: 1,
         failed: [{ sessionId: "01a04882-d037-7a42-ad24-9afb61901182", message: "editor unavailable" }]
       })
-    ).toContain("01a04882-d037-7a42-ad24-9afb61901182 (editor unavailable)");
+    ).toContain("Saved work was kept");
     expect(formatAutoResumeResult({ attempted: 0, opened: 0, failed: [] })).toBeUndefined();
   });
 
   it("includes the recovered session title in auto-resume copy", async () => {
     const id = "01a04882-d037-7a42-ad24-9afb61901190";
     const state = createContext([id]);
-    vi.spyOn(sessionEditor, "readCodexCliSessionSummary").mockResolvedValue({
-      id,
-      title: "Fix SMS end to end",
-      status: "idle",
-      archived: false
+    vi.mocked(sessionEditor.readCodexCliSessionRecoveryMetadata).mockResolvedValue({
+      [id]: { title: "Fix SMS end to end", updatedAt: Date.now() }
     });
     const result = await resumePersistedCodexSessions(state.context, async () => undefined);
     expect(formatAutoResumeResult(result)).toContain("“Fix SMS end to end”");
   });
+});
+
+
+it("does not log unchanged background recovery snapshots", async () => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([]);
+  const event = vi.spyOn(diagnostics, "recordPersistentEvent");
+  try {
+    await persistOpenCodexSessions(state.context, async () => [id]);
+    expect(event.mock.calls.filter(call => call[2] === "Background recovery snapshot updated")).toHaveLength(1);
+    event.mockClear();
+    await persistOpenCodexSessions(state.context, async () => [id]);
+    expect(event.mock.calls.filter(call => call[2] === "Background recovery snapshot updated")).toHaveLength(0);
+  } finally { event.mockRestore(); }
 });

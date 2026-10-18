@@ -83,12 +83,16 @@ export function reserveCodexSessionLive() {
     finish(status: "completed" | "cancelled" | "failed" | "disconnected", error?: string) {
       if (entry) { entry.reducer.finish(status, error); entry.finishedAt = Date.now(); flush(); }
     },
-    dispose() {
+    dispose(discard = false) {
       if (disposed) return;
       disposed = true;
       off?.();
       offDisconnect?.();
-      flush();
+      if (discard) {
+        if (entry?.timer) clearTimeout(entry.timer);
+        if (sessionId && streams.get(sessionId) === entry) streams.delete(sessionId);
+        entry = undefined;
+      } else flush();
       activeSlots.delete(streamId);
     }
   };

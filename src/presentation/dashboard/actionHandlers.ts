@@ -1,4 +1,7 @@
-import { exportPersistentLogs } from "../../utils/persistentLog";
+import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
+import { getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
+import { resumeCodexSessionWork } from "../../services/codexSessionRecovery";
+import { normalizeNativePath } from "../../utils/nativePaths";
 import { runAccountBatch } from "../../application/accounts/batch";
 import * as vscode from "vscode";
 import { readWorkspaceTerminalActivity } from "../../services/dashboardRealtime";
@@ -21,12 +24,14 @@ import {
   openNewCodexWebview,
   readCodexCliComposerConfig,
   readCodexCliSessionSummary,
+  resolveRecordedSessionProject,
   readNewCodexCliSessionSummary,
   readCodexCliSessions,
   getCodexSessionReadNotice,
   isCodexCliAvailable,
   readCodexCliSessionMessages,
   renameCodexCliSession,
+  setCodexSessionGoalStatus,
   startCodexCliSession,
   sendCodexCliSessionMessage,
   steerCodexCliSessionTurn,
@@ -73,7 +78,7 @@ import { AccountsRepository } from "../../storage";
 import { waitWithin } from "../../utils/concurrency";
 import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
-import { clearAutoSwitchLock, setAutoSwitchLock } from "../workbench/autoSwitchState";
+import { updateAutoSwitchLock } from "../workbench/autoSwitchState";
 import { getTokenAutomationSnapshot } from "../workbench/tokenAutomationState";
 import {
   clearQueuedAccountSwitch,
@@ -123,6 +128,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "getUsageGraph",
   "openNewCodexWebview",
   "resumeCodexSessions",
+  "setCodexSessionGoalStatus",
   "startCodexCliSession",
   "listCodexCliSessions",
   "getCodexCliSessionMessages",
@@ -161,7 +167,7 @@ import {
 import { consumeDashboardActionNotice, shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
 import { runWithPersistentOperation } from "../../utils/persistentLog";
 import { markOnboardingCompleted } from "../../services/onboarding";
-import { withCodexSessionRecovery } from "../../services/codexSessionAutoResume";
+import { cancelCodexSessionAutoResume, withCodexSessionRecovery } from "../../services/codexSessionAutoResume";
 import { filterCliSessionsBySection } from "../../domain/codexSessionState";
 import {
   clearTokenAutomationError,
@@ -217,8 +223,16 @@ export async function executeDashboardActionMessage(
   payload?: Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"];
   errorMessage?: string;
 }> {
-  // Polling the console must not fill the log with its own successful reads.
-  if (message.action === "viewLogs") return executeDashboardActionMessageCore(ctx, message);
+  if (["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn",
+    "openNewCodexWebview", "resumeCodexSessions", "setCodexSessionGoalStatus", "renameCodexCliSession",
+    "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession"].includes(message.action) ||
+    (message.action === "openCodexCliSession" && (ctx.hostKind !== "browser" || message.payload?.openInVsCode === true)))
+    cancelCodexSessionAutoResume("Auto Resume was cancelled for this manual action.");
+  // Routine reads and the console itself must not generate audit traffic.
+  if (["viewLogs", "downloadLogs", "clearLogs", "getMaintenanceStatus", "getMaintenancePage",
+    "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages",
+    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"
+  ].includes(message.action)) return executeDashboardActionMessageCore(ctx, message);
   const execute = () => runWithPersistentOperation(
     `dashboard:${message.action}`,
     () => executeDashboardActionMessageCore(ctx, message),
@@ -308,7 +322,8 @@ async function executeDashboardActionMessageCore(
         : "failed";
     if (error instanceof WorkspaceTerminalCommandError) payload = { terminalResult: error.result };
     errorMessage = toFailureMessage(error);
-    console.error(`[codexManager] dashboard action failed: ${message.action}`, error);
+    if (!["viewLogs", "downloadLogs", "clearLogs"].includes(message.action))
+      console.error(`[codexManager] dashboard action failed: ${message.action}`, error);
     if (!shouldSuppressDashboardNotifications() && (message.action === "switch" || message.action === "refreshToken")) {
       void vscode.window.showErrorMessage(
         `Unable to ${message.action === "switch" ? "switch account" : "refresh token"}: ${errorMessage}`
@@ -328,6 +343,10 @@ async function runDashboardAction(
   account?: Awaited<ReturnType<AccountsRepository["getAccount"]>>
 ): Promise<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] | undefined> {
   const translate = t(ctx.resolveLanguage());
+  if (payload?.sessionId && ["getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "createWorkspaceTerminal", "runWorkspaceTerminalCommand", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(action)) {
+    payload = { ...payload, projectPath: await waitWithin(resolveRecordedSessionProject(payload.sessionId, payload.projectPath),
+      5_000, "This session's project folder is unavailable. Retry when it is connected.") };
+  }
 
   switch (action) {
     case "setCrossPcSyncEnabled": {
@@ -416,6 +435,20 @@ async function runDashboardAction(
       const logs = await exportPersistentLogs();
       return { logDownload: { filename: logs.filename, text: logs.text }, notice: { level: "info" as const, message: "Logs refreshed." } };
     }
+    case "clearLogs":
+      await clearPersistentLogs();
+      return { notice: { level: "info" as const, message: "System log cleared." } };
+    case "previewMaintenance":
+      return { maintenancePreview: await previewMaintenance(payload?.maintenanceTool) };
+    case "inspectMaintenanceStorage":
+      return { maintenanceReport: await inspectMaintenanceStorage(payload?.maintenanceInspection) };
+    case "runMaintenance":
+      return { maintenanceJob: runMaintenance(payload?.maintenanceToken ?? "", payload?.confirmed === true, payload?.maintenanceIds, payload?.maintenanceOperation), notice: { level: "info" as const, message: "Operation started. Progress is shown in Tools." } };
+    case "getMaintenancePage":
+      return { maintenancePage: readMaintenancePage(payload?.maintenanceToken ?? "", payload?.maintenanceQuery, payload?.maintenanceOffset) };
+    case "getMaintenanceStatus":
+    case "cancelMaintenance":
+      return { maintenanceJob: getMaintenanceJob(payload?.maintenanceJobId ?? "", action === "cancelMaintenance") };
     case "downloadLogs": {
       const logs = await exportPersistentLogs();
       const notice = { level: logs.limited ? "warning" as const : "info" as const,
@@ -574,8 +607,14 @@ async function runDashboardAction(
       };
     }
     case "openExternalUrl":
+      if (ctx.hostKind === "browser") throw new Error("Open links from this browser. Reload the dashboard and try again.");
       return handleOpenExternalUrl(payload);
     case "downloadJsonFile":
+      if (ctx.hostKind === "browser") {
+        if (!payload?.text) throw new Error("There is no data to download.");
+        return { fileDownload: { filename: path.basename(payload.filename?.trim() || "codex-manager-export.json"), text: payload.text },
+          notice: { level: "info" as const, message: "Download prepared for this browser." } };
+      }
       return handleDownloadJsonFile(payload);
     case "importSharedJson":
       return handleImportSharedJson(ctx.repo, ctx.schedulePublishState, payload, translate);
@@ -797,7 +836,7 @@ async function runDashboardAction(
     case "getResetCredits":
       return handleGetResetCredits(ctx.repo, account);
     case "getDailyUsage":
-      if (payload?.automatic === true && !getCodexManagerConfiguration().get<boolean>("dailyTokenUsageEnabled", false)) {
+      if (payload?.automatic === true && !getCodexManagerConfiguration().get<boolean>("dailyTokenUsageEnabled", true)) {
         return { notice: { level: "warning", message: "Automatic token history is disabled. Saved history remains available." } };
       }
       return handleGetDailyUsage(ctx.context, ctx.repo, account, payload?.days, payload?.automatic !== true);
@@ -810,7 +849,7 @@ async function runDashboardAction(
     case "startCodexCliSession":
       return handleStartCodexCliSession(payload);
     case "listCodexCliSessions":
-      return handleListCodexCliSessions(ctx.context, ctx.getRemoteCliSessions);
+      return handleListCodexCliSessions(ctx.context, ctx.getRemoteCliSessions, payload?.automatic !== true);
     case "getCodexSubAgentMessages": {
       ensureCliIntegrationEnabled();
       if (!payload?.sessionId) throw new Error("Choose a sub-agent from the parent session first.");
@@ -834,6 +873,8 @@ async function runDashboardAction(
       return handleOpenCodexCliSession(payload?.sessionId, ctx.hostKind === "browser" && payload?.openInVsCode !== true);
     case "renameCodexCliSession":
       return handleRenameCodexCliSession(payload?.sessionId, payload?.text);
+    case "setCodexSessionGoalStatus":
+      return handleSetCodexSessionGoalStatus(ctx.context, payload);
     case "forkCodexCliSession":
       return handleForkCodexCliSession(payload?.sessionId);
     case "archiveCodexCliSession":
@@ -870,7 +911,7 @@ async function runDashboardAction(
       return { workspaceTerminals: listWorkspaceTerminals(), ...readWorkspaceTerminalActivity() };
     case "createWorkspaceTerminal":
       return {
-        workspaceTerminal: createWorkspaceTerminal(
+        workspaceTerminal: await createWorkspaceTerminal(
           payload?.projectPath,
           payload?.terminalProfile,
           payload?.terminalName
@@ -1282,7 +1323,6 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "dashboardTheme",
     "codexAppRestartEnabled",
     "codexAppRestartMode",
-    "codexSessionTransport",
     "autoRefreshMinutes",
     "autoRefreshCurrentMinutes",
     "usageHistoryRetentionDays",
@@ -1338,22 +1378,22 @@ async function pathExists(filePath: string): Promise<boolean> {
   }
 }
 
-function handleAutoSwitchLock(
+async function handleAutoSwitchLock(
   payload: DashboardActionPayload | undefined,
   account: CodexManagerAccountRecord | undefined,
   schedulePublishState: () => void
 ) {
   const lockAccountId = account?.id ?? payload?.accountIds?.[0];
-  const lockMinutes = typeof payload?.lockMinutes === "number" ? payload.lockMinutes : 0;
+  const lockMinutes = typeof payload?.lockMinutes === "number" ? payload.lockMinutes : Number.NaN;
   if (!lockAccountId) {
     throw new Error("This action requires an account. Refresh the dashboard and try again.");
   }
 
-  if (lockMinutes > 0) {
-    setAutoSwitchLock(lockAccountId, lockMinutes);
-  } else {
-    clearAutoSwitchLock(lockAccountId);
+  if (!Number.isFinite(lockMinutes) || !Number.isInteger(lockMinutes) || lockMinutes < 0 || lockMinutes > 120) {
+    throw new Error("Choose an unlock action or a whole lock duration from 1 to 120 minutes.");
   }
+
+  await updateAutoSwitchLock(lockAccountId, lockMinutes);
   schedulePublishState();
   return {
     notice: {
@@ -1599,12 +1639,12 @@ async function handleReloadPrompt(
   if (payload?.confirmed === true || payload?.forceReload || !account) {
     return {
       reloadScheduled: true,
-      notice: { level: "info" as const, message: "Reloading the VS Code extension host…" }
+      notice: { level: "info" as const, message: "Reloading VS Code…" }
     };
   }
   const reloaded = await promptWindowReloadForAccount(account);
   return reloaded
-    ? { notice: { level: "info" as const, message: "Reloading the VS Code extension host…" } }
+    ? { notice: { level: "info" as const, message: "Reloading VS Code…" } }
     : {
         notice: {
           level: "warning" as const,
@@ -1679,10 +1719,11 @@ export function upsertCliSessionInList(
 
 async function handleListCodexCliSessions(
   context: vscode.ExtensionContext,
-  getRemoteCliSessions?: () => DashboardCliSessionSummary[]
+  getRemoteCliSessions?: () => DashboardCliSessionSummary[],
+  force = false
 ) {
   ensureCliIntegrationEnabled();
-  const [localSessions, cliComposerConfig] = await Promise.all([readCodexCliSessions(), readCodexCliComposerConfig()]);
+  const [localSessions, cliComposerConfig] = await Promise.all([readCodexCliSessions(undefined, undefined, force), readCodexCliComposerConfig()]);
   const remoteSessions = getRemoteCliSessions?.() ?? [];
   const stabilizedLocalSessions = await stabilizeSessionProjectPaths(
     context,
@@ -1754,7 +1795,7 @@ async function handleGetCodexCliSessionMessages(sessionId: string | undefined, r
 }
 
 async function canonicalProjectPath(projectPath: string): Promise<string> {
-  const resolved = path.resolve(projectPath.trim());
+  const resolved = path.resolve(normalizeNativePath(projectPath.trim()));
   const canonical = await realpath(resolved).catch(() => resolved);
   return process.platform === "win32" ? canonical.toLocaleLowerCase("en-US") : canonical;
 }
@@ -1843,7 +1884,7 @@ async function handleOpenCodexCliSession(sessionId: string | undefined, openInBr
       notice: { level: "info" as const, message: "Opened the session in the browser dashboard." }
     };
   }
-  await openCodexSessionInVsCode(sessionId);
+  await openCodexSessionInVsCode(sessionId, undefined, true);
   return { notice: { level: "info" as const, message: "Opened the session in the Codex extension." } };
 }
 
@@ -1859,22 +1900,40 @@ async function handleResumeCodexSessions(context: vscode.ExtensionContext, sessi
     filterCliSessionsBySection(withCodexSessionRecovery(context, await readCodexCliSessions(), true), "active")
       .filter(session => session.status === "running" || session.interrupted);
   if (!sessions.length) return { notice: { level: "info" as const, message: "No running or interrupted sessions to reopen." } };
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 60_000;
   const failures: string[] = [];
   let opened = 0;
+  let continuationPrompts = 0;
   for (const session of sessions) {
     if (session.subAgent || session.parentSessionId || session.archived || session.status === "unknown") { failures.push(session.title); continue; }
     if (Date.now() >= deadline) { failures.push("Remaining sessions timed out"); break; }
     const controller = new AbortController();
     try {
-      await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), Math.min(8_000, deadline - Date.now()), "Opening the conversation timed out");
+      await waitWithin(openCodexSessionInVsCode(session.id, controller.signal, true), Math.min(45_000, deadline - Date.now()), "Opening the conversation timed out", controller.signal);
       opened++;
+      if (await waitWithin(resumeCodexSessionWork(session.id, controller.signal, "user"), Math.min(25_000, Math.max(1, deadline - Date.now())), "Resuming the conversation was not confirmed", controller.signal) === "continued") continuationPrompts++;
     } catch (error) {
       failures.push(`${session.title}: ${toFailureMessage(error)}`);
     } finally { controller.abort(); }
   }
   return { notice: { level: failures.length ? "warning" as const : "info" as const,
-    message: `${opened} conversation${opened === 1 ? "" : "s"} opened in VS Code.${failures.length ? ` Some could not open; recovery was kept. ${failures[0]}` : ""}` } };
+    message: `${opened} conversation${opened === 1 ? "" : "s"} opened in VS Code.${continuationPrompts ? ` ${continuationPrompts} continuation prompt${continuationPrompts === 1 ? " was" : "s were"} sent for interrupted non-goal session${continuationPrompts === 1 ? "" : "s"}.` : ""}${failures.length ? ` Some could not open or resume; recovery was kept. ${failures[0]}` : ""}` } };
+}
+
+async function handleSetCodexSessionGoalStatus(context: vscode.ExtensionContext, payload?: DashboardActionPayload) {
+  ensureCliIntegrationEnabled();
+  if (!payload?.sessionId || !["active", "paused"].includes(payload.goalStatus ?? "")) throw new Error("Choose a session and Pause or Resume for its goal.");
+  const status = payload.goalStatus!;
+  const session = await ensureCliSessionIsActive(payload.sessionId);
+  if (session.subAgent || session.parentSessionId || !session.goal || !["active", "paused", "usage_limited"].includes(session.goal.status))
+    throw new Error("This goal cannot be paused or resumed here. Refresh its current state in Codex.");
+  await setCodexSessionGoalStatus(session.id, status);
+  let notice = { level: "info" as "info" | "warning", message: status === "paused" ? "Goal paused. The current turn can finish." : "Goal resumed." };
+  if (status === "active") {
+    const resumed = await handleResumeCodexSessions(context, session.id).catch(error => ({ notice: { level: "warning" as const, message: toFailureMessage(error) } }));
+    notice = { level: resumed.notice.level === "warning" ? "warning" : "info", message: `Goal resumed. ${resumed.notice.message}` };
+  }
+  return { cliSession: { ...session, goal: { ...session.goal, status } }, notice };
 }
 
 async function handleRenameCodexCliSession(sessionId: string | undefined, name: string | undefined) {
@@ -1950,7 +2009,7 @@ async function handleDeleteCodexCliSession(payload: DashboardActionPayload | und
 
 async function refreshSessionListAfterMutation() {
   try {
-    return { cliSessions: await waitWithin(readCodexCliSessions(), 500, "Session discovery is still pending") };
+    return { cliSessions: await waitWithin(readCodexCliSessions(undefined, undefined, true), 500, "Session discovery is still pending") };
   } catch (error) {
     return { notice: { level: "warning" as const, message: `The session action completed, but the session list could not refresh: ${toFailureMessage(error)}. Refresh the list before retrying the action.` } };
   }

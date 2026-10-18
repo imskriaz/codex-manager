@@ -14,12 +14,16 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
   const modalRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const backdropPressedRef = useRef(false);
+  const restoreFrameRef = useRef<number | undefined>(undefined);
   onCloseRef.current = onClose;
 
   useLayoutEffect(() => {
     if (!open) {
       return;
     }
+
+    if (restoreFrameRef.current !== undefined) window.cancelAnimationFrame(restoreFrameRef.current);
 
     previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const modal = modalRef.current;
@@ -29,12 +33,20 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
     return () => {
       const previouslyFocused = previouslyFocusedRef.current;
       if (previouslyFocused?.isConnected) {
-        window.requestAnimationFrame(() => previouslyFocused.focus({ preventScroll: true }));
+        restoreFrameRef.current = window.requestAnimationFrame(() => {
+          restoreFrameRef.current = undefined;
+          if (document.activeElement === document.body || modal?.contains(document.activeElement)) previouslyFocused.focus({ preventScroll: true });
+        });
       }
     };
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (open && document.activeElement === document.body) modalRef.current?.focus({ preventScroll: true });
+  });
+
   const onKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLDivElement>): void => {
+    event.stopPropagation();
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -68,7 +80,18 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
     }
   };
 
-  return { modalRef, onKeyDown };
+  const onBackdropPointerDown = (event: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
+    backdropPressedRef.current = event.target === event.currentTarget;
+    event.stopPropagation();
+  };
+  const onBackdropClick = (event: JSX.TargetedMouseEvent<HTMLDivElement>): void => {
+    event.stopPropagation();
+    if (event.target === event.currentTarget && (event.detail === 0 || backdropPressedRef.current)) onCloseRef.current();
+    backdropPressedRef.current = false;
+  };
+  const onBackdropMouseDown = (event: JSX.TargetedMouseEvent<HTMLDivElement>): void => event.stopPropagation();
+
+  return { modalRef, onKeyDown, onBackdropPointerDown, onBackdropClick, onBackdropMouseDown };
 }
 
 export function ActionButton(props: {
@@ -130,7 +153,9 @@ export function ModalShell(props: {
     <div
       class={`overlay ${props.open ? "open" : ""}`}
       aria-hidden={!props.open}
-      onClick={props.closeOnBackdrop === false ? undefined : props.onClose}
+      onPointerDown={accessibility.onBackdropPointerDown}
+      onMouseDown={accessibility.onBackdropMouseDown}
+      onClick={(event) => { if (props.closeOnBackdrop === false) event.stopPropagation(); else accessibility.onBackdropClick(event); }}
     >
       <div
         ref={accessibility.modalRef}

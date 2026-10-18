@@ -10,7 +10,6 @@ import { registerAutoRefreshScheduler, registerTokenRefreshScheduler } from "./s
 import { EncryptedSyncManager } from "../../services/encryptedSync";
 import { WebDashboardServer } from "../../services/webDashboardServer";
 import { AlwaysOnlineServer } from "../../services/alwaysOnlineServer";
-import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import { waitWithin } from "../../utils/concurrency";
 import {
   closeQuotaSummaryTabsForExtensionHostRestart,
@@ -28,7 +27,8 @@ import {
   formatAutoResumeResult,
   prepareCodexSessionsForExtensionHostRestart,
   registerCodexSessionAutoResumeTracking,
-  resumePersistedCodexSessions
+  resumePersistedCodexSessions,
+  scheduleCodexSessionAutoResume
 } from "../../services/codexSessionAutoResume";
 
 const TOKEN_REFRESH_CHECK_INTERVAL_MS = 15 * 60 * 1000;
@@ -53,7 +53,7 @@ export class AccountsWorkbench {
       this.encryptedSync.canAutomateAccountAfterVaultRefresh(accountId)
     );
     this.webDashboard = new WebDashboardServer(context, this.repo, this.encryptedSync);
-    this.alwaysOnlineServer = new AlwaysOnlineServer(context, this.encryptedSync);
+    this.alwaysOnlineServer = new AlwaysOnlineServer(context, this.encryptedSync, () => this.webDashboard.isConfiguredDomainLocal());
     this.repo.setAccountSwitchCoordinator(this.encryptedSync);
   }
 
@@ -82,7 +82,7 @@ export class AccountsWorkbench {
     };
     this.encryptedSync.setOnStateChanged(() => {
       refreshers.refresh();
-      if (this.alwaysOnlineServer.isWaitingForConfiguration()) {
+      if (!this.disposed) {
         this.scheduleAlwaysOnlinePreparation();
       }
     });
@@ -137,29 +137,6 @@ export class AccountsWorkbench {
     if (completedAutoSwitchNotice) {
       void vscode.window.showInformationMessage(completedAutoSwitchNotice);
     }
-    void measureStep("autoResumeCodexSessions", async () => {
-      try {
-        const result = await resumePersistedCodexSessions(this.context);
-        const message = formatAutoResumeResult(result);
-        if (!message) {
-          return;
-        }
-        void vscode.window.showInformationMessage(message);
-        if (result.failed.length) {
-          console.warn("[codexManager] automatic session resume incomplete", message);
-        } else {
-          console.info("[codexManager] automatic session resume complete", message);
-        }
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.warn("[codexManager] auto resume failed", error);
-        console.warn("[codexManager] automatic session resume could not restore running sessions", detail);
-      }
-    }).finally(() => {
-      if (this.disposed) return;
-      this.autoResumeTracking = registerCodexSessionAutoResumeTracking(this.context);
-      this.context.subscriptions.push(this.autoResumeTracking);
-    }).catch((error) => console.warn("[codexManager] auto resume startup task failed", error));
     const repoInit = await measureStep("repo.init", async () => this.repo.init());
     const encryptedSyncStartup = measureStep("encryptedSync.start", async () => {
       // Settings Sync is an optional transport. A broken provider, stale
@@ -210,44 +187,14 @@ export class AccountsWorkbench {
         if (event.affectsConfiguration("codexManager")) {
           this.webDashboard.publishRealtimeState();
         }
-        if (event.affectsConfiguration("codexManager.encryptedSyncEnabled") && getAlwaysOnlineEnabled()) {
+        if (event.affectsConfiguration("codexManager.encryptedSyncEnabled") ||
+            event.affectsConfiguration("codexManager.webDashboardEnabled") ||
+            event.affectsConfiguration("codexManager.cloudflaredDomain") ||
+            event.affectsConfiguration("codexManager.webSocketServerEnabled")) {
           this.scheduleAlwaysOnlinePreparation();
-        }
-        if (
-          event.affectsConfiguration("codexManager.webDashboardEnabled") ||
-          event.affectsConfiguration("codexManager.cloudflaredDomain") ||
-          event.affectsConfiguration("codexManager.webDashboardAlwaysOnlineEnabled")
-        ) {
-          void this.webDashboard.applyConfiguration().catch((error) => {
+          void this.webDashboard.applyConfiguration().catch(error => {
             console.warn("[codexManager] Web Dashboard configuration update failed", error);
-            void vscode.window.showWarningMessage(
-              `Web Dashboard configuration failed: ${error instanceof Error ? error.message : String(error)}`
-            );
           });
-          if (event.affectsConfiguration("codexManager.webDashboardAlwaysOnlineEnabled")) {
-            void this.alwaysOnlineServer
-              .applyConfiguration()
-              .then((result) => {
-                if (result === "started")
-                  void vscode.window.showInformationMessage("Always-online WebSocket host started on this PC.");
-                if (result === "stopped")
-                  void vscode.window.showInformationMessage("Always-online WebSocket host stopped.");
-                if (result === "paused")
-                  void vscode.window.showInformationMessage(
-                    "Always-online WebSocket host is armed and will take over when VS Code closes."
-                  );
-                if (result === "waiting-for-configuration") {
-                  void vscode.window.showWarningMessage(
-                    "Always-online WebSocket host is waiting. Enable Encrypted Sync and save the shared password to arm it."
-                  );
-                }
-              })
-              .catch((error) => {
-                void vscode.window.showErrorMessage(
-                  `Always-online WebSocket host failed: ${error instanceof Error ? error.message : String(error)}`
-                );
-              });
-          }
         }
       })
     );
@@ -318,6 +265,34 @@ export class AccountsWorkbench {
       activationSteps.map((step) => `${step.name}=${step.durationMs}ms`).join(", ")
     );
     this.scheduleAlwaysOnlinePreparation();
+    // Let activation and the restored dashboard paint before optional recovery.
+    const recoveryTimer = scheduleCodexSessionAutoResume(() => {
+      if (this.disposed) return;
+      void measureStep("autoResumeCodexSessions", async () => {
+        try {
+          const result = await resumePersistedCodexSessions(this.context);
+          const message = formatAutoResumeResult(result);
+          if (!message) {
+            return;
+          }
+          void vscode.window.showInformationMessage(message);
+          if (result.failed.length) {
+            console.warn("[codexManager] automatic session resume incomplete", message);
+          } else {
+            console.info("[codexManager] automatic session resume complete", message);
+          }
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.warn("[codexManager] auto resume failed", error);
+          console.warn("[codexManager] automatic session resume could not restore running sessions", detail);
+        }
+      }).finally(() => {
+        if (this.disposed) return;
+        this.autoResumeTracking = registerCodexSessionAutoResumeTracking(this.context);
+        this.context.subscriptions.push(this.autoResumeTracking);
+      }).catch((error) => console.warn("[codexManager] auto resume startup task failed", error));
+    });
+    this.context.subscriptions.push(recoveryTimer);
   }
 
   dispose(): void {
@@ -367,20 +342,17 @@ export class AccountsWorkbench {
     }
   }
 
-  private scheduleAlwaysOnlinePreparation(): void {
-    if (this.alwaysOnlinePreparationTimer) return;
+  private scheduleAlwaysOnlinePreparation(delay = 1_000): void {
+    if (this.alwaysOnlinePreparationTimer) {
+      if (delay > 1_000) return;
+      clearTimeout(this.alwaysOnlinePreparationTimer);
+    }
     this.alwaysOnlinePreparationTimer = setTimeout(() => {
       this.alwaysOnlinePreparationTimer = undefined;
-      void runWithPersistentOperation("startup:alwaysOnlineServer.prepare", () =>
-        this.alwaysOnlineServer.applyConfiguration()
-      ).catch((error) => {
+      void this.alwaysOnlineServer.applyConfiguration().catch((error) => {
         console.warn("[codexManager] Always-online relay startup failed", error);
-      });
-    }, 1_000);
+      }).finally(() => { if (!this.disposed) this.scheduleAlwaysOnlinePreparation(60_000); });
+    }, delay);
     this.alwaysOnlinePreparationTimer.unref?.();
   }
-}
-
-function getAlwaysOnlineEnabled(): boolean {
-  return getCodexManagerConfiguration().get<boolean>("webDashboardAlwaysOnlineEnabled", false);
 }

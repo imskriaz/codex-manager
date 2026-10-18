@@ -193,12 +193,12 @@ describe("sessions sidebar layout", () => {
     expect(settings).toContain('"Enable workspace (Experimental)"');
     expect(settings).toContain("Add chats and terminals to this dashboard.");
     const dashboardStart = settings.indexOf(': "Web Dashboard"');
-    const dashboardEnd = settings.indexOf("</SettingsToggleBlock>", settings.indexOf("Web Socket Server"));
+    const dashboardEnd = settings.indexOf("</SettingsToggleBlock>", settings.indexOf("WS Cross System"));
     expect(dashboardStart).toBeGreaterThan(-1);
     expect(dashboardEnd).toBeGreaterThan(dashboardStart);
-    expect(settings.slice(dashboardStart, dashboardEnd)).toContain("Keep connections online");
-    expect(settings.slice(dashboardStart, dashboardEnd)).toContain("Web Socket Server");
-    expect(settings).toContain('class="settings-block settings-block-wide settings-dashboard-server"');
+    expect(settings).not.toContain("Keep connections online");
+    expect(settings.slice(dashboardStart, dashboardEnd)).toContain("WS Cross System");
+    expect(settings).toContain('onToggle={(enabled) => patchAndSend("webSocketServerEnabled", enabled)}');
   });
 
   it("keeps the removed CLI path out while retaining restart and parallel settings", () => {
@@ -515,23 +515,10 @@ describe("sessions sidebar layout", () => {
     const resume = readFileSync("src/services/codexSessionResume.ts", "utf8");
     const rpc = readFileSync("src/services/codexAppServerRpc.ts", "utf8");
 
-    expect(packageJson).toContain('"app-server-stdio"');
-    expect(packageJson).toContain('"cli"');
-    expect(packageJson).not.toContain('"app-server-websocket"');
-    expect(settings).not.toContain("app-server-websocket");
-    expect(settings).toContain('className="settings-block-wide settings-session-transport"');
-    expect(settings).toContain('description: "Recommended"');
-    expect(settings).toContain('description: "Compatibility mode"');
-    expect(settings).toContain("Uses the selected connection only.");
-    const transportSettings = settings.slice(
-      settings.indexOf('title="Workspace connection"'),
-      settings.indexOf("</SettingsSegmentBlock>", settings.indexOf('title="Workspace connection"'))
-    );
-    expect(transportSettings.match(/key: \"(?:app-server-stdio|cli)\"/g)).toHaveLength(2);
-    expect(transportSettings).not.toContain("WebSocket");
-    const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(styles).toMatch(/\.settings-session-transport \.settings-segment\s*\{[^}]*grid-template-columns:\s*repeat\(2,/s);
-    expect(resume).toContain('"thread/list"');
+    expect(packageJson).not.toContain('"codexManager.codexSessionTransport"');
+    expect(settings).not.toContain("Workspace connection");
+    expect(settings).not.toContain("CLI compatibility");
+    expect(resume).not.toContain("withCliImageAttachments");
     expect(resume).not.toContain("paginated_threads");
     expect(resume).not.toContain("using transcript fallback");
     expect(resume).toContain('"thread/archive"');
@@ -561,7 +548,6 @@ describe("sessions sidebar layout", () => {
     expect(settings).not.toContain("Codex default");
     expect(main).not.toContain("codexSessionDefault");
     expect(main).toContain('requestSessionAction("openCodexCliSession"');
-    expect(source).toContain("const selected = projects.find((project) => nextProject && canonicalWebPath(project.path) === canonicalWebPath(nextProject))?.path ?? projects[0]?.path ?? \"\";");
     expect(source).not.toContain("props.onOpenNewInCodex();");
   });
 

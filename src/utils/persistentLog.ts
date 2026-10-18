@@ -9,9 +9,10 @@ import { redactDebugText } from "./debug";
 import { getCodexManagerStorageRoot } from "./storageRoot";
 import { SqliteStateStore, sqliteStoreForFile } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "./crossWindowOperations";
+import { logRetentionCutoff } from "../storage/logRetention";
+import { compactManagerDatabase, waitForManagerDatabaseMaintenance } from "../storage/databaseMaintenance";
 
 export const PERSISTENT_LOG_RETENTION_DAYS = 3;
-const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_PERSISTENT_LOG_RECORD_BYTES = 64 * 1024;
 const MAX_PENDING_LOG_RECORDS = 128;
 const MAX_PENDING_LOG_BYTES = 2 * 1024 * 1024;
@@ -60,6 +61,9 @@ let stopLoggingSettings: (() => void) | undefined;
 
 /** Diagnostics use their own WAL database so log volume cannot bloat manager state. */
 export class PersistentSqliteLogger {
+  private writesSincePrune = 0;
+  private maintenanceTimer: NodeJS.Timeout | undefined;
+  private maintenanceStarted = false;
   private writeChain: Promise<void> = Promise.resolve();
   private writeError: unknown;
   private writeFailureReported = false;
@@ -77,7 +81,14 @@ export class PersistentSqliteLogger {
     private retentionDays = PERSISTENT_LOG_RETENTION_DAYS,
     private readonly now: () => Date = () => new Date(),
     private readonly onWriteFailure?: (error: unknown) => void,
-    private readonly appendRecord = (store: SqliteStateStore, key: string, record: unknown): Promise<void> => { store.set("logs", key, record); return Promise.resolve(); }
+    private readonly appendRecord = (store: SqliteStateStore, key: string, record: unknown, generation?: string): Promise<void> => {
+      store.transaction(() => {
+        const control = store.get<{ enabled?: boolean; generation?: string }>("log-control", "state");
+        if (control?.enabled === false || (control?.generation ?? "") !== (generation ?? "")) return;
+        store.set("logs", key, record);
+      });
+      return Promise.resolve();
+    }
   ) {}
 
   private async database(): Promise<SqliteStateStore> {
@@ -102,7 +113,12 @@ export class PersistentSqliteLogger {
 
   async initialize(): Promise<void> {
     await this.database();
-    await this.pruneExpiredLogs();
+    if (this.maintenanceTimer) clearTimeout(this.maintenanceTimer);
+    this.maintenanceTimer = setTimeout(() => {
+      this.maintenanceTimer = undefined;
+      void this.pruneExpiredLogs().catch(error => this.onWriteFailure?.(error));
+    }, 30_000);
+    this.maintenanceTimer.unref?.();
     this.activeUtcDate = toUtcDate(this.now());
     this.write("info", "lifecycle", "Persistent logging initialized", {
       retentionDays: this.retentionDays,
@@ -161,14 +177,16 @@ export class PersistentSqliteLogger {
     this.pendingBytes += lineBytes;
     const utcDate = toUtcDate(recordTime);
     const key = `${recordTime.toISOString()}:${randomUUID()}`;
+    const generation = this.database().then(store => store.get<{ generation?: string }>("log-control", "state")?.generation).catch(() => undefined);
     const dayChanged = this.activeUtcDate !== undefined && this.activeUtcDate !== utcDate;
     this.activeUtcDate = utcDate;
     this.writeChain = this.writeChain
       .then(async () => {
-        if (dayChanged) {
+        if (dayChanged || ++this.writesSincePrune >= 128) {
           await this.pruneExpiredLogs();
+          this.writesSincePrune = 0;
         }
-        await this.appendRecord(await this.database(), key, JSON.parse(line));
+        await this.appendRecord(await this.database(), key, JSON.parse(line), await generation);
         this.writeError = undefined;
         this.writeFailureReported = false;
       })
@@ -200,16 +218,10 @@ export class PersistentSqliteLogger {
   }
 
   async pruneExpiredLogs(): Promise<void> {
-    const currentDay = startOfUtcDay(this.now());
-    const oldestRetainedDay = currentDay - (this.retentionDays - 1) * MILLISECONDS_PER_DAY;
-    const store = await this.database();
-    const cutoff = new Date(oldestRetainedDay).toISOString();
-    store.deleteBefore("logs", cutoff);
-    // Archived legacy diagnostics obey the same retention once logging runs.
-    for (const key of store.keys("legacy-files")) {
-      const day = /^logs\/codex-manager-(\d{4}-\d{2}-\d{2})/.exec(key)?.[1];
-      if (day && Date.parse(`${day}T00:00:00.000Z`) < oldestRetainedDay) store.set("legacy-files", key, undefined);
-    }
+    await this.database();
+    this.maintenanceStarted = true;
+    const outcome = await compactManagerDatabase(this.databasePath, { days: this.retentionDays, now: this.now() });
+    if (outcome === "deferred") throw new Error("Log cleanup was deferred because storage is busy. The retention policy is saved; retry after storage responds.");
   }
 
   async readRecent(): Promise<string> {
@@ -218,20 +230,57 @@ export class PersistentSqliteLogger {
 
   async readExport(): Promise<{ records: unknown[]; limited: boolean }> {
     await this.flush();
-    const rows = (await this.database()).recent<unknown>("logs", 1001);
+    const store = await this.database();
+    const cutoff = logRetentionCutoff(this.retentionDays, this.now());
+    const rows = store.prepare(`SELECT state.value FROM state JOIN (
+      SELECT key FROM (SELECT key,SUM(record_bytes) OVER (ORDER BY key DESC ROWS UNBOUNDED PRECEDING) AS bytes
+        FROM (SELECT key,length(CAST(value AS BLOB)) AS record_bytes FROM state WHERE namespace='logs' AND key>=? ORDER BY key DESC LIMIT 1000)
+      ) WHERE bytes<=524288
+    ) AS selected ON state.namespace='logs' AND state.key=selected.key ORDER BY state.key DESC`).all(cutoff);
+    const count = Number(store.prepare("SELECT COUNT(*) AS count FROM (SELECT key FROM state WHERE namespace='logs' AND key>=? LIMIT 1001)").get(cutoff)?.["count"] ?? 0);
     const records: unknown[] = [];
     let bytes = 0;
-    for (const row of rows.slice(-1000).reverse()) {
-      const record = sanitizeLogValue(row);
+    for (const row of rows) {
+      const record = sanitizeLogValue(JSON.parse(String(row["value"])));
       bytes += Buffer.byteLength(JSON.stringify(record));
       if (bytes > 512 * 1024) break;
       records.push(record);
     }
-    return { records: records.reverse(), limited: records.length < rows.length };
+    return { records: records.reverse(), limited: records.length < count };
   }
 
   async close(): Promise<void> {
-    try { await this.flush(); } finally { this.store?.close(); this.store = undefined; }
+    if (this.maintenanceTimer) clearTimeout(this.maintenanceTimer);
+    this.maintenanceTimer = undefined;
+    try { await this.flush(); if (this.maintenanceStarted) await waitForManagerDatabaseMaintenance(this.databasePath); } finally { this.store?.close(); this.store = undefined; }
+  }
+
+  async setRecordingEnabled(enabled: boolean): Promise<void> {
+    const store = await this.database();
+    store.transaction(() => store.set("log-control", "state", { ...store.get<Record<string, unknown>>("log-control", "state"), enabled }));
+  }
+
+  async clear(disable = false): Promise<void> {
+    const clearing = this.writeChain.then(async () => {
+      const store = await this.database();
+      store.transaction(() => {
+        store.set("log-control", "state", { enabled: !disable, generation: randomUUID(), clearedAt: this.now().toISOString() });
+        store.prepare("DELETE FROM state WHERE namespace='logs' OR (namespace='legacy-files' AND key LIKE 'logs/%')").run();
+      });
+      this.droppedRecords = 0;
+      this.writeError = undefined;
+      this.compactLater(store);
+    });
+    this.writeChain = clearing.catch(() => undefined);
+    await clearing;
+  }
+
+  private compactLater(store: SqliteStateStore): void {
+    if (this.pendingWrites > 1) return;
+    const free = Number(store.prepare("PRAGMA freelist_count").get()?.["freelist_count"] ?? 0);
+    if (free < 512) return;
+    this.maintenanceStarted = true;
+    void compactManagerDatabase(this.databasePath).catch(error => this.onWriteFailure?.(error));
   }
 }
 
@@ -253,8 +302,14 @@ export async function registerPersistentLogging(
     if (settings.enabled) {
       const candidate = await createPersistentLogger(storageRoot, settings.retentionDays);
       if (epoch !== loggingEpoch) { await candidate.close(); return; }
-      persistentLogger = candidate;
-      restoreGlobalCapture = installGlobalFailureCapture(persistentLogger, context.extensionPath);
+      try {
+        await runCrossWindowExclusive("preferences:file-logging", "Initialize System Log", async () => {
+          if (epoch !== loggingEpoch || !(await readLoggingSettings(storageRoot)).enabled) { await candidate.close(); return; }
+          await candidate.setRecordingEnabled(true);
+          persistentLogger = candidate;
+          restoreGlobalCapture = installGlobalFailureCapture(candidate, context.extensionPath);
+        });
+      } catch (error) { await candidate.close(); throw error; }
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") console.warn("[codexManager] persistent logging unavailable; disabled", error);
@@ -269,7 +324,9 @@ export async function registerPersistentLogging(
       if (cancelled || registration !== loggingRegistration ||
           (!needsRetry && settings.enabled === isPersistentLoggingEnabled() && settings.retentionDays === persistentLogRetentionDays && settings.level === persistentLogLevel)) return;
       needsRetry = false;
-      return updatePersistentLoggingSettings({});
+      return updatePersistentLoggingSettings({}).then(() => {
+        if (!cancelled && !refreshTimer) { refreshTimer = setTimeout(refresh, 0); refreshTimer.unref?.(); }
+      });
     }).catch(error => {
       if (cancelled) return;
       needsRetry = true;
@@ -355,6 +412,23 @@ export function setPersistentLoggingEnabled(enabled: boolean): Promise<void> {
   return updatePersistentLoggingSettings({ enabled });
 }
 
+export function clearPersistentLogs(): Promise<void> {
+  return runCrossWindowExclusive("preferences:file-logging", "Clear system log", async () => {
+    if (!loggingRegistration) throw new Error("System Log is still initializing. Retry shortly.");
+    await clearLogStorage(loggingRegistration.storageRoot, !isPersistentLoggingEnabled());
+  });
+}
+
+async function clearLogStorage(storageRoot: string, disable: boolean): Promise<void> {
+  const logger = persistentLogger ?? new PersistentSqliteLogger(path.join(storageRoot, "manager_logs.sqlite"));
+  try {
+    await logger.clear(disable);
+    await withLoggingSettingsStore(storageRoot, store => {
+      store.prepare("DELETE FROM state WHERE namespace='legacy-files' AND key LIKE 'logs/%'").run();
+    });
+  } finally { if (logger !== persistentLogger) await logger.close(); }
+}
+
 type LoggingSettings = { enabled: boolean; retentionDays: number; level: PersistentLogLevel };
 
 async function readLoggingSettings(storageRoot: string): Promise<LoggingSettings> {
@@ -388,14 +462,19 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
     const retentionChanged = persistentLogRetentionDays !== settings.retentionDays;
     try {
       if (epoch !== loggingEpoch) throw new Error("Logging update was interrupted because the host stopped.");
-      await withLoggingSettingsStore(storageRoot, store => store.set("files", "logging-settings.json", { text: JSON.stringify(settings) }));
+      if (Object.keys(patch).length > 0)
+        await withLoggingSettingsStore(storageRoot, store => store.set("files", "logging-settings.json", { text: JSON.stringify(settings) }));
       if (epoch !== loggingEpoch) throw new Error("Logging settings were saved; reload the window to apply them.");
     } catch (error) {
       await candidate?.close().catch(() => undefined);
       throw error;
     }
-    if (!settings.enabled) await disposePersistentLogging();
+    if (!settings.enabled) {
+      await disposePersistentLogging();
+      if (patch.enabled === false) await clearLogStorage(storageRoot, true);
+    }
     else if (candidate) {
+      await candidate.setRecordingEnabled(true);
       persistentLogger = candidate;
       restoreGlobalCapture = installGlobalFailureCapture(candidate, context.extensionPath);
     }
@@ -403,7 +482,7 @@ async function updatePersistentLoggingSettings(patch: Partial<LoggingSettings>):
     persistentLogLevel = settings.level;
     persistentLogger?.setLevel(settings.level);
     persistentLogger?.setRetentionDays(settings.retentionDays);
-    if ((patch.retentionDays || retentionChanged || Object.keys(patch).length === 0) && persistentLogger)
+    if ((patch.retentionDays || (retentionChanged && Object.keys(patch).length > 0)) && persistentLogger)
       await persistentLogger.pruneExpiredLogs();
     fireSqliteConfigurationChanges(["persistentLoggingEnabled","persistentLogRetentionDays","persistentLogLevel"]);
   }).finally(() => { if (loggingUpdate === update) { loggingUpdate = undefined; loggingUpdateRequest = ""; } });
@@ -691,10 +770,6 @@ function normalizePathForComparison(value: string): string {
 
 function toUtcDate(value: Date): string {
   return value.toISOString().slice(0, 10);
-}
-
-function startOfUtcDay(value: Date): number {
-  return Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
 }
 
 function toErrorMessage(error: unknown): string {

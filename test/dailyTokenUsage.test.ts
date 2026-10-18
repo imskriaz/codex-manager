@@ -36,6 +36,11 @@ afterEach(async () => {
 });
 
 describe("daily token usage on account load", () => {
+  it("keeps token points in queryable rows without duplicating them in account metadata", async () => {
+    await upsertDashboardDailyUsageCache(context(), "a", usage, now);
+    expect(JSON.parse(String(store.prepare("SELECT data FROM daily_usage WHERE account_id='a'").get()?.["data"])).usage.points).toEqual([]);
+    expect(readDashboardDailyUsage(context(), "a")?.usage.points).toEqual(usage.points);
+  });
   it.each([1, 1440])("waits the full %i-minute gap after an account fails, without delaying other accounts", async gap => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageIntervalMinutes" ? gap : fallback } as never);
     const failed = vi.fn().mockRejectedValue(new Error("offline"));

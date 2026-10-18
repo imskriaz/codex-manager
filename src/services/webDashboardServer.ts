@@ -47,7 +47,7 @@ import { recordPeerQuotaChecks } from "./quotaCheckCoordination";
 import { AccountsRepository } from "../storage";
 import type { EncryptedSyncManager } from "./encryptedSync";
 import { isValidSyncAccountEnablement, type SyncAccountEnablement } from "./syncEnablementRegistry";
-import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessionSummary, readCodexCliSessions, readNewCodexCliSessionSummary, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "./codexSessionResume";
+import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSessionRecoveryMetadata, readCodexCliSessions, resolveCodexHome, SESSION_DISCOVERY_RETRY_GAP_MS } from "./codexSessionResume";
 import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import {
@@ -61,7 +61,7 @@ import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import { recordSessionLive } from "./sessionRecording";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
-import { BrowserPushService } from "./browserPush";
+import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
 import { ConversationShares, sharedConversationPage } from "./conversationShares";
 import { filterCliSessionsBySection, isCodexSessionRunning } from "../domain/codexSessionState";
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
@@ -95,7 +95,7 @@ export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount
   if (action === "syncNow" || action === "configureEncryptedSync") return 135_000;
   if (action === "commitWorkspaceChanges") return 75_000;
   if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(action)) return 90_000;
-  if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession", "resumeCodexSessions"].includes(action)) return 75_000;
+  if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession", "resumeCodexSessions", "setCodexSessionGoalStatus"].includes(action)) return 75_000;
   if (action === "cancelCodexCliSessionTurn") return 40_000;
   if (action === "steerCodexCliSessionTurn") return 40_000;
   if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession") {
@@ -445,6 +445,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly browserPush: BrowserPushService;
   private readonly conversationShares: ConversationShares;
   private readonly claimAuthority = new AccountClaimAuthority(path.join(getCodexManagerStorageRoot(), "account-claim-authority.json"), () => this.encryptedSync?.getRealtimeEnablementRegistry() ?? []);
+  private readonly hostProofKey = crypto.randomBytes(32);
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -754,9 +755,39 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private isEnabled(): boolean {
     const config = getCodexManagerConfiguration();
-    return (
-      config.get<boolean>("webDashboardEnabled", false) || config.get<boolean>("webDashboardAlwaysOnlineEnabled", false)
-    );
+    return config.get<boolean>("webDashboardEnabled", false);
+  }
+
+  /** Verify that the public tunnel reaches this server without exposing a device identifier. */
+  async isConfiguredDomainLocal(): Promise<boolean> {
+    const settings = this.settingsStore.getDashboardSettings();
+    const domain = normalizeCloudflaredDomain(settings.cloudflaredDomain ?? "");
+    if (!domain || !settings.webDashboardEnabled || settings.webSocketServerEnabled === false) return false;
+    const challenge = crypto.randomBytes(16).toString("hex");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4_000);
+    try {
+      const url = new URL("/api/relay-host", domain);
+      url.searchParams.set("challenge", challenge);
+      const response = await undiciFetch(url, { signal: controller.signal, redirect: "error" });
+      if (!response.ok) { await response.body?.cancel(); return false; }
+      const reader = response.body?.getReader();
+      if (!reader) return false;
+      let text = "";
+      try {
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          text += Buffer.from(chunk.value).toString("utf8");
+          if (text.length > 512) return false;
+        }
+      } finally { await reader.cancel().catch(() => undefined); }
+      const result = JSON.parse(text) as { proof?: string };
+      return result.proof === crypto.createHmac("sha256", this.hostProofKey).update(challenge).digest("hex") &&
+        domain === normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "") &&
+        this.settingsStore.getDashboardSettings().webSocketServerEnabled !== false && this.settingsStore.getDashboardSettings().webDashboardEnabled === true;
+    } catch { return false; }
+    finally { clearTimeout(timer); }
   }
 
   private getUrl(pathname = "/"): string {
@@ -780,6 +811,12 @@ export class WebDashboardServer implements vscode.Disposable {
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
+    if (method === "GET" && path === "/api/relay-host") {
+      const challenge = requestUrl.searchParams.get("challenge") ?? "";
+      if (!/^[a-f0-9]{32}$/.test(challenge)) { response.statusCode = 400; this.sendJson(response, { error: "Invalid host check." }); return; }
+      this.sendJson(response, { proof: crypto.createHmac("sha256", this.hostProofKey).update(challenge).digest("hex") });
+      return;
+    }
     if (method === "GET" && path.startsWith("/share/")) {
       const share = await this.conversationShares.get(path.slice(7));
       if (!share) { response.statusCode = 404; response.end("This shared link is invalid, expired, or revoked. Ask the owner for a new link."); return; }
@@ -824,7 +861,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "POST" && path === "/api/peer-heartbeat") {
-      const domainConfigured = Boolean(configuredCloudflaredOrigin);
+      const domainConfigured = this.settingsStore.getDashboardSettings().webSocketServerEnabled !== false && Boolean(configuredCloudflaredOrigin);
       if (!domainConfigured || request.headers["x-codex-peer"] !== "1") {
         response.statusCode = 404;
         response.end("Not found");
@@ -931,8 +968,9 @@ export class WebDashboardServer implements vscode.Disposable {
         } else throw new Error("Unknown notification action.");
         this.sendJson(response, { ok: true });
       } catch (error) {
-        response.statusCode = error instanceof RequestBodyTooLargeError ? 413 : 400;
-        this.sendJson(response, { error: error instanceof Error ? error.message : "Notification request failed. Retry from settings." });
+        response.statusCode = error instanceof RequestBodyTooLargeError ? 413 : error instanceof BrowserPushRegistrationConflictError ? 409 : 400;
+        this.sendJson(response, { error: error instanceof Error ? error.message : "Notification request failed. Retry from settings.",
+          ...(error instanceof BrowserPushRegistrationConflictError ? { code: "push-registration-conflict" } : {}) });
       }
       return;
     }
@@ -1286,7 +1324,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["viewLogs", "downloadLogs", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -1464,7 +1502,7 @@ export class WebDashboardServer implements vscode.Disposable {
   ): Promise<void> {
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const isPeer = requestUrl.searchParams.get("peer") === "1";
-    const domainConfigured = Boolean(normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""));
+    const domainConfigured = this.settingsStore.getDashboardSettings().webSocketServerEnabled !== false && Boolean(normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""));
     const localBrowser = !isPeer && isLocalWebDashboardRequest(request);
     const browserAuthorized = isPeer ? domainConfigured : await this.isAuthorized(request);
     const browserPassphraseFingerprint =
@@ -1545,10 +1583,10 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async notifySessionCompletion(state: DashboardCodexSessionLiveState): Promise<void> {
-    const title = (state.deviceId ? this.getRemoteCliSessions().find((session) => session.id === state.sessionId)?.title : undefined)
-      ?? readNewCodexCliSessionSummary(state.sessionId)?.title
-      ?? (await readCodexCliSessionSummary(state.sessionId).catch(() => undefined))?.title
-      ?? `Codex session ${state.sessionId.slice(0, 8)}`;
+    const candidate = state.deviceId
+      ? this.getRemoteCliSessions().find((session) => session.id === state.sessionId && session.deviceId === state.deviceId)?.title
+      : (await waitWithin(readCodexCliSessionRecoveryMetadata([state.sessionId]), 2_000, "Session title unavailable.").catch(() => ({} as Record<string, { title?: string }>)))[state.sessionId]?.title;
+    const title = candidate?.trim() && candidate !== state.sessionId && candidate !== `Codex session ${state.sessionId.slice(0, 8)}` ? candidate : "Codex conversation";
     this.browserPush.notify({
       notificationId: state.streamId,
       title,
@@ -2406,7 +2444,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private connectPeerSocket(): void {
     const domain = normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "");
-    if (this.peerStopped || !domain || this.peerSocket) return;
+    if (this.peerStopped || !domain || this.peerSocket || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) return;
     let endpoint: URL;
     try {
       endpoint = new URL(domain);
@@ -2611,7 +2649,7 @@ export class WebDashboardServer implements vscode.Disposable {
     const revision = this.peerConnectionRevision;
     if (this.peerSocket?.readyState === UndiciWebSocket.OPEN) return;
     const domain = normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "");
-    if (!domain) {
+    if (!domain || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) {
       this.peerPresenceAuthoritative = false;
       this.encryptedSync?.setOnlineDeviceIds(undefined);
       return;

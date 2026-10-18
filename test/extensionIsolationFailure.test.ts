@@ -7,7 +7,7 @@ vi.mock("../src/presentation/workbench/accountsWorkbench", () => ({ AccountsWork
   constructor() { fixture.construct(); }
   activate = fixture.activate;
 } }));
-vi.mock("../src/storage/sqliteContext", () => ({ initializeSqliteContext: async (context: unknown) => context, disposeSqliteContext: vi.fn(), sqliteConfiguration: (config: unknown) => config }));
+vi.mock("../src/storage/sqliteContext", () => ({ initializeSqliteContextWithRetry: async (context: unknown) => context, disposeSqliteContext: vi.fn(), sqliteConfiguration: (config: unknown) => config }));
 vi.mock("../src/utils/persistentLog", () => ({ registerPersistentLogging: vi.fn(), disposePersistentLogging: vi.fn() }));
 vi.mock("../src/utils/notificationMirror", () => ({ enableTransientVscodeNotices: () => ({ dispose() {} }) }));
 vi.mock("../src/services/workspaceTools", () => ({ registerWorkspaceTerminalMonitoring: vi.fn() }));

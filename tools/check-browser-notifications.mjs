@@ -14,19 +14,21 @@ const screenshots = path.join(tmpdir(), "codex-manager-ui-check");
 await mkdir(screenshots, { recursive: true });
 const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWSER || "msedge", headless: true });
 try {
-  for (const scenario of ["subscribe", "registered", "revoked", "denied", "cancelled", "storage-failure", "timeout"]) {
+  for (const scenario of ["subscribe", "registered", "login-conflict", "denied", "cancelled", "storage-failure", "timeout"]) {
     console.log(`Checking browser notification ${scenario}`);
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
     await context.addInitScript(({ scenario }) => {
       window.__permissionRequests = 0; window.__unsubscribes = 0;
       const subscription = { endpoint: "https://fcm.googleapis.com/fcm/send/fixture", toJSON: () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/fixture", keys: { p256dh: "fixture", auth: "fixture" } }), unsubscribe: async () => { window.__unsubscribes++; return true; } };
-      let current = ["registered", "revoked"].includes(scenario) ? subscription : null;
+      let current = ["registered", "login-conflict"].includes(scenario) ? subscription : null;
       const registration = { pushManager: { getSubscription: async () => current, subscribe: async () => { current = subscription; return subscription; } } };
       Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: Promise.resolve(registration) } });
       window.PushManager = function() {};
-      Object.defineProperty(window, "Notification", { configurable: true, value: { permission: "default", requestPermission: () => {
+      Object.defineProperty(window, "Notification", { configurable: true, value: { permission: ["registered", "login-conflict"].includes(scenario) ? "granted" : "default", requestPermission: () => {
         window.__permissionRequests++;
-        return scenario === "timeout" ? new Promise(() => {}) : Promise.resolve(scenario === "denied" ? "denied" : scenario === "cancelled" ? "default" : "granted");
+        const result = scenario === "denied" ? "denied" : scenario === "cancelled" ? "default" : "granted";
+        if (scenario !== "timeout") window.Notification.permission = result;
+        return scenario === "timeout" ? new Promise(() => {}) : Promise.resolve(result);
       } } });
       const setTimeout = window.setTimeout.bind(window);
       if (scenario === "timeout") window.setTimeout = (fn, ms, ...args) => setTimeout(fn, ms === 15000 ? 200 : ms, ...args);
@@ -43,7 +45,10 @@ try {
       if (pathname === "/api/push/test") return route.fulfill({ json: windowlessTestResult });
       if (pathname === "/api/push/key") return route.fulfill({ json: { publicKey: Buffer.alloc(65, 1).toString("base64url") } });
       if (pathname === "/api/push/status") return route.fulfill({ json: { subscribed: registered } });
-      if (pathname === "/api/push/subscribe") { registered = scenario !== "storage-failure"; return route.fulfill({ status: scenario === "storage-failure" ? 500 : 200, json: scenario === "storage-failure" ? { error: "Notification storage failed. Retry when storage recovers." } : { ok: true } }); }
+      if (pathname === "/api/push/subscribe") {
+        if (scenario === "login-conflict" && calls.filter(path => path === pathname).length === 1) return route.fulfill({ status: 409, json: { code: "push-registration-conflict", error: "Registration needs refreshing" } });
+        registered = scenario !== "storage-failure"; return route.fulfill({ status: scenario === "storage-failure" ? 500 : 200, json: scenario === "storage-failure" ? { error: "Notification storage failed. Retry when storage recovers." } : { ok: true } });
+      }
       return route.fulfill({ json: { ok: true } });
     });
     await page.route("**/assets/browserHost.js*", route => route.fulfill({ contentType: "text/javascript", body: host }));
@@ -55,9 +60,10 @@ try {
     await page.locator(".dashboard-mobile-actions").waitFor();
     console.log(`${scenario}: dashboard ready`);
     const offer = page.getByRole("region", { name: "Notification subscription", exact: true });
-    if (scenario === "registered") {
-      await page.waitForTimeout(300);
+    if (["registered", "login-conflict"].includes(scenario)) {
+      await page.waitForFunction(() => document.documentElement.dataset.pushSubscribed === "true");
       assert.equal(await offer.count(), 0, "Registered devices are not prompted again");
+      if (scenario === "login-conflict") assert.equal(await page.evaluate(() => window.__unsubscribes), 1, "Login conflict is repaired quietly in this browser");
     } else {
       await offer.waitFor().catch(async error => { console.log("Offer state", calls, await page.locator("body").textContent(), errors); throw error; });
       console.log(`${scenario}: offer visible`);
@@ -82,7 +88,7 @@ try {
       assert.equal(await page.evaluate(() => window.__permissionRequests), 0, "Permission requires an explicit gesture");
       await offer.getByRole("button", { name: "Subscribe to browser notifications", exact: true }).click();
       console.log(`${scenario}: subscribe clicked`);
-      if (["subscribe", "revoked"].includes(scenario)) {
+      if (scenario === "subscribe") {
         await offer.getByRole("status").filter({ hasText: "Notifications are on for this device" }).waitFor().catch(async error => { console.log("Subscription state", calls, await offer.textContent(), errors); throw error; });
         console.log(`${scenario}: subscribed`);
         assert.equal(calls.filter(path => path === "/api/push/subscribe").length, 1);
@@ -105,7 +111,7 @@ try {
       } else {
         await offer.getByRole("alert").waitFor();
         assert.equal(await offer.getByRole("button", { name: "Subscribe to browser notifications", exact: true }).isEnabled(), true, "Failures leave a retryable terminal state");
-        assert.equal(await page.evaluate(() => window.__unsubscribes), scenario === "storage-failure" ? 1 : 0, "Failed persistence rolls back a new browser subscription");
+        assert.equal(await page.evaluate(() => window.__unsubscribes), 0, "Failed registration keeps this browser's subscription available for retry");
       }
     }
     assert.deepEqual(errors, [], `${scenario} has no console errors`);

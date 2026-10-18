@@ -1,18 +1,21 @@
 import * as vscode from "vscode";
 import { getCodexHome } from "../codex/authFile";
 import { getSqliteStateStore } from "../storage/sqliteState";
-import { currentSessionAccountId, initializeSessionStorage, listStoredSessionLive, saveSessionLive, saveSessionStatus } from "../storage/sqliteSessions";
+import { currentSessionAccountId, initializeSessionStorage, listStoredSessionLive, pruneSessionCache, saveSessionLive, saveSessionStatus } from "../storage/sqliteSessions";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import { runCrossWindowExclusive, CrossWindowOperationBusyError } from "../utils/crossWindowOperations";
 import { getCodexHomeStateKey } from "../codex/authFile";
 
-const pending = new Map<string,{ home:string; state:DashboardCodexSessionLiveState; accountId?:string }>();
+const pending = new Map<string,{ home:string; state:DashboardCodexSessionLiveState; accountId?:string; bytes:number }>();
+let pendingBytes = 0;
 let timer: NodeJS.Timeout | undefined;
 let warned = false;
 const pendingStatus = new Map<string,{home:string;id:string;status:"running"|"idle"|"unknown";at:number}>();
-const observed = new Map<string,DashboardCodexSessionLiveState>();
+type Revision = Pick<DashboardCodexSessionLiveState,"sessionId"|"deviceId"|"streamId"|"sequence"|"updatedAt"|"status">;
+const observed = new Map<string,Revision>();
+const revision = ({sessionId,deviceId,streamId,sequence,updatedAt,status}:DashboardCodexSessionLiveState):Revision => ({sessionId,deviceId,streamId,sequence,updatedAt,status});
 
 function warn(error: unknown): void {
   console.warn("[codexManager] session recording delayed",error);
@@ -30,16 +33,18 @@ export function captureSessionAccount(): string | undefined {
 export function recordSessionLive(state:DashboardCodexSessionLiveState,accountId?:string): void {
   if (!getSqliteStateStore()) return;
   if (!isCodexSessionLiveState(state)) { warn(new Error("Invalid live session snapshot.")); return; }
-  state = JSON.parse(JSON.stringify(state)) as DashboardCodexSessionLiveState;
-  state.sessionId = state.sessionId.toLowerCase();
-  state.streamId = state.streamId.toLowerCase();
+  state = { ...state, sessionId: state.sessionId.toLowerCase(), streamId: state.streamId.toLowerCase() };
   const home = getCodexHome(), key = JSON.stringify([getCodexHomeStateKey(home),state.deviceId ?? "",state.streamId]);
   const previous = pending.get(key);
   if (previous && !isNewerCodexSessionLiveState(state,previous.state)) return;
   if (!previous && pending.size >= 128) { warn(new Error("The session recording queue is full; an update could not be retained.")); return; }
-  pending.set(key,{home,state,accountId:previous?.accountId ?? accountId});
+  const serialized = JSON.stringify(state), bytes = Buffer.byteLength(serialized);
+  if (pendingBytes - (previous?.bytes ?? 0) + bytes > 8 * 1024 * 1024) { warn(new Error("The session recording byte limit was reached; an update could not be retained.")); return; }
+  state = JSON.parse(serialized) as DashboardCodexSessionLiveState;
+  pendingBytes += bytes - (previous?.bytes ?? 0);
+  pending.set(key,{home,state,accountId:previous?.accountId ?? accountId,bytes});
   if (!state.deviceId) {
-    observed.set(state.sessionId,state);
+    observed.set(state.sessionId,revision(state));
     if (observed.size > 30) observed.delete(observed.keys().next().value!);
   }
   if (!timer) schedule(250);
@@ -62,7 +67,7 @@ export function flushSessionRecording(limit = 8): boolean {
         for (const [,entry] of states) saveSessionLive(store,entry.home,entry.state,entry.accountId);
         for (const [,entry] of statuses) saveSessionStatus(store,entry.home,entry.id,entry.status,entry.at);
       });
-      for (const [key,entry] of states) if (pending.get(key) === entry) pending.delete(key);
+      for (const [key,entry] of states) if (pending.get(key) === entry) { pending.delete(key); pendingBytes -= entry.bytes; }
       for (const [key,entry] of statuses) if (pendingStatus.get(key) === entry) pendingStatus.delete(key);
     } catch (error) { warn(error); failed = true; }
   }
@@ -79,6 +84,7 @@ export function disposeSessionRecording(): void {
   if (timer) clearTimeout(timer);
   timer = undefined;
   pending.clear();
+  pendingBytes = 0;
   warned = false;
   pendingStatus.clear();
   observed.clear();
@@ -100,17 +106,22 @@ export function registerSessionRecording(context:vscode.ExtensionContext): void 
   const stopStorage = store.subscribe(["sessions"], () => {
     for (const state of listStoredSessionLive(store,getCodexHome())) {
       if (!isNewerCodexSessionLiveState(state,observed.get(state.sessionId))) continue;
-      observed.set(state.sessionId,state);
+      observed.set(state.sessionId,revision(state));
       if (observed.size > 30) observed.delete(observed.keys().next().value!);
       publishDashboardRealtime({type:"dashboard:codex-session-live",state});
     }
   });
   const controller = new AbortController();
   let inFlight = false, warnedScan = false;
+  let lastCleanup = 0;
   const scan = async ():Promise<void> => {
     if (inFlight || controller.signal.aborted) return;
     inFlight = true;
     try {
+      if (Date.now() - lastCleanup >= 60_000) {
+        pruneSessionCache(store);
+        lastCleanup = Date.now();
+      }
       const sessions = await import("./codexSessionResume");
       const home = getCodexHome();
       if (!sessions.readRecentRunningCodexSessionIds(home))

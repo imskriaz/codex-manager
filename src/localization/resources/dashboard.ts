@@ -177,9 +177,9 @@ const en: DashboardCopy = {
     "Reload VS Code after switching accounts.",
   autoResumeTitle: "Auto resume sessions (Experimental)",
   autoResumeGoalOnlyTitle: "Resume running goals only",
-  autoResumeGoalOnlySub: "Resume active or quota-paused goals.",
+  autoResumeGoalOnlySub: "Filter saved running chats to active or quota-paused goals. Paused goals stay paused.",
   autoResumeSub:
-    "Reopen unfinished chats after a VS Code restart.",
+    "Reopen previously running, unfinished chats after a VS Code restart.",
   autoSwitchLockMinutesTitle: "Temporary Lock Duration",
   autoSwitchLockMinutesSub:
     "Keep the current account for this long.",

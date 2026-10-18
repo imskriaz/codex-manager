@@ -18,6 +18,10 @@ export function initializeUsageStorage(store:SqliteStateStore):void {
       WHERE json_type(point.value,'$.date')='text'`);
     store.set("migrations", "daily-usage-points-v1", true);
   });
+  if (!store.get("migrations", "daily-usage-header-v1")) store.transaction(() => {
+    store.prepare("UPDATE daily_usage SET data=json_set(data,'$.usage.points',json('[]'))").run();
+    store.set("migrations", "daily-usage-header-v1", true);
+  });
   store.watchTable("usage_samples","usage");
   store.watchTable("daily_usage","usage");
   store.watchTable("daily_usage_points","usage");
@@ -51,7 +55,7 @@ export function replaceUsageRows(store:SqliteStateStore,samples:readonly Dashboa
 
 export function readDailyUsageRows(store:SqliteStateStore):DashboardDailyUsageCacheEntry[] {
   initializeUsageStorage(store);
-  return store.prepare("SELECT data FROM daily_usage ORDER BY fetched_at DESC").all().map(row=>JSON.parse(String(row["data"])) as DashboardDailyUsageCacheEntry);
+  return store.prepare("SELECT account_id FROM daily_usage ORDER BY fetched_at DESC").all().map(row => readDailyUsageRow(store, String(row["account_id"]))!);
 }
 
 export function readDailyUsageRow(store: SqliteStateStore, accountId: string): DashboardDailyUsageCacheEntry | undefined {
@@ -60,6 +64,8 @@ export function readDailyUsageRow(store: SqliteStateStore, accountId: string): D
   if (!row) return;
   const entry = JSON.parse(String(row["data"])) as DashboardDailyUsageCacheEntry;
   if (entry.accountId !== accountId) throw new Error("Stored daily usage identity does not match its account key.");
+  entry.usage.points = store.prepare("SELECT data FROM daily_usage_points WHERE account_id=? ORDER BY date DESC LIMIT 90").all(accountId)
+    .reverse().map(point => JSON.parse(String(point["data"])) as DashboardDailyUsageCacheEntry["usage"]["points"][number]);
   return entry;
 }
 
@@ -70,7 +76,7 @@ export function upsertDailyUsageRow(store: SqliteStateStore, entry: DashboardDai
     if (previous && Number(previous["fetched_at"]) > entry.fetchedAt) return;
     store.prepare(`INSERT INTO daily_usage(account_id,fetched_at,data) VALUES(?,?,?) ON CONFLICT(account_id)
       DO UPDATE SET fetched_at=excluded.fetched_at,data=excluded.data WHERE daily_usage.data!=excluded.data`)
-      .run(entry.accountId, entry.fetchedAt, JSON.stringify(entry));
+      .run(entry.accountId, entry.fetchedAt, JSON.stringify({ ...entry, usage: { ...entry.usage, points: [] } }));
     const write = store.prepare(`INSERT INTO daily_usage_points(account_id,date,fetched_at,data) VALUES(?,?,?,?)
       ON CONFLICT(account_id,date) DO UPDATE SET fetched_at=excluded.fetched_at,data=excluded.data
       WHERE excluded.fetched_at>=daily_usage_points.fetched_at AND daily_usage_points.data!=excluded.data`);
@@ -162,10 +168,7 @@ export function replaceDailyUsageRows(store:SqliteStateStore,entries:readonly Da
         store.prepare("DELETE FROM daily_usage_points WHERE account_id=?").run(String(row["account_id"]));
       }
     }
-    const write = store.prepare(`INSERT INTO daily_usage(account_id,fetched_at,data) VALUES(?,?,?) ON CONFLICT(account_id)
-      DO UPDATE SET fetched_at=excluded.fetched_at,data=excluded.data WHERE excluded.fetched_at>=daily_usage.fetched_at AND (daily_usage.data!=excluded.data OR daily_usage.fetched_at!=excluded.fetched_at)`);
     for (const entry of entries) {
-      write.run(entry.accountId,entry.fetchedAt,JSON.stringify(entry));
       upsertDailyUsageRow(store, entry);
     }
     finishMigration(store,legacyKey,"daily-usage-rows-v1");

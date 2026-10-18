@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.3.5",
+  "version": "1.4.1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -110,7 +110,7 @@
         },
         "codexManager.dailyTokenUsageEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "Save daily usage at the selected interval and fill missing chart history; saved usage stays when off."
         },
         "codexManager.usageHistoryRetentionDays": {
@@ -127,16 +127,7 @@
           "scope": "machine",
           "markdownDescription": "Experimental Workspace: add chats and terminals to the dashboard."
         },
-        "codexManager.codexSessionTransport": {
-          "type": "string",
-          "scope": "machine",
-          "enum": [
-            "app-server-stdio",
-            "cli"
-          ],
-          "default": "app-server-stdio",
-          "markdownDescription": "Choose the workspace connection: app server (recommended) or CLI compatibility."
-        },
+
         "codexManager.autoSwitchEnabled": {
           "type": "boolean",
           "default": false,
@@ -157,13 +148,13 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Experimental: with Auto Switch on, reopen unfinished parent chats after a VS Code restart."
+          "markdownDescription": "Experimental: with Auto Switch on, reopen previously running, unfinished parent chats after a VS Code restart. Paused goals stay paused."
         },
         "codexManager.autoResumeGoalOnlyEnabled": {
           "type": "boolean",
           "scope": "machine",
           "default": true,
-          "markdownDescription": "Resume only chats with active or quota-paused goals; off includes other unfinished parent chats."
+          "markdownDescription": "Filter saved running chats to active or quota-paused goals; off also includes saved running chats without goals. Paused goals stay paused."
         },
         "codexManager.crossWindowAccountModeEnabled": {
           "type": "boolean",
@@ -285,11 +276,11 @@
           "scope": "machine",
           "markdownDescription": "Open a browser dashboard on this PC; set a shared password before allowing remote access."
         },
-        "codexManager.webDashboardAlwaysOnlineEnabled": {
+        "codexManager.webSocketServerEnabled": {
           "type": "boolean",
           "scope": "machine",
-          "default": false,
-          "markdownDescription": "Keep PC connections online after VS Code closes; enable on one always-on PC."
+          "default": true,
+          "markdownDescription": "Connect systems through the configured shared dashboard server."
         },
         "codexManager.cloudflaredDomain": {
           "type": "string",

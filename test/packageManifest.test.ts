@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.3.5");
+    expect(manifest.version).toBe("1.4.1");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });
@@ -162,7 +162,7 @@ describe("extension manifest configuration", () => {
       contributes?: { configuration?: { properties?: Record<string, { type?: string; default?: unknown }> } };
     };
 
-    expect(manifest.contributes?.configuration?.properties?.["codexManager.dailyTokenUsageEnabled"]).toMatchObject({ type: "boolean", default: false });
+    expect(manifest.contributes?.configuration?.properties?.["codexManager.dailyTokenUsageEnabled"]).toMatchObject({ type: "boolean", default: true });
     expect(manifest.contributes?.configuration?.properties?.["codexManager.dailyTokenUsageIntervalMinutes"]).toMatchObject({ type: "number", default: 60, minimum: 1, maximum: 1440 });
     expect(manifest.contributes?.configuration?.properties?.["codexManager.usageHistoryRetentionDays"]).toMatchObject({
       type: "number",
@@ -171,7 +171,7 @@ describe("extension manifest configuration", () => {
     });
   });
 
-  it("declares the optional always-online WebSocket host setting", () => {
+  it("declares a cross-system WebSocket toggle without the retired always-online preference", () => {
     const manifestPath = path.resolve(__dirname, "../package.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
       contributes?: {
@@ -180,9 +180,9 @@ describe("extension manifest configuration", () => {
         };
       };
     };
-    const property = manifest.contributes?.configuration?.properties?.["codexManager.webDashboardAlwaysOnlineEnabled"];
-    expect(property).toMatchObject({ type: "boolean", default: false });
-    expect(property?.markdownDescription).toContain("after VS Code closes");
+    expect(manifest.contributes?.configuration?.properties?.["codexManager.webDashboardAlwaysOnlineEnabled"]).toBeUndefined();
+    const property = manifest.contributes?.configuration?.properties?.["codexManager.webSocketServerEnabled"];
+    expect(property).toMatchObject({ type: "boolean", default: true });
     expect(fs.existsSync(path.resolve(path.dirname(manifestPath), "tools", "always-online-server.js"))).toBe(true);
   });
 

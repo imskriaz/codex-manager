@@ -9,7 +9,6 @@ import {
   SettingsDiscreteSlider,
   SettingsLanguageBlock,
   SettingsPathBlock,
-  SettingsSegmentBlock,
   SettingsThemeBlock,
   SettingsThresholdBlock,
   SettingsToggleBlock
@@ -20,6 +19,8 @@ import { useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
 
 import { BrowserNotifications } from "./browserNotifications";
+import { MaintenanceTools } from "./maintenanceTools";
+import type { SendAction } from "./hookTypes";
 
 const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
 const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
@@ -37,7 +38,7 @@ const WARNING_VALUES = Array.from({ length: 91 }, (_, index) => index);
 const WARNING_SCALE_VALUES = [0, 20, 40, 60, 80, 90];
 const WEEKLY_WARNING_VALUES = WARNING_VALUES;
 const WEEKLY_WARNING_SCALE_VALUES = WARNING_SCALE_VALUES;
-type SettingsTabId = "general" | "automation" | "data";
+type SettingsTabId = "general" | "automation" | "data" | "tools";
 
 export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingKey): boolean {
   // CLI discovery starts after the host commits the setting.
@@ -66,10 +67,7 @@ export function SettingsOverlay(props: {
   onClearCodexAppPath: () => void;
   onClearUsageHistory: () => void;
   onExportBackup: () => void;
-  onDownloadLogs: () => void;
   onShowLogs: () => void;
-  showLogsPending: boolean;
-  downloadLogsPending: boolean;
   onImportBackup: () => void;
   onConfigureSync: () => void;
   onSyncNow: () => void;
@@ -78,6 +76,9 @@ export function SettingsOverlay(props: {
   crossPcSyncPending: boolean;
   onSetRegistryOverride: (enabled: boolean) => void;
   registryOverridePending: boolean;
+  sendAction: SendAction;
+  targetDeviceId?: string;
+  targetName: string;
 }) {
   const longQuotaLabel = resolveLongQuotaSettingsLabel(props.lang, props.copy.weeklyLabel);
   const safeCurrentRefreshMinutes =
@@ -96,11 +97,11 @@ export function SettingsOverlay(props: {
   const transferCopy = resolveTransferCopy(props.lang);
   const passwordCopy = resolvePasswordCopy(props.lang, !props.encryptedSyncNeedsConfiguration);
   const navigationCopy = resolveSettingsNavigationCopy(props.lang);
-  const tabs = navigationCopy.tabs;
+  const tabs = [...navigationCopy.tabs, { id: "tools" as const, label: "Tools", heading: "System tools", description: "Cleanup, diagnostics, and recovery." }];
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
 
   return (
-    <div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open} onClick={props.onClose}>
+    <div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
       <div
         ref={accessibility.modalRef}
         class="settings-modal"
@@ -277,53 +278,20 @@ export function SettingsOverlay(props: {
                               ? "已停用。工作區入口與工作階段讀取均關閉。"
                               : "Workspace is off."}
                       </div>
-                    {props.settings.cliIntegrationEnabled && (
-                      <SettingsSegmentBlock
-                        title="Workspace connection"
-                        sub="Choose how chats connect to Codex."
-                        className="settings-block-wide settings-session-transport"
-                        options={[
-                          {
-                            key: "app-server-stdio",
-                            title: "App server",
-                            description: "Recommended",
-                            active: (props.settings.codexSessionTransport ?? "app-server-stdio") === "app-server-stdio",
-                            onClick: () => patchAndSend("codexSessionTransport", "app-server-stdio")
-                          },
-                          {
-                            key: "cli",
-                            title: "CLI compatibility",
-                            description: "Compatibility mode",
-                            active: props.settings.codexSessionTransport === "cli",
-                            onClick: () => patchAndSend("codexSessionTransport", "cli")
-                          }
-                        ]}
-                      >
-                        <div class="settings-note">Uses the selected connection only.</div>
-                      </SettingsSegmentBlock>
-                    )}
                     </SettingsToggleBlock>
-                  <div class="settings-block settings-block-wide settings-dashboard-server">
-                    <div class="settings-block-head">
-                      <div class="settings-block-title">
-                        {props.lang === "zh"
-                          ? "Cloudflared 域名"
-                          : props.lang === "zh-hant"
-                            ? "Cloudflared 網域"
-                            : "Web Socket Server"}
-                      </div>
-                      <div class="settings-block-sub">
-                        {props.lang === "zh"
-                          ? "可选：输入 Cloudflared 的 HTTPS 域名以便从其他电脑访问。"
-                          : props.lang === "zh-hant"
-                            ? "可選：輸入 Cloudflared 的 HTTPS 網域，從其他電腦存取。"
-                            : "Optional address for access from other PCs."}
-                      </div>
-                    </div>
+                  <SettingsToggleBlock
+                    title="WS Cross System"
+                    className="settings-dashboard-server"
+                    sub="Connect your systems through a shared server."
+                    enabled={props.settings.webSocketServerEnabled !== false}
+                    onToggle={(enabled) => patchAndSend("webSocketServerEnabled", enabled)}
+                  >
+                  <div class={`settings-stack ${props.settings.webSocketServerEnabled === false ? "is-hidden" : ""}`}>
                     <input
                       class="settings-text-input"
                       type="text"
                       name="cloudflared-domain"
+                      aria-label="Cloudflared domain"
                       autoComplete="url"
                       spellcheck={false}
                       value={props.settings.cloudflaredDomain ?? ""}
@@ -343,46 +311,8 @@ export function SettingsOverlay(props: {
                           ? "簡要設定：cloudflared tunnel --url http://127.0.0.1:39875；先設定面板密碼，再將此 HTTPS 網域分享給其他電腦。"
                           : "Set a password before sharing this dashboard."}
                     </div>
-
-                    <SettingsToggleBlock
-                      title={
-                        props.lang === "zh"
-                        ? "始终在线 WebSocket 主机"
-                        : props.lang === "zh-hant"
-                          ? "始終在線 WebSocket 主機"
-                          : "Keep connections online"
-                    }
-                    sub={
-                      props.lang === "zh"
-                        ? "在此电脑启动独立 Node.js 中继，即使 VS Code 关闭也保持多电脑 WebSocket 在线。建议只在一台常开电脑启用。"
-                        : props.lang === "zh-hant"
-                          ? "在此電腦啟動獨立 Node.js 中繼，即使 VS Code 關閉也保持多電腦 WebSocket 在線。建議只在一台常開電腦啟用。"
-                          : "Keep PC connections available after VS Code closes."
-                    }
-                    enabled={props.settings.webDashboardAlwaysOnlineEnabled === true}
-                    onToggle={(enabled) => patchAndSend("webDashboardAlwaysOnlineEnabled", enabled)}
-                  >
-                    <div class="settings-note">
-                      {props.settings.webDashboardAlwaysOnlineEnabled
-                        ? !props.settings.encryptedSyncEnabled || props.encryptedSyncNeedsConfiguration
-                          ? props.lang === "zh"
-                            ? "正在等待。请启用加密同步并保存共享密码以启动此主机。"
-                            : props.lang === "zh-hant"
-                              ? "正在等待。請啟用加密同步並儲存共用密碼以啟動此主機。"
-                              : "Set a password and enable Auto Sync to start."
-                          : props.lang === "zh"
-                            ? "已启用。VS Code 关闭后中继会接管 127.0.0.1:39875；Cloudflared 端口无需改变。"
-                            : props.lang === "zh-hant"
-                              ? "已啟用。VS Code 關閉後中繼會接管 127.0.0.1:39875；Cloudflared 連接埠無需改變。"
-                              : "Connections stay online while this PC is on."
-                        : props.lang === "zh"
-                          ? "已停用。VS Code 关闭后不会运行独立中继。"
-                          : props.lang === "zh-hant"
-                            ? "已停用。VS Code 關閉後不會執行獨立中繼。"
-                            : "Connections close with VS Code."}
-                    </div>
-                  </SettingsToggleBlock>
                   </div>
+                  </SettingsToggleBlock>
                 </div>
                 </SettingsToggleBlock>
               </div>
@@ -802,7 +732,7 @@ export function SettingsOverlay(props: {
                 </div>
               </div>
               <SettingsToggleBlock
-                title="Save diagnostic logs"
+                title="System Log"
                 sub="Save local logs with account secrets hidden."
                 enabled={props.settings.persistentLoggingEnabled === true}
                 className="settings-block-wide"
@@ -828,22 +758,14 @@ export function SettingsOverlay(props: {
                   onPreview={setLogRetentionPreview}
                   onCommit={(days) => { setLogRetentionPreview(undefined); patchAndSend("persistentLogRetentionDays", days); }}
                 />
+                <div class="settings-actions"><button class="settings-action-btn" type="button" onClick={props.onShowLogs}>Show log</button></div>
               </SettingsToggleBlock>
-              <div class="settings-block settings-block-wide">
-                <div class="settings-block-head">
-                  <div class="settings-block-title">Download logs</div>
-                  <div class="settings-block-sub" title="Download recent logs with account secrets hidden.">Download recent logs with account secrets hidden.</div>
-                </div>
-                <div class="settings-actions">
-                  <button class="settings-action-btn" type="button" disabled={props.downloadLogsPending} aria-busy={props.downloadLogsPending} onClick={props.onDownloadLogs}>
-                    {props.downloadLogsPending ? "Preparing logs…" : "Download logs"}
-                  </button>
-                  <button class="settings-action-btn" type="button" disabled={props.showLogsPending} aria-busy={props.showLogsPending} onClick={props.onShowLogs}>
-                    {props.showLogsPending ? "Loading logs…" : "Show logs"}
-                  </button>
-                </div>
-              </div>
+
             </div>
+          </div>
+          <div class="settings-tab-panel" id="settings-panel-tools" role="tabpanel" aria-labelledby="settings-tab-tools" hidden={activeTab !== "tools"}>
+            <SettingsPanelIntro tab={tabs[3]!} />
+            <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open} />
           </div>
         </div>
       </div>
@@ -866,6 +788,7 @@ function SettingsPanelIntro(props: {
 }
 
 function SettingsTabIcon(props: { tab: SettingsTabId }) {
+  if (props.tab === "tools") return <svg class="settings-tab-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m12 3-1 4 3 3 4-1a6 6 0 0 1-7 6l-5 4-3-3 5-5a6 6 0 0 1 4-8Z" /></svg>;
   if (props.tab === "automation") {
     return (
       <svg class="settings-tab-icon" viewBox="0 0 20 20" aria-hidden="true">

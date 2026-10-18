@@ -1,4 +1,5 @@
 import type { DashboardLanguage, DashboardLanguageOption } from "../../localization/languages";
+import type { MaintenanceJob, MaintenancePreview, MaintenancePage, MaintenanceTool, MaintenanceReport, CodexInspection } from "../maintenance";
 import type {
   CodexDailyUsageBreakdown,
   CodexImportPreviewSummary,
@@ -15,7 +16,6 @@ export type DashboardSettingKey =
   | "codexAppRestartEnabled"
   | "codexAppRestartMode"
   | "cliIntegrationEnabled"
-  | "codexSessionTransport"
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
@@ -44,7 +44,7 @@ export type DashboardSettingKey =
   | "fullCrossPcAccountSyncEnabled"
   | "encryptedSyncVsCodeHeartbeatMinutes"
   | "webDashboardEnabled"
-  | "webDashboardAlwaysOnlineEnabled"
+  | "webSocketServerEnabled"
   | "cloudflaredDomain"
   | "displayLanguage";
 
@@ -104,8 +104,7 @@ export interface DashboardSettings {
   encryptedSyncVsCodeHeartbeatMinutes?: number;
   encryptedSyncRegistryOverrideEnabled: boolean;
   webDashboardEnabled: boolean;
-  /** Keep a detached Node relay alive after VS Code closes. */
-  webDashboardAlwaysOnlineEnabled?: boolean;
+  webSocketServerEnabled?: boolean;
   /** Optional public HTTPS origin used when the dashboard is exposed by Cloudflared. */
   cloudflaredDomain?: string;
   displayLanguage: DashboardLanguageOption;
@@ -526,6 +525,13 @@ export type DashboardActionName =
   | "exportBackup"
   | "downloadLogs"
   | "viewLogs"
+  | "clearLogs"
+  | "previewMaintenance"
+  | "runMaintenance"
+  | "getMaintenanceStatus"
+  | "getMaintenancePage"
+  | "cancelMaintenance"
+  | "inspectMaintenanceStorage"
   | "configureEncryptedSync"
   | "syncNow"
   | "setEncryptedSyncRegistryOverride"
@@ -568,6 +574,7 @@ export type DashboardActionName =
   | "getUsageGraph"
   | "openNewCodexWebview"
   | "resumeCodexSessions"
+  | "setCodexSessionGoalStatus"
   | "startCodexCliSession"
   | "listCodexCliSessions"
   | "getCodexSubAgentMessages"
@@ -604,6 +611,15 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
+  goalStatus?: "active" | "paused";
+  maintenanceTool?: MaintenanceTool;
+  maintenanceInspection?: CodexInspection;
+  maintenanceToken?: string;
+  maintenanceQuery?: string;
+  maintenanceOffset?: number;
+  maintenanceIds?: string[];
+  maintenanceOperation?: "delete" | "restore";
+  maintenanceJobId?: string;
   accountIds?: string[];
   jsonText?: string;
   text?: string;
@@ -878,10 +894,15 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  maintenancePreview?: MaintenancePreview;
+  maintenancePage?: MaintenancePage;
+  maintenanceJob?: MaintenanceJob;
+  maintenanceReport?: MaintenanceReport;
   notice?: DashboardNotice;
   /** Choice prompts raised while a dashboard action was running. */
   actionPrompts?: DashboardActionPrompt[];
   logDownload?: { filename: string; text: string };
+  fileDownload?: { filename: string; text: string };
   sharedJson?: string;
   authJson?: string;
   oauthSession?: DashboardOAuthSessionDescriptor;

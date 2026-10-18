@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({ root: "" }));
 vi.mock("../src/utils/storageRoot", () => ({ getCodexManagerStorageRoot: () => fixture.root }));
-import { disposeSqliteContext, initializeSqliteContext } from "../src/storage/sqliteContext";
+import { disposeSqliteContext, initializeSqliteContext, initializeSqliteContextWithRetry } from "../src/storage/sqliteContext";
 import { configureSqliteStateStore, getSqliteStateStore } from "../src/storage/sqliteState";
 import { getCodexManagerConfiguration, getSyncHeartbeatMinutes } from "../src/infrastructure/config/extensionSettings";
 import { removeTestDirectory } from "./testFilesystem";
@@ -15,6 +15,18 @@ import { onDidChangeConfiguration } from "../src/storage/configurationEvents";
 import { SqliteStateStore } from "../src/storage/sqliteState";
 
 const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+
+it("retries a transient storage lock and completes initialization", async () => {
+  const open = vi.spyOn(SqliteStateStore, "open").mockRejectedValueOnce(Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" }));
+  await expect(initializeSqliteContextWithRetry(context())).resolves.toBeDefined();
+  expect(open).toHaveBeenCalledTimes(2);
+});
+it("bounds persistent lock retries and preserves permanent storage failures", async () => {
+  const open = vi.spyOn(SqliteStateStore, "open").mockRejectedValue(Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" }));
+  await expect(initializeSqliteContextWithRetry(context())).rejects.toThrow("locked"); expect(open).toHaveBeenCalledTimes(3);
+  open.mockClear().mockRejectedValue(new Error("database disk image is malformed"));
+  await expect(initializeSqliteContextWithRetry(context())).rejects.toThrow("malformed"); expect(open).toHaveBeenCalledOnce();
+});
 let values: Map<string, unknown>;
 let listeners: Set<(event: vscode.ConfigurationChangeEvent) => unknown>;
 let subscriptions: vscode.Disposable[];
@@ -162,18 +174,19 @@ describe("SQLite extension context and settings migration", () => {
 });
 
 
-it("disables token collection for untouched defaults and preserves an explicit On choice", async () => {
+it("enables token collection for untouched defaults and preserves an explicit Off choice", async () => {
   await initializeSqliteContext(context());
   const store = getSqliteStateStore()!;
-  const namespace = store.keys("migrations").find(key => key.endsWith(":token-history-default-off"))!.replace(":token-history-default-off", "");
-  store.set(namespace, "dailyTokenUsageEnabled", true);
-  store.set("migrations", `${namespace}:token-history-default-off`, undefined);
-  disposeSqliteContext();
-  await initializeSqliteContext(context());
-  expect(getCodexManagerConfiguration().get("dailyTokenUsageEnabled")).toBe(false);
-  await getCodexManagerConfiguration().update("dailyTokenUsageEnabled", true, vscode.ConfigurationTarget.Global);
-  getSqliteStateStore()!.set("migrations", `${namespace}:token-history-default-off`, undefined);
+  const namespace = store.keys("migrations").find(key => key.endsWith(":token-history-default-on"))!.replace(":token-history-default-on", "");
+  store.set(namespace, "dailyTokenUsageEnabled", false);
+  store.set("migrations", `${namespace}:token-history-default-off`, true);
+  store.set("migrations", `${namespace}:token-history-default-on`, undefined);
   disposeSqliteContext();
   await initializeSqliteContext(context());
   expect(getCodexManagerConfiguration().get("dailyTokenUsageEnabled")).toBe(true);
+  await getCodexManagerConfiguration().update("dailyTokenUsageEnabled", false, vscode.ConfigurationTarget.Global);
+  getSqliteStateStore()!.set("migrations", `${namespace}:token-history-default-on`, undefined);
+  disposeSqliteContext();
+  await initializeSqliteContext(context());
+  expect(getCodexManagerConfiguration().get("dailyTokenUsageEnabled")).toBe(false);
 });

@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.4.1
+
+- Track fresh completion events when native goals resume themselves during editor loading, without sending a duplicate prompt or claiming control of the native turn.
+- Prevent backdrop pointer-down dismissal and modal click-through, including stacked dialogs and touch input. Keep pointer drags from dismissing a dialog accidentally, contain keyboard shortcuts, and preserve focus when dialogs reopen.
+- Exclude routine dashboard, transcript, workspace, console and relay-health polling from System Log, remove duplicate request auditing and successful backup/render/refresh-sweep noise, and record recovery snapshots only when their session selection changes. Preserve meaningful actions and failures, and honor logging changes from other windows without overwriting them.
+- Move session catalogues to individual SQLite rows, remove confirmed deleted-session cache entries, and preserve newer scans and pending recovery. Query shared-cache metadata, token points, account recovery candidates, and log byte limits directly in SQLite instead of deserializing bulk snapshots. Bound live-recording memory and reduce retained transcript caches.
+- Automatically prune expired Manager caches and diagnostics, cap noisy logs at 10,000 records or 32 MiB, and reclaim unused Manager database space in bounded background maintenance. Preserve accounts, credentials, settings, unknown recovery data, and native Codex conversations and goals; defer busy storage safely.
+- Run large diagnostic purges outside the extension host after startup, so old logs cannot hold up Codex loading. Apply retention and byte budgets directly to console/export queries before loading selected records.
+- Stop browser-initiated native-owner turns through the verified owning window using the accepted turn ID, coalesce duplicate Stop requests, and report unconfirmed or changed-turn outcomes without blind retries.
+- Enable Automatic token history by default while preserving explicit Off choices. Keep default account switching thresholds at 5% for the 5-hour quota and 0% for weekly/monthly quota.
+- Add a compact Tools tab with dedicated Codex management dialogs: search and select archived conversations, restore or delete selected archives, clear conversations or goals, and remove inactive shell snapshots older than seven days. Preview the selected system, confirm deletion, preserve running work and unselected children, and report progress, cancellation, and partial failures.
+- Add read-only tools to find missing project folders, rank large conversation files, and check native Codex databases. Keep existing dashboard features in their original locations.
+- Use App Server for all composers and session lifecycle operations. Remove the Workspace connection choice and migrate retired CLI selections automatically.
+- Resume opened native conversations through their verified owner connection. Use native goal continuation without a user prompt, or exactly `Continue if not completed` for eligible interrupted non-goal sessions. Keep uncertain requests for verification instead of blindly resending.
+- Wait for late native session owners before continuing, avoiding competing writers during tab startup. Preserve active goals and verify committed goal state after a native writer conflict before continuing.
+- Rediscover native readiness after a cached not-loaded snapshot, accept the resumed owner's fresh revision sequence, and keep opening tabs pinned during status-cache pressure. Reject turn dispatch while a known owner is still loading.
+- Allow cold native tabs up to 40 seconds to become ready within bounded 45-second open and 60-second recovery budgets. Manual native actions cancel optional startup restoration while retaining queued work. Reload the full VS Code window when Codex is installed so native webviews reconnect cleanly.
+- Limit automatic recovery to verified running sessions and their saved unfinished work. Keep paused goals paused with either goal-only setting; exclude idle goal history. Add compact Pause and Resume goal controls beside the goal in browser chats, with confirmed status changes and visible failures.
+- Return confirmed goal Pause/Resume results immediately without waiting for unrelated session discovery or replacing their success message with a refresh warning.
+- Make startup recovery optional background work after the dashboard loads. Persist bounded recovery IDs, titles, recorded projects, and timestamps in SQLite; prune stale runtime caches without losing pending work or token statistics.
+- Resolve each session's recorded project automatically for workspace actions across closed projects, worktrees, and remote systems. Normalize native Windows paths and preserve explicit project and terminal ownership checks.
+- Rename the existing connection control to WS Cross System and add a working toggle. Remove Keep connections online; prepare the detached relay only when a fresh host proof confirms the configured tunnel reaches this system.
+- Repair browser notification registration quietly after login or key changes, rotating only this browser's subscription when needed.
+- Wait for opened Codex conversations to finish loading before recovery continues, with a short pause between automatic opens and retained recovery when readiness cannot be confirmed. Honor native restore flags even while transcripts remain in archive folders.
+- Use current local conversation titles for completion and recovery notifications; keep session IDs out of notification titles when metadata is unavailable.
+- Replace diagnostic log settings with System Log and a dated console: level summaries, expandable details, filters, follow-bottom scrolling, and Download and Clear actions inside the dialog. Turning logging off clears saved manager logs and prevents stale writers from restoring old entries.
+- Keep browser downloads in the requesting browser and open running-session View actions in its browser workspace.
+- Open external links on the requesting browser's device, report blocked pop-ups locally, and keep native continuation completion notifications connected to the session title lookup.
+- Keep older project conversations in the browser session list beyond the previous global 200-session cutoff. Read older native entries from local metadata while limiting detailed transcript reads.
+- Cache project/session metadata in Manager SQLite across reloads, refresh stale activity in the background, and invalidate old scans after session changes. Bound retained cache entries and expire unused history snapshots automatically.
+- Retry transient storage startup failures before giving up. Keep a compact recovery screen and command access available when storage still cannot open, with reload, copied diagnostic details, and guidance for unsupported runtimes; preserve all existing database files.
+- Redesign More with compact groups, aligned icons, a single-line Mask control, keyboard navigation, and a scrollable mobile layout. Remove Show All Sessions from More and keep the dashboard link in the sessions flyout.
+- Verify Lock and Unlock storage changes before reporting success. Keep background discovery and project failures quiet while explicit actions retain visible failures and retry guidance.
+
 ## 1.3.5
 
 - Open the account dashboard at the home URL and chats under `/workspace/<session-id>`, preserving existing bookmarks and remote-session links.

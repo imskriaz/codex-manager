@@ -50,8 +50,11 @@ const mockHost = `(() => {
   const sessions = ${JSON.stringify(sessions)};
   const messages = ${JSON.stringify(messages)};
   const config = ${JSON.stringify(config)};
+  if(location.search.includes('closed-project')) { sessions[0].projectPath = 'D:/closed-worktree'; sessions[0].title = 'Closed worktree task'; }
   let messageReads = 0;
   let logReads = 0;
+  let logCleared = false;
+  const toolJobs = new Map();
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
   window.__uiActions = []; window.__uiSessions = sessions; window.__uiSnapshot = state; window.__uiSettingResults = [];
   window.__setUiPaths = customPath => {
@@ -74,9 +77,25 @@ const mockHost = `(() => {
         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
           if(message.action === 'viewLogs') logReads++;
           if(window.__failLogReads || window.__failNextLogRead) { window.__failNextLogRead = false; error = 'Simulated log storage failure.'; }
-          else payload = {logDownload:{filename:'codex-manager-logs-fixture.json',text:window.__invalidLogReads || window.__invalidNextLogRead ? '{' : JSON.stringify({format:'codex-manager-logs',records:[{message:'live record '+logReads},{message:'old record'}]})},notice:{level:'info',message:'Logs refreshed.'}};
+          else payload = {logDownload:{filename:'codex-manager-logs-fixture.json',text:window.__invalidLogReads || window.__invalidNextLogRead ? '{' : JSON.stringify({format:'codex-manager-logs',records:logCleared ? [] : Array.from({length:80},(_,i)=>({timestamp:new Date(1792300000000+i*1000).toISOString(),sequence:i,level:i<2?'error':i<4?'warning':'info',scope:'recovery',message:i===0?'old record':i===79?'live record '+logReads:'Saved record '+i,details:{accepted:i>3}}))})},notice:{level:'info',message:'Logs refreshed.'}};
           window.__invalidNextLogRead = false;
         }
+        else if(message.action === 'clearLogs') { logCleared = true; payload={notice:{level:'info',message:'System log cleared.'}}; }
+        else if(message.action === 'previewMaintenance') payload={maintenancePreview:{token:'preview-'+message.payload.maintenanceTool,tool:message.payload.maintenanceTool,count:63,expiresAt:Date.now()+300000,titles:['Archived task 0']}};
+        else if(message.action === 'getMaintenancePage') {
+          const query=message.payload.maintenanceQuery||'',offset=message.payload.maintenanceOffset||0;
+          const items=Array.from({length:63},(_,i)=>({id:'tool-item-'+i,title:'Archived task '+i,detail:'demo project'})).filter(item=>item.title.toLowerCase().includes(query.toLowerCase()));
+          payload={maintenancePage:{token:message.payload.maintenanceToken,query,offset,total:items.length,items:items.slice(offset,offset+50)}};
+        }
+        else if(message.action === 'runMaintenance') {
+          const job={id:'job-'+Date.now(),tool:message.payload.maintenanceToken.replace('preview-',''),operation:message.payload.maintenanceOperation||'delete',status:'running',total:message.payload.maintenanceIds?.length||63,processed:0,cleared:0,skipped:0,failed:0,errors:[]};
+          toolJobs.set(job.id,job);payload={maintenanceJob:job};
+        }
+        else if(message.action === 'getMaintenanceStatus' || message.action === 'cancelMaintenance') {
+          const job=toolJobs.get(message.payload.maintenanceJobId);
+          if(job) { job.status=message.action==='cancelMaintenance'?'cancelled':'completed';job.processed=job.total;job.cleared=job.total;payload={maintenanceJob:job}; } else error='This cleanup is no longer available in this window.';
+        }
+        else if(message.action === 'inspectMaintenanceStorage') payload={maintenanceReport:{title:'Codex report',items:[{label:'Recorded projects checked',value:'12'},{label:'Missing projects',value:'1'},{label:'state_5.sqlite',value:'Healthy · 2 MB'}]}};
         else if(message.action === 'getUsageGraph') payload = {usageGraph:{...message.payload.usageGraph,history:[],dailyUsageCache:[],truncated:false}};
         else if(message.action === 'listCodexCliSessions') {
           if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }
@@ -87,6 +106,12 @@ const mockHost = `(() => {
           if(!sessions.some(row=>row.id===session.id)) sessions.push(session);
           payload = {cliSession:session,cliSessionMessages:[{id:'new-user',kind:'message',role:'user',text:message.payload.text},{id:'new-answer',kind:'message',role:'assistant',text:'New chat first response'}],notice:{level:'info',message:'New Codex chat is ready.'}};
         }
+        else if(message.action === 'setCodexSessionGoalStatus') {
+          if(window.__failNextGoal) {window.__failNextGoal=false;error='Goal storage unavailable.';}
+          else {const session=sessions.find(s=>s.id===message.payload.sessionId);
+            session.goal={...session.goal,status:message.payload.goalStatus};
+            payload={cliSession:session,notice:{level:'info',message:message.payload.goalStatus==='paused'?'Goal paused.':'Goal resumed.'}};}
+        }
         else if(message.action === 'getCodexCliSessionMessages') {
           messageReads++;
           if(location.search.includes('missing-transcript')) error = 'The session transcript was not found on this PC.';
@@ -96,7 +121,7 @@ const mockHost = `(() => {
           if(message.payload?.includeBranchDiff && window.__failNextComparison) {
             window.__failNextComparison = false;
             error = 'Simulated Git comparison failure.';
-          } else payload = {workspaceEnvironment:{projectPath:'D:/demo',projectName:'demo',isGitRepository:true,branch:'main',changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false,...(message.payload?.includeBranchDiff ? {branchDiff:'diff --git a/compare.ts b/compare.ts\\n--- a/compare.ts\\n+++ b/compare.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n',branchDiffBase:'origin/main'} : {})}};
+          } else payload = {workspaceEnvironment:{projectPath:message.payload?.projectPath,projectName:'demo',isGitRepository:true,branch:'main',changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false,...(message.payload?.includeBranchDiff ? {branchDiff:'diff --git a/compare.ts b/compare.ts\\n--- a/compare.ts\\n+++ b/compare.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n',branchDiffBase:'origin/main'} : {})}};
         }
         else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:[]};
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:[]};
@@ -209,6 +234,18 @@ try {
     assert.ok(await deletion.locator(".cli-delete-confirm-copy > span").evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 13), "Delete text stays readable");
     assert.ok((await deletion.getByRole("button", { name: "Delete", exact: true }).boundingBox()).height >= 36, "Delete control is usable");
     await page.screenshot({ path: path.join(output, "delete-confirm-" + width + ".png") });
+    // A backdrop must remain mounted until click, so pointer-up cannot hit a row below it.
+    await page.mouse.move(2, 2);
+    await page.mouse.down();
+    assert.equal(await deletion.isVisible(), true, "Pointer-down never removes the delete backdrop");
+    await page.mouse.move(3, 3);
+    await page.mouse.up();
+    await deletion.waitFor({ state: "hidden" });
+    assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "deleteCodexCliSession").length), 0, "Dismissing the backdrop cannot delete a session");
+    await page.getByRole("button", { name: "Dismiss session message", exact: true }).click();
+    await page.locator(".cli-session-row.is-archived").hover();
+    await page.getByRole("button", { name: "Delete Archived task", exact: true }).click();
+    await deletion.waitFor();
     await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByText("Session deletion cancelled.", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Dismiss session message", exact: true }).click();
@@ -270,6 +307,12 @@ try {
     await page.getByRole("button", { name: "Show fewer files", exact: true }).click();
     assert.equal(await page.locator(".cli-goal-strip > summary").count(), 1, "Goal stays above composer");
     assert.ok((await page.locator(".cli-goal-strip").textContent()).includes("from native goal metadata"), "Native goal wins over older history");
+    await page.getByRole("button", { name: "Pause goal", exact: true }).click();
+    await page.getByRole("button", { name: "Resume goal", exact: true }).waitFor();
+    assert.equal(await page.locator(".cli-goal-strip").evaluate(element=>element.open), false, "Goal control does not toggle its details");
+    await page.getByRole("button", { name: "Resume goal", exact: true }).click();
+    await page.getByRole("button", { name: "Pause goal", exact: true }).waitFor();
+    if(width===390){await page.evaluate(()=>{window.__failNextGoal=true;});await page.getByRole('button',{name:'Pause goal',exact:true}).click();await page.getByText('Goal storage unavailable.',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Pause goal',exact:true}).count(),1,'Failed pause retains the confirmed goal state');await page.getByRole('button',{name:'Dismiss message',exact:true}).click();}
     const goalBounds = await page.locator(".cli-goal-strip").boundingBox();
     const composerBounds = await page.locator(".cli-composer").boundingBox();
     assert.ok(goalBounds.y >= 0 && goalBounds.y + goalBounds.height <= height && goalBounds.y + goalBounds.height <= composerBounds.y + 1, "Goal is visible above composer on every viewport");
@@ -674,8 +717,11 @@ try {
     assert.ok((await page.locator(".cli-sessions-running-row").boundingBox()).height <= 40, "Session rows use a compact two-line layout");
     assert.equal(await page.getByRole("button", { name: "Session dashboard", exact: true }).count(), 1);
     await page.screenshot({ path: path.join(output, `running-sessions-${width}x${height}.png`) });
-    await page.getByRole("button", { name: "View Running workspace task in VS Code", exact: true }).click();
-    await page.waitForFunction(() => window.__uiActions.some(message => message.action === "openCodexCliSession" && message.payload?.openInVsCode === true));
+    await page.getByRole("button", { name: "View Running workspace task in browser", exact: true }).click();
+    await page.waitForURL(`**/workspace/${runningId}`);
+    await page.goBack();
+    await page.locator("#cliSessionsButton").click();
+    await page.locator(".cli-sessions-popover").waitFor();
     await page.evaluate(() => {
       window.__recoveryStart = window.__uiSessions.length;
       window.__uiSessions.push({ id: "recovery", title: "Interrupted workspace task", projectPath: "C:\\work\\interrupted\\", status: "idle", interrupted: true, model: "gpt-5" }, { id: "recovery-long", title: "Long project task", projectPath: "/work/a-very-long-project-name-that-needs-to-truncate/", status: "idle", interrupted: true }, { id: "recovery-missing", title: "Missing project task", status: "idle", interrupted: true });
@@ -788,14 +834,18 @@ try {
     await page.waitForFunction(() => { const bounds = document.querySelector(".overview-more-menu")?.getBoundingClientRect(); return bounds && bounds.top >= 0 && bounds.bottom <= innerHeight; });
     assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Password/ }).count(), 0);
     assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: snapshot.copy.showSensitive, exact: true }).count(), 1);
+    const mask = page.locator(".overview-more-menu").getByRole("menuitem", { name: snapshot.copy.showSensitive, exact: true });
+    assert.ok(await mask.evaluate(button => { const icon = button.querySelector("svg").getBoundingClientRect(), text = button.querySelector("span:last-child").getBoundingClientRect(); return Math.abs((icon.top + icon.height / 2) - (text.top + text.height / 2)) < 2; }), "Mask icon and label share a line");
+    await page.keyboard.press("End");
+    assert.ok(await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Resume$/ }).evaluate(button => button === document.activeElement), "End focuses the final action");
     await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Codex$/ }).click();
     await page.waitForFunction(() => window.__uiActions.some(message => message.action === "openNewCodexWebview"));
     await page.getByRole("button", { name: "More", exact: true }).click();
     await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Resume$/ }).click();
     await page.waitForFunction(() => window.__uiActions.some(message => message.action === "resumeCodexSessions" && !message.payload?.sessionId));
     await page.getByRole("button", { name: "More", exact: true }).click();
-    await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Show All Sessions$/ }).click();
-    await page.waitForURL(`${origin}/workspace`);
+    assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Show All Sessions$/ }).count(), 0);
+    await page.keyboard.press("Escape");
     await page.goto(`${origin}/`);
     await page.locator(".hero").waitFor();
     console.log(`Checking ${width}: account filters`);
@@ -847,18 +897,17 @@ try {
         const dashboardToggle = page.getByRole("button", { name: "Web Dashboard", exact: true });
         const workspaceToggle = page.getByRole("button", { name: "Enable workspace (Experimental)", exact: true });
         const dashboardCard = dashboardToggle.locator("../..");
-        assert.equal(await dashboardCard.locator(".settings-session-transport").count(), 1, "Workspace transport is nested under Web Dashboard");
+        assert.equal(await dashboardCard.locator(".settings-session-transport").count(), 0, "Retired transport choices are removed");
         const serverCard = dashboardCard.locator(".settings-dashboard-server");
         const serverBounds = await serverCard.boundingBox();
         const workspaceCard = workspaceToggle.locator("../..");
         const workspaceBounds = await workspaceCard.boundingBox();
         assert.ok(Math.abs(serverBounds.width - workspaceBounds.width) <= 2, "Enable workspace and Web Socket Server use equal-width cards");
         if (width > 560) assert.ok(serverBounds.x > workspaceBounds.x && Math.abs(serverBounds.y - workspaceBounds.y) <= 2, "Web Socket Server follows Enable workspace in the same row");
-        assert.equal(await serverCard.locator(".settings-block").filter({ has: page.getByRole("button", { name: "Keep connections online", exact: true }) }).count(), 1, "Online control is nested in Web Socket Server");
-        await workspaceToggle.click();
-        await page.locator(".settings-session-transport").waitFor({ state: "hidden" });
-        await workspaceToggle.click();
-        await page.locator(".settings-session-transport").waitFor({ state: "visible" });
+        assert.equal(await page.getByRole("button", { name: "Keep connections online", exact: true }).count(), 0, "Relay ownership is automatic");
+        const crossSystemToggle = page.getByRole("button", { name: "WS Cross System", exact: true });
+        await crossSystemToggle.click(); await domain.waitFor({ state: "hidden" });
+        await crossSystemToggle.click(); await domain.waitFor({ state: "visible" });
         await dashboardToggle.click();
         await workspaceToggle.waitFor({ state: "hidden" });
         await domain.waitFor({ state: "hidden" });
@@ -875,16 +924,53 @@ try {
         await level.selectOption("debug");
         assert.equal(await level.inputValue(), "debug", "Log level can be changed");
         await level.selectOption("info");
-        const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download logs", exact: true }).click()]);
-        assert.equal(download.suggestedFilename(), "codex-manager-logs-fixture.json", "Redacted logs can be downloaded in the browser");
-        await page.getByRole("button", { name: "Show logs", exact: true }).click();
-        await page.getByRole("dialog", { name: "Diagnostic logs", exact: true }).waitFor();
+        assert.equal(await page.getByRole("button", { name: "Download logs", exact: true }).count(), 0, "Downloads are inside System Log");
+        await page.getByRole("button", { name: "Show log", exact: true }).click();
+        await page.getByRole("dialog", { name: "System Log", exact: true }).waitFor();
         await page.locator(".log-console-output").filter({ hasText: "old record" }).waitFor();
         const consoleOutput = page.locator(".log-console-output");
         const initialLogs = await consoleOutput.innerText();
         await page.waitForFunction(text => document.querySelector(".log-console-output")?.textContent !== text, initialLogs);
+        const consoleDialog = page.getByRole("dialog", { name: "System Log", exact: true });
+        const refreshesBefore = await page.evaluate(() => window.__uiActions.filter(action => action.action === "refreshAll").length);
+        await consoleDialog.getByRole("button", { name: "Close", exact: true }).focus();
+        await page.keyboard.press("r");
+        assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "refreshAll").length), refreshesBefore, "Modal keys never refresh the dashboard behind them");
+        await page.keyboard.press("/");
+        assert.equal(await consoleDialog.evaluate(element => element.contains(document.activeElement)), true, "Dashboard search never takes focus out of a dialog");
+        const modalBounds = await consoleDialog.boundingBox();
+        await page.mouse.move(modalBounds.x + modalBounds.width / 2, modalBounds.y + 16);
+        await page.mouse.down();
+        await page.mouse.move(2, 2);
+        await page.mouse.up();
+        assert.equal(await consoleDialog.isVisible(), true, "Dragging out of a modal never dismisses it");
+        await page.mouse.move(2, 2);
+        await page.mouse.down();
+        assert.equal(await consoleDialog.isVisible(), true, "Nested console stays above Settings until click");
+        await page.mouse.up();
+        await consoleDialog.waitFor({ state: "hidden" });
+        assert.equal(await page.locator(".overlay.open").count(), 1, "Backdrop closes only the top dialog");
+        if (width <= 760) {
+          await page.getByRole("button", { name: "Show log", exact: true }).click();
+          await consoleDialog.waitFor();
+          await page.touchscreen.tap(2, 2);
+          await consoleDialog.waitFor({ state: "hidden" });
+          assert.equal(await page.locator(".overlay.open").count(), 1, "Touch closes the top dialog without reaching Settings");
+        }
+
+        await page.getByRole("button", { name: "Show log", exact: true }).click();
+        await consoleDialog.waitFor();
+
+        const [download] = await Promise.all([page.waitForEvent("download"), consoleDialog.getByRole("button", { name: "Download", exact: true }).click()]);
+        assert.equal(download.suggestedFilename(), "codex-manager-logs-fixture.json", "Redacted logs download in the browser");
+        await consoleDialog.getByRole("combobox", { name: "Filter log entries" }).selectOption("error");
+        assert.equal(await consoleDialog.locator(".system-log-entry").count(), 2, "Console filters errors");
+        await consoleDialog.getByRole("combobox", { name: "Filter log entries" }).selectOption("all");
+        await consoleDialog.locator(".system-log-entry").last().locator("summary").click();
+        await consoleDialog.getByText("Auto-scroll paused", { exact: true }).waitFor();
+        await consoleDialog.getByRole("button", { name: "Latest ↓", exact: true }).click();
+        await consoleDialog.getByText("Following latest entries", { exact: true }).waitFor();
         await page.evaluate(() => { window.__failLogReads = true; });
-        const consoleDialog = page.getByRole("dialog", { name: "Diagnostic logs", exact: true });
         await page.waitForFunction(() => !(document.querySelector('.log-console-modal button[aria-busy="true"]')?.disabled));
         await consoleDialog.getByRole("button", { name: "Refresh", exact: true }).click();
         await consoleDialog.getByText("Simulated log storage failure.", { exact: true }).waitFor();
@@ -897,6 +983,8 @@ try {
         await consoleDialog.getByText("The log response was unreadable. Retry refresh.", { exact: true }).waitFor();
         assert.ok((await consoleOutput.innerText()).includes("old record"), "Malformed responses preserve previous logs");
         await page.evaluate(() => { window.__invalidLogReads = false; });
+        await consoleDialog.getByRole("button", { name: "Clear", exact: true }).click();
+        await consoleDialog.getByText("No saved logs.", { exact: true }).waitFor();
         await consoleDialog.getByRole("button", { name: "Close", exact: true }).click();
         const logReadsAfterClose = await page.evaluate(() => window.__uiActions.filter(action => action.action === "viewLogs").length);
         await page.waitForTimeout(2_100);
@@ -943,6 +1031,43 @@ try {
         await switchCard.scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(output, `settings-switching-${width}x${height}.png`) });
       }
+      if (await tab.getAttribute("id") === "settings-tab-tools") {
+        assert.equal(await page.locator(".maintenance-tool").count(), 7, "Tools contain Codex utilities instead of duplicated dashboard shortcuts");
+        const archiveCard = page.locator(".maintenance-tool").filter({ hasText: "Archive manager" });
+        await archiveCard.getByRole("button", { name: "Manage", exact: true }).click();
+        const archive = page.getByRole("dialog", { name: "Archive manager", exact: true });
+        await archive.getByRole("checkbox").first().waitFor();
+        assert.equal(await archive.getByRole("checkbox").count(), 50, "Archive management loads one bounded page");
+        await archive.getByRole("button", { name: "Next", exact: true }).click();
+        await page.waitForFunction(() => document.querySelectorAll(".maintenance-items input[type=checkbox]").length === 13);
+        await archive.getByRole("searchbox", { name: "Search tool items" }).fill("task 62");
+        await archive.getByRole("checkbox", { name: "Select Archived task 62", exact: true }).waitFor();
+        await archive.getByRole("checkbox", { name: "Select Archived task 62", exact: true }).check();
+        await archive.getByRole("button", { name: "Delete selected", exact: true }).click();
+        await archive.getByRole("region", { name: "Confirm maintenance" }).waitFor();
+        assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "runMaintenance").length), 0, "Opening deletion confirmation changes no data");
+        await archive.getByRole("button", { name: "Cancel", exact: true }).click();
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "Management modal fits the viewport");
+        await page.screenshot({ path: path.join(output, `archive-manager-${width}x${height}.png`) });
+        await archive.getByRole("button", { name: "Restore selected", exact: true }).click();
+        await archive.getByRole("button", { name: "Restore selected", exact: true }).click();
+        await archive.getByText("Restore complete", { exact: true }).waitFor();
+        assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "runMaintenance" && action.payload.maintenanceOperation === "restore" && action.payload.maintenanceIds.length === 1)), "Restore preserves the reviewed selection");
+        await page.keyboard.press("Escape");
+        assert.equal(await page.locator(".overlay.open").count(), 1, "Escape closes only the tool modal");
+        for (const title of ["Conversation cleanup", "Goal manager", "Shell snapshot cleanup"]) {
+          await page.locator(".maintenance-tool").filter({ hasText: title }).getByRole("button", { name: "Manage", exact: true }).click();
+          const dialog = page.getByRole("dialog", { name: title, exact: true });
+          await dialog.getByRole("checkbox").first().waitFor();
+          await dialog.getByRole("button", { name: "Close tool", exact: true }).click();
+        }
+        for (const [card, title] of [["Find missing projects", "Missing projects"], ["Find large conversations", "Largest conversations"], ["Check Codex storage", "Codex storage check"]]) {
+          await page.locator(".maintenance-tool").filter({ hasText: card }).getByRole("button", { name: "Inspect", exact: true }).click();
+          const dialog = page.getByRole("dialog", { name: title, exact: true });
+          await dialog.getByText("Healthy · 2 MB", { exact: true }).waitFor();
+          await dialog.getByRole("button", { name: "Close tool", exact: true }).click();
+        }
+      }
       await page.screenshot({ path: path.join(output, `settings-${await tab.getAttribute("id")}-${width}x${height}.png`) });
     }
     console.log(`Settings checks ${width}x${height}: ${Math.round(performance.now() - settingsStarted)}ms`);
@@ -952,6 +1077,28 @@ try {
     await page.waitForFunction(() => !document.querySelector(".overlay.open") && [...document.querySelectorAll(".overlay")].every(element => getComputedStyle(element).visibility === "hidden" || getComputedStyle(element).display === "none" || getComputedStyle(element).opacity === "0"));
     assert.deepEqual(errors, [], "Browser runtime errors");
     await page.screenshot({ path: path.join(output, `dashboard-${width}x${height}.png`) });
+    await page.goto(`${origin}/workspace/${parentId}?closed-project`);
+    await page.waitForFunction(() => window.__uiActions.some(action => action.action === "getWorkspaceEnvironment" && action.payload?.projectPath === "D:/closed-worktree"));
+    if (width <= 1180) {
+      if (width <= 760) {
+        await page.getByRole("button", { name: "Session actions", exact: true }).click();
+        await page.getByRole("menuitem", { name: "Show workspace tools", exact: true }).click();
+      } else await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
+    }
+    const closedFiles = page.getByRole("tab", { name: "Files", exact: true });
+    if (await closedFiles.count()) await closedFiles.click();
+    else {
+      await page.getByRole("button", { name: "Add workspace tool or terminal", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Files", exact: true }).click();
+    }
+    await page.waitForFunction(() => window.__uiActions.some(action => action.action === "listWorkspaceFiles" && action.payload?.projectPath === "D:/closed-worktree"));
+    if (width <= 1180) await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
+    if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "false") await page.locator(".cli-rail-toggle").click();
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
+    await page.getByRole("button", { name: "Message settings", exact: true }).click();
+    assert.equal(await page.getByRole("combobox", { name: "Project", exact: true }).inputValue(), "D:/closed-worktree", "New chat retains the closed session project");
+    await page.keyboard.press("Escape");
+    assert.deepEqual(errors, [], "Closed-project browser runtime errors");
     results.push({ width, height, checks: "parent list, running icon, chat, live messages, Agent tabs, share, session menu, Environment, Files, Reviews, quote, attachment, failed send, settings" });
     await context.close();
   }

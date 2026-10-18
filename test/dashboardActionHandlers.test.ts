@@ -8,6 +8,8 @@ import * as diagnostics from "../src/utils/persistentLog";
 import * as encryptedSync from "../src/services/encryptedSync";
 import type { CodexManagerAccountRecord } from "../src/core/types";
 import * as sessionEditors from "../src/services/codexSessionResume";
+import * as workspaceTools from "../src/services/workspaceTools";
+import * as autoResume from "../src/services/codexSessionAutoResume";
 
 const { consumeResetCreditMock, fetchResetCreditsMock, refreshQuotaMock } = vi.hoisted(() => ({
   consumeResetCreditMock: vi.fn().mockResolvedValue(undefined),
@@ -103,19 +105,50 @@ describe("manual Codex navigation and recovery", () => {
     expect(result.status).toBe("completed");
     expect(open).toHaveBeenCalledOnce();
   });
+  it("pauses a running goal from the browser and keeps the explicit result visible", async () => {
+    enableSessions();
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Goal task", status: "running", goal: { objective: "Finish work", status: "active" } });
+    readCodexCliSessionsMock.mockReset().mockImplementation(() => new Promise(() => undefined));
+    const update = vi.spyOn(sessionEditors, "setCodexSessionGoalStatus").mockResolvedValue(undefined);
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "pause-goal", action: "setCodexSessionGoalStatus", payload: { sessionId: id, goalStatus: "paused" } });
+    expect(update).toHaveBeenCalledWith(id, "paused");
+    expect(result.status).toBe("completed"); expect(result.payload?.cliSession?.goal?.status).toBe("paused");
+    expect(result.payload?.notice?.message).toContain("Goal paused");
+    expect(readCodexCliSessionsMock).not.toHaveBeenCalled();
+    update.mockRejectedValueOnce(new Error("Goal storage unavailable"));
+    const failed = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "pause-goal-fail", action: "setCodexSessionGoalStatus", payload: { sessionId: id, goalStatus: "paused" } });
+    expect(failed.status).toBe("failed"); expect(failed.errorMessage).toContain("Goal storage unavailable");
+  });
   it("opens a running conversation in VS Code when requested by the browser", async () => {
     enableSessions();
     readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Running", status: "running" });
-    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+    const cancel = vi.spyOn(autoResume, "cancelCodexSessionAutoResume");
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockImplementation(async () => { expect(cancel).toHaveBeenCalledOnce(); });
     const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "view-editor", action: "openCodexCliSession", payload: { sessionId: id, openInVsCode: true } });
     expect(result.status).toBe("completed");
-    expect(open).toHaveBeenCalledWith(id);
+    expect(open).toHaveBeenCalledWith(id, undefined, true);
     expect(result.payload?.cliSessionMessages).toBeUndefined();
+  });
+  it("explicitly resumes a paused goal without sending a continuation prompt", async () => {
+    enableSessions();
+    const goal = { objective: "Finish work", status: "paused" };
+    readCodexCliSessionSummaryMock.mockImplementation(async () => ({ id, title: "Goal task", status: "idle", goal }));
+    readCodexCliSessionsMock.mockReset().mockImplementation(() => new Promise(() => undefined));
+    vi.spyOn(sessionEditors, "setCodexSessionGoalStatus").mockImplementation(async (_id, status) => { goal.status = status; });
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+    const resume = vi.spyOn(sessionEditors, "resumeCodexSessionGoal").mockResolvedValue(undefined);
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "explicit-resume-goal", action: "setCodexSessionGoalStatus", payload: { sessionId: id, goalStatus: "active" } });
+    expect(result.status).toBe("completed"); expect(result.payload?.cliSession?.goal?.status).toBe("active");
+    expect(open).toHaveBeenCalledOnce(); expect(resume).toHaveBeenCalledOnce();
+    expect(sendCodexCliSessionMessageMock).not.toHaveBeenCalled();
+    expect(result.payload?.notice).toMatchObject({ level: "info", message: expect.stringContaining("Goal resumed") });
+    expect(readCodexCliSessionsMock).not.toHaveBeenCalled();
   });
   it("reopens running and interrupted parents without closing existing tabs and acknowledges duplicate requests", async () => {
     enableSessions();
     const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
     const close = vi.spyOn(sessionEditors, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
+    readCodexCliSessionSummaryMock.mockImplementation(async (sessionId: string) => ({ id: sessionId, title: sessionId, status: sessionId === id ? "running" : "idle", interrupted: sessionId !== id, goal: null }));
     readCodexCliSessionsMock.mockResolvedValue([{ id, title: "Running", status: "running" }, { id: "interrupted", title: "Interrupted", status: "idle", interrupted: true }, { id: "completed", title: "Done", status: "idle", interrupted: false }, { id: "child", title: "Agent", status: "running", parentSessionId: id }, { id: "archived", title: "Archive", status: "running", archived: true }]);
     const ctx = createContext();
     const request = { type: "dashboard:action" as const, requestId: "resume-all", action: "resumeCodexSessions" as const };
@@ -134,6 +167,29 @@ describe("manual Codex navigation and recovery", () => {
     readCodexCliSessionSummaryMock.mockResolvedValue(undefined);
     expect((await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "resume-missing", action: "resumeCodexSessions", payload: { sessionId: id } })).status).toBe("failed");
   });
+  it("sends Continue if not completed to an explicitly resumed non-goal session independently of the goal filter", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : key === "autoResumeGoalOnlyEnabled" ? true : fallback } as never);
+    const open = vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+    readCodexCliSessionsMock.mockResolvedValue([{ id, title: "Interrupted", status: "idle", interrupted: true, goal: null }]);
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Interrupted", status: "idle", interrupted: true, goal: null });
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "resume-with-prompt", action: "resumeCodexSessions" });
+    await vi.waitFor(() => expect(sendCodexCliSessionMessageMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId: id, text: "Continue if not completed" })));
+    expect(open).toHaveBeenCalledOnce();
+    expect(result.payload?.notice?.message).toContain("continuation prompt was sent");
+  });
+  it("continues a cold manual opener after thirty seconds without sending duplicate prompts", async () => {
+    enableSessions();
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Cold project", status: "idle", interrupted: true, goal: null });
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockImplementation(() => new Promise(resolve => setTimeout(resolve, 30_000)));
+      const work = executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "resumeCodexSessions", requestId: "cold-native-resume", payload: { sessionId: id } });
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect((await work).payload?.notice?.level).toBe("info");
+      expect(sendCodexCliSessionMessageMock).toHaveBeenCalledOnce();
+      expect(sendCodexCliSessionMessageMock).toHaveBeenCalledWith(expect.objectContaining({ text: "Continue if not completed" }));
+    } finally { vi.useRealTimers(); }
+  });
   it("bounds an editor timeout, aborts its late open and keeps recovery for retry", async () => {
     enableSessions();
     readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Interrupted", status: "idle", interrupted: true });
@@ -142,7 +198,7 @@ describe("manual Codex navigation and recovery", () => {
     try {
       const result = executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "resume-timeout", action: "resumeCodexSessions", payload: { sessionId: id } });
       await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
-      await vi.advanceTimersByTimeAsync(8_001);
+      await vi.advanceTimersByTimeAsync(45_001);
       expect((await result).payload?.notice).toMatchObject({ level: "warning", message: expect.stringContaining("timed out") });
       expect(open.mock.calls[0]?.[1]?.aborted).toBe(true);
     } finally { vi.useRealTimers(); }
@@ -150,6 +206,12 @@ describe("manual Codex navigation and recovery", () => {
 });
 
 describe("isSafeExternalUrl", () => {
+  it("does not open a browser link on the VS Code host", async () => {
+    const open = vi.mocked(vscode.env.openExternal).mockClear();
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", requestId: "browser-link", action: "openExternalUrl", payload: { url: "https://example.com/help" } });
+    expect(result.status).toBe("failed");
+    expect(open).not.toHaveBeenCalled();
+  });
   it("allows ordinary HTTP(S) URLs and rejects executable or credential-bearing schemes", () => {
     expect(isSafeExternalUrl("https://openai.com/research")).toBe(true);
     expect(isSafeExternalUrl("http://localhost:3000/help")).toBe(true);
@@ -175,6 +237,20 @@ describe("CLI session list freshness", () => {
 });
 
 describe("executeDashboardActionMessage", () => {
+  it("returns browser downloads to their initiating browser without a VS Code save dialog", async () => {
+    const dialog = vi.fn(); Object.assign(vscode.window, { showSaveDialog: dialog });
+    const result = await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", action: "downloadJsonFile", requestId: "browser-download", payload: { filename: "backup.json", text: "{}" } });
+    expect(result).toMatchObject({ status: "completed", payload: { fileDownload: { filename: "backup.json", text: "{}" } } });
+    expect(dialog).not.toHaveBeenCalled();
+  });
+  it("resolves a recorded project in the background when the browser did not send a folder", async () => {
+    const project = path.resolve(operationDirectory, "closed-project");
+    const resolve = vi.spyOn(sessionEditors, "resolveRecordedSessionProject").mockResolvedValue(project);
+    const environment = vi.spyOn(workspaceTools, "readWorkspaceEnvironment").mockResolvedValue({ projectPath: project, projectName: "closed-project", isGitRepository: false, changes: 0, additions: 0, deletions: 0, ahead: 0, behind: 0, hasRemote: false });
+    const id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "getWorkspaceEnvironment", requestId: "dashboard-auto-project", payload: { sessionId: id, automatic: true } });
+    expect(result.status).toBe("completed"); expect(resolve).toHaveBeenCalledWith(id, undefined); expect(environment).toHaveBeenCalledWith(project, false);
+  });
   it.each(["browser", "webview"] as const)("keeps %s history readable and reports why an unverified session cannot send", async (hostKind) => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
     const session = { id: "01a04882-d037-7a42-ad24-9afb61901188", title: "Chat", status: "unknown", statusError: "Session inspection timed out.", archived: false };
@@ -650,6 +726,26 @@ describe("executeDashboardActionMessage", () => {
     expect(unlocked.status).toBe("completed");
     expect(unlocked.payload?.notice).toEqual({ level: "info", message: "Auto-switch lock removed." });
     expect(context.schedulePublishState).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects invalid lock durations instead of silently unlocking", async () => {
+    const account = { id: "lock-validation-account", email: "lock-validation@example.com" };
+    const context = {
+      ...createContext(),
+      repo: { getAccount: vi.fn().mockResolvedValue(account) } as unknown as DashboardActionContext["repo"]
+    };
+    for (const lockMinutes of [-1, 0.5, 121, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const result = await executeDashboardActionMessage(context, {
+        type: "dashboard:action",
+        action: "setAutoSwitchLock",
+        requestId: `req-invalid-lock-${String(lockMinutes)}`,
+        accountId: account.id,
+        payload: { lockMinutes }
+      });
+      expect(result.status).toBe("failed");
+      expect(result.errorMessage).toContain("whole lock duration");
+    }
+    expect(context.schedulePublishState).not.toHaveBeenCalled();
   });
 
   it("opens the VS Code account picker when overview Switch has no preset target", async () => {
@@ -1970,7 +2066,7 @@ describe("executeDashboardActionMessage", () => {
     expect(result.errorMessage).toMatch(/access token/i);
   });
 
-  it.each([false, undefined])("does not collect automatic usage with enabled=%s", async enabled => {
+  it.each([false])("does not collect automatic usage with enabled=%s", async enabled => {
     const context = createContext();
     context.repo = { getAccount: vi.fn().mockResolvedValue({ id: "a" }), getTokens: vi.fn() } as never;
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageEnabled" ? enabled ?? fallback : fallback } as never);
@@ -1978,6 +2074,16 @@ describe("executeDashboardActionMessage", () => {
     expect(result.status).toBe("completed");
     expect(result.payload?.notice?.message).toMatch(/disabled/);
     expect(context.repo.getTokens).not.toHaveBeenCalled();
+  });
+
+  it("enables automatic token history by default while preserving credential failures", async () => {
+    const context = createContext();
+    context.context = { globalState: { get: vi.fn(), update: vi.fn().mockResolvedValue(undefined) } } as never;
+    context.repo = { getAccount: vi.fn().mockResolvedValue({ id: "default-history" }), getTokens: vi.fn().mockResolvedValue(undefined) } as never;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    const result = await executeDashboardActionMessage(context, { type: "dashboard:action", action: "getDailyUsage", accountId: "default-history", requestId: "default-automatic-history", payload: { automatic: true } });
+    expect(context.repo.getTokens).toHaveBeenCalledOnce();
+    expect(result.status).toBe("failed"); expect(result.errorMessage).toMatch(/access token/i);
   });
 
   it("rejects usage credentials for a different account before making a request", async () => {
@@ -2092,5 +2198,28 @@ describe("diagnostic downloads", () => {
     expect(await executeDashboardActionMessage(createContext(), message)).toMatchObject({ status: "failed", errorMessage: "disk full" });
     vi.mocked(diagnostics.exportPersistentLogs).mockRejectedValueOnce(new Error("log store locked"));
     expect(await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, message)).toMatchObject({ status: "failed", errorMessage: "log store locked" });
+  });
+});
+
+
+describe("routine dashboard logging exclusions", () => {
+  it("does not log console polling, console clearing, downloads, or session reads even on failure", async () => {
+    const audit = vi.spyOn(diagnostics, "runWithPersistentOperation");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(diagnostics, "exportPersistentLogs").mockResolvedValue({ filename: "logs.json", text: '{"records":[]}', limited: false });
+    vi.spyOn(diagnostics, "clearPersistentLogs").mockResolvedValue(undefined);
+    readCodexCliSessionMessagesMock.mockRejectedValue(new Error("transcript unavailable"));
+    for (const hostKind of ["browser", "webview"] as const) {
+      for (const action of ["viewLogs", "clearLogs", "getCodexCliSessionMessages"] as const) {
+        await executeDashboardActionMessage({ ...createContext(), hostKind }, { type: "dashboard:action", action, requestId: `quiet-${action}`, payload: { sessionId: "01a04882-d037-7a42-ad24-9afb61901181" } });
+      }
+      await executeDashboardActionMessage({ ...createContext(), hostKind: "browser" }, { type: "dashboard:action", action: "downloadLogs", requestId: "quiet-download" });
+    }
+    expect(audit).not.toHaveBeenCalled();
+    vi.spyOn(diagnostics, "exportPersistentLogs").mockRejectedValue(new Error("log store locked"));
+    errors.mockClear();
+    expect(await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "viewLogs", requestId: "quiet-failed" })).toMatchObject({ status: "failed", errorMessage: "log store locked" });
+    expect(audit).not.toHaveBeenCalled();
+    expect(errors).not.toHaveBeenCalled();
   });
 });

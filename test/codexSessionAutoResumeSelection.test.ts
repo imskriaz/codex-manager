@@ -17,7 +17,7 @@ import * as sessionEditor from "../src/services/codexSessionResume";
 
 const roots: string[] = [];
 const readAutoResumeCodexSessionIds = (...args: Parameters<typeof selectSessions>) =>
-  selectSessions(args[0], args[1], args[2], args[3], args[4], args[5] ?? false);
+  selectSessions(args[0], args[1], args[2], args[3], args[4], args[5] ?? false, args[6], args[7], args[8]);
 const ids = [
   "01a04882-d037-7a42-ad24-9afb61901188",
   "01a04882-d037-7a42-ad24-9afb61901189",
@@ -50,6 +50,17 @@ function goals(home: string, statuses: Array<string | null>) {
   db.close();
 }
 describe("auto resume selection", () => {
+  it("includes interrupted non-goal worktrees outside the open project and excludes terminal or child tasks", async () => {
+    const home = await fixture();
+    await rm(path.join(home, "thread-writer-locks"), { recursive: true });
+    const event = (type: string) => JSON.stringify({ type: "event_msg", payload: { type } }) + "\n";
+    await appendFile(path.join(home, "sessions", `rollout-${ids[0]}.jsonl`), event("task_failed"));
+    await appendFile(path.join(home, "sessions", `rollout-${ids[2]}.jsonl`), event("task_complete"));
+    expect(await selectSessions(home, undefined, [], undefined, "running", false, [])).toEqual([]);
+    expect(await selectSessions(home, undefined, [], undefined, "running", false, [], undefined, [ids[0]!])).toEqual([ids[0]]);
+    expect(await selectSessions(home, [path.join(home, "another-project")], [], undefined, "running", false, [])).toEqual([]);
+    expect(await selectSessions(home, undefined, [], undefined, "running", true, [])).toEqual([]);
+  });
   it("saves only eligible open parents when running-session discovery is unavailable", async () => {
     const home = await fixture();
     goals(home, ["active", "active", "complete"]);
@@ -77,21 +88,23 @@ describe("auto resume selection", () => {
   it("keeps quota-blocked parent goals eligible after the native turn stops", async () => {
     const home = await fixture();
     goals(home, ["usage_limited", "usage_limited", "complete"]);
-    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [])).toEqual([ids[0]]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [])).toEqual([]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [], undefined, ids)).toEqual([ids[0]]);
     expect(await filterAutoResumeGoalSessionIds(ids, home, undefined, true)).toEqual([ids[0], ids[1]]);
     await appendFile(path.join(home,"sessions",`rollout-${ids[0]}.jsonl`),JSON.stringify({type:"event_msg",payload:{type:"turn_aborted",reason:"user_cancelled"}})+"\n");
-    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [])).toEqual([]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [], undefined, ids)).toEqual([ids[0]]);
   });
 
-  it("recovers quota failures without treating unrelated idle, cancelled, or completed sessions as running", async () => {
+  it("recovers interrupted quota and cancelled work without treating completed sessions as running", async () => {
     const home = await fixture();
     const transcript = path.join(home, "sessions", `rollout-${ids[0]}.jsonl`);
     const event = (type: string, extra = {}) => JSON.stringify({type:"event_msg",payload:{type,turn_id:"turn-1",...extra}})+"\n";
+    await appendFile(path.join(home, "sessions", `rollout-${ids[2]}.jsonl`), event("task_complete"));
     await appendFile(transcript, event("error", {message:"You've hit your usage limit"})+event("task_failed")+event("task_started"));
     expect(await sessionEditor.readRunningCodexSessionIds(home,undefined,[ids[0]!])).toEqual([]);
-    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [])).toEqual([ids[0]]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [], undefined, ids)).toEqual([ids[0]]);
     await appendFile(transcript,event("turn_aborted",{reason:"user_cancelled"}));
-    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [])).toEqual([]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [], undefined, ids)).toEqual([ids[0]]);
     await appendFile(transcript,JSON.stringify({type:"event_msg",payload:{type:"task_started",turn_id:"turn-2"}})+"\n"+JSON.stringify({type:"event_msg",payload:{type:"task_complete",turn_id:"turn-2"}})+"\n");
     expect(await selectSessions(home, undefined, ids, undefined, "running", false, [])).toEqual([]);
   });
@@ -105,7 +118,7 @@ describe("auto resume selection", () => {
     db.exec("CREATE TABLE future_schema (id TEXT)");
     db.close();
     await expect(filterAutoResumeGoalSessionIds(ids, home, undefined, true)).rejects.toThrow("Saved recovery was retained");
-    expect(await filterAutoResumeGoalSessionIds(ids, home, undefined, false)).toEqual(ids);
+    await expect(filterAutoResumeGoalSessionIds(ids, home, undefined, false)).rejects.toThrow("Saved recovery was retained");
   });
   it("records open idle parents without running locks and skips open sub-agents", async () => {
     const home = await fixture();
@@ -127,26 +140,26 @@ describe("auto resume selection", () => {
     expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0], ids[2]]);
   });
   it.each(["paused", "blocked", "complete", "usage_limited", "budget_limited"])(
-    "resumes %s parent sessions because goals are not required",
+    "respects %s goal status even with goal-only turned off",
     async (status) => {
       const home = await fixture();
       goals(home, [status, "active", null]);
-      expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0], ids[2]]);
+      expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual(status === "usage_limited" ? [ids[0], ids[2]] : [ids[2]]);
     }
   );
   it("resumes parents when goal state is unavailable", async () => {
     const home = await fixture();
     expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0], ids[2]]);
   });
-  it("resumes parents when the database is corrupt or its schema is unavailable", async () => {
+  it("retains recovery when goal status cannot be verified even with goal-only off", async () => {
     const home = await fixture();
     await writeFile(path.join(home, "goals_1.sqlite"), "corrupt");
-    expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0], ids[2]]);
+    await expect(readAutoResumeCodexSessionIds(home, [home])).rejects.toThrow("Saved recovery was retained");
     await rm(path.join(home, "goals_1.sqlite"));
     const db = new DatabaseSync(path.join(home, "goals_1.sqlite"));
     db.exec("CREATE TABLE future_schema (id TEXT)");
     db.close();
-    expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([ids[0], ids[2]]);
+    await expect(readAutoResumeCodexSessionIds(home, [home])).rejects.toThrow("Saved recovery was retained");
   });
   it("captures all local running parent windows by default across projects", async () => {
     const home = await fixture();
@@ -258,14 +271,16 @@ describe("auto resume selection", () => {
       [ids[0], ids[1]]
     );
   });
-  it("does not reopen stale locks after a stopped process or reboot", async () => {
+  it("retains interrupted parents after a stopped process or reboot without calling stale locks running", async () => {
     const home = await fixture();
     const old = new Date(Date.now() - 60 * 60 * 1000);
     for (const id of ids) {
       await utimes(path.join(home, "thread-writer-locks", `${id}.lock`), old, old);
       await utimes(path.join(home, "sessions", `rollout-${id}.jsonl`), old, old);
     }
+    expect(await sessionEditor.readRunningCodexSessionIds(home)).toEqual([]);
     expect(await readAutoResumeCodexSessionIds(home, [home])).toEqual([]);
+    expect(await readAutoResumeCodexSessionIds(home, [home], undefined, undefined, "running", false, [], undefined, ids)).toEqual([ids[0], ids[2]]);
   });
   it("explains session recovery without storage details", () => {
     const copy = getDashboardCopy("en").autoResumeSub;

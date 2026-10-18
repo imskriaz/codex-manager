@@ -39,7 +39,6 @@ export async function backupCurrentIndex(indexPath: string, backupCount: number)
     return;
   }
 
-  console.info("[codexManager] creating accounts index backup");
   for (let slot = backupCount; slot >= 2; slot -= 1) {
     const from = getBackupPath(indexPath, slot - 1);
     const to = getBackupPath(indexPath, slot);
@@ -128,11 +127,10 @@ export async function readLatestValidTempIndex(
   const prefix = `${path.basename(indexPath)}${tempSuffix}-`;
   const store = sqliteStoreForFile(indexPath);
   if (store) {
-    const archived = store.keys("legacy-files").filter(key => key.startsWith(prefix))
-      .map(key => store.get<{ path: string; modifiedAt?: number; base64: string }>("legacy-files", key)!)
-      .filter(record => record.path.startsWith(prefix) && typeof record.base64 === "string")
-      .sort((left, right) => (right.modifiedAt ?? 0) - (left.modifiedAt ?? 0));
-    for (const record of archived) {
+    const archived = store.prepare("SELECT key FROM state WHERE namespace='legacy-files' AND substr(key,1,length(?))=? AND json_valid(value) ORDER BY COALESCE(json_extract(value,'$.modifiedAt'),0) DESC").all(prefix, prefix);
+    for (const row of archived) {
+      const record = store.get<{ path: string; base64: string }>("legacy-files", String(row["key"]));
+      if (!record || typeof record.path !== "string" || !record.path.startsWith(prefix) || typeof record.base64 !== "string") continue;
       try { return parseAccountsIndex(Buffer.from(record.base64, "base64").toString("utf8"), record.path); }
       catch { /* Older validated snapshots may still recover the account list. */ }
     }

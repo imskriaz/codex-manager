@@ -119,8 +119,10 @@ The browser dashboard is disabled by default and listens on `http://127.0.0.1:39
 
 1. Turn on **Web dashboard**.
 2. Set the shared **Password** in General; remote dashboard login and optional cross-PC claim checks use that same password.
-3. If the dashboard must remain available after VS Code closes, turn on **Keep connections online** on one always-on PC.
-4. For a public HTTPS address, set **Web Socket Server** to the final URL (for example `https://codex.example.com`) and configure the tunnel to forward to `http://127.0.0.1:39875`.
+3. For a public HTTPS address, enable **WS Cross System**, enter the final URL (for example `https://codex.example.com`), and configure the tunnel to forward to `http://127.0.0.1:39875`.
+4. The manager automatically prepares the relay on the system verified to host that tunnel. Other systems connect without preparing a detached host.
+
+The **Tools** tab opens dedicated Codex maintenance dialogs for archives, conversations, goals, and old shell snapshots. Review the selected system and affected items before confirming deletion. Inspection tools report missing projects, large conversations, and native database health without changing data. **System Log** stays in Data & sync; its console contains download and clear controls, and switching logging off clears saved manager history.
 
 Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/), [downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/), [remotely-managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/), and [Quick Tunnels guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) first.
 
@@ -145,8 +147,7 @@ Important combinations:
 - **CLI integration** enables dashboard session discovery and controls. It does not perform automatic CLI resume.
 - **Encrypted sync** uses authenticated peer WebSockets when available and VS Code Settings Sync as its durable cross-PC fallback. Use the same password value on each machine; the password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
-- **Always-online host** is optional and requires cross-PC claim checks before it can relay signed peer state.
-- **Web Socket Server** is the canonical HTTPS origin for cross-PC WebSocket connections. Cross-PC connections require a valid domain; local dashboard WebSockets work without one. The `cloudflared` process and DNS route are managed by you.
+- **WS Cross System** controls cross-PC WebSocket connections using the configured HTTPS origin. Manager prepares the detached relay only after verifying that the configured tunnel reaches this system. Local dashboard WebSockets work independently. The `cloudflared` process and DNS route are managed by you.
 
 ## Privacy and security
 
@@ -154,7 +155,8 @@ Important combinations:
 - Account metadata, settings, session recovery, usage history, and other extension state share that SQLite database, using WAL and full synchronous commits. Existing state is migrated without deleting its source files. VS Code Settings remains the editing interface and stays synchronized with SQLite. Process locks, diagnostic logs, Codex-owned files, and browser offline caches keep their platform formats.
 - Auto Sync synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Sync account logins** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
-- Persistent logs redact tokens and account identifiers. In **Data & sync**, choose the log level and retention, open **Show logs** for recent history with live refresh, or **Download logs** for a redacted JSON export. The console and download include up to 1,000 recent records within 512 KiB.
+- Persistent logs redact tokens and account identifiers. Open **System Log** in **Data & sync** for live console history, filters, details, Download, and Clear. The console and download include up to 1,000 recent records within 512 KiB. Saved diagnostics additionally obey the configured retention and a 10,000-record or 32 MiB cap.
+- Manager automatically expires expendable caches and confirmed deleted-session metadata, and reclaims database space in the background. Session catalogues and token points use individual SQLite rows; SQL filters cache metadata and log exports before loading data into memory. Accounts, credentials, settings, native Codex history, and pending recovery are preserved.
 - Review the [MIT License](LICENSE) and only manage accounts you own or are authorized to use.
 
 ## Troubleshooting
@@ -176,7 +178,9 @@ Codex Manager is available under the [MIT License](LICENSE). The project was ori
 
 ### Session-aware switching and current-account claims
 
-Auto Resume captures local running and quota-interrupted parent conversations across projects and restores each as a persistent native Codex tab. A usage-limited goal or structured quota failure remains eligible after its native turn stops. Completed, cancelled, and unrelated idle sessions are excluded. The goal-only filter accepts active and usage-limited goals. Native running checks still report actual process activity, so quota exhaustion cannot block an account switch indefinitely.
+Auto Resume captures verified running parent conversations across projects and restores saved unfinished work as persistent native Codex tabs. Interrupted or quota-limited work stays eligible only when a previous running snapshot recorded it. Idle goal history does not add sessions to recovery. Paused, completed, blocked, and budget-limited goals are excluded with either goal-only setting. The goal-only toggle filters the saved running set to active or usage-limited goals. In the browser chat, use the goal's Pause or Resume icon to change it explicitly. Native running checks still report actual activity, so retained writer handles cannot block an account switch indefinitely.
+
+Automatic token history is on by default and preserves an explicit Off preference. Default switching thresholds remain 5% for the 5-hour quota and 0% for weekly/monthly quota.
 
 **Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, automatic switching waits with a warning and retries. Manual account switching remains available immediately.
 
@@ -204,7 +208,7 @@ Session inspection is demand-driven. Overlapping consumers share bounded running
 | --- | --- | --- |
 | Wait for running sessions | Auto Switch and Wait for running sessions enabled | All local running session IDs |
 | Auto Resume at managed reload | Auto Switch and Auto Resume enabled | Recent verified running IDs (up to 30 seconds old), otherwise a fresh check; then goal filter |
-| Auto Resume background save | Auto Switch and Auto Resume enabled | Running or quota-interrupted parent tabs plus running sidebar goals in goal-only mode; saved on status changes and every 30 seconds |
+| Auto Resume background save | Auto Switch and Auto Resume enabled | Verified running parents and previously recorded interrupted work; saved on status changes and every 30 seconds |
 | Auto Resume restore | Saved recovery exists and both toggles enabled | Saved IDs and goal filter |
 | Running indicators and workspace lists | Dashboard/session view requests status | Per-session native/transcript status |
 | Explicit session actions | A session command needs ownership | Per-session status |

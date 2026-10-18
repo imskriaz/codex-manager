@@ -25,9 +25,9 @@ vi.mock("child_process", async (original) => {
   } };
 });
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.openRpc }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexCliSessions, readCodexCliSessionSummary, readRecentRunningCodexSessionIds, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
+import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexCliSessions, readCodexCliSessionSummary, readQuotaInterruptedCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
-import { readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
+import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 
 const id = "01a04882-d037-7a42-ad24-9afb61901188";
 let home: string;
@@ -35,7 +35,7 @@ let transcript: string;
 let lock: string;
 let previousHome: string | undefined;
 const event = (type: string, turnId = "turn-1") => JSON.stringify({ type: "event_msg", payload: { type, turn_id: turnId } }) + "\n";
-const select = () => readAutoResumeCodexSessionIds(home, [home], [], undefined, "running", false);
+const select = (previous: string[] = []) => readAutoResumeCodexSessionIds(home, [home], [], undefined, "running", false, undefined, undefined, previous);
 
 beforeEach(async () => {
   vi.mocked(readNativeCodexSessionRunning).mockReset().mockResolvedValue(undefined);
@@ -60,6 +60,14 @@ afterEach(async () => {
 });
 
 describe("shared running-session detection and auto resume", () => {
+  it("retains an explicitly stopped conversation for non-goal recovery without calling it running", async () => {
+    await appendFile(transcript, event("turn_aborted"));
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: true });
+    expect(await readQuotaInterruptedCodexSessionIds(home, [id], undefined, [], true)).toEqual([id]);
+    expect(await readQuotaInterruptedCodexSessionIds(home, [id], undefined, [], false)).toEqual([]);
+    await appendFile(transcript, event("task_started", "next-turn") + event("task_complete", "next-turn"));
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: false });
+  });
   it("reads the recorded model and thinking from native turn context across partial appends", async () => {
     const context = (model: unknown, effort: unknown) => JSON.stringify({ type: "turn_context", payload: { model, effort } });
     await appendFile(transcript, context("gpt-native", "high"));
@@ -103,6 +111,13 @@ describe("shared running-session detection and auto resume", () => {
       await writeFile(transcript, JSON.stringify({ timestamp, type: "event_msg", payload: { type: "task_started", turn_id: String(timestamp) } }) + "\n");
       expect((await readCodexCliSessionSummary(id, home))?.runningSince).toBeUndefined();
     }
+  });
+  it("does not reuse a completed turn's start while the native owner starts new work", async () => {
+    await writeFile(transcript, JSON.stringify({ timestamp: new Date(Date.now() - 60_000).toISOString(), type: "event_msg", payload: { type: "task_started", turn_id: "old-turn" } }) + "\n" + event("task_complete", "old-turn"));
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+    try {
+      expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "running", runningSince: undefined });
+    } finally { vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
   });
   it("retains recent verified checks for recovery while safety checks remain fresh", async () => {
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
@@ -169,7 +184,7 @@ describe("shared running-session detection and auto resume", () => {
       return false;
     });
     const sessions = await readCodexCliSessions(home);
-    expect(sessions).toHaveLength(200);
+    expect(sessions).toHaveLength(300);
     expect(sessions.every(session => session.status === "idle")).toBe(true);
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(32);
@@ -190,11 +205,12 @@ describe("shared running-session detection and auto resume", () => {
     await expect(second).resolves.toEqual([]);
     expect(readNativeCodexSessionRunning).toHaveBeenCalledOnce();
   });
-  it("excludes a native idle conversation with an unfinished transcript and retained writer handle", async () => {
+  it("keeps native idle work in recovery without counting its retained writer handle as running", async () => {
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
     mocks.heldLocks.add(lock);
     expect(await readRunningCodexSessionIds(home)).toEqual([]);
     expect(await select()).toEqual([]);
+    expect(await select([id])).toEqual([id]);
     expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", locked: false });
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
     expect(await readRunningCodexSessionIds(home)).toEqual([id]);
@@ -311,6 +327,7 @@ describe("shared running-session detection and auto resume", () => {
       expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", locked: false });
       expect(await readRunningCodexSessionIds(home)).toEqual([]);
       expect(await select()).toEqual([]);
+      expect(await select([id])).toEqual(["task_failed", "turn_failed", "turn_aborted"].includes(type) ? [id] : []);
     }
   );
 
@@ -331,6 +348,7 @@ describe("shared running-session detection and auto resume", () => {
     expect(await select()).toEqual([id]);
     await appendFile(transcript, event("turn_aborted", "turn-2"));
     expect(await select()).toEqual([]);
+    expect(await select([id])).toEqual([id]);
   });
 
   it("does not revive duplicate starts or let delayed completion stop a new turn", async () => {

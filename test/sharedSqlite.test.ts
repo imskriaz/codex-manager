@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { readAccountRow, saveAccountIndex } from "../src/storage/sqliteAccounts";
-import { initializeSessionStorage, readAccountSessionStats, readSessionDiscovery, saveSessionDiscovery, saveSessionStatus, readSessionStatus } from "../src/storage/sqliteSessions";
+import { initializeSessionStorage, pruneSessionCache, readAccountSessionStats, readSessionDiscovery, saveSessionDiscovery, saveSessionStatus, readSessionStatus } from "../src/storage/sqliteSessions";
 import { recordNativeSessionStatus, recordSessionLive, flushSessionRecording, disposeSessionRecording } from "../src/services/sessionRecording";
 import { readRecentRunningCodexSessionIds } from "../src/services/codexSessionResume";
 import { cleanupManagerStorage } from "../src/storage/storageCleanup";
@@ -140,6 +140,31 @@ describe("batched session persistence",()=>{
 });
 
 describe("safe cleanup and credential read races",()=>{
+  it("bounds queued live snapshots by bytes and recovers after flushing", () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const messages = Array.from({ length: 75 }, (_, n) => ({ id: String(n), text: "x".repeat(12_000) }));
+    for (let n = 1; n <= 12; n++) recordSessionLive({ ...state(n), messages });
+    expect(warning).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: expect.stringContaining("byte limit") }));
+    flushSessionRecording(128);
+    expect(Number(store.prepare("SELECT COUNT(*) AS n FROM session_turns").get()?.["n"])).toBeLessThan(12);
+    recordSessionLive(state(99)); expect(flushSessionRecording()).toBe(true);
+    expect(store.prepare("SELECT COUNT(*) AS n FROM session_turns WHERE stream_id=?").get(state(99).streamId)?.["n"]).toBe(1);
+  });
+  it("expires bounded runtime caches without deleting recovery or token statistics", () => {
+    const now = Date.now();
+    saveSessionStatus(store, root, sessionId, "running", now - 2 * 24 * 60 * 60_000);
+    saveSessionStatus(store, root, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "idle", now);
+    store.set("session-discovery", "old-home", { checkedAt: now - 60_000, ids: [sessionId] });
+    store.set("workspace:test", "codexManager.autoResumeSessionIds", [sessionId]);
+    recordSessionLive({ ...state(1), updatedAt: now - 10 * 60_000, messages: [{ id: "old", text: "Large preview" }] }, "a");
+    flushSessionRecording();
+    pruneSessionCache(store, now);
+    expect(store.prepare("SELECT COUNT(*) AS n FROM session_status WHERE checked_at < ?").get(now - 24 * 60 * 60_000)?.["n"]).toBe(0);
+    expect(store.get("session-discovery", "old-home")).toBeUndefined();
+    expect(store.get("workspace:test", "codexManager.autoResumeSessionIds")).toEqual([sessionId]);
+    expect(readAccountSessionStats(store, "a")).toMatchObject({ turns: 1, total_tokens: 10 });
+    expect(JSON.parse(String(store.prepare("SELECT data FROM session_turns").get()?.["data"])).messages).toEqual([]);
+  });
   it("removes only retired data and verified duplicate recovery copies",()=>{
     const archive=(name:string,text:string)=>{const bytes=Buffer.from(text);store.set("legacy-files",name,{path:name,base64:bytes.toString("base64"),sha256:createHash("sha256").update(bytes).digest("hex")});};
     store.set("files","announcements/announcement_cache.json",{text:"retired"});archive("announcements/announcement_cache.json","retired");

@@ -68,15 +68,15 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("accepts the optional always-online host toggle", async () => {
+  it("accepts the cross-system WebSocket toggle", async () => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn(),
       update,
-      inspect: vi.fn(() => ({ key: "codexManager.webDashboardAlwaysOnlineEnabled", defaultValue: false }))
+      inspect: vi.fn(() => ({ key: "codexManager.webSocketServerEnabled", defaultValue: false }))
     } as never);
-    await expect(handleDashboardSettingUpdate("webDashboardAlwaysOnlineEnabled", true)).resolves.toBe(true);
-    expect(update).toHaveBeenCalledWith("webDashboardAlwaysOnlineEnabled", true, vscode.ConfigurationTarget.Global);
+    await expect(handleDashboardSettingUpdate("webSocketServerEnabled", true)).resolves.toBe(true);
+    expect(update).toHaveBeenCalledWith("webSocketServerEnabled", true, vscode.ConfigurationTarget.Global);
   });
 
   it("updates the workspace value when an effective setting is overridden there", async () => {

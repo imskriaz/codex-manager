@@ -862,13 +862,6 @@ async function evaluateAutoSwitchForActiveQuota(
         }
       }
     }
-    console.info("[codexManager] auto switch threshold reached, but no safe candidate is available", {
-      activeHourlyTriggered,
-      activeWeeklyTriggered,
-      hourlyRemaining: active.quotaSummary.hourlyPercentage,
-      weeklyRemaining: active.quotaSummary.weeklyPercentage,
-      candidateCount: accounts.length - 1
-    });
     const blockedKey = [
       active.id,
       activeHourlyTriggered ? `hourly:${active.quotaSummary.hourlyPercentage}` : "",

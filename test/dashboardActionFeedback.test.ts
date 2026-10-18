@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { formatSessionReadError, noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
+  it("keeps list failures and cancellations in the session view instead of duplicating technical toasts", () => {
+    for (const status of ["failed", "cancelled", "completed"] as const) expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "retry", action: "listCodexCliSessions", status, error: "Technical inspection failed.", payload: { notice: { level: "warning", message: "Technical inspection failed." } } })).toBeUndefined();
+  });
   it.each(["failed", "cancelled", "completed"] as const)("keeps token history %s outcomes out of toasts", status => {
     for (const action of ["getDailyUsage", "getUsageGraph"] as const) for (const error of [undefined, "offline", "storage full", "The usage provider requested a retry delay.",
       "The usage endpoint returned no readable daily data. Automatic usage checks wait at least one hour and respect server retry delay",

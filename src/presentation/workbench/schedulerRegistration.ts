@@ -545,8 +545,6 @@ export function registerTokenRefreshScheduler(params: {
     inFlight = true;
     const version = scheduleVersion;
     let lastFailureMessage: string | undefined;
-    let checked = 0;
-    let refreshedCount = 0;
     try {
       await runSharedMaintenance("background:token-refresh-sweep", "Background token refresh", intervalMs, async () => {
         if (disposed || version !== scheduleVersion) return;
@@ -570,7 +568,6 @@ export function registerTokenRefreshScheduler(params: {
               const latestAccount = await readEligibleAccount(account.id, version);
               if (!latestAccount) return;
               markTokenAutomationCheck(account.id);
-              checked += 1;
               if (!tokens?.accessToken || !needsTokenRefresh(tokens, params.skewSeconds)) {
                 clearTokenAutomationError(account.id);
                 return;
@@ -582,7 +579,6 @@ export function registerTokenRefreshScheduler(params: {
 
               await runWithBulkProviderRequests(() => params.repo.refreshAccountTokens(account.id, { skewSeconds: params.skewSeconds }));
               if (!disposed && version === scheduleVersion) markTokenAutomationRefreshSuccess(account.id);
-              refreshedCount += 1;
             });
           } catch (error) {
             if (error instanceof CrossWindowOperationBusyError) {
@@ -603,11 +599,6 @@ export function registerTokenRefreshScheduler(params: {
     } finally {
       inFlight = false;
       if (!disposed && version === scheduleVersion) markTokenAutomationSweepFinished(lastFailureMessage);
-      console.info(
-        `[codexManager] background token refresh sweep: checked=${checked}, refreshed=${refreshedCount}` +
-          (lastFailureMessage ? `, lastError=${lastFailureMessage}` : ""),
-        { checked, refreshed: refreshedCount }
-      );
       if (!disposed && version === scheduleVersion) params.view.refresh();
     }
   };

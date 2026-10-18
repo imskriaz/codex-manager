@@ -17,6 +17,27 @@ describe("bounded shared extension host reload", () => {
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
     } finally { delivery.dispose(); vi.useRealTimers(); }
   });
+  it.each([true, false])("reloads the full window for an installed Codex extension, including during activation (%s)", async isActive => {
+    const extension = vi.spyOn(vscode.extensions, "getExtension").mockReturnValue({ isActive } as never);
+    try {
+      vi.mocked(vscode.commands.executeCommand).mockResolvedValue(undefined);
+      await reloadExtensionHostWithSessionCapture(true);
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.reloadWindow");
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+    } finally { extension.mockRestore(); }
+  });
+  it("does not issue a host restart after an uncertain full-window reload", async () => {
+    vi.useFakeTimers();
+    const extension = vi.spyOn(vscode.extensions, "getExtension").mockReturnValue({ isActive: true } as never);
+    let finish!: () => void;
+    try {
+      const execute = vi.mocked(vscode.commands.executeCommand).mockImplementation(name => name === "workbench.action.reloadWindow" ? new Promise<void>(resolve => { finish = resolve; }) : Promise.resolve(undefined));
+      const failed = expect(reloadExtensionHostWithSessionCapture(true)).rejects.toThrow("did not acknowledge");
+      await vi.advanceTimersByTimeAsync(45_000); await failed;
+      expect(execute).not.toHaveBeenCalledWith("workbench.action.restartExtensionHost");
+      finish(); await vi.advanceTimersByTimeAsync(0);
+    } finally { extension.mockRestore(); vi.useRealTimers(); }
+  });
   beforeEach(() => {
     vi.mocked(vscode.commands.executeCommand).mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({

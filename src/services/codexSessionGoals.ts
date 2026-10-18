@@ -3,7 +3,7 @@ import * as path from "path";
 import type { DashboardCodexSessionGoal } from "../domain/dashboard/types";
 
 /** Optional native goal metadata; never create or migrate Codex's database. */
-export async function readCodexSessionGoals(home: string, sessionIds?: readonly string[]): Promise<Map<string, DashboardCodexSessionGoal> | undefined> {
+export async function readCodexSessionGoals(home: string, sessionIds?: readonly string[], limit = 2000): Promise<Map<string, DashboardCodexSessionGoal> | undefined> {
   if (sessionIds?.length === 0) return new Map();
   let db: { prepare(sql: string): { all(...ids: string[]): Record<string, unknown>[] }; close(): void } | undefined;
   try {
@@ -22,7 +22,7 @@ export async function readCodexSessionGoals(home: string, sessionIds?: readonly 
         const batch = ids.slice(offset, offset + 500);
         rows.push(...db.prepare(`${columns} WHERE thread_id IN (${batch.map(() => "?").join(",")})`).all(...batch));
       }
-    } else rows.push(...db.prepare(`${columns} LIMIT 2000`).all());
+    } else rows.push(...db.prepare(`${columns} LIMIT ${Math.max(1, Math.min(10001, Math.floor(limit)))}`).all());
     for (const row of rows) {
       const id = row["thread_id"], objective = row["objective"], status = row["status"], seconds = row["time_used_seconds"];
       if (typeof id !== "string" || typeof objective !== "string" || !objective.trim() || typeof status !== "string" || !/^[a-z_]{1,40}$/.test(status)) continue;

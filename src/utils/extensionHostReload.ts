@@ -137,7 +137,9 @@ export function reloadExtensionHostWithSessionCapture(
       if (!inFlightAutomatic) void vscode.window.showWarningMessage(`Reload will continue, but some Codex or Codex Manager tabs could not close: ${error instanceof Error ? error.message : String(error)}`);
     } finally { closing.abort(new Error("Reload editor cleanup ended.")); }
     verifyAutomaticPreference();
-    if (typeof config.inspect === "function" && ["autoSwitchWaitForSessionsEnabled", "encryptedSyncClaimAllAccountsEnabled"].some(key => !config.inspect(key))) {
+    // Codex webviews need a fresh window context to reconnect their native owner.
+    if (vscode.extensions?.getExtension?.("openai.chatgpt") ||
+        (typeof config.inspect === "function" && ["autoSwitchWaitForSessionsEnabled", "encryptedSyncClaimAllAccountsEnabled"].some(key => !config.inspect(key)))) {
       await command("workbench.action.reloadWindow", deadline - Date.now());
       return;
     }

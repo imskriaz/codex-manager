@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("child_process", () => ({ spawn: mocks.spawn }));
@@ -10,9 +11,31 @@ function child() {
   mocks.spawn.mockReturnValue(process);
   return process;
 }
-afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
 describe("app-server initialization recovery", () => {
+  it("pins a relative Codex home before switching to a session's project", async () => {
+    vi.stubEnv("CODEX_HOME", "relative-codex-home");
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, path.resolve("different-project"));
+    expect(mocks.spawn.mock.calls[0]?.[2].env.CODEX_HOME).toBe(path.resolve("relative-codex-home"));
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n"); (await opening).close();
+  });
+  it("closes initialization immediately when recovery is cancelled", async () => {
+    const processChild = child(), controller = new AbortController();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd(), controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    expect(processChild.kill).toHaveBeenCalledOnce();
+  });
+  it("opts into the native goal lifecycle API", async () => {
+    const processChild = child();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    const initialize = JSON.parse(processChild.stdin.read().toString());
+    expect(initialize.params.capabilities).toEqual({ experimentalApi: true });
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    (await pending).close();
+  });
   it.each(["stdout", "stderr"] as const)("reports %s pipe failures and rejects pending work", async (pipe) => {
     const processChild = child();
     const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());

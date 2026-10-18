@@ -16,10 +16,10 @@ describe("always-online WebSocket relay handoff", () => {
   it("waits without throwing or retaining a stale relay when encrypted sync is unavailable", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((key: string, fallback?: unknown) =>
-        key === "webDashboardAlwaysOnlineEnabled" ? true : fallback
+        key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : fallback
       )
     } as unknown as vscode.WorkspaceConfiguration);
-    const server = new AlwaysOnlineServer({} as vscode.ExtensionContext);
+    const server = new AlwaysOnlineServer({} as vscode.ExtensionContext, undefined, async () => true);
     const stop = vi.spyOn(server, "stop").mockResolvedValue();
 
     await expect(server.applyConfiguration()).resolves.toBe("waiting-for-configuration");
@@ -27,11 +27,29 @@ describe("always-online WebSocket relay handoff", () => {
     expect(server.isWaitingForConfiguration()).toBe(true);
   });
 
-  it("renders the missing sync prerequisite as waiting instead of enabled", () => {
+  it("removes retired connection preferences from Settings", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
 
-    expect(settings).toContain("!props.settings.encryptedSyncEnabled || props.encryptedSyncNeedsConfiguration");
-    expect(settings).toContain("Set a password and enable Auto Sync to start.");
+    expect(settings).not.toContain('title="Keep connections online"');
+    expect(settings).not.toContain('title="Workspace connection"');
+    expect(settings).toContain('title="WS Cross System"');
+  });
+
+  it.each([false, true])("starts the relay only after local host verification (%s)", async verified => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : fallback } as never);
+    const server = new AlwaysOnlineServer({} as vscode.ExtensionContext, { getRealtimeRelayKey: async () => "key" } as never, async () => verified);
+    const stop = vi.spyOn(server, "stop").mockResolvedValue(); const start = vi.spyOn(server, "start").mockResolvedValue("started");
+    await expect(server.applyConfiguration()).resolves.toBe(verified ? "started" : "stopped");
+    expect(start).toHaveBeenCalledTimes(verified ? 1 : 0); expect(stop).toHaveBeenCalledTimes(verified ? 0 : 1);
+  });
+
+  it("does not start after disposal while the host check was pending", async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? "https://tunnel.example" : key === "webDashboardEnabled" ? true : fallback } as never);
+    let verify!: (value: boolean) => void;
+    const server = new AlwaysOnlineServer({} as vscode.ExtensionContext, { getRealtimeRelayKey: async () => "key" } as never, () => new Promise(resolve => { verify = resolve; }));
+    const stop = vi.spyOn(server, "stop").mockResolvedValue(); const start = vi.spyOn(server, "start").mockResolvedValue("started");
+    const pending = server.applyConfiguration(); server.dispose(); verify(true);
+    await expect(pending).resolves.toBe("stopped"); expect(start).not.toHaveBeenCalled(); expect(stop).toHaveBeenCalledOnce();
   });
 
   it("generates an unpredictable admin token without host details", () => {

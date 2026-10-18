@@ -41,6 +41,28 @@ async function register(directory: string) {
 }
 
 describe("SQLite persistent diagnostics", () => {
+  it("starts without waiting for old-log cleanup and cancels its background timer on close", async () => {
+    vi.useFakeTimers();
+    try {
+      const directory = await root(), log = logger(directory);
+      const cleanup = vi.spyOn(log, "pruneExpiredLogs").mockImplementation(() => new Promise(() => undefined));
+      await log.initialize(); expect(cleanup).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(30_000); expect(cleanup).toHaveBeenCalledOnce();
+      await log.close();
+    } finally { vi.useRealTimers(); }
+  });
+  it("filters expired records before background cleanup and removes them when cleanup is requested", async () => {
+    const directory = await root(), file = path.join(directory, "manager_logs.sqlite");
+    const seed = await SqliteStateStore.open(file);
+    seed.set("logs", "2026-10-01T12:00:00.000Z:old", { message: "expired" });
+    seed.set("unrelated", "keep", true); seed.close();
+    const log = logger(directory, 3, () => new Date("2026-10-18T12:00:00Z")); await log.initialize();
+    expect((await log.readExport()).records).not.toEqual(expect.arrayContaining([expect.objectContaining({ message: "expired" })]));
+    await log.pruneExpiredLogs();
+    const check = await SqliteStateStore.open(file);
+    try { expect(check.get("logs", "2026-10-01T12:00:00.000Z:old")).toBeUndefined(); expect(check.get("unrelated", "keep")).toBe(true); }
+    finally { check.close(); }
+  });
   it("applies logging preferences committed by another window",async()=>{
     const directory=await root(),store=await SqliteStateStore.open(path.join(directory,"manager.sqlite"));
     const peer=await SqliteStateStore.open(store.file);configureSqliteStateStore(store);
@@ -273,7 +295,7 @@ it("persists a validated log level, retains it across disable and restart, and s
   expect(getPersistentLogLevel()).toBe("debug");
 });
 
-it("downloads redacted retained logs even after logging is disabled and bounds export size", async () => {
+it("clears saved logs when disabled and bounds redacted exports", async () => {
   const directory = await root(); await register(directory);
   const { exportPersistentLogs, setPersistentLoggingEnabled, recordPersistentEvent } = await import("../src/utils/persistentLog");
   await expect(exportPersistentLogs()).rejects.toThrow("No saved logs");
@@ -283,7 +305,8 @@ it("downloads redacted retained logs even after logging is disabled and bounds e
   const exported = await exportPersistentLogs();
   expect(exported.filename).toMatch(/^codex-manager-logs-.*\.json$/);
   expect(exported.text).not.toContain("secret-value"); expect(exported.text).not.toContain("dev@example.com");
-  expect(JSON.parse(exported.text)).toMatchObject({ format: "codex-manager-logs", level: "info", limited: false });
+  expect(JSON.parse(exported.text)).toMatchObject({ format: "codex-manager-logs", level: "info", limited: false, records: [] });
+  await logRecordingEnabled(directory);
   let eventTime = Date.now();
   const log = logger(directory, 3, () => new Date(eventTime++));
   for (let i = 0; i < 1050; i++) { log.write("info", "test", `event-${i}`); if (i % 100 === 0) await log.flush(); }
@@ -323,5 +346,33 @@ it("finishes a download if logging is disabled while the export is reading", asy
   const download = exportPersistentLogs();
   await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
   await setPersistentLoggingEnabled(false); release();
-  expect(JSON.parse((await download).text).records.length).toBeGreaterThan(0);
+  expect(JSON.parse((await download).text).records).toEqual([]);
+});
+
+async function logRecordingEnabled(directory: string) { const log = logger(directory); await log.setRecordingEnabled(true); }
+
+it("clears System Log across active writers and rejects queued stale records while disabled", async () => {
+  const directory = await root(); await enable(directory); await register(directory);
+  const { clearPersistentLogs, exportPersistentLogs, recordPersistentEvent, setPersistentLoggingEnabled } = await import("../src/utils/persistentLog");
+  recordPersistentEvent("info", "test", "old entry");
+  const peer = logger(directory); peer.write("info", "test", "peer old entry"); await peer.flush();
+  await clearPersistentLogs();
+  expect(JSON.parse((await exportPersistentLogs()).text).records).toEqual([]);
+  recordPersistentEvent("info", "test", "new entry"); await peer.setRecordingEnabled(true);
+  expect(JSON.parse((await exportPersistentLogs()).text).records).toEqual(expect.arrayContaining([expect.objectContaining({ message: "new entry" })]));
+  await setPersistentLoggingEnabled(false); peer.write("info", "test", "stale peer entry"); await peer.flush();
+  expect(JSON.parse((await exportPersistentLogs()).text).records).toEqual([]);
+});
+
+it("keeps post-clear records written in the same millisecond and drops another writer's queued generation", async () => {
+  const directory = await root(); await enable(directory); await register(directory);
+  const { clearPersistentLogs, exportPersistentLogs } = await import("../src/utils/persistentLog");
+  const peer = logger(directory, 3, () => new Date("2026-10-18T12:00:00.000Z")); await peer.initialize();
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  (peer as unknown as { writeChain: Promise<void> }).writeChain = gate;
+  peer.write("info", "test", "queued before clear");
+  await clearPersistentLogs(); release(); await peer.flush();
+  expect(JSON.parse((await exportPersistentLogs()).text).records).toEqual([]);
+  peer.write("info", "test", "written after clear"); await peer.flush();
+  expect(JSON.parse((await exportPersistentLogs()).text).records).toEqual([expect.objectContaining({ message: "written after clear" })]);
 });

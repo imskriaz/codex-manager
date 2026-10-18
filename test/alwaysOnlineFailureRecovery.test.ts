@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), get: vi.fn(), request: vi.fn(), readFile: vi.fn() }));
-vi.mock("child_process", () => ({ spawn: mocks.spawn }));
+vi.mock("child_process", async () => ({ ...await vi.importActual<typeof import("child_process")>("child_process"), spawn: mocks.spawn }));
 vi.mock("http", () => ({ get: mocks.get, request: mocks.request }));
 vi.mock("fs/promises", async () => ({ ...await vi.importActual<typeof import("fs/promises")>("fs/promises"), readFile: mocks.readFile }));
 vi.mock("../src/utils/storageRoot", () => ({ getCodexManagerStorageRoot: () => "relay-test-storage" }));

@@ -1,8 +1,41 @@
 import { createHash } from "crypto";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { isDeepStrictEqual } from "util";
 import { hasAccountRows, readAccountIndex } from "./sqliteAccounts";
-import { isManagedStatePath, type SqliteStateStore } from "./sqliteState";
+import { isManagedStatePath, SqliteStateStore } from "./sqliteState";
 import { initializeUsageStorage, readUsageRows, readDailyUsageRows } from "./sqliteUsage";
+import { pruneSessionCache } from "./sqliteSessions";
+import { compactManagerDatabase } from "./databaseMaintenance";
+export { pruneManagerLogRows } from "./logRetention";
+
+export async function maintainManagerDatabases(store: SqliteStateStore): Promise<void> {
+  cleanupManagerStorage(store);
+  pruneManagerCaches(store);
+  await compactManagerDatabase(store.file);
+  const logs = path.join(path.dirname(store.file), "manager_logs.sqlite");
+  const info = await fs.lstat(logs).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+  if (!info?.isFile() || info.isSymbolicLink()) return;
+  const preference = store.get<{text?: string}>("files", "logging-settings.json");
+  let days = 3;
+  try {
+    const policy = JSON.parse(preference?.text ?? "{}") as { retentionDays?: unknown } | null;
+    if (!policy || typeof policy !== "object" || Array.isArray(policy)) return;
+    const value = policy.retentionDays;
+    if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 30) days = value;
+  }
+  catch { return; } // Preserve diagnostics when their saved policy cannot be read.
+  await compactManagerDatabase(logs, { days, now: new Date() });
+}
+
+/** Short SQL-only sweeps of expendable Manager state; recovery and unknown namespaces stay intact. */
+export function pruneManagerCaches(store: SqliteStateStore, now = Date.now()): void {
+  pruneSessionCache(store, now);
+  store.transaction(() => {
+    store.prepare("DELETE FROM state WHERE namespace='shared-reads' AND (CASE WHEN json_valid(value) THEN COALESCE(json_extract(value,'$.completedAt'),0) NOT BETWEEN ? AND ? ELSE 1 END)").run(now - 60_000, now + 5_000);
+    store.prepare("DELETE FROM state WHERE namespace='once-operations' AND (CASE WHEN json_valid(value) THEN json_type(value) NOT IN ('integer','real') OR json_extract(value,'$') NOT BETWEEN ? AND ? ELSE 1 END)").run(now - 10 * 60_000, now + 60_000);
+  });
+}
 
 /** Remove retired data and proven duplicate archives; unknown recovery bytes stay intact. */
 export function cleanupManagerStorage(store: SqliteStateStore): { retired: number; duplicates: number } {

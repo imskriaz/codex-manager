@@ -39,7 +39,7 @@ try {
       await page.getByRole("button", { name: "Message settings", exact: true }).click();
       await page.getByRole("combobox", { name: "Access mode", exact: true }).selectOption("read-only");
       await page.keyboard.press("Escape");
-      await composer.fill("continue");
+      await composer.fill("Continue if not completed");
       const startedAt = Date.now();
       await page.getByRole("button", { name: "Send message", exact: true }).click();
       result.sent = true;

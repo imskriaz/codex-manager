@@ -16,17 +16,49 @@ export async function browserPushRequest(path: string, body?: unknown): Promise<
         ? { headers: { "Content-Type": "application/json", "X-Codex-Dashboard": "1" }, body: JSON.stringify(body) }
         : {})
     });
-    const result = (await response.json()) as { error?: string; publicKey?: string; subscribed?: boolean; subscriptions?: number; accepted?: number; failed?: number };
+    if (response.status === 401) { await response.body?.cancel(); throw new Error("Your session expired. Sign in again."); }
+    const result = (await response.json().catch(() => { throw new Error("Notification setup did not respond correctly. Try again."); })) as { error?: string; code?: string; publicKey?: string; subscribed?: boolean; subscriptions?: number; accepted?: number; failed?: number };
     if (!response.ok)
-      throw new Error(
+      throw Object.assign(new Error(
         response.status === 401
           ? "Your session expired. Sign in again."
           : (result.error ?? "Could not update notifications. Try again.")
-      );
+      ), { code: result.code });
     return result;
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+let registration: Promise<PushSubscription> | undefined;
+
+/** Renew this browser only; a conflicting server registration is never taken over. */
+export function registerBrowserPush(worker: ServiceWorkerRegistration): Promise<PushSubscription> {
+  if (registration) return registration;
+  const work = (async () => {
+    const { publicKey } = await browserPushRequest("key");
+    if (!publicKey) throw new Error("Notification setup is unavailable. Try again.");
+    const applicationServerKey = Uint8Array.from(atob(publicKey.replace(/-/g, "+").replace(/_/g, "/")), character => character.charCodeAt(0));
+    let subscription = await notificationDeadline(worker.pushManager.getSubscription());
+    const rotate = async () => {
+      if (subscription && !(await notificationDeadline(subscription.unsubscribe())))
+        throw new Error("This browser could not refresh notifications. Try again.");
+      subscription = await notificationDeadline(worker.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey }));
+    };
+    const previousKey = subscription?.options?.applicationServerKey;
+    if (previousKey && (previousKey.byteLength !== applicationServerKey.length || new Uint8Array(previousKey).some((byte, index) => byte !== applicationServerKey[index]))) await rotate();
+    if (!subscription) await rotate();
+    try {
+      await browserPushRequest("subscribe", { subscription: subscription!.toJSON() });
+    } catch (error) {
+      if ((error as { code?: string }).code !== "push-registration-conflict") throw error;
+      await rotate();
+      await browserPushRequest("subscribe", { subscription: subscription!.toJSON() });
+    }
+    return subscription!;
+  })().finally(() => { if (registration === work) registration = undefined; });
+  registration = work;
+  return work;
 }
 
 async function notificationDeadline<T>(work: Promise<T>): Promise<T> {
@@ -81,19 +113,31 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   const revision = useRef(0);
   useEffect(() => {
     let disposed = false;
-    const initialRevision = revision.current;
-    if (supported)
-      void workerReady()
-        .then(async (worker) => {
-          const subscription = await notificationDeadline(worker.pushManager.getSubscription());
-          const subscribed = subscription ? (await browserPushRequest("status", { endpoint: subscription.endpoint })).subscribed === true : false;
-          if (!disposed && revision.current === initialRevision) {
-            setEnabled(subscribed);
-            setInitialized(true);
-            if (props.offerOnLoad && subscribed) setDismissed(true);
-          }
-        })
-        .catch(() => undefined);
+    let refreshing = false;
+    const refresh = async () => {
+      if (!supported || refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      const initialRevision = revision.current;
+      try {
+        const worker = await workerReady();
+        const subscription = await notificationDeadline(worker.pushManager.getSubscription());
+        const subscribed = !!subscription && Notification.permission === "granted" && !!(await registerBrowserPush(worker));
+        if (!disposed && revision.current === initialRevision) {
+          setEnabled(subscribed);
+          document.documentElement.dataset["pushSubscribed"] = String(subscribed);
+          if (props.offerOnLoad && subscribed) setDismissed(true);
+        }
+      } catch (error) {
+        console.debug("[codex-manager] notification registration will retry when connected", error);
+      } finally {
+        refreshing = false;
+        if (!disposed) setInitialized(true);
+      }
+    };
+    void refresh();
+    const reconnect = () => { void refresh(); };
+    window.addEventListener("online", reconnect);
+    document.addEventListener("visibilitychange", reconnect);
     const prompt = (event: Event) => setInstall(event as InstallPrompt);
     const changed = () => {
       revision.current++;
@@ -104,6 +148,8 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     window.addEventListener("codex:push-subscription-changed", changed);
     return () => {
       disposed = true;
+      window.removeEventListener("online", reconnect);
+      document.removeEventListener("visibilitychange", reconnect);
       window.removeEventListener("beforeinstallprompt", prompt);
       window.removeEventListener("codex:push-subscription-changed", changed);
     };
@@ -125,7 +171,8 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
             : "Notification permission cancelled."
         );
       const worker = await workerReady();
-      let subscription = await notificationDeadline(worker.pushManager.getSubscription());
+      if (registration) await registration.catch(() => undefined);
+      const subscription = await notificationDeadline(worker.pushManager.getSubscription());
       if (enabled && subscription) {
         await browserPushRequest("unsubscribe", { endpoint: subscription.endpoint });
         if (!(await notificationDeadline(subscription.unsubscribe())))
@@ -137,23 +184,7 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
         window.dispatchEvent(new Event("codex:push-subscription-changed"));
         setFeedback("Notifications are off.");
       } else {
-        const { publicKey } = await browserPushRequest("key");
-        if (!publicKey) throw new Error("Notification setup is unavailable. Try again.");
-        const encoded = atob(publicKey.replace(/-/g, "+").replace(/_/g, "/"));
-        const applicationServerKey = Uint8Array.from(encoded, (character) => character.charCodeAt(0));
-        let created = false;
-        if (!subscription) {
-          subscription = await notificationDeadline(
-            worker.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })
-          );
-          created = true;
-        }
-        try {
-          await browserPushRequest("subscribe", { subscription: subscription.toJSON() });
-        } catch (error) {
-          if (created) await notificationDeadline(subscription.unsubscribe()).catch(() => false);
-          throw error;
-        }
+        await registerBrowserPush(worker);
         setEnabled(true);
         document.documentElement.dataset["pushSubscribed"] = "true";
         window.dispatchEvent(new Event("codex:push-subscription-changed"));

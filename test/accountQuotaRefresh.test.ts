@@ -1143,7 +1143,8 @@ describe("refreshSingleQuota token automation state", () => {
     });
   });
 
-  it("logs when the threshold is crossed but no safe candidate exists", async () => {
+  it("logs a changed unavailable-candidate decision once without repeated threshold noise", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     vi.mocked(vscode.window.showWarningMessage).mockClear();
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {
@@ -1172,6 +1173,10 @@ describe("refreshSingleQuota token automation state", () => {
     expect(getAutoSwitchRuntimeSnapshot().dashboardNotice?.message).not.toBe(
       "No account to switch — no capable account has enough quota remaining."
     );
+    await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() });
+    expect(info.mock.calls.filter(call => String(call[0]).includes("auto switch threshold reached"))).toHaveLength(0);
+    expect(info.mock.calls.filter(call => String(call[0]).includes("automatic account switch deferred"))).toHaveLength(1);
+
   });
 
   it("refreshes a dashboard-capable candidate whose snapshot predates its session before switching", async () => {

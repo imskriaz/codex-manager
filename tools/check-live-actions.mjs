@@ -110,7 +110,7 @@ try {
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).fill("Reply exactly LIVE DESKTOP OK. Do not run tools or modify files.");
     const created = await clickAction("startCodexCliSession", () => page.getByRole("button", { name: "Send message", exact: true }).click());
     owned.add(created.payload.cliSession.id);
-    assert.ok(projects.some(project => path.resolve(project.path).toLowerCase() === path.resolve(created.payload.cliSession.projectPath).toLowerCase()), "New chat uses an open project");
+    assert.equal(path.resolve(created.payload.cliSession.projectPath).toLowerCase(), path.resolve(stale.projectPath).toLowerCase(), "New chat retains the selected session's project");
     await page.locator(".cli-session-message.is-assistant").filter({ hasText: "LIVE DESKTOP OK" }).waitFor({ timeout: 120_000 });
     await waitIdle(created.payload.cliSession.id);
   });

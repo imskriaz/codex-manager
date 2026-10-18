@@ -1,6 +1,6 @@
 import { prepareQuotaSummaryPanelForExtensionHostRestart } from "./presentation/dashboard/panel";
 import { waitWithin } from "./utils/concurrency";
-import { cleanupManagerStorage } from "./storage/storageCleanup";
+import { maintainManagerDatabases } from "./storage/storageCleanup";
 import { getSqliteStateStore } from "./storage/sqliteState";
 import { registerSessionRecording, disposeSessionRecording } from "./services/sessionRecording";
 import { onDidChangeConfiguration } from "./storage/configurationEvents";
@@ -23,7 +23,8 @@ import {
   disposeCrossWindowAccountMode
 } from "./services/windowAccountMode";
 import { registerWorkspaceTerminalMonitoring } from "./services/workspaceTools";
-import { disposeSqliteContext, initializeSqliteContext } from "./storage/sqliteContext";
+import { disposeSqliteContext, initializeSqliteContextWithRetry } from "./storage/sqliteContext";
+import { showStorageRecovery } from "./presentation/storageRecovery";
 
 let workbench: AccountsWorkbench | undefined;
 let transientNotices: vscode.Disposable | undefined;
@@ -34,9 +35,10 @@ let transientNotices: vscode.Disposable | undefined;
  * @param context - 扩展上下文
  */
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  try { context = await initializeSqliteContext(context); } catch (error) {
-    void vscode.window.showErrorMessage(`Codex Manager storage could not open. Existing data was retained: ${error instanceof Error ? error.message : String(error)}`);
-    throw error;
+  try { context = await initializeSqliteContextWithRetry(context); } catch (error) {
+    console.error("[codexManager] storage initialization failed; recovery controls remain available", error);
+    showStorageRecovery(context, error);
+    return;
   }
   registerWorkspaceTerminalMonitoring(context);
   const extensionVersion = resolveExtensionVersion(context);
@@ -80,17 +82,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   workbench = new AccountsWorkbench(context);
   registerSessionRecording(context);
   if (getSqliteStateStore()) {
-  const cleanupTimer = setTimeout(() => {
-    void runCrossWindowExclusive("background:storage-cleanup", "Storage cleanup", () => {
+  const cleanup = () => {
+    void runCrossWindowExclusive("background:storage-cleanup", "Storage cleanup", async () => {
       const store = getSqliteStateStore();
-      if (store) cleanupManagerStorage(store);
-      return Promise.resolve();
+      if (store) await maintainManagerDatabases(store);
     }, { background: true }).catch(error => {
       if (!(error instanceof CrossWindowOperationBusyError)) console.warn("[codexManager] storage cleanup postponed",error);
     });
-  }, 2_000);
+  };
+  const cleanupTimer = setTimeout(cleanup, 30_000);
+  const cleanupInterval = setInterval(cleanup, 30 * 60_000);
   cleanupTimer.unref?.();
-  context.subscriptions.push({dispose:()=>clearTimeout(cleanupTimer)});
+  cleanupInterval.unref?.();
+  context.subscriptions.push({dispose:()=>{ clearTimeout(cleanupTimer); clearInterval(cleanupInterval); }});
   }
   try {
     await initializeCodexProxyEnvironment();

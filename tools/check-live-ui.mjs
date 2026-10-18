@@ -57,7 +57,7 @@ try {
     await page.screenshot({ path: path.join(output, `dashboard-${width}.png`) });
     if (width === 390) {
       await page.locator(".dashboard-mobile-actions > summary").click();
-      await page.locator(".dashboard-mobile-actions-menu [role=menuitem]").nth(3).click();
+      await page.locator(".dashboard-mobile-actions-menu").getByRole("menuitem", { name: /Settings/ }).click();
     } else {
       await page.locator("#settingsOpenButton").click();
     }

@@ -6,11 +6,13 @@ import * as vscode from "vscode";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { configureSqliteStateStore, createSqliteMemento, SqliteStateStore } from "../src/storage/sqliteState";
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
-import { AUTO_RESUME_SESSION_IDS_KEY as queue, AUTO_RESUME_OPEN_SESSION_IDS_KEY as snapshot, closeCodexSessionsForExtensionHostRestart, persistOpenCodexSessions, persistRunningCodexSessions, registerCodexSessionAutoResumeTracking, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
+import { AUTO_RESUME_METADATA_KEY as metadata, AUTO_RESUME_SESSION_IDS_KEY as queue, AUTO_RESUME_OPEN_SESSION_IDS_KEY as snapshot, closeCodexSessionsForExtensionHostRestart, formatAutoResumeResult, persistOpenCodexSessions, persistRunningCodexSessions, registerCodexSessionAutoResumeTracking, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
 import { saveSessionStatus } from "../src/storage/sqliteSessions";
 import { disposeSessionRecording } from "../src/services/sessionRecording";
 import { removeTestDirectory } from "./testFilesystem";
 import * as sessionEditor from "../src/services/codexSessionResume";
+vi.mock("../src/services/codexSessionRecovery", () => ({ resumeCodexSessionWork: vi.fn().mockResolvedValue("idle") }));
+import { resumeCodexSessionWork } from "../src/services/codexSessionRecovery";
 
 const ids = ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","cccccccc-cccc-cccc-cccc-cccccccccccc"];
 const namespace = "workspace:auto-resume-integration";
@@ -52,11 +54,14 @@ afterEach(async()=>{
 });
 
 it("captures quota-stopped parents, survives a fresh connection, verifies native editor opens, and consumes recovery",async()=>{
+  store.set(namespace,snapshot,ids.slice(0,2));
   await persistOpenCodexSessions(context());
   expect(store.get(namespace,snapshot)).toEqual(ids.slice(0,2));
   store.close();store=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(store);
   const result=await resumePersistedCodexSessions(context());
   expect(result).toEqual({attempted:2,opened:2,failed:[]});
+  expect(resumeCodexSessionWork).toHaveBeenCalledWith(ids[0], expect.any(AbortSignal));
+  expect(resumeCodexSessionWork).toHaveBeenCalledWith(ids[1], expect.any(AbortSignal));
   expect(tabs.map(tab=>tab.input.uri.path)).toEqual(ids.slice(0,2).map(id=>`/local/${id}`));
   expect(vscode.window.tabGroups.close).toHaveBeenCalledOnce();
   expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith").map(([, uri]) => (uri as {path:string}).path)).toEqual([...ids,...ids.slice(0,2)].map(id=>`/local/${id}`));
@@ -65,6 +70,7 @@ it("captures quota-stopped parents, survives a fresh connection, verifies native
 });
 
 it("seals goal recovery before reload cleanup and restores after the open-tab snapshot is replaced", async () => {
+  store.set(namespace,snapshot,ids.slice(0,2));
   await persistOpenCodexSessions(context());
   await closeCodexSessionsForExtensionHostRestart(context());
   expect(tabs).toEqual([]);
@@ -76,10 +82,55 @@ it("seals goal recovery before reload cleanup and restores after the open-tab sn
   expect(store.get(namespace, queue)).toBeUndefined();
 });
 
-it("captures quota-interrupted open tabs even when native running inspection is offline",async()=>{
+it("persists titles and projects across restarts, uses them offline, and removes consumed metadata", async () => {
+  const read = vi.spyOn(sessionEditor, "readCodexCliSessionRecoveryMetadata").mockResolvedValue({
+    [ids[0]!]: { title: "Pending outside project", projectPath: root, updatedAt: Date.now() }
+  });
+  await persistOpenCodexSessions(context(), async () => [ids[0]!]);
+  expect(store.get<Record<string, unknown>>(namespace, metadata)?.[ids[0]!]).toMatchObject({ title: "Pending outside project", projectPath: root });
+  store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
+  read.mockClear().mockRejectedValue(new Error("offline"));
+  const failed = await resumePersistedCodexSessions(context(), async () => { throw new Error("editor offline"); });
+  expect(read).not.toHaveBeenCalled();
+  expect(formatAutoResumeResult(failed)).toContain("Pending outside project");
+  expect(store.get(namespace, metadata)).toBeDefined();
+  expect((await resumePersistedCodexSessions(context(), async () => undefined)).opened).toBe(1);
+  expect(store.get(namespace, metadata)).toBeUndefined();
+});
+
+it("cleans orphaned and invalid metadata without deleting failed recovery", async () => {
+  store.set(namespace, queue, [ids[0]]);
+  store.set(namespace, metadata, {
+    [ids[0]!]: { title: "Retry this", updatedAt: Date.now() },
+    [ids[1]!]: { title: "Orphaned", updatedAt: Date.now() },
+    invalid: { title: "Bad", updatedAt: "yesterday" }
+  });
+  await resumePersistedCodexSessions(context(), async () => { throw new Error("offline"); });
+  expect(Object.keys(store.get<Record<string, unknown>>(namespace, metadata)!)).toEqual([ids[0]]);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => false } as never);
+  await resumePersistedCodexSessions(context());
+  expect(store.get(namespace, metadata)).toBeUndefined();
+  expect(store.get(namespace, queue)).toBeUndefined();
+});
+
+it("does not put legacy ID placeholders in auto-resume notifications", async () => {
+  store.set(namespace, queue, [ids[0]]);
+  store.set(namespace, metadata, { [ids[0]!]: { title: `Codex session ${ids[0]!.slice(0, 8)}`, updatedAt: Date.now() } });
+  const result = await resumePersistedCodexSessions(context(), async () => undefined);
+  expect(formatAutoResumeResult(result)).toContain("Untitled conversation");
+  expect(formatAutoResumeResult(result)).not.toContain(ids[0]!.slice(0, 8));
+});
+
+it("retains previously recorded quota recovery when native running inspection is offline",async()=>{
+  store.set(namespace,snapshot,ids.slice(0,2));
   const running=vi.spyOn(sessionEditor,"readRunningCodexSessionIds").mockRejectedValue(new Error("native IPC offline"));
+  await expect(persistOpenCodexSessions(context())).rejects.toThrow("native IPC offline");
+  expect(store.get(namespace,snapshot)).toEqual(ids.slice(0,2));
+});
+
+it("does not add idle quota goals without a previously running record",async()=>{
   await persistOpenCodexSessions(context());
-  expect(running).not.toHaveBeenCalled();expect(store.get(namespace,snapshot)).toEqual(ids.slice(0,2));
+  expect(store.get(namespace,snapshot)).toBeUndefined();
 });
 
 it("rolls back the snapshot transfer before opening tabs when its second write fails",async()=>{
@@ -115,6 +166,7 @@ it("retains recovery when an isolated Codex home changes instead of dropping mis
 });
 
 it("refreshes open-tab recovery on a committed status update and releases its subscriptions",async()=>{
+  store.set(namespace,snapshot,ids.slice(0,2));
   const state=context();
   disposables.push(registerCodexSessionAutoResumeTracking(state));
   await vi.waitFor(()=>expect(store.get(namespace,snapshot)).toEqual(ids.slice(0,2)));

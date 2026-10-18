@@ -24,6 +24,7 @@ import {
   WorkspaceTerminalCommandError
 } from "../src/services/workspaceTools";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
+import { removeTestDirectory } from "./testFilesystem";
 
 describe("workspace tools", () => {
   it("previews DOCX and retains Mammoth CLI compatibility with the argparse security override",async()=>{
@@ -62,6 +63,38 @@ describe("workspace tools", () => {
     expect(environment.changes).toBeGreaterThanOrEqual(0);
     expect(environment.additions).toBeGreaterThanOrEqual(0);
     expect(environment.deletions).toBeGreaterThanOrEqual(0);
+  });
+  it("requires an explicit absolute project for every workspace action", async () => {
+    expect(() => resolveWorkspaceProjectPath(undefined)).toThrow("session's project folder");
+    expect(() => resolveWorkspaceProjectPath("relative-folder")).toThrow("session's project folder");
+    await expect(listWorkspaceFiles(undefined)).rejects.toThrow("session's project folder");
+    await expect(runWorkspaceTerminalCommand({ command: "echo unsafe" })).rejects.toThrow("session's project folder");
+  });
+  it.skipIf(process.platform !== "win32")("uses the same closed project for native extended Windows paths", async () => {
+    const project = await mkdtemp(join(tmpdir(), "codex-native-project-"));
+    try {
+      await writeFile(join(project, "proof.txt"), "native project");
+      const native = `\\\\?\\${project}`;
+      expect(resolveWorkspaceProjectPath(native)).toBe(project);
+      expect((await listWorkspaceFiles(native)).map(file => file.path)).toContain("proof.txt");
+      expect((await readWorkspaceFile(native, "proof.txt")).content).toBe("native project");
+    } finally { await removeTestDirectory(project); }
+  });
+  it("does not run a selected terminal in another or unknown folder", async () => {
+    const originalTerminals = vscode.window.terminals, originalCreate = vscode.window.createTerminal;
+    const executeCommand = vi.fn();
+    const terminal = { name: "Wrong project", show: vi.fn(), shellIntegration: { cwd: vscode.Uri.file(tmpdir()), executeCommand } };
+    Object.defineProperty(vscode.window, "terminals", { configurable: true, value: [terminal] });
+    Object.defineProperty(vscode.window, "createTerminal", { configurable: true, value: vi.fn() });
+    try {
+      await expect(runWorkspaceTerminalCommand({ projectPath: process.cwd(), command: "echo wrong", terminalId: terminal.name })).rejects.toThrow("does not match the session project");
+      delete (terminal.shellIntegration as { cwd?: unknown }).cwd;
+      await expect(runWorkspaceTerminalCommand({ projectPath: process.cwd(), command: "echo unknown", terminalId: terminal.name })).rejects.toThrow("could not be verified");
+      expect(executeCommand).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(vscode.window, "terminals", { configurable: true, value: originalTerminals });
+      Object.defineProperty(vscode.window, "createTerminal", { configurable: true, value: originalCreate });
+    }
   });
 
   it("compares working changes and unpushed commits against Git's upstream", async () => {
@@ -196,7 +229,7 @@ describe("workspace tools", () => {
       name: "Codex · test project",
       show: vi.fn(),
       sendText: vi.fn(),
-      shellIntegration: { executeCommand: vi.fn(() => execution) }
+      shellIntegration: { cwd: vscode.Uri.file(process.cwd()), executeCommand: vi.fn(() => execution) }
     };
     Object.defineProperty(vscode.window, "terminals", { configurable: true, value: [terminal] });
     Object.defineProperty(vscode.window, "createTerminal", { configurable: true, value: vi.fn() });
@@ -239,7 +272,7 @@ describe("workspace tools", () => {
     let close: ((terminal: unknown) => void) | undefined;
     let release: (() => void) | undefined;
     const execution = { read: async function* () { yield "partial output"; await new Promise<void>((resolve) => { release = resolve; }); } };
-    const terminal = { name: "bounded-native-test", show: vi.fn(), sendText: vi.fn(), shellIntegration: { executeCommand: () => execution } };
+    const terminal = { name: "bounded-native-test", show: vi.fn(), sendText: vi.fn(), shellIntegration: { cwd: vscode.Uri.file(process.cwd()), executeCommand: () => execution } };
     const disposed = vi.fn();
     const values = [[terminal], vi.fn(), (callback: typeof end) => { end = callback; return { dispose: disposed }; }, (callback: typeof close) => { close = callback; return { dispose: disposed }; }];
     names.forEach((name, index) => Object.defineProperty(vscode.window, name, { configurable: true, value: values[index] }));
@@ -480,7 +513,7 @@ describe("workspace tools", () => {
         .toBe("Verify workspace commit");
     } finally {
       restoreWorkspace();
-      await rm(projectPath, { recursive: true, force: true });
+      await removeTestDirectory(projectPath);
     }
   });
 

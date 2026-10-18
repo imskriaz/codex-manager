@@ -17,6 +17,7 @@ import type {
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import { waitWithin } from "../utils/concurrency";
 import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
+import { normalizeNativePath } from "../utils/nativePaths";
 
 const MAX_COMMAND_CHARS = 8_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -82,11 +83,11 @@ export class WorkspaceTerminalCommandError extends Error {
 }
 
 export function resolveWorkspaceProjectPath(projectPath: string | undefined): string {
-  const fallback = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-  const requested = path.resolve(projectPath?.trim() || fallback);
-  const allowed = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(folder.uri.fsPath));
+  const selected = normalizeNativePath(projectPath?.trim() ?? "");
+  if (!selected || !path.isAbsolute(selected)) throw new Error("Select this session's project folder before using workspace actions.");
+  const requested = path.resolve(selected);
+  const allowed = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(normalizeNativePath(folder.uri.fsPath)));
   if (
-    (allowed.length === 0 && path.relative(path.resolve(fallback), requested) === "") ||
     allowed.some((root) => path.relative(root, requested) === "" || isPathInside(root, requested))
   ) {
     return requested;
@@ -230,12 +231,14 @@ export function listWorkspaceTerminals(): DashboardWorkspaceTerminalInfo[] {
   return vscode.window.terminals.map(terminalInfo);
 }
 
-export function createWorkspaceTerminal(
+export async function createWorkspaceTerminal(
   projectPath: string | undefined,
   profile: "default" | "powershell" | "cmd" | "bash" = "default",
   name?: string
-): DashboardWorkspaceTerminalInfo {
+): Promise<DashboardWorkspaceTerminalInfo> {
   const cwd = resolveWorkspaceProjectPath(projectPath);
+  const folder = await waitWithin(fs.stat(cwd), WORKSPACE_READ_TIMEOUT_MS, "The project folder did not respond. Retry after it becomes available.");
+  if (!folder.isDirectory()) throw new Error("The selected project path is not a folder.");
   const shellPath = profile === "powershell"
     ? resolveWindowsPowerShell()
     : profile === "cmd"
@@ -275,7 +278,7 @@ export function registerWorkspaceTerminalMonitoring(context: vscode.ExtensionCon
     const command = execution.commandLine.value.trim();
     if (!command) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const cwd = execution.cwd?.fsPath ?? resolveWorkspaceProjectPath(undefined);
+    const cwd = execution.cwd?.fsPath ?? "";
     const record = {
       id, terminal, terminalId: nativeTerminalId(terminal), command, cwd, startedAt: Date.now(), output: "",
       emit: createTerminalOutputEmitter({ id, terminalId: nativeTerminalId(terminal), command, cwd }),
@@ -537,6 +540,13 @@ export async function runWorkspaceTerminalCommand(options: {
         throw new WorkspaceTerminalCommandError(result.output, result);
       }
       if ([...observedTerminalExecutions.values()].some((record) => record.terminal === terminal)) throw new Error("This terminal started another command. Wait for it to finish before retrying.");
+      if (selectedTerminal) {
+        const terminalCwd = terminal.shellIntegration?.cwd?.fsPath;
+        if (!terminalCwd || path.relative(await fs.realpath(cwd), await fs.realpath(normalizeNativePath(terminalCwd))) !== "") {
+          throw new Error("This terminal's folder does not match the session project or could not be verified. Open a new terminal for this project and retry.");
+        }
+        terminalContext.cwd = cwd;
+      }
       // Shell integration gives us the real terminal stream without replacing
       // the user's VS Code terminal. Read immediately so no output is missed.
       if (terminal.shellIntegration) {

@@ -187,9 +187,17 @@ export function resolveOAuthCopyActionOutcome(
 }
 
 export function openOAuthAuthorizationWindow(authUrl: string): boolean {
+  let popup: Window | null = null;
   try {
-    return Boolean(window.open(authUrl, "_blank", "noopener,noreferrer"));
+    const url = new URL(authUrl);
+    if ((url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) || url.username || url.password) return false;
+    popup = window.open("about:blank", "_blank");
+    if (!popup) return false;
+    popup.opener = null;
+    popup.location.replace(url.href);
+    return true;
   } catch {
+    popup?.close();
     return false;
   }
 }

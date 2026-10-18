@@ -1,5 +1,5 @@
 import { installRelayStartup, removeRelayStartup } from "../utils/relayStartup";
-import { sqliteConfiguration } from "../storage/sqliteContext";
+import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as http from "http";
@@ -24,6 +24,7 @@ type PreparedRelay = RelayConfig & {
   previousKey?: string;
   previousAdminToken?: string;
 };
+type RelayConfigurationResult = "started" | "already-running" | "stopped" | "paused" | "waiting-for-configuration";
 
 export class AlwaysOnlineServer implements vscode.Disposable {
   private child: ChildProcess | undefined;
@@ -31,23 +32,38 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private sessionActive = false;
   private preparedRelay: PreparedRelay | undefined;
   private waitingForConfiguration = false;
+  private verifiedConfiguration: string | undefined;
+  private applying: Promise<RelayConfigurationResult> | undefined;
+  private disposed = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
-    private readonly encryptedSync?: EncryptedSyncManager
+    private readonly encryptedSync?: EncryptedSyncManager,
+    private readonly isConfiguredHostLocal: () => Promise<boolean> = () => Promise.resolve(false)
   ) {}
 
-  async applyConfiguration(): Promise<
-    "started" | "already-running" | "stopped" | "paused" | "waiting-for-configuration"
-  > {
-    const enabled = sqliteConfiguration(vscode.workspace.getConfiguration("codexManager"))
-      .get<boolean>("webDashboardAlwaysOnlineEnabled", false);
+  applyConfiguration(): Promise<RelayConfigurationResult> {
+    if (this.disposed) return Promise.resolve("stopped");
+    if (this.applying) return this.applying;
+    const task = this.applyConfigurationInternal().finally(() => { if (this.applying === task) this.applying = undefined; });
+    this.applying = task;
+    return task;
+  }
+
+  private async applyConfigurationInternal(): Promise<RelayConfigurationResult> {
+    const configuration = this.configurationKey();
+    let enabled = false;
+    try { enabled = !!configuration && await this.isConfiguredHostLocal(); }
+    catch (error) { console.debug("[codexManager] tunnel host check deferred", error); }
+    if (this.disposed || configuration !== this.configurationKey()) { this.verifiedConfiguration = undefined; await this.stop(); return "stopped"; }
+    this.verifiedConfiguration = enabled ? configuration : undefined;
     if (!enabled) {
       this.waitingForConfiguration = false;
       await this.stop();
       return "stopped";
     }
     const hostKey = await this.encryptedSync?.getRealtimeRelayKey();
+    if (this.disposed || configuration !== this.configurationKey()) { this.verifiedConfiguration = undefined; await this.stop(); return "stopped"; }
     if (!hostKey) {
       // This is a prerequisite state, not a relay failure. In particular, an
       // old prepared relay must not be launched from dispose() after the user
@@ -64,6 +80,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
       // does not await Disposable.dispose(), so beginning this work from
       // dispose() is too late and can leave the shared dashboard port empty.
       await this.prepareRelay(hostKey);
+      if (this.disposed || configuration !== this.configurationKey()) { await this.stop(); return "stopped"; }
       return "paused";
     }
     return this.start(hostKey);
@@ -76,9 +93,6 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   /** Release the shared port while the VS Code dashboard is active. */
   async prepareForVscodeSession(): Promise<void> {
     this.sessionActive = true;
-    const enabled = sqliteConfiguration(vscode.workspace.getConfiguration("codexManager"))
-      .get<boolean>("webDashboardAlwaysOnlineEnabled", false);
-    if (!enabled) return;
     try {
       const storage = getCodexManagerStorageRoot();
       const configPath = path.join(storage, CONFIG_FILE);
@@ -94,6 +108,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
 
   async start(hostKey?: string): Promise<"started" | "already-running"> {
     const prepared = await this.prepareRelay(hostKey);
+    if (this.disposed) { await this.stop(); throw new Error("Relay preparation stopped because this window closed."); }
     const existingPid = await readLivePid(prepared.pidPath);
     if (existingPid) {
       // A changed encrypted-sync passphrase changes the relay key; restart so
@@ -110,6 +125,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     if (await relayIsHealthy(prepared.port)) {
       return "already-running";
     }
+    if (this.disposed) { await this.stop(); throw new Error("Relay preparation stopped because this window closed."); }
     this.spawnPreparedRelay(prepared);
     const ready = await waitForRelay(prepared.port);
     if (!ready) {
@@ -147,16 +163,24 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.sessionActive = false;
     if (
       this.preparedRelay &&
-      sqliteConfiguration(vscode.workspace.getConfiguration("codexManager")).get<boolean>("webDashboardAlwaysOnlineEnabled", false)
+      this.verifiedConfiguration !== undefined && this.verifiedConfiguration === this.configurationKey()
     ) {
       // Disposable.dispose() is synchronous. Spawn the already-prepared relay
       // before the extension host exits; it retries the bind until the Web
       // Dashboard releases the shared port.
       this.spawnPreparedRelay(this.preparedRelay);
     }
+  }
+
+  private configurationKey(): string | undefined {
+    const config = getCodexManagerConfiguration();
+    const domain = config.get<string>("cloudflaredDomain", "").trim();
+    return config.get<boolean>("webDashboardEnabled", false) && config.get<boolean>("webSocketServerEnabled", true) && domain ? domain : undefined;
   }
 
   private async prepareRelay(preparedHostKey?: string): Promise<PreparedRelay> {

@@ -39,7 +39,8 @@ import { readSubAgentMetadata } from "../../src/domain/sessionSource";
 import { cliSessionTargetKey } from "./cliSessionRoute";
 import { isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import { useModalAccessibility } from "./primitives";
-import { getSensitiveDisplayValue, isOpenWorkspaceProject } from "./helpers";
+import { getSensitiveDisplayValue } from "./helpers";
+import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, cliComposerDraftKey, resolveCliComposerSettings, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
 
@@ -145,6 +146,8 @@ export type CliSessionsPageProps = {
   sending: boolean;
   stopping: boolean;
   mutating: boolean;
+  goalUpdating?: boolean;
+  onGoalStatus?: (status: "active" | "paused") => void;
   error?: string;
   messagesError?: string;
   feedback?: CliSessionFeedback;
@@ -492,7 +495,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const projects = props.composerConfig?.projects ?? [];
   const composerProjects = useMemo(() => {
     const known = new Set(projects.map((project) => canonicalWebPath(project.path)));
-    const extraPaths = [...props.sessions.filter(session => !session.remote).map(session => session.projectPath), ...(props.selectedSession && !props.selectedSession.remote ? [props.selectedSession.projectPath] : [])]
+    const extraPaths = [...props.sessions.filter(session => !session.remote).map(session => session.projectPath), ...(props.selectedSession ? [props.selectedSession.projectPath] : [])]
       .filter((projectPath): projectPath is string => typeof projectPath === "string" && projectPath.length > 0 && !known.has(canonicalWebPath(projectPath)));
     const uniqueExtraPaths = extraPaths.filter((projectPath, index, all) => all.findIndex((candidate) => canonicalWebPath(candidate) === canonicalWebPath(projectPath)) === index);
     return [...projects, ...uniqueExtraPaths.map((projectPath) => ({
@@ -514,15 +517,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const goal = useMemo(() => props.selectedSession?.goal !== undefined ? normalizeCodexSessionGoal(props.selectedSession.goal) : getSessionGoal(props.messages), [props.messages, props.selectedSession?.goal]);
   const turnChanges = useMemo(() => summarizeTurnChanges(props.messages, props.liveState?.turnId), [props.messages, props.liveState?.turnId]);
   const showWorking = currentTurnRunning && !hasInProgressActivity;
-  const selectedProjectPath = props.selectedSession?.projectPath ?? newChatProject ?? projectPath;
-  const openProjectPaths = props.composerConfig?.projects ?? [];
-  const toolProjectPath = props.selectedSession?.remote || !selectedProjectPath || openProjectPaths.length === 0 || isOpenWorkspaceProject(selectedProjectPath, openProjectPaths)
-    ? selectedProjectPath
-    : openProjectPaths[0]?.path;
+  const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
+  const toolProjectPath = selectedProjectPath;
   const startNewChat = (nextProject?: string): void => {
     if (mobileLayout) setRailCollapsed(true);
+    if (props.selectedSession) props.onPeerChange?.(props.selectedSession.deviceId ?? localPeerId ?? "local");
     props.onBackToList();
-    const selected = projects.find((project) => nextProject && canonicalWebPath(project.path) === canonicalWebPath(nextProject))?.path ?? projects[0]?.path ?? "";
+    const preferred = nextProject ?? props.selectedSession?.projectPath ?? newChatProject ?? projectPath;
+    const selected = composerProjects.find((project) => preferred && canonicalWebPath(project.path) === canonicalWebPath(preferred))?.path ?? preferred ?? projects[0]?.path ?? "";
     setNewChatProject(selected);
     setProjectPath(selected);
   };
@@ -922,7 +924,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {turnChanges ? <div class="cli-turn-change-bar" role="group" aria-label="Turn changes"><span>{turnChanges.files} file{turnChanges.files === 1 ? "" : "s"} changed <b class="is-added">+{turnChanges.additions}</b> <b class="is-removed">−{turnChanges.deletions}</b></span><button type="button" onClick={() => openContextTab("reviews")}>View changes</button></div> : null}
               {localFeedback ? <div class={`cli-workspace-feedback is-${localFeedback.level}`} role={localFeedback.level === "error" ? "alert" : "status"}><span>{localFeedback.message}</span><button type="button" aria-label="Dismiss message" onClick={() => setLocalFeedback(undefined)}>×</button></div> : null}
               {draftStorageWarning}
-              {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span aria-hidden="true">◎</span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small>{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small><ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
+              {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span aria-hidden="true">◎</span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small>{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : props.selectedSession.status === "unknown" ? (
@@ -1218,7 +1220,7 @@ function ImageLightbox({ image, onClose }: { image: { src: string; alt?: string 
   const [failed, setFailed] = useState(false);
   const alt = image.alt || "Image preview";
   return createPortal(
-      <div ref={accessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onKeyDown={accessibility.onKeyDown} onClick={(event) => { if (event.currentTarget === event.target) onClose(); }}>
+      <div ref={accessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={alt} tabIndex={-1} onKeyDown={accessibility.onKeyDown} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
         <div class="cli-image-lightbox-toolbar"><strong>{alt}</strong><span><a href={image.src} target="_blank" rel="noopener noreferrer">Open original</a><button type="button" aria-label="Close image preview" onClick={onClose}><CloseIcon /></button></span></div>
         {failed ? <p role="alert">Image unavailable. Open the original or close this preview.</p> : <img src={image.src} alt={alt} onError={() => setFailed(true)} />}
       </div>,
@@ -1818,7 +1820,7 @@ function WorkspaceFilesView(props: {
     {fileMenu ? createPortal(<div class="cli-file-context-menu" role="menu" style={{ left: `${Math.min(fileMenu.x, Math.max(8, window.innerWidth - 190))}px`, top: `${Math.min(fileMenu.y, Math.max(8, window.innerHeight - 150))}px` }} onClick={(event) => event.stopPropagation()}><strong title={fileMenu.entry.path}>{fileMenu.entry.name}</strong>{fileMenu.entry.type === "file" ? <button type="button" role="menuitem" onClick={() => { setFileMenu(undefined); openFile(fileMenu.entry.path); }}><FileIcon /> Open</button> : <button type="button" role="menuitem" onClick={() => { setFileMenu(undefined); setCollapsed((current) => ({ ...current, [fileMenu.entry.path]: !current[fileMenu.entry.path] })); }}><EmptyFolderIcon /> Expand / collapse</button>}<button type="button" role="menuitem" onClick={() => { const selected = fileMenu.entry.path; setFileMenu(undefined); void navigator.clipboard.writeText(selected).then(() => props.onFeedback({ level: "info", message: "File path copied." }), () => props.onFeedback({ level: "error", message: "File path could not be copied." })); }}><LinkIcon /> Copy path</button>{fileMenu.entry.type === "file" ? <button type="button" role="menuitem" class="is-danger" onClick={() => { setDeleteTarget(fileMenu.entry); setFileMenu(undefined); }}><TrashIcon /> Delete</button> : null}</div>, document.body) : null}
     {deleteTarget ? <DeleteConfirmation compact title={deleteTarget.name} onCancel={() => setDeleteTarget(undefined)} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDeleteFile(target.path); if (target.path === currentPath) props.onClearFile(); }} /> : null}
     {currentPath ? <div class="cli-file-editor">{fileReady && props.file ? <><header><span><strong>{props.file.path}</strong><small>{dirty ? "Modified" : `${props.file.kind === "text" ? props.file.language : props.file.mimeType} · ${formatFileSize(props.file.size)}`}</small></span><span class="cli-file-actions">{props.file.language === "markdown" ? <button type="button" onClick={() => setDocumentModes((current) => ({ ...current, [props.file!.path]: markdownPreview ? "edit" : "preview" }))}>{markdownPreview ? "Edit" : "Preview"}</button> : null}{props.file.kind === "text" && !markdownPreview ? <button type="button" disabled={!canCut || props.fileLoading || props.saving} onClick={() => void cutSelectionRef.current?.()} title="Cut selected code to the clipboard">Cut</button> : null}{props.file.kind === "text" ? <button type="button" disabled={!dirty || props.saving} onClick={() => props.onSave(props.file!.path, draft)}>{props.saving ? "Saving…" : "Save"}</button> : null}</span></header>{props.file.kind === "image" && props.file.dataUrl ? <figure class="cli-file-image-preview"><button type="button" aria-label={`Preview ${props.file.path}`} onClick={() => setImageOpen(true)}><img src={props.file.dataUrl} alt={props.file.path} /></button><figcaption>{props.file.mimeType} · {formatFileSize(props.file.size)}</figcaption></figure> : props.file.kind === "audio" && props.file.dataUrl ? <div class="cli-file-media-preview"><FileIcon /><audio controls preload="metadata" src={props.file.dataUrl}>Audio preview is not supported by this browser.</audio><small>{props.file.mimeType} · {formatFileSize(props.file.size)}</small></div> : props.file.kind === "video" && props.file.dataUrl ? <div class="cli-file-media-preview is-video"><FileIcon /><video controls preload="metadata" src={props.file.dataUrl}>Video preview is not supported by this browser.</video><small>{props.file.mimeType} · {formatFileSize(props.file.size)}</small></div> : props.file.kind === "pdf" && props.file.dataUrl ? <iframe class="cli-file-pdf-preview" title={`Preview ${props.file.path}`} src={props.file.dataUrl} /> : props.file.kind === "document" ? <iframe class="cli-file-document-preview" title={`Preview ${props.file.path}`} sandbox="" srcDoc={`<!doctype html><meta charset="utf-8"><style>body{max-width:760px;margin:0 auto;padding:32px;color:#24292f;background:#fff;font:15px/1.65 Georgia,serif}img{max-width:100%;height:auto}table{border-collapse:collapse}td,th{padding:6px;border:1px solid #d0d7de}</style>${props.file.content}`} /> : markdownPreview ? <MarkdownPreview content={draft} /> : <WorkspaceCodeEditor path={props.file.path} language={props.file.language} value={draft} disabled={props.fileLoading || props.saving} onChange={(value) => setDrafts((current) => ({ ...current, [props.file!.path]: value }))} onSave={() => { if (dirty && !props.saving) props.onSave(props.file!.path, draft); }} onCutReady={(cut) => { cutSelectionRef.current = cut; setCanCut(Boolean(cut)); }} onSelectionChange={setCanCut} />}</> : <div class="cli-context-empty" role="status"><FileIcon /><span>{props.fileLoading ? "Opening file…" : "File could not be loaded."}</span>{!props.fileLoading ? <button type="button" onClick={() => props.onOpenFile(currentPath)}>Retry</button> : null}</div>}</div> : null}
-  </div>{imageOpen && props.file?.kind === "image" && props.file.dataUrl ? <div ref={imageAccessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={`Preview ${props.file.path}`} tabIndex={-1} onKeyDown={imageAccessibility.onKeyDown} onClick={(event) => { if (event.currentTarget === event.target) setImageOpen(false); }}><div class="cli-image-lightbox-toolbar"><strong>{props.file.path}</strong><button type="button" aria-label="Close image preview" onClick={() => setImageOpen(false)}><CloseIcon /></button></div><img src={props.file.dataUrl} alt={props.file.path} /></div> : null}</>;
+  </div>{imageOpen && props.file?.kind === "image" && props.file.dataUrl ? <div ref={imageAccessibility.modalRef} class="cli-image-lightbox" role="dialog" aria-modal="true" aria-label={`Preview ${props.file.path}`} tabIndex={-1} onKeyDown={imageAccessibility.onKeyDown} onPointerDown={imageAccessibility.onBackdropPointerDown} onMouseDown={imageAccessibility.onBackdropMouseDown} onClick={imageAccessibility.onBackdropClick}><div class="cli-image-lightbox-toolbar"><strong>{props.file.path}</strong><button type="button" aria-label="Close image preview" onClick={() => setImageOpen(false)}><CloseIcon /></button></div><img src={props.file.dataUrl} alt={props.file.path} /></div> : null}</>;
 }
 
 function WorkspaceCodeEditor(props: { path: string; language: string; value: string; disabled: boolean; onChange: (value: string) => void; onSave: () => void; onCutReady?: (cut: (() => Promise<boolean>) | undefined) => void; onSelectionChange?: (canCut: boolean) => void }) {
@@ -2140,7 +2142,7 @@ function SessionShareModal(props: { title: string; sessionKey: string; messages:
     try { await navigator.clipboard.writeText(url); setCopied(true); props.onFeedback({ level: "info", message: "Shared conversation link copied." }); }
     catch { props.onFeedback({ level: "error", message: "Session link could not be copied. Select it and copy manually." }); }
   };
-  return <div ref={accessibility.modalRef} onKeyDown={accessibility.onKeyDown} class="cli-share-overlay" role="presentation" onMouseDown={(event) => { if (!busy && event.currentTarget === event.target) props.onClose(); }}><section class="cli-share-modal" role="dialog" aria-modal="true" aria-labelledby="cli-share-title"><header><span><ShareIcon /><strong id="cli-share-title">Share session</strong></span><IconButton label="Close share dialog" disabled={busy} onClick={props.onClose}><CloseIcon /></IconButton></header><p>Anyone with the token link can read a snapshot of <strong>{props.title}</strong> without signing in. Only conversation messages are included. Review their contents before sharing.</p>{browser ? <><button type="button" class="cli-secondary-button" disabled={busy} onClick={() => void request("create")}>{busy ? "Please wait…" : url ? "Create replacement link" : "Create read-only link"}</button><button type="button" class="cli-secondary-button" disabled={busy} onClick={() => void request("revoke")}>Revoke shared link</button>{url && <div class="cli-share-link-row"><input value={url} readOnly aria-label="Session link" onFocus={(event) => event.currentTarget.select()} /><button type="button" onClick={() => void copy()}><CopyIcon /> {copied ? "Copied" : "Copy"}</button></div>}</> : <p>Open this conversation in the browser dashboard to create a public link using its reachable address.</p>}{feedback && <p role="status">{feedback}</p>}</section></div>;
+  return <div ref={accessibility.modalRef} onKeyDown={accessibility.onKeyDown} class="cli-share-overlay" role="presentation" onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}><section class="cli-share-modal" role="dialog" aria-modal="true" aria-labelledby="cli-share-title"><header><span><ShareIcon /><strong id="cli-share-title">Share session</strong></span><IconButton label="Close share dialog" disabled={busy} onClick={props.onClose}><CloseIcon /></IconButton></header><p>Anyone with the token link can read a snapshot of <strong>{props.title}</strong> without signing in. Only conversation messages are included. Review their contents before sharing.</p>{browser ? <><button type="button" class="cli-secondary-button" disabled={busy} onClick={() => void request("create")}>{busy ? "Please wait…" : url ? "Create replacement link" : "Create read-only link"}</button><button type="button" class="cli-secondary-button" disabled={busy} onClick={() => void request("revoke")}>Revoke shared link</button>{url && <div class="cli-share-link-row"><input value={url} readOnly aria-label="Session link" onFocus={(event) => event.currentTarget.select()} /><button type="button" onClick={() => void copy()}><CopyIcon /> {copied ? "Copied" : "Copy"}</button></div>}</> : <p>Open this conversation in the browser dashboard to create a public link using its reachable address.</p>}{feedback && <p role="status">{feedback}</p>}</section></div>;
 }
 
 function WorkingMessage() {
@@ -2179,7 +2181,7 @@ function activityMeta(message: DashboardCliSessionMessage): string {
 function DeleteConfirmation(props: { title: string; compact?: boolean; onCancel: () => void; onDelete: () => void }) {
   const accessibility = useModalAccessibility(true, props.onCancel);
   return createPortal(
-    <div class="cli-delete-overlay" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) props.onCancel(); }}>
+    <div class="cli-delete-overlay" role="presentation" onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
       <section ref={accessibility.modalRef} class="cli-delete-confirm" role="alertdialog" aria-modal="true" aria-label={`Delete ${props.title} permanently`} tabIndex={-1} onKeyDown={accessibility.onKeyDown}>
         <div class="cli-delete-confirm-copy"><TrashIcon /><span><strong>Delete permanently?</strong> {props.title} cannot be recovered.</span></div>
         <div class="cli-delete-confirm-actions"><button type="button" class="cli-secondary-button" onClick={props.onCancel}>Cancel</button><button type="button" class="cli-danger-button" onClick={props.onDelete}>Delete</button></div>
@@ -2238,7 +2240,7 @@ function workspaceRelativePath(filePath: string, projectPath: string | undefined
   return filePath.replace(/\\/g, "/").replace(/^\/+/, "");
 }
 function canonicalWebPath(value: string): string {
-  return value.trim().replace(/^\\\\\?\\/, "").replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
+  return normalizeNativePath(value.trim()).replace(/\\/g, "/").replace(/\/+$/, "").toLocaleLowerCase();
 }
 function clamp(value: number, minimum: number, maximum = Number.POSITIVE_INFINITY): number { return Math.min(maximum, Math.max(minimum, value)); }
 function loadWorkspaceLayout(): WorkspaceLayout {

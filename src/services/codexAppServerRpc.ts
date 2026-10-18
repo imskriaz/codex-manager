@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { StringDecoder } from "node:string_decoder";
+import * as path from "node:path";
+import { normalizeNativePath } from "../utils/nativePaths";
 
 export type AppServerExecutable = { command: string; prefixArgs: string[]; shell?: boolean };
 export class CodexAppServerTurnInterruptedError extends Error {
@@ -38,28 +40,35 @@ export class CodexAppServerRpc {
     child.on("close", (code) => this.fail(new Error(`Codex app-server exited with code ${code ?? "unknown"}.`)));
   }
 
-  static async open(executable: AppServerExecutable, cwd: string): Promise<CodexAppServerRpc> {
+  static async open(executable: AppServerExecutable, cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
+    signal?.throwIfAborted();
     const args = ["app-server", "--stdio"];
+    const configuredHome = process.env["CODEX_HOME"]?.trim().replace(/^['"]|['"]$/g, "");
     const child = spawn(executable.command, [...executable.prefixArgs, ...args], {
       cwd,
-      env: { ...process.env, ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
+      env: { ...process.env, ...(configuredHome ? { CODEX_HOME: path.resolve(normalizeNativePath(configuredHome)) } : {}), ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
       windowsHide: true,
       shell: executable.shell,
       stdio: ["pipe", "pipe", "pipe"]
     });
     const client = new CodexAppServerRpc(child);
+    const abort = () => client.close();
+    signal?.addEventListener("abort", abort, { once: true });
     child.stderr.on("data", () => undefined);
     try {
       child.stdout.on("data", (chunk: Buffer) => client.receiveChunk(chunk));
       await client.request("initialize", {
-        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.3.5" },
-        capabilities: null
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.4.1" },
+        capabilities: { experimentalApi: true }
       }, 30_000);
+      signal?.throwIfAborted();
       client.send({ method: "initialized", params: {} });
       return client;
     } catch (error) {
       client.close();
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
     }
   }
 

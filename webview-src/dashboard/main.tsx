@@ -1,3 +1,4 @@
+import { SystemLogConsole } from "./systemLogConsole";
 import { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { render } from "preact";
 import { BrowserNotifications } from "./browserNotifications";
@@ -25,7 +26,7 @@ import type {
 } from "../../src/domain/dashboard/types";
 import { createAutoQueuePolicy, type AutoQueuePolicy } from "../../src/domain/autoQueuePolicy";
 import { BatchSelectionBar, OverviewSection, RecoveryPanel } from "./components";
-import { postMessageToHost } from "./host";
+import { isAutomaticRequest, postMessageToHost } from "./host";
 import {
   compareDashboardAutoQueueAccounts,
   compareDashboardQuotaBalance,
@@ -38,7 +39,6 @@ import {
 import {
   countAccountEnablement,
   getSensitiveDisplayValue,
-  isOpenWorkspaceProject,
   isAccountAttention,
   isAccountClaimedByAnotherDevice,
   normalizeThresholds,
@@ -72,7 +72,7 @@ import { createDashboardToastController, scheduleDashboardToastDismiss, type Das
 import { BrowserActionModal, type BrowserActionRequest } from "./browserActionModal";
 import { OnboardingModal, type OnboardingStep } from "./onboardingModal";
 import { DonationDetails } from "./donationDetails";
-import { ModalShell } from "./primitives";
+import { ModalShell, useModalAccessibility } from "./primitives";
 import { onboardingFailureMessage } from "./onboardingFeedback";
 import { classifyCliSessionListResult } from "./cliSessionListResult";
 import { formatSessionReadError } from "./actionFeedback";
@@ -368,8 +368,9 @@ function App() {
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const logDownloadRequestRef = useRef<string>();
   const logConsoleRequestRef = useRef<string>();
+  const browserDownloadsRef = useRef(new Set<string>());
   const [logConsoleOpen, setLogConsoleOpen] = useState(false);
-  const [logConsoleText, setLogConsoleText] = useState("");
+  const [logConsoleRecords, setLogConsoleRecords] = useState<unknown[]>([]);
   const [logConsoleError, setLogConsoleError] = useState<string>();
   const [logConsoleLimited, setLogConsoleLimited] = useState(false);
 
@@ -482,7 +483,7 @@ function App() {
   }, [isBrowserDashboard, snapshot]);
   const refreshLogConsole = useCallback(() => {
     if (logConsoleRequestRef.current) return;
-    logConsoleRequestRef.current = sendAction("viewLogs");
+    logConsoleRequestRef.current = sendAction("viewLogs", undefined, { automatic: true });
   }, [sendAction]);
   useEffect(() => {
     if (!logConsoleOpen) return;
@@ -490,22 +491,30 @@ function App() {
     const timer = setInterval(refreshLogConsole, 2_000);
     return () => { clearInterval(timer); logConsoleRequestRef.current = undefined; };
   }, [logConsoleOpen, refreshLogConsole]);
+  useEffect(() => {
+    setLogConsoleRecords([]); setLogConsoleError(undefined); setLogConsoleLimited(false);
+    logConsoleRequestRef.current = undefined;
+  }, [selectedPeerId, snapshot?.settings.persistentLoggingEnabled]);
 
   const lastCliListRequestAtRef = useRef(0);
   const lastCliRealtimeRevisionRef = useRef(0);
   const lastCliMessageRequestRef = useRef<{ target: CliSessionTarget; at: number }>();
   const cliSessionsRef = useRef(cliSessions);
   cliSessionsRef.current = cliSessions;
+  const connectedPeers = mergeDashboardPeers(snapshot?.connectedPeers ?? [], cliSessions);
+  const pcOptions = connectedPeers.length > 0 ? connectedPeers : [{ id: "local", name: "This PC", sessionCount: 0, connected: true, local: true }];
+  const selectedPeer = pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
+  const workspaceTargetDeviceId = selectedCliSession ? selectedCliSession.deviceId : selectedPeer?.local ? undefined : selectedPeer?.id;
   const requestSessionAction = (action: DashboardActionName, session: CliSessionTarget, payload?: DashboardActionPayload): void => {
     const requestId = sendAction(action, undefined, { ...payload, sessionId: session.id, targetDeviceId: session.deviceId });
     if (requestId) sessionActionRequests.current.set(requestId, session);
   };
   const requestCliSessions = useCallback(
-    (force = false): string | undefined => {
+    (force = false, userInitiated = false): string | undefined => {
       const now = Date.now();
       if (!force && now - lastCliListRequestAtRef.current < 2_000) return;
       lastCliListRequestAtRef.current = now;
-      return sendAction("listCodexCliSessions", undefined, { automatic: true, targetDeviceId: undefined });
+      return sendAction("listCodexCliSessions", undefined, { automatic: !userInitiated, targetDeviceId: undefined });
     },
     [sendAction]
   );
@@ -527,14 +536,14 @@ function App() {
     [sendAction]
   );
   const requestWorkspaceEnvironment = useCallback(
-    (projectPath?: string, includeBranchDiff?: boolean): void => {
-      sendAction("getWorkspaceEnvironment", undefined, { projectPath, includeBranchDiff, targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
+    (projectPath?: string, includeBranchDiff?: boolean, automatic = false): void => {
+      sendAction("getWorkspaceEnvironment", undefined, { sessionId: selectedCliSession?.id, projectPath: projectPath ?? selectedCliSession?.projectPath, includeBranchDiff, automatic, targetDeviceId: workspaceTargetDeviceId });
     },
-    [sendAction, selectedPeerId]
+    [sendAction, workspaceTargetDeviceId, selectedCliSession?.id, selectedCliSession?.projectPath]
   );
   const requestWorkspaceTerminals = useCallback((): void => {
-    sendAction("listWorkspaceTerminals", undefined, { targetDeviceId: selectedPeerId === "local" ? undefined : selectedPeerId });
-  }, [sendAction, selectedPeerId]);
+    sendAction("listWorkspaceTerminals", undefined, { targetDeviceId: workspaceTargetDeviceId });
+  }, [sendAction, workspaceTargetDeviceId]);
   const lastAutomaticWorkspaceLoadRef = useRef<string>();
   const modals = useDashboardModals({
     dispatch,
@@ -709,21 +718,28 @@ function App() {
           try {
             const parsed = JSON.parse(message.payload.logDownload.text) as { records?: unknown[]; limited?: boolean };
             if (!Array.isArray(parsed.records)) throw new Error("Missing log records");
-            setLogConsoleText([...parsed.records].reverse().map(record => JSON.stringify(record)).join("\n") || "No saved logs yet.");
+            setLogConsoleRecords(parsed.records);
             setLogConsoleLimited(parsed.limited === true);
             setLogConsoleError(undefined);
           } catch { setLogConsoleError("The log response was unreadable. Retry refresh."); }
         } else setLogConsoleError(message.error ?? "No logs were returned. Retry refresh.");
       }
+      if (message.type === "dashboard:action-result" && message.action === "clearLogs") {
+        if (message.status === "completed") { logConsoleRequestRef.current = undefined; setLogConsoleRecords([]); setLogConsoleError(undefined); refreshLogConsole(); }
+        else setLogConsoleError(message.error ?? "System log could not be cleared. Retry when storage is available.");
+      }
+      if (message.type === "dashboard:action-result" && message.action === "downloadJsonFile" && message.status === "completed" && message.payload?.fileDownload && isBrowserDashboard) {
+        if (browserDownloadsRef.current.has(message.requestId)) return;
+        browserDownloadsRef.current.add(message.requestId);
+        if (browserDownloadsRef.current.size > 64) browserDownloadsRef.current.delete(browserDownloadsRef.current.values().next().value!);
+        try { downloadInBrowser(message.payload.fileDownload); }
+        catch { showNotice({ level: "error", message: "Download could not start. Retry in this browser." }); }
+      }
       if (message.type === "dashboard:action-result" && message.action === "downloadLogs" && message.requestId === logDownloadRequestRef.current) {
         logDownloadRequestRef.current = undefined;
         if (message.status === "completed" && message.payload?.logDownload) {
           try {
-            const { filename, text } = message.payload.logDownload;
-            const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
-            const link = document.createElement("a");
-            link.href = url; link.download = filename; link.click();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            downloadInBrowser(message.payload.logDownload);
           } catch {
             showNotice({ level: "error", message: "Log download could not start. Retry in this browser." });
           }
@@ -1007,7 +1023,7 @@ function App() {
               message: message.payload?.notice?.message ?? "Environment action completed."
             });
           }
-        } else if (message.status === "failed") {
+        } else if (message.status === "failed" && !isAutomaticRequest(message.requestId)) {
           showCliSessionFeedback({
             key: Date.now(),
             level: "error",
@@ -1028,7 +1044,7 @@ function App() {
               ? (message.payload?.notice?.message ?? "Terminal command completed.")
               : (message.error ?? "Terminal command failed.")
         });
-        requestWorkspaceEnvironment(selectedCliSession?.projectPath);
+        requestWorkspaceEnvironment(selectedCliSession?.projectPath, undefined, true);
         requestWorkspaceTerminals();
       }
       if (message.type === "dashboard:terminal-output") {
@@ -1096,7 +1112,7 @@ function App() {
             level: "info",
             message: message.payload?.notice?.message ?? "File deleted."
           });
-          requestWorkspaceEnvironment(selectedCliSession?.projectPath);
+          requestWorkspaceEnvironment(selectedCliSession?.projectPath, undefined, true);
         } else
           showCliSessionFeedback({
             key: Date.now(),
@@ -1117,7 +1133,7 @@ function App() {
               level: "info",
               message: message.payload.notice?.message ?? "File saved."
             });
-            requestWorkspaceEnvironment(selectedCliSession?.projectPath);
+            requestWorkspaceEnvironment(selectedCliSession?.projectPath, undefined, true);
           }
         } else if (message.status === "failed") {
           showCliSessionFeedback({
@@ -1142,6 +1158,7 @@ function App() {
         [
           "openNewCodexWebview",
           "resumeCodexSessions",
+          "setCodexSessionGoalStatus",
           "openCodexCliSession",
           "renameCodexCliSession",
           "forkCodexCliSession",
@@ -1175,7 +1192,7 @@ function App() {
             return updated ? [updated, ...current.filter((session) => !sameCliSessionTarget(session, updated))] : current;
           });
         }
-        if (applyToCurrentChat && message.status === "completed" && message.action === "renameCodexCliSession" && message.payload?.cliSession)
+        if (applyToCurrentChat && message.status === "completed" && ["renameCodexCliSession", "setCodexSessionGoalStatus"].includes(message.action) && message.payload?.cliSession)
           setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current));
         if (
           isBrowserDashboard &&
@@ -1226,20 +1243,18 @@ function App() {
   }, [viewingBrowserWorkspace, realtimeConnected, requestWorkspaceTerminals]);
   useEffect(() => {
     if (!viewingBrowserWorkspace) return;
-    const projectPath = selectedCliSession?.projectPath ?? cliComposerConfig?.projects?.[0]?.path;
+    const projectPath = selectedCliSession ? selectedCliSession.projectPath : cliComposerConfig?.projects?.[0]?.path;
     const loadKey = `${selectedPeerId}:${browserPath}\n${projectPath ?? ""}:${workspaceRootsKey}`;
     // Object-valued composer/session state can be replaced by every realtime
     // response. Key the automatic load by the actual route and path so those
     // renders cannot create a request -> result -> render feedback loop.
     if (lastAutomaticWorkspaceLoadRef.current === loadKey) return;
     lastAutomaticWorkspaceLoadRef.current = loadKey;
-    // History can include projects outside this host's open workspace. Loading
-    // chat must not issue a failing inspector request for those projects.
-    if (selectedCliSession?.remote || (projectPath && !isOpenWorkspaceProject(projectPath, cliComposerConfig?.projects ?? []))) {
+    if (!projectPath) {
       setWorkspaceEnvironment(undefined);
       return;
     }
-    requestWorkspaceEnvironment(projectPath);
+    requestWorkspaceEnvironment(projectPath, undefined, true);
     requestWorkspaceTerminals();
   }, [
     browserPath,
@@ -1462,13 +1477,6 @@ function App() {
     );
   }
 
-  const connectedPeers = mergeDashboardPeers(snapshot.connectedPeers ?? [], cliSessions);
-  const pcOptions =
-    connectedPeers.length > 0
-      ? connectedPeers
-      : [{ id: "local", name: "This PC", sessionCount: 0, connected: true, local: true }];
-  const selectedPeer =
-    pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
   const runningCliSessions = filterCliSessionsBySection(cliSessions, "active").filter((session) =>
     (session.status === "running" && (!session.remote || pcOptions.some(peer => peer.id === session.deviceId && peer.connected))) || session.interrupted === true
   );
@@ -2113,6 +2121,7 @@ function App() {
               ) : null}
               {snapshot.settings.cliIntegrationEnabled === true ? (
                 <CliSessionsMenu
+                  browser={isBrowserDashboard}
                   sessions={runningCliSessions}
                   peers={pcOptions}
                   ready={liveSessionListReceived.current}
@@ -2120,7 +2129,12 @@ function App() {
                   connected={!isBrowserDashboard || realtimeConnected}
                   loading={isActionPending("listCodexCliSessions")}
                   actionPending={isActionPending("resumeCodexSessions") || isActionPending("openCodexCliSession")}
-                  onOpen={(session) => requestSessionAction(session.status === "running" ? "openCodexCliSession" : "resumeCodexSessions", session, { openInVsCode: true })}
+                  onOpen={(session) => {
+                    if (isBrowserDashboard && session.status === "running") {
+                      setCliSessionsMenuOpen(false);
+                      navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
+                    } else requestSessionAction(session.status === "running" ? "openCodexCliSession" : "resumeCodexSessions", session, { openInVsCode: true });
+                  }}
                   lang={snapshot.lang}
                   privacyMode={state.privacyMode}
                   open={cliSessionsMenuOpen}
@@ -2130,7 +2144,7 @@ function App() {
                     if (!cliSessionsMenuOpen) requestCliSessions();
                   }}
                   onClose={() => setCliSessionsMenuOpen(false)}
-                  onRetry={() => { setCliSessionsError(undefined); requestCliSessions(true); }}
+                  onRetry={() => { setCliSessionsError(undefined); requestCliSessions(true, true); }}
                   onManage={() => {
                     setCliSessionsMenuOpen(false);
                     openCliSessions();
@@ -2554,10 +2568,10 @@ function App() {
           }
         }}
         onExportBackup={handleExportBackup}
-        onDownloadLogs={() => { logDownloadRequestRef.current = sendAction("downloadLogs"); }}
-        downloadLogsPending={isActionPending("downloadLogs")}
         onShowLogs={() => setLogConsoleOpen(true)}
-        showLogsPending={isActionPending("viewLogs")}
+        sendAction={sendAction}
+        targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
+        targetName={getSensitiveDisplayValue(selectedPeer?.name ?? "This system", state.privacyMode, "name")}
         onImportBackup={modals.openImportModal}
         onConfigureSync={handleConfigureEncryptedSync}
         onSyncNow={handleSyncNow}
@@ -2566,18 +2580,19 @@ function App() {
         registryOverridePending={isActionPending("setEncryptedSyncRegistryOverride")}
       />
 
-      <ModalShell open={logConsoleOpen} title="Diagnostic logs" closeLabel={snapshot.copy.closeModal} onClose={() => setLogConsoleOpen(false)} className="log-console-modal">
+      <ModalShell open={logConsoleOpen} title="System Log" closeLabel={snapshot.copy.closeModal} onClose={() => setLogConsoleOpen(false)} className="log-console-modal">
         <div class="settings-note">Recent redacted logs refresh every 2 seconds while open.</div>
         {logConsoleError && <div role="status" class="settings-note">{logConsoleError}</div>}
         {logConsoleLimited && <div class="settings-note">Showing up to 1,000 recent records; older logs exceed the display limit.</div>}
-        <pre class="log-console-output" tabIndex={0} aria-label="Log records">{logConsoleText || (logConsoleError ? "No records loaded." : "Loading logs…")}</pre>
+        <SystemLogConsole records={logConsoleRecords} loading={isActionPending("viewLogs")} emptyMessage={logConsoleError && !logConsoleRecords.length ? "No records loaded." : undefined} />
         <div class="settings-actions">
           <button class="settings-action-btn" type="button" disabled={isActionPending("viewLogs")} onClick={refreshLogConsole}>Refresh</button>
           <button class="settings-action-btn" type="button" disabled={isActionPending("downloadLogs")} onClick={() => { logDownloadRequestRef.current = sendAction("downloadLogs"); }}>Download</button>
+          <button class="settings-action-btn" type="button" disabled={isActionPending("clearLogs")} onClick={() => sendAction("clearLogs")}>{isActionPending("clearLogs") ? "Clearing…" : "Clear"}</button>
         </div>
       </ModalShell>
 
-      {isBrowserDashboard && <BrowserNotifications offerOnLoad />}
+      {isBrowserDashboard && !isCliSessionsPath(browserPath) && !state.settingsOpen && <BrowserNotifications offerOnLoad />}
       <OnboardingModal
         open={onboardingOpen}
         step={onboardingStep}
@@ -2674,6 +2689,8 @@ function App() {
                 "unarchiveCodexCliSession",
                 "deleteCodexCliSession"
               ].some((action) => isActionPending(action as DashboardActionName))}
+              goalUpdating={isActionPending("setCodexSessionGoalStatus")}
+              onGoalStatus={(status) => selectedCliSession && requestSessionAction("setCodexSessionGoalStatus", selectedCliSession, { goalStatus: status })}
               error={cliSessionsError}
               agentMessages={agentMessages}
               onReadAgent={(agent) => {
@@ -2711,7 +2728,7 @@ function App() {
               onPeerChange={setSelectedPeerId}
               onDashboard={() => navigateDashboardPath("/", setBrowserPath)}
               onRefresh={() => {
-                explicitCliRefreshRef.current = requestCliSessions(true);
+                explicitCliRefreshRef.current = requestCliSessions(true, true);
               }}
               onSelect={selectCliSession}
               onBackToList={() => {
@@ -2732,41 +2749,44 @@ function App() {
                 requestWorkspaceEnvironment(projectPath, includeBranchDiff);
               }}
               onRunTerminal={(command, projectPath, terminalId) =>
-                sendAction("runWorkspaceTerminalCommand", undefined, { command, projectPath, terminalId, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })
+                sendAction("runWorkspaceTerminalCommand", undefined, { sessionId: selectedCliSession?.id, command, projectPath, terminalId, targetDeviceId: workspaceTargetDeviceId })
               }
               onListTerminals={requestWorkspaceTerminals}
               onCreateTerminal={(profile, projectPath) =>
-                sendAction("createWorkspaceTerminal", undefined, { terminalProfile: profile, projectPath, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })
+                sendAction("createWorkspaceTerminal", undefined, { sessionId: selectedCliSession?.id, terminalProfile: profile, projectPath, targetDeviceId: workspaceTargetDeviceId })
               }
-              onFocusTerminal={(terminalId) => sendAction("focusWorkspaceTerminal", undefined, { terminalId, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
-              onCancelTerminal={(terminalId) => sendAction("cancelWorkspaceTerminalCommand", undefined, { terminalId, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
+              onFocusTerminal={(terminalId) => sendAction("focusWorkspaceTerminal", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
+              onCancelTerminal={(terminalId) => sendAction("cancelWorkspaceTerminalCommand", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
               onCommitWorkspace={(commitMessage, projectPath) =>
-                sendAction("commitWorkspaceChanges", undefined, { commitMessage, projectPath, confirmed: true })
+                sendAction("commitWorkspaceChanges", undefined, { sessionId: selectedCliSession?.id, commitMessage, projectPath, confirmed: true, targetDeviceId: workspaceTargetDeviceId })
               }
               onPushWorkspace={(projectPath) =>
-                sendAction("pushWorkspaceBranch", undefined, { projectPath, confirmed: true })
+                sendAction("pushWorkspaceBranch", undefined, { sessionId: selectedCliSession?.id, projectPath, confirmed: true, targetDeviceId: workspaceTargetDeviceId })
               }
-              onClearTerminal={() => dispatchTerminalActivity({ clear: true, deviceId: selectedPeer?.local !== false ? "local" : selectedPeer.id })}
+              onClearTerminal={() => dispatchTerminalActivity({ clear: true, deviceId: workspaceTargetDeviceId ?? "local" })}
               onListFiles={(projectPath) =>
                 sendAction("listWorkspaceFiles", undefined, {
+                  sessionId: selectedCliSession?.id,
                   projectPath,
-                  targetDeviceId: selectedCliSession?.deviceId
+                  targetDeviceId: workspaceTargetDeviceId
                 })
               }
               onReadFile={(filePath, projectPath) =>
                 sendAction("readWorkspaceFile", undefined, {
                   filePath,
+                  sessionId: selectedCliSession?.id,
                   projectPath,
-                  targetDeviceId: selectedCliSession?.deviceId
+                  targetDeviceId: workspaceTargetDeviceId
                 })
               }
               onClearFile={() => setWorkspaceFilesByPath({})}
               onDeleteFile={(filePath, projectPath) =>
                 sendAction("deleteWorkspaceFile", undefined, {
                   filePath,
+                  sessionId: selectedCliSession?.id,
                   projectPath,
                   confirmed: true,
-                  targetDeviceId: selectedCliSession?.deviceId
+                  targetDeviceId: workspaceTargetDeviceId
                 })
               }
               onSaveFile={(filePath, fileContent, fileRevision, projectPath) =>
@@ -2774,8 +2794,9 @@ function App() {
                   filePath,
                   fileContent,
                   fileRevision,
+                  sessionId: selectedCliSession?.id,
                   projectPath,
-                  targetDeviceId: selectedCliSession?.deviceId
+                  targetDeviceId: workspaceTargetDeviceId
                 })
               }
               onStart={(input) => sendAction("startCodexCliSession", undefined, { ...input, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
@@ -2968,10 +2989,11 @@ function CodexRequestDialog(props: {
   onRespond: (decision: "approve" | "decline", answers?: Record<string, string>) => void;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const accessibility = useModalAccessibility(true, () => undefined);
   const isQuestion = props.request.kind === "question";
   const complete = !isQuestion || (props.request.questions ?? []).every((question) => Boolean(answers[question.id]?.trim()));
-  return <div class="codex-request-backdrop" role="presentation">
-    <section class="codex-request-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-request-title" aria-describedby="codex-request-description">
+  return <div class="codex-request-backdrop" role="presentation" onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
+    <section ref={accessibility.modalRef} onKeyDown={accessibility.onKeyDown} tabIndex={-1} class="codex-request-dialog" role="dialog" aria-modal="true" aria-labelledby="codex-request-title" aria-describedby="codex-request-description">
       <div class="codex-request-eyebrow"><span class="codex-request-pulse" /> Codex needs your input{props.queuedCount > 0 ? ` · ${props.queuedCount} more waiting` : ""}</div>
       <h2 id="codex-request-title">{props.request.title}</h2>
       <p id="codex-request-description">{isQuestion ? "Answer to let Codex continue this turn." : "Review this request before Codex continues. Approval applies to this request only."}</p>
@@ -3227,6 +3249,7 @@ function PcPickerControl(props: {
 }
 
 function CliSessionsMenu(props: {
+  browser: boolean;
   sessions: DashboardCliSessionSummary[];
   peers: DashboardPeerView[];
   ready: boolean;
@@ -3352,13 +3375,14 @@ function CliSessionsMenu(props: {
                   const time = typeof session.runningSince === "number" && Number.isFinite(session.runningSince) && session.runningSince > 0 && session.runningSince <= now + 5 * 60_000 ? formatElapsed(Math.max(0, now - session.runningSince)) : "Time unavailable";
                   const detail = `Goal: ${session.goal?.objective || (session.goal === null ? "No goal" : "Unavailable")}\nThinking: ${session.reasoningEffort || "Unavailable"}`;
                   const running = session.status === "running";
+                  const destination = running && props.browser ? "browser" : "VS Code";
                   const offline = session.remote && !props.peers.some(peer => peer.id === session.deviceId && peer.connected);
                   return <article class="cli-sessions-running-row" role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
                     <div class="cli-sessions-running-copy">
                     <strong class="cli-sessions-running-title">{session.title}</strong>
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
-                    <button type="button" class="cli-icon-button" disabled={props.actionPending || session.status === "unknown" || offline} aria-label={`${running ? "View" : "Resume"} ${session.title} in VS Code`} title={offline ? "System offline" : session.status === "unknown" ? "Refresh to verify this session" : running ? "View in VS Code" : "Resume in VS Code"} onClick={() => props.onOpen(session)}>{running ? <EyeIcon /> : <span aria-hidden="true">↻</span>}</button>
+                    <button type="button" class="cli-icon-button" disabled={props.actionPending || session.status === "unknown" || offline} aria-label={`${running ? "View" : "Resume"} ${session.title} in ${destination}`} title={offline ? "System offline" : session.status === "unknown" ? "Refresh to verify this session" : running ? `View in ${destination}` : "Resume in VS Code"} onClick={() => props.onOpen(session)}>{running ? <EyeIcon /> : <span aria-hidden="true">↻</span>}</button>
                   </article>;
                 })}
               </div>
@@ -3448,3 +3472,11 @@ function resolveAboutTitle(lang: string): string {
 }
 
 render(<App />, document.getElementById("app")!);
+
+function downloadInBrowser(file: { filename: string; text: string }): void {
+  const url = URL.createObjectURL(new Blob([file.text], { type: "application/json" }));
+  try {
+    const link = document.createElement("a");
+    link.href = url; link.download = file.filename; link.click();
+  } finally { setTimeout(() => URL.revokeObjectURL(url), 1_000); }
+}

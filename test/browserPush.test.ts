@@ -6,7 +6,7 @@ vi.mock("web-push", async (original) => {
   const api = (module as any).default ?? module;
   return { default: { generateVAPIDKeys: api.generateVAPIDKeys.bind(api), sendNotification: send } };
 });
-import { BrowserPushService, validateBrowserPushSubscription } from "../src/services/browserPush";
+import { BrowserPushService, BrowserPushRegistrationConflictError, validateBrowserPushSubscription } from "../src/services/browserPush";
 
 const subscription = (name = "one") => {
   const key = createECDH("prime256v1");
@@ -39,6 +39,16 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("persistent browser push", () => {
+  it("rebinds a proven browser after login and prunes expired conflicts without taking another device", async () => {
+    const first = subscription(); await service.subscribe(first, "old-login", "https://dashboard.example", password);
+    await service.subscribe(first, "new-login", "https://dashboard.example", password);
+    expect(await service.isSubscribed(first.endpoint, "new-login", "https://dashboard.example")).toBe(true);
+    const changed = { ...first, keys: subscription("other").keys };
+    await expect(service.subscribe(changed, "other-device", "https://dashboard.example", password)).rejects.toBeInstanceOf(BrowserPushRegistrationConflictError);
+    const state = JSON.parse(stored.get("codexManager.browserPush.v1")!); state.subscriptions[0].expiresAt = Date.now() - 1; stored.set("codexManager.browserPush.v1", JSON.stringify(state));
+    await service.subscribe(changed, "other-device", "https://dashboard.example", password);
+    expect(await service.isSubscribed(first.endpoint, "other-device", "https://dashboard.example")).toBe(true);
+  });
   it("reports actual provider acceptance and removes rejected subscriptions from a test send", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
     await service.subscribe(subscription("expired"), "other", "https://dashboard.example", password);

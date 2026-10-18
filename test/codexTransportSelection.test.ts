@@ -11,8 +11,8 @@ describe("machine session transport", () => {
     const config = { get: () => "cli", inspect: () => ({ defaultValue: "app-server-stdio", workspaceValue: "cli" }) } as unknown as vscode.WorkspaceConfiguration;
     expect(readCodexSessionTransport(config)).toBe("app-server-stdio");
   });
-  it("retains an explicitly selected machine compatibility transport", () => {
+  it("migrates a retired machine compatibility choice to App Server", () => {
     const config = { get: () => "app-server-stdio", inspect: () => ({ globalValue: "cli" }) } as unknown as vscode.WorkspaceConfiguration;
-    expect(readCodexSessionTransport(config)).toBe("cli");
+    expect(readCodexSessionTransport(config)).toBe("app-server-stdio");
   });
 });

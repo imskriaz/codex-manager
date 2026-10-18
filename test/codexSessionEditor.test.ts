@@ -1,12 +1,15 @@
 import * as vscode from "vscode";
+vi.mock("../src/services/codexSessionRecovery", () => ({ resumeCodexSessionWork: vi.fn().mockResolvedValue("idle") }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareCodexSessionsForExtensionHostRestart, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
 import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readOpenCodexSessionIds } from "../src/services/codexSessionResume";
+import { waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 
 describe("Codex VS Code session editor", () => {
   let activateExtension: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(undefined);
     activateExtension = vi.fn(async () => undefined);
     const extension = {
       extensionPath: "official-codex",
@@ -32,6 +35,15 @@ describe("Codex VS Code session editor", () => {
       }
       return undefined;
     });
+  });
+
+  it("retains a loading tab and allows retry once its native conversation is ready", async () => {
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    vi.mocked(waitForNativeCodexSessionReady).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await expect(openCodexSessionInVsCode(id)).rejects.toThrow("still loading");
+    expect(vscode.window.tabGroups.all[0]!.tabs).toHaveLength(1);
+    await expect(openCodexSessionInVsCode(id)).resolves.toBeUndefined();
+    expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
   });
 
   it("resolves restored editors across groups, then closes only conversation tabs", async () => {

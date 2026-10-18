@@ -128,18 +128,23 @@ describe("SQLite WAL state", () => {
     configureSqliteStateStore(store);
     const firstState = createSqliteMemento(store, "global", legacy());
     const secondState = createSqliteMemento(await open(), "global", legacy());
+    vi.useFakeTimers();
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     let entered!: () => void;
     const ready = new Promise<void>(resolve => { entered = resolve; });
-    const blocker = runCrossWindowExclusive("state:dashboard-usage", "Competing usage writer", async () => { entered(); await gate; });
-    await ready;
-    const first = upsertDashboardDailyUsageCache({ globalState: firstState } as never, "a", { days: 1, points: [] });
-    const second = upsertDashboardDailyUsageCache({ globalState: secondState } as never, "b", { days: 1, points: [] });
-    await new Promise(resolve => setTimeout(resolve, 30));
-    release();
-    await Promise.all([blocker, first, second]);
-    expect(readDashboardDailyUsageCache({ globalState: secondState } as never).map(item => item.accountId).sort()).toEqual(["a", "b"]);
+    try {
+      const blocker = runCrossWindowExclusive("state:dashboard-usage", "Competing usage writer", async () => { entered(); await gate; });
+      await ready;
+      const first = upsertDashboardDailyUsageCache({ globalState: firstState } as never, "a", { days: 1, points: [] });
+      const second = upsertDashboardDailyUsageCache({ globalState: secondState } as never, "b", { days: 1, points: [] });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readDashboardDailyUsageCache({ globalState: secondState } as never)).toEqual([]);
+      release();
+      await vi.advanceTimersByTimeAsync(150);
+      await Promise.all([blocker, first, second]);
+      expect(readDashboardDailyUsageCache({ globalState: secondState } as never).map(item => item.accountId).sort()).toEqual(["a", "b"]);
+    } finally { release(); vi.useRealTimers(); }
   });
 
   it("uses WAL and full commits, exposes updates across connections, and rolls back incomplete transactions", async () => {

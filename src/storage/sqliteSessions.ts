@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import * as os from "os";
-import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
+import type { DashboardCliSessionSummary, DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import type { SqliteStateStore } from "./sqliteState";
@@ -9,9 +9,77 @@ import type { TrackedCliTurn } from "../services/codexSessionResume";
 const instance = randomUUID();
 const initialized = new WeakSet<SqliteStateStore>();
 const lastPruned = new WeakMap<SqliteStateStore, number>();
+const CATALOGUE_NAMESPACE = "session-catalogue";
+type SessionCatalogue = { generation: string; checkedAt: number; bootAt: number; invalidated?: boolean; rows: DashboardCliSessionSummary[] };
+
+function catalogueHeader(store: SqliteStateStore, home: string): Omit<SessionCatalogue, "rows"> | undefined {
+  initializeSessionStorage(store);
+  const value = store.get<SessionCatalogue>(CATALOGUE_NAMESPACE, getCodexHomeStateKey(home));
+  if (!value || typeof value.generation !== "string" || !Number.isFinite(value.checkedAt) || !Number.isFinite(value.bootAt) || value.checkedAt > Date.now() + 5_000 || Date.now() - value.checkedAt > 7 * 24 * 60 * 60_000) return undefined;
+  if (value.rows !== undefined) {
+    if (!Array.isArray(value.rows) || value.rows.length > 30_000 || value.rows.some(row => !validCatalogueRow(row))) return undefined;
+    // Migrate the old JSON snapshot once; ordinary metadata checks never load its rows.
+    store.transaction(() => {
+      store.prepare("DELETE FROM session_catalogue_rows WHERE home=?").run(getCodexHomeStateKey(home));
+      const insert = store.prepare("INSERT OR REPLACE INTO session_catalogue_rows(home,session_id,position,generation,data) VALUES(?,?,?,?,?)");
+      value.rows.forEach((row, index) => insert.run(getCodexHomeStateKey(home), row.id, index, value.generation, JSON.stringify(row)));
+      const { rows: _rows, ...header } = value;
+      store.set(CATALOGUE_NAMESPACE, getCodexHomeStateKey(home), header);
+    });
+  }
+  const { rows: _rows, ...header } = value;
+  return header;
+}
+
+function validCatalogueRow(row: DashboardCliSessionSummary): boolean {
+  return Boolean(row && typeof row.id === "string" && /^[a-f0-9-]{36}$/i.test(row.id) && typeof row.title === "string" && row.title.length <= 256 && ["running", "idle", "unknown"].includes(row.status));
+}
+
+export function readSessionCatalogue(store: SqliteStateStore, home: string): SessionCatalogue | undefined {
+  initializeSessionStorage(store);
+  return store.transaction(() => {
+  const header = catalogueHeader(store, home);
+  if (!header) return undefined;
+  const rows = store.prepare("SELECT data FROM session_catalogue_rows WHERE home=? ORDER BY position LIMIT 30000").all(getCodexHomeStateKey(home)).map(row => JSON.parse(String(row["data"])) as DashboardCliSessionSummary);
+  if (rows.some(row => !validCatalogueRow(row))) return undefined;
+  return { ...header, rows };
+  }, "read");
+}
+
+export function invalidateSessionCatalogue(store: SqliteStateStore, home: string, preserveHistory = false): string {
+  const generation = randomUUID();
+  const previous = catalogueHeader(store, home);
+  store.transaction(() => {
+    if (!preserveHistory) store.prepare("DELETE FROM session_catalogue_rows WHERE home=?").run(getCodexHomeStateKey(home));
+    store.set(CATALOGUE_NAMESPACE, getCodexHomeStateKey(home), { generation, checkedAt: preserveHistory ? previous?.checkedAt ?? Date.now() : Date.now(), bootAt: previous?.bootAt ?? Date.now() - os.uptime() * 1000, invalidated: preserveHistory ? previous?.invalidated ?? true : true });
+  });
+  return generation;
+}
+
+export function saveSessionCatalogue(store: SqliteStateStore, home: string, generation: string, rows: DashboardCliSessionSummary[], startedAt: number): void {
+  if (rows.length > 30_000) return;
+  const key = getCodexHomeStateKey(home);
+  store.transaction(() => {
+    const previous = catalogueHeader(store, home);
+    if (previous?.generation !== generation || (!previous.invalidated && previous.checkedAt > startedAt)) return;
+    const write = store.prepare("INSERT INTO session_catalogue_rows(home,session_id,position,generation,data) VALUES(?,?,?,?,?) ON CONFLICT(home,session_id) DO UPDATE SET position=excluded.position,generation=excluded.generation,data=excluded.data WHERE position!=excluded.position OR generation!=excluded.generation OR data!=excluded.data");
+    let bytes = 0;
+    rows.forEach((row, index) => {
+      if (!validCatalogueRow(row)) throw new Error("Invalid session cache row.");
+      const data = JSON.stringify(row); bytes += Buffer.byteLength(data);
+      if (bytes > 8 * 1024 * 1024) throw new Error("The session cache exceeds its size limit. Previous history was retained.");
+      write.run(key, row.id, index, generation, data);
+    });
+    store.prepare("DELETE FROM session_catalogue_rows WHERE home=? AND session_id NOT IN (SELECT value FROM json_each(?))").run(key, JSON.stringify(rows.map(row => row.id)));
+    store.set(CATALOGUE_NAMESPACE, key, { generation, checkedAt: Date.now(), bootAt: Date.now() - os.uptime() * 1000 });
+    store.prepare("DELETE FROM state WHERE namespace='session-catalogue' AND key!=? AND key IN (SELECT key FROM state WHERE namespace='session-catalogue' AND key!=? ORDER BY CASE WHEN json_valid(value) THEN json_extract(value,'$.checkedAt') END DESC LIMIT -1 OFFSET 7)").run(key, key);
+    store.prepare("DELETE FROM session_catalogue_rows WHERE home NOT IN (SELECT key FROM state WHERE namespace='session-catalogue')").run();
+  });
+}
 
 export function initializeSessionStorage(store: SqliteStateStore): void {
   if (initialized.has(store)) return;
+  store.database.exec("CREATE TABLE IF NOT EXISTS session_catalogue_rows(home TEXT NOT NULL,session_id TEXT NOT NULL,position INTEGER NOT NULL,generation TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(home,session_id)); CREATE INDEX IF NOT EXISTS session_catalogue_order ON session_catalogue_rows(home,position)");
   store.database.exec(`CREATE TABLE IF NOT EXISTS session_turns (
     home TEXT NOT NULL, device_id TEXT NOT NULL, session_id TEXT NOT NULL, stream_id TEXT NOT NULL,
     sequence INTEGER NOT NULL, updated_at REAL NOT NULL, status TEXT NOT NULL, account_id TEXT,
@@ -89,6 +157,38 @@ export function saveSessionStatus(store: SqliteStateStore, home: string, id: str
 }
 
 type Discovery = { ids:string[]; startedAt:number; checkedAt:number; bootAt:number };
+/** Expire caches, not transcripts, recovery queues, or durable token statistics. */
+export function pruneSessionCache(store: SqliteStateStore, now = Date.now()): void {
+  initializeSessionStorage(store);
+  store.transaction(() => {
+    store.prepare("DELETE FROM session_status WHERE rowid IN (SELECT rowid FROM session_status WHERE checked_at < ? OR checked_at > ? LIMIT 256)").run(now - 24 * 60 * 60_000, now + 60_000);
+    store.prepare("DELETE FROM state WHERE namespace='session-discovery' AND key IN (SELECT key FROM state WHERE namespace='session-discovery' AND json_valid(value) AND (json_extract(value,'$.checkedAt') < ? OR json_extract(value,'$.checkedAt') > ?) LIMIT 256)").run(now - 30_000, now + 5_000);
+    store.prepare("DELETE FROM state WHERE namespace='session-catalogue' AND NOT json_valid(value)").run();
+    store.prepare("DELETE FROM state WHERE namespace='session-catalogue' AND (COALESCE(json_type(value,'$.checkedAt'),'null') NOT IN ('integer','real') OR json_extract(value,'$.checkedAt') < ? OR json_extract(value,'$.checkedAt') > ?)").run(now - 7 * 24 * 60 * 60_000, now + 5_000);
+    store.prepare("DELETE FROM session_catalogue_rows WHERE home NOT IN (SELECT key FROM state WHERE namespace='session-catalogue')").run();
+    store.prepare("UPDATE session_turns SET compacted=1,data=json_set(json_remove(data,'$.diff','$.plan'),'$.messages',json('[]'),'$.truncated',json('true')) WHERE rowid IN (SELECT rowid FROM session_turns WHERE compacted=0 AND status NOT IN ('starting','running') AND updated_at < ? LIMIT 128)").run(now - 5 * 60_000);
+  });
+}
+
+/** Only a successful complete discovery may confirm these IDs as deleted. */
+export function removeDeletedSessionCache(store: SqliteStateStore, home: string, ids: readonly string[], generation?: string, startedAt = Date.now()): void {
+  if (!ids.length) return;
+  initializeSessionStorage(store);
+  store.transaction(() => {
+    if (generation) {
+      const current = catalogueHeader(store, home);
+      if (current?.generation !== generation || current.checkedAt > startedAt) return;
+    }
+    const pending = store.prepare("SELECT 1 FROM state,json_each(CASE WHEN json_valid(state.value) THEN state.value ELSE '[]' END) AS item WHERE state.key IN ('codexManager.autoResumeSessionIds','codexManager.autoResumeOpenSessionIds') AND item.value=? LIMIT 1");
+    for (const id of ids) {
+      if (pending.get(id) || store.prepare("SELECT 1 FROM running_turns WHERE session_id=?").get(id) || store.prepare("SELECT 1 FROM session_turns WHERE home=? AND session_id=? AND status IN ('starting','running') AND updated_at>=? LIMIT 1").get(getCodexHomeStateKey(home), id, Date.now() - 24 * 60 * 60_000)) continue;
+      store.prepare("DELETE FROM session_status WHERE home=? AND session_id=?").run(getCodexHomeStateKey(home), id);
+      store.prepare("DELETE FROM session_turns WHERE home=? AND session_id=? AND device_id=''").run(getCodexHomeStateKey(home), id);
+      store.prepare("DELETE FROM session_catalogue_rows WHERE home=? AND session_id=?").run(getCodexHomeStateKey(home), id);
+    }
+  });
+}
+
 export function readSessionDiscovery(store:SqliteStateStore,home:string):Discovery|undefined {
   const value = store.get<Discovery>("session-discovery",getCodexHomeStateKey(home));
   const age = value ? Date.now()-value.checkedAt : Infinity;

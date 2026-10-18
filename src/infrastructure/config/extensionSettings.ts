@@ -40,7 +40,7 @@ export class ExtensionSettingsStore {
       usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
       tokenHistoryRetentionDays: normalizeTokenHistoryRetentionDays(config.get<number>("tokenHistoryRetentionDays", 30)),
       dailyTokenUsageIntervalMinutes: normalizeDailyTokenUsageIntervalMinutes(config.get<number>("dailyTokenUsageIntervalMinutes", 60)),
-      dailyTokenUsageEnabled: config.get<boolean>("dailyTokenUsageEnabled", false),
+      dailyTokenUsageEnabled: config.get<boolean>("dailyTokenUsageEnabled", true),
       autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
       autoSwitchWaitForSessionsEnabled: config.get<boolean>("autoSwitchWaitForSessionsEnabled", false),
       // The 5-hour quota is always part of automatic quota control. Keep the
@@ -72,7 +72,7 @@ export class ExtensionSettingsStore {
       // Runtime-owned and passphrase-gated; buildDashboardState replaces this placeholder.
       encryptedSyncRegistryOverrideEnabled: false,
       webDashboardEnabled: config.get<boolean>("webDashboardEnabled", false),
-      webDashboardAlwaysOnlineEnabled: config.get<boolean>("webDashboardAlwaysOnlineEnabled", false),
+      webSocketServerEnabled: config.get<boolean>("webSocketServerEnabled", true),
       cloudflaredDomain: config.get<string>("cloudflaredDomain", "").trim(),
       displayLanguage: config.get<DashboardLanguageOption>("displayLanguage", "en")
     };
@@ -96,18 +96,13 @@ export function normalizeDashboardTheme(value: string | undefined): DashboardThe
   return value === "dark" || value === "light" || value === "auto" ? value : "auto";
 }
 
-export function normalizeCodexSessionTransport(value: string | undefined): DashboardCodexSessionTransport {
-  return value === "cli" ? value : "app-server-stdio";
+/** Retired transport preferences migrate to the single supported App Server connection. */
+export function normalizeCodexSessionTransport(_value: string | undefined): DashboardCodexSessionTransport {
+  return "app-server-stdio";
 }
 
-/** Machine-scoped transport must not inherit a legacy repository override. */
-export function readCodexSessionTransport(
-  config: vscode.WorkspaceConfiguration = getCodexManagerConfiguration()
-): DashboardCodexSessionTransport {
-  const inspected = config.inspect?.<string>("codexSessionTransport");
-  return normalizeCodexSessionTransport(
-    inspected ? (inspected.globalValue ?? inspected.defaultValue) : config.get<string>("codexSessionTransport")
-  );
+export function readCodexSessionTransport(_config?: vscode.WorkspaceConfiguration): DashboardCodexSessionTransport {
+  return "app-server-stdio";
 }
 
 export function normalizeSyncHeartbeatMinutes(value: number): number {

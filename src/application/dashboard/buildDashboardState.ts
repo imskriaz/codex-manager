@@ -304,15 +304,7 @@ function mapAccount(
   const creditsOrderValue = parseCreditsOrderValue(account.quotaSummary?.credits);
   const resetCreditsAvailable = account.quotaSummary?.resetCreditsAvailable;
   const resetCreditsNextExpiresAt = account.quotaSummary?.resetCreditsNextExpiresAt;
-  if ((resetCreditsAvailable ?? 0) > 0 && resetCreditsNextExpiresAt == null) {
-    console.info("[codexManager] dashboard state missing reset credits expiry", {
-      accountId: account.id,
-      remoteAccountId: account.accountId,
-      resetCreditsAvailable,
-      lastQuotaAt: account.lastQuotaAt ?? null,
-      updatedAt: account.updatedAt
-    });
-  }
+
 
   return {
     quotaIssueKind: getQuotaIssueKind(account.quotaError),

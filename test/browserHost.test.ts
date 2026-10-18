@@ -3,6 +3,27 @@ import { runInNewContext } from "vm";
 import { describe, expect, it, vi } from "vitest";
 
 describe("browser dashboard bridge", () => {
+  it.each(["opened", "blocked", "unsafe"])("opens external links on the initiating browser without sending a host action: %s", async outcome => {
+    const events: Array<Record<string, unknown>> = [];
+    const popup = { opener: {} as unknown, location: { replace: vi.fn() }, close: vi.fn() };
+    const fetchMock = vi.fn();
+    const windowMock = {
+      dispatchEvent: (event: { data: Record<string, unknown> }) => events.push(event.data),
+      open: vi.fn(() => outcome === "blocked" ? null : popup),
+      setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { reload: vi.fn() },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> })
+    };
+    class Event { constructor(_type: string, public options: { data: Record<string, unknown> }) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), {
+      window: windowMock, navigator: { onLine: false }, MessageEvent: Event, fetch: fetchMock, URL,
+      console: { error: vi.fn(), warn: vi.fn() }, Error, TypeError, Array, JSON, Date, Map
+    });
+    await windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:action", action: "openExternalUrl", requestId: "local-link", payload: { url: outcome === "unsafe" ? "javascript:alert(1)" : "https://example.com/help", targetDeviceId: "another-pc" } });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(events).toContainEqual(expect.objectContaining({ requestId: "local-link", status: outcome === "opened" ? "completed" : "failed" }));
+    if (outcome === "opened") { expect(popup.opener).toBeNull(); expect(popup.location.replace).toHaveBeenCalledWith("https://example.com/help"); }
+    if (outcome === "unsafe") expect(windowMock.open).not.toHaveBeenCalled();
+  });
   it("replays an earlier snapshot immediately when a dashboard listener becomes ready", async () => {
     const events: Array<Record<string, unknown>> = [];
     const snapshot = { accounts: [{ id: "one" }] };

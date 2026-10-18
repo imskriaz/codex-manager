@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import { CodexAutoSwitchReason } from "../../core/types";
+import { waitWithin } from "../../utils/concurrency";
+import { recordPersistentEvent } from "../../utils/persistentLog";
 
 type AutoSwitchRuntimeState = {
   lockedAccountId?: string;
@@ -23,6 +25,7 @@ const DASHBOARD_NOTICE_TTL_MS = 2 * 60_000;
 
 const state: AutoSwitchRuntimeState = {};
 let extensionContext: vscode.ExtensionContext | undefined;
+let lockUpdatePending = false;
 
 export function initAutoSwitchRuntimeState(context: vscode.ExtensionContext): void {
   extensionContext = context;
@@ -72,6 +75,33 @@ export function clearAutoSwitchLock(accountId?: string): void {
   state.lockedAccountId = undefined;
   state.lockedUntil = undefined;
   persist();
+}
+
+/** Explicit dashboard changes acknowledge persistence before reporting success. */
+export async function updateAutoSwitchLock(accountId: string, minutes: number): Promise<void> {
+  if (!accountId || !Number.isInteger(minutes) || minutes < 0 || minutes > 120) throw new Error("Choose an account and a whole lock duration from 0 to 120 minutes.");
+  if (lockUpdatePending) throw new Error("The previous lock change is still saving. Retry after storage responds.");
+  pruneExpiredLock();
+  if (state.lockedAccountId && state.lockedAccountId !== accountId) throw new Error("Auto-switch is locked for another account. Unlock that account first.");
+  const previous = { lockedAccountId: state.lockedAccountId, lockedUntil: state.lockedUntil };
+  state.lockedAccountId = minutes ? accountId : undefined;
+  state.lockedUntil = minutes ? Date.now() + minutes * 60_000 : undefined;
+  const until = state.lockedUntil;
+  const owner = state.lockedAccountId;
+  const saved = { ...state };
+  lockUpdatePending = true;
+  const write = Promise.resolve().then(() => extensionContext?.globalState.update(GLOBAL_STATE_KEY, saved)).then(() => {
+    recordPersistentEvent("info", "auto-switch-lock", "Lock change saved", { accountId, minutes });
+  }).catch(error => {
+    if (state.lockedUntil === until && state.lockedAccountId === owner) Object.assign(state, previous);
+    throw error;
+  }).finally(() => { lockUpdatePending = false; });
+  try {
+    await waitWithin(write, 5_000, "The lock change is still saving. Its outcome is unconfirmed; retry after storage responds.");
+  } catch (error) {
+    recordPersistentEvent("warning", "auto-switch-lock", "Lock change could not be confirmed", { accountId, minutes }, error);
+    throw error;
+  }
 }
 
 export function isAutoSwitchLocked(accountId: string | undefined): boolean {
@@ -145,11 +175,11 @@ function pruneExpiredDashboardNotice(): void {
 }
 
 function persist(): void {
-  void extensionContext?.globalState.update(GLOBAL_STATE_KEY, {
+  void Promise.resolve(extensionContext?.globalState.update(GLOBAL_STATE_KEY, {
     lockedAccountId: state.lockedAccountId,
     lockedUntil: state.lockedUntil,
     lastReason: state.lastReason,
     pendingNotice: state.pendingNotice,
     dashboardNotice: state.dashboardNotice
-  });
+  })).catch(error => recordPersistentEvent("warning", "auto-switch-lock", "Runtime state could not be saved", undefined, error));
 }

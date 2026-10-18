@@ -10,7 +10,6 @@ import {
   normalizeAutoSwitchLockMinutes,
   normalizeAutoSwitchThreshold,
   normalizeAutoResetWeeklyThreshold,
-  normalizeCodexSessionTransport,
   normalizeDashboardTheme,
   normalizeQuotaWarningThreshold,
   normalizeQuotaWarningWeeklyThreshold,
@@ -71,7 +70,7 @@ export async function handleDashboardSettingUpdate(
     case "encryptedSyncClaimAllAccountsEnabled":
     case "fullCrossPcAccountSyncEnabled":
     case "webDashboardEnabled":
-    case "webDashboardAlwaysOnlineEnabled":
+    case "webSocketServerEnabled":
       if (typeof value === "boolean") {
         await updateDashboardConfiguration(config, key, value, target);
         updated = true;
@@ -95,12 +94,6 @@ export async function handleDashboardSettingUpdate(
     case "codexAppRestartMode":
       if (value === "auto" || value === "manual") {
         await updateDashboardConfiguration(config, key, value, target);
-        updated = true;
-      }
-      break;
-    case "codexSessionTransport":
-      if (typeof value === "string" && (value === "app-server-stdio" || value === "cli")) {
-        await updateDashboardConfiguration(config, key, normalizeCodexSessionTransport(value), target);
         updated = true;
       }
       break;
@@ -280,7 +273,6 @@ function resolveConfigurationTarget(
   // left a workspace-level override behind in a shared repository.
   if (
     key === "cliIntegrationEnabled" ||
-    key === "codexSessionTransport" ||
     key === "autoResumeEnabled" ||
     key === "autoResumeGoalOnlyEnabled" ||
     key === "privacyMode" ||

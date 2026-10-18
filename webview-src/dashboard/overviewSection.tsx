@@ -16,7 +16,7 @@ import { formatRelativeTimestamp, formatTimestamp, getSensitiveDisplayValue, res
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
 import { ActionButton } from "./primitives";
 import { MetricGauge } from "./accountMetricPrimitives";
-import { AccountAccessIcon, EyeIcon, EyeOffIcon, renderRefreshIcon, ResetCreditIcon } from "./icons";
+import { AccountAccessIcon, CodexSessionsIcon, EyeIcon, EyeOffIcon, renderRefreshIcon, ResetCreditIcon } from "./icons";
 import { loadUsageGraphPreferences, saveUsageGraphPreferences, type UsageGraphPreferences, type UsageGraphRange } from "./preferences";
 
 export type { DashboardUsageSample } from "../../src/domain/dashboard/types";
@@ -152,6 +152,7 @@ export function OverviewSection(props: {
   };
   useEffect(() => {
     if (!moreOpen) return;
+    morePopoverContentRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
     const updatePosition = (): void => {
       const rect = moreRef.current?.getBoundingClientRect();
       if (rect) setMorePopoverPosition(resolveOverviewPopoverPosition(rect, window.innerWidth, window.innerHeight, morePopoverContentRef.current?.getBoundingClientRect().height ?? 0));
@@ -166,12 +167,21 @@ export function OverviewSection(props: {
   }, [moreOpen]);
   useEffect(() => {
     if (!moreOpen) return;
+    const trigger = moreRef.current?.querySelector<HTMLButtonElement>("button");
     const close = (event: PointerEvent) => {
       const target = event.target as Node;
       if (!moreRef.current?.contains(target) && !morePopoverContentRef.current?.contains(target)) setMoreOpen(false);
     };
     const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMoreOpen(false);
+      if (event.key === "Escape") { event.preventDefault(); setMoreOpen(false); trigger?.focus(); }
+      if (event.key === "Tab") { setMoreOpen(false); trigger?.focus(); }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+      const items = [...(morePopoverContentRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])];
+      if (!items.length) return;
+      event.preventDefault();
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items[next]?.focus();
     };
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", key);
@@ -413,9 +423,9 @@ export function OverviewSection(props: {
                           aria-label={resolveOverviewToolbarLabel("more", props.lang)}
                           style={{ top: `${morePopoverPosition.top}px`, right: `${morePopoverPosition.right}px` }}
                         >
-                          <div class="claim-popover-title">{resolveOverviewToolbarLabel("more", props.lang)}</div>
+                          <div class="claim-popover-title"><strong>{resolveOverviewToolbarLabel("more", props.lang)}</strong><span>{props.lang === "zh" ? "账户与工作区" : props.lang === "zh-hant" ? "帳戶與工作區" : "Account & workspace"}</span></div>
                           <button type="button" role="menuitem" disabled={props.privacyPending} onClick={() => { setMoreOpen(false); props.onPrivacyToggle(); }}>
-                            {privacyMode ? <EyeOffIcon /> : <EyeIcon />}{privacyMode ? copy.showSensitive : copy.hideSensitive}
+                            {privacyMode ? <EyeOffIcon /> : <EyeIcon />}<span>{privacyMode ? copy.showSensitive : copy.hideSensitive}</span>
                           </button>
                           {providedAccount && contextAction !== "switch" ? (
                             <button
@@ -426,7 +436,7 @@ export function OverviewSection(props: {
                                 props.onSwitchAccount();
                               }}
                             >
-                              ⇄ {resolveOverviewMenuLabel("switch", props.lang)}
+                              <span class="overview-menu-icon" aria-hidden="true">⇄</span>{resolveOverviewMenuLabel("switch", props.lang)}
                             </button>
                           ) : null}
                           {providedAccount ? (
@@ -438,7 +448,7 @@ export function OverviewSection(props: {
                                 props.onReloadAccount();
                               }}
                             >
-                              ↻ {resolveOverviewMenuLabel("reload", props.lang)}
+                              <span class="overview-menu-icon" aria-hidden="true">↻</span>{resolveOverviewMenuLabel("reload", props.lang)}
                             </button>
                           ) : null}
                           {providedAccount ? (
@@ -450,7 +460,7 @@ export function OverviewSection(props: {
                                 props.onUnloadAuth();
                               }}
                             >
-                              ⏏ {resolveOverviewMenuLabel("unload", props.lang)}
+                              <span class="overview-menu-icon" aria-hidden="true">⏏</span>{resolveOverviewMenuLabel("unload", props.lang)}
                             </button>
                           ) : null}
                           {props.accounts?.some((candidate) => candidate.enabled === false) ? (
@@ -464,7 +474,7 @@ export function OverviewSection(props: {
                               }}
                               title={resolveOverviewEnableAllHint(props.lang)}
                             >
-                              ⊕ {resolveOverviewMenuLabel("enableAll", props.lang)}
+                              <span class="overview-menu-icon" aria-hidden="true">⊕</span>{resolveOverviewMenuLabel("enableAll", props.lang)}
                             </button>
                           ) : null}
                           {props.accounts?.some((candidate) => candidate.enabled !== false) ? (
@@ -476,7 +486,7 @@ export function OverviewSection(props: {
                                 props.onDisableAll();
                               }}
                             >
-                              ⊘ {resolveOverviewMenuLabel("disableAll", props.lang)}
+                              <span class="overview-menu-icon" aria-hidden="true">⊘</span>{resolveOverviewMenuLabel("disableAll", props.lang)}
                             </button>
                           ) : null}
                           {providedAccount && contextAction !== "rescue" ? (
@@ -488,7 +498,7 @@ export function OverviewSection(props: {
                                 props.onSetRegistryOverride(!settings.encryptedSyncRegistryOverrideEnabled);
                               }}
                             >
-                              🛟{" "}
+                              <span class="overview-menu-icon" aria-hidden="true">◇</span>
                               {resolveOverviewMenuLabel(
                                 settings.encryptedSyncRegistryOverrideEnabled ? "rescueOff" : "rescue",
                                 props.lang
@@ -500,7 +510,7 @@ export function OverviewSection(props: {
                               type="button"
                               role="menuitem"
                               onClick={(event) => {
-                                if (account.autoSwitchLockedUntil) {
+                                if (account.autoSwitchLockedUntil && account.autoSwitchLockedUntil > props.now) {
                                   setMoreOpen(false);
                                   props.onSetAutoSwitchLock(0);
                                 } else {
@@ -508,26 +518,15 @@ export function OverviewSection(props: {
                                 }
                               }}
                             >
-                              {account.autoSwitchLockedUntil ? "🔓" : "🔒"}{" "}
-                              {resolveOverviewMenuLabel(account.autoSwitchLockedUntil ? "unlock" : "lock", props.lang)}
+                              <span class="overview-menu-icon" aria-hidden="true">{account.autoSwitchLockedUntil && account.autoSwitchLockedUntil > props.now ? "◇" : "▣"}</span>
+                              {resolveOverviewMenuLabel(account.autoSwitchLockedUntil && account.autoSwitchLockedUntil > props.now ? "unlock" : "lock", props.lang)}
                             </button>
                           ) : null}
                           {props.showCliSessions ? <>
-                            <button type="button" role="menuitem" disabled={props.codexOpenPending} onClick={() => { setMoreOpen(false); props.onOpenCodex(); }}>◈ Codex</button>
-                            <button type="button" role="menuitem" disabled={props.resumeSessionsPending} onClick={() => { setMoreOpen(false); props.onResumeSessions(); }}>↻ Resume</button>
+                            <div class="overview-menu-section" role="presentation">{props.lang === "zh" ? "工作区" : props.lang === "zh-hant" ? "工作區" : "Workspace"}</div>
+                            <button type="button" role="menuitem" disabled={props.codexOpenPending} onClick={() => { setMoreOpen(false); props.onOpenCodex(); }}><CodexSessionsIcon />Codex</button>
+                            <button type="button" role="menuitem" disabled={props.resumeSessionsPending} onClick={() => { setMoreOpen(false); props.onResumeSessions(); }}><span class="overview-menu-icon" aria-hidden="true">↻</span>Resume</button>
                           </> : null}
-                          {props.showCliSessions && props.onOpenCliSessions ? (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setMoreOpen(false);
-                                props.onOpenCliSessions!();
-                              }}
-                            >
-                              ◉ Show All Sessions
-                            </button>
-                          ) : null}
                         </div>,
                         document.body
                       )
@@ -549,6 +548,7 @@ export function OverviewSection(props: {
           onSetAutoSwitchLock={props.onSetAutoSwitchLock}
           onClose={() => setLockDialogOpen(false)}
           contentRef={lockPopoverContentRef}
+          now={props.now}
         />
       ) : null}
     </>
@@ -592,8 +592,9 @@ function LockDialog(props: {
   onSetAutoSwitchLock: (minutes: number) => void;
   onClose: () => void;
   contentRef: preact.RefObject<HTMLDivElement>;
+  now: number;
 }) {
-  return props.open && !props.account.autoSwitchLockedUntil
+  return props.open && !(props.account.autoSwitchLockedUntil && props.account.autoSwitchLockedUntil > props.now)
     ? createPortal(
         <div
           ref={props.contentRef}

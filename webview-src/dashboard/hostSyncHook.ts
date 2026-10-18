@@ -17,7 +17,7 @@ export function useDashboardHostSync(params: {
     };
 
     const onKeydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !event.defaultPrevented) {
         paramsRef.current.handleEscape();
       }
     };

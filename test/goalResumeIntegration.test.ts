@@ -47,7 +47,7 @@ function context() {
     update: async (key: string, value: unknown) => { saved.set(key, value); } } } as never };
 }
 const select = () => readAutoResumeCodexSessionIds(home, undefined, ids, undefined, "running", goalOnly,
-  ids.filter((_id, index) => index !== 1));
+  ids.filter((_id, index) => index !== 1), undefined, [ids[1]!]);
 
 it("captures and restores active and quota-limited parent goals using real native goal storage", async () => {
   const state = context();
@@ -83,22 +83,24 @@ it("preserves recovery without closing tabs when native goal storage becomes inc
 it("includes eligible parents without active goals when goal-only is turned off", async () => {
   goalOnly = false;
   const state = context();
-  expect((await persistRunningCodexSessions(state.context, select)).sort()).toEqual(ids.slice(0, 5));
+  expect((await persistRunningCodexSessions(state.context, select)).sort()).toEqual(ids.slice(0, 2));
   const result = await resumePersistedCodexSessions(state.context, async () => undefined);
-  expect(result).toEqual({ attempted: 5, opened: 5, failed: [] });
+  expect(result).toEqual({ attempted: 2, opened: 2, failed: [] });
 });
 
 it("captures a running sidebar goal without any conversation tab, then restores it after reload", async () => {
   const state = context();
   vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([]);
   vi.spyOn(sessionEditor, "readRecentRunningCodexSessionIds").mockReturnValue([ids[0]!]);
-  expect(await persistOpenCodexSessions(state.context)).toEqual(ids.slice(0, 2));
-  expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual(ids.slice(0, 2));
+  const history = vi.spyOn(sessionEditor, "readQuotaInterruptedCodexSessionIds");
+  expect(await persistOpenCodexSessions(state.context)).toEqual([ids[0]]);
+  expect(history.mock.calls.every(call => Array.isArray(call[1]))).toBe(true);
+  expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([ids[0]]);
   const open = vi.fn(async (_sessionId: string) => undefined);
   const events = vi.spyOn(diagnostics, "recordPersistentEvent");
-  expect(await resumePersistedCodexSessions(state.context, open)).toMatchObject({ opened: 2, failed: [] });
-  expect(open.mock.calls.map(call => call[0])).toEqual(ids.slice(0, 2));
-  expect(events).toHaveBeenCalledWith("info", "auto-resume", "Startup recovery loaded", { savedCount: 2, goalOnly: true });
+  expect(await resumePersistedCodexSessions(state.context, open)).toMatchObject({ opened: 1, failed: [] });
+  expect(open.mock.calls.map(call => call[0])).toEqual([ids[0]]);
+  expect(events).toHaveBeenCalledWith("info", "auto-resume", "Startup recovery loaded", { savedCount: 1, goalOnly: true });
 });
 
 it("captures reload recovery from tabs and sidebar goals without scanning running history", async () => {
@@ -108,14 +110,14 @@ it("captures reload recovery from tabs and sidebar goals without scanning runnin
   const scan = vi.spyOn(sessionEditor, "readRunningCodexSessionIds").mockReturnValue(new Promise(() => undefined));
   await prepareCodexSessionsForExtensionHostRestart(state.context, true);
   expect(scan).not.toHaveBeenCalled();
-  expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual(ids.slice(0, 2));
+  expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([ids[0]]);
 });
 
 it("excludes idle active goals, child goals, and archived goals from the background snapshot", async () => {
   const state = context();
   vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([]);
   vi.spyOn(sessionEditor, "readRecentRunningCodexSessionIds").mockReturnValue([ids[5]!, ids[6]!]);
-  expect(await persistOpenCodexSessions(state.context)).toEqual([ids[1]]);
+  expect(await persistOpenCodexSessions(state.context)).toEqual([]);
 });
 
 it("retains the previous snapshot when sidebar goal storage is partial or corrupt", async () => {
@@ -124,6 +126,24 @@ it("retains the previous snapshot when sidebar goal storage is partial or corrup
   db.exec("ALTER TABLE thread_goals RENAME TO incompatible_schema");
   await expect(persistOpenCodexSessions(state.context)).rejects.toThrow();
   expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([ids[0]]);
+});
+
+it("never opens a previously paused goal with goal-only turned off", async () => {
+  goalOnly = false;
+  const state = context(); state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [ids[2]]);
+  const open = vi.fn();
+  expect(await resumePersistedCodexSessions(state.context, open)).toEqual({ attempted: 0, opened: 0, failed: [] });
+  expect(open).not.toHaveBeenCalled();
+  expect(db.prepare("SELECT status FROM thread_goals WHERE thread_id=?").get(ids[2]!)?.status).toBe("paused");
+});
+
+it("keeps a quota-interrupted goal only when a previous running snapshot recorded it", async () => {
+  const state = context();
+  vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockReturnValue([]);
+  vi.spyOn(sessionEditor, "readRecentRunningCodexSessionIds").mockReturnValue([]);
+  expect(await persistOpenCodexSessions(state.context)).toEqual([]);
+  state.saved.set(AUTO_RESUME_OPEN_SESSION_IDS_KEY, [ids[1]]);
+  expect(await persistOpenCodexSessions(state.context)).toEqual([ids[1]]);
 });
 
 it("bounds goal discovery and rejects oversized native goal results", async () => {

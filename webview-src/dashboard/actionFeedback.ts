@@ -5,7 +5,7 @@ export function noticeFromActionResult(
   automatic = false
 ): DashboardNotice | undefined {
   if (automatic) return undefined;
-  if (message.action === "getDailyUsage" || message.action === "getUsageGraph") return undefined;
+  if (message.action === "getDailyUsage" || message.action === "getUsageGraph" || message.action === "listCodexCliSessions") return undefined;
   if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(message.action) &&
     message.error?.startsWith("Session Integration is disabled.")) return undefined;
   if (message.status === "cancelled") {
