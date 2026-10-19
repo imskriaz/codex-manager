@@ -1,6 +1,30 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import type { DashboardCodexSessionGoal } from "../domain/dashboard/types";
+import { getCodexHomeStateKey } from "../codex/authFile";
+import { getSqliteStateStore } from "../storage/sqliteState";
+
+const EXPLICIT_PAUSE_NAMESPACE = "session-goal-explicit-pause";
+const explicitPauseFallback = new Set<string>();
+const explicitPauseKey = (home: string, sessionId: string) => `${getCodexHomeStateKey(home)}:${sessionId.toLowerCase()}`;
+
+/** Keep a user Pause distinct from a native/system interruption across windows and reloads. */
+export function markExplicitSessionGoalPause(home: string, sessionId: string): void {
+  const key = explicitPauseKey(home, sessionId);
+  explicitPauseFallback.add(key);
+  getSqliteStateStore()?.set(EXPLICIT_PAUSE_NAMESPACE, key, { at: Date.now() });
+}
+
+export function clearExplicitSessionGoalPause(home: string, sessionId: string): void {
+  const key = explicitPauseKey(home, sessionId);
+  explicitPauseFallback.delete(key);
+  getSqliteStateStore()?.set(EXPLICIT_PAUSE_NAMESPACE, key, undefined);
+}
+
+export function isExplicitSessionGoalPause(home: string, sessionId: string): boolean {
+  const key = explicitPauseKey(home, sessionId);
+  return explicitPauseFallback.has(key) || getSqliteStateStore()?.get(EXPLICIT_PAUSE_NAMESPACE, key) !== undefined;
+}
 
 /** Optional native goal metadata; never create or migrate Codex's database. */
 export async function readCodexSessionGoals(home: string, sessionIds?: readonly string[], limit = 2000): Promise<Map<string, DashboardCodexSessionGoal> | undefined> {

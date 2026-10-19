@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import { observeRunningCodexSession, readCodexCliSessionSummary, resolveCodexHome, resumeCodexSessionGoal, sendCodexCliSessionMessage, toSessionLogRef } from "./codexSessionResume";
 import { waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
+import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 
 const recovering = new Map<string, Promise<"running" | "continued" | "goal" | "idle">>();
 
@@ -35,7 +36,8 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
       return "running" as const;
     }
     if (session.status === "unknown") throw new Error("Running state could not be verified. Recovery was kept; refresh before retrying.");
-    if (session.goal && ["active", "usage_limited"].includes(session.goal.status)) {
+    const recoverablePausedGoal = session.goal?.status === "paused" && (origin === "user" || (session.interrupted === true && !isExplicitSessionGoalPause(resolveCodexHome(), session.id)));
+    if (session.goal && (["active", "usage_limited"].includes(session.goal.status) || recoverablePausedGoal)) {
       await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
       recordPersistentEvent("info", "session-resume", "Goal continuation accepted", { ...identity, title: session.title });
       return "goal" as const;

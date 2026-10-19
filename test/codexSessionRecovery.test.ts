@@ -4,6 +4,7 @@ vi.mock("../src/services/codexSessionResume", () => ({ observeRunningCodexSessio
 vi.mock("node:fs/promises", () => ({ readdir: mocks.files }));
 vi.mock("../src/utils/persistentLog", () => ({ recordPersistentEvent: mocks.log }));
 import { resumeCodexSessionWork } from "../src/services/codexSessionRecovery";
+import { clearExplicitSessionGoalPause, markExplicitSessionGoalPause } from "../src/services/codexSessionGoals";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -25,10 +26,17 @@ describe("post-load session recovery", () => {
     expect(await resumeCodexSessionWork("session")).toBe("goal");
     expect(mocks.goal).toHaveBeenCalledOnce(); expect(mocks.send).not.toHaveBeenCalled();
   });
+  it("resumes a paused goal recorded as an interruption while preserving explicit Pause", async () => {
+    mocks.summary.mockResolvedValue({ id: "session", title: "Interrupted goal", status: "idle", interrupted: true, goal: { status: "paused" } });
+    expect(await resumeCodexSessionWork("session")).toBe("goal");
+    expect(mocks.goal).toHaveBeenCalledOnce();
+  });
   it.each(["paused", "blocked", "complete", "budget_limited"])("preserves a %s goal", async status => {
     mocks.summary.mockResolvedValue({ id: "session", status: "idle", interrupted: true, goal: { status } });
+    if (status === "paused") markExplicitSessionGoalPause("recovery-test", "session");
     expect(await resumeCodexSessionWork("session")).toBe("idle");
     expect(mocks.send).not.toHaveBeenCalled(); expect(mocks.goal).not.toHaveBeenCalled();
+    clearExplicitSessionGoalPause("recovery-test", "session");
   });
   it("does not duplicate a native goal that resumed while the editor loaded", async () => {
     mocks.summary.mockResolvedValue({ id: "session", status: "running", locked: true });

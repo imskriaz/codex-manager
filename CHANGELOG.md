@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.5
+
+- Keep the newest session live and native status update when bounded background recording queues fill; evict older terminal or idle entries instead of dropping current recovery state.
+- Persist explicit goal Pause actions across windows and reloads while allowing goals paused by recorded interruptions to resume after recovery. Recheck goal status before each restore and keep explicit pauses untouched.
+
 ## 1.4.4
 
 - Resume saved active and usage-limited goals even when their previous turn completed successfully; goal completion is authoritative for goal recovery. Continue to exclude archived, child, paused, blocked, completed, and budget-limited goals.

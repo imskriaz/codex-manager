@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
-import { readCodexSessionGoals } from "../src/services/codexSessionGoals";
+import { clearExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "../src/services/codexSessionGoals";
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readAutoResumeGoalCandidateIds } from "../src/services/codexSessionAutoResumeSelection";
@@ -41,6 +41,7 @@ beforeEach(async () => {
   }
 });
 afterEach(async () => {
+  ids.forEach(id => clearExplicitSessionGoalPause(home, id));
   db.close(); vi.restoreAllMocks();
   mocks.open.mockReset();
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined);
@@ -121,6 +122,7 @@ it("rechecks each goal between editor opens and skips a newly paused goal", asyn
   const state = context();
   await persistRunningCodexSessions(state.context, select);
   const open = vi.fn(async (_sessionId: string) => {
+    markExplicitSessionGoalPause(home, ids[1]!);
     db.prepare("UPDATE thread_goals SET status='paused' WHERE thread_id=?").run(ids[1]!);
   });
   const result = await resumePersistedCodexSessions(state.context, open);
@@ -243,6 +245,7 @@ it("retains the previous snapshot when sidebar goal storage is partial or corrup
 it("never opens a previously paused goal with goal-only turned off", async () => {
   goalOnly = false;
   const state = context(); state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [ids[2]]);
+  markExplicitSessionGoalPause(home, ids[2]!);
   const open = vi.fn();
   expect(await resumePersistedCodexSessions(state.context, open)).toEqual({ attempted: 0, opened: 0, failed: [] });
   expect(open).not.toHaveBeenCalled();

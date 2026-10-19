@@ -1,5 +1,5 @@
 import { sqliteConfiguration } from "../storage/sqliteContext";
-import { readCodexSessionGoals } from "./codexSessionGoals";
+import { clearExplicitSessionGoalPause, isExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "./codexSessionGoals";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { isCodexQuotaInterruption } from "../domain/codexSessionState";
 import { getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
@@ -355,6 +355,8 @@ export async function setCodexSessionGoalStatus(sessionId: string, status: "acti
     const result = rpc ? await rpc.request<{ goal?: { status?: string } }>("thread/goal/set", params) :
       await runCodexAppServerRequest<{ goal?: { status?: string } }>("thread/goal/set", params);
     if (result.goal?.status !== status) throw new Error("Codex did not confirm the goal change. Refresh before retrying.");
+    if (status === "paused") markExplicitSessionGoalPause(resolveCodexHome(), sessionId);
+    else clearExplicitSessionGoalPause(resolveCodexHome(), sessionId);
   });
 }
 
@@ -998,7 +1000,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
       }
       const current = await rpc.request<{ goal?: { status?: string; objective?: string } | null }>("thread/goal/get", { threadId: session.id });
       signal?.throwIfAborted();
-      if (!current.goal || !["active", "usageLimited", "usage_limited"].includes(current.goal.status ?? "")) throw new Error("The goal is no longer eligible to resume. Refresh the session before retrying.");
+      if (!current.goal || (!["active", "usageLimited", "usage_limited"].includes(current.goal.status ?? "") && !(current.goal.status === "paused" && (origin === "user" || !isExplicitSessionGoalPause(home, session.id))))) throw new Error("The goal is no longer eligible to resume. Refresh the session before retrying.");
       const transcript = await findCliSessionTranscript(resolveCodexHome(), session.id, signal);
       await readRecentTranscriptTurnState(transcript);
       const previous = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
@@ -1021,6 +1023,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
           if (verified.goal?.status !== "active" || !current.goal.objective || verified.goal.objective !== current.goal.objective) throw error;
           recordPersistentEvent("warning", "session-resume", "Goal activation verified after native writer conflict", { sessionRef: toSessionLogRef(session.id), title: session.title }, error);
         }
+        clearExplicitSessionGoalPause(home, session.id);
       }
       if (getNativeCodexSessionRunning(resolveCodexHome(), session.id) === true) { monitorNative(); return; }
       if (getNativeCodexSessionRunning(home, session.id) !== undefined && await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, nativeStarted)) { monitorNative(); return; }

@@ -14,6 +14,7 @@ import { readSubAgentMetadata } from "../domain/sessionSource";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { normalizeNativePath } from "../utils/nativePaths";
+import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 
 type SqliteDatabase = {
   prepare(sql: string): { get(id: string): Record<string, unknown> | undefined; all(): Record<string, unknown>[] };
@@ -25,9 +26,9 @@ export function isAutoResumeGoalOnlyEnabled(): boolean {
   return getCodexManagerConfiguration().get<boolean>("autoResumeGoalOnlyEnabled", true) === true;
 }
 
-/** Paused or terminal goals never auto-resume, regardless of the goal-only filter. */
+/** Explicitly paused or terminal goals never auto-resume; interrupted pauses are checked separately. */
 export async function filterAutoResumeGoalSessionIds(
-  ids: string[], home = resolveCodexHome(), signal?: AbortSignal, goalOnly = isAutoResumeGoalOnlyEnabled()
+  ids: string[], home = resolveCodexHome(), signal?: AbortSignal, goalOnly = isAutoResumeGoalOnlyEnabled(), includeInterruptedPaused = false
 ): Promise<string[]> {
   signal?.throwIfAborted();
   if (!ids.length) return ids;
@@ -41,7 +42,7 @@ export async function filterAutoResumeGoalSessionIds(
     return ids.filter((id) => {
       signal?.throwIfAborted();
       const status = statement.get(id)?.["status"];
-      const eligible = status === "active" || status === "usage_limited" || (status === undefined && !goalOnly);
+      const eligible = status === "active" || status === "usage_limited" || (status === "paused" && includeInterruptedPaused && !isExplicitSessionGoalPause(home, id)) || (status === undefined && !goalOnly);
       return eligible;
     });
   } catch (error) {
@@ -113,7 +114,8 @@ export async function readAutoResumeCodexSessionIds(
     const goals = previouslyRunningSessionIds.length ? await openMetadataDatabase(home, "goals") : undefined;
     let pendingGoals: string[] = [];
     try {
-      pendingGoals = goals?.prepare("SELECT thread_id FROM thread_goals WHERE status IN ('active','usage_limited') LIMIT 10001").all()
+      pendingGoals = goals?.prepare("SELECT thread_id, status FROM thread_goals WHERE status IN ('active','usage_limited','paused') LIMIT 10001").all()
+        .filter(row => row["status"] !== "paused" || !isExplicitSessionGoalPause(home, String(row["thread_id"])))
         .map(row => row["thread_id"]).filter((id): id is string => typeof id === "string" && previouslyRunningSessionIds.includes(id)) ?? [];
     } catch { /* Optional goal metadata; transcript evidence remains available. */ }
     finally { goals?.close(); }
@@ -132,7 +134,12 @@ export async function readAutoResumeCodexSessionIds(
     try {
       const status = goals?.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
       // A finished turn does not finish an active goal.
-      running = running.filter(id => !completed.has(id) || ["active", "usage_limited"].includes(String(status?.get(id)?.["status"])));
+      running = running.filter(id => {
+        if (!completed.has(id)) return true;
+        const rawStatus = status?.get(id)?.["status"];
+        const goalStatus = typeof rawStatus === "string" ? rawStatus : "";
+        return ["active", "usage_limited"].includes(goalStatus) || (goalStatus === "paused" && !isExplicitSessionGoalPause(home, id));
+      });
     } finally { goals?.close(); }
     if (!running.length) return [];
   }
@@ -218,7 +225,7 @@ export async function readAutoResumeCodexSessionIds(
         continue;
       parents.push(id);
     }
-    return filterAutoResumeGoalSessionIds(parents, home, signal, goalOnly);
+    return filterAutoResumeGoalSessionIds(parents, home, signal, goalOnly, selection === "recovery" || (selection === "running" && previouslyRunningSessionIds.length > 0));
   } finally {
     state?.close();
   }

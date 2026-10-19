@@ -17,6 +17,21 @@ type Revision = Pick<DashboardCodexSessionLiveState,"sessionId"|"deviceId"|"stre
 const observed = new Map<string,Revision>();
 const revision = ({sessionId,deviceId,streamId,sequence,updatedAt,status}:DashboardCodexSessionLiveState):Revision => ({sessionId,deviceId,streamId,sequence,updatedAt,status});
 
+function evictOldestLive(skipKey?: string): boolean {
+  const terminal = [...pending.entries()].find(([key, entry]) => key !== skipKey && ["completed", "failed", "cancelled", "disconnected"].includes(entry.state.status));
+  const entry = terminal ?? [...pending.entries()].find(([key]) => key !== skipKey);
+  if (!entry) return false;
+  pending.delete(entry[0]);
+  pendingBytes -= entry[1].bytes;
+  return true;
+}
+
+function evictOldestStatus(): void {
+  const idle = [...pendingStatus.entries()].find(([, entry]) => entry.status !== "running");
+  const entry = idle ?? [...pendingStatus.entries()][0];
+  if (entry) pendingStatus.delete(entry[0]);
+}
+
 function warn(error: unknown): void {
   console.warn("[codexManager] session recording delayed",error);
   if (warned) return;
@@ -37,8 +52,16 @@ export function recordSessionLive(state:DashboardCodexSessionLiveState,accountId
   const home = getCodexHome(), key = JSON.stringify([getCodexHomeStateKey(home),state.deviceId ?? "",state.streamId]);
   const previous = pending.get(key);
   if (previous && !isNewerCodexSessionLiveState(state,previous.state)) return;
-  if (!previous && pending.size >= 128) { warn(new Error("The session recording queue is full; an update could not be retained.")); return; }
   const serialized = JSON.stringify(state), bytes = Buffer.byteLength(serialized);
+  if (bytes > 8 * 1024 * 1024) { warn(new Error("The session recording byte limit was reached; an update could not be retained.")); return; }
+  let evicted = false, byteEvicted = false;
+  while ((!previous && pending.size >= 128) || pendingBytes - (previous?.bytes ?? 0) + bytes > 8 * 1024 * 1024) {
+    if (pendingBytes - (previous?.bytes ?? 0) + bytes > 8 * 1024 * 1024) byteEvicted = true;
+    if (!evictOldestLive(previous ? key : undefined)) break;
+    evicted = true;
+  }
+  if (evicted) warn(new Error("The session recording queue is full; older queued updates were evicted to retain the newest state."));
+  if (byteEvicted) warn(new Error("The session recording byte limit was reached; older queued updates were evicted to retain the newest state."));
   if (pendingBytes - (previous?.bytes ?? 0) + bytes > 8 * 1024 * 1024) { warn(new Error("The session recording byte limit was reached; an update could not be retained.")); return; }
   state = JSON.parse(serialized) as DashboardCodexSessionLiveState;
   pendingBytes += bytes - (previous?.bytes ?? 0);
@@ -94,7 +117,10 @@ export function disposeSessionRecording(): void {
 export function recordNativeSessionStatus(home:string,id:string,running:boolean|undefined): void {
   if (!getSqliteStateStore()) return;
   const key = JSON.stringify([getCodexHomeStateKey(home),id.toLowerCase()]);
-  if (!pendingStatus.has(key) && pendingStatus.size >= 1024) { warn(new Error("The session status recording queue is full.")); return; }
+  if (!pendingStatus.has(key) && pendingStatus.size >= 1024) {
+    warn(new Error("The session status recording queue is full; the oldest queued status was evicted to retain the newest state."));
+    evictOldestStatus();
+  }
   pendingStatus.set(key,{home,id:id.toLowerCase(),status:running === undefined ? "unknown" : running ? "running" : "idle",at:Date.now()});
   if (!timer) schedule(250);
 }

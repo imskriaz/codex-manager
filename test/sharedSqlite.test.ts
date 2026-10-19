@@ -147,6 +147,7 @@ describe("batched session persistence",()=>{
     expect(warning).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({message:expect.stringContaining("queue is full")}));
     expect(flushSessionRecording(128)).toBe(true);
     expect(store.prepare("SELECT COUNT(*) AS n FROM session_status").get()?.["n"]).toBe(1024);
+    expect(readSessionStatus(store,root,"00000400-cccc-cccc-cccc-cccccccccccc")).toBe("running");
     recordNativeSessionStatus(root,sessionId,false);expect(flushSessionRecording()).toBe(true);
     expect(readSessionStatus(store,root,sessionId)).toBe("idle");
   });

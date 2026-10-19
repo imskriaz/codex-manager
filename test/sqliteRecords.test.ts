@@ -145,6 +145,7 @@ describe("durable session recording", () => {
       expect(warning).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ message: expect.stringContaining("queue is full") }));
       expect(flushSessionRecording(128)).toBe(true);
       expect(store.database.prepare("SELECT COUNT(*) AS count FROM session_turns").get()?.["count"]).toBe(129);
+      expect(store.database.prepare("SELECT stream_id FROM session_turns WHERE stream_id=?").get("00000080-dddd-dddd-dddd-dddddddddddd")?.["stream_id"]).toBe("00000080-dddd-dddd-dddd-dddddddddddd");
       recordSessionLive(live({ sequence: 2, status: "completed" }));
       expect(flushSessionRecording()).toBe(true);
     } finally { peer.close(); }
