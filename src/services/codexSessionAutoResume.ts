@@ -604,8 +604,8 @@ export function resumePersistedCodexSessions(
       const savedTitles = readSavedMetadata(context);
       const missingTitles = savedIds.filter(id => !savedTitles[id]);
       if (missingTitles.length) Object.assign(savedTitles, await captureRecoveryMetadata(missingTitles, controller.signal));
-      const ids = await bounded(() => filterAutoResumeGoalSessionIds(savedIds, undefined, controller.signal), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
-        "Auto Resume could not verify goals within 30 seconds. Saved recovery was retained.", controller.signal);
+      const ids = await bounded(() => readAutoResumeCodexSessionIds(undefined, undefined, savedIds, controller.signal, "recovery", goalOnly), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
+        "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal);
       if (!isAutoResumeAvailable()) {
         await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
         return { attempted: 0, opened: 0, failed: [] };
@@ -648,9 +648,9 @@ export function resumePersistedCodexSessions(
           );
         try {
           controller.signal.throwIfAborted();
-          if (!(await bounded(() => filterAutoResumeGoalSessionIds([id], undefined, controller.signal), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
-            "Auto Resume could not verify this session's goal before its deadline.", controller.signal)).length) {
-            recordPersistentEvent("info", "auto-resume", "Session skipped because goal is no longer eligible", { sessionId: id, sessionRef: toSessionLogRef(id) });
+          if (!(await bounded(() => readAutoResumeCodexSessionIds(undefined, undefined, [id], controller.signal, "recovery", goalOnly), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
+            "Auto Resume could not verify this saved session before its deadline.", controller.signal)).length) {
+            recordPersistentEvent("info", "auto-resume", "Session skipped because recovery is no longer eligible", { sessionId: id, sessionRef: toSessionLogRef(id) });
             remaining = remaining.filter((candidate) => candidate !== id);
             await writeIds(context, remaining, deadline, false, { remove: [id] });
             continue;

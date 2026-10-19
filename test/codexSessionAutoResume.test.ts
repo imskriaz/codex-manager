@@ -42,6 +42,7 @@ function createContext(initial?: unknown) {
 }
 
 const readNativeTabs = sessionEditor.readOpenCodexSessionIds;
+const selectNativeSessions = autoResumeSelection.readAutoResumeCodexSessionIds;
 
 it("does not let a delayed startup resume override a manual account switch or disposed window", async () => {
   vi.useFakeTimers();
@@ -99,6 +100,8 @@ beforeEach(() => {
   vi.spyOn(sessionEditor, "readCodexCliSessionRecoveryMetadata").mockResolvedValue({});
   vi.spyOn(autoResumeSelection, "readAutoResumeGoalCandidateIds").mockResolvedValue([]);
   vi.spyOn(autoResumeSelection, "filterAutoResumeGoalSessionIds").mockImplementation(async (ids) => ids);
+  vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds").mockImplementation((...args) =>
+    args[4] === "recovery" ? autoResumeSelection.filterAutoResumeGoalSessionIds(args[2] ?? [], args[0], args[3], args[5]) : selectNativeSessions(...args));
 
 });
 

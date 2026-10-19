@@ -2802,7 +2802,9 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
             const quota = isCodexQuotaInterruption(JSON.stringify([record.error,record.payload?.error, /failed|aborted/.test(type ?? "") ? record.payload?.message : undefined]));
             const cancelled = typeof record.payload?.reason === "string" && /user|cancel/i.test(record.payload.reason);
             turnCancelled = cancelled || type === "turn_aborted";
-            state = quota || (state === "quota-paused" && !cancelled) ? "quota-paused" : /failed/.test(type ?? "") && !cancelled ? "failed" : "terminal";
+            // Native task_complete can carry a provider error; it is unfinished work, not success.
+            const failed = /failed/.test(type ?? "") || Boolean(record.error ?? record.payload?.error) || state === "failed";
+            state = quota || (state === "quota-paused" && !cancelled) ? "quota-paused" : failed && !cancelled ? "failed" : "terminal";
             turnId = eventTurnId ?? turnId;
           }
         } else if (type === "error" && (!eventTurnId || !turnId || eventTurnId === turnId) && isCodexQuotaInterruption(JSON.stringify(record))) {
@@ -2830,6 +2832,17 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
     if (cliTranscriptTurnStateCache.size > MAX_VISIBLE_CLI_SESSIONS * 3) cliTranscriptTurnStateCache.delete(cliTranscriptTurnStateCache.keys().next().value!);
     return state;
   }
+}
+
+/** Successful native completion makes an old recovery entry ineligible for replay. */
+export async function readCompletedCodexSessionIds(home: string, ids: readonly string[], signal?: AbortSignal): Promise<string[]> {
+  const transcripts = await findCliSessionTranscripts(home, new Set(ids), signal);
+  const completed: string[] = [];
+  for (const [id, transcript] of transcripts) {
+    signal?.throwIfAborted();
+    if (await readRecentTranscriptTurnState(transcript) === "terminal" && !cliTranscriptTurnStateCache.get(transcript)?.cancelled) completed.push(id);
+  }
+  return completed;
 }
 
 /** Optionally include all interrupted turns; discovery never changes native writer locks. */

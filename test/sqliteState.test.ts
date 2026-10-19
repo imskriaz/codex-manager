@@ -47,6 +47,7 @@ afterEach(async () => {
   for (const store of stores) store.close();
   stores.clear();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await removeTestDirectory(root);
 });
 
@@ -290,9 +291,12 @@ describe("SQLite WAL state", () => {
   });
 
   it("restores committed conversation IDs through a new SQLite connection after reload", async () => {
+    vi.stubEnv("CODEX_HOME", root);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : key === "autoResumeGoalOnlyEnabled" ? false : fallback } as never);
     vi.spyOn(selection, "filterAutoResumeGoalSessionIds").mockImplementation(async ids => ids);
     const id = "01a04882-d037-7a42-ad24-9afb61901181";
+    await fs.mkdir(path.join(root, "sessions"));
+    await fs.writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, source: "vscode", cwd: root } }) + "\n");
     const context = { workspaceState: createSqliteMemento(await open(), "workspace:reload", legacy()) } as never;
     await persistOpenCodexSessions(context, async () => [id]);
     const fresh = { workspaceState: createSqliteMemento(await open(), "workspace:reload", legacy()) } as never;

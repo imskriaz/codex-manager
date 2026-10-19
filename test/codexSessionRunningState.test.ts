@@ -331,6 +331,36 @@ describe("shared running-session detection and auto resume", () => {
     }
   );
 
+  it.each(["task_complete", "task_completed", "turn/completed", "turn.completed"])("retains %s provider errors for recovery until a new turn succeeds", async type => {
+    const failed = JSON.stringify({ type: "event_msg", payload: { type, turn_id: "turn-1", error: { message: "Selected model is at capacity. Please try a different model.", codex_error_info: "server_overloaded" } } }) + "\n";
+    expect(await select()).toEqual([id]);
+    await appendFile(transcript, failed.slice(0, -4));
+    expect(await select()).toEqual([id]);
+    await appendFile(transcript, failed.slice(-4));
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: true });
+    expect(await select()).toEqual([]);
+    expect(await select([id])).toEqual([id]);
+    // Replayed errorless completion and duplicate starts cannot erase the failure.
+    await appendFile(transcript, event(type) + event("task_started"));
+    expect(await select([id])).toEqual([id]);
+    // A delayed error from that turn cannot undo a later successful turn.
+    await appendFile(transcript, event("task_started", "next-turn") + event("task_complete", "next-turn") + failed);
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: false });
+    expect(await select([id])).toEqual([]);
+  });
+
+  it.each([null, false, ""])("does not retain successful completion with an empty error %j", async error => {
+    await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "turn-1", error } }) + "\n");
+    expect(await select([id])).toEqual([]);
+  });
+
+  it("retains top-level completion errors without mistaking quoted errors for failures", async () => {
+    await appendFile(transcript, JSON.stringify({ type: "turn/completed", turn_id: "turn-1", error: { message: "Provider unavailable" } }) + "\n");
+    expect(await select([id])).toEqual([id]);
+    await appendFile(transcript, event("task_started", "next-turn") + JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "next-turn", result: { error: "Quoted failure" } } }) + "\n");
+    expect(await select([id])).toEqual([]);
+  });
+
   it("ignores nested event names, partial records, and item starts after completion", async () => {
     await appendFile(transcript, JSON.stringify({ type: "response_item", payload: { type: "message", quoted: { type: "task_complete" } } }) + "\n");
     expect(await select()).toEqual([id]);

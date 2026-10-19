@@ -5,6 +5,7 @@ import {
   findCliSessionTranscripts,
   readOpenCodexSessionIds,
   readRunningCodexSessionIds,
+  readCompletedCodexSessionIds,
   readQuotaInterruptedCodexSessionIds,
   resolveCodexHome,
   SESSION_ID_PATTERN
@@ -77,7 +78,7 @@ export async function readAutoResumeGoalCandidateIds(home = resolveCodexHome(), 
 }
 
 /** Optional runtime capability: never create or migrate Codex's databases. */
-async function openMetadataDatabase(home: string, prefix: string): Promise<SqliteDatabase | undefined> {
+async function openMetadataDatabase(home: string, prefix: string, strict = false): Promise<SqliteDatabase | undefined> {
   try {
     const names = await fs.readdir(home);
     const candidates = names.filter((name) => new RegExp(`^${prefix}_[0-9]+\\.sqlite$`).test(name));
@@ -86,7 +87,8 @@ async function openMetadataDatabase(home: string, prefix: string): Promise<Sqlit
     const moduleName = "node:sqlite";
     const sqlite = (await import(moduleName)) as SqliteModule;
     return new sqlite.DatabaseSync(path.join(home, candidates[0]), { readOnly: true });
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     // Older extension hosts, missing files, and locked/corrupt databases use
     // the documented parent-session fallback rather than blocking a reload.
     return undefined;
@@ -99,7 +101,7 @@ export async function readAutoResumeCodexSessionIds(
   workspacePaths?: string[],
   openSessionIds = readOpenCodexSessionIds(),
   signal?: AbortSignal,
-  selection: "running" | "open" = "running",
+  selection: "running" | "open" | "recovery" = "running",
   goalOnly = isAutoResumeGoalOnlyEnabled(),
   runningSessionIds?: string[],
   candidateSessionIds?: string[],
@@ -123,8 +125,13 @@ export async function readAutoResumeCodexSessionIds(
   }
   signal?.throwIfAborted();
   if (!running.length) return [];
+  if (selection === "recovery") {
+    const completed = new Set(await readCompletedCodexSessionIds(home, running, signal));
+    running = running.filter(id => !completed.has(id));
+    if (!running.length) return [];
+  }
   const transcripts = await findCliSessionTranscripts(home, new Set(running), signal);
-  const state = await openMetadataDatabase(home, "state");
+  const state = await openMetadataDatabase(home, "state", selection === "recovery");
   try {
     const parents: string[] = [];
     for (const id of running) {
@@ -136,7 +143,8 @@ export async function readAutoResumeCodexSessionIds(
       } catch {
         try {
           metadata = state?.prepare("SELECT source, cwd FROM threads WHERE id = ?").get(id);
-        } catch {
+        } catch (error) {
+          if (selection === "recovery") throw error;
           /* use transcript */
         }
       }

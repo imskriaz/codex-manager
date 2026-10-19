@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -67,6 +67,28 @@ it("captures quota-stopped parents, survives a fresh connection, verifies native
   expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith").map(([, uri]) => (uri as {path:string}).path)).toEqual([...ids,...ids.slice(0,2)].map(id=>`/local/${id}`));
   expect(store.get(namespace,queue)).toBeUndefined();expect(store.get(namespace,snapshot)).toBeUndefined();
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
+});
+
+it.each([true, false])("keeps native capacity errors durable through capture and restart with goal-only=%s", async goalOnly => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string) => key === "autoResumeGoalOnlyEnabled" ? goalOnly : key !== "cliIntegrationEnabled" } as never);
+  const goals = new DatabaseSync(path.join(root, "goals_1.sqlite"));
+  goals.exec("UPDATE thread_goals SET status='complete'");
+  if (goalOnly) goals.prepare("UPDATE thread_goals SET status='active' WHERE thread_id=?").run(ids[0]!);
+  else goals.prepare("DELETE FROM thread_goals WHERE thread_id=?").run(ids[0]!);
+  goals.close();
+  const transcript = path.join(root, "sessions", `rollout-${ids[0]}.jsonl`);
+  await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "restored-turn" } }) + "\n" +
+    JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "restored-turn", error: { message: "Selected model is at capacity. Please try a different model.", codex_error_info: "server_overloaded" } } }) + "\n");
+  tabs = [];
+  store.set(namespace, snapshot, [ids[0]]);
+  await persistOpenCodexSessions(context());
+  expect(store.get(namespace, snapshot)).toEqual([ids[0]]);
+  await closeCodexSessionsForExtensionHostRestart(context());
+  store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
+  const opened = vi.fn(async () => undefined);
+  expect(await resumePersistedCodexSessions(context(), opened)).toEqual({ attempted: 1, opened: 1, failed: [] });
+  expect(opened).toHaveBeenCalledExactlyOnceWith(ids[0], expect.any(AbortSignal));
+  expect(store.get(namespace, queue)).toBeUndefined();
 });
 
 it("seals goal recovery before reload cleanup and restores after the open-tab snapshot is replaced", async () => {

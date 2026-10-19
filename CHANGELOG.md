@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.3
+
+- Revalidate saved recovery before touching editors and again before every open. Discard archived, child, and successfully completed conversations; preserve pending recovery without opening tabs when native metadata cannot be verified.
+- Keep failed native turns eligible for Auto Resume when Codex records `task_complete` with a provider error, including model capacity failures. Preserve those errors across partial writes, duplicate events, background capture, and restart; clear recovery after a later successful turn.
+
 ## 1.4.2
 
 - Record verified native chats in the background even without an open dashboard or conversation tab. Keep tracking active when manual work cancels startup restoration, and preserve pending recovery while slow editors load.

@@ -1,4 +1,7 @@
 import * as vscode from "vscode";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 vi.mock("../src/services/codexSessionRecovery", () => ({ resumeCodexSessionWork: vi.fn().mockResolvedValue("idle") }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareCodexSessionsForExtensionHostRestart, resumePersistedCodexSessions } from "../src/services/codexSessionAutoResume";
@@ -265,13 +268,19 @@ describe("Codex VS Code session editor", () => {
       get: (key: string, fallback?: unknown) => ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : key === "autoResumeGoalOnlyEnabled" ? false : fallback
     } as never);
     const ids = ["01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3", "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd4"];
+    const home = await mkdtemp(path.join(tmpdir(), "codex-editor-recovery-"));
+    vi.stubEnv("CODEX_HOME", home);
+    await mkdir(path.join(home, "sessions"));
+    for (const id of ids) await writeFile(path.join(home, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, source: "vscode", cwd: home } }) + "\n");
     const saved = new Map<string, unknown>();
     const context = { workspaceState: { get: (key: string) => saved.get(key), update: async (key: string, value: unknown) => { saved.set(key, value); } } } as never;
-    await prepareCodexSessionsForExtensionHostRestart(context, true, async () => ids, async () => ids);
-    expect(await resumePersistedCodexSessions(context)).toEqual({ attempted: 2, opened: 2, failed: [] });
-    expect(readOpenCodexSessionIds(false)).toEqual(ids);
-    expect(vscode.window.tabGroups.all[0]?.tabs).toHaveLength(2);
-    expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.focusActiveEditorGroup");
+    try {
+      await prepareCodexSessionsForExtensionHostRestart(context, true, async () => ids, async () => ids);
+      expect(await resumePersistedCodexSessions(context)).toEqual({ attempted: 2, opened: 2, failed: [] });
+      expect(readOpenCodexSessionIds(false)).toEqual(ids);
+      expect(vscode.window.tabGroups.all[0]?.tabs).toHaveLength(2);
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.focusActiveEditorGroup");
+    } finally { vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); }
   });
 
   it("opens a local session through the official Codex custom editor", async () => {

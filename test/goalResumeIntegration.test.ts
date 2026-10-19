@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -68,6 +68,56 @@ it("rechecks each goal between editor opens and skips a newly paused goal", asyn
   const result = await resumePersistedCodexSessions(state.context, open);
   expect(result).toEqual({ attempted: 2, opened: 1, failed: [] });
   expect(open.mock.calls.map(call => call[0])).toEqual([ids[0]]);
+});
+
+it.each([true, false])("drops stale completed, archived, and child recovery before closing editors with goal-only=%s", async onlyGoals => {
+  goalOnly = onlyGoals;
+  const state = context();
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [ids[0], ids[1], ids[5], ids[6]]);
+  const metadata = new DatabaseSync(path.join(home, "state_5.sqlite"));
+  metadata.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, source TEXT, cwd TEXT, archived INTEGER)");
+  metadata.prepare("INSERT INTO threads VALUES (?, 'vscode', ?, 1)").run(ids[1]!, home);
+  metadata.close();
+  await appendFile(path.join(home, "sessions", `rollout-${ids[0]}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "finished" } }) + "\n");
+  const open = vi.fn();
+  expect(await resumePersistedCodexSessions(state.context, open)).toEqual({ attempted: 0, opened: 0, failed: [] });
+  expect(open).not.toHaveBeenCalled();
+  expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();
+  expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
+});
+
+it.each(["archive", "completion"])("rechecks %s between editor opens and consumes the obsolete queued ID", async change => {
+  const state = context();
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, ids.slice(0, 2));
+  const metadata = new DatabaseSync(path.join(home, "state_5.sqlite"));
+  metadata.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, source TEXT, cwd TEXT, archived INTEGER)");
+  for (const id of ids.slice(0, 2)) metadata.prepare("INSERT INTO threads VALUES (?, 'vscode', ?, 0)").run(id!, home);
+  try {
+    const open = vi.fn(async () => {
+      if (change === "archive") metadata.prepare("UPDATE threads SET archived=1 WHERE id=?").run(ids[1]!);
+      else await appendFile(path.join(home, "sessions", `rollout-${ids[1]}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } }) + "\n");
+    });
+    expect(await resumePersistedCodexSessions(state.context, open)).toEqual({ attempted: 2, opened: 1, failed: [] });
+    expect(open).toHaveBeenCalledExactlyOnceWith(ids[0], expect.any(AbortSignal));
+    expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
+  } finally { metadata.close(); }
+});
+
+it.each(["corrupt", "schema", "missing", "partial"])("keeps recovery without opening or closing editors when session metadata is %s", async failure => {
+  const state = context();
+  const saved = failure === "missing" ? "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" : ids[0]!;
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [saved]);
+  if (failure === "corrupt") await writeFile(path.join(home, "state_5.sqlite"), "corrupt");
+  if (failure === "schema") {
+    const metadata = new DatabaseSync(path.join(home, "state_5.sqlite"));
+    metadata.exec("CREATE TABLE incompatible_schema(id TEXT)"); metadata.close();
+  }
+  if (failure === "partial") await writeFile(path.join(home, "sessions", `rollout-${saved}.jsonl`), '{"type":"session_meta","payload":');
+  const open = vi.fn();
+  await expect(resumePersistedCodexSessions(state.context, open)).rejects.toThrow();
+  expect(open).not.toHaveBeenCalled();
+  expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();
+  expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toEqual([saved]);
 });
 
 it("preserves recovery without closing tabs when native goal storage becomes incompatible", async () => {
