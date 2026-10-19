@@ -30,6 +30,18 @@ it("uses the verified native owner to accept Continue once in its recorded proje
   expect(socket.sent.filter(value => value.method === "thread-follower-start-turn")).toHaveLength(1);
   expect(socket.sent.find(value => value.method === "initialize")).toMatchObject({ version: 0 });
 });
+it.each([undefined, null, "", " ", 42, "x".repeat(257)])("does not acknowledge a native start without a valid turn ID %j", async turnId => {
+  const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("idle")); await reading;
+  const started = vi.fn();
+  const result = expect(startNativeCodexSessionTurn(home, id, { threadId: id, input: [] }, undefined, started)).rejects.toThrow("did not confirm a started turn");
+  for (let i = 0; i < 50; i++) await Promise.resolve();
+  const sent = socket.sent.find(value => value.method === "thread-follower-start-turn");
+  message({ type: "response", requestId: sent.requestId, resultType: "success", result: { result: { turn: { id: turnId } } } });
+  await result;
+  expect(started).not.toHaveBeenCalled();
+  expect(socket.sent.filter(value => value.method === "thread-follower-start-turn")).toHaveLength(1);
+});
+
 it.each(["confirmed", "changed", "goal-pause", "timeout", "disconnect"])("stops only the accepted native turn and preserves an unconfirmed outcome (%s)", async outcome => {
   const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("active")); await reading;
   const pending = cancelNativeCodexSessionTurn(home, id, "native-turn");

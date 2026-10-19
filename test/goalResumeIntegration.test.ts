@@ -4,12 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ open: vi.fn() }));
+vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
 import { readCodexSessionGoals } from "../src/services/codexSessionGoals";
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readAutoResumeGoalCandidateIds } from "../src/services/codexSessionAutoResumeSelection";
 import { AUTO_RESUME_OPEN_SESSION_IDS_KEY, persistOpenCodexSessions, AUTO_RESUME_SESSION_IDS_KEY, persistRunningCodexSessions, resumePersistedCodexSessions, prepareCodexSessionsForExtensionHostRestart } from "../src/services/codexSessionAutoResume";
+import { getNativeCodexSessionRunning, startNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
+import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
 let home: string, db: DatabaseSync;
 let goalOnly: boolean;
@@ -38,6 +42,9 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   db.close(); vi.restoreAllMocks();
+  mocks.open.mockReset();
+  vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined);
+  vi.mocked(startNativeCodexSessionTurn).mockReset().mockResolvedValue(false);
   if (previousHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previousHome;
   await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
@@ -59,6 +66,57 @@ it("captures and restores active and quota-limited parent goals using real nativ
   expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
 });
 
+it.each(["active", "usage_limited"])("opens and starts an unfinished %s goal after its previous turn completed", async status => {
+  const state = context(), id = ids[0]!;
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [id]);
+  db.prepare("UPDATE thread_goals SET status=? WHERE thread_id=?").run(status, id);
+  await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Unfinished goal" }) + "\n");
+  const transcript = path.join(home, "sessions", `rollout-${id}.jsonl`);
+  await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "previous-turn" } }) + "\n");
+  const previousTabs = vscode.window.tabGroups;
+  const tabs: Array<{ input: unknown; isPreview: boolean }> = [];
+  Object.assign(vscode.window, { tabGroups: { all: [{ tabs }] } });
+  vi.mocked(vscode.extensions.getExtension).mockReturnValue({ activate: async () => undefined } as never);
+  vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command, uri, viewType) => {
+    if (command === "vscode.openWith") tabs.push({ input: { uri, viewType }, isPreview: false });
+  });
+  vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+  const rpc = { request: vi.fn(async (method: string) => {
+    if (method === "thread/goal/set") db.prepare("UPDATE thread_goals SET status='active' WHERE thread_id=?").run(id);
+    return { goal: { status: method === "thread/goal/set" ? "active" : status, objective: "Finish the requested task" } };
+  }), close: vi.fn() };
+  mocks.open.mockResolvedValue(rpc);
+  const completed = vi.fn();
+  const unsubscribe = subscribeDashboardRealtime(message => { if (message.type === "dashboard:codex-session-live" && message.state.sessionId === id && message.state.status === "completed") completed(); });
+  vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, _turn, _signal, onStarted) => {
+    await appendFile(transcript, ["task_started", "task_complete"].map(type => JSON.stringify({ type: "event_msg", payload: { type, turn_id: "confirmed-goal-turn" } })).join("\n") + "\n");
+    onStarted?.("confirmed-goal-turn");
+    return true;
+  });
+  try {
+    expect(await resumePersistedCodexSessions(state.context)).toEqual({ attempted: 1, opened: 1, failed: [] });
+    expect(tabs).toHaveLength(1);
+    expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(home, id, { threadId: id, input: [], cwd: home }, expect.any(AbortSignal), expect.any(Function));
+    expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(["thread/goal/get", ...(status === "active" ? [] : ["thread/goal/set"])]);
+    await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce());
+    expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
+  } finally { unsubscribe(); Object.assign(vscode.window, { tabGroups: previousTabs }); }
+});
+
+it("retains goal recovery when the tab opens but the native turn start is unconfirmed", async () => {
+  const state = context(), id = ids[0]!;
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [id]);
+  await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Unfinished goal" }) + "\n");
+  vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+  vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+  mocks.open.mockResolvedValue({ request: vi.fn(async () => ({ goal: { status: "active" } })), close: vi.fn() });
+  vi.mocked(startNativeCodexSessionTurn).mockRejectedValueOnce(new Error("Codex did not confirm a started turn. The outcome is unconfirmed."));
+  const result = await resumePersistedCodexSessions(state.context);
+  expect(result).toMatchObject({ attempted: 1, opened: 0, failed: [{ sessionId: id, message: expect.stringContaining("did not confirm a started turn") }] });
+  expect(startNativeCodexSessionTurn).toHaveBeenCalledOnce();
+  expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toEqual([id]);
+});
+
 it("rechecks each goal between editor opens and skips a newly paused goal", async () => {
   const state = context();
   await persistRunningCodexSessions(state.context, select);
@@ -78,6 +136,7 @@ it.each([true, false])("drops stale completed, archived, and child recovery befo
   metadata.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, source TEXT, cwd TEXT, archived INTEGER)");
   metadata.prepare("INSERT INTO threads VALUES (?, 'vscode', ?, 1)").run(ids[1]!, home);
   metadata.close();
+  db.prepare("UPDATE thread_goals SET status='complete' WHERE thread_id=?").run(ids[0]!);
   await appendFile(path.join(home, "sessions", `rollout-${ids[0]}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "finished" } }) + "\n");
   const open = vi.fn();
   expect(await resumePersistedCodexSessions(state.context, open)).toEqual({ attempted: 0, opened: 0, failed: [] });
@@ -95,7 +154,10 @@ it.each(["archive", "completion"])("rechecks %s between editor opens and consume
   try {
     const open = vi.fn(async () => {
       if (change === "archive") metadata.prepare("UPDATE threads SET archived=1 WHERE id=?").run(ids[1]!);
-      else await appendFile(path.join(home, "sessions", `rollout-${ids[1]}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } }) + "\n");
+      else {
+        db.prepare("UPDATE thread_goals SET status='complete' WHERE thread_id=?").run(ids[1]!);
+        await appendFile(path.join(home, "sessions", `rollout-${ids[1]}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } }) + "\n");
+      }
     });
     expect(await resumePersistedCodexSessions(state.context, open)).toEqual({ attempted: 2, opened: 1, failed: [] });
     expect(open).toHaveBeenCalledExactlyOnceWith(ids[0], expect.any(AbortSignal));

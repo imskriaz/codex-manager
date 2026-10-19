@@ -111,23 +111,29 @@ export async function readAutoResumeCodexSessionIds(
   let running = openSessionIds;
   if (selection === "running") {
     const goals = previouslyRunningSessionIds.length ? await openMetadataDatabase(home, "goals") : undefined;
-    let limited: string[] = [];
+    let pendingGoals: string[] = [];
     try {
-      limited = goals?.prepare("SELECT thread_id FROM thread_goals WHERE status='usage_limited' LIMIT 10001").all()
+      pendingGoals = goals?.prepare("SELECT thread_id FROM thread_goals WHERE status IN ('active','usage_limited') LIMIT 10001").all()
         .map(row => row["thread_id"]).filter((id): id is string => typeof id === "string" && previouslyRunningSessionIds.includes(id)) ?? [];
     } catch { /* Optional goal metadata; transcript evidence remains available. */ }
     finally { goals?.close(); }
-    if (limited.length > 10000) throw new Error("Quota recovery exceeded its safe discovery limit. Saved recovery was retained.");
-    const interrupted = previouslyRunningSessionIds.length ? await readQuotaInterruptedCodexSessionIds(home, previouslyRunningSessionIds, signal, limited, true) : [];
-    const inspect = candidateSessionIds?.filter(id => !interrupted.includes(id));
+    if (pendingGoals.length > 10000) throw new Error("Goal recovery exceeded its safe discovery limit. Saved recovery was retained.");
+    const interrupted = previouslyRunningSessionIds.length ? await readQuotaInterruptedCodexSessionIds(home, previouslyRunningSessionIds, signal, pendingGoals, true) : [];
+    const retained = [...new Set([...pendingGoals, ...interrupted])];
+    const inspect = candidateSessionIds?.filter(id => !retained.includes(id));
     const live = runningSessionIds ?? (inspect?.length === 0 ? [] : await readRunningCodexSessionIds(home, signal, inspect));
-    running = [...new Set([...live, ...interrupted])];
+    running = [...new Set([...live, ...retained])];
   }
   signal?.throwIfAborted();
   if (!running.length) return [];
   if (selection === "recovery") {
     const completed = new Set(await readCompletedCodexSessionIds(home, running, signal));
-    running = running.filter(id => !completed.has(id));
+    const goals = completed.size ? await openGoalDatabase(home) : undefined;
+    try {
+      const status = goals?.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
+      // A finished turn does not finish an active goal.
+      running = running.filter(id => !completed.has(id) || ["active", "usage_limited"].includes(String(status?.get(id)?.["status"])));
+    } finally { goals?.close(); }
     if (!running.length) return [];
   }
   const transcripts = await findCliSessionTranscripts(home, new Set(running), signal);

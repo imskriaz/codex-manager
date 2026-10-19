@@ -154,6 +154,30 @@ it("does not add idle quota goals without a previously running record",async()=>
   await persistOpenCodexSessions(context());
   expect(store.get(namespace,snapshot)).toBeUndefined();
 });
+
+it.each(["active", "usage_limited"])("keeps a previously running %s goal durable between turns until its goal completes", async status => {
+  tabs = [];
+  const goals = new DatabaseSync(path.join(root, "goals_1.sqlite"));
+  try {
+    goals.exec("UPDATE thread_goals SET status='complete'");
+    goals.prepare("UPDATE thread_goals SET status=? WHERE thread_id=?").run(status, ids[0]!);
+    const transcript = path.join(root, "sessions", `rollout-${ids[0]}.jsonl`);
+    await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "last-turn" } }) + "\n" +
+      JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "last-turn" } }) + "\n");
+    saveSessionStatus(store, root, ids[0]!, "idle");
+    saveSessionDiscovery(store, root, [], Date.now());
+    await persistOpenCodexSessions(context());
+    expect(store.get(namespace, snapshot)).toBeUndefined();
+    store.set(namespace, snapshot, [ids[0]]);
+    await persistOpenCodexSessions(context());
+    store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
+    expect(store.get(namespace, snapshot)).toEqual([ids[0]]);
+    goals.prepare("UPDATE thread_goals SET status='complete' WHERE thread_id=?").run(ids[0]!);
+    await persistOpenCodexSessions(context());
+    expect(store.get(namespace, snapshot)).toBeUndefined();
+  } finally { goals.close(); }
+});
+
 it("records native non-goal sidebar chats without an editor or dashboard and clears confirmed completion",async()=>{
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string)=>key!=="autoResumeGoalOnlyEnabled" && key!=="cliIntegrationEnabled"} as never);
   tabs=[];

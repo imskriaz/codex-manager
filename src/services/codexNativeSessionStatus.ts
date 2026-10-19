@@ -212,9 +212,12 @@ async function connect(home: string): Promise<void> {
 /** Send through the verified native owner; a missing owner is safe to fall back before sending. */
 export async function startNativeCodexSessionTurn(home: string, id: string, turn: Record<string, unknown>, signal?: AbortSignal, onStarted?: (turnId: string) => void): Promise<boolean> {
   const reply = await requestNativeOwner(home, id, "thread-follower-start-turn", { conversationId: id, turnStart: { request: turn, context: { inheritThreadSettings: true } } }, signal);
+  if (!reply) return false;
   const turnId = reply?.result?.result?.turn?.id;
-  if (typeof turnId === "string" && turnId.length > 0 && turnId.length <= 256) onStarted?.(turnId);
-  return Boolean(reply);
+  if (typeof turnId !== "string" || !turnId.trim() || turnId.length > 256)
+    throw new Error("Codex did not confirm a started turn. The outcome is unconfirmed; check the conversation before retrying.");
+  onStarted?.(turnId);
+  return true;
 }
 
 /** Only the exact turn accepted from this caller may be interrupted. */

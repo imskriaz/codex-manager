@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.4
+
+- Resume saved active and usage-limited goals even when their previous turn completed successfully; goal completion is authoritative for goal recovery. Continue to exclude archived, child, paused, blocked, completed, and budget-limited goals.
+- Keep previously recorded goals in the durable recovery snapshot between turns until their goal becomes ineligible; do not add unrelated idle goal history.
+- Require a valid native turn ID before acknowledging a start. Retain recovery and report unconfirmed replies without sending a duplicate request. Cover opening, goal activation, turn startup, and completion together through the default recovery path.
+
 ## 1.4.3
 
 - Revalidate saved recovery before touching editors and again before every open. Discard archived, child, and successfully completed conversations; preserve pending recovery without opening tabs when native metadata cannot be verified.
