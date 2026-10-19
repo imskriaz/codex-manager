@@ -87,7 +87,7 @@ describe("browser PWA cache boundary", () => {
     expect(await work?.then((response) => response.text())).toBe("Recovery screen");
   });
 
-  it("preloads only static UI assets and serves the generic offline page on navigation failure", async () => {
+  it("preloads data-free assets and restores the dashboard shell offline without caching APIs", async () => {
     let offline = false;
     const fetchMock = vi.fn(async (request: { url: string }) => {
       if (offline) throw new Error("host down");
@@ -135,7 +135,7 @@ describe("browser PWA cache boundary", () => {
       request: { method: "GET", mode: "navigate", url: "https://dashboard.example/workspace/01a04882-d037-7a42-ad24-9afb61901188" },
       respondWith: (response) => { navigation = response; }
     });
-    expect(await navigation?.then((response) => response.text())).toBe("/offline.html");
+    expect(await navigation?.then((response) => response.text())).toBe("/offline-dashboard.html");
   });
 
   it("does not cache a login page returned for a private script", async () => {

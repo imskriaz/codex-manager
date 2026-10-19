@@ -1,39 +1,34 @@
 # Changelog
 
-## 1.4.3-pre.1
-
-- Add per-session Auto Resume controls that follow the global switch, plus a durable recovery queue toggle with priority ordering and a compact flyout for running sessions.
-- Preserve renamed session titles immediately across catalogue refreshes and shared dashboard windows.
-- Batch session preference reads and keep recovery/list state decoration bounded so large session lists do not perform one SQLite read per row.
-- Improve account Auto Queue ordering by preferring verified reset reserves over stale ordinary quota, and probe queued credentials in parallel before one final ownership check.
-- Compact the status-bar notification flyout by removing the redundant open-quota instruction and quick-access block.
-- Mark model-capacity provider failures as interrupted work and show direct retry guidance in session messages.
-- Wrap settings tabs and constrain running-session flyouts on narrow screens; open browser donation links in the requesting browser and default the donation amount to USD 11.
-
-## 1.4.5
-
-- Keep the newest session live and native status update when bounded background recording queues fill; evict older terminal or idle entries instead of dropping current recovery state.
-- Persist explicit goal Pause actions across windows and reloads while allowing goals paused by recorded interruptions to resume after recovery. Recheck goal status before each restore and keep explicit pauses untouched.
-
-## 1.4.4
-
-- Resume saved active and usage-limited goals even when their previous turn completed successfully; goal completion is authoritative for goal recovery. Continue to exclude archived, child, paused, blocked, completed, and budget-limited goals.
-- Keep previously recorded goals in the durable recovery snapshot between turns until their goal becomes ineligible; do not add unrelated idle goal history.
-- Require a valid native turn ID before acknowledging a start. Retain recovery and report unconfirmed replies without sending a duplicate request. Cover opening, goal activation, turn startup, and completion together through the default recovery path.
-
 ## 1.4.3
 
-- Revalidate saved recovery before touching editors and again before every open. Discard archived, child, and successfully completed conversations; preserve pending recovery without opening tabs when native metadata cannot be verified.
-- Keep failed native turns eligible for Auto Resume when Codex records `task_complete` with a provider error, including model capacity failures. Preserve those errors across partial writes, duplicate events, background capture, and restart; clear recovery after a later successful turn.
+### Sessions, recovery, and workspace
 
-## 1.4.2
+- Record verified native sessions and goals in SQLite in the background while the dashboard is closed. Keep running counts stable during partial discovery, preserve newer activity under recording-queue pressure, and retain recovery across reloads, storage contention, and unconfirmed starts.
+- Resume eligible recorded interruptions and unfinished active goals after native readiness is verified. Respect explicit Pause actions and exclude archived, child, completed, blocked, and budget-limited work. Treat model-capacity failures as interruptions and preserve provider errors until a later successful turn.
+- Add per-session Auto Resume and queue controls to the Running Sessions flyout. Global Auto Resume off disables effective per-session recovery. Deferred sessions wait for other active work, follow priorities 1–3, and start equal priorities together in bounded groups. Durable claims prevent blind replay after an uncertain start or restart.
+- Update externally changed session titles and retire temporary rename overrides after native confirmation. Reapply current preferences to cached lists across windows.
+- Validate closed-project paths asynchronously for files, terminals, and Git operations. Preserve symlink containment, file revisions, ownership checks, cancellation, and timeout safeguards. Automatically create a terminal in the session project when the selected terminal has a different or unverifiable folder.
 
-- Record verified native chats in the background even without an open dashboard or conversation tab. Keep tracking active when manual work cancels startup restoration, and preserve pending recovery while slow editors load.
-- Keep running counts stable during metadata refresh by reading fresh native and SQLite activity together. Publish committed status changes to browser and VS Code dashboards, expire unverified activity safely, and keep the native observer connected until extension shutdown.
-- Allow automatic recovery up to two minutes for native readiness within bounded recovery deadlines; preserve pending work on timeout or cancellation and keep manual opening limits unchanged.
-- Batch indexed status reads, skip full history-index reads when native metadata is available, and avoid repeated title reads and unchanged recovery writes. Retain bounded recording queues and existing storage-full, contention, and replay safeguards.
-- Remove the expanded daily-usage error block from Graph settings. Keep compact per-account refresh results, retries, and diagnostics.
-- Preserve known goal, model, and agent metadata during partial UI refreshes while applying confirmed removals and runtime changes. Resolve transcript paths once per normal message read and process goal query batches without an extra full result array.
+### Project tasks and sharing
+
+- Add project Kanban with **Idea, Planned, Running, Completed**, enabled by default. Store custom tasks, discovered sessions, and comments in indexed Manager SQLite tables with revision checks and idempotent retries.
+- Organize sessions and custom tasks as nested subtasks at any level, or move them back to the board. Preserve session identity and history; grouped sessions appear once. Reject cycles, cross-project parents, missing tasks, and conflicting edits.
+- Open task details for messages, activities, project files, recorded changes, and Git history. Read tabs on demand, keep history pages bounded, preserve saved views when refreshes fail, and push committed task/comment updates to connected dashboards.
+- Create expiring public project links with selectable message, activity, file, change, Git, comment, and submission permissions. Visitors can submit ideas and comment when allowed. Revoke project links and enforce permissions on the server. A separate embedding permission enables iframe integration with the same access rules.
+
+### API and offline behavior
+
+- Add optional dashboard API access, off by default. Manage multiple named tokens in a table, scope them to one project or all projects, grant selected operation permissions, revoke individual tokens, browse operations, and test requests in the browser dashboard. Store token hashes and filter project-scoped results.
+- Cache the data-free browser shell and bounded saved read views for offline reload. Reconcile task drafts and comments on reconnect with stable request IDs and visible conflict review. Preserve unsynced outbox entries when storage fills; never silently evict them.
+- Disable live-only actions offline. Session execution, terminal commands, filesystem and Git mutations, account changes, tokens, and public links are never queued for later execution.
+
+### Dashboard and account automation
+
+- Keep Settings tabs in one row. On narrow screens, show the active label and other tabs as icons. Compact task, account, API, notification, and Running Sessions surfaces, with bounded columns and ellipsized titles.
+- Keep the session-list refresh warning toast-only. Remove the expanded daily-usage error block and redundant notification instructions while retaining actionable failures and retries.
+- Improve account Auto Queue ordering and credential checks. Add **Allow auto reset** per account: after all eligible accounts exhaust weekly quota, opted-in accounts can reset even with global Auto Reset off. Auto Switch, ownership, fresh quota, valid credits, and uncertain-outcome checks still apply; selection prefers the largest reserve, then earliest expiry.
+- Open donation links in the requesting browser and use USD 11 as the suggested amount.
 
 ## 1.4.1
 

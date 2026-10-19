@@ -24,6 +24,7 @@ import {
   openNewCodexWebview,
   readCodexCliComposerConfig,
   readCodexCliSessionSummary,
+  resolveCodexHome,
   resolveRecordedSessionProject,
   readNewCodexCliSessionSummary,
   readCodexCliSessions,
@@ -82,6 +83,10 @@ import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
 import { updateAutoSwitchLock } from "../workbench/autoSwitchState";
 import { getTokenAutomationSnapshot } from "../workbench/tokenAutomationState";
+import { createDashboardApiToken, listDashboardApiTokens, revokeDashboardApiToken } from '../../services/dashboardApiToken';
+import { readProjectBoard, readSavedProjectBoard, readProjectTaskDetails } from '../../services/projectBoard';
+import { saveProjectTask, addProjectComment, createProjectShare, revokeProjectShares, claimProjectTaskStart, finishProjectTaskStart, resetProjectTaskStart } from '../../services/projectTasks';
+import { resolveWorkspaceProjectPathAsync } from '../../services/workspaceTools';
 import {
   clearQueuedAccountSwitch,
   getCurrentWindowRuntimeAccountKey,
@@ -92,6 +97,7 @@ import { homedir } from "node:os";
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
+  "generateApiToken", "listApiTokens", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
   "setPrivacyMode",
   "setCrossPcSyncEnabled",
   "importCurrent",
@@ -206,6 +212,7 @@ const ACCOUNT_REQUIRED_ACTIONS = new Set<DashboardActionName>([
   "toggleAccountEnabled",
   "setAccountQueuePriority",
   "setAccountTokenRefreshEnabled",
+  "setAccountAutoResetAllowed",
   "refreshToken",
   "getResetCredits",
   "getDailyUsage",
@@ -371,6 +378,54 @@ async function runDashboardAction(
     case "addAccount":
       await vscode.commands.executeCommand("codexManager.addAccount");
       return undefined;
+    case "generateApiToken":
+      if (!getCodexManagerConfiguration().get<boolean>("apiAccessEnabled", false)) {
+        throw new Error("Enable API access in Settings before generating a token.");
+      }
+      return { apiToken: (await createDashboardApiToken(ctx.context, { name: payload?.tokenName, permissions: payload?.tokenPermissions, projectPath: payload?.projectPath ? await resolveWorkspaceProjectPathAsync(payload.projectPath) : undefined })).token,
+        apiTokens: await listDashboardApiTokens(ctx.context), apiEndpoint: '/api/message (POST)' };
+    case 'listApiTokens':
+      return { apiTokens: await listDashboardApiTokens(ctx.context) };
+    case 'revokeApiToken':
+      await revokeDashboardApiToken(ctx.context, payload?.tokenId);
+      return { apiTokens: await listDashboardApiTokens(ctx.context), notice: { level: 'info', message: 'API token revoked.' } };
+    case 'getProjectBoard':
+      return { projectBoard: await readProjectBoard(payload?.projectPath) };
+    case 'getProjectTaskDetails':
+      if (!payload?.taskId) throw new Error('Choose a task first.');
+      return { projectTaskDetails: await readProjectTaskDetails(await resolveWorkspaceProjectPathAsync(payload.projectPath), payload.taskId, payload.taskView, payload.taskBefore) };
+    case 'saveProjectTask': {
+      if (!payload?.task) throw new Error('The task draft is missing.');
+      const project = await resolveWorkspaceProjectPathAsync(payload.projectPath);
+      saveProjectTask(project, payload.task);
+      return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: 'Task saved.' } };
+    }
+    case 'addProjectComment': {
+      if (!payload?.comment) throw new Error('The comment is missing.');
+      const project = await resolveWorkspaceProjectPathAsync(payload.projectPath);
+      addProjectComment(project, payload.comment);
+      return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: 'Comment added.' } };
+    }
+    case 'startProjectTask': {
+      ensureCliIntegrationEnabled();
+      const project = await resolveWorkspaceProjectPathAsync(payload?.projectPath);
+      if (!payload?.taskId) throw new Error('Choose a planned task first.');
+      const task = claimProjectTaskStart(project, payload.taskId, payload.taskRevision);
+      const sessionId = await startCodexCliSession({ projectPath: project, text: task.prompt });
+      finishProjectTaskStart(project, task.id, sessionId, resolveCodexHome());
+      return { projectBoard: readSavedProjectBoard(project, readNewCodexCliSessionSummary(sessionId)), notice: { level: 'info', message: 'Task started in Codex.' } };
+    }
+    case 'shareProjectBoard':
+      return { projectShare: createProjectShare(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.sharePermissions, payload?.shareDays) };
+    case 'resetProjectTaskStart': {
+      if (!payload?.taskId || payload.confirmed !== true) throw new Error('Review the session list and confirm that the previous start was not accepted before allowing a retry.');
+      const project = await resolveWorkspaceProjectPathAsync(payload.projectPath);
+      resetProjectTaskStart(project, payload.taskId, payload.taskRevision);
+      return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: 'Task startup was reset after your review.' } };
+    }
+    case 'revokeProjectShares':
+      revokeProjectShares(await resolveWorkspaceProjectPathAsync(payload?.projectPath));
+      return { notice: { level: 'info', message: 'All public links for this project were revoked.' } };
     case "setPrivacyMode": {
       if (typeof payload?.privacyMode !== "boolean") {
         throw new Error("The privacy mode request is invalid. Refresh the dashboard and try again.");
@@ -835,6 +890,11 @@ async function runDashboardAction(
         ctx.schedulePublishState();
       }
       return undefined;
+    case 'setAccountAutoResetAllowed':
+      if (!account || typeof payload?.autoResetAllowed !== 'boolean') throw new Error('Choose an account and a valid Auto Reset option.');
+      await ctx.repo.setAccountAutoResetAllowed(account.id, payload.autoResetAllowed);
+      ctx.schedulePublishState();
+      return { notice: { level: 'info', message: payload.autoResetAllowed ? 'Auto Reset allowed for this account after all eligible accounts exhaust weekly quota. Auto Switch must be enabled.' : 'Account Auto Reset override disabled. The global Auto Reset setting still applies.' } };
     case "refreshToken":
       return handleRefreshToken(ctx.repo, account, ctx.schedulePublishState, ctx.resolveLanguage());
     case "getResetCredits":
@@ -937,6 +997,7 @@ async function runDashboardAction(
       const terminalResult = await runWorkspaceTerminalCommand(payload ?? {});
       return {
         terminalResult,
+        workspaceTerminals: listWorkspaceTerminals().map(terminal => ({ ...terminal, isActive: terminal.id === terminalResult.terminalId })),
         notice: terminalResult.status === "untracked"
           ? { level: "warning" as const, message: "Command sent to VS Code, but this shell does not expose live output. View the terminal tab for status." }
           : { level: "info" as const, message: terminalResult.status === "running" ? "Terminal command started; output is streaming live." : "Terminal command completed." }

@@ -6,7 +6,7 @@ import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessio
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
-import { orderCodexSessionRecoveryIds } from "./codexSessionPreferences";
+import { orderCodexSessionRecoveryIds, readQueuedCodexSessionPreferences } from "./codexSessionPreferences";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexHomeStateKey } from "../codex/authFile";
@@ -605,8 +605,9 @@ export function resumePersistedCodexSessions(
       const savedTitles = readSavedMetadata(context);
       const missingTitles = savedIds.filter(id => !savedTitles[id]);
       if (missingTitles.length) Object.assign(savedTitles, await captureRecoveryMetadata(missingTitles, controller.signal));
+      const queuedIds = readQueuedCodexSessionPreferences(resolveCodexHome());
       const ids = orderCodexSessionRecoveryIds(resolveCodexHome(), await bounded(() => readAutoResumeCodexSessionIds(undefined, undefined, savedIds, controller.signal, "recovery", goalOnly), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
-        "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal));
+        "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal)).filter(id => !queuedIds.has(id));
       if (!isAutoResumeAvailable()) {
         await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
         return { attempted: 0, opened: 0, failed: [] };

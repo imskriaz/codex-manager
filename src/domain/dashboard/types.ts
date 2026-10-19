@@ -16,6 +16,8 @@ export type DashboardSettingKey =
   | "codexAppRestartEnabled"
   | "codexAppRestartMode"
   | "cliIntegrationEnabled"
+  | "taskBoardEnabled"
+  | "apiAccessEnabled"
   | "autoRefreshMinutes"
   | "autoRefreshCurrentMinutes"
   | "usageHistoryRetentionDays"
@@ -60,6 +62,8 @@ export interface DashboardSettings {
   codexAppRestartMode: "auto" | "manual";
   /** Master gate for local Codex session access. */
   cliIntegrationEnabled?: boolean;
+  taskBoardEnabled?: boolean;
+  apiAccessEnabled?: boolean;
   /** Default dashboard session surface. */
   /** Backend transport for embedded local Codex sessions. */
   codexSessionTransport?: DashboardCodexSessionTransport;
@@ -429,6 +433,7 @@ export interface DashboardAccountViewModel {
   enabled: boolean;
   queuePriority: boolean;
   tokenRefreshEnabled: boolean;
+  autoResetAllowed?: boolean;
   canRefreshToken: boolean;
   showInStatusBar: boolean;
   canToggleStatusBar: boolean;
@@ -543,6 +548,17 @@ export type DashboardActionName =
   | "openDashboard"
   | "openWebDashboard"
   | "openExternalUrl"
+  | "generateApiToken"
+  | "listApiTokens"
+  | "revokeApiToken"
+  | "getProjectBoard"
+  | "getProjectTaskDetails"
+  | "saveProjectTask"
+  | "addProjectComment"
+  | "startProjectTask"
+  | "resetProjectTaskStart"
+  | "shareProjectBoard"
+  | "revokeProjectShares"
   | "downloadJsonFile"
   | "previewImportSharedJson"
   | "importSharedJson"
@@ -569,6 +585,7 @@ export type DashboardActionName =
   | "toggleAccountEnabled"
   | "setAccountQueuePriority"
   | "setAccountTokenRefreshEnabled"
+  | "setAccountAutoResetAllowed"
   | "refreshToken"
   | "getDailyUsage"
   | "getUsageGraph"
@@ -613,6 +630,17 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
+  tokenId?: string;
+  tokenName?: string;
+  tokenPermissions?: string[];
+  task?: import('../projectTasks').ProjectTaskMutation;
+  taskId?: string;
+  taskRevision?: number;
+  taskBefore?: string;
+  sharePermissions?: import('../projectTasks').ProjectSharePermission[];
+  shareDays?: number;
+  taskView?: 'messages' | 'activities' | 'files' | 'changes' | 'git';
+  comment?: { id: string; taskId: string; text: string; author?: string };
   goalStatus?: "active" | "paused";
   autoResumeEnabled?: boolean;
   queueEnabled?: boolean;
@@ -640,6 +668,7 @@ export interface DashboardActionPayload {
   privacyMode?: boolean;
   queuePriority?: boolean;
   tokenRefreshEnabled?: boolean;
+  autoResetAllowed?: boolean;
   enabled?: boolean;
   days?: number;
   automatic?: boolean;
@@ -726,6 +755,7 @@ export interface DashboardCliSessionSummary {
   queueEnabled?: boolean;
   /** Queue order; equal priorities may recover together. */
   queuePriority?: 1 | 2 | 3;
+  queueError?: string;
 }
 
 export interface DashboardCliSessionMessage {
@@ -905,6 +935,9 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  projectBoard?: import('../projectTasks').ProjectBoard;
+  projectTaskDetails?: import('../projectTasks').ProjectTaskDetails;
+  projectShare?: { token: string; expiresAt: number; permissions: import('../projectTasks').ProjectSharePermission[] };
   maintenancePreview?: MaintenancePreview;
   maintenancePage?: MaintenancePage;
   maintenanceJob?: MaintenanceJob;
@@ -915,6 +948,9 @@ export interface DashboardActionResultPayload {
   logDownload?: { filename: string; text: string };
   fileDownload?: { filename: string; text: string };
   sharedJson?: string;
+  apiToken?: string;
+  apiEndpoint?: string;
+  apiTokens?: import('./apiActions').DashboardApiToken[];
   authJson?: string;
   oauthSession?: DashboardOAuthSessionDescriptor;
   importPreview?: CodexImportPreviewSummary;
@@ -985,6 +1021,7 @@ export interface DashboardNotice {
 }
 
 export type DashboardHostMessage =
+  | { type: 'dashboard:project-changed'; projectPath: string }
   | {
       type: "dashboard:snapshot";
       state: DashboardState;

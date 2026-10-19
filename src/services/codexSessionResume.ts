@@ -31,7 +31,7 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, type SqliteStateStore } from "../storage/sqliteState";
 import { normalizeNativePath } from "../utils/nativePaths";
-import { readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, type CodexSessionPreference } from "./codexSessionPreferences";
+import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles } from "./codexSessionPreferences";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
@@ -207,14 +207,18 @@ export async function readCodexCliSessions(
 
 function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:DashboardCliSessionSummary[],stale = false): DashboardCliSessionSummary[] {
   const statuses = readSessionStatuses(store,home);
-  const needsPreferences = rows.some((row) => row.autoResumeEnabled === undefined || row.queueEnabled === undefined);
-  const preferences: Map<string, CodexSessionPreference> = needsPreferences ? readCodexSessionPreferences(home, rows.map((row) => row.id)) : new Map<string, CodexSessionPreference>();
-  const autoResume = needsPreferences ? isAutoResumeEnabled() : false;
+  const preferences = readCodexSessionPreferences(home, rows.map(row => row.id));
+  const titles = readCodexSessionTitleOverrides(home, rows.map(row => row.id));
+  const autoResume = isAutoResumeEnabled();
   return rows.map(row => {
     const preference = preferences.get(row.id);
-    const decorated = needsPreferences ? { ...row,
-      ...(autoResume || preference?.autoResume === false ? { autoResumeEnabled: autoResume && preference?.autoResume !== false } : {}),
-      ...(preference?.queue === true ? { queueEnabled: true, queuePriority: preference.priority ?? 3 } : {}) } : row;
+    const decorated: DashboardCliSessionSummary = { ...row, title: titles.get(row.id) ?? row.title };
+    if (autoResume || preference?.autoResume === false) decorated.autoResumeEnabled = autoResume && preference?.autoResume !== false;
+    if (preference?.queue === true) {
+      decorated.queueEnabled = true;
+      decorated.queuePriority = preference.priority ?? 3;
+      decorated.queueError = preference.queueError ?? (preference.queueClaimedAt ? 'A queued start was not confirmed. Review the session before requeuing.' : undefined);
+    }
     if (row.archived) return decorated;
     const native = getNativeCodexSessionRunning(home,row.id);
     const current = native === undefined ? statuses.get(row.id) : native ? "running" : "idle";
@@ -289,13 +293,13 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
     catch (error) { recordPersistentEvent("warning", "session-list", "Deleted session cache cleanup deferred", undefined, error); }
   }
   const preferences = readCodexSessionPreferences(codexHome, summaries.filter(Boolean).map((summary) => summary.id));
-  const titleOverrides = readCodexSessionTitleOverrides(codexHome, summaries.filter(Boolean).map((summary) => summary.id));
+  const titleOverrides = reconcileCodexSessionTitles(codexHome, summaries.filter(Boolean));
   const autoResume = isAutoResumeEnabled();
   return summaries.filter(Boolean).map((summary) => {
     const preference = preferences.get(summary.id);
     return { ...summary, title: titleOverrides.get(summary.id) ?? summary.title,
       ...(autoResume || preference?.autoResume === false ? { autoResumeEnabled: autoResume && preference?.autoResume !== false } : {}),
-      ...(preference?.queue === true ? { queueEnabled: true, queuePriority: preference.priority ?? 3 } : {}),
+      ...(preference?.queue === true ? { queueEnabled: true, queuePriority: preference.priority ?? 3, queueError: preference.queueError ?? (preference.queueClaimedAt ? 'A queued start was not confirmed. Review the session before requeuing.' : undefined) } : {}),
     };
   });
 }
@@ -422,7 +426,8 @@ export async function readCodexCliSessionSummary(
   const archived = state?.archived ?? Boolean(archiveRelative && !path.isAbsolute(archiveRelative) && archiveRelative !== ".." && !archiveRelative.startsWith(`..${path.sep}`));
   const summary = await toCliSessionSummary(codexHome, { ...entry, thread_name: normalizeSessionTitle(state?.title, sessionId, entry.thread_name) }, archived, transcriptPath);
   const goals = await readCodexSessionGoals(codexHome, [sessionId]);
-  return { ...summary, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
+  const title = reconcileCodexSessionTitles(codexHome, [summary]).get(sessionId) ?? summary.title;
+  return { ...summary, title, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
 }
 
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
@@ -1346,7 +1351,13 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
   );
   const recent = recentNewSessions.get(sessionId);
   if (recent) recent.summary = { ...recent.summary, title: normalized };
-  writeCodexSessionTitleOverride(resolveCodexHome(), sessionId, normalized);
+  try {
+    writeCodexSessionTitleOverride(resolveCodexHome(), sessionId, normalized);
+  } catch (error) {
+    // The native rename is already committed; Manager can reconcile the title
+    // from the native transcript when its optional cache becomes available.
+    recordPersistentEvent("warning", "session-list", "Native title changed but the local title cache is unavailable", { sessionRef: toSessionLogRef(sessionId) }, error);
+  }
 }
 
 export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): void {
@@ -1357,7 +1368,14 @@ export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): 
 
 export function setCodexSessionQueue(sessionId: string, enabled: boolean, priority: 1 | 2 | 3 = 3): void {
   validateSessionId(sessionId);
-  writeCodexSessionPreference(resolveCodexHome(), sessionId, { queue: enabled, priority: enabled ? priority : undefined });
+  if (typeof enabled !== 'boolean' || ![1,2,3].includes(priority)) throw new Error('Choose queue priority 1, 2, or 3.');
+  const store = getSqliteStateStore(), home = resolveCodexHome();
+  if (!store) throw new Error('Session preference storage is unavailable. The queue was not changed.');
+  store.transaction(() => {
+    const queued = readQueuedCodexSessionPreferences(home);
+    if (enabled && !queued.has(sessionId) && queued.size >= 256) throw new Error('The session queue is full. Remove an entry before adding another.');
+    writeCodexSessionPreference(home, sessionId, { queue: enabled, priority: enabled ? priority : undefined, queueClaimedAt: undefined, queueClaimId: undefined, queueError: undefined, queueRevision: randomUUID() });
+  });
 }
 
 export async function forkCodexCliSession(sessionId: string): Promise<string> {
@@ -1402,6 +1420,40 @@ export async function deleteCodexCliSession(sessionId: string): Promise<void> {
   });
   recentNewSessions.delete(sessionId);
   newSessionFailures.delete(sessionId);
+}
+
+/** Read a bounded history page without locking the writer or retaining the complete transcript. */
+export async function readCodexCliSessionMessagePage(sessionId: string, before?: string, home = resolveCodexHome()): Promise<{ messages: DashboardCliSessionMessage[]; olderThan?: string; warnings: string[] }> {
+  if (!SESSION_ID_PATTERN.test(sessionId) || (before !== undefined && !/^\d{1,16}$/.test(before))) throw new Error('The session history cursor is invalid.');
+  const transcript = await findCliSessionTranscript(home, sessionId);
+  if (!transcript) return { messages: await readCodexCliSessionMessages(sessionId, home), warnings: [] };
+  let end = 0;
+  let windowBytes = 256 * 1024;
+  const readPage = () => readSafeFileSnapshot(transcript, { maxBytes: windowBytes, startOffset: stat => {
+    end = before === undefined ? stat.size : Number(before);
+    if (end > stat.size) throw new Error('The transcript changed. Refresh history before loading older activity.');
+    // Read one byte before the nominal window so an oversized JSONL record can
+    // be identified instead of being mistaken for a complete suffix.
+    return Math.max(0, end - windowBytes - 1);
+  } });
+  let page = await readPage();
+  let raw = page.buffer.subarray(0, Math.max(0, end - page.startOffset));
+  let boundary = page.startOffset;
+  const warnings: string[] = [];
+  if (page.startOffset > 0) {
+    // If the extra prefix byte is not a newline, the first record began
+    // before this window. Expand until its beginning is included.
+    while (page.startOffset > 0 && page.buffer[0] !== 0x0a && windowBytes < MAX_SESSION_TRANSCRIPT_READ_BYTES) {
+      windowBytes = Math.min(MAX_SESSION_TRANSCRIPT_READ_BYTES, windowBytes * 2);
+      page = await readPage(); raw = page.buffer.subarray(0, Math.max(0, end - page.startOffset));
+    }
+    if (page.startOffset > 0) {
+      if (page.buffer[0] === 0x0a) { boundary += 1; raw = raw.subarray(1); }
+      else { raw = Buffer.alloc(0); warnings.push('A history record exceeds the 25 MB read limit. Open the native conversation to inspect that record.'); }
+    }
+  }
+  const parsed = parseCliTranscriptLines(raw.toString('utf8'), boundary, {});
+  return { messages: await hydrateSessionImages(parsed.messages), olderThan: boundary > 0 ? String(boundary) : undefined, warnings };
 }
 
 export async function readCodexCliSessionMessages(

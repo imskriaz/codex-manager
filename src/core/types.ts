@@ -197,6 +197,8 @@ export interface CodexManagerAccountRecord {
   queuePriority?: boolean;
   /** Whether this PC may refresh this account's token automatically. Missing values are treated as disabled. */
   tokenRefreshEnabled?: boolean;
+  /** Local opt-in to reset after every eligible account exhausts its weekly quota. */
+  autoResetAllowed?: boolean;
   /** 是否在状态栏显示 */
   showInStatusBar?: boolean;
   /** 忽略中的健康问题键 */

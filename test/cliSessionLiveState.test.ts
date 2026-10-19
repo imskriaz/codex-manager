@@ -7,6 +7,11 @@ const message = (id: string, text: string, turnId?: string, role: "user" | "assi
 const snapshot = (changes: Partial<DashboardCodexSessionLiveState> = {}): DashboardCodexSessionLiveState => ({ sessionId: "chat", streamId: "stream", sequence: 1, updatedAt: 100, status: "running", turnId: "turn", messages: [], ...changes });
 
 describe("shared browser/native live turn reconciliation", () => {
+  it("keeps saved current-turn history when the bounded live suffix has rolled forward", () => {
+    const history = [message("prompt", "Do work", "turn", "user"), message("early", "Earlier activity", "turn"), message("latest", "Partial", "turn")];
+    expect(combineCliLiveMessages(history, snapshot({ truncated: true, messages: [message("latest", "Updated", "turn")] })).map(item => item.text)).toEqual(["Do work", "Earlier activity", "Updated"]);
+    expect(combineCliLiveMessages(history.slice(0, 2), snapshot({ truncated: true, messages: [message("latest", "Updated", "turn")] }))).toHaveLength(3);
+  });
   it("keeps failed turns resumable and clears recovery when running or completed", () => {
     const row = { id: "chat", title: "Task", status: "idle" as const, interrupted: true, runningSince: 10 };
     const reconcile = (status: DashboardCodexSessionLiveState["status"]) => reconcileCliSessionStatus(row, { [cliSessionTargetKey(row)]: snapshot({ status }) });

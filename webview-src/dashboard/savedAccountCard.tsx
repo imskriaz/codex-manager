@@ -141,6 +141,7 @@ export function SavedAccountCard(props: {
       | "toggleAccountEnabled"
       | "setAccountQueuePriority"
       | "setAccountTokenRefreshEnabled"
+      | "setAccountAutoResetAllowed"
       | "refreshToken"
       | "consumeResetCredit"
       | "syncNow"
@@ -705,6 +706,7 @@ export function SavedAccountCard(props: {
                         )}
                         <span>{tokenRefreshLabel}</span>
                       </button>
+                      <button type="button" role="menuitemcheckbox" aria-checked={account.autoResetAllowed === true} title="Allow this account to reset when all eligible accounts exhaust weekly quota, even with global Auto Reset off. Requires Auto Switch." onClick={() => { setActionsOpen(false); onAction('setAccountAutoResetAllowed', account.id, { autoResetAllowed: !account.autoResetAllowed }); }}><span class={`saved-menu-check ${account.autoResetAllowed ? 'is-checked' : ''}`} aria-hidden="true">{account.autoResetAllowed ? '✓' : '○'}</span><span>Allow auto reset</span></button>
                       <button
                         type="button"
                         disabled={props.detailsPending}
@@ -984,6 +986,7 @@ export function SavedAccountCard(props: {
                             )}
                             <span>{tokenRefreshLabel}</span>
                           </button>
+                          <button type="button" role="menuitemcheckbox" aria-checked={account.autoResetAllowed === true} title="Allow this account to reset when all eligible accounts exhaust weekly quota, even with global Auto Reset off. Requires Auto Switch." onClick={() => { setActionsOpen(false); onAction('setAccountAutoResetAllowed', account.id, { autoResetAllowed: !account.autoResetAllowed }); }}><span class={`saved-menu-check ${account.autoResetAllowed ? 'is-checked' : ''}`} aria-hidden="true">{account.autoResetAllowed ? '✓' : '○'}</span><span>Allow auto reset</span></button>
                           <button
                             type="button"
                             disabled={props.detailsPending}

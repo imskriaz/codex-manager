@@ -117,7 +117,11 @@ export class CodexSessionLiveReducer {
         while (sections.length <= index) sections.push("");
         sections[index] = append(sections[index], params["delta"]);
         item[key] = sections;
-      } else if (type === "commandExecution" || type === "fileChange") item["aggregatedOutput"] = append(item["aggregatedOutput"], params["delta"]);
+      } else if (type === "commandExecution" || type === "fileChange") {
+        const output = `${typeof item["aggregatedOutput"] === "string" ? item["aggregatedOutput"] : ""}${params["delta"]}`;
+        if (output.length > MAX_TEXT) this.state.truncated = true;
+        item["aggregatedOutput"] = output.slice(-MAX_TEXT);
+      }
       else return false;
       this.putItem(id, item);
     } else if (method === "item/mcpToolCall/progress") {
@@ -189,7 +193,8 @@ export class CodexSessionLiveReducer {
     this.itemBytes.set(id, bytes);
     this.items.set(id, item);
     while (this.items.size > MAX_CODEX_LIVE_ITEMS || this.retainedItemBytes + this.items.size + 1 > MAX_CODEX_LIVE_STATE_BYTES / 2) {
-      const oldest = this.items.keys().next().value!;
+      // Keep an active command updating even when many later activities finish.
+      const oldest = [...this.items].find(([, value]) => value["status"] !== "inProgress")?.[0] ?? this.items.keys().next().value!;
       this.retainedItemBytes -= this.itemBytes.get(oldest)!;
       this.itemBytes.delete(oldest);
       this.items.delete(oldest);

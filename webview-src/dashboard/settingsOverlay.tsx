@@ -47,6 +47,7 @@ export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingK
 
 export function SettingsOverlay(props: {
   open: boolean;
+  connected?: boolean;
   copy: DashboardCopy;
   lang: DashboardState["lang"];
   settings: DashboardSettings;
@@ -131,6 +132,8 @@ export function SettingsOverlay(props: {
               class={`settings-tab ${activeTab === tab.id ? "active" : ""}`}
               type="button"
               role="tab"
+              aria-label={tab.label}
+              title={tab.label}
               aria-selected={activeTab === tab.id}
               aria-controls={`settings-panel-${tab.id}`}
               tabIndex={activeTab === tab.id ? 0 : -1}
@@ -165,6 +168,8 @@ export function SettingsOverlay(props: {
           ))}
         </div>
         <div class="settings-modal-body">
+          {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
+          <fieldset class="settings-offline-fieldset" disabled={props.connected === false}>
           <div
             class="settings-tab-panel"
             id="settings-panel-general"
@@ -174,7 +179,6 @@ export function SettingsOverlay(props: {
           >
             <SettingsPanelIntro tab={tabs[0]!} />
             <div class="settings-layout">
-              {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
               <SettingsThemeBlock
                 lang={props.lang}
                 settings={props.settings}
@@ -351,6 +355,18 @@ export function SettingsOverlay(props: {
                   />
                 </div>
               </SettingsToggleBlock>
+                  <SettingsToggleBlock
+                    title="Project task board"
+                    sub="Show Idea, Planned, Running, and Completed project work with offline drafts."
+                    enabled={props.settings.taskBoardEnabled !== false}
+                    onToggle={(enabled) => patchAndSend("taskBoardEnabled", enabled)}
+                  />
+                  <SettingsToggleBlock
+                    title="Dashboard API"
+                    sub="Allow generated Bearer tokens to call the local dashboard API."
+                    enabled={props.settings.apiAccessEnabled === true}
+                    onToggle={(enabled) => patchAndSend("apiAccessEnabled", enabled)}
+                  />
               <SettingsToggleBlock
                 title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
                 sub={
@@ -767,7 +783,7 @@ export function SettingsOverlay(props: {
             <SettingsPanelIntro tab={tabs[3]!} />
             <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open} />
           </div>
-        </div>
+        </fieldset></div>
       </div>
     </div>
   );

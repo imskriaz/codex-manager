@@ -12,6 +12,16 @@ const params = (values: Record<string, unknown>) => ({ threadId: sessionId, turn
 afterEach(() => vi.useRealTimers());
 
 describe("Codex live current turn", () => {
+  it("keeps active command output moving after its text and item limits", () => {
+    const live = reducer(); live.started("turn-1");
+    live.accept("item/started", params({ item: { id: "active", type: "commandExecution", command: "long task" } }));
+    for (let index = 0; index < 220; index++) live.accept("item/completed", params({ item: { id: `done-${index}`, type: "agentMessage", text: "done" } }));
+    live.accept("item/commandExecution/outputDelta", params({ itemId: "active", delta: "x".repeat(15000) }));
+    live.accept("item/commandExecution/outputDelta", params({ itemId: "active", delta: "LATEST OUTPUT" }));
+    expect(live.snapshot().messages.find(item => item.id === "active")?.output).toMatch(/LATEST OUTPUT$/);
+    expect(live.snapshot().truncated).toBe(true);
+    expect(isCodexSessionLiveState(live.snapshot())).toBe(true);
+  });
   it("reuses unchanged snapshots without exposing mutable cached state", () => {
     const parse = vi.fn(parseCodexAppServerThreadItems);
     const live = new CodexSessionLiveReducer(sessionId, streamId, parse);

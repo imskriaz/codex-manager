@@ -6,6 +6,7 @@ describe("browser cache recovery", () => {
     const records = new Map<string, unknown>();
     const db = { transaction: () => {
       const transaction = { oncomplete: undefined as undefined | (() => void), objectStore: () => ({
+        openCursor: () => { const request = { result: undefined, onsuccess: undefined as undefined | (() => void) }; queueMicrotask(() => request.onsuccess?.()); return request; },
         put: (record: { key: string }) => { records.set(record.key, record); queueMicrotask(() => transaction.oncomplete?.()); },
         get: (key: string) => { const request = { result: records.get(key), onsuccess: undefined as undefined | (() => void) }; queueMicrotask(() => request.onsuccess?.()); return request; }
       }) };
@@ -32,7 +33,7 @@ describe("browser cache recovery", () => {
     let complete = false;
     const abort = vi.fn();
     const db = { transaction: () => {
-      const transaction = { abort, oncomplete: undefined as undefined | (() => void), objectStore: () => ({ put: () => undefined, delete: () => undefined }) };
+      const transaction = { abort, oncomplete: undefined as undefined | (() => void), objectStore: () => ({ openCursor: () => ({}), put: () => undefined, delete: () => undefined }) };
       if (complete) queueMicrotask(() => transaction.oncomplete?.());
       return transaction;
     } };
@@ -124,7 +125,7 @@ describe("browser cache recovery", () => {
   it("finishes aborted writes and invalidations without hanging", async () => {
     vi.resetModules();
     const db = { transaction: () => {
-      const transaction = { onabort: undefined as undefined | (() => void), objectStore: () => ({ put: () => undefined, delete: () => undefined }) };
+      const transaction = { onabort: undefined as undefined | (() => void), objectStore: () => ({ openCursor: () => ({}), put: () => undefined, delete: () => undefined }) };
       queueMicrotask(() => transaction.onabort?.());
       return transaction;
     } };

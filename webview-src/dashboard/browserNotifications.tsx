@@ -105,6 +105,7 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [failed, setFailed] = useState(false);
   const [install, setInstall] = useState((window as InstallWindow).codexInstallPrompt);
@@ -223,8 +224,8 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   };
 
   const sendTest = async () => {
-    if (busy) return;
-    setBusy(true); setFailed(false); setFeedback("");
+    if (testBusy) return;
+    setTestBusy(true); setFailed(false); setFeedback("");
     try {
       const result = await browserPushRequest("test", {});
       if (![result.subscriptions, result.accepted, result.failed].every(value => Number.isSafeInteger(value) && value! >= 0 && value! <= 64) || result.accepted! + result.failed! !== result.subscriptions)
@@ -237,7 +238,7 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
     } catch (error) {
       setFailed(true);
       setFeedback(error instanceof Error && error.name !== "AbortError" ? error.message : "Test timed out. Check your phone.");
-    } finally { setBusy(false); }
+    } finally { setTestBusy(false); }
   };
 
   if (props.offerOnLoad && (!initialized || dismissed || (enabled && !feedback))) return null;
@@ -251,7 +252,7 @@ export function BrowserNotifications(props: { offerOnLoad?: boolean } = {}) {
   return <div class="settings-block settings-block-wide browser-notification-settings">
     <div class="browser-notification-heading"><span class="browser-notification-mark">{bell}</span><div><div class="settings-block-title">Browser notifications</div><p class="settings-block-sub" title="Get account switches and alerts on this device.">{enabled ? "Notifications are on for this device." : "Get account switches and alerts on this device."}</p></div><span class={`browser-notification-badge ${enabled ? "is-enabled" : ""}`}>{enabled ? "On" : "Off"}</span></div>
     {!supported ? <p class="settings-note">Notifications are unavailable in this browser.</p> : null}
-    <div class="browser-notification-actions"><button type="button" class={`browser-notification-button ${enabled ? "" : "is-primary"}`} aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? "Please wait…" : enabled ? "Disable notifications" : "Enable notifications"}</button><button type="button" class="browser-notification-button" disabled={busy || !supported} onClick={() => void sendTest()}>Send test notification</button>{install ? <button type="button" class="browser-notification-button" disabled={busy} onClick={() => void installApp()}>Install app</button> : null}</div>
+    <div class="browser-notification-actions"><button type="button" class={`browser-notification-button ${enabled ? "" : "is-primary"}`} aria-busy={busy} disabled={busy || !supported} onClick={() => void toggle()}>{busy ? "Please wait…" : enabled ? "Disable notifications" : "Enable notifications"}</button><button type="button" class="browser-notification-button" aria-busy={testBusy} disabled={testBusy || !supported} onClick={() => void sendTest()}>{testBusy ? "Sending…" : "Send test notification"}</button>{install ? <button type="button" class="browser-notification-button" disabled={busy} onClick={() => void installApp()}>Install app</button> : null}</div>
     {feedbackView}
     <details class="browser-notification-help"><summary>Install & offline help</summary><p class="settings-note">On iPhone or iPad, use Share → Add to Home Screen. Drafts stay saved while offline.</p></details>
   </div>;

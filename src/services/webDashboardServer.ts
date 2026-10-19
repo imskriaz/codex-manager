@@ -61,6 +61,11 @@ import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import { recordSessionLive } from "./sessionRecording";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
+import { isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
+import { authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
+import { readProjectBoard, readSharedProjectTask } from './projectBoard';
+import { getProjectShare, publicProjectBoard, saveProjectTask, addProjectComment } from './projectTasks';
+import { DASHBOARD_API_ACTIONS } from '../domain/dashboard/apiActions';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
 import { ConversationShares, sharedConversationPage } from "./conversationShares";
 import { filterCliSessionsBySection, isCodexSessionRunning } from "../domain/codexSessionState";
@@ -98,9 +103,10 @@ export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount
   if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession", "resumeCodexSessions", "setCodexSessionGoalStatus"].includes(action)) return 75_000;
   if (action === "cancelCodexCliSessionTurn") return 40_000;
   if (action === "steerCodexCliSessionTurn") return 40_000;
-  if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession") {
+  if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession" || action === 'startProjectTask') {
     return 15 * 60_000 + 15_000;
   }
+  if (['getProjectBoard','getProjectTaskDetails','saveProjectTask','addProjectComment'].includes(action)) return 65_000;
   if (["runWorkspaceTerminalCommand", "saveWorkspaceFile", "pushWorkspaceBranch"].includes(action)) {
     return 135_000;
   }
@@ -232,6 +238,7 @@ export function mergeFreshPeerAccountStates(
         enabled: local.enabled,
         queuePriority: local.queuePriority,
         tokenRefreshEnabled: local.tokenRefreshEnabled,
+        autoResetAllowed: local.autoResetAllowed,
         showInStatusBar: local.showInStatusBar,
         canToggleStatusBar: local.canToggleStatusBar,
         statusToggleTitle: local.statusToggleTitle,
@@ -312,6 +319,8 @@ export function isCliSessionWatchPath(filename: string | Buffer | null): boolean
 }
 
 const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: string }> = {
+  '/assets/projectShare.js': { parts: ['media', 'webview', 'projectShare.js'], contentType: 'text/javascript; charset=utf-8' },
+  '/offline-dashboard.html': { parts: ['media', 'webview', 'pwaDashboard.html'], contentType: 'text/html; charset=utf-8' },
   "/manifest.webmanifest": { parts: ["media", "webview", "pwaManifest.webmanifest"], contentType: "application/manifest+json; charset=utf-8" },
   "/service-worker.js": { parts: ["media", "webview", "pwaServiceWorker.js"], contentType: "text/javascript; charset=utf-8" },
   "/assets/pwaRecovery.js": { parts: ["media", "webview", "pwaRecovery.js"], contentType: "text/javascript; charset=utf-8" },
@@ -335,6 +344,7 @@ const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: strin
   ,"/assets/sharedConversation.js": { parts: ["media", "webview", "sharedConversation.js"], contentType: "text/javascript; charset=utf-8" }
 };
 const WEB_DASHBOARD_PUBLIC_ASSETS = new Set([
+  '/assets/projectShare.js', '/offline-dashboard.html', '/assets/dashboard.js', '/assets/browserHost.js', '/assets/dashboard.css', '/assets/shared.css',
   "/manifest.webmanifest", "/service-worker.js", "/offline.html", "/assets/pwaRecovery.js",
   "/assets/icon-192.png", "/assets/icon-512.png", "/assets/codex.svg", "/assets/sharedConversation.js"
 ]);
@@ -433,6 +443,8 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly browserSocketSessionFingerprint = new WeakMap<WebSocket, string>();
   private readonly browserSocketPassphraseFingerprint = new WeakMap<WebSocket, string>();
   private readonly loginAttempts = new Map<string, LoginAttempt>();
+  private readonly publicProjectRequests = new Map<string, { until: number; reads: number; writes: number }>();
+  private publicProjectInflight = 0;
   private readonly settingsStore = new ExtensionSettingsStore();
   private readonly oauth: DashboardOAuthCoordinator;
   private notificationMirrorSubscription: vscode.Disposable | undefined;
@@ -813,6 +825,58 @@ export class WebDashboardServer implements vscode.Disposable {
     const method = request.method ?? "GET";
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const path = requestUrl.pathname;
+    if (path.startsWith('/projects/share/') || path.startsWith('/api/projects/share/')) {
+      const api = path.startsWith('/api/');
+      const token = path.slice(api ? '/api/projects/share/'.length : '/projects/share/'.length);
+      const share = getProjectShare(token);
+      if (!share) { response.statusCode = 404; this.sendJson(response, { error: 'This project link expired or was revoked.' }); return; }
+      if (!api && method === 'GET') {
+        if (share.permissions.includes('embed')) {
+          response.removeHeader('X-Frame-Options');
+          response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+          response.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors http: https:; base-uri 'none'");
+        }
+        this.sendHtml(response, '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Shared project</title><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"><p role="status">Loading shared project…</p></main><script src="/assets/projectShare.js"></script></body></html>'); return;
+      }
+      for (const [key, value] of this.publicProjectRequests) if (value.until <= Date.now()) this.publicProjectRequests.delete(key);
+      const rateKey = `${token}:${request.socket.remoteAddress ?? ''}`;
+      let rate = this.publicProjectRequests.get(rateKey);
+      if (!rate && this.publicProjectRequests.size < 256) { rate = { until: Date.now() + 60_000, reads: 0, writes: 0 }; this.publicProjectRequests.set(rateKey, rate); }
+      if (!rate || this.publicProjectInflight >= 8 || (method === 'POST' ? ++rate.writes > 20 : ++rate.reads > 120)) { response.statusCode = 429; response.setHeader('Retry-After', '60'); this.sendJson(response, { error: 'Too many shared project requests. Keep your draft and retry shortly.' }); return; }
+      this.publicProjectInflight++;
+      const sendShared = (value: unknown) => {
+        if (!getProjectShare(token)) { response.statusCode = 404; this.sendJson(response, { error: 'This project link expired or was revoked.' }); }
+        else this.sendJson(response, value);
+      };
+      try {
+        if (api && method === 'GET') {
+          const taskId = requestUrl.searchParams.get('task');
+          if (taskId) {
+            sendShared(await readSharedProjectTask(share, taskId, requestUrl.searchParams.get('view') ?? 'messages', requestUrl.searchParams.get('before') ?? undefined, requestUrl.searchParams.get('file') ?? undefined));
+          } else sendShared(publicProjectBoard(await readProjectBoard(share.projectPath), share));
+          return;
+        }
+        if (api && method === 'POST') {
+          if (!isTrustedWebDashboardOrigin(request, configuredCloudflaredOrigin || undefined) || request.headers['x-codex-dashboard'] !== '1') { response.statusCode = 403; this.sendJson(response, { error: 'Cross-origin project request rejected.' }); return; }
+          const body = JSON.parse(await readDashboardRequestBody(request, 48 * 1024)) as Record<string, unknown>;
+          const bodyText = (key: string): string => typeof body[key] === 'string' ? body[key] as string : '';
+          if (!getProjectShare(token)) throw new Error('This project link expired or was revoked.');
+          if (body['kind'] === 'task') {
+            if (!share.permissions.includes('submissions')) throw new Error('Submissions are disabled for this link.');
+            saveProjectTask(share.projectPath, { id: bodyText('id'), title: bodyText('title'), prompt: bodyText('prompt'), stage: 'idea', expectedRevision: 0 });
+          } else if (body['kind'] === 'comment') {
+            if (!share.permissions.includes('comments')) throw new Error('Comments are disabled for this link.');
+            const taskId = bodyText('taskId');
+            if (!getProjectShare(token)) throw new Error('This project link expired or was revoked.');
+            const author = bodyText('author') || 'Visitor';
+            addProjectComment(share.projectPath, { id: bodyText('id'), taskId, text: bodyText('text'), author: `Guest · ${author.slice(0, 60)}` });
+          } else throw new Error('Unknown project request.');
+          this.sendJson(response, { ok: true }); return;
+        }
+        response.statusCode = 405; this.sendJson(response, { error: 'Method not allowed.' }); return;
+      } catch (error) { response.statusCode = 400; this.sendJson(response, { error: error instanceof Error ? error.message : 'Project request failed.' }); return; }
+      finally { this.publicProjectInflight--; }
+    }
     if (method === "GET" && path === "/api/relay-host") {
       const challenge = requestUrl.searchParams.get("challenge") ?? "";
       if (!/^[a-f0-9]{32}$/.test(challenge)) { response.statusCode = 400; this.sendJson(response, { error: "Invalid host check." }); return; }
@@ -898,13 +962,18 @@ export class WebDashboardServer implements vscode.Disposable {
       await this.sendAsset(path, request, response);
       return;
     }
-    if (method === "POST" && !isTrustedWebDashboardOrigin(request, configuredCloudflaredOrigin || undefined)) {
+    const bearer = readDashboardBearerToken(request);
+    const apiToken = bearer && this.settingsStore.getDashboardSettings().apiAccessEnabled ? await readDashboardApiToken(this.context, bearer) : undefined;
+    const apiAuthorized = !!apiToken;
+    if (bearer && !apiAuthorized) { response.statusCode = 401; this.sendJson(response, { error: 'API access is disabled or the token is invalid.' }); return; }
+    if (apiToken && !['/api/state', '/api/schema', '/api/message'].includes(path)) { response.statusCode = 403; this.sendJson(response, { error: 'Use the permitted dashboard API endpoints.' }); return; }
+    if (method === "POST" && !(apiAuthorized && !request.headers.origin) && !isTrustedWebDashboardOrigin(request, configuredCloudflaredOrigin || undefined)) {
       response.statusCode = 403;
       if (path.startsWith("/api/")) this.sendJson(response, { error: "Cross-origin dashboard request rejected" });
       else response.end("Forbidden");
       return;
     }
-    if (!(await this.isAuthorized(request))) {
+    if (!apiAuthorized && !(await this.isAuthorized(request))) {
       if (path.startsWith("/api/")) {
         response.statusCode = 401;
         this.sendJson(response, { error: "Dashboard session expired" });
@@ -924,8 +993,15 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "GET" && path === "/api/state") {
+      if (apiToken) {
+        if (!hasApiPermission(apiToken, 'state')) { response.statusCode = 403; this.sendJson(response, { error: 'This token cannot read state.' }); return; }
+        if (apiToken.projectPath) { this.sendJson(response, await readProjectBoard(apiToken.projectPath)); return; }
+      }
       await this.sendState(response);
       return;
+    }
+    if (method === 'GET' && path === '/api/schema') {
+      this.sendJson(response, { actions: DASHBOARD_API_ACTIONS.filter(action => !apiToken || hasApiPermission(apiToken, action) && (!apiToken.projectPath || PROJECT_API_ACTIONS.has(action))), endpoints: ['GET /api/state', 'POST /api/message'], actionFormat: { type: 'dashboard:action', requestId: 'unique-request-id', action: 'listCodexCliSessions', payload: {} } }); return;
     }
     if (method === "POST" && (path === "/api/share/create" || path === "/api/share/revoke")) {
       try {
@@ -977,7 +1053,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "POST" && path === "/api/message") {
-      await this.handleClientMessage(request, response);
+      await this.handleClientMessage(request, response, apiToken);
       return;
     }
     if (method === "GET" && path.startsWith("/assets/")) {
@@ -1041,6 +1117,8 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async isAuthorized(request: http.IncomingMessage): Promise<boolean> {
+    const bearer = readDashboardBearerToken(request);
+    if (bearer) return getCodexManagerConfiguration().get<boolean>("apiAccessEnabled", false) && await isDashboardApiToken(this.context, bearer);
     // The dashboard is bound to loopback, so direct local use does not need a
     // second passphrase prompt. Requests arriving through a forwarded/tunneled
     // connection (for example Cloudflared) are still required to authenticate.
@@ -1107,8 +1185,8 @@ export class WebDashboardServer implements vscode.Disposable {
     }
   }
 
-  private async handleClientMessage(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
-    if (request.headers["x-codex-dashboard"] !== "1") {
+  private async handleClientMessage(request: http.IncomingMessage, response: http.ServerResponse, apiToken?: DashboardApiToken): Promise<void> {
+    if (request.headers["x-codex-dashboard"] !== "1" && !apiToken) {
       response.statusCode = 403;
       response.end("Forbidden");
       return;
@@ -1119,6 +1197,7 @@ export class WebDashboardServer implements vscode.Disposable {
       const parsed = JSON.parse(await readDashboardRequestBody(request, MAX_DASHBOARD_MESSAGE_BYTES)) as unknown;
       if (!isDashboardClientMessage(parsed)) throw new Error("Invalid message");
       message = parsed;
+      if (message.type === 'dashboard:action' && !DASHBOARD_API_ACTIONS.includes(message.action)) throw new Error('Unknown action.');
     } catch (error) {
       if (error instanceof RequestBodyTooLargeError) {
         response.statusCode = 413;
@@ -1130,8 +1209,13 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
 
+    if (apiToken) {
+      try { message = await authorizeApiMessage(apiToken, message); }
+      catch (error) { response.statusCode = 403; this.sendJson(response, { error: error instanceof Error ? error.message : 'API permission denied.' }); return; }
+    }
+
     const { messages, reloadAfterResponse } = await this.processClientMessage(message);
-    this.sendJson(response, { messages });
+    this.sendJson(response, { messages: apiToken ? scopeApiResults(apiToken, messages) : messages });
     this.publishProcessedSnapshot(messages);
     if (reloadAfterResponse) {
       scheduleExtensionHostReload(
@@ -1326,7 +1410,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -1488,6 +1572,7 @@ export class WebDashboardServer implements vscode.Disposable {
       payload: {
         ...payload,
         ...(Array.isArray(payload["cliSessions"]) ? { cliSessions: payload["cliSessions"].map(decorateSession) } : {}),
+        ...(payload['projectBoard'] && typeof payload['projectBoard'] === 'object' ? { projectBoard: { ...payload['projectBoard'], sessions: ((payload['projectBoard'] as import('../domain/projectTasks').ProjectBoard).sessions ?? []).map(decorateSession) } } : {}),
         ...(payload["cliSession"] ? { cliSession: decorateSession(payload["cliSession"]) } : {}),
         ...(isCodexSessionLiveState(payload["cliSessionLive"]) ? { cliSessionLive: { ...payload["cliSessionLive"], deviceId } } : {}),
         ...(Array.isArray(payload["terminalLiveOutputs"]) ? { terminalLiveOutputs: payload["terminalLiveOutputs"].map(decorateTerminal) } : {}),
@@ -1502,6 +1587,8 @@ export class WebDashboardServer implements vscode.Disposable {
     socket: import("stream").Duplex,
     head: Buffer
   ): Promise<void> {
+    // API tokens use HTTP, where every request enforces project and operation scope.
+    if (readDashboardBearerToken(request)) { socket.destroy(); return; }
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const isPeer = requestUrl.searchParams.get("peer") === "1";
     const domainConfigured = this.settingsStore.getDashboardSettings().webSocketServerEnabled !== false && Boolean(normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""));
@@ -2778,6 +2865,13 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 }
 
+function readDashboardBearerToken(request: Pick<http.IncomingMessage, "headers">): string | undefined {
+  const value = request.headers.authorization;
+  if (typeof value !== "string") return undefined;
+  const match = value.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim();
+}
+
 class RequestBodyTooLargeError extends Error {}
 
 export interface PersistedWebDashboardSession {
@@ -2816,7 +2910,7 @@ export function normalizePersistedWebDashboardSessions(
 }
 
 export function isWebDashboardPagePath(pathname: string): boolean {
-  return pathname === "/" || pathname === "/dash" || pathname === "/workspace" || /^\/(?:workspace\/)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathname);
+  return pathname === "/" || pathname === "/tasks" || pathname === "/dash" || pathname === "/workspace" || /^\/(?:workspace\/)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pathname);
 }
 
 export function normalizeWebDashboardReturnPath(pathname: string): string {

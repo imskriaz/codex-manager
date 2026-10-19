@@ -8,7 +8,8 @@ const recovering = new Map<string, Promise<"running" | "continued" | "goal" | "i
 
 /** Recheck after the native editor loads; never replace an active writer or resend after acceptance. */
 export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" = "automatic"): Promise<"running" | "continued" | "goal" | "idle"> {
-  const key = `${resolveCodexHome()}:${sessionId}`;
+  const home = resolveCodexHome();
+  const key = `${home}:${sessionId}`;
   const identity = { sessionId, sessionRef: toSessionLogRef(sessionId) };
   const pending = recovering.get(key);
   if (pending) {
@@ -23,8 +24,9 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
   const startedAt = Date.now();
   let title: string | undefined;
   const work = (async () => {
-    const session = await waitWithin(readCodexCliSessionSummary(sessionId), 6_000, "Session state could not be verified after opening.", controller.signal);
+    const session = await waitWithin(readCodexCliSessionSummary(sessionId, home), 6_000, "Session state could not be verified after opening.", controller.signal);
     controller.signal.throwIfAborted();
+    if (resolveCodexHome() !== home) throw new Error('The active account home changed. Recovery was kept; refresh before resuming.');
     if (!session || session.archived || session.subAgent || session.parentSessionId) throw new Error("This session is missing, archived, or belongs to a parent. Refresh before resuming.");
     title = session.title;
     recordPersistentEvent("debug", "session-resume", "Post-load recovery state", {
@@ -49,6 +51,7 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     if (session.goal === undefined) {
       const files = await waitWithin(fs.readdir(resolveCodexHome()), 2_000, "Goal storage did not respond. Recovery was kept.", controller.signal);
       controller.signal.throwIfAborted();
+      if (resolveCodexHome() !== home) throw new Error('The active account home changed. Recovery was kept; refresh before resuming.');
       if (files.some(name => /^goals_\d+\.sqlite$/.test(name))) throw new Error("Goal status is unavailable. Recovery was kept to avoid sending a duplicate prompt.");
     }
     if (session.interrupted !== true) {

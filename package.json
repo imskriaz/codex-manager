@@ -1,8 +1,8 @@
 {
   "name": "codex-manager",
   "displayName": "Codex Manager",
-  "description": "Manage multiple Codex/ChatGPT accounts in VS Code, inspect quota, and switch the active global auth.json.",
-  "version": "1.4.3-pre.1",
+  "description": "Manage Codex accounts, quota, native sessions and goals, project Kanban, scoped APIs, and a local-first VS Code and browser dashboard.",
+  "version": "1.4.3",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -126,6 +126,17 @@
           "default": false,
           "scope": "machine",
           "markdownDescription": "Experimental Workspace: add chats and terminals to the dashboard."
+        },
+        "codexManager.taskBoardEnabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the compact project task board with Idea, Planned, Running, and Completed columns."
+        },
+        "codexManager.apiAccessEnabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "Allow generated Bearer tokens to call the local dashboard API."
         },
         "codexManager.autoSwitchEnabled": {
           "type": "boolean",
@@ -429,5 +440,17 @@
     "typescript": "^5.7.2",
     "vite": "^6.4.3",
     "vitest": "^4.1.1"
-  }
+  },
+  "keywords": [
+    "codex",
+    "chatgpt",
+    "openai",
+    "account manager",
+    "quota",
+    "sessions",
+    "kanban",
+    "dashboard",
+    "api",
+    "offline"
+  ]
 }

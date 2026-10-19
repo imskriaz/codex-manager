@@ -4,6 +4,8 @@ import {
   compareAutoQueueCandidates,
   createAutoQueuePolicy,
   hasAutoQueueCapability,
+  isAutoQueueSnapshotFresh,
+  usableAutoQueueResetCount,
   type AutoQueueCandidate,
   type AutoQueuePolicy,
   type AutoQueueCapabilityThresholds
@@ -14,6 +16,19 @@ import { getCodexManagerConfiguration, normalizeAutoRefreshMinutes } from "../..
 
 export type { AutoQueueCapabilityThresholds };
 export type AutoQueueScoringOptions = { nowMs?: number; staleAfterMs?: number; policy?: AutoQueuePolicy } | AutoQueuePolicy;
+
+export function allAccountsWeeklyExhausted(accounts: CodexManagerAccountRecord[], policy = getAccountAutoQueuePolicy()): boolean {
+  const enabled = accounts.filter(account => account.enabled !== false);
+  return enabled.length > 0 && enabled.every(account => !account.quotaError && hasComparableWeeklyWindow(account) && isAutoQueueSnapshotFresh(toAutoQueueOrderValue(account), policy) && account.quotaSummary!.weeklyPercentage <= 0);
+}
+
+export function selectAccountResetOverride(accounts: CodexManagerAccountRecord[], policy = getAccountAutoQueuePolicy()): CodexManagerAccountRecord | undefined {
+  if (!policy.autoSwitchEnabled || !allAccountsWeeklyExhausted(accounts, policy)) return undefined;
+  const resetPolicy = { ...policy, autoResetEnabled: true };
+  const count = (account: CodexManagerAccountRecord) => usableAutoQueueResetCount(toAutoQueueOrderValue(account), resetPolicy);
+  return accounts.filter(account => account.enabled !== false && account.autoResetAllowed === true && count(account) > 0)
+    .sort((a,b) => count(b) - count(a) || (a.quotaSummary?.resetCreditsNextExpiresAt ?? Infinity) - (b.quotaSummary?.resetCreditsNextExpiresAt ?? Infinity) || a.id.localeCompare(b.id))[0];
+}
 
 export function getAccountAutoQueuePolicy(nowMs = Date.now(), staleAfterMs?: number): AutoQueuePolicy {
   const config = getCodexManagerConfiguration();

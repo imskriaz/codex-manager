@@ -63,7 +63,8 @@ import {
   ConfirmCancelOauthModal,
   resolveAccountModalTitle,
   SettingsOverlay,
-  ShareTokenModal
+  ShareTokenModal,
+  ApiTokenModal
 } from "./panels";
 import { SavedAccountCard } from "./savedAccountCard";
 import { createInitialState, reducer } from "./state";
@@ -79,7 +80,7 @@ import { formatSessionReadError } from "./actionFeedback";
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
-import { formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
+import { AutoResumeIcon, QueueIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
 import { filterCliSessionsBySection, mergeDashboardPeers } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
@@ -95,6 +96,7 @@ import {
   writeCliSessionMessagesCache
 } from "./cliSessionCache";
 import { clampWebviewZoom, nextWebviewZoom } from "./webviewZoom";
+import { TaskBoard } from "./taskBoard";
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 const USAGE_HISTORY_STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
@@ -120,7 +122,7 @@ function isCliSessionsPath(pathname: string): boolean {
 }
 
 function hasBrowserWorkspaceShell(pathname: string): boolean {
-  return pathname === "/" || isCliSessionsPath(pathname);
+  return pathname === "/" || pathname === "/tasks" || isCliSessionsPath(pathname);
 }
 
 function getCliSessionIdFromPath(pathname: string): string | undefined {
@@ -197,6 +199,9 @@ function App() {
   const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [donationOpen, setDonationOpen] = useState(false);
+  const [apiTokenOpen, setApiTokenOpen] = useState(false);
+  const [apiToken, setApiToken] = useState<string>();
+  const [apiTokens, setApiTokens] = useState<import('../../src/domain/dashboard/apiActions').DashboardApiToken[]>([]);
   const [accountSort, setAccountSort] = useState<AccountSort>(() => {
     try {
       const stored = window.localStorage.getItem(ACCOUNT_SORT_STORAGE_KEY);
@@ -277,6 +282,7 @@ function App() {
   const showCliSessionFeedback = useCallback((feedback: CliSessionFeedback): void => {
     // These updates are already visible in their panel and were causing a
     // stream of stacked toasts while the workspace refreshed in the background.
+    if (feedback.message.startsWith("The session action completed, but the session list could not refresh:")) { noticeControllerRef.current?.show(feedback); return; }
     if (feedback.level === "info") return;
     setCliSessionFeedback(feedback);
   }, []);
@@ -442,8 +448,10 @@ function App() {
     dispatch,
     showNotice,
     selectedPeerId,
-    handleActionTimeout
+    handleActionTimeout,
+    !isBrowserDashboard || realtimeConnected
   );
+  useEffect(() => { if (apiTokenOpen) sendAction('listApiTokens', undefined, { targetDeviceId: undefined }); }, [apiTokenOpen]);
   const openExternalLink = useCallback((url: string): void => {
     if (!isBrowserDashboard) {
       sendAction("openExternalUrl", undefined, { url });
@@ -649,6 +657,17 @@ function App() {
       if (message.type === "dashboard:action-result" && message.action === "respondCodexServerRequest") {
         setCodexRequestError(message.status === "completed" ? undefined : (message.error ?? "Codex could not receive this response. Try again or refresh the session."));
         if (message.status !== "completed") showCliSessionFeedback({ key: Date.now(), level: "error", message: message.error ?? "Codex could not receive this response. Try again or refresh the session." });
+      }
+      if (message.type === "dashboard:action-result" && ["generateApiToken", "listApiTokens", "revokeApiToken"].includes(message.action)) {
+        if (message.payload?.apiTokens) setApiTokens(message.payload.apiTokens);
+        if (message.status === 'completed' && message.action === 'revokeApiToken') setApiToken(undefined);
+        if (message.action === 'revokeApiToken' && message.status === 'completed') setApiToken(undefined);
+      }
+      if (message.type === "dashboard:action-result" && message.action === "generateApiToken") {
+        if (message.status === "completed" && message.payload?.apiToken) {
+          setApiToken(message.payload.apiToken);
+          setApiTokenOpen(true);
+        } else if (message.status !== "completed") showNotice({ level: "error", message: message.error ?? "API token could not be generated." });
       }
       if (message.type === "dashboard:notification-dismissed") {
         setBrowserActionRequest((current) =>
@@ -1379,7 +1398,7 @@ function App() {
 
   useEffect(() => {
     const workspaceRoute = isBrowserDashboard && isCliSessionsPath(browserPath);
-    const dashboardWorkspaceRoute = isBrowserDashboard && browserPath === "/";
+    const dashboardWorkspaceRoute = isBrowserDashboard && (browserPath === "/" || browserPath === "/tasks");
     document.body.classList.toggle("is-cli-workspace-route", workspaceRoute);
     document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute);
     return () => {
@@ -2061,6 +2080,12 @@ function App() {
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
+        {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard
+          sessions={cliSessions} projects={cliComposerConfig?.projects}
+          connected={!isBrowserDashboard || realtimeConnected}
+          targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
+          sendAction={sendAction} onOpenSession={selectCliSession}
+        /></div> : null}
         {snapshot.indexHealth.status !== "healthy" ? (
           <section class="section">
             <RecoveryPanel
@@ -2075,7 +2100,7 @@ function App() {
             />
           </section>
         ) : null}
-        <section class="section">
+        <section class="section" hidden={browserPath === '/tasks'}>
           <div class="hero">
             <div class="brand">
               <img class="brand-logo" src={snapshot.logoUri} alt="" aria-hidden="true" width="28" height="28" />
@@ -2121,13 +2146,16 @@ function App() {
               {snapshot.settings.cliIntegrationEnabled === true ? (
                 <CliSessionsMenu
                   browser={isBrowserDashboard}
+                  autoResumeEnabled={snapshot.settings.autoResumeEnabled === true}
+                  onAutoResume={(session, enabled) => requestSessionAction("setCodexSessionAutoResume", session, { autoResumeEnabled: enabled })}
+                  onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 0 })}
                   sessions={runningCliSessions}
                   peers={pcOptions}
                   ready={liveSessionListReceived.current}
                   error={cliSessionsError}
                   connected={!isBrowserDashboard || realtimeConnected}
                   loading={isActionPending("listCodexCliSessions")}
-                  actionPending={isActionPending("resumeCodexSessions") || isActionPending("openCodexCliSession")}
+                  actionPending={isActionPending("resumeCodexSessions") || isActionPending("openCodexCliSession") || isActionPending("setCodexSessionAutoResume") || isActionPending("setCodexSessionQueue")}
                   onOpen={(session) => {
                     if (isBrowserDashboard && session.status === "running") {
                       setCliSessionsMenuOpen(false);
@@ -2161,6 +2189,16 @@ function App() {
                 <span class="button-face">
                   <span class="button-label">♡</span>
                 </span>
+              </button>
+              <button
+                id="apiOpenButton"
+                class="settings-btn action-btn"
+                type="button"
+                title="API access"
+                aria-label="API access"
+                onClick={() => setApiTokenOpen(true)}
+              >
+                <span class="button-face"><span class="button-label">API</span></span>
               </button>
               <button
                 id="settingsOpenButton"
@@ -2281,8 +2319,9 @@ function App() {
             resumeSessionsPending={isActionPending("resumeCodexSessions")}
             codexOpenPending={isActionPending("openNewCodexWebview")}
           />
+
         </section>
-        {displayedAccounts.length > 0 ? (
+        {displayedAccounts.length > 0 && browserPath !== '/tasks' ? (
           <section class="section">
             <div class="header accounts-section-header">
               <div>
@@ -2504,7 +2543,7 @@ function App() {
                   settings={snapshot.settings}
                   now={state.now}
                   privacyMode={state.privacyMode}
-                  busy={state.pendingActions.some(request => request.accountId === account.id)}
+                  busy={(isBrowserDashboard && !realtimeConnected) || state.pendingActions.some(request => request.accountId === account.id)}
                   unloadAuthPending={isActionPending("unloadAuth")}
                   reloadPromptPending={isActionPending("reloadPrompt", account.id)}
                   switchPending={isActionPending("switch", account.id)}
@@ -2536,6 +2575,7 @@ function App() {
       </main>
 
       <SettingsOverlay
+        connected={!isBrowserDashboard || realtimeConnected}
         onSetCrossPcSyncEnabled={(enabled) => sendAction("setCrossPcSyncEnabled", undefined, { enabled })}
         crossPcSyncPending={isActionPending("setCrossPcSyncEnabled")}
         open={state.settingsOpen}
@@ -2633,6 +2673,19 @@ function App() {
         onOpenExternal={openExternalLink}
       />
 
+      <ApiTokenModal
+        open={apiTokenOpen}
+        token={apiToken}
+        tokens={apiTokens}
+        projects={cliComposerConfig?.projects}
+        connected={!isBrowserDashboard || realtimeConnected}
+        enabled={snapshot.settings.apiAccessEnabled === true}
+        pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken") || isActionPending("listApiTokens")}
+        onClose={() => setApiTokenOpen(false)}
+        onGenerate={(name, projectPath, permissions) => sendAction('generateApiToken', undefined, { tokenName: name, projectPath, tokenPermissions: permissions, targetDeviceId: undefined })}
+        onRevoke={tokenId => { sendAction('revokeApiToken', undefined, { tokenId, targetDeviceId: undefined }); }}
+      />
+
       <AccountInfoModal
         account={isBrowserDashboard ? accountInfoAccount : undefined}
         lang={snapshot.lang}
@@ -2661,7 +2714,10 @@ function App() {
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
-              dashboardMode={browserPath === "/"}
+              dashboardMode={browserPath === "/" || browserPath === "/tasks"}
+              taskBoardEnabled={snapshot.settings.taskBoardEnabled !== false}
+              onTasks={() => navigateDashboardPath('/tasks', setBrowserPath)}
+              onApi={() => setApiTokenOpen(true)}
               showLogout={document.documentElement.dataset["dashboardRemote"] === "true"}
               privacyMode={state.privacyMode}
               autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}
@@ -2679,7 +2735,7 @@ function App() {
               messagesLoading={isActionPending("getCodexCliSessionMessages")}
               sending={isActionPending("sendCodexCliSessionMessage") && [...turnRequests.current.values()].some((target) => sameCliSessionTarget(target, selectedCliSession))}
               stopping={isActionPending("cancelCodexCliSessionTurn")}
-              mutating={[
+              mutating={(isBrowserDashboard && !realtimeConnected) || [
                 "openNewCodexWebview",
                 "openCodexCliSession",
                 "renameCodexCliSession",
@@ -3250,6 +3306,9 @@ function PcPickerControl(props: {
 }
 
 function CliSessionsMenu(props: {
+  autoResumeEnabled: boolean;
+  onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
+  onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: 1 | 2 | 3) => void;
   browser: boolean;
   sessions: DashboardCliSessionSummary[];
   peers: DashboardPeerView[];
@@ -3383,7 +3442,9 @@ function CliSessionsMenu(props: {
                     <strong class="cli-sessions-running-title">{session.title}</strong>
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
-                    <button type="button" class="cli-icon-button" disabled={props.actionPending || session.status === "unknown" || offline} aria-label={`${running ? "View" : "Resume"} ${session.title} in ${destination}`} title={offline ? "System offline" : session.status === "unknown" ? "Refresh to verify this session" : running ? `View in ${destination}` : "Resume in VS Code"} onClick={() => props.onOpen(session)}>{running ? <EyeIcon /> : <span aria-hidden="true">↻</span>}</button>
+                    <div class="cli-running-row-actions">
+                    {running ? <button type="button" class={`cli-icon-button ${props.autoResumeEnabled && session.autoResumeEnabled !== false ? "is-active" : ""}`} aria-pressed={props.autoResumeEnabled && session.autoResumeEnabled !== false} aria-label={`Auto Resume for ${session.title}`} title={!props.autoResumeEnabled ? "Auto Resume is off globally" : session.autoResumeEnabled === false ? "Enable Auto Resume" : "Disable Auto Resume"} disabled={!props.connected || !props.autoResumeEnabled || offline || props.actionPending} onClick={() => props.onAutoResume(session, session.autoResumeEnabled === false)}><AutoResumeIcon enabled={props.autoResumeEnabled && session.autoResumeEnabled !== false} goal={!!session.goal} /></button> : <details class="cli-running-queue"><summary aria-label={`Queue priority for ${session.title}`} title="Queue after other sessions finish"><QueueIcon enabled={session.queueEnabled === true} />{session.queueEnabled ? <small>{session.queuePriority ?? 3}</small> : null}</summary><div class="cli-session-queue-menu"><strong>Run after other work</strong>{session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}{([1,2,3] as const).map(priority => <button type="button" disabled={!props.connected || offline || props.actionPending} aria-pressed={session.queueEnabled && session.queuePriority === priority} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, true, priority); }}>Priority {priority}<small>{priority === 1 ? "First" : priority === 2 ? "Next" : "Last"}</small></button>)}<button type="button" disabled={!props.connected || offline || props.actionPending || !session.queueEnabled} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, false); }}>Remove from queue</button></div></details>}
+                    <button type="button" class="cli-icon-button" disabled={(!running && !props.connected) || props.actionPending || session.status === "unknown" || offline} aria-label={`${running ? "View" : "Resume"} ${session.title} in ${destination}`} title={offline ? "System offline" : session.status === "unknown" ? "Refresh to verify this session" : running ? `View in ${destination}` : "Resume in VS Code"} onClick={() => props.onOpen(session)}>{running ? <EyeIcon /> : <span aria-hidden="true">↻</span>}</button></div>
                   </article>;
                 })}
               </div>

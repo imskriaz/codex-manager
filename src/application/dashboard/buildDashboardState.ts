@@ -346,6 +346,7 @@ function mapAccount(
     enabled: account.enabled !== false,
     queuePriority: account.queuePriority === true,
     tokenRefreshEnabled: account.tokenRefreshEnabled === true,
+    autoResetAllowed: account.autoResetAllowed === true,
     canRefreshToken: Boolean(viewState?.tokens?.refreshToken?.trim()),
     switchQueued,
     showInStatusBar: Boolean(account.showInStatusBar),

@@ -97,6 +97,7 @@ try {
         await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
         await page.getByRole("button", { name: "Disable notifications", exact: true }).waitFor();
         const testButton = page.getByRole("button", { name: "Send test notification", exact: true });
+        await page.waitForFunction(() => { const button = [...document.querySelectorAll("button")].find(element => element.textContent?.trim() === "Send test notification"); return button instanceof HTMLButtonElement && !button.disabled; });
         await testButton.click();
         await page.getByRole("status").filter({ hasText: "1 device is connected" }).waitFor();
         assert.equal(calls.filter(path => path === "/api/push/test").length, 1);

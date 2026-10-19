@@ -19,6 +19,7 @@ import {
   readWorkspaceEnvironment,
   registerWorkspaceTerminalMonitoring,
   resolveWorkspaceProjectPath,
+  resolveWorkspaceProjectPathAsync,
   runWorkspaceTerminalCommand,
   saveWorkspaceFile,
   WorkspaceTerminalCommandError
@@ -80,16 +81,23 @@ describe("workspace tools", () => {
       expect((await readWorkspaceFile(native, "proof.txt")).content).toBe("native project");
     } finally { await removeTestDirectory(project); }
   });
-  it("does not run a selected terminal in another or unknown folder", async () => {
+  it("automatically opens a project terminal instead of executing in a wrong or unknown folder", async () => {
     const originalTerminals = vscode.window.terminals, originalCreate = vscode.window.createTerminal;
-    const executeCommand = vi.fn();
+    const executeCommand = vi.fn(), sendText = vi.fn();
     const terminal = { name: "Wrong project", show: vi.fn(), shellIntegration: { cwd: vscode.Uri.file(tmpdir()), executeCommand } };
+    const create = vi.fn((_options: unknown) => ({ name: 'Project terminal', show: vi.fn(), sendText }));
     Object.defineProperty(vscode.window, "terminals", { configurable: true, value: [terminal] });
-    Object.defineProperty(vscode.window, "createTerminal", { configurable: true, value: vi.fn() });
+    Object.defineProperty(vscode.window, "createTerminal", { configurable: true, value: create });
     try {
-      await expect(runWorkspaceTerminalCommand({ projectPath: process.cwd(), command: "echo wrong", terminalId: terminal.name })).rejects.toThrow("does not match the session project");
-      delete (terminal.shellIntegration as { cwd?: unknown }).cwd;
-      await expect(runWorkspaceTerminalCommand({ projectPath: process.cwd(), command: "echo unknown", terminalId: terminal.name })).rejects.toThrow("could not be verified");
+      for (const command of ['echo wrong', 'echo unknown']) {
+        if (command === 'echo unknown') delete (terminal.shellIntegration as { cwd?: unknown }).cwd;
+        const result = await runWorkspaceTerminalCommand({ projectPath: process.cwd(), command, terminalId: terminal.name });
+        expect(result.cwd).toBe(process.cwd());
+        expect(result.output).toContain('Opened a new terminal in the session project');
+        expect(sendText).toHaveBeenLastCalledWith(command, true);
+      }
+      expect(create).toHaveBeenCalledTimes(2);
+      expect(create.mock.calls[0]![0]).toMatchObject({ cwd: { fsPath: process.cwd() } });
       expect(executeCommand).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(vscode.window, "terminals", { configurable: true, value: originalTerminals });
@@ -192,6 +200,7 @@ describe("workspace tools", () => {
 
   it("reserves a terminal while preparing integration and supports cancellation before execution", async () => {
     vi.useFakeTimers();
+    const restoreWorkspace = exposeWorkspaceRoot(process.cwd());
     const names = ["terminals", "createTerminal", "onDidChangeTerminalShellIntegration"] as const;
     const originals = names.map(name => vscode.window[name]);
     const terminal = { name: "Preparing terminal", show: vi.fn(), sendText: vi.fn() };
@@ -212,6 +221,7 @@ describe("workspace tools", () => {
       await expect(runWorkspaceTerminalCommand({ projectPath: process.cwd(), terminalId, command: "echo stale" })).rejects.toThrow(/no longer open/);
     } finally {
       names.forEach((name, index) => Object.defineProperty(vscode.window, name, { configurable: true, value: originals[index] }));
+      restoreWorkspace();
       vi.useRealTimers();
     }
   });
@@ -425,6 +435,21 @@ describe("workspace tools", () => {
     Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: undefined });
     try {
       expect(resolveWorkspaceProjectPath(projectPath)).toBe(projectPath);
+    } finally {
+      Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: previous });
+      await rm(projectPath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps async workspace actions usable without an open VS Code folder", async () => {
+    const previous = vscode.workspace.workspaceFolders;
+    const projectPath = await mkdtemp(join(tmpdir(), "codex-async-unopened-project-"));
+    Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: undefined });
+    try {
+      await writeFile(join(projectPath, "proof.txt"), "async project\n");
+      await expect(resolveWorkspaceProjectPathAsync(projectPath)).resolves.toBe(projectPath);
+      await expect(listWorkspaceFiles(projectPath)).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ path: "proof.txt", type: "file" })]));
+      await expect(readWorkspaceFile(projectPath, "proof.txt")).resolves.toMatchObject({ content: "async project\n" });
     } finally {
       Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: previous });
       await rm(projectPath, { recursive: true, force: true });

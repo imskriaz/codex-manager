@@ -2050,6 +2050,26 @@ describe("shared queue policy revalidation and reset dependencies", () => {
     expect(consumeResetCreditMock).not.toHaveBeenCalled();
   });
 
+  it("uses a per-account reset opt-in with global reset off after all weekly quota is exhausted", async () => {
+    settings.autoResetEnabled = false;
+    const active = createAccount('opted-in-active', true, 0, 0);
+    active.autoResetAllowed = true; active.quotaSummary!.resetCreditsAvailable = 2;
+    const repo = createResetRepository([active], tokens); prepareResetCreditSnapshot();
+    refreshQuotaMock.mockResolvedValue({ quota: createQuotaSummary({ hourly: 90, weekly: 90 }), error: undefined });
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(true);
+    expect(consumeResetCreditMock).toHaveBeenCalledOnce(); expect(repo.switchAccount).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the account opt-in after fetching reset credits and consumes nothing if it was revoked", async () => {
+    settings.autoResetEnabled = false;
+    const active = createAccount('opted-in-revoked', true, 0, 0);
+    active.autoResetAllowed = true; active.quotaSummary!.resetCreditsAvailable = 2;
+    const repo = createResetRepository([active], tokens);
+    fetchResetCreditsMock.mockImplementationOnce(async () => { active.autoResetAllowed = false; return { availableCount: 1, credits: [{ id: 'credit', status: 'available' }], nextExpiresAt: Math.floor(Date.now()/1000) + 3600 }; });
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
   it.each(["autoResetEnabled", "autoSwitchEnabled"])("does not consume resets when %s is off", async (key) => {
     settings[key] = false;
     const active = createAccount(`off-${key}`, true, 0, 0);

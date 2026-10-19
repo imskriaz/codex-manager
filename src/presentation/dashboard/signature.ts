@@ -26,6 +26,7 @@ export function buildDashboardStateSignature(state: DashboardState): string {
         account.enabled ? "1" : "0",
         account.queuePriority ? "1" : "0",
         account.tokenRefreshEnabled ? "1" : "0",
+        account.autoResetAllowed ? "1" : "0",
         account.showInStatusBar ? "1" : "0",
         account.lastQuotaAt ?? 0,
         account.resetCreditsAvailable ?? "",

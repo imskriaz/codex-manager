@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { checkTaskUi } from "./check-task-ui.mjs";
 import { dashboardCopyResources } from "../out/localization/resources/dashboard.js";
 
 // Only GET the canonical local snapshot. All browser actions are intercepted
@@ -18,6 +19,8 @@ snapshot.settings.codexAppRestartEnabled = true;
 snapshot.settings.codexCliPath = "";
 snapshot.settings.autoSwitchEnabled = true;
 snapshot.settings.autoResetEnabled = true;
+snapshot.settings.taskBoardEnabled = true;
+snapshot.settings.apiAccessEnabled = true;
 snapshot.settings.autoResumeEnabled = true;
 snapshot.settings.privacyMode = true;
 snapshot.settings.dailyTokenUsageEnabled = false;
@@ -51,6 +54,14 @@ const mockHost = `(() => {
   const messages = ${JSON.stringify(messages)};
   const config = ${JSON.stringify(config)};
   if(location.search.includes('closed-project')) { sessions[0].projectPath = 'D:/closed-worktree'; sessions[0].title = 'Closed worktree task'; }
+  const taskComments = [], projectTasks = [
+    {id:'release-group',title:'Release work',prompt:'Prepare the release',stage:'planned',revision:1,createdAt:1,updatedAt:2},
+    {id:'idea-fixture',title:'Idea collection',prompt:'A visitor suggestion',stage:'idea',revision:1,createdAt:1,updatedAt:1},
+    ...[...new Map(sessions.filter(session=>!session.parentSessionId).map(session=>[session.id,session])).values()].map(session=>({id:'session:'+session.id,title:session.title,prompt:'',stage:session.status==='running'?'running':session.archived?'completed':'planned',revision:1,createdAt:1,updatedAt:1,sessionId:session.id,sourceKey:'fixture:'+session.id,parentTaskId:session.id===${JSON.stringify(parentId)}?'release-group':undefined}))
+  ];
+  let projectRevision=1;
+  const projectBoard = () => ({projectPath:'D:/demo',homeKey:'fixture',revision:projectRevision,tasks:projectTasks,comments:taskComments,sessions:sessions.filter(session=>!session.parentSessionId),updatedAt:Date.now()});
+  const apiTokens=[{id:'token-project',name:'Project reader',projectPath:'D:/demo',permissions:['state','getProjectBoard'],createdAt:1},{id:'token-all',name:'Owner operations',permissions:['*'],createdAt:1}];
   let messageReads = 0;
   let logReads = 0;
   let logCleared = false;
@@ -74,7 +85,21 @@ const mockHost = `(() => {
       } else if(message.type === 'dashboard:action') {
         if(message.action === 'switch' && window.__holdNextSwitch) { window.__holdNextSwitch = false; window.__heldSwitch = message; return; }
         let payload = {}, error;
-        if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
+        if(message.action==='getProjectBoard') payload={projectBoard:projectBoard()};
+        else if(message.action==='getProjectTaskDetails') payload={projectTaskDetails:{taskId:message.payload.taskId,messages:['messages','activities','changes'].includes(message.payload.taskView||'messages')?messages:[],files:message.payload.taskView==='files'?[{path:'src/app.ts',name:'app.ts',type:'file',depth:1}]:[],environment:['git','changes'].includes(message.payload.taskView)?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:message.payload.taskView==='git'?[{hash:'abcdef012345',author:'Project owner',date:'2026-10-20',subject:'Prepare project tasks'}]:[],warnings:[]}};
+        else if(message.action==='saveProjectTask') {
+          if(window.__failTaskSaves) error='This task changed in another browser. Your draft was kept.';
+          else {const input=message.payload.task,index=projectTasks.findIndex(task=>task.id===input.id),task={...input,parentTaskId:input.parentTaskId||undefined,revision:input.expectedRevision+1,createdAt:Date.now(),updatedAt:Date.now()};if(index<0)projectTasks.push(task);else projectTasks[index]=task;projectRevision++;payload={projectBoard:projectBoard()};}
+        }
+        else if(message.action==='addProjectComment') {if(!taskComments.some(item=>item.id===message.payload.comment.id))taskComments.push({...message.payload.comment,author:'Owner',createdAt:Date.now()});projectRevision++;payload={projectBoard:projectBoard()};}
+        else if(message.action==='shareProjectBoard') payload={projectShare:{token:'b'.repeat(64),expiresAt:Date.now()+86400000,permissions:message.payload.sharePermissions}};
+        else if(message.action==='revokeProjectShares') payload={notice:{level:'info',message:'All project links revoked.'}};
+        else if(message.action==='listApiTokens') payload={apiTokens};
+        else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token',name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
+        else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
+        else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.sessionQueuePriority});payload={cliSession:session};}}
+        else if(message.action==='readWorkspaceFile') payload={workspaceFile:{path:message.payload.filePath,content:'const task = 1;',kind:'text',language:'typescript',mimeType:'text/plain',size:15,revision:'fixture'}};
+        else         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
           if(message.action === 'viewLogs') logReads++;
           if(window.__failLogReads || window.__failNextLogRead) { window.__failNextLogRead = false; error = 'Simulated log storage failure.'; }
           else payload = {logDownload:{filename:'codex-manager-logs-fixture.json',text:window.__invalidLogReads || window.__invalidNextLogRead ? '{' : JSON.stringify({format:'codex-manager-logs',records:logCleared ? [] : Array.from({length:80},(_,i)=>({timestamp:new Date(1792300000000+i*1000).toISOString(),sequence:i,level:i<2?'error':i<4?'warning':'info',scope:'recovery',message:i===0?'old record':i===79?'live record '+logReads:'Saved record '+i,details:{accepted:i>3}}))})},notice:{level:'info',message:'Logs refreshed.'}};
@@ -177,6 +202,7 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    await checkTaskUi(page, {origin,width,height,output});
     await page.goto(`${origin}/workspace`);
     await page.locator(".cli-workspace").waitFor();
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
@@ -671,12 +697,13 @@ try {
       await page.locator("#donateButton").click();
       const donation = page.getByRole("dialog", { name: "Donate to Codex Manager", exact: true });
       const amount = donation.getByRole("spinbutton", { name: "Donation amount (USD)", exact: true });
-      assert.equal(await amount.inputValue(), "12", "Donation starts at USD 12");
+      assert.equal(await amount.inputValue(), "11", "Donation starts at USD 11");
+      await page.evaluate(() => { window.__openedLinks = []; window.open = (url) => { window.__openedLinks.push(String(url)); return {}; }; });
       await donation.getByRole("button", { name: "Open Xoom", exact: true }).click();
-      await page.waitForFunction(() => window.__uiActions.some(action => action.action === "openExternalUrl" && new URL(action.payload.url).searchParams.get("sendAmount") === "12.00"));
+      await page.waitForFunction(() => window.__openedLinks.some(url => new URL(url).searchParams.get("sendAmount") === "11.00"));
       await amount.fill("17.50");
       await donation.getByRole("button", { name: "Open Xoom", exact: true }).click();
-      await page.waitForFunction(() => window.__uiActions.some(action => action.action === "openExternalUrl" && new URL(action.payload.url).searchParams.get("sendAmount") === "17.50"));
+      await page.waitForFunction(() => window.__openedLinks.some(url => new URL(url).searchParams.get("sendAmount") === "17.50"));
       await page.keyboard.press("Escape");
     }
     console.log(`Checking ${width}: compact overview and floating controls`);
@@ -707,6 +734,11 @@ try {
     assert.equal(await page.locator("#cliSessionsButton .cli-running-count").textContent(), "1", "Badge excludes running child agents");
     assert.equal(await page.locator(".cli-sessions-running-row").count(), 1);
     await page.locator(".cli-sessions-running-row").filter({ hasText: "Running workspace task" }).waitFor();
+    const autoResumeControl = page.getByRole('button',{name:'Auto Resume for Running workspace task',exact:true});
+    assert.equal(await autoResumeControl.getAttribute('aria-pressed'),'true');
+    await autoResumeControl.click();
+    await page.waitForFunction(()=>window.__uiActions.some(message=>message.action==='setCodexSessionAutoResume'&&message.payload?.autoResumeEnabled===false));
+    await page.waitForFunction(()=>document.querySelector('.cli-running-row-actions button[aria-pressed]')?.getAttribute('aria-pressed')==='false');
     const runningMeta = page.locator(".cli-sessions-running-row .cli-session-row-meta");
     assert.equal(await runningMeta.locator("span").nth(2).textContent(), "demo", "Project follows the PC name");
     assert.ok((await runningMeta.textContent()).includes("gpt-5"));
@@ -732,6 +764,9 @@ try {
     assert.equal(await page.locator(".cli-sessions-running-row").filter({ hasText: "Missing project task" }).locator(".cli-session-row-meta > span").nth(2).textContent(), "Workspace");
     assert.equal(await page.locator(".cli-sessions-running-row").filter({ hasText: "Long project task" }).locator(".cli-session-row-meta > span").nth(2).getAttribute("title"), "a-very-long-project-name-that-needs-to-truncate");
     assert.ok(await page.locator(".cli-sessions-running-row").evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth)), "Long and missing project names stay within the flyout");
+    await interruptedRow.locator('.cli-running-queue > summary').click();
+    await interruptedRow.getByRole('button',{name:/Priority 2/}).click();
+    await page.waitForFunction(()=>window.__uiActions.some(message=>message.action==='setCodexSessionQueue'&&message.payload?.sessionId==='recovery'&&message.payload?.sessionQueuePriority===2));
     await page.screenshot({ path: path.join(output, `compact-recovery-${width}x${height}.png`) });
     await page.getByRole("button", { name: "Resume Interrupted workspace task in VS Code", exact: true }).click();
     await page.waitForFunction(() => window.__uiActions.some(message => message.action === "resumeCodexSessions" && message.payload?.sessionId === "recovery"));
@@ -880,6 +915,8 @@ try {
     await page.locator(".overlay.open").waitFor();
     for (const tab of await page.locator(".settings-tab").all()) {
       await tab.click();
+      assert.ok(await page.locator('.settings-tab').evaluateAll(tabs => tabs.every(tab => Math.abs(tab.getBoundingClientRect().top - tabs[0].getBoundingClientRect().top) < 2)), 'Settings tabs stay on one row');
+      if(width<=650) assert.ok(await page.locator('.settings-tab:not(.active) .settings-tab-copy').evaluateAll(items=>items.every(item=>getComputedStyle(item).display==='none')), 'Narrow inactive tabs show icons only');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth <= 2), "Settings overflow");
       assert.deepEqual(await page.locator(".settings-tab-panel:not([hidden]) .settings-block-sub").evaluateAll(elements => elements.filter(element => element.getBoundingClientRect().height > 0).filter(element => element.getBoundingClientRect().height > parseFloat(getComputedStyle(element).lineHeight) + 1).map(element => element.textContent)), [], "Every setting description occupies at most one line");
       if (await tab.getAttribute("id") === "settings-tab-general") {

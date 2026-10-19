@@ -1365,6 +1365,19 @@ export class AccountsRepository {
   }
 
   /** Enable or disable background token refresh for one account. */
+  async setAccountAutoResetAllowed(accountId: string, allowed: boolean): Promise<CodexManagerAccountRecord> {
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = index.accounts.find(item => item.id === accountId);
+      if (!account) throw createError.accountNotFound(accountId);
+      account.autoResetAllowed = allowed;
+      this.writeIndex(index, { notifyAccountSync: false });
+      await this.flush();
+      return account;
+    });
+  }
+
+  /** Enable or disable background token refresh for one account. */
   async setAccountTokenRefreshEnabled(accountId: string, enabled: boolean): Promise<CodexManagerAccountRecord> {
     return this.withAccountCredentials(accountId, async () => {
       const index = await this.readIndex();

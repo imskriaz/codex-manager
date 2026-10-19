@@ -10,6 +10,7 @@ import {
   isCodexCliAvailable,
   readCodexCliComposerConfig,
   readCodexCliSessionMessages,
+  readCodexCliSessionMessagePage,
   readCodexCliSessionSummary,
   readNewCodexCliSessionSummary,
   renameCodexCliSession,
@@ -36,6 +37,28 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it("pages saved history across oversized records without gaps or a stuck cursor", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-history-pages-")); roots.push(root);
+    await mkdir(path.join(root, "sessions"));
+    const transcript = path.join(root, "sessions", `rollout-${sessionId}.jsonl`);
+    const line = (text: string) => JSON.stringify({ type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text }] } }) + "\n";
+    const first = line("Earlier history");
+    await writeFile(transcript, first + line("界".repeat(110000)));
+    const latest = await readCodexCliSessionMessagePage(sessionId, undefined, root);
+    expect(latest.messages.at(-1)?.text).toMatch(/^界/);
+    expect(latest.warnings).toEqual([]);
+    if (latest.olderThan) {
+      const older = await readCodexCliSessionMessagePage(sessionId, latest.olderThan, root);
+      expect(older.messages[0]?.text).toBe("Earlier history");
+      expect(older.olderThan).toBeUndefined();
+    } else expect(latest.messages[0]?.text).toBe("Earlier history");
+    await writeFile(transcript, '{"partial":', { flag: "a" });
+    const afterPartial = await readCodexCliSessionMessagePage(sessionId, undefined, root);
+    expect(afterPartial.messages.some(message => message.text.startsWith("界") || message.text === "Earlier history")).toBe(true);
+    await truncate(transcript, 0);
+    await expect(readCodexCliSessionMessagePage(sessionId, String(Buffer.byteLength(first)), root)).rejects.toThrow(/changed/);
+    await expect(readCodexCliSessionMessagePage(sessionId, "bad", root)).rejects.toThrow(/cursor/);
+  });
   it("reads recorded model and thinking settings without requiring newer native columns", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "codex-session-settings-")); roots.push(home);
     const db = new DatabaseSync(path.join(home, "state_5.sqlite"));

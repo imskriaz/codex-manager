@@ -52,7 +52,8 @@ import {
   hasComparableHourlyWindow,
   hasComparableWeeklyWindow,
   toAutoQueueOrderValue,
-  getAccountAutoQueuePolicy
+  getAccountAutoQueuePolicy,
+  allAccountsWeeklyExhausted, selectAccountResetOverride
 } from "./autoQueueOrder";
 import {
   autoReloadWindowForAccount,
@@ -741,6 +742,12 @@ async function evaluateAutoSwitchForActiveQuota(
       return evaluateAutoSwitchForActiveQuota(repo, view, options, true, verificationFailed, true);
     }
 
+    const ownedAccounts = accounts.filter(account => options.canUseAccount?.(account.id) ?? true);
+    const optedInReset = selectAccountResetOverride(ownedAccounts);
+    if (optedInReset) {
+      if (optedInReset.isActive) return executeActiveResetPlan(repo, view, active, hourlyThreshold, weeklyThreshold, 0, options.canUseAccount, options.userInitiated, true);
+      return executeResetPlan(repo, view, active, optedInReset, hourlyThreshold, weeklyThreshold, 0, options.canUseAccount, options.userInitiated, true);
+    }
     if (getAccountAutoQueuePolicy().autoResetEnabled) {
       const resetThreshold = getAccountAutoQueuePolicy().resetWeeklyThreshold;
       if (
@@ -1052,7 +1059,8 @@ async function executeActiveResetPlan(
   weeklyThreshold: number,
   resetThreshold: number,
   canUseAccount?: (accountId: string) => boolean,
-  userInitiated = false
+  userInitiated = false,
+  accountOverride = false
 ): Promise<boolean> {
   if (await deferAutoSwitchForSessions(userInitiated)) return false;
   if (!(await isExpectedActiveAccount(repo, active.id))) {
@@ -1061,8 +1069,9 @@ async function executeActiveResetPlan(
   const redeemed = await redeemAccountResetCredit(
     repo,
     active.id,
-    (account) => account.isActive && (canUseAccount?.(account.id) ?? true) &&
-      isAutoSelectionStillNeeded(account) && isAutomaticResetAllowed(account),
+    async (account) => account.isActive && (canUseAccount?.(account.id) ?? true) &&
+      isAutoSelectionStillNeeded(account) && isAutomaticResetAllowed(account, accountOverride) &&
+      (!accountOverride || allAccountsWeeklyExhausted((await repo.listAccounts()).filter(candidate => canUseAccount?.(candidate.id) ?? true))),
     () => refreshResetQuota(repo, view, active.id)
   );
   if (!redeemed) return false;
@@ -1104,7 +1113,8 @@ async function executeResetPlan(
   weeklyThreshold: number,
   resetThreshold: number,
   canUseAccount?: (accountId: string) => boolean,
-  userInitiated = false
+  userInitiated = false,
+  accountOverride = false
 ): Promise<boolean> {
   if (await deferAutoSwitchForSessions(userInitiated)) return false;
   if (!(await isExpectedActiveAccount(repo, active.id))) {
@@ -1116,7 +1126,8 @@ async function executeResetPlan(
     async (account) =>
       !account.isActive &&
       (canUseAccount?.(account.id) ?? true) &&
-      isAutomaticResetAllowed(account) &&
+      isAutomaticResetAllowed(account, accountOverride) &&
+      (!accountOverride || allAccountsWeeklyExhausted((await repo.listAccounts()).filter(candidate => canUseAccount?.(candidate.id) ?? true))) &&
       isAutoSelectionStillNeeded((await repo.getAccount(active.id)) ?? active),
     () => refreshResetQuota(repo, view, next.id)
   );
@@ -1534,15 +1545,15 @@ function autoQueueScoringOptions() {
   return getAccountAutoQueuePolicy();
 }
 
-function isAutomaticResetAllowed(account: CodexManagerAccountRecord): boolean {
+function isAutomaticResetAllowed(account: CodexManagerAccountRecord, accountOverride = false): boolean {
   const policy = getAccountAutoQueuePolicy();
   return (
-    policy.autoResetEnabled &&
+    (accountOverride ? policy.autoSwitchEnabled && account.autoResetAllowed === true : policy.autoResetEnabled) &&
     account.enabled !== false &&
     !account.quotaError &&
     hasFreshQuotaSnapshot(account) &&
     hasComparableWeeklyWindow(account) &&
-    account.quotaSummary!.weeklyPercentage <= policy.resetWeeklyThreshold
+    account.quotaSummary!.weeklyPercentage <= (accountOverride ? 0 : policy.resetWeeklyThreshold)
   );
 }
 

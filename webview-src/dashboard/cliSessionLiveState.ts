@@ -43,6 +43,12 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
   const exactTurn = live.turnId ? history.findIndex((item) => item.turnId === live.turnId) : -1;
   const ids = new Set(live.messages.map((item) => item.id));
   const exactItem = history.findIndex((item) => ids.has(item.id));
+  // A bounded live snapshot contains only a suffix, not the whole saved turn.
+  if (live.truncated) {
+    const replacements = new Map(live.messages.map(item => [item.id, item]));
+    const savedIds = new Set(history.map(item => item.id));
+    return [...history.map(item => replacements.get(item.id) ?? item), ...live.messages.filter(item => !savedIds.has(item.id))];
+  }
   let boundary = exactTurn >= 0 ? exactTurn : exactItem;
   if (boundary < 0) {
     const prompt = live.messages.find((item) => item.role === "user" && (!item.kind || item.kind === "message"));

@@ -194,6 +194,7 @@ export function buildAccountRecordDraft(params: {
     enabled: params.forceActive ? true : (params.existing?.enabled ?? true),
     queuePriority: params.existing?.queuePriority ?? false,
     tokenRefreshEnabled: params.existing?.tokenRefreshEnabled ?? false,
+    autoResetAllowed: params.existing?.autoResetAllowed ?? false,
     // New accounts should not silently opt into the status popup.
     showInStatusBar: params.existing?.showInStatusBar ?? false,
     dismissedHealthIssueKey: params.existing?.dismissedHealthIssueKey,

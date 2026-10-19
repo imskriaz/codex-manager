@@ -1,5 +1,5 @@
 import { runCrossWindowExclusive, sharedPathKey } from "../utils/crossWindowOperations";
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import * as crypto from "crypto";
 import { promises as fs } from "fs";
 import * as fsSync from "fs";
@@ -61,7 +61,7 @@ const observedTerminalExecutions = new Map<vscode.TerminalShellExecution, {
 }>();
 const cancelledTerminalCommands = new Set<string>();
 const environmentReads = new Map<string, Promise<DashboardWorkspaceEnvironment>>();
-let resolvedWindowsPowerShell: string | undefined;
+let resolvedWindowsPowerShell: Promise<string> | undefined;
 
 type ProcessResult = {
   stdout: string;
@@ -103,8 +103,33 @@ export function resolveWorkspaceProjectPath(projectPath: string | undefined): st
   throw new Error("The selected project is not an open workspace folder.");
 }
 
+export async function resolveWorkspaceProjectPathAsync(projectPath: string | undefined): Promise<string> {
+  const selected = normalizeNativePath(projectPath?.trim() ?? "");
+  if (!selected || !path.isAbsolute(selected)) throw new Error("Select this session's project folder before using workspace actions.");
+  const requested = path.resolve(selected);
+  const allowed = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(normalizeNativePath(folder.uri.fsPath)));
+  if (allowed.some((root) => path.relative(root, requested) === "" || isPathInside(root, requested))) return requested;
+  try {
+    if ((await waitWithin(fs.stat(requested), WORKSPACE_READ_TIMEOUT_MS, "The project folder did not respond. Reconnect it and retry.")).isDirectory()) return requested;
+  } catch (error) {
+    if (!(error as NodeJS.ErrnoException).code) throw error;
+    // Fall through to the actionable validation error below.
+  }
+  throw new Error("The selected project is not an open workspace folder.");
+}
+
+export async function readWorkspaceGitHistory(projectPath: string): Promise<import('../domain/projectTasks').ProjectTaskDetails['history']> {
+  const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
+  const result = await runProcess('git', ['log', '-50', '--format=%H%x00%an%x00%aI%x00%s', '--no-show-signature'], cwd, GIT_TIMEOUT_MS);
+  if (result.timedOut || result.exitCode !== 0) throw new Error(result.stderr.trim() || 'Git history could not be read.');
+  return result.stdout.split(/\r?\n/).filter(Boolean).map(line => {
+    const [hash = '', author = '', date = '', subject = ''] = line.split('\0');
+    return { hash, author, date, subject };
+  });
+}
+
 export async function readWorkspaceEnvironment(projectPath: string | undefined, includeBranchDiff = false): Promise<DashboardWorkspaceEnvironment> {
-  const cwd = resolveWorkspaceProjectPath(projectPath);
+  const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
   let read = environmentReads.get(cwd);
   if (!read) {
     read = readWorkspaceEnvironmentInternal(cwd).finally(() => {
@@ -130,7 +155,7 @@ export async function readWorkspaceEnvironment(projectPath: string | undefined, 
 }
 
 export async function listWorkspaceFiles(projectPath: string | undefined): Promise<DashboardWorkspaceFileEntry[]> {
-  const root = resolveWorkspaceProjectPath(projectPath);
+  const root = await resolveWorkspaceProjectPathAsync(projectPath);
   const entries: DashboardWorkspaceFileEntry[] = [];
   const deadline = Date.now() + WORKSPACE_READ_TIMEOUT_MS;
   let cancelled = false;
@@ -218,7 +243,8 @@ export async function deleteWorkspaceFile(
 }
 
 function terminalInfo(terminal: vscode.Terminal): DashboardWorkspaceTerminalInfo {
-  const sameNames = vscode.window.terminals.filter((item) => item.name === terminal.name);
+  const terminals = vscode.window.terminals ?? [];
+  const sameNames = terminals.filter((item) => item.name === terminal.name);
   return {
     id: nativeTerminalId(terminal),
     name: sameNames.length > 1 ? `${terminal.name} (${sameNames.indexOf(terminal) + 1})` : terminal.name,
@@ -228,7 +254,7 @@ function terminalInfo(terminal: vscode.Terminal): DashboardWorkspaceTerminalInfo
 }
 
 export function listWorkspaceTerminals(): DashboardWorkspaceTerminalInfo[] {
-  return vscode.window.terminals.map(terminalInfo);
+  return (vscode.window.terminals ?? []).map(terminalInfo);
 }
 
 export async function createWorkspaceTerminal(
@@ -236,11 +262,11 @@ export async function createWorkspaceTerminal(
   profile: "default" | "powershell" | "cmd" | "bash" = "default",
   name?: string
 ): Promise<DashboardWorkspaceTerminalInfo> {
-  const cwd = resolveWorkspaceProjectPath(projectPath);
+  const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
   const folder = await waitWithin(fs.stat(cwd), WORKSPACE_READ_TIMEOUT_MS, "The project folder did not respond. Retry after it becomes available.");
   if (!folder.isDirectory()) throw new Error("The selected project path is not a folder.");
   const shellPath = profile === "powershell"
-    ? resolveWindowsPowerShell()
+    ? await resolveWindowsPowerShell()
     : profile === "cmd"
       ? (process.env["ComSpec"] || "cmd.exe")
       : profile === "bash" ? "bash" : undefined;
@@ -412,15 +438,6 @@ function textMimeTypeForFile(filePath: string): string {
   return ({ html: "text/html", htm: "text/html", css: "text/css", js: "text/javascript", mjs: "text/javascript", cjs: "text/javascript", json: "application/json", md: "text/markdown", xml: "application/xml", yaml: "application/yaml", yml: "application/yaml" } as Record<string, string>)[extension] ?? "text/plain";
 }
 
-function resolveWorkspaceFile(projectPath: string | undefined, filePath: string | undefined): { relative: string; absolute: string } {
-  const root = resolveWorkspaceProjectPath(projectPath);
-  const requested = filePath?.trim().replace(/\\/g, "/") ?? "";
-  if (!requested || path.isAbsolute(requested)) throw new Error("Choose a valid project file.");
-  const absolute = path.resolve(root, requested);
-  if (absolute === root || !absolute.startsWith(`${root}${path.sep}`)) throw new Error("The selected file is outside the project.");
-  return { relative: path.relative(root, absolute).replace(/\\/g, "/"), absolute };
-}
-
 function languageForFile(filePath: string): string {
   const extension = path.extname(filePath).slice(1).toLowerCase();
   return ({ tsx: "typescriptreact", jsx: "javascriptreact", md: "markdown", yml: "yaml", ps1: "powershell" } as Record<string, string>)[extension]
@@ -496,31 +513,62 @@ export async function runWorkspaceTerminalCommand(options: {
   if (requestedTerminalName?.startsWith("native-terminal:") && !selectedTerminal) throw new Error("That VS Code terminal is no longer open. Refresh the terminal list.");
   const selectedId = selectedTerminal ? nativeTerminalId(selectedTerminal) : requestedTerminalName;
   if (selectedTerminal && uncertainTerminals.has(selectedTerminal)) throw new Error("The previous command has not confirmed completion. Check the VS Code terminal before starting another command.");
-  if (activeTerminalCommands.has(terminalId) || (selectedId && (activeTerminalCancels.has(selectedId) || startingTerminals.has(selectedId))) || (selectedTerminal && [...observedTerminalExecutions.values()].some((record) => record.terminal === selectedTerminal))) {
+  if (activeTerminalCommands.has(terminalId) || startingTerminals.has(terminalId) || (selectedId && (activeTerminalCancels.has(selectedId) || startingTerminals.has(selectedId))) || (selectedTerminal && [...observedTerminalExecutions.values()].some((record) => record.terminal === selectedTerminal))) {
     throw new Error("A command is already running in this terminal. Stop it or wait for it to finish.");
   }
-  const cwd = resolveWorkspaceProjectPath(options.projectPath);
+  // Reserve an already selected native terminal before async project validation
+  // so a second request cannot slip through while a closed project is checked.
+  let cancelledBeforeStart = false;
+  const selectedReservationId = selectedTerminal ? nativeTerminalId(selectedTerminal) : terminalId;
+  const selectedReservationCancel = selectedReservationId ? () => { cancelledBeforeStart = true; } : undefined;
+  if (selectedReservationId && selectedReservationCancel) {
+    startingTerminals.add(selectedReservationId);
+    activeTerminalCancels.set(selectedReservationId, selectedReservationCancel);
+  }
+  try {
+  const cwd = await resolveWorkspaceProjectPathAsync(options.projectPath);
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const cancelled = () => {
+    const result: DashboardWorkspaceTerminalResult = { id, terminalId: selectedId ?? terminalId, command, cwd, output: "Command cancelled before it started.", durationMs: 0, status: "cancelled", finishedAt: new Date().toISOString() };
+    publishDashboardRealtime({ type: "dashboard:terminal-complete", result });
+    return new WorkspaceTerminalCommandError(result.output, result);
+  };
   // Use the selected real VS Code terminal for dashboard input whenever the
   // host provides one. The detached runner below remains a compatibility path
   // for older/test hosts without a terminal API.
   if (typeof vscode.window.createTerminal === "function") {
-    const terminal: vscode.Terminal = selectedTerminal
+    let verifiedTerminal = selectedTerminal;
+    let terminalNotice = '';
+    if (verifiedTerminal) {
+      const terminalCwd = verifiedTerminal.shellIntegration?.cwd?.fsPath;
+      const verified = terminalCwd && await waitWithin(Promise.all([fs.realpath(cwd), fs.realpath(normalizeNativePath(terminalCwd))]), 1000, 'Terminal folder inspection timed out.').then(([project, folder]) => path.relative(project, folder) === '', () => false);
+      if (!verified) {
+        verifiedTerminal = undefined;
+        terminalNotice = 'Opened a new terminal in the session project because the selected terminal folder differed or could not be verified. ';
+      }
+    }
+    if (cancelledBeforeStart) throw cancelled();
+    if (!verifiedTerminal) {
+      const folder = await waitWithin(fs.stat(cwd), WORKSPACE_READ_TIMEOUT_MS, 'The session project folder is unavailable. Restore it before running commands.');
+      if (!folder.isDirectory()) throw new Error('The session project path is not a folder.');
+      if (cancelledBeforeStart) throw cancelled();
+    }
+    const terminal: vscode.Terminal = verifiedTerminal
       ?? vscode.window.createTerminal({
-        name: options.terminalId?.trim() || `Codex · ${path.basename(cwd) || "Workspace"}`,
+        name: `Codex · ${path.basename(cwd) || "Workspace"}`,
         cwd: vscode.Uri.file(cwd)
       });
+    if (!terminal) throw new Error('VS Code could not open a terminal for this project. Retry after the terminal service is available.');
     const actualId = nativeTerminalId(terminal);
-    const previouslyIdle = knownIdleTerminals.has(terminal) || !selectedTerminal;
+    const previouslyIdle = knownIdleTerminals.has(terminal) || !verifiedTerminal;
     startingTerminals.add(actualId);
-    let cancelledBeforeStart = false;
-    const cancelPreparation = (): void => { cancelledBeforeStart = true; };
+    const cancelPreparation = selectedReservationCancel ?? (() => { cancelledBeforeStart = true; });
     activeTerminalCancels.set(actualId, cancelPreparation);
     knownIdleTerminals.delete(terminal);
     try {
       terminal.show(true);
       const startedAt = Date.now();
-      const terminalContext = { id, terminalId: actualId, command, cwd: selectedTerminal ? "" : cwd };
+      const terminalContext = { id, terminalId: actualId, command, cwd };
       const emit = createTerminalOutputEmitter(terminalContext);
       if (!terminal.shellIntegration && typeof vscode.window.onDidChangeTerminalShellIntegration === "function") {
         await new Promise<void>((resolve) => {
@@ -540,13 +588,6 @@ export async function runWorkspaceTerminalCommand(options: {
         throw new WorkspaceTerminalCommandError(result.output, result);
       }
       if ([...observedTerminalExecutions.values()].some((record) => record.terminal === terminal)) throw new Error("This terminal started another command. Wait for it to finish before retrying.");
-      if (selectedTerminal) {
-        const terminalCwd = terminal.shellIntegration?.cwd?.fsPath;
-        if (!terminalCwd || path.relative(await fs.realpath(cwd), await fs.realpath(normalizeNativePath(terminalCwd))) !== "") {
-          throw new Error("This terminal's folder does not match the session project or could not be verified. Open a new terminal for this project and retry.");
-        }
-        terminalContext.cwd = cwd;
-      }
       // Shell integration gives us the real terminal stream without replacing
       // the user's VS Code terminal. Read immediately so no output is missed.
       if (terminal.shellIntegration) {
@@ -617,7 +658,7 @@ export async function runWorkspaceTerminalCommand(options: {
         if (typeof vscode.window.onDidCloseTerminal === "function") subscriptions.push(vscode.window.onDidCloseTerminal((closed) => {
         if (closed === terminal) { ended = true; finish("cancelled", undefined, "The terminal was closed before command completion was confirmed."); }
         }));
-        emit("terminal", "Command started in the VS Code terminal.\n");
+        emit("terminal", `${terminalNotice}Command started in the VS Code terminal.\n`);
         reading = (async () => {
           try {
             for await (const chunk of execution.read()) {
@@ -632,14 +673,14 @@ export async function runWorkspaceTerminalCommand(options: {
         })();
         return {
           ...terminalContext,
-          output: "Command started in the real VS Code terminal.",
+          output: `${terminalNotice}Command started in the real VS Code terminal.`,
           durationMs: 0, status: "running", finishedAt: new Date().toISOString()
         };
       }
       // Shell integration is not available for some remote/legacy terminals.
       // Keep the command in the real VS Code terminal and make that limitation
       // explicit in the dashboard rather than rendering an empty log.
-      const fallback = "Command sent to the real VS Code terminal. Shell integration is unavailable, so VS Code does not expose its output to the dashboard; view the terminal tab for live output.";
+      const fallback = `${terminalNotice}Command sent to the real VS Code terminal. Shell integration is unavailable, so VS Code does not expose its output to the dashboard; view the terminal tab for live output.`;
       emit("terminal", `${fallback}\n`);
       try { terminal.sendText(command, true); }
       catch (error) {
@@ -648,6 +689,7 @@ export async function runWorkspaceTerminalCommand(options: {
         publishDashboardRealtime({ type: "dashboard:terminal-complete", result });
         throw new WorkspaceTerminalCommandError(message, result);
       }
+      uncertainTerminals.add(terminal);
       const result: DashboardWorkspaceTerminalResult = { ...terminalContext, output: fallback, durationMs: 0, status: "untracked", finishedAt: new Date().toISOString() };
       publishDashboardRealtime({ type: "dashboard:terminal-complete", result });
       return result;
@@ -657,8 +699,14 @@ export async function runWorkspaceTerminalCommand(options: {
     }
   }
   const shell = process.platform === "win32"
-    ? resolveWindowsShell(command)
+    ? await resolveWindowsShell(command)
     : { command: "/bin/sh", args: ["-lc", command] };
+  if (cancelledBeforeStart) {
+    const result: DashboardWorkspaceTerminalResult = { id, terminalId, command, cwd, output: 'Command cancelled before it started.', durationMs: 0, status: 'cancelled', finishedAt: new Date().toISOString() };
+    publishDashboardRealtime({ type: 'dashboard:terminal-complete', result });
+    throw new WorkspaceTerminalCommandError(result.output, result);
+  }
+  if (activeTerminalCancels.get(selectedReservationId) === selectedReservationCancel) activeTerminalCancels.delete(selectedReservationId);
   const processResult = await runProcess(shell.command, shell.args, cwd, COMMAND_TIMEOUT_MS, terminalId, createTerminalOutputEmitter({ id, terminalId, command, cwd }));
   const status: DashboardWorkspaceTerminalResult["status"] = processResult.cancelled
     ? "cancelled"
@@ -691,6 +739,10 @@ export async function runWorkspaceTerminalCommand(options: {
     throw new WorkspaceTerminalCommandError(message, result);
   }
   return result;
+  } finally {
+    startingTerminals.delete(selectedReservationId);
+    if (activeTerminalCancels.get(selectedReservationId) === selectedReservationCancel) activeTerminalCancels.delete(selectedReservationId);
+  }
 }
 
 export function cancelWorkspaceTerminalCommand(terminalId: string | undefined): boolean {
@@ -729,7 +781,7 @@ export async function commitWorkspaceChanges(
   const message = commitMessage?.trim() ?? "";
   if (!message) throw new Error("Enter a commit message before committing changes.");
   if (message.length > 200) throw new Error("Keep the commit message under 200 characters.");
-  const cwd = resolveWorkspaceProjectPath(projectPath);
+  const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
   const repository = await runProcess("git", ["rev-parse", "--git-common-dir"], cwd, GIT_TIMEOUT_MS);
   if (repository.exitCode !== 0 || repository.timedOut) throw new Error("Git repository could not be verified. Retry after Git responds.");
   const canonical = await fs.realpath(path.resolve(cwd, repository.stdout.trim()));
@@ -746,7 +798,7 @@ export async function pushWorkspaceBranch(
   confirmed: boolean | undefined
 ): Promise<DashboardWorkspaceEnvironment | undefined> {
   if (confirmed !== true) throw new Error("Confirm pushing the current branch, then try again.");
-  const cwd = resolveWorkspaceProjectPath(projectPath);
+  const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
   const repository = await runProcess("git", ["rev-parse", "--git-common-dir"], cwd, GIT_TIMEOUT_MS);
   if (repository.exitCode !== 0 || repository.timedOut) throw new Error("Git repository could not be verified. Retry after Git responds.");
   const canonical = await fs.realpath(path.resolve(cwd, repository.stdout.trim()));
@@ -778,13 +830,13 @@ function normalizeTerminalId(value: string | undefined): string {
   return /^[a-zA-Z0-9._:-]{1,120}$/.test(normalized) ? normalized : "workspace-terminal";
 }
 
-function resolveWindowsShell(command: string): { command: string; args: string[] } {
+async function resolveWindowsShell(command: string): Promise<{ command: string; args: string[] }> {
   // Most workspace commands are shell-neutral (`git`, `npm`, `dir`, etc.).
   // cmd.exe starts much faster than Windows PowerShell, while retaining
   // PowerShell for scripts that clearly depend on its cmdlets or syntax.
   const needsPowerShell = /\b(?:Write-Output|Write-Error|Start-Sleep|Get-[A-Za-z]|Set-[A-Za-z]|New-[A-Za-z]|Remove-[A-Za-z]|Where-Object|ForEach-Object)\b|\$env:|`/.test(command);
   return needsPowerShell
-    ? { command: resolveWindowsPowerShell(), args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command] }
+    ? { command: await resolveWindowsPowerShell(), args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command] }
     : { command: process.env["ComSpec"] || "cmd.exe", args: ["/d", "/s", "/c", command] };
 }
 
@@ -792,15 +844,19 @@ async function resolveReadableWorkspaceFile(
   projectPath: string | undefined,
   filePath: string | undefined
 ): Promise<{ relative: string; absolute: string }> {
-  const resolved = resolveWorkspaceFile(projectPath, filePath);
-  const root = resolveWorkspaceProjectPath(projectPath);
+  const root = await resolveWorkspaceProjectPathAsync(projectPath);
+  const requested = filePath?.trim().replace(/\\/g, "/") ?? "";
+  if (!requested || path.isAbsolute(requested)) throw new Error("Choose a valid project file.");
+  const absolute = path.resolve(root, requested);
+  if (absolute === root || !absolute.startsWith(`${root}${path.sep}`)) throw new Error("The selected file is outside the project.");
+  const relative = path.relative(root, absolute).replace(/\\/g, "/");
   const deadline = Date.now() + WORKSPACE_READ_TIMEOUT_MS;
   const [realRoot, realFile] = await Promise.all([
     workspaceReadBeforeDeadline(fs.realpath(root), deadline, "The workspace path took too long to inspect."),
-    workspaceReadBeforeDeadline(fs.realpath(resolved.absolute), deadline, "The workspace file took too long to inspect.")
+    workspaceReadBeforeDeadline(fs.realpath(absolute), deadline, "The workspace file took too long to inspect.")
   ]);
   if (!isPathInside(realRoot, realFile)) throw new Error("The selected file resolves outside the project.");
-  return { relative: resolved.relative, absolute: realFile };
+  return { relative, absolute: realFile };
 }
 
 function isPathInside(root: string, candidate: string): boolean {
@@ -826,13 +882,14 @@ async function workspaceReadBeforeDeadline<T>(operation: Promise<T>, deadline: n
   });
 }
 
-function resolveWindowsPowerShell(): string {
-  if (resolvedWindowsPowerShell) return resolvedWindowsPowerShell;
-  // PowerShell 7 is more reliable than Windows PowerShell 5 when Node starts
-  // it without a visible console. Retain the inbox shell as the compatibility
-  // fallback for machines where pwsh is not installed.
-  const pwsh = spawnSync("where.exe", ["pwsh.exe"], { windowsHide: true, stdio: "ignore" });
-  resolvedWindowsPowerShell = pwsh.status === 0 ? "pwsh.exe" : "powershell.exe";
+function resolveWindowsPowerShell(): Promise<string> {
+  if (process.platform !== 'win32') return Promise.resolve('pwsh');
+  resolvedWindowsPowerShell ??= new Promise(resolve => {
+    const child = spawn('where.exe', ['pwsh.exe'], { windowsHide: true, stdio: 'ignore' });
+    const timeout = setTimeout(() => { child.kill(); resolve('powershell.exe'); }, 1000);
+    child.once('error', () => { clearTimeout(timeout); resolve('powershell.exe'); });
+    child.once('close', code => { clearTimeout(timeout); resolve(code === 0 ? 'pwsh.exe' : 'powershell.exe'); });
+  });
   return resolvedWindowsPowerShell;
 }
 

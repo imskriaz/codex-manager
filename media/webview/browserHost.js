@@ -12,7 +12,7 @@
   let authenticationRequired = false;
   let hiddenAt;
   const pendingSocketActions = new Map();
-  const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage"].includes(message?.action)
+  const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage", "startProjectTask"].includes(message?.action)
     ? 15 * 60_000 + 15_000
     : ["addAccount", "importCurrent", "startOAuthAutoFlow"].includes(message?.action)
       ? 10 * 60_000 + 30_000
@@ -34,7 +34,7 @@
     window.dispatchEvent(new MessageEvent("message", { data: message }));
   };
 
-  const isBrowserOffline = () => typeof navigator !== "undefined" && navigator.onLine === false;
+  const isBrowserOffline = () => typeof navigator !== "undefined" && navigator.onLine === false && !['localhost','127.0.0.1','[::1]'].includes(window.location?.hostname);
   const publishStatus = (stage, retryInMs) => {
     dispatch({
       type: "dashboard:host-status",

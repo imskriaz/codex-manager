@@ -10,9 +10,9 @@ import { normalizeCliComposerDraft, type CliComposerDraft } from "./cliSessionCo
 const DB_NAME = "codex-manager-cache";
 const DB_VERSION = 1;
 const STORE_NAME = "cli-sessions";
-const MAX_CACHE_AGE_MS = 5 * 60_000;
+const MAX_CACHE_AGE_MS = 30 * 24 * 60 * 60_000;
 const DASHBOARD_CACHE_KEY = "dashboard-state";
-const MAX_DASHBOARD_CACHE_AGE_MS = 30 * 60_000;
+const MAX_DASHBOARD_CACHE_AGE_MS = MAX_CACHE_AGE_MS;
 const MAX_DRAFT_AGE_MS = 30 * 24 * 60 * 60_000;
 const MAX_DRAFT_RECORDS = 20;
 const MAX_DRAFT_BYTES = 16 * 1024 * 1024;
@@ -118,7 +118,7 @@ function openCache(): Promise<IDBDatabase | undefined> {
 export async function readCliSessionListCache(): Promise<CliSessionListCache | undefined> {
   const cached = await readFreshRecord<Partial<CliSessionListCache>>("list", MAX_CACHE_AGE_MS);
   if (!cached || !Array.isArray(cached.value.sessions)) return undefined;
-  return { sessions: cached.value.sessions, composerConfig: cached.value.composerConfig, ageMs: cached.ageMs };
+  return { sessions: cached.ageMs > 5000 ? cached.value.sessions.map(session => ({ ...session, status: 'unknown', canStop: false })) : cached.value.sessions, composerConfig: cached.value.composerConfig, ageMs: cached.ageMs };
 }
 
 export async function readCliComposerDraft(key: string): Promise<CliComposerDraft | undefined> {
@@ -237,6 +237,7 @@ export function writeDashboardStateCache(state: DashboardState): Promise<void> {
   delete pendingDashboardState.dailyUsageCache;
   dashboardWrite ??= flushDashboardStateWrites().finally(() => {
     dashboardWrite = undefined;
+    if (pendingDashboardState) void writeDashboardStateCache(pendingDashboardState);
   });
   return dashboardWrite;
 }
@@ -284,13 +285,102 @@ async function readRecord(key: string): Promise<CacheRecord | undefined> {
 }
 
 async function writeRecord(record: CacheRecord): Promise<void> {
-  const db = await openCache();
-  if (!db) return;
-  await new Promise<void>((resolve) => {
-    const transaction = db.transaction(STORE_NAME, "readwrite");
-    const finish = (): void => { clearTimeout(timer); resolve(); };
-    const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } finish(); }, 3_000);
-    transaction.objectStore(STORE_NAME).put(record);
-    transaction.oncomplete = transaction.onerror = transaction.onabort = finish;
+  const db = await openCache(); if (!db) return;
+  record.sizeBytes = JSON.stringify(record).length * 2;
+  if (record.sizeBytes > 4 * 1024 * 1024) return;
+  await new Promise<void>(resolve => {
+    const tx = db.transaction(STORE_NAME, 'readwrite'), store = tx.objectStore(STORE_NAME);
+    const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(); }, 3000);
+    const prior: Array<{ key: string; at: number; bytes: number }> = [];
+    const cursor = store.openCursor();
+    cursor.onsuccess = () => {
+      const row = cursor.result;
+      if (row) {
+        const value = row.value as CacheRecord;
+        if (!value.key.startsWith('composer:') && !value.key.startsWith('browser:outbox:') && value.key !== record.key) {
+          if (Date.now() - value.updatedAt > MAX_CACHE_AGE_MS) row.delete();
+          else prior.push({ key: value.key, at: value.updatedAt, bytes: value.sizeBytes ?? JSON.stringify(value).length * 2 });
+        }
+        row.continue(); return;
+      }
+      let bytes = prior.reduce((total, value) => total + value.bytes, record.sizeBytes!);
+      prior.sort((a,b) => a.at - b.at);
+      while (prior.length >= 80 || bytes > 24 * 1024 * 1024) {
+        const evicted = prior.shift(); if (!evicted) break;
+        store.delete(evicted.key); bytes -= evicted.bytes;
+      }
+      store.put(record);
+    };
+    tx.oncomplete = tx.onerror = tx.onabort = () => { clearTimeout(timer); resolve(); };
   }).catch(() => undefined);
+}
+
+/** Durable task/comment outbox entries are never silently evicted. */
+export async function readBrowserCache<T>(key: string): Promise<T | undefined> {
+  return (await readFreshRecord<T>(`browser:${key}`, MAX_CACHE_AGE_MS))?.value;
+}
+export async function writeBrowserCache(key: string, value: unknown): Promise<boolean> {
+  const db = await openCache(); if (!db) return false;
+  const record: CacheRecord = { key: `browser:${key}`, updatedAt: Date.now(), value };
+  try { record.sizeBytes = JSON.stringify(record).length * 2; } catch { return false; }
+  if (record.sizeBytes > 2 * 1024 * 1024) return false;
+  const durable = record.key.startsWith('browser:outbox:');
+  return new Promise<boolean>(resolve => {
+    const tx = db.transaction(STORE_NAME, 'readwrite'), store = tx.objectStore(STORE_NAME);
+    const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(false); }, 3000);
+    const cached: Array<{ key: string; bytes: number; at: number }> = [];
+    let draftCount = 0, draftBytes = durable ? record.sizeBytes! : 0;
+    const cursor = store.openCursor();
+    cursor.onsuccess = () => {
+      const row = cursor.result;
+      if (row) {
+        const prior = row.value as CacheRecord;
+        if (typeof prior?.key !== 'string') { row.continue(); return; }
+        if (prior.key !== record.key) {
+          const bytes = prior.sizeBytes ?? JSON.stringify(prior).length * 2;
+          if (prior.key.startsWith('browser:outbox:')) { draftCount++; draftBytes += bytes; }
+          else if (!prior.key.startsWith('composer:')) {
+            if (!Number.isFinite(prior.updatedAt) || prior.updatedAt > Date.now() || Date.now() - prior.updatedAt > MAX_CACHE_AGE_MS) row.delete();
+            else cached.push({ key: prior.key, bytes, at: prior.updatedAt });
+          }
+        }
+        row.continue(); return;
+      }
+      // A full durable outbox rejects the new write; it never evicts unsynced work.
+      if (durable && (draftCount >= 100 || draftBytes > 8 * 1024 * 1024)) { tx.abort(); return; }
+      let bytes = cached.reduce((sum, entry) => sum + entry.bytes, durable ? 0 : record.sizeBytes!);
+      cached.sort((a,b) => a.at - b.at);
+      while (cached.length >= 80 || bytes > 24 * 1024 * 1024) { const oldest = cached.shift(); if (!oldest) break; store.delete(oldest.key); bytes -= oldest.bytes; }
+      store.put(record);
+    };
+    tx.oncomplete = () => { clearTimeout(timer); resolve(true); };
+    tx.onerror = tx.onabort = () => { clearTimeout(timer); resolve(false); };
+  }).catch(() => false);
+}
+
+export async function listBrowserOutbox<T>(): Promise<Array<{ key: string; value: T }>> {
+  const db = await openCache(); if (!db) return [];
+  return new Promise<Array<{ key: string; value: T }>>(resolve => {
+    const tx = db.transaction(STORE_NAME, 'readonly'), rows: Array<{ key: string; value: T }> = [];
+    const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve([]); }, 3000);
+    const cursor = tx.objectStore(STORE_NAME).openCursor();
+    cursor.onsuccess = () => {
+      const row = cursor.result; if (!row) return;
+      const record = row.value as CacheRecord;
+      if (typeof record?.key === 'string' && record.key.startsWith('browser:outbox:')) rows.push({ key: record.key.slice(8), value: record.value as T });
+      row.continue();
+    };
+    tx.oncomplete = () => { clearTimeout(timer); resolve(rows); };
+    tx.onerror = tx.onabort = () => { clearTimeout(timer); resolve([]); };
+  }).catch(() => []);
+}
+export async function deleteBrowserCache(key: string): Promise<boolean> {
+  const db = await openCache(); if (!db) return false;
+  return new Promise<boolean>(resolve => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve(false); }, 3000);
+    tx.objectStore(STORE_NAME).delete(`browser:${key}`);
+    tx.oncomplete = () => { clearTimeout(timer); resolve(true); };
+    tx.onerror = tx.onabort = () => { clearTimeout(timer); resolve(false); };
+  }).catch(() => false);
 }

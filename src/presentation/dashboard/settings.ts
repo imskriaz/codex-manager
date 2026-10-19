@@ -64,6 +64,8 @@ export async function handleDashboardSettingUpdate(
     case "autoSwitchRefreshAllBeforeSwitchEnabled":
     case "autoResetEnabled":
     case "cliIntegrationEnabled":
+    case "taskBoardEnabled":
+    case "apiAccessEnabled":
     case "quotaWarningEnabled":
     case "dailyTokenUsageEnabled":
     case "encryptedSyncEnabled":

@@ -1,5 +1,4 @@
-/* The dashboard is authenticated. Cache only versioned, non-sensitive UI
- * assets; never cache a navigation, API response, WebSocket, or user data. */
+/* Cache only data-free UI assets. IndexedDB owns bounded offline user data. */
 const version = new URL(self.location.href).searchParams.get("v") || "dev";
 const cacheName = `codex-manager-static-${version}`;
 const cachePrefix = "codex-manager-static-";
@@ -13,10 +12,11 @@ const staticTypes = new Map([
   ["/assets/icon-512.png", "image/png"],
   ["/manifest.webmanifest", "application/manifest+json"],
   ["/offline.html", "text/html"],
+  ["/offline-dashboard.html", "text/html"],
   ["/assets/pwaRecovery.js", "javascript"]
 ]);
 const warmPaths = [...staticTypes.keys()].map((path) =>
-  path === "/offline.html" ? path : `${path}?v=${encodeURIComponent(version)}`
+  path === "/offline.html" || path === '/offline-dashboard.html' ? path : `${path}?v=${encodeURIComponent(version)}`
 );
 
 function isCacheable(response, expectedType) {
@@ -76,6 +76,10 @@ self.addEventListener("fetch", (event) => {
       if (response.status >= 500) throw new Error("Host restarting");
       return response;
     }).catch(async () => {
+      if (url.pathname === '/' || url.pathname === '/tasks' || url.pathname === '/workspace' || /^\/workspace\/[a-f0-9-]{36}$/.test(url.pathname)) {
+        const shell = await caches.match('/offline-dashboard.html').catch(() => undefined);
+        if (shell) return shell;
+      }
       const offline = await caches.match("/offline.html").catch(() => undefined);
       return offline || new Response("The dashboard host is unavailable. Reopen this page when VS Code is running.", {
         status: 503,

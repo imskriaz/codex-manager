@@ -470,7 +470,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('document.body.classList.toggle("is-cli-workspace-route", workspaceRoute)');
     expect(main).toContain('document.body.classList.toggle("is-dashboard-workspace-route", dashboardWorkspaceRoute)');
     expect(main).toContain("hasBrowserWorkspaceShell(browserPath)");
-    expect(main).toContain('dashboardMode={browserPath === "/"}');
+    expect(main).toContain('dashboardMode={browserPath === "/" || browserPath === "/tasks"}');
     expect(main).toContain("is-dashboard-workspace-route");
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain(
       'props.dashboardMode ? "is-dashboard-mode"'
@@ -611,7 +611,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('sendAction("openWebDashboard", undefined, { path: "/workspace", targetDeviceId: undefined })');
     expect(source).toContain('onDashboard={() => navigateDashboardPath("/", setBrowserPath)}');
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
-    expect(source).toContain('return pathname === "/" || isCliSessionsPath(pathname);');
+    expect(source).toContain('return pathname === "/" || pathname === "/tasks" || isCliSessionsPath(pathname);');
     expect(source).toContain("if (!hasBrowserWorkspaceShell(browserPath)) return;");
     expect(source).toContain("if (sessionId || hasBrowserWorkspaceShell(path)) requestCliSessions(true);");
     expect(source).toContain("window.setInterval(announceCurrentVisibility, 15_000)");
