@@ -444,6 +444,14 @@ function App() {
     selectedPeerId,
     handleActionTimeout
   );
+  const openExternalLink = useCallback((url: string): void => {
+    if (!isBrowserDashboard) {
+      sendAction("openExternalUrl", undefined, { url });
+      return;
+    }
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) showNotice({ level: "warning", message: "The browser blocked this link. Allow pop-ups for this dashboard and try again." });
+  }, [isBrowserDashboard, sendAction, showNotice]);
   const tokenHistoryRefresh = useTokenHistoryRefresh(sendAction, selectedPeerId, state.snapshot?.settings.dailyTokenUsageEnabled === true);
   const snapshot = state.snapshot;
   useEffect(() => {
@@ -1148,6 +1156,8 @@ function App() {
           "openNewCodexWebview",
           "resumeCodexSessions",
           "setCodexSessionGoalStatus",
+          "setCodexSessionAutoResume",
+          "setCodexSessionQueue",
           "openCodexCliSession",
           "renameCodexCliSession",
           "forkCodexCliSession",
@@ -1181,7 +1191,7 @@ function App() {
             return updated ? [updated, ...current.filter((session) => !sameCliSessionTarget(session, updated))] : current;
           });
         }
-        if (applyToCurrentChat && message.status === "completed" && ["renameCodexCliSession", "setCodexSessionGoalStatus"].includes(message.action) && message.payload?.cliSession)
+        if (applyToCurrentChat && message.status === "completed" && ["renameCodexCliSession", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue"].includes(message.action) && message.payload?.cliSession)
           setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current));
         if (
           isBrowserDashboard &&
@@ -2600,7 +2610,7 @@ function App() {
           setOnboardingStep("cloudflare");
         }}
         onContinueCloudflare={continueOnboardingCloudflare}
-        onOpenExternal={(url) => sendAction("openExternalUrl", undefined, { url })}
+        onOpenExternal={openExternalLink}
         onFinish={finishOnboarding}
       />
 
@@ -2611,7 +2621,7 @@ function App() {
         className="dashboard-modal-compact"
         onClose={() => setDonationOpen(false)}
       >
-        <DonationDetails onOpenExternal={(url) => sendAction("openExternalUrl", undefined, { url })} />
+        <DonationDetails onOpenExternal={openExternalLink} />
       </ModalShell>
 
       <AboutModal
@@ -2620,7 +2630,7 @@ function App() {
         logoUri={snapshot.logoUri}
         version={packageJson.version}
         onClose={() => setAboutOpen(false)}
-        onOpenExternal={(url) => sendAction("openExternalUrl", undefined, { url })}
+        onOpenExternal={openExternalLink}
       />
 
       <AccountInfoModal
@@ -2654,6 +2664,7 @@ function App() {
               dashboardMode={browserPath === "/"}
               showLogout={document.documentElement.dataset["dashboardRemote"] === "true"}
               privacyMode={state.privacyMode}
+              autoResumeEnabled={snapshot?.settings.autoResumeEnabled === true}
               sessions={cliSessions}
               selectedSession={selectedCliSession}
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
@@ -2679,6 +2690,8 @@ function App() {
               ].some((action) => isActionPending(action as DashboardActionName))}
               goalUpdating={isActionPending("setCodexSessionGoalStatus")}
               onGoalStatus={(status) => selectedCliSession && requestSessionAction("setCodexSessionGoalStatus", selectedCliSession, { goalStatus: status })}
+              onAutoResume={(session, enabled) => requestSessionAction("setCodexSessionAutoResume", session, { autoResumeEnabled: enabled })}
+              onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 0 })}
               error={cliSessionsError}
               agentMessages={agentMessages}
               onReadAgent={(agent) => {

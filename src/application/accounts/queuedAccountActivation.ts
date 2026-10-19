@@ -67,23 +67,29 @@ async function activateQueuedAccount(
   }
 
   let lastError: unknown;
-  for (const account of queuedAccounts) {
+  const tokenChecks = await Promise.all(queuedAccounts.map(async (account) => {
     try {
-      if (!(await repo.getTokens(account.id, { bypassCache: true }))) {
-        lastError = new Error(`Stored credentials are missing for ${account.email}.`);
-        continue;
-      }
-      const latestAccounts = await repo.listAccounts();
-      if (latestAccounts.some((item) => item.isActive)) return { status: "not-needed" };
-      const latest = latestAccounts.find((item) => item.id === account.id);
+      return { account, available: Boolean(await repo.getTokens(account.id, { bypassCache: true })) };
+    } catch (error) {
+      return { account, available: false, error };
+    }
+  }));
+  const latestAccounts = await repo.listAccounts();
+  if (latestAccounts.some((item) => item.isActive)) return { status: "not-needed" };
+  for (const check of tokenChecks) {
+    if (!check.available) {
+      lastError = check.error ?? new Error(`Stored credentials are missing for ${check.account.email}.`);
+      continue;
+    }
+    try {
+      const latest = latestAccounts.find((item) => item.id === check.account.id);
       if (
         !latest ||
         latest.queuePriority !== true ||
         !canUseAccount(latest.id) ||
         !isAutoQueueCandidateEligible(toAutoQueueOrderValue(latest), getAccountAutoQueuePolicy())
-      )
-        continue;
-      const activated = await repo.switchAccount(account.id, { expectedActiveAccountId: null });
+      ) continue;
+      const activated = await repo.switchAccount(check.account.id, { expectedActiveAccountId: null });
       await repo.flush?.();
       return { status: "activated", account: activated };
     } catch (error) {

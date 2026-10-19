@@ -48,7 +48,7 @@ export type CliSessionFeedback = DashboardNotice & { key: number };
 type WorkspaceTab = "terminal" | "files" | "reviews" | "agents" | `agent:${string}` | `file:${string}` | `review:${string}`;
 type WorkspaceToolTab = "terminal" | "files" | "reviews" | "agents";
 export type CliSessionSection = "active" | "archived";
-import { filterCliSessionsBySection, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder } from "../../src/domain/codexSessionState";
+import { filterCliSessionsBySection, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
 export function getMessagePrompt(messages: DashboardCliSessionMessage[], id: string): string | undefined {
@@ -128,6 +128,7 @@ export type CliSessionsPageProps = {
   /** Show the remote dashboard sign-out action in the avatar menu. */
   showLogout?: boolean;
   privacyMode: boolean;
+  autoResumeEnabled: boolean;
   sessions: DashboardCliSessionSummary[];
   selectedSession?: DashboardCliSessionSummary;
   messages: DashboardCliSessionMessage[];
@@ -202,6 +203,8 @@ export type CliSessionsPageProps = {
     projectPath?: string;
   }) => string | undefined;
   onStop: (session: DashboardCliSessionSummary) => void;
+  onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
+  onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: 1 | 2 | 3) => void;
   onRename: (name: string) => void;
   onFork: () => void;
   onCopyLink: () => void;
@@ -222,6 +225,15 @@ export function shouldShowLatestButton(scrollHeight: number, clientHeight: numbe
 export function CliSessionsPage(props: CliSessionsPageProps) {
   const [section, setSection] = useState<CliSessionSection>("active");
   const [search, setSearch] = useState("");
+  const [queueMenuSession, setQueueMenuSession] = useState<string>();
+  useEffect(() => {
+    if (!queueMenuSession) return;
+    const close = (event: PointerEvent): void => { if (!(event.target as Element).closest(".cli-session-queue-wrap")) setQueueMenuSession(undefined); };
+    const escape = (event: KeyboardEvent): void => { if (event.key === "Escape") setQueueMenuSession(undefined); };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
+  }, [queueMenuSession]);
   const [attachmentReading, setAttachmentReading] = useState(false);
   const submittedDrafts = useRef(new Map<string, ComposerDraft & { key: string }>());
   const attachmentReadRef = useRef(false);
@@ -600,6 +612,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   ) : (
     (() => {
       const running = isCodexSessionRunning(session);
+      const autoResume = session.autoResumeEnabled ?? props.autoResumeEnabled;
+      const hasGoal = Boolean(session.goal && ["active", "usage_limited", "paused"].includes(session.goal.status));
       return <div role="listitem" class={`cli-session-row ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta"><span>{sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small></span>
@@ -608,7 +622,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         {session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />}
       </span> : null}
       <span class="cli-session-row-actions">
-        {running ? (session.canStop ? <IconButton label={`Stop ${session.title}`} disabled={props.mutating} onClick={() => props.onStop(session)}><StopIcon /></IconButton> : null) : <>
+        {running ? <>
+          <IconButton label={`${autoResume ? "Disable" : "Enable"} Auto Resume for ${session.title}${hasGoal ? " (goal included)" : ""}`} disabled={props.mutating || !props.autoResumeEnabled} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={hasGoal} /></IconButton>
+          <span class="cli-session-queue-wrap">
+            <IconButton label={`${session.queueEnabled ? "Edit" : "Add"} ${session.title} to recovery queue`} disabled={props.mutating} onClick={() => setQueueMenuSession((current) => current === session.id ? undefined : session.id)}><QueueIcon enabled={session.queueEnabled === true} /></IconButton>
+            {queueMenuSession === session.id ? <div class="cli-session-queue-menu" role="menu" onClick={(event) => event.stopPropagation()}><strong>Recovery order</strong>{([1, 2, 3] as const).map((priority) => <button type="button" role="menuitem" class={session.queueEnabled && session.queuePriority === priority ? "is-selected" : ""} onClick={() => { setQueueMenuSession(undefined); props.onQueue(session, true, priority); }}>Priority {priority}<small>{priority === 1 ? "First" : priority === 2 ? "After priority 1" : "Last"}</small></button>)}{session.queueEnabled ? <button type="button" role="menuitem" class="is-muted" onClick={() => { setQueueMenuSession(undefined); props.onQueue(session, false); }}>Remove from queue</button> : null}</div> : null}
+          </span>
+          {session.canStop ? <IconButton label={`Stop ${session.title}`} disabled={props.mutating} onClick={() => props.onStop(session)}><StopIcon /></IconButton> : null}
+        </> : <>
           <IconButton label={`Open ${session.title} in Codex`} disabled={props.mutating} onClick={() => props.onOpenInCodex(session)}><RestoreIcon /></IconButton>
         </>}
       </span>
@@ -1318,11 +1339,12 @@ function CopySnippet({ text, label = "Copy code" }: { text: string; label?: stri
 function ActivityMessage({ message, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
   const running = message.status === "inProgress";
   const failed = message.status === "failed" || message.kind === "error";
+  const capacity = isCodexCapacityInterruption([message.text, message.result, message.debug].filter(Boolean).join(" "));
   return <details class={`cli-activity is-${message.kind} ${running ? "is-running" : ""} ${failed ? "is-failed" : ""}`} open={message.kind === "reasoning"}>
     <summary title={[message.command ?? message.title, message.cwd, formatTime(message.timestamp)].filter(Boolean).join(" · ")}>
       <span class="cli-activity-icon"><ActivityGlyph kind={message.kind} /></span>
       <span class="cli-activity-heading"><strong>{activityLabel(message)}</strong><small>{activityMeta(message)}</small></span>
-      <span class={`cli-activity-status is-${message.status ?? "completed"}`}>{running ? <i /> : failed ? "Failed" : message.status === "declined" ? "Declined" : message.status === "interrupted" ? "Interrupted" : message.status === "unknown" ? "Unknown" : <CheckIcon />}</span>
+      <span class={`cli-activity-status is-${message.status ?? "completed"}`}>{running ? <i /> : capacity ? "Capacity" : failed ? "Failed" : message.status === "declined" ? "Declined" : message.status === "interrupted" ? "Interrupted" : message.status === "unknown" ? "Unknown" : <CheckIcon />}</span>
       <ChevronIcon />
     </summary>
     <div class="cli-activity-body">
@@ -1358,9 +1380,9 @@ function ActivityDetail({ message }: { message: DashboardCliSessionMessage }) {
     case "compaction":
       return <div class="cli-activity-copy cli-activity-detail cli-activity-compaction"><strong>{message.status === "inProgress" ? "Compacting context" : "Context compacted"}</strong><span>{message.text || (message.status === "inProgress" ? "Codex is condensing earlier context before continuing." : "Codex condensed earlier context to continue working.")}</span></div>;
     case "error":
-      return <div class="cli-activity-copy cli-activity-detail cli-activity-error"><strong>Error</strong><span>{message.text || "Codex reported an error."}</span>{message.debug ? <div class="cli-code-surface"><CopySnippet text={message.debug} label="Copy debug details" /><pre><code>{message.debug}</code></pre></div> : null}</div>;
+      return <div class="cli-activity-copy cli-activity-detail cli-activity-error">{isCodexCapacityInterruption([message.text, message.result, message.debug].filter(Boolean).join(" ")) ? <><strong>Model at capacity</strong><span>Selected model is at capacity. Try a different model, then retry.</span></> : <><strong>Error</strong><span>{message.text || "Codex reported an error."}</span></>}{message.debug ? <div class="cli-code-surface"><CopySnippet text={message.debug} label="Copy debug details" /><pre><code>{message.debug}</code></pre></div> : null}</div>;
     default:
-      return <div class="cli-activity-copy cli-activity-detail"><span>{message.text}</span></div>;
+      return <div class="cli-activity-copy cli-activity-detail">{isCodexCapacityInterruption([message.text, message.result, message.debug].filter(Boolean).join(" ")) ? <><strong>Model at capacity</strong><span>Selected model is at capacity. Try a different model, then retry.</span></> : <span>{message.text}</span>}</div>;
   }
 }
 
@@ -2300,6 +2322,8 @@ function ReasoningIcon() { return <Icon><path d="M9 18h6M10 21h4M8.5 15.5C6.9 14
 function ShieldIcon() { return <Icon><path d="M12 3 5 6v5c0 4.6 2.9 8.2 7 10 4.1-1.8 7-5.4 7-10V6l-7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></Icon>; }
 function SendIcon() { return <Icon><path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function StopIcon() { return <Icon><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></Icon>; }
+function AutoResumeIcon({ enabled, goal }: { enabled: boolean; goal: boolean }) { return <Icon><path d="M19 8V4h-4M5 16v4h4M18.4 5.6A8 8 0 0 0 5.6 8.2M5.6 18.4a8 8 0 0 0 12.8-2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d={enabled ? "m9 12 2 2 4-4" : "M9 12h6"} fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>{goal ? <circle cx="18" cy="18" r="2.3" fill="currentColor" stroke="var(--vscode-editor-background, #1e1e1e)" stroke-width="1"/> : null}</Icon>; }
+function QueueIcon({ enabled }: { enabled: boolean }) { return <Icon><path d="M5 6h10M5 12h7M5 18h10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d={enabled ? "m17 12 2 2 3-4" : "M17 18h4"} fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function SwitchAccountIcon() { return <Icon><path d="M5 8h11l-2.5-2.5M19 16H8l2.5 2.5M16 8l2.5 2.5L16 13M8 16l-2.5-2.5L8 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function EmptyFolderIcon() { return <Icon><path d="M3 7h7l2 2h9v10H3V7Zm0 0V5h7l2 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></Icon>; }
 function PlusIcon() { return <Icon><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></Icon>; }

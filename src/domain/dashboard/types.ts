@@ -575,6 +575,8 @@ export type DashboardActionName =
   | "openNewCodexWebview"
   | "resumeCodexSessions"
   | "setCodexSessionGoalStatus"
+  | "setCodexSessionAutoResume"
+  | "setCodexSessionQueue"
   | "startCodexCliSession"
   | "listCodexCliSessions"
   | "getCodexSubAgentMessages"
@@ -612,6 +614,9 @@ export interface DashboardOAuthSessionDescriptor {
 
 export interface DashboardActionPayload {
   goalStatus?: "active" | "paused";
+  autoResumeEnabled?: boolean;
+  queueEnabled?: boolean;
+  sessionQueuePriority?: 0 | 1 | 2 | 3;
   maintenanceTool?: MaintenanceTool;
   maintenanceInspection?: CodexInspection;
   maintenanceToken?: string;
@@ -715,6 +720,12 @@ export interface DashboardCliSessionSummary {
   agentName?: string;
   /** Null means native storage confirms no goal; undefined supports older hosts. */
   goal?: DashboardCodexSessionGoal | null;
+  /** Effective per-session recovery switch after the global setting is applied. */
+  autoResumeEnabled?: boolean;
+  /** Keep this session in the deferred recovery queue. */
+  queueEnabled?: boolean;
+  /** Queue order; equal priorities may recover together. */
+  queuePriority?: 1 | 2 | 3;
 }
 
 export interface DashboardCliSessionMessage {

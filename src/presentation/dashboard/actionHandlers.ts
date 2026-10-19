@@ -32,6 +32,8 @@ import {
   readCodexCliSessionMessages,
   renameCodexCliSession,
   setCodexSessionGoalStatus,
+  setCodexSessionAutoResume,
+  setCodexSessionQueue,
   startCodexCliSession,
   sendCodexCliSessionMessage,
   steerCodexCliSessionTurn,
@@ -129,6 +131,8 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "openNewCodexWebview",
   "resumeCodexSessions",
   "setCodexSessionGoalStatus",
+  "setCodexSessionAutoResume",
+  "setCodexSessionQueue",
   "startCodexCliSession",
   "listCodexCliSessions",
   "getCodexCliSessionMessages",
@@ -875,6 +879,10 @@ async function runDashboardAction(
       return handleRenameCodexCliSession(payload?.sessionId, payload?.text);
     case "setCodexSessionGoalStatus":
       return handleSetCodexSessionGoalStatus(ctx.context, payload);
+    case "setCodexSessionAutoResume":
+      return handleSetCodexSessionAutoResume(payload);
+    case "setCodexSessionQueue":
+      return handleSetCodexSessionQueue(payload);
     case "forkCodexCliSession":
       return handleForkCodexCliSession(payload?.sessionId);
     case "archiveCodexCliSession":
@@ -1934,6 +1942,24 @@ async function handleSetCodexSessionGoalStatus(context: vscode.ExtensionContext,
     notice = { level: resumed.notice.level === "warning" ? "warning" : "info", message: `Goal resumed. ${resumed.notice.message}` };
   }
   return { cliSession: { ...session, goal: { ...session.goal, status } }, notice };
+}
+
+async function handleSetCodexSessionAutoResume(payload?: DashboardActionPayload) {
+  ensureCliIntegrationEnabled();
+  if (!payload?.sessionId || typeof payload.autoResumeEnabled !== "boolean") throw new Error("Choose a session and Auto Resume state.");
+  const session = await ensureCliSessionIsActive(payload.sessionId);
+  setCodexSessionAutoResume(session.id, payload.autoResumeEnabled);
+  const enabled = payload.autoResumeEnabled && getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false) === true;
+  return { cliSession: { ...session, autoResumeEnabled: enabled }, notice: { level: "info" as const, message: enabled ? "Auto Resume enabled for this session." : "Auto Resume disabled for this session." } };
+}
+
+async function handleSetCodexSessionQueue(payload?: DashboardActionPayload) {
+  ensureCliIntegrationEnabled();
+  if (!payload?.sessionId || typeof payload.queueEnabled !== "boolean") throw new Error("Choose a session and queue state.");
+  const priority = payload.sessionQueuePriority === 1 || payload.sessionQueuePriority === 2 || payload.sessionQueuePriority === 3 ? payload.sessionQueuePriority : 3;
+  const session = await ensureCliSessionIsActive(payload.sessionId);
+  setCodexSessionQueue(session.id, payload.queueEnabled, priority);
+  return { cliSession: { ...session, queueEnabled: payload.queueEnabled, ...(payload.queueEnabled ? { queuePriority: priority } : { queuePriority: undefined }) }, notice: { level: "info" as const, message: payload.queueEnabled ? `Session queued at priority ${priority}.` : "Session removed from the recovery queue." } };
 }
 
 async function handleRenameCodexCliSession(sessionId: string | undefined, name: string | undefined) {

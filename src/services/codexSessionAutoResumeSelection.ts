@@ -15,6 +15,7 @@ import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { isExplicitSessionGoalPause } from "./codexSessionGoals";
+import { readCodexSessionPreferences } from "./codexSessionPreferences";
 
 type SqliteDatabase = {
   prepare(sql: string): { get(id: string): Record<string, unknown> | undefined; all(): Record<string, unknown>[] };
@@ -39,8 +40,10 @@ export async function filterAutoResumeGoalSessionIds(
       return goalOnly ? [] : ids;
     }
     const statement = db.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
+    const preferences = readCodexSessionPreferences(home, ids);
     return ids.filter((id) => {
       signal?.throwIfAborted();
+      if (preferences.get(id)?.autoResume === false) return false;
       const status = statement.get(id)?.["status"];
       const eligible = status === "active" || status === "usage_limited" || (status === "paused" && includeInterruptedPaused && !isExplicitSessionGoalPause(home, id)) || (status === undefined && !goalOnly);
       return eligible;

@@ -15028,3 +15028,19 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .maintenance-report dd { margin:0; color:var(--text-muted); text-align:right; max-width:220px; overflow-wrap:anywhere; }
 .maintenance-job-summary { margin-top:12px; padding:10px 12px; border:1px solid var(--border-muted); border-radius:9px; }
 @media(max-width:480px) { .maintenance-modal { width:calc(100vw - 16px); }.maintenance-item { padding:8px; gap:9px; }.maintenance-selection { gap:5px; }.maintenance-selection > span { flex-basis:100%; }.maintenance-report dl > div { grid-template-columns:minmax(0,1fr); gap:4px; }.maintenance-report dd { text-align:left; max-width:none; }.maintenance-footer .settings-action-btn { flex:1 1 auto; } }
+.cli-session-queue-wrap { position: relative; display: inline-flex; }
+.cli-session-queue-menu { position: absolute; z-index: 30; right: 0; top: calc(100% + 6px); width: 190px; padding: 8px; border: 1px solid var(--vscode-widget-border, rgba(255,255,255,.16)); border-radius: 10px; background: var(--vscode-editorWidget-background, #1d2028); box-shadow: 0 12px 30px rgba(0,0,0,.3); }
+.cli-session-queue-menu strong { display: block; padding: 3px 6px 7px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; opacity: .7; }
+.cli-session-queue-menu button { display: flex; width: 100%; justify-content: space-between; gap: 10px; padding: 7px 8px; border: 0; border-radius: 6px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.cli-session-queue-menu button:hover, .cli-session-queue-menu button.is-selected { background: var(--vscode-list-activeSelectionBackground, rgba(80,140,255,.22)); }
+.cli-session-queue-menu button small { opacity: .62; }
+.cli-session-queue-menu button.is-muted { margin-top: 4px; border-top: 1px solid var(--vscode-widget-border, rgba(255,255,255,.1)); color: var(--vscode-descriptionForeground, #aaa); }
+
+/* Keep compact controls readable on narrow browser and VS Code surfaces. */
+.settings-tab-list { display: flex; flex-wrap: wrap; align-items: stretch; }
+.settings-tab { flex: 1 1 220px; }
+.cli-sessions-popover { max-width: calc(100vw - 16px); }
+.cli-sessions-running-title { display: block !important; min-width: 0; max-width: 100%; overflow: hidden !important; text-overflow: ellipsis !important; white-space: nowrap !important; }
+@media (max-width: 560px) {
+  .settings-tab { flex: 1 1 calc(50% - 4px); }
+}

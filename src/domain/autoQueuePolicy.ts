@@ -97,8 +97,10 @@ export function compareAutoQueueCandidates(left: AutoQueueCandidate, right: Auto
     if (value.disabled) return 5;
     if (value.quotaError || value.resetCreditAttempt) return 4;
     if (isAutoQueueCandidateEligible(value, policy)) return 0;
-    if (hasAutoQueueCapability(value, policy)) return 1;
-    if (isAutoQueueResetCandidate(value, policy)) return 2;
+    // A verified reset-credit reserve is safer than a stale ordinary quota
+    // snapshot; stale data must never outrank a capability that can be used.
+    if (isAutoQueueResetCandidate(value, policy)) return 1;
+    if (hasAutoQueueCapability(value, policy)) return 2;
     return 3;
   };
   const leftRank = rank(left);

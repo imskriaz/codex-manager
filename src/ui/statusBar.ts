@@ -66,12 +66,6 @@ export class AccountsStatusBarProvider {
       md.appendMarkdown(
         "\n\nSaved accounts are still available in the dashboard. Open Codex Manager to read them or load one into this window."
       );
-      md.appendMarkdown(
-        "\n\n**Quick access**  \n" +
-          "`Ctrl+Shift+P` — find every **Codex Manager** command  \n" +
-          "`Ctrl+K Ctrl+S` — view or assign keyboard shortcuts  \n" +
-          "Command: **Codex Manager: Keyboard Shortcuts & Help**"
-      );
       this.item.tooltip = md;
       this.item.show();
       return;
@@ -123,15 +117,12 @@ export function buildStatusText(account: CodexManagerAccountRecord, showHourlyQu
 }
 
 function buildTooltip(primary: CodexManagerAccountRecord, showHourlyQuota: boolean): vscode.MarkdownString {
-  const _t = t();
   const md = new vscode.MarkdownString(undefined, true);
   md.isTrusted = true;
 
   md.appendMarkdown("**Codex Manager**\n\n");
   md.appendMarkdown(renderAccountPanel(primary, showHourlyQuota));
 
-  md.appendMarkdown(`\n\n---\n${_t("status.tooltip")}`);
-  md.appendMarkdown(`\n\n${buildStatusQuickAccessMarkdown()}`);
   return md;
 }
 

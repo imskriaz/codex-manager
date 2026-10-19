@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.3-pre.1
+
+- Add per-session Auto Resume controls that follow the global switch, plus a durable recovery queue toggle with priority ordering and a compact flyout for running sessions.
+- Preserve renamed session titles immediately across catalogue refreshes and shared dashboard windows.
+- Batch session preference reads and keep recovery/list state decoration bounded so large session lists do not perform one SQLite read per row.
+- Improve account Auto Queue ordering by preferring verified reset reserves over stale ordinary quota, and probe queued credentials in parallel before one final ownership check.
+- Compact the status-bar notification flyout by removing the redundant open-quota instruction and quick-access block.
+- Mark model-capacity provider failures as interrupted work and show direct retry guidance in session messages.
+- Wrap settings tabs and constrain running-session flyouts on narrow screens; open browser donation links in the requesting browser and default the donation amount to USD 11.
+
 ## 1.4.5
 
 - Keep the newest session live and native status update when bounded background recording queues fill; evict older terminal or idle entries instead of dropping current recovery state.

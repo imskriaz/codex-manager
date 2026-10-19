@@ -1,7 +1,7 @@
 import { sqliteConfiguration } from "../storage/sqliteContext";
 import { clearExplicitSessionGoalPause, isExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "./codexSessionGoals";
 import { getCodexHomeStateKey } from "../codex/authFile";
-import { isCodexQuotaInterruption } from "../domain/codexSessionState";
+import { isCodexCapacityInterruption, isCodexQuotaInterruption } from "../domain/codexSessionState";
 import { getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
 import * as os from "os";
@@ -31,6 +31,8 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, type SqliteStateStore } from "../storage/sqliteState";
 import { normalizeNativePath } from "../utils/nativePaths";
+import { readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, type CodexSessionPreference } from "./codexSessionPreferences";
+import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -205,15 +207,22 @@ export async function readCodexCliSessions(
 
 function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:DashboardCliSessionSummary[],stale = false): DashboardCliSessionSummary[] {
   const statuses = readSessionStatuses(store,home);
+  const needsPreferences = rows.some((row) => row.autoResumeEnabled === undefined || row.queueEnabled === undefined);
+  const preferences: Map<string, CodexSessionPreference> = needsPreferences ? readCodexSessionPreferences(home, rows.map((row) => row.id)) : new Map<string, CodexSessionPreference>();
+  const autoResume = needsPreferences ? isAutoResumeEnabled() : false;
   return rows.map(row => {
-    if (row.archived) return row;
+    const preference = preferences.get(row.id);
+    const decorated = needsPreferences ? { ...row,
+      ...(autoResume || preference?.autoResume === false ? { autoResumeEnabled: autoResume && preference?.autoResume !== false } : {}),
+      ...(preference?.queue === true ? { queueEnabled: true, queuePriority: preference.priority ?? 3 } : {}) } : row;
+    if (row.archived) return decorated;
     const native = getNativeCodexSessionRunning(home,row.id);
     const current = native === undefined ? statuses.get(row.id) : native ? "running" : "idle";
-    if (current === undefined && (!stale || row.status !== "running")) return row;
+    if (current === undefined && (!stale || row.status !== "running")) return decorated;
     const status = current === "starting" ? "unknown" : current ?? "unknown";
-    if (status !== "running" && status !== "idle" && status !== "unknown") return row;
+    if (status !== "running" && status !== "idle" && status !== "unknown") return decorated;
     const canStop = status === "running" && ownsSessionTurn(home,row.id);
-    return { ...row,status,canStop,locked:status !== "idle",
+    return { ...decorated,status,canStop,locked:status !== "idle",
       statusError:status === "unknown" ? row.statusError ?? "Checking saved running activity. Refresh before sending." : undefined,
       runningBy:status === "running" ? canStop ? "Codex Manager" : "another Codex process" : undefined,
       runningSince:status === "running" ? row.runningSince : undefined,
@@ -279,7 +288,16 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
     try { removeDeletedSessionCache(store, codexHome, deleted, generation, startedAt); }
     catch (error) { recordPersistentEvent("warning", "session-list", "Deleted session cache cleanup deferred", undefined, error); }
   }
-  return summaries.filter(Boolean);
+  const preferences = readCodexSessionPreferences(codexHome, summaries.filter(Boolean).map((summary) => summary.id));
+  const titleOverrides = readCodexSessionTitleOverrides(codexHome, summaries.filter(Boolean).map((summary) => summary.id));
+  const autoResume = isAutoResumeEnabled();
+  return summaries.filter(Boolean).map((summary) => {
+    const preference = preferences.get(summary.id);
+    return { ...summary, title: titleOverrides.get(summary.id) ?? summary.title,
+      ...(autoResume || preference?.autoResume === false ? { autoResumeEnabled: autoResume && preference?.autoResume !== false } : {}),
+      ...(preference?.queue === true ? { queueEnabled: true, queuePriority: preference.priority ?? 3 } : {}),
+    };
+  });
 }
 
 type StateSessionRecord = { id: string; title?: string; model?: string; reasoningEffort?: string; updatedAt?: string; archived?: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
@@ -1328,6 +1346,18 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
   );
   const recent = recentNewSessions.get(sessionId);
   if (recent) recent.summary = { ...recent.summary, title: normalized };
+  writeCodexSessionTitleOverride(resolveCodexHome(), sessionId, normalized);
+}
+
+export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): void {
+  validateSessionId(sessionId);
+  if (!isAutoResumeEnabled() && enabled) throw new Error("Enable global Auto Resume before enabling it for a session.");
+  writeCodexSessionPreference(resolveCodexHome(), sessionId, { autoResume: enabled ? undefined : false });
+}
+
+export function setCodexSessionQueue(sessionId: string, enabled: boolean, priority: 1 | 2 | 3 = 3): void {
+  validateSessionId(sessionId);
+  writeCodexSessionPreference(resolveCodexHome(), sessionId, { queue: enabled, priority: enabled ? priority : undefined });
 }
 
 export async function forkCodexCliSession(sessionId: string): Promise<string> {
@@ -3238,6 +3268,9 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     };
     const timestamp = typeof value.timestamp === "string" ? normalizeTimestamp(value.timestamp) : undefined;
     const eventPayload = value.type === "event_msg" ? value.payload : undefined;
+    if (eventPayload && (eventPayload["type"] === "error" || ["task_complete", "task_completed", "task_failed", "turn_failed", "turn/completed", "turn.completed"].includes(String(eventPayload["type"]))) && isCodexCapacityInterruption(JSON.stringify(eventPayload))) {
+      return { id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "capacity"}`, kind: "error", title: "Model at capacity", text: "Selected model is at capacity. Try a different model, then retry.", status: "failed", timestamp };
+    }
     if (eventPayload?.["type"] === "user_message") {
       return parsePersistedUserMessage(
         eventPayload,

@@ -5,6 +5,10 @@ export function isCodexQuotaInterruption(message: string): boolean {
   return /usage[_ -]?limit(?:[_ -]?reached|ed)|usageLimitReached|hit (?:your |the )?usage limit|(?:quota|usage limit) (?:has been )?(?:exceeded|exhausted|reached)|insufficient_quota|quota_exceeded|out of quota/i.test(message);
 }
 
+export function isCodexCapacityInterruption(message: string): boolean {
+  return /selected model is at capacity|model(?:[_ -](?:server|provider))?[_ -]?overloaded|server[_ -]?overloaded|(?:provider|model) capacity/i.test(message);
+}
+
 export function isCliTurnActive(state: DashboardCodexSessionLiveState | undefined): boolean {
   return state?.status === "starting" || state?.status === "running";
 }

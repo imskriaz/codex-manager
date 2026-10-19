@@ -7,6 +7,7 @@
 - Render dashboard failures in both the VS Code webview and browser dashboard; show Command Palette failures in VS Code notifications. Background work may log quietly; explicit actions must report failures and inconclusive outcomes.
 - For tracked changes, run relevant verification, build a VSIX, commit all intended files, and push the branch. Report any verification, packaging, commit, or push failure. Do not install or deploy unless requested.
 - Increment the extension prerelease number exactly one step per change and synchronize `package.json` with root `package-lock.json`, unless the user explicitly requests a version.
+- Unpublished release work uses the requested base version with a numeric prerelease suffix, for example `1.4.3-pre.1`, then `1.4.3-pre.2` for the next unconfirmed build. Remove the prerelease suffix and publish `1.4.3` only after the user explicitly confirms the release.
 - Keep developer specific domains, hostnames, personal URLs, and identifying deployment details out of public documentation and manifest descriptions.
 - When the user explicitly requests a release, publish the requested GitHub Release with the verified VSIX attached. If GitHub authentication or tooling is unavailable, report that blocker.
 - Publish tags, releases, Marketplace updates, or deployments only when explicitly requested; a version bump or local VSIX alone does not authorize publication. Never claim delivery after a failed required step.
