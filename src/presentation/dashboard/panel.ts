@@ -160,8 +160,8 @@ export class DashboardPanelController {
       void this.publishCliSessionsRealtime();
     });
     let stopStorage: (() => void) | undefined;
-    try { stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state", "session-status"], topics => {
-      if (topics.has("session-status")) { this.cliSessionRefreshAfter = 0; void this.publishCliSessionsRealtime(); }
+    try { stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state", "session-status", "session-preferences"], topics => {
+      if (topics.has("session-status") || topics.has("session-preferences")) { this.cliSessionRefreshAfter = 0; void this.publishCliSessionsRealtime(); }
       if (topics.has("accounts") || topics.has("usage") || topics.has("state")) this.schedulePublishState();
     }); }
     catch (error) { stopRealtime(); peersChanged?.dispose(); this.oauth.dispose(); throw error; }
@@ -548,7 +548,7 @@ export class DashboardPanelController {
       if (this.panel !== panel || panel.visible === false || !this.webviewReady ||
         !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
       await this.postActionResult(`realtime-cli-${Date.now()}`, "listCodexCliSessions", "completed", undefined, {
-        cliSessions: [...stabilized, ...(dashboardPeerHost?.getRemoteCliSessions() ?? [])],
+        cliSessions: stabilized,
         realtimeRevision: ++this.cliSessionRealtimeRevision,
         notice: getCodexSessionReadNotice(stabilized)
       });

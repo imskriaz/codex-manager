@@ -94,7 +94,7 @@
       } catch (error) { if (requestId === generation) feedback.textContent = 'View could not refresh: ' + error.message; }
       finally { if (requestId === generation) pending = false; }
     }
-    const features = [allowed('activities') ? 'activities' : 'messages','files','changes','git'].filter(allowed);
+    const features = [allowed('activities') ? 'activities' : 'messages','files','changes'].filter(allowed);
     tabs.setAttribute('role', 'tablist');
     for (const feature of features) { const tab = node('button', feature === 'messages' ? 'Activities' : feature === 'git' ? 'Git history' : feature[0].toUpperCase() + feature.slice(1)); tab.type = 'button'; tab.setAttribute('role', 'tab'); tab.onclick = () => { for (const item of tabs.children) item.setAttribute('aria-selected', String(item === tab)); void load(feature); }; tab.setAttribute('aria-selected', String(feature === features[0])); tabs.append(tab); }
     const subtasks = board.tasks.filter(child => child.parentTaskId === task.id);

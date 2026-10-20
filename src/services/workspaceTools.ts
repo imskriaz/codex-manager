@@ -292,6 +292,14 @@ export function focusWorkspaceTerminal(terminalId: string | undefined): Dashboar
   return terminalInfo(terminal);
 }
 
+export function closeWorkspaceTerminal(terminalId: string | undefined): boolean {
+  const terminal = findNativeTerminal(terminalId);
+  if (!terminal) return false;
+  activeTerminalCancels.get(nativeTerminalId(terminal))?.();
+  terminal.dispose();
+  return true;
+}
+
 /** Mirror commands typed directly into VS Code terminals when shell integration
  * exposes their stream. VS Code does not provide a raw scrollback API for
  * terminals without shell integration. */

@@ -6,7 +6,7 @@ import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessio
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
-import { orderCodexSessionRecoveryIds, readQueuedCodexSessionPreferences } from "./codexSessionPreferences";
+import { orderCodexSessionRecoveryIds, readQueuedCodexSessionPreferences, readCodexSessionPreferences, hasCodexSessionAutoResumeOptIn, isCodexSessionAutoResumeEnabled } from "./codexSessionPreferences";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexHomeStateKey } from "../codex/authFile";
@@ -28,6 +28,12 @@ type Operations = { tail: Promise<unknown>; capture?: Promise<unknown>; restore?
 const operations = new WeakMap<object, Operations>();
 const pendingWrites = new WeakMap<object, Promise<void>>();
 const recoveryIds = new WeakMap<object, string[]>();
+
+function filterSessionAutoResumeIds(home: string, ids: readonly string[]): string[] {
+  if (isAutoResumeEnabled()) return [...ids];
+  const preferences = readCodexSessionPreferences(home, ids);
+  return ids.filter(id => isCodexSessionAutoResumeEnabled(home, id) && preferences.get(id)?.autoResume === true);
+}
 const openRecoveryIds = new WeakMap<object, string[]>();
 const unrestoredOpenSnapshots = new WeakSet<object>();
 const restoreControllers = new Set<AbortController>();
@@ -352,9 +358,10 @@ export function persistRunningCodexSessions(
         await clearIds(context, deadline);
         return [];
       }
-      const ids = await bounded(() => filterAutoResumeGoalSessionIds(normalizeIds([
+      const home = resolveCodexHome();
+      const ids = await bounded(async () => filterSessionAutoResumeIds(home, await filterAutoResumeGoalSessionIds(normalizeIds([
         ...readPersistedSessionIds(context), ...normalizeIds(running)
-      ]), undefined, controller.signal), deadline - Date.now(),
+      ]), undefined, controller.signal)), deadline - Date.now(),
         "Auto Resume could not verify goals before saving recovery.", controller.signal);
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Retry after preferences settle.");
       controller.signal.throwIfAborted();
@@ -462,7 +469,7 @@ export function persistOpenCodexSessions(
     try {
       const discovered = normalizeIds(await bounded(() => readOpenParents(controller.signal), OPERATION_TIMEOUT_MS,
         "Open Codex session discovery did not respond within 30 seconds. Saved tabs will retry later.", controller.signal));
-      const ids = await bounded(() => filterAutoResumeGoalSessionIds(discovered, undefined, controller.signal, goalOnly, true), deadline - Date.now(),
+      const ids = await bounded(async () => filterSessionAutoResumeIds(resolveCodexHome(), await filterAutoResumeGoalSessionIds(discovered, undefined, controller.signal, goalOnly, true)), deadline - Date.now(),
         "Auto Resume could not verify goals before saving open tabs.", controller.signal);
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Saved tabs were retained for retry.");
       if (!isAutoResumeAvailable()) {
@@ -711,7 +718,7 @@ export function resumePersistedCodexSessions(
 }
 
 function isAutoResumeAvailable(): boolean {
-  return isAutoResumeEnabled();
+  return isAutoResumeEnabled() || hasCodexSessionAutoResumeOptIn(resolveCodexHome());
 }
 
 export function formatAutoResumeResult(result: AutoResumeResult): string | undefined {

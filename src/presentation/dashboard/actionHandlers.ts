@@ -41,6 +41,7 @@ import {
   unarchiveCodexCliSession
 } from "../../services/codexSessionResume";
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
+import { isCodexSessionAutoResumeEnabled } from "../../services/codexSessionPreferences";
 import { respondCodexAppServerPrompt } from "../../services/codexAppServerPrompts";
 import { getCodexSessionLiveState } from "../../services/codexSessionLive";
 import { unloadAuthFile, runCodexHomeOperation } from "../../codex";
@@ -48,6 +49,7 @@ import { queryDashboardUsage } from "../../services/dashboardUsageHistory";
 import { loadDailyTokenUsage } from "../../services/dailyTokenUsage";
 import {
   cancelWorkspaceTerminalCommand,
+  closeWorkspaceTerminal,
   commitWorkspaceChanges,
   pushWorkspaceBranch,
   deleteWorkspaceFile,
@@ -163,6 +165,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "focusWorkspaceTerminal",
   "runWorkspaceTerminalCommand",
   "cancelWorkspaceTerminalCommand",
+  "closeWorkspaceTerminal",
   "commitWorkspaceChanges",
   "pushWorkspaceBranch"
 ]);
@@ -1009,6 +1012,9 @@ async function runDashboardAction(
         throw new Error("There is no running command to stop in this terminal.");
       }
       return { notice: { level: "warning" as const, message: "Stopping the terminal command…" } };
+    case "closeWorkspaceTerminal":
+      if (!closeWorkspaceTerminal(payload?.terminalId)) throw new Error("That VS Code terminal is no longer open. Refresh the terminal list.");
+      return { workspaceTerminals: listWorkspaceTerminals(), notice: { level: "info" as const, message: "VS Code terminal closed." } };
     case "commitWorkspaceChanges":
       return {
         workspaceEnvironment: await commitWorkspaceChanges(
@@ -2011,14 +2017,14 @@ async function handleSetCodexSessionAutoResume(payload?: DashboardActionPayload)
   if (!payload?.sessionId || typeof payload.autoResumeEnabled !== "boolean") throw new Error("Choose a session and Auto Resume state.");
   const session = await ensureCliSessionIsActive(payload.sessionId);
   setCodexSessionAutoResume(session.id, payload.autoResumeEnabled);
-  const enabled = payload.autoResumeEnabled && getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false) === true;
+  const enabled = payload.autoResumeEnabled && isCodexSessionAutoResumeEnabled(resolveCodexHome(), session.id);
   return { cliSession: { ...session, autoResumeEnabled: enabled }, notice: { level: "info" as const, message: enabled ? "Auto Resume enabled for this session." : "Auto Resume disabled for this session." } };
 }
 
 async function handleSetCodexSessionQueue(payload?: DashboardActionPayload) {
   ensureCliIntegrationEnabled();
   if (!payload?.sessionId || typeof payload.queueEnabled !== "boolean") throw new Error("Choose a session and queue state.");
-  const priority = payload.sessionQueuePriority === 1 || payload.sessionQueuePriority === 2 || payload.sessionQueuePriority === 3 ? payload.sessionQueuePriority : 3;
+  const priority = payload.queueEnabled ? payload.sessionQueuePriority ?? 3 : 3;
   const session = await ensureCliSessionIsActive(payload.sessionId);
   setCodexSessionQueue(session.id, payload.queueEnabled, priority);
   return { cliSession: { ...session, queueEnabled: payload.queueEnabled, ...(payload.queueEnabled ? { queuePriority: priority } : { queuePriority: undefined }) }, notice: { level: "info" as const, message: payload.queueEnabled ? `Session queued at priority ${priority}.` : "Session removed from the recovery queue." } };
@@ -2145,7 +2151,9 @@ async function handleConsumeResetCredit(
     throw new Error("Confirm the rate-limit reset in the browser dashboard, then try again.");
   }
   if (payload?.confirmed !== true) {
-    const choice = await vscode.window.showWarningMessage(`${title}\n\n${body}`, { modal: true }, confirmBtn);
+    const choice = await vscode.window.showWarningMessage(`${title}
+
+${body}`, { modal: true }, confirmBtn);
     if (choice !== confirmBtn) {
       return { notice: { level: "info" as const, message: "Quota reset cancelled." } };
     }

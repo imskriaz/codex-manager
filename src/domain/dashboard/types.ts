@@ -618,6 +618,7 @@ export type DashboardActionName =
   | "focusWorkspaceTerminal"
   | "runWorkspaceTerminalCommand"
   | "cancelWorkspaceTerminalCommand"
+  | "closeWorkspaceTerminal"
   | "commitWorkspaceChanges"
   | "pushWorkspaceBranch"
   | "getResetCredits"
@@ -645,7 +646,7 @@ export interface DashboardActionPayload {
   goalStatus?: "active" | "paused";
   autoResumeEnabled?: boolean;
   queueEnabled?: boolean;
-  sessionQueuePriority?: 0 | 1 | 2 | 3;
+  sessionQueuePriority?: number;
   maintenanceTool?: MaintenanceTool;
   maintenanceInspection?: CodexInspection;
   maintenanceToken?: string;
@@ -755,7 +756,7 @@ export interface DashboardCliSessionSummary {
   /** Keep this session in the deferred recovery queue. */
   queueEnabled?: boolean;
   /** Queue order; equal priorities may recover together. */
-  queuePriority?: 1 | 2 | 3;
+  queuePriority?: number;
   queueError?: string;
 }
 

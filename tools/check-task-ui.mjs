@@ -23,8 +23,8 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByRole('tab', { name: 'Files', exact: true }).click();
   await task.locator('.task-file-row').filter({ hasText: 'src/app.ts' }).click();
   await task.getByText('const task = 1;', { exact: true }).waitFor();
-  await task.getByRole('tab', { name: 'Git history', exact: true }).click();
-  await task.getByText('Prepare project tasks', { exact: true }).waitFor();
+  await task.getByRole('tab', { name: 'Changes', exact: true }).click();
+  await task.getByText(/Current project:/).waitFor();
   await page.screenshot({ path: path.join(output, `task-details-${width}x${height}.png`) });
   await task.getByRole('button', { name: 'Close task details', exact: true }).click();
   await page.getByRole('button', { name: 'Share project', exact: true }).click();

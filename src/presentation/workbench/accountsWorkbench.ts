@@ -58,7 +58,9 @@ export class AccountsWorkbench {
   }
 
   async activate(): Promise<void> {
-    this.context.subscriptions.push(registerDashboardPanelSerializer(this.context, this.repo, this.webDashboard));
+    // VS Code is the local control surface. Cross-PC discovery and switching
+    // remain available from the browser dashboard only.
+    this.context.subscriptions.push(registerDashboardPanelSerializer(this.context, this.repo));
     this.autoResumeTracking = registerCodexSessionAutoResumeTracking(this.context);
     this.context.subscriptions.push(this.autoResumeTracking);
     const activationStartedAt = Date.now();

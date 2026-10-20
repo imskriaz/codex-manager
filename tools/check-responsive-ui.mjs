@@ -765,7 +765,8 @@ try {
     assert.equal(await page.locator(".cli-sessions-running-row").filter({ hasText: "Long project task" }).locator(".cli-session-row-meta > span").nth(2).getAttribute("title"), "a-very-long-project-name-that-needs-to-truncate");
     assert.ok(await page.locator(".cli-sessions-running-row").evaluateAll(rows => rows.every(row => row.scrollWidth <= row.clientWidth)), "Long and missing project names stay within the flyout");
     await interruptedRow.locator('.cli-running-queue > summary').click();
-    await interruptedRow.getByRole('button',{name:/Priority 2/}).click();
+    await interruptedRow.locator('input[type="number"]').fill('2');
+    await interruptedRow.getByRole('button',{name:'Queue session',exact:true}).click();
     await page.waitForFunction(()=>window.__uiActions.some(message=>message.action==='setCodexSessionQueue'&&message.payload?.sessionId==='recovery'&&message.payload?.sessionQueuePriority===2));
     await page.screenshot({ path: path.join(output, `compact-recovery-${width}x${height}.png`) });
     await page.getByRole("button", { name: "Resume Interrupted workspace task in VS Code", exact: true }).click();

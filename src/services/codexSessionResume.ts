@@ -33,6 +33,7 @@ import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteSto
 import { normalizeNativePath } from "../utils/nativePaths";
 import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles } from "./codexSessionPreferences";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
+import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 
 const CODEX_EXTENSION_ID = "openai.chatgpt";
 const CODEX_CONVERSATION_VIEW_TYPE = "chatgpt.conversationEditor";
@@ -214,7 +215,7 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
     const preference = preferences.get(row.id);
     const decorated: DashboardCliSessionSummary = { ...row, title: titles.get(row.id) ?? row.title };
     delete decorated.autoResumeEnabled; delete decorated.queueEnabled; delete decorated.queuePriority; delete decorated.queueError;
-    if (autoResume || preference?.autoResume === false) decorated.autoResumeEnabled = autoResume && preference?.autoResume !== false;
+    if (autoResume || preference?.autoResume !== undefined) decorated.autoResumeEnabled = autoResume || preference?.autoResume === true;
     if (preference?.queue === true) {
       decorated.queueEnabled = true;
       decorated.queuePriority = preference.priority ?? 3;
@@ -299,7 +300,7 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
   return summaries.filter(Boolean).map((summary) => {
     const preference = preferences.get(summary.id);
     return { ...summary, title: titleOverrides.get(summary.id) ?? summary.title,
-      ...(autoResume || preference?.autoResume === false ? { autoResumeEnabled: autoResume && preference?.autoResume !== false } : {}),
+      ...(autoResume || preference?.autoResume !== undefined ? { autoResumeEnabled: autoResume || preference?.autoResume === true } : {}),
       ...(preference?.queue === true ? { queueEnabled: true, queuePriority: preference.priority ?? 3, queueError: preference.queueError ?? (preference.queueClaimedAt ? 'A queued start was not confirmed. Review the session before requeuing.' : undefined) } : {}),
     };
   });
@@ -1376,13 +1377,12 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
 
 export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): void {
   validateSessionId(sessionId);
-  if (!isAutoResumeEnabled() && enabled) throw new Error("Enable global Auto Resume before enabling it for a session.");
-  writeCodexSessionPreference(resolveCodexHome(), sessionId, { autoResume: enabled ? undefined : false });
+  writeCodexSessionPreference(resolveCodexHome(), sessionId, { autoResume: enabled ? (isAutoResumeEnabled() ? undefined : true) : false });
 }
 
-export function setCodexSessionQueue(sessionId: string, enabled: boolean, priority: 1 | 2 | 3 = 3): void {
+export function setCodexSessionQueue(sessionId: string, enabled: boolean, priority = 3): void {
   validateSessionId(sessionId);
-  if (typeof enabled !== 'boolean' || ![1,2,3].includes(priority)) throw new Error('Choose queue priority 1, 2, or 3.');
+  if (typeof enabled !== 'boolean' || !isSessionQueuePriority(priority)) throw new Error('Choose a positive whole number for queue priority.');
   const store = getSqliteStateStore(), home = resolveCodexHome();
   if (!store) throw new Error('Session preference storage is unavailable. The queue was not changed.');
   store.transaction(() => {

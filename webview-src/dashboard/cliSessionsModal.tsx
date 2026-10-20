@@ -124,6 +124,7 @@ const EMPTY_CHAT_ATTACHMENTS: ChatAttachment[] = [];
 type ComposerDraft = CliComposerDraft;
 
 export type CliSessionsPageProps = {
+  browser?: boolean;
   dashboardMode?: boolean;
   taskBoardActive?: boolean;
   taskBoardEnabled?: boolean;
@@ -189,6 +190,7 @@ export type CliSessionsPageProps = {
   onListTerminals: () => void;
   onCreateTerminal: (profile: "default" | "powershell" | "cmd" | "bash", projectPath?: string) => void;
   onFocusTerminal: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string) => void;
   onCancelTerminal: (terminalId?: string) => void;
   onCommitWorkspace: (commitMessage: string, projectPath?: string) => void;
   onPushWorkspace: (projectPath?: string) => void;
@@ -208,7 +210,7 @@ export type CliSessionsPageProps = {
   }) => string | undefined;
   onStop: (session: DashboardCliSessionSummary) => void;
   onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
-  onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: 1 | 2 | 3) => void;
+  onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: number) => void;
   onRename: (name: string) => void;
   onFork: () => void;
   onCopyLink: () => void;
@@ -230,6 +232,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [section, setSection] = useState<CliSessionSection>("active");
   const [search, setSearch] = useState("");
   const [queueMenuSession, setQueueMenuSession] = useState<string>();
+  const [queuePriorityDraft, setQueuePriorityDraft] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!queueMenuSession) return;
     const close = (event: PointerEvent): void => { if (!(event.target as Element).closest(".cli-session-queue-wrap")) setQueueMenuSession(undefined); };
@@ -292,8 +295,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerWidth < 1180);
-  const [contextTabs, setContextTabs] = useState<WorkspaceTab[]>([]);
-  const [activeContextTab, setActiveContextTab] = useState<WorkspaceTab>("terminal");
+  const [contextTabsByProject, setContextTabsByProject] = useState<Record<string, { tabs: WorkspaceTab[]; active: WorkspaceTab }>>({});
   const [branchReview, setBranchReview] = useState(false);
   useEffect(() => setBranchReview(false), [props.selectedSession?.id, props.selectedSession?.deviceId]);
   const [contextAddOpen, setContextAddOpen] = useState(false);
@@ -536,6 +538,23 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const showWorking = currentTurnRunning && !hasInProgressActivity;
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
   const toolProjectPath = selectedProjectPath;
+  const contextProjectKey = canonicalWebPath(toolProjectPath ?? "__workspace__") || "__workspace__";
+  const contextProjectState = contextTabsByProject[contextProjectKey] ?? { tabs: [], active: "terminal" as WorkspaceTab };
+  const contextTabs = contextProjectState.tabs;
+  const activeContextTab = contextProjectState.active;
+  const setContextTabs = (next: WorkspaceTab[] | ((current: WorkspaceTab[]) => WorkspaceTab[])): void => {
+    setContextTabsByProject(current => {
+      const entry = current[contextProjectKey] ?? { tabs: [], active: "terminal" as WorkspaceTab };
+      const tabs = typeof next === "function" ? next(entry.tabs) : next;
+      return { ...current, [contextProjectKey]: { ...entry, tabs } };
+    });
+  };
+  const setActiveContextTab = (next: WorkspaceTab | ((current: WorkspaceTab) => WorkspaceTab)): void => {
+    setContextTabsByProject(current => {
+      const entry = current[contextProjectKey] ?? { tabs: [], active: "terminal" as WorkspaceTab };
+      return { ...current, [contextProjectKey]: { ...entry, active: typeof next === "function" ? next(entry.active) : next } };
+    });
+  };
   const startNewChat = (nextProject?: string): void => {
     if (mobileLayout) setRailCollapsed(true);
     if (props.selectedSession) props.onPeerChange?.(props.selectedSession.deviceId ?? localPeerId ?? "local");
@@ -617,7 +636,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   ) : (
     (() => {
       const running = isCodexSessionRunning(session);
-      const autoResume = props.autoResumeEnabled && session.autoResumeEnabled !== false;
+      const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
       const hasGoal = Boolean(session.goal && ["active", "usage_limited", "paused"].includes(session.goal.status));
       const autoResumeLabel = !props.autoResumeEnabled
         ? `Auto Resume is off globally for ${session.title} (default)`
@@ -631,10 +650,10 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </span> : null}
       <span class="cli-session-row-actions">
         {running ? <>
-          <IconButton label={autoResumeLabel} title={autoResumeLabel} disabled={props.mutating || !props.autoResumeEnabled} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={hasGoal} /></IconButton>
+          <IconButton label={autoResumeLabel} title={autoResumeLabel} disabled={props.mutating} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={hasGoal} /></IconButton>
           <span class="cli-session-queue-wrap">
             <IconButton label={`${session.queueEnabled ? "Edit" : "Add"} ${session.title} to recovery queue`} disabled={props.mutating} onClick={() => setQueueMenuSession((current) => current === session.id ? undefined : session.id)}><QueueIcon enabled={session.queueEnabled === true} /></IconButton>
-            {queueMenuSession === session.id ? <div class="cli-session-queue-menu" role="menu" onClick={(event) => event.stopPropagation()}><strong>Recovery order</strong>{session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}{([1, 2, 3] as const).map((priority) => <button type="button" role="menuitem" class={session.queueEnabled && session.queuePriority === priority ? "is-selected" : ""} onClick={() => { setQueueMenuSession(undefined); props.onQueue(session, true, priority); }}>Priority {priority}<small>{priority === 1 ? "First" : priority === 2 ? "After priority 1" : "Last"}</small></button>)}{session.queueEnabled ? <button type="button" role="menuitem" class="is-muted" onClick={() => { setQueueMenuSession(undefined); props.onQueue(session, false); }}>Remove from queue</button> : null}</div> : null}
+            {queueMenuSession === session.id ? <div class="cli-session-queue-menu" role="menu" onClick={(event) => event.stopPropagation()}><strong>Recovery order</strong>{session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}<label class="cli-queue-priority-field"><span>Priority</span><input type="number" min="1" step="1" inputMode="numeric" value={queuePriorityDraft[session.id] ?? String(session.queuePriority ?? 3)} onInput={(event) => setQueuePriorityDraft(current => ({ ...current, [session.id]: event.currentTarget.value }))} /></label><button type="button" role="menuitem" disabled={!Number.isSafeInteger(Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3)) || Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3) < 1} onClick={() => { setQueueMenuSession(undefined); props.onQueue(session, true, Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3)); }}>Queue session</button>{session.queueEnabled ? <button type="button" role="menuitem" class="is-muted" onClick={() => { setQueueMenuSession(undefined); props.onQueue(session, false); }}>Remove from queue</button> : null}</div> : null}
           </span>
           {session.canStop ? <IconButton label={`Stop ${session.title}`} disabled={props.mutating} onClick={() => props.onStop(session)}><StopIcon /></IconButton> : null}
         </> : <>
@@ -798,7 +817,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         <aside ref={sidebarRef} id="cli-session-sidebar" class={`cli-session-rail ${props.selectedSession ? "has-selection" : ""}`} role={mobileLayout ? "dialog" : undefined} aria-modal={mobileLayout && !railCollapsed || undefined} aria-hidden={railCollapsed || undefined} inert={railCollapsed || undefined} aria-label="Codex sessions">
           <div class="cli-rail-header">
             <button type="button" class="cli-rail-brand" aria-label="Open dashboard" title="Open dashboard" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{!props.dashboardMode ? (props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>) : null}<strong>Codex</strong></button>
-            <label class="cli-rail-system" title="Switch system"><span aria-hidden="true">▣</span><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select></label>
+            {props.browser ? <label class="cli-rail-system" title="Switch system"><span aria-hidden="true">▣</span><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select></label> : null}
           </div>
             <nav class="cli-primary-nav" aria-label="Workspace navigation">
               <div class="cli-sidebar-toolbar">
@@ -960,7 +979,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {turnChanges ? <div class="cli-turn-change-bar" role="group" aria-label="Turn changes"><span>{turnChanges.files} file{turnChanges.files === 1 ? "" : "s"} changed <b class="is-added">+{turnChanges.additions}</b> <b class="is-removed">−{turnChanges.deletions}</b></span><button type="button" onClick={() => openContextTab("reviews")}>View changes</button></div> : null}
               {localFeedback ? <div class={`cli-workspace-feedback is-${localFeedback.level}`} role={localFeedback.level === "error" ? "alert" : "status"}><span>{localFeedback.message}</span><button type="button" aria-label="Dismiss message" onClick={() => setLocalFeedback(undefined)}>×</button></div> : null}
               {draftStorageWarning}
-              {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span aria-hidden="true">◎</span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small>{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
+              {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status">◎</span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
+              {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session">☷</span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
               ) : props.selectedSession.status === "unknown" ? (
@@ -1054,6 +1074,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onListTerminals={props.onListTerminals}
           onCreateTerminal={(profile) => props.onCreateTerminal(profile, toolProjectPath)}
           onFocusTerminal={props.onFocusTerminal}
+          onCloseTerminal={props.onCloseTerminal}
           onFeedback={reportLocalFeedback}
           onStop={() => props.onCancelTerminal(props.workspaceTerminals.find((terminal) => terminal.isActive)?.id ?? WORKSPACE_TERMINAL_ID)}
           onClear={props.onClearTerminal}
@@ -1205,15 +1226,15 @@ function Composer(props: {
   </form></>;
 }
 
-function LiveTurnDetails({ state, loading, onLoadHistory }: { state?: DashboardCodexSessionLiveState; loading: boolean; onLoadHistory: () => void }) {
+function LiveTurnDetails({ state }: { state?: DashboardCodexSessionLiveState; loading?: boolean; onLoadHistory?: () => void }) {
   const tokens = state?.tokenUsage;
   const counts = tokens ? [["Input", tokens.input], ["Cached", tokens.cachedInput], ["Output", tokens.output], ["Reasoning", tokens.reasoningOutput], ["Total", tokens.total], ["Context", tokens.contextWindow]].filter((entry) => typeof entry[1] === "number") : [];
   return <div class="cli-turn-details">
     {state?.error ? <p class="cli-composer-unavailable" role="alert">{state.error}</p> : null}
-    {state?.truncated ? <p class="settings-note cli-history-load"><button type="button" disabled={loading} onClick={onLoadHistory}>{loading ? "Loading history…" : "Load history"}</button></p> : null}
+    {state?.truncated ? <p class="settings-note cli-history-truncated" role="status">Earlier activity is available in the saved conversation history.</p> : null}
     {state?.plan?.steps.length ? <details class="cli-activity is-plan"><summary><strong>Current plan</strong></summary><div class="cli-activity-body">{state.plan.explanation ? <p>{state.plan.explanation}</p> : null}<ol>{state.plan.steps.map((step, index) => <li key={index}>{step.status === "completed" ? "✓ " : step.status === "inProgress" ? "In progress · " : "Pending · "}{step.step}</li>)}</ol></div></details> : null}
     {state?.diff ? <details class="cli-activity is-file-change"><summary><strong>Turn changes</strong></summary><DiffPreview diff={state.diff} /></details> : null}
-    {counts.length || state?.rateLimits ? <details class="cli-activity"><summary><strong>Turn usage</strong></summary><div class="cli-activity-body">{counts.map(([label, count]) => <span key={String(label)}>{label}: {Number(count).toLocaleString()} · </span>)}{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p key={window}>{window === "primary" ? "Primary" : "Secondary"} window: {Math.round(limit.usedPercent)}% used{limit.resetsAt ? ` · resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : ""}</p> : null) : null}</div></details> : null}
+    {counts.length || state?.rateLimits ? <details class="cli-activity cli-turn-usage"><summary><span class="cli-activity-icon" aria-hidden="true" title="Token usage">Σ</span><span class="cli-activity-heading"><strong>Turn usage</strong><small>Tokens and rate windows</small></span><ChevronIcon /></summary><div class="cli-activity-body"><div class="cli-usage-grid">{counts.map(([label, count]) => <span key={String(label)} title={`${label} tokens`}><i aria-hidden="true">{String(label).toLowerCase().includes("cache") ? "◌" : String(label).toLowerCase().includes("output") ? "↑" : String(label).toLowerCase().includes("input") ? "↓" : "•"}</i><b>{label}</b><strong>{Number(count).toLocaleString()}</strong></span>)}</div>{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p class="cli-rate-window" key={window}><span>{window === "primary" ? "Primary" : "Secondary"} window</span><strong>{Math.round(limit.usedPercent)}% used</strong><small>{limit.resetsAt ? `Resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : "Reset time unavailable"}</small></p> : null) : null}</div></details> : null}
   </div>;
 }
 
@@ -1721,6 +1742,7 @@ function WorkspaceContextPanel(props: {
   onListTerminals: () => void;
   onCreateTerminal: (profile: "default" | "powershell" | "cmd" | "bash") => void;
   onFocusTerminal: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string) => void;
   onFeedback: (notice: DashboardNotice) => void;
   onStop: () => void;
   onClear: () => void;
@@ -1762,9 +1784,9 @@ function WorkspaceContextPanel(props: {
   const activePath = workspaceTabPath(props.activeTab);
   return <aside class="cli-terminal-panel cli-context-panel-v3" aria-label="Workspace tools">
     <div class="cli-context-edge-resizer" role="separator" aria-label="Resize terminal panel" aria-orientation="vertical" aria-valuemin={280} aria-valuenow={Math.round(props.terminalWidth)} tabIndex={0} onPointerDown={props.onResizePointerDown} onKeyDown={props.onResizeKeyDown} onDblClick={props.onResizeReset}><span /></div>
-    <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={(event) => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{props.tabs.map((tab) => { const kind = workspaceTabKind(tab); const path = workspaceTabPath(tab); const label = kind === "agents" && path ? `Agent: ${props.agentSessions.find((agent) => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind); return <span class={props.activeTab === tab ? "is-active" : ""} key={tab}><button type="button" role="tab" aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={path ?? kind}>{kind === "terminal" ? <TerminalIcon /> : kind === "files" ? <FileIcon /> : kind === "agents" ? <ForkIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button><button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button></span>; })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool or terminal" title="Add a tool or create a terminal" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div class="cli-context-add-menu" role="menu">{(["terminal", "files", "reviews", "agents"] as const).filter((tab) => !props.tabs.includes(tab)).map((tab) => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === "terminal" ? <TerminalIcon /> : tab === "files" ? <FileIcon /> : tab === "agents" ? <ForkIcon /> : <ReviewIcon />}{capitalize(tab)}</button>)}{activeKind === "terminal" ? <><span>New terminal</span>{(["default", "powershell", "cmd", "bash"] as const).map((profile) => <button type="button" role="menuitem" disabled={props.connected === false} onClick={() => { props.onAddToggle(); props.onCreateTerminal(profile); }}><TerminalIcon />{profile === "default" ? "Default terminal" : profile === "powershell" ? "PowerShell terminal" : `${profile.toUpperCase()} terminal`}</button>)}</> : null}{activeKind !== "terminal" && (["terminal", "files", "reviews", "agents"] as const).every((tab) => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><span class="cli-terminal-header-actions"><IconButton label="Hide workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></span></header>
+    <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={(event) => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{props.tabs.map((tab) => { const kind = workspaceTabKind(tab); const path = workspaceTabPath(tab); const label = kind === "agents" && path ? `Agent: ${props.agentSessions.find((agent) => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind); return <span class={props.activeTab === tab ? "is-active" : ""} key={tab}><button type="button" role="tab" aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={path ?? kind}>{kind === "terminal" ? <TerminalIcon /> : kind === "files" ? <FileIcon /> : kind === "agents" ? <ForkIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button><button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button></span>; })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool or terminal" title="Add a workspace tool" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div class="cli-context-add-menu" role="menu">{(["terminal", "files", "reviews", "agents"] as const).filter((tab) => !props.tabs.includes(tab)).map((tab) => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === "terminal" ? <TerminalIcon /> : tab === "files" ? <FileIcon /> : tab === "agents" ? <ForkIcon /> : <ReviewIcon />}{capitalize(tab)}</button>)}{activeKind !== "terminal" && (["terminal", "files", "reviews", "agents"] as const).every((tab) => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><span class="cli-terminal-header-actions"><IconButton label="Hide workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></span></header>
     {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onOpen={(id) => props.onAdd("agents", id)} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <>
-    <div class="cli-terminal-toolbar"><label>VS Code terminal<select aria-label="Select VS Code terminal" disabled={props.connected === false} value={props.terminals.find((terminal) => terminal.isActive)?.id ?? ""} onChange={(event) => { const id = event.currentTarget.value; if (id) props.onFocusTerminal(id); }}><option value="">Select terminal…</option>{props.terminals.map((terminal) => <option value={terminal.id}>{terminal.name} · {terminal.state}</option>)}</select></label><button type="button" class="cli-terminal-refresh" onClick={props.onListTerminals} title="Refresh running terminals"><RefreshIcon /></button></div>
+    <div class="cli-terminal-toolbar"><label>VS Code terminal<select aria-label="Select VS Code terminal" disabled={props.connected === false} value={props.terminals.find((terminal) => terminal.isActive)?.id ?? ""} onChange={(event) => { const id = event.currentTarget.value; if (id) props.onFocusTerminal(id); }}><option value="">Select terminal…</option>{props.terminals.map((terminal) => <option value={terminal.id}>{terminal.name} · {terminal.state}</option>)}</select></label>{props.terminals.find((terminal) => terminal.isActive) ? <IconButton label="Close terminal" title="Close terminal" disabled={props.connected === false} onClick={() => props.onCloseTerminal(props.terminals.find((terminal) => terminal.isActive)!.id)}><CloseIcon /></IconButton> : null}<details class="cli-terminal-new-menu"><summary>＋ New</summary><div role="menu">{(["default", "powershell", "cmd", "bash"] as const).map((profile) => <button type="button" role="menuitem" disabled={props.connected === false} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onCreateTerminal(profile); }}>{profile === "default" ? "Default" : profile === "powershell" ? "PowerShell" : profile.toUpperCase()}</button>)}</div></details><button type="button" class="cli-terminal-refresh" onClick={props.onListTerminals} title="Refresh running terminals"><RefreshIcon /></button></div>
     <div ref={outputRef} class="cli-terminal-output" role="log" aria-live="polite" onScroll={(event) => {
       const target = event.currentTarget;
       setFollowOutput(target.scrollHeight - target.scrollTop - target.clientHeight < 48);

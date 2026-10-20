@@ -13,7 +13,7 @@ export type Database = {
   close(): void;
 };
 
-export type SqliteTopic = "accounts" | "settings" | "usage" | "sessions" | "session-status" | "state";
+export type SqliteTopic = "accounts" | "settings" | "usage" | "sessions" | "session-status" | "session-preferences" | "state";
 type ChangeListener = { topics: ReadonlySet<SqliteTopic>; changed: (topics: ReadonlySet<SqliteTopic>) => void };
 
 export class SqliteStateStore {
@@ -49,6 +49,9 @@ export class SqliteStateStore {
       this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_state_${operation} AFTER ${operation} ON state
         WHEN ${row}.namespace IN ('global','files','account-index') OR ${row}.namespace LIKE 'workspace:%' OR ${row}.namespace LIKE 'settings%'
         BEGIN INSERT INTO manager_revisions(topic,revision) VALUES(${topic},1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
+      this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_session_preferences_${operation} AFTER ${operation} ON state
+        WHEN ${row}.namespace='codex-session-preferences'
+        BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('session-preferences',1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
     }
     this.notificationsReady = true;
   }

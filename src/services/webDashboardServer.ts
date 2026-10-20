@@ -1418,7 +1418,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "closeWorkspaceTerminal"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -2304,6 +2304,29 @@ export class WebDashboardServer implements vscode.Disposable {
     } satisfies PeerAggregateMessage);
   }
 
+  /** Apply a peer snapshot atomically so a partial/invalid aggregate never
+   * makes the browser briefly report zero systems. */
+  private async replacePeerAggregate(peers: unknown[]): Promise<boolean> {
+    const previous = new Map(this.peerSessions);
+    const previousSeen = new Map(this.peerLastSeenAt);
+    const previousSigned = new Map(this.peerLastSignedAt);
+    this.peerSessions.clear();
+    this.peerLastSeenAt.clear();
+    this.peerLastSignedAt.clear();
+    for (const peer of peers) {
+      if (!(await this.acceptPeerSession(peer as Partial<PeerSessionMessage>, false))) {
+        this.peerSessions.clear();
+        this.peerLastSeenAt.clear();
+        this.peerLastSignedAt.clear();
+        for (const [id, value] of previous) this.peerSessions.set(id, value);
+        for (const [id, value] of previousSeen) this.peerLastSeenAt.set(id, value);
+        for (const [id, value] of previousSigned) this.peerLastSignedAt.set(id, value);
+        return false;
+      }
+    }
+    return true;
+  }
+
   private async handlePeerMessage(raw: string, sourceSocket: WebSocket): Promise<void> {
     try {
       const revision = this.peerConnectionRevision;
@@ -2620,14 +2643,7 @@ export class WebDashboardServer implements vscode.Disposable {
             publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId: message.requestId, deviceId: message.deviceId });
           }
           if (message.type === "peer:aggregate" && Array.isArray(message.peers)) {
-            this.peerSessions.clear();
-            this.peerLastSeenAt.clear();
-            this.peerLastSignedAt.clear();
-            for (const peer of message.peers) {
-              if (this.peerSocket !== socket) return;
-              await this.acceptPeerSession(peer, false);
-            }
-            if (this.peerSocket !== socket) return;
+            if (this.peerSocket !== socket || !(await this.replacePeerAggregate(message.peers))) return;
             this.notifyDashboardPeers();
             this.markPeerPresenceHealthy();
             this.publishRealtimeState();
@@ -2770,14 +2786,7 @@ export class WebDashboardServer implements vscode.Disposable {
         throw new Error("Peer heartbeat returned an invalid response.");
       }
       if (this.peerStopped || revision !== this.peerConnectionRevision || domain !== normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "")) return;
-      this.peerSessions.clear();
-      this.peerLastSeenAt.clear();
-      this.peerLastSignedAt.clear();
-      for (const peer of aggregate.peers) {
-        if (revision !== this.peerConnectionRevision) return;
-        await this.acceptPeerSession(peer, false);
-      }
-      if (revision !== this.peerConnectionRevision) return;
+      if (revision !== this.peerConnectionRevision || !(await this.replacePeerAggregate(aggregate.peers))) return;
       this.notifyDashboardPeers();
       this.markPeerPresenceHealthy();
       this.publishRealtimeState();

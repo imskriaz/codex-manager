@@ -1,11 +1,13 @@
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { randomUUID } from 'node:crypto';
+import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
+import { isAutoResumeEnabled } from '../infrastructure/config/extensionSettings';
 
 export type CodexSessionPreference = {
   autoResume?: boolean;
   queue?: boolean;
-  priority?: 1 | 2 | 3;
+  priority?: number;
   queueClaimedAt?: number;
   queueError?: string;
   queueRevision?: string;
@@ -19,7 +21,14 @@ const key = (home: string, id: string) => `${getCodexHomeStateKey(home)}:${id.to
 
 function read(store: ReturnType<typeof getSqliteStateStore>, home: string, id: string): CodexSessionPreference {
   const value = store?.get<CodexSessionPreference>(NAMESPACE, key(home, id));
-  return value && typeof value === "object" ? value : {};
+  return normalizePreference(value);
+}
+
+function normalizePreference(value: unknown): CodexSessionPreference {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const preference = value as CodexSessionPreference;
+  return preference.priority === undefined || isSessionQueuePriority(preference.priority) ? preference
+    : { ...preference, queueError: 'Saved queue priority is invalid. Choose a positive whole number before requeuing.' };
 }
 
 function readNamespace(home: string, namespace: string): Map<string, unknown> {
@@ -39,12 +48,13 @@ export function readCodexSessionPreferences(home: string, ids: readonly string[]
   const result = new Map<string, CodexSessionPreference>();
   for (const id of ids) {
     const value = values.get(id.toLowerCase());
-    result.set(id, value && typeof value === "object" ? value as CodexSessionPreference : {});
+    result.set(id, normalizePreference(value));
   }
   return result;
 }
 
 export function writeCodexSessionPreference(home: string, id: string, patch: Partial<CodexSessionPreference>): CodexSessionPreference {
+  if (patch.priority !== undefined && !isSessionQueuePriority(patch.priority)) throw new Error('Choose a positive whole number for queue priority.');
   const store = getSqliteStateStore();
   if (!store) throw new Error('Session preference storage is unavailable. The change was not saved.');
   return store.transaction(() => {
@@ -80,11 +90,27 @@ export function readQueuedCodexSessionPreferences(home: string): Map<string, Cod
   const store = getSqliteStateStore();
   if (!store) return new Map();
   const prefix = `${getCodexHomeStateKey(home)}:`;
-  return new Map(store.prepare("SELECT key,value FROM state WHERE namespace=? AND key LIKE ? AND json_valid(value) AND json_extract(value,'$.queue')=1 LIMIT 256").all(NAMESPACE, `${prefix}%`).map(row => [String(row['key']).slice(prefix.length), JSON.parse(String(row['value'])) as CodexSessionPreference]));
+  return new Map(store.prepare("SELECT key,value FROM state WHERE namespace=? AND key LIKE ? AND json_valid(value) AND json_extract(value,'$.queue')=1 LIMIT 256").all(NAMESPACE, `${prefix}%`).map(row => [String(row['key']).slice(prefix.length), normalizePreference(JSON.parse(String(row['value'])))]));
 }
 
 export function isCodexSessionAutoResumeDisabled(home: string, id: string): boolean {
   return read(getSqliteStateStore(), home, id).autoResume === false;
+}
+
+export function hasCodexSessionAutoResumeOptIn(home: string): boolean {
+  const store = getSqliteStateStore();
+  if (!store) return false;
+  const prefix = `${getCodexHomeStateKey(home)}:`;
+  return Boolean(store.prepare("SELECT 1 FROM state WHERE namespace=? AND key LIKE ? AND json_extract(value,'$.autoResume')=1 LIMIT 1").get(NAMESPACE, `${prefix}%`));
+}
+
+export function isCodexSessionAutoResumeEnabled(home: string, id: string): boolean {
+  const preference = read(getSqliteStateStore(), home, id);
+  return (isAutoResumeEnabledForHome() || preference.autoResume === true) && preference.autoResume !== false;
+}
+
+function isAutoResumeEnabledForHome(): boolean {
+  return isAutoResumeEnabled();
 }
 
 export function orderCodexSessionRecoveryIds(home: string, ids: readonly string[]): string[] {

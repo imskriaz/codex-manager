@@ -2120,7 +2120,7 @@ function App() {
               </div>
             </div>
             <div class="hero-settings">
-              {selectedPeer ? (
+              {isBrowserDashboard && selectedPeer ? (
                 <PcPickerControl
                   peers={pcOptions}
                   accountsByPeerId={Object.fromEntries(
@@ -2718,6 +2718,7 @@ function App() {
       {isBrowserDashboard && hasBrowserWorkspaceShell(browserPath)
         ? createPortal(
             <CliSessionsPage
+                browser={isBrowserDashboard}
               dashboardMode={browserPath === "/" || browserPath === "/tasks"}
               taskBoardActive={browserPath === '/tasks'}
               taskBoardEnabled={snapshot.settings.taskBoardEnabled !== false}
@@ -2818,6 +2819,7 @@ function App() {
                 sendAction("createWorkspaceTerminal", undefined, { sessionId: selectedCliSession?.id, terminalProfile: profile, projectPath, targetDeviceId: workspaceTargetDeviceId })
               }
               onFocusTerminal={(terminalId) => sendAction("focusWorkspaceTerminal", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
+              onCloseTerminal={(terminalId) => sendAction("closeWorkspaceTerminal", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
               onCancelTerminal={(terminalId) => sendAction("cancelWorkspaceTerminalCommand", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
               onCommitWorkspace={(commitMessage, projectPath) =>
                 sendAction("commitWorkspaceChanges", undefined, { sessionId: selectedCliSession?.id, commitMessage, projectPath, confirmed: true, targetDeviceId: workspaceTargetDeviceId })
@@ -3314,7 +3316,7 @@ function PcPickerControl(props: {
 function CliSessionsMenu(props: {
   autoResumeEnabled: boolean;
   onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
-  onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: 1 | 2 | 3) => void;
+  onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: number) => void;
   browser: boolean;
   sessions: DashboardCliSessionSummary[];
   peers: DashboardPeerView[];
@@ -3337,6 +3339,7 @@ function CliSessionsMenu(props: {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0 });
   const [now, setNow] = useState(Date.now());
+  const [queuePriorityDraft, setQueuePriorityDraft] = useState<Record<string, string>>({});
   const isZh = props.lang === "zh";
   const isHant = props.lang === "zh-hant";
   const menuLabel = isZh ? "运行中的会话" : isHant ? "執行中的工作階段" : "Running sessions";
@@ -3447,7 +3450,7 @@ function CliSessionsMenu(props: {
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
-                    {running ? <button type="button" class={`cli-icon-button ${props.autoResumeEnabled && session.autoResumeEnabled !== false ? "is-active" : ""}`} aria-pressed={props.autoResumeEnabled && session.autoResumeEnabled !== false} aria-label={`Auto Resume for ${session.title}`} title={!props.autoResumeEnabled ? "Auto Resume is off globally" : session.autoResumeEnabled === false ? "Enable Auto Resume" : "Disable Auto Resume"} disabled={!props.connected || !props.autoResumeEnabled || offline || props.actionPending} onClick={() => props.onAutoResume(session, session.autoResumeEnabled === false)}><AutoResumeIcon enabled={props.autoResumeEnabled && session.autoResumeEnabled !== false} goal={!!session.goal} /></button> : <details class="cli-running-queue"><summary aria-label={`Queue priority for ${session.title}`} title="Queue after other sessions finish"><QueueIcon enabled={session.queueEnabled === true} />{session.queueEnabled ? <small>{session.queuePriority ?? 3}</small> : null}</summary><div class="cli-session-queue-menu"><strong>Run after other work</strong>{session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}{([1,2,3] as const).map(priority => <button type="button" disabled={!props.connected || offline || props.actionPending} aria-pressed={session.queueEnabled && session.queuePriority === priority} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, true, priority); }}>Priority {priority}<small>{priority === 1 ? "First" : priority === 2 ? "Next" : "Last"}</small></button>)}<button type="button" disabled={!props.connected || offline || props.actionPending || !session.queueEnabled} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, false); }}>Remove from queue</button></div></details>}
+                    {running ? <button type="button" class={`cli-icon-button ${(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true) ? "is-active" : ""}`} aria-pressed={props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true} aria-label={`Auto Resume for ${session.title}`} title={!props.autoResumeEnabled ? "Enable Auto Resume for this session" : session.autoResumeEnabled === false ? "Enable Auto Resume" : "Disable Auto Resume"} disabled={!props.connected || offline || props.actionPending} onClick={() => props.onAutoResume(session, !(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true))}><AutoResumeIcon enabled={props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true} goal={!!session.goal} /></button> : <details class="cli-running-queue"><summary aria-label={`Queue priority for ${session.title}`} title="Queue after other sessions finish"><QueueIcon enabled={session.queueEnabled === true} />{session.queueEnabled ? <small>{session.queuePriority ?? 3}</small> : null}</summary><div class="cli-session-queue-menu"><strong>Run after other work</strong>{session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}<label class="cli-queue-priority-field"><span>Priority</span><input type="number" min="1" step="1" inputMode="numeric" value={queuePriorityDraft[session.id] ?? String(session.queuePriority ?? 3)} onInput={event => setQueuePriorityDraft(current => ({ ...current, [session.id]: event.currentTarget.value }))} /></label><button type="button" disabled={!props.connected || offline || props.actionPending || !Number.isSafeInteger(Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3)) || Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3) < 1} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, true, Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3)); }}>Queue session</button><button type="button" disabled={!props.connected || offline || props.actionPending || !session.queueEnabled} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, false); }}>Remove from queue</button></div></details>}
                     </div>
                   </article>;
                 })}
