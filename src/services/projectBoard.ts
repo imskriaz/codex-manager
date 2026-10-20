@@ -1,7 +1,7 @@
 import type { ProjectBoard, ProjectTaskDetails } from '../domain/projectTasks';
 import { projectTaskKey, readProjectTasks, readProjectTask, syncProjectSessions } from './projectTasks';
 import { readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessagePage, resolveCodexHome } from './codexSessionResume';
-import { resolveWorkspaceProjectPathAsync, listWorkspaceFiles, readWorkspaceEnvironment, readWorkspaceGitHistory } from './workspaceTools';
+import { resolveWorkspaceProjectPathAsync, readWorkspaceEnvironment, readWorkspaceGitHistory } from './workspaceTools';
 import { waitWithin } from '../utils/concurrency';
 import type { ProjectShare } from './projectTasks';
 import { readWorkspaceFile } from './workspaceTools';
@@ -67,7 +67,15 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
     if (view === 'messages' || view === 'activities' || view === 'changes') {
       if (sessionId) Object.assign(result, await waitWithin(readCodexCliSessionMessagePage(sessionId, before, task.sourceHome), 5000, 'Task activity is still loading. Retry shortly.'));
     }
-    if (view === 'files') result.files = await listWorkspaceFiles(project);
+    if (view === 'files' && sessionId) {
+      const page = await waitWithin(readCodexCliSessionMessagePage(sessionId, before, task.sourceHome), 5000, 'Chat files are still loading. Retry shortly.');
+      Object.assign(result, page);
+      const files = new Map<string, ProjectTaskDetails['files'][number]>();
+      for (const message of page.messages) for (const change of message.changes ?? []) {
+        if (!files.has(change.path)) files.set(change.path, { path: change.path, name: change.path.split(/[\\/]/).pop() ?? change.path, type: 'file', depth: change.path.split(/[\\/]/).length - 1 });
+      }
+      result.files = [...files.values()];
+    }
     if (view === 'changes' || view === 'git') {
       result.environment = await waitWithin(readWorkspaceEnvironment(project, view === 'changes'), 5000, 'Git status is still loading.');
       if (view === 'git' && result.environment.isGitRepository) result.history = await readWorkspaceGitHistory(project);

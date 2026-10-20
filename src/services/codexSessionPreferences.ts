@@ -67,12 +67,12 @@ export function claimCodexSessionQueue(home: string, id: string, revision: strin
   });
 }
 
-export function finishCodexSessionQueueClaim(home: string, id: string, claimId: string, error?: string): void {
+export function finishCodexSessionQueueClaim(home: string, id: string, claimId: string, error?: string, keepQueued = false): void {
   const store = getSqliteStateStore();
   if (!store) throw new Error('Session queue result could not be saved. Review the session before requeuing.');
   store.transaction(() => {
     if (read(store, home, id).queueClaimId !== claimId) return;
-    writeCodexSessionPreference(home, id, error ? { queueError: error } : { queue: false, priority: undefined, queueClaimId: undefined, queueClaimedAt: undefined, queueError: undefined });
+    writeCodexSessionPreference(home, id, error ? { queueError: error } : { queue: keepQueued, priority: keepQueued ? read(store, home, id).priority : undefined, queueClaimId: undefined, queueClaimedAt: undefined, queueError: undefined });
   });
 }
 

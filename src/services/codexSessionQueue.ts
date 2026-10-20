@@ -41,7 +41,7 @@ export function registerCodexSessionQueue(context: vscode.ExtensionContext): voi
           if (!claimId) return;
           try {
             const outcome = await resumeCodexSessionWork(session.id, controller.signal, 'automatic');
-            finishCodexSessionQueueClaim(home, session.id, claimId);
+            finishCodexSessionQueueClaim(home, session.id, claimId, undefined, outcome !== 'idle');
             if (outcome === 'idle') publishDashboardRealtime({ type: 'dashboard:notice', level: 'info', message: `Queued session “${session.title}” has no eligible unfinished work. It was left idle.` });
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);

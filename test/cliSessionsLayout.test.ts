@@ -309,7 +309,7 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('class="cli-session-project"');
     expect(source).toContain('class="cli-conversation-project"');
     expect(source).not.toContain('"Current workspace"');
-    expect(source).not.toContain('"Open workspace"');
+    expect(source).toContain('"Open workspace"');
     expect(css).toContain(".cli-session-spinner");
     expect(css).toContain(".cli-project-row:hover .cli-project-new");
     expect(css).toContain(".cli-project-collapse");

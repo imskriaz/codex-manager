@@ -27,6 +27,7 @@ export function TaskBoard(props: {
   const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<TaskCard>();
   const [title, setTitle] = useState(''), [prompt, setPrompt] = useState(''), [parent, setParent] = useState(''), [comment, setComment] = useState('');
+  const [search, setSearch] = useState(''), [dropStage, setDropStage] = useState<TaskStage>();
   const [tab, setTab] = useState<DetailTab>('messages'), [cursor, setCursor] = useState<string>();
   const [details, setDetails] = useState<ProjectTaskDetails>(), [detailLoading, setDetailLoading] = useState(false);
   const [file, setFile] = useState<DashboardActionResultPayload['workspaceFile']>();
@@ -147,13 +148,29 @@ export function TaskBoard(props: {
     return tasks.sort((a,b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
   }, [board, outbox, props.sessions, scope]);
   const effectiveStages = useMemo(() => projectTaskStages(cards), [cards]);
+  const visibleCards = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return query ? cards.filter(task => `${task.title}\n${task.prompt}`.toLowerCase().includes(query)) : cards;
+  }, [cards, search]);
   const children = useMemo(() => {
     const map = new Map<string, TaskCard[]>();
     for (const task of cards) if (task.parentTaskId) map.set(task.parentTaskId, [...(map.get(task.parentTaskId) ?? []), task]);
     return map;
   }, [cards]);
   const ids = new Set(cards.map(task => task.id));
-  const roots = cards.filter(task => !task.parentTaskId || !ids.has(task.parentTaskId));
+  const roots = visibleCards.filter(task => !task.parentTaskId || !ids.has(task.parentTaskId));
+  const moveDropped = async (stage: TaskStage, event: DragEvent): Promise<void> => {
+    event.preventDefault(); setDropStage(undefined);
+    const taskId = event.dataTransfer?.getData('application/x-codex-task');
+    const rawSession = event.dataTransfer?.getData('application/x-codex-session');
+    let sourceId = taskId;
+    if (!sourceId && rawSession) { try { sourceId = (JSON.parse(rawSession) as { id?: string }).id; } catch { /* malformed drag data */ } }
+    const task = sourceId ? cards.find(item => item.id === sourceId || item.sessionId === sourceId) : undefined;
+    if (!task || !task.revision) { setStatus('Refresh the board before moving this session.'); return; }
+    if (task.launchPending) { setStatus('This task cannot move until its current operation is confirmed.'); return; }
+    if (task.stage === stage) return;
+    await action('saveProjectTask', { task: { id: task.id, title: task.title, prompt: task.prompt, stage, expectedRevision: task.revision, parentTaskId: task.parentTaskId ?? null } });
+  };
   const open = (task: TaskCard) => {
     detailGeneration.current++; selection.current = task.id;
     setSelected(task); setTitle(task.title); setPrompt(task.prompt); setParent(task.parentTaskId ?? ''); setComment(''); setTab('messages'); setCursor(undefined); setDetails(undefined); setFile(undefined);
@@ -246,10 +263,11 @@ export function TaskBoard(props: {
       }}>Use project</button></details>
       <button type="button" disabled={!project || busy} onClick={() => open({ id: '', title: '', prompt: '', stage: 'idea', revision: 0, createdAt: 0, updatedAt: 0 })}>＋ Task</button>
       <button type="button" disabled={!project || !props.connected || busy} onClick={() => setShareOpen(true)}>Share project</button>
-      <button type="button" disabled={!project || !props.connected || busy} onClick={() => { void refresh().then(() => sync(true)); }}>↻ Sync{rows.length ? ` (${rows.length})` : ''}</button>
+      <button type="button" disabled={!project || !props.connected || busy} onClick={() => { void refresh(); }} title="Refresh the saved project board">↻ Refresh</button><button type="button" disabled={!project || !props.connected || busy} onClick={() => { void sync(true); }} title="Sync local task drafts and comments">⇄ Sync{rows.length ? ` (${rows.length})` : ''}</button>
     </div></header>
+    <div class="task-board-subtoolbar"><label class="task-board-search"><span>⌕</span><input type="search" aria-label="Search tasks" placeholder="Search tasks…" value={search} onInput={event => setSearch(event.currentTarget.value)} /></label><span class="task-board-hint">Drag a session or card into a column to change its stage.</span></div>
     <p class="task-board-status" role="status">{props.connected ? 'Connected' : 'Offline · saved view'}{board ? ` · Updated ${new Date(board.updatedAt).toLocaleTimeString()}` : ''}{status ? ` · ${status}` : ''}</p>
-    <div class="task-board-columns">{stages.map(stage => <TaskColumn key={`${scope}:${stage}`} stage={stage} tasks={roots.filter(task => effectiveStages.get(task.id) === stage)} children={children} pendingIds={pendingIds} onOpen={open} />)}</div>
+    <div class="task-board-columns">{stages.map(stage => <TaskColumn key={`${scope}:${stage}`} stage={stage} tasks={roots.filter(task => effectiveStages.get(task.id) === stage)} children={children} pendingIds={pendingIds} onOpen={open} onDrop={moveDropped} isDropTarget={dropStage === stage} onDragOver={() => setDropStage(stage)} onDragLeave={() => setDropStage(undefined)} />)}</div>
     {rows.some(row => syncErrors[row.key]) ? <details class="task-sync-conflicts"><summary>Review unsynced changes</summary>{rows.filter(row => syncErrors[row.key]).map(row => <article key={row.key}><p>{syncErrors[row.key]}</p><pre>{JSON.stringify(row.value.task ?? row.value.comment, null, 2)}</pre><button type="button" onClick={() => { if (window.confirm('Discard this local change? The host version will be kept.')) void deleteBrowserCache(row.key).then(async removed => { if (removed) { setOutbox(await listBrowserOutbox<Outbox>()); setStatus('Local change discarded. Host version kept.'); } else setStatus('Browser storage did not confirm removal. Local change kept.'); }); }}>Discard local change</button></article>)}</details> : null}
     <ModalShell open={Boolean(selected)} title={selected?.title || 'New task'} closeLabel="Close" onClose={() => setSelected(undefined)} className="task-detail-modal">
       {selected ? <><div class="task-detail-meta">{basename(project)} · {label(selected.stage)}{!props.connected ? ' · Offline saved view' : ''}</div>
@@ -261,7 +279,7 @@ export function TaskBoard(props: {
         <div class="task-detail-scroll" role="tabpanel">{details?.warnings.map(warning => <p key={warning} class="settings-note" role="status">{warning}</p>)}
           {cursor ? <button type="button" disabled={detailLoading} onClick={() => setCursor(undefined)}>Latest activity</button> : null}{details?.olderThan && ['messages','activities','changes'].includes(tab) ? <button type="button" disabled={detailLoading} onClick={() => setCursor(details.olderThan)}>Older history</button> : null}
           {['messages','activities'].includes(tab) ? details?.messages.filter(item => tab === 'messages' ? !item.kind || item.kind === 'message' : item.kind && item.kind !== 'message').map(item => <SessionMessage key={item.id} message={item} onActionFeedback={notice => setStatus(notice.message)} />) : null}
-          {tab === 'files' ? <><p class="settings-note">Current project files · read-only preview</p>{details?.files.map(entry => <button type="button" class="task-file-row" key={entry.path} disabled={entry.type !== 'file'} onClick={() => { void openFile(entry.path); }}><span>{entry.path}</span><small>{entry.type}</small></button>)}{file ? <article class="task-activity"><strong>{file.path}</strong>{file.kind === 'image' && file.dataUrl ? <img src={file.dataUrl} alt={file.path} /> : <pre>{file.content}</pre>}</article> : null}</> : null}
+          {tab === 'files' ? <><p class="settings-note">Files shared or changed in this conversation · read-only</p>{details?.files.map(entry => <button type="button" class="task-file-row" key={entry.path} disabled={entry.type !== 'file'} onClick={() => { void openFile(entry.path); }}><span>{entry.path}</span><small>Chat file</small></button>)}{details && !details.files.length ? <p class="task-board-empty">No files were shared or changed in this conversation.</p> : null}{file ? <article class="task-activity"><strong>{file.path}</strong>{file.kind === 'image' && file.dataUrl ? <img src={file.dataUrl} alt={file.path} /> : <pre>{file.content}</pre>}</article> : null}</> : null}
           {tab === 'changes' ? <><p>Current project: {details?.environment?.changes ?? 0} changed files · +{details?.environment?.additions ?? 0} / −{details?.environment?.deletions ?? 0}</p>{details?.environment?.branchDiff ? <details><summary>Current branch differences</summary><pre>{details.environment.branchDiff}</pre></details> : null}{details?.messages.filter(item => item.changes?.length).map(item => <SessionMessage key={item.id} message={item} />)}</> : null}
           {tab === 'git' ? details?.environment?.isGitRepository ? details.history.map(commit => <article class="task-activity" key={commit.hash}><strong>{commit.subject}</strong><small>{commit.hash.slice(0,8)} · {commit.author} · {commit.date}</small></article>) : details ? <p>This project has no Git repository.</p> : null : null}
           {detailLoading ? <p role="status" class="settings-note">Refreshing {label(tab).toLowerCase()}…</p> : !details ? <p class="task-board-empty">{selected.id ? 'No cached details yet. Reconnect to load this view.' : 'Save this task to add comments and start Codex.'}</p> : !details.messages.length && ['messages','activities'].includes(tab) ? <p class="task-board-empty">No activity on this history page.</p> : null}
@@ -285,10 +303,10 @@ export function TaskBoard(props: {
 function TaskTree(props: { task: TaskCard; children: Map<string, TaskCard[]>; pendingIds: Set<string>; onOpen: (task: TaskCard) => void }) {
   const [expanded, setExpanded] = useState(false);
   const children = props.children.get(props.task.id) ?? [];
-  return <article class="task-tree-item"><button type="button" class="task-board-card" onClick={() => props.onOpen(props.task)}><strong>{props.task.title}</strong>{props.task.prompt ? <p>{props.task.prompt}</p> : null}<footer><span>{props.task.launchPending ? 'Start unconfirmed' : props.pendingIds.has(props.task.id) ? 'Pending sync' : props.task.session?.interrupted ? 'Interrupted' : props.task.session?.archived ? 'Archived' : props.task.session?.status === 'unknown' || props.task.sessionStatus === 'unknown' ? 'State unverified' : props.task.sessionId ? 'Codex session' : 'Task'}</span><small>{props.task.session?.model ?? ''}</small></footer></button>{children.length ? <><button type="button" class="task-tree-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '▾' : '▸'} {children.length} subtasks</button>{expanded ? <div class="task-tree-children">{children.map(task => <TaskTree key={task.id} {...props} task={task} />)}</div> : null}</> : null}</article>;
+  return <article class="task-tree-item"><button type="button" draggable class="task-board-card" onDragStart={event => { event.dataTransfer?.setData('application/x-codex-task', props.task.id); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'; }} onClick={() => props.onOpen(props.task)}><strong>{props.task.title}</strong>{props.task.prompt ? <p>{props.task.prompt}</p> : null}<footer><span>{props.task.launchPending ? 'Start unconfirmed' : props.pendingIds.has(props.task.id) ? 'Pending sync' : props.task.session?.interrupted ? 'Interrupted' : props.task.session?.archived ? 'Archived' : props.task.session?.status === 'unknown' || props.task.sessionStatus === 'unknown' ? 'State unverified' : props.task.sessionId ? 'Codex session' : 'Task'}</span><small>{props.task.session?.model ?? ''}</small></footer></button>{children.length ? <><button type="button" class="task-tree-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '▾' : '▸'} {children.length} subtasks</button>{expanded ? <div class="task-tree-children">{children.map(task => <TaskTree key={task.id} {...props} task={task} />)}</div> : null}</> : null}</article>;
 }
 
-function TaskColumn(props: { stage: TaskStage; tasks: TaskCard[]; children: Map<string, TaskCard[]>; pendingIds: Set<string>; onOpen: (task: TaskCard) => void }) {
+function TaskColumn(props: { stage: TaskStage; tasks: TaskCard[]; children: Map<string, TaskCard[]>; pendingIds: Set<string>; onOpen: (task: TaskCard) => void; onDrop: (stage: TaskStage, event: DragEvent) => void; isDropTarget: boolean; onDragOver: () => void; onDragLeave: () => void }) {
   const [visible, setVisible] = useState(50);
-  return <section class={`task-board-column is-${props.stage}`} aria-label={label(props.stage)}><header class="task-board-column-heading"><strong><i />{label(props.stage)}</strong><span>{props.tasks.length}</span></header><div class="task-board-card-list">{props.tasks.slice(0, visible).map(task => <TaskTree key={task.id} task={task} children={props.children} pendingIds={props.pendingIds} onOpen={props.onOpen} />)}{props.tasks.length > visible ? <button type="button" onClick={() => setVisible(visible + 50)}>Show more ({props.tasks.length - visible})</button> : !props.tasks.length ? <p class="task-board-empty">{props.stage === 'idea' ? 'Collect the next useful idea.' : props.stage === 'planned' ? 'Plan your next task.' : props.stage === 'running' ? 'Active work appears here.' : 'Completed and archived work appears here.'}</p> : null}</div></section>;
+  return <section class={`task-board-column is-${props.stage} ${props.isDropTarget ? 'is-drop-target' : ''}`} aria-label={label(props.stage)} onDragOver={event => { event.preventDefault(); props.onDragOver(); }} onDragLeave={event => { if (event.currentTarget === event.target) props.onDragLeave(); }} onDrop={event => props.onDrop(props.stage, event)}><header class="task-board-column-heading"><strong><i />{label(props.stage)}</strong><span>{props.tasks.length}</span></header><div class="task-board-card-list">{props.tasks.slice(0, visible).map(task => <TaskTree key={task.id} task={task} children={props.children} pendingIds={props.pendingIds} onOpen={props.onOpen} />)}{props.tasks.length > visible ? <button type="button" onClick={() => setVisible(visible + 50)}>Show more ({props.tasks.length - visible})</button> : !props.tasks.length ? <p class="task-board-empty">{props.stage === 'idea' ? 'Collect the next useful idea.' : props.stage === 'planned' ? 'Plan your next task.' : props.stage === 'running' ? 'Active work appears here.' : 'Completed and archived work appears here.'}</p> : null}</div></section>;
 }

@@ -32,7 +32,7 @@ it('imports native sessions into the database and reads each detail tab only whe
   expect(task.sessionId).toBe(state.id); expect(task.sessionStatus).toBe('running');
   expect(await readProjectTaskDetails(root, task.id)).toMatchObject({ olderThan: '200', messages: [{ id: 'message' }, { id: 'tool' }] });
   expect(workspace.listWorkspaceFiles).not.toHaveBeenCalled(); expect(workspace.readWorkspaceEnvironment).not.toHaveBeenCalled();
-  await readProjectTaskDetails(root, task.id, 'files'); expect(workspace.listWorkspaceFiles).toHaveBeenCalledOnce();
+  await readProjectTaskDetails(root, task.id, 'files'); expect(workspace.listWorkspaceFiles).not.toHaveBeenCalled();
   await readProjectTaskDetails(root, task.id, 'git'); expect(workspace.readWorkspaceGitHistory).toHaveBeenCalledOnce();
 });
 
@@ -53,7 +53,7 @@ it('preserves tasks when discovery fails and reports optional detail failures wi
   await expect(readProjectBoard(root)).rejects.toThrow(/offline/);
   expect(readProjectTasks(root).tasks[0]?.title).toBe('Saved');
   vi.mocked(workspace.listWorkspaceFiles).mockRejectedValueOnce(new Error('Storage busy'));
-  expect(await readProjectTaskDetails(root, 'draft', 'files')).toMatchObject({ warnings: ['Storage busy'], files: [] });
+  expect(await readProjectTaskDetails(root, 'draft', 'files')).toMatchObject({ warnings: [], files: [] });
 });
 
 it('rejects an account-home change during discovery instead of importing the old catalogue into the new identity', async () => {
