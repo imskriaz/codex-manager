@@ -64,7 +64,7 @@ export function readProjectTasks(project: string): { tasks: ProjectTask[]; comme
 export function syncProjectSessions(project: string, home: string, sessions: ProjectBoard['sessions']): void {
   const { store, key } = projectStorage(project);
   const homeKey = projectTaskKey(home), importKey = `${key}:${homeKey}`;
-  const fingerprint = digest(JSON.stringify(sessions.map(session => [session.id, session.title, sessionTaskStage(session), session.status])));
+  const fingerprint = digest(JSON.stringify(sessions.map(session => [session.id, session.title, sessionTaskStage(session), session.status, session.archived === true])));
   const previous = imported.get(store) ?? new Map<string, string>();
   if (previous.get(importKey) === fingerprint) return;
   store.transaction(() => {
@@ -78,9 +78,9 @@ export function syncProjectSessions(project: string, home: string, sessions: Pro
       if (!current && ++count > 30000) throw new Error('Project task storage is full. Saved tasks were preserved.');
       const stage = session.status === 'unknown' && current ? current.stage : sessionTaskStage(session);
       const title = session.title;
-      if (current?.sourceKey === sourceKey && current.title === title && current.stage === stage) continue;
+      if (current?.sourceKey === sourceKey && current.title === title && current.stage === stage && current.sessionArchived === (session.archived === true)) continue;
       const next: ProjectTask = { ...current, id: current?.id ?? `session:${digest(sourceKey).slice(0, 16)}:${session.id}`, title,
-        prompt: current?.prompt ?? '', sessionId: session.id, sourceKey, sourceHome: home, stage, revision: (current?.revision ?? 0) + 1,
+        prompt: current?.prompt ?? '', sessionId: session.id, sourceKey, sourceHome: home, stage, sessionArchived: session.archived === true, revision: (current?.revision ?? 0) + 1,
         createdAt: current?.createdAt ?? Date.now(), updatedAt: Date.now() };
       putTask(store, key, next);
     }
@@ -210,6 +210,6 @@ export function revokeProjectShares(project: string): void {
 }
 export function publicProjectBoard(board: ProjectBoard, share: ProjectShare): unknown {
   const stages = projectTaskStages(board.tasks);
-  return { title: path.basename(board.projectPath), tasks: board.tasks.map(({ id, title, prompt, stage, parentTaskId }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId })),
+  return { title: path.basename(board.projectPath), tasks: board.tasks.map(({ id, title, prompt, stage, parentTaskId, sessionArchived }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId, sessionArchived })),
     comments: share.permissions.includes('comments') ? board.comments : [], permissions: share.permissions, expiresAt: share.expiresAt, updatedAt: board.updatedAt };
 }

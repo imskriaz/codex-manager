@@ -5,6 +5,7 @@ export function noticeFromActionResult(
   automatic = false
 ): DashboardNotice | undefined {
   if (automatic) return undefined;
+  if (message.action === 'getCodexCliSessionMessages' && message.status === 'failed' && isMissingCliSessionError(message.error ?? '')) return undefined;
   if (message.action === "getDailyUsage" || message.action === "getUsageGraph" || message.action === "listCodexCliSessions") return undefined;
   if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(message.action) &&
     message.error?.startsWith("Session Integration is disabled.")) return undefined;
@@ -32,6 +33,7 @@ export function noticeFromActionResult(
   }
 
   if (message.payload?.notice) {
+    if (message.payload.notice.message.startsWith('The session action completed, but the session list could not refresh:')) return undefined;
     if (["listCodexCliSessions", "getCodexCliSessionMessages"].includes(message.action) &&
       message.payload.notice.message.startsWith("Session history is available, but running state could not be verified.")) return undefined;
     return message.payload.notice;
@@ -57,6 +59,10 @@ export function noticeFromActionResult(
   }
 
   return { level: "info", message: `${formatActionName(message.action)} done.` };
+}
+
+export function isMissingCliSessionError(message: string): boolean {
+  return /(?:session|transcript).*not found/i.test(message) && !/timeout|timed out|offline|unreachable|discovery.*pending/i.test(message);
 }
 
 export function formatSessionReadError(action: DashboardActionName, message: string): string {

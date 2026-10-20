@@ -1,0 +1,122 @@
+# 1.4.3 completion checklist
+
+This checklist preserves the full active release goal and later user requests.
+An unchecked item needs implementation, review, or current verification; it is
+not a claim that the feature is absent. Do not mark the goal complete or publish
+an updated artifact until every release gate is satisfied.
+
+## Repository inventory (2026-10-20)
+
+- One worktree: the current checkout on `main`.
+- No local branches unmerged into `main` at inventory time.
+- The current working diff and new UI checks, renderer and regression tests
+  remain pending delivery.
+- Seven preserved stashes need a semantic audit against current code. Keep them
+  intact; do not apply old version/lockfile changes over the release.
+
+| Stash | Preserved work | Audit status |
+| --- | --- | --- |
+| 0 | Usage graph reads, caches, aggregation, storage, and chart UI | Pending comparison |
+| 1 | 1.2.6 preview, sharing/project bindings, isolation, import, sorting/header | Pending comparison |
+| 2 | Same patch ID as stash 1, preserved after storage cleanup | Duplicate verified; retain intact |
+| 3 | Overlapping 15-file patch preserved during announcement removal | Pending comparison |
+| 4 | SQLite migration, recording, storage, relay, diagnostics, sorting/header | Pending comparison |
+| 5 | Earlier SQLite migration plus sharing/isolation/import work | Pending comparison |
+| 6 | Auto Sync, native recovery, manual scheduling and cross-window coordination | Pending comparison |
+
+All newly exported source symbols from these stashes exist in their current
+files; this is preliminary inventory evidence, not a semantic equivalence proof.
+Also audit preserved untracked snapshots: `dailyTokenUsage.ts` in stash 0;
+`extensionIsolationFailure.test.ts` and `workbenchShutdown.test.ts` in stash 5;
+and `webDashboardPeerDomain.test.ts` in stash 6. These files now exist in the
+checkout and must be compared before declaring the stashes fully covered.
+
+## Session reliability and automation
+
+- [ ] Audit background session/goal/live recording while dashboard and windows
+  are closed; stable discovery and correct titles across devices and reloads.
+- [ ] Verify session messages, metadata, goals and renames without blocking native
+  app work, retaining newer writes and bounded read/cache resources.
+- [ ] Verify real continuation after recovery, excluding archived, completed,
+  child, blocked/budget-limited and explicitly paused work.
+- [ ] Verify capacity errors as standalone events and completion payloads; keep
+  interruption-paused goals durable through capture and restart; prevent
+  duplicate starts while a native owner is still active.
+- [ ] Verify per-session Auto Resume and global-default behavior in the flyout,
+  including the requested enable/disable defaults and per-session overrides.
+- [ ] Verify free numeric queue priority selection, equal-priority groups, active-work waits,
+  run-until-finished semantics, durable claims and uncertain-outcome handling.
+- [ ] Verify account Auto Queue, scoped auto-reset overrides, credit/ownership
+  checks, account switching, cancellation and native restart recovery.
+- [ ] Verify composer sending, draft preservation and terminal project fallback.
+
+## Dashboard and event-driven updates
+
+- [x] Include API access and Kanban enabled settings in the dashboard state
+  signature so changes also push reliably to other open dashboard clients.
+- [ ] Verify settings tabs stay one row; narrow screens use the active label and
+  other icons. Verify About links and all navigation remain compact/readable.
+- [ ] Verify settings and stacked dialogs do not steal typing focus during
+  background updates, preserve keyboard navigation and restore focus on close.
+- [ ] Replace avoidable UI polling with state/file/live/reconnect/focus events;
+  finish auditing remaining maintenance, public-share and server reconciliation
+  loops. Preserve timeout/cancellation and required automation schedules.
+- [ ] Verify removal of unnecessary pulse/transition effects.
+- [ ] Verify pinned account footer, system switching/remote identity, compact
+  sidebar, separate tool context bar, queue menu placement and title actions.
+- [ ] Verify distinct Sync and Refresh icons throughout the dashboard.
+- [ ] Suppress the requested stale refresh/history notices and retire confirmed
+  missing sessions without losing drafts or hiding transient errors.
+- [ ] Verify donation links and USD 11 suggestion.
+- [ ] Verify manual OAuth URL submission alongside a pending automatic listener,
+  duplicate clicks, listener failure, retry, cancellation and stale results.
+- [ ] Prefix browser and background push titles with the originating system;
+  preserve session subjects and system identity in notification action results.
+
+## Project task management and sharing
+
+- [ ] Verify Idea, Planned, Running, Completed and separate Archive; DB tasks,
+  sessions as tasks/subtasks, arbitrary hierarchy, moving back to board, cycle
+  checks, search and cross-project/system boundaries.
+- [ ] Verify drag/drop from sidebar, within board and onto parent tasks; expose
+  understandable outcomes where activity determines a session's column.
+- [ ] Verify right task panel, combined Activities, comments, conversation-shared
+  files (not a project tree), recorded changes and Git history with live updates.
+- [ ] Verify public project permission modal, shared features, submissions,
+  comments, expiry, revocation, embedding and server-side authorization.
+- [ ] Verify public board/task rendering matches rich workspace presentation.
+
+## API and offline safety
+
+- [ ] Verify API off/Kanban on defaults, multiple named token table, separate
+  create modal, all/selected project checkbox scopes, Check All then individual
+  permission exclusions, revocation, explorer and HTTP testing.
+- [ ] Verify every granted operation and scoped result, cross-project/system
+  denial, invalid/expired tokens and data-exposure boundaries.
+- [ ] Verify offline shell reload and browser read caches; reconnect ordering,
+  duplicate/idempotent sync, revision conflicts and bounded storage.
+- [ ] Queue only task drafts/comments; disable execution, account, file, Git,
+  token and sharing mutations offline; retain unsynced work on storage failure.
+
+## Edge cases and release gates
+
+Current verified evidence for this work slice: 174 test files / 2,057 tests pass;
+lint reports warnings with zero errors; both TypeScript checks and VSIX
+dependency layout checks pass. The six-size responsive run and desktop/mobile
+public share run passed. A final responsive repeat additionally checks token
+creation and unavailable clipboard handling. Real cross-PC and phone delivery
+still need verification. These results do not close the unchecked audit items.
+
+- [ ] Audit normal, offline, stale, missing, partial, reconnect, retry, duplicate,
+  queue-full, storage-full, reboot, timeout and failure paths for changes.
+- [ ] Run focused regressions after implementation, then the full regression
+  suite; fix failures without weakening behavior checks.
+- [ ] Run lint and both TypeScript checks. Review all intended diffs.
+- [ ] Run read-only local dashboard, responsive, public UI, console and timing
+  smoke checks; record any unavailable real-device/cross-PC verification.
+- [ ] Consolidate CHANGELOG/README/features/SEO under the requested 1.4.3 version;
+  keep package and lockfile synchronized and omit personal deployment details.
+- [ ] Build verified VSIX; install as previously requested; commit intended files
+  on main and push. Report any required step that fails.
+- [ ] Publish/update the authorized 1.4.3 GitHub Release with the verified VSIX;
+  verify the release/tag/artifact match the delivered commit.

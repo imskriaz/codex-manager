@@ -77,6 +77,14 @@ function createState(overrides?: {
 }
 
 describe("buildDashboardStateSignature", () => {
+  it.each(["apiAccessEnabled", "taskBoardEnabled"] as const)("publishes %s changes to other open clients", key => {
+    const state = createState();
+    const before = buildDashboardStateSignature(state);
+    state.settings[key] = key === "apiAccessEnabled";
+    expect(buildDashboardStateSignature(state)).not.toBe(before);
+    state.settings[key] = key !== "apiAccessEnabled";
+    expect(buildDashboardStateSignature(state)).toBe(before);
+  });
   it("publishes changes to the automatic token history gap", () => {
     const state = createState();
     const before = buildDashboardStateSignature(state);

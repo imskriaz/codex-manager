@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatSessionReadError, noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
+import { formatSessionReadError, isMissingCliSessionError, noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
   it("keeps list failures and cancellations in the session view instead of duplicating technical toasts", () => {
@@ -32,8 +32,13 @@ describe("dashboard action feedback", () => {
         error: "The session transcript was not found on this PC.", payload: { notice: { level: "warning", message: "Technical inspection failed" } } }, true)).toBeUndefined();
     }
     expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "manual", action: "getCodexCliSessionMessages", status: "failed",
-      error: "The session transcript was not found on this PC." })?.message).toBe("This conversation is unavailable. Refresh the session list or choose another conversation.");
+      error: "The session transcript was not found on this PC." })).toBeUndefined();
     expect(formatSessionReadError("getCodexCliSessionMessages", "Permission denied.")).toBe("Permission denied.");
+  });
+  it('evicts only confirmed missing conversations while preserving transient read failures', () => {
+    expect(isMissingCliSessionError('This session was not found.')).toBe(true);
+    for (const error of ['Permission denied.', 'Session discovery is still pending.', 'Session transcript not found while offline.', 'Session read timed out.']) expect(isMissingCliSessionError(error)).toBe(false);
+    expect(noticeFromActionResult({ type: 'dashboard:action-result', requestId: 'rename', action: 'renameCodexCliSession', status: 'completed', payload: { notice: { level: 'warning', message: 'The session action completed, but the session list could not refresh: Session discovery is still pending.' } } })).toBeUndefined();
   });
   it("does not duplicate embedded turn completion with an internal CLI action-name toast", () => {
     expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "turn", action: "sendCodexCliSessionMessage", status: "completed" })).toBeUndefined();

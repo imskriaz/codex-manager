@@ -462,7 +462,7 @@ export function persistOpenCodexSessions(
     try {
       const discovered = normalizeIds(await bounded(() => readOpenParents(controller.signal), OPERATION_TIMEOUT_MS,
         "Open Codex session discovery did not respond within 30 seconds. Saved tabs will retry later.", controller.signal));
-      const ids = await bounded(() => filterAutoResumeGoalSessionIds(discovered, undefined, controller.signal), deadline - Date.now(),
+      const ids = await bounded(() => filterAutoResumeGoalSessionIds(discovered, undefined, controller.signal, goalOnly, true), deadline - Date.now(),
         "Auto Resume could not verify goals before saving open tabs.", controller.signal);
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Saved tabs were retained for retry.");
       if (!isAutoResumeAvailable()) {

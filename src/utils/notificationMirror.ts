@@ -9,6 +9,7 @@ export interface MirroredNotification {
   level: MirroredNotificationLevel;
   /** Optional human-readable subject used as the browser push title. */
   title?: string;
+  systemName?: string;
   message: string;
   actions?: string[];
 }

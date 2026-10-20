@@ -14,21 +14,25 @@
 
 - Add project Kanban with **Idea, Planned, Running, Completed**, enabled by default. Store custom tasks, discovered sessions, and comments in indexed Manager SQLite tables with revision checks and idempotent retries.
 - Organize sessions and custom tasks as nested subtasks at any level, or move them back to the board. Preserve session identity and history; grouped sessions appear once. Reject cycles, cross-project parents, missing tasks, and conflicting edits.
-- Open task details for messages, activities, project files, recorded changes, and Git history. Read tabs on demand, keep history pages bounded, preserve saved views when refreshes fail, and push committed task/comment updates to connected dashboards.
+- Open task details in a right panel for combined Activities, conversation files, recorded changes, and Git history. Keep archived sessions in a separate Archive view. Read tabs on demand, keep history pages bounded, preserve saved views when refreshes fail, and push committed task/comment updates to connected dashboards.
 - Create expiring public project links with selectable message, activity, file, change, Git, comment, and submission permissions. Visitors can submit ideas and comment when allowed. Revoke project links and enforce permissions on the server. A separate embedding permission enables iframe integration with the same access rules.
 
 ### API and offline behavior
 
-- Add optional dashboard API access, off by default. Manage multiple named tokens in a table, scope them to one project or all projects, grant selected operation permissions, revoke individual tokens, browse operations, and test requests in the browser dashboard. Store token hashes and filter project-scoped results.
+- Add optional dashboard API access, off by default. Manage multiple named tokens in a compact table with a separate creation modal, scope them to selected projects or all projects, check all permissions and uncheck individual operations, revoke tokens, browse operations, and test requests in the browser dashboard. Store token hashes and filter every scoped request and result.
 - Cache the data-free browser shell and bounded saved read views for offline reload. Reconcile task drafts and comments on reconnect with stable request IDs and visible conflict review. Preserve unsynced outbox entries when storage fills; never silently evict them.
 - Disable live-only actions offline. Session execution, terminal commands, filesystem and Git mutations, account changes, tokens, and public links are never queued for later execution.
 
 ### Dashboard and account automation
 
 - Keep Settings tabs in one row. On narrow screens, show the active label and other tabs as icons. Compact task, account, API, notification, and Running Sessions surfaces, with bounded columns and ellipsized titles.
-- Keep the session-list refresh warning toast-only. Remove the expanded daily-usage error block and redundant notification instructions while retaining actionable failures and retries.
+- Suppress the redundant post-action session-refresh notice and live-history display-limit banner. Remove confirmed missing conversations from the browser list/cache while retaining drafts and transient read failures.
+- Stop hidden task-view polling, avoid unchanged board/detail cache writes and rerenders, load static detail tabs on demand, and cache unchanged native title indexes. Preserve fast live activity refresh and offline drafts.
+- Pin the sidebar account footer, separate identity/system selection from compact navigation, keep the system switcher visible, and remove the redundant Live badge. Reuse rich workspace messages in public shares with permission checks for conversation files.
 - Improve account Auto Queue ordering and credential checks. Add **Allow auto reset** per account: after all eligible accounts exhaust weekly quota, opted-in accounts can reset even with global Auto Reset off. Auto Switch, ownership, fresh quota, valid credits, and uncertain-outcome checks still apply; selection prefers the largest reserve, then earliest expiry.
 - Open donation links in the requesting browser and use USD 11 as the suggested amount.
+- Allow manual OAuth callback submission while the automatic listener waits, retain duplicate-submit protection after listener failures, and keep interruption-paused capacity goals in recovery snapshots.
+- Prefix browser push titles with the originating system name and preserve session subjects in mobile notifications. Refresh task/session views from state, live, reconnect and focus events instead of independent browser polling; load System Log on demand and avoid refocusing dialogs during background renders.
 
 ## 1.4.1
 

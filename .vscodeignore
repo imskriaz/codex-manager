@@ -45,3 +45,5 @@ tools/check-usage-ui.mjs
 tools/check-session-continue-ui.mjs
 
 tools/check-task-ui.mjs
+tools/check-public-ui.mjs
+RELEASE-1.4.3-PENDING.md

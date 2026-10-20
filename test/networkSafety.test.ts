@@ -29,18 +29,18 @@ describe("provider network safety", () => {
 
   it("holds later requests until a provider Retry-After cooldown expires", async () => {
     vi.resetModules();
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("limited", { status: 429, headers: { "Retry-After": "0.4" } }))
-      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    const starts: number[] = [];
+    const fetchMock = vi.fn(async () => {
+      starts.push(Date.now());
+      return starts.length === 1 ? new Response('limited', { status: 429, headers: { 'Retry-After': '0.4' } }) : new Response('ok', { status: 200 });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const { fetchWithTimeout } = await import("../src/utils/network");
 
     await fetchWithTimeout("https://example.test/first");
-    const startedAt = Date.now();
     await fetchWithTimeout("https://example.test/second");
 
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(350);
+    expect(starts[1]! - starts[0]!).toBeGreaterThanOrEqual(350);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

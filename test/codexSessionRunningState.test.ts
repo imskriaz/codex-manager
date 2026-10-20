@@ -25,7 +25,7 @@ vi.mock("child_process", async (original) => {
   } };
 });
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.openRpc }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexCliSessions, readCodexCliSessionSummary, readQuotaInterruptedCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
+import { getCodexSessionReadNotice, onDidInspectRunningCodexSessions, readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessages, readQuotaInterruptedCodexSessionIds, readRecentRunningCodexSessionIds, readRunningCodexSessionIds } from "../src/services/codexSessionResume";
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
 import { getNativeCodexSessionRunning, readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 
@@ -352,6 +352,21 @@ describe("shared running-session detection and auto resume", () => {
   it.each([null, false, ""])("does not retain successful completion with an empty error %j", async error => {
     await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "turn-1", error } }) + "\n");
     expect(await select([id])).toEqual([]);
+  });
+
+  it.each(["error", "task_complete"])("recognizes a standalone %s capacity message without a nested error", async type => {
+    await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type, turn_id: "turn-1", message: "Selected model is at capacity. Please try a different model." } }) + "\n");
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: true });
+    expect(await select([id])).toEqual([id]);
+    await appendFile(transcript, event("task_started", "new-turn") + event("task_complete", "new-turn"));
+    expect(await select([id])).toEqual([]);
+  });
+
+  it.each(["error", "turn/completed"])("shows and retains a top-level %s capacity error", async type => {
+    await appendFile(transcript, JSON.stringify({ type, turn_id: "turn-1", error: { message: "Selected model is at capacity. Please try a different model." } }) + "\n");
+    expect(await readCodexCliSessionSummary(id, home)).toMatchObject({ status: "idle", interrupted: true });
+    expect(await select([id])).toEqual([id]);
+    expect(await readCodexCliSessionMessages(id, home)).toContainEqual(expect.objectContaining({ kind: "error", title: "Model at capacity", status: "failed" }));
   });
 
   it("retains top-level completion errors without mistaking quoted errors for failures", async () => {

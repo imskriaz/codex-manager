@@ -76,7 +76,7 @@ import { DonationDetails } from "./donationDetails";
 import { ModalShell, useModalAccessibility } from "./primitives";
 import { onboardingFailureMessage } from "./onboardingFeedback";
 import { classifyCliSessionListResult } from "./cliSessionListResult";
-import { formatSessionReadError } from "./actionFeedback";
+import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedback";
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
@@ -97,6 +97,7 @@ import {
 } from "./cliSessionCache";
 import { clampWebviewZoom, nextWebviewZoom } from "./webviewZoom";
 import { TaskBoard } from "./taskBoard";
+import { initializePublicMessages } from './publicMessages';
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 const USAGE_HISTORY_STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
@@ -282,7 +283,7 @@ function App() {
   const showCliSessionFeedback = useCallback((feedback: CliSessionFeedback): void => {
     // These updates are already visible in their panel and were causing a
     // stream of stacked toasts while the workspace refreshed in the background.
-    if (feedback.message.startsWith("The session action completed, but the session list could not refresh:")) { noticeControllerRef.current?.show(feedback); return; }
+    if (feedback.message.startsWith("The session action completed, but the session list could not refresh:")) return;
     if (feedback.level === "info") return;
     setCliSessionFeedback(feedback);
   }, []);
@@ -345,7 +346,8 @@ function App() {
       const show = () => {
         if (browserPushGenerationRef.current !== generation || Notification.permission !== "granted") return;
         try {
-          const notification = new Notification("Codex Manager", {
+          const systemName = notice.systemName?.trim() || state.snapshot?.connectedPeers?.find(peer => peer.id === selectedPeerId || selectedPeerId === "local" && peer.local)?.name || (selectedPeerId === "local" ? "This system" : "Remote system");
+          const notification = new Notification(`${systemName} · Codex Manager`, {
             body: notice.message,
             tag: `codex-manager-${notice.notificationId ?? notice.level}`
           });
@@ -368,7 +370,7 @@ function App() {
       if (Notification.permission === "denied") return;
       // Notification permission is requested only by the explicit settings control.
     },
-    [closeBrowserPush, isBrowserDashboard]
+    [closeBrowserPush, isBrowserDashboard, selectedPeerId, state.snapshot?.connectedPeers]
   );
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const logDownloadRequestRef = useRef<string>();
@@ -503,8 +505,7 @@ function App() {
   useEffect(() => {
     if (!logConsoleOpen) return;
     refreshLogConsole();
-    const timer = setInterval(refreshLogConsole, 2_000);
-    return () => { clearInterval(timer); logConsoleRequestRef.current = undefined; };
+    return () => { logConsoleRequestRef.current = undefined; };
   }, [logConsoleOpen, refreshLogConsole]);
   useEffect(() => {
     setLogConsoleRecords([]); setLogConsoleError(undefined); setLogConsoleLimited(false);
@@ -925,6 +926,14 @@ function App() {
               level: "warning",
               message: "This session is archived. Restore it below to continue the conversation."
             });
+          } else if (requestedTarget && isMissingCliSessionError(error)) {
+            const remaining = cliSessionsRef.current.filter(session => !sameCliSessionTarget(session, requestedTarget));
+            setCliSessions(remaining);
+            void invalidateCliSessionCache(requestedTarget.id, requestedTarget.deviceId);
+            void writeCliSessionListCache({ sessions: remaining, composerConfig: cliComposerConfig });
+            selectedCliSessionRef.current = undefined;
+            setSelectedCliSession(undefined); setCliSessionMessages([]); setCliSessionMessagesError(undefined);
+            navigateDashboardPath('/workspace', setBrowserPath);
           } else {
             setCliSessionMessagesError(formatSessionReadError(message.action, error));
           }
@@ -1198,6 +1207,8 @@ function App() {
         });
         if (message.status === "completed" && message.payload?.cliSessions) {
           const sessions = mergeCachedCliSessions(message.payload.cliSessions, cliSessions);
+          const updated = message.payload.cliSession;
+          if (updated) { const index = sessions.findIndex(session => sameCliSessionTarget(session, updated)); if (index >= 0) sessions[index] = mergeCachedCliSession(updated, sessions[index]); }
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig });
         }
@@ -1306,22 +1317,21 @@ function App() {
   useEffect(() => {
     const session = selectedCliSession;
     if (!session) return;
-    // Filesystem notifications are not guaranteed on every platform or for
-    // every Codex writer. Keep the selected transcript fresh while a turn is
-    // active; requestCliSessionMessages throttles duplicate requests.
+    // Live events and session-list pushes refresh history; focus/reconnect
+    // revalidate it without an independent browser polling loop.
     const refresh = (): void => {
       if (document.visibilityState === "visible" && navigator.onLine) requestCliSessionMessages(session.id, session.deviceId);
     };
-    const timer = window.setInterval(refresh, session.status === "running" ? 2_000 : 5_000);
     const onVisibilityChange = (): void => {
       if (document.visibilityState === "visible") refresh();
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("online", onVisibilityChange);
+    window.addEventListener("focus", onVisibilityChange);
     refresh();
     return () => {
       window.removeEventListener("online", onVisibilityChange);
-      window.clearInterval(timer);
+      window.removeEventListener("focus", onVisibilityChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [requestCliSessionMessages, realtimeConnected, selectedCliSession?.deviceId, selectedCliSession?.id, selectedCliSession?.status]);
@@ -2080,7 +2090,7 @@ function App() {
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
-        {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard
+        {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard active={browserPath === '/tasks'}
           sessions={cliSessions} projects={cliComposerConfig?.projects}
           connected={!isBrowserDashboard || realtimeConnected}
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
@@ -2110,7 +2120,7 @@ function App() {
               </div>
             </div>
             <div class="hero-settings">
-              {selectedPeer && pcOptions.length > 1 ? (
+              {selectedPeer ? (
                 <PcPickerControl
                   peers={pcOptions}
                   accountsByPeerId={Object.fromEntries(
@@ -2136,12 +2146,6 @@ function App() {
                   }}
                   onOpenBrowser={!isBrowserDashboard ? () => sendAction("openWebDashboard") : undefined}
                 />
-              ) : null}
-              {isBrowserDashboard && realtimeConnected ? (
-                <span class="dashboard-live-status" role="status" title="Live updates are active">
-                  <span aria-hidden="true"></span>
-                  Live
-                </span>
               ) : null}
               {snapshot.settings.cliIntegrationEnabled === true ? (
                 <CliSessionsMenu
@@ -2619,7 +2623,7 @@ function App() {
       />
 
       <ModalShell open={logConsoleOpen} title="System Log" closeLabel={snapshot.copy.closeModal} onClose={() => setLogConsoleOpen(false)} className="log-console-modal">
-        <div class="settings-note">Recent redacted logs refresh every 2 seconds while open.</div>
+        <div class="settings-note">Recent redacted logs load when opened. Use Refresh to query again.</div>
         {logConsoleError && <div role="status" class="settings-note">{logConsoleError}</div>}
         {logConsoleLimited && <div class="settings-note">Showing up to 1,000 recent records; older logs exceed the display limit.</div>}
         <SystemLogConsole records={logConsoleRecords} loading={isActionPending("viewLogs")} emptyMessage={logConsoleError && !logConsoleRecords.length ? "No records loaded." : undefined} />
@@ -2682,7 +2686,7 @@ function App() {
         enabled={snapshot.settings.apiAccessEnabled === true}
         pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken") || isActionPending("listApiTokens")}
         onClose={() => setApiTokenOpen(false)}
-        onGenerate={(name, projectPath, permissions) => sendAction('generateApiToken', undefined, { tokenName: name, projectPath, tokenPermissions: permissions, targetDeviceId: undefined })}
+        onGenerate={(name, projectPaths, permissions) => sendAction('generateApiToken', undefined, { tokenName: name, tokenProjectPaths: projectPaths, tokenPermissions: permissions, targetDeviceId: undefined })}
         onRevoke={tokenId => { sendAction('revokeApiToken', undefined, { tokenId, targetDeviceId: undefined }); }}
       />
 
@@ -2715,6 +2719,7 @@ function App() {
         ? createPortal(
             <CliSessionsPage
               dashboardMode={browserPath === "/" || browserPath === "/tasks"}
+              taskBoardActive={browserPath === '/tasks'}
               taskBoardEnabled={snapshot.settings.taskBoardEnabled !== false}
               onTasks={() => navigateDashboardPath('/tasks', setBrowserPath)}
               onApi={() => setApiTokenOpen(true)}
@@ -2726,7 +2731,7 @@ function App() {
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
               liveStates={cliLiveStates}
-              connected={realtimeConnected && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected)) && (!selectedCliSession || !cliLiveStates[cliSessionTargetKey(selectedCliSession)] || liveAuthority.current.has(cliSessionTargetKey(selectedCliSession)))}
+              connected={realtimeConnected && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected))}
               submissionResults={submissionResults}
               steering={isActionPending("steerCodexCliSessionTurn")}
               composerConfig={cliComposerConfig}
@@ -2863,6 +2868,7 @@ function App() {
                 const requestId = sendAction("sendCodexCliSessionMessage", undefined, {
                   sessionId: selectedCliSession.id,
                   targetDeviceId: selectedCliSession.deviceId,
+                  projectPath: selectedCliSession.projectPath,
                   ...input
                 });
                 if (requestId) turnRequests.current.set(requestId, selectedCliSession);
@@ -3340,9 +3346,7 @@ function CliSessionsMenu(props: {
   useEffect(() => {
     if (!props.open) return;
     setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [props.open]);
+  }, [props.open, props.sessions]);
 
   useEffect(() => {
     if (!props.open) {
@@ -3439,12 +3443,12 @@ function CliSessionsMenu(props: {
                   const offline = session.remote && !props.peers.some(peer => peer.id === session.deviceId && peer.connected);
                   return <article class="cli-sessions-running-row" role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
                     <div class="cli-sessions-running-copy">
-                    <strong class="cli-sessions-running-title">{session.title}</strong>
+                    <button type="button" class="cli-sessions-running-title" disabled={(!running && !props.connected) || props.actionPending || session.status === 'unknown' || offline} aria-label={`${running ? 'View' : 'Resume'} ${session.title} in ${destination}`} title={offline ? 'System offline' : running ? `View in ${destination}` : 'Resume in VS Code'} onClick={() => props.onOpen(session)}>{session.title}</button>
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
                     {running ? <button type="button" class={`cli-icon-button ${props.autoResumeEnabled && session.autoResumeEnabled !== false ? "is-active" : ""}`} aria-pressed={props.autoResumeEnabled && session.autoResumeEnabled !== false} aria-label={`Auto Resume for ${session.title}`} title={!props.autoResumeEnabled ? "Auto Resume is off globally" : session.autoResumeEnabled === false ? "Enable Auto Resume" : "Disable Auto Resume"} disabled={!props.connected || !props.autoResumeEnabled || offline || props.actionPending} onClick={() => props.onAutoResume(session, session.autoResumeEnabled === false)}><AutoResumeIcon enabled={props.autoResumeEnabled && session.autoResumeEnabled !== false} goal={!!session.goal} /></button> : <details class="cli-running-queue"><summary aria-label={`Queue priority for ${session.title}`} title="Queue after other sessions finish"><QueueIcon enabled={session.queueEnabled === true} />{session.queueEnabled ? <small>{session.queuePriority ?? 3}</small> : null}</summary><div class="cli-session-queue-menu"><strong>Run after other work</strong>{session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}{([1,2,3] as const).map(priority => <button type="button" disabled={!props.connected || offline || props.actionPending} aria-pressed={session.queueEnabled && session.queuePriority === priority} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, true, priority); }}>Priority {priority}<small>{priority === 1 ? "First" : priority === 2 ? "Next" : "Last"}</small></button>)}<button type="button" disabled={!props.connected || offline || props.actionPending || !session.queueEnabled} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, false); }}>Remove from queue</button></div></details>}
-                    <button type="button" class="cli-icon-button" disabled={(!running && !props.connected) || props.actionPending || session.status === "unknown" || offline} aria-label={`${running ? "View" : "Resume"} ${session.title} in ${destination}`} title={offline ? "System offline" : session.status === "unknown" ? "Refresh to verify this session" : running ? `View in ${destination}` : "Resume in VS Code"} onClick={() => props.onOpen(session)}>{running ? <EyeIcon /> : <span aria-hidden="true">↻</span>}</button></div>
+                    </div>
                   </article>;
                 })}
               </div>
@@ -3533,7 +3537,8 @@ function resolveAboutTitle(lang: string): string {
   return "About";
 }
 
-render(<App />, document.getElementById("app")!);
+if (document.getElementById('project-share') || document.getElementById('conversation')) initializePublicMessages();
+else render(<App />, document.getElementById("app")!);
 
 function downloadInBrowser(file: { filename: string; text: string }): void {
   const url = URL.createObjectURL(new Blob([file.text], { type: "application/json" }));

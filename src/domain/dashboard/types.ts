@@ -633,6 +633,7 @@ export interface DashboardActionPayload {
   tokenId?: string;
   tokenName?: string;
   tokenPermissions?: string[];
+  tokenProjectPaths?: string[];
   task?: import('../projectTasks').ProjectTaskMutation;
   taskId?: string;
   taskRevision?: number;
@@ -1016,6 +1017,7 @@ export type DashboardActionPrompt =
 export interface DashboardNotice {
   level: "info" | "warning" | "error";
   message: string;
+  systemName?: string;
   notificationId?: string;
   actions?: string[];
 }

@@ -41,11 +41,7 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
     };
   }, [open]);
 
-  useLayoutEffect(() => {
-    if (open && document.activeElement === document.body) modalRef.current?.focus({ preventScroll: true });
-  });
-
-  const onKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLDivElement>): void => {
+  const onKeyDown = (event: KeyboardEvent): void => {
     event.stopPropagation();
     if (event.key === "Escape") {
       event.preventDefault();
@@ -79,6 +75,20 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
       first.focus();
     }
   };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    // Removed or disabled controls can leave focus on body. Route keys to the
+    // top dialog without refocusing it on every background render.
+    const route = (event: KeyboardEvent) => {
+      const modal = modalRef.current;
+      if (!modal || modal.contains(event.target as Node)) return;
+      const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')).filter(dialog => dialog.getClientRects().length > 0);
+      if (dialogs.at(-1) === modal) onKeyDown(event);
+    };
+    document.addEventListener("keydown", route, true);
+    return () => document.removeEventListener("keydown", route, true);
+  }, [open]);
 
   const onBackdropPointerDown = (event: JSX.TargetedPointerEvent<HTMLDivElement>): void => {
     backdropPressedRef.current = event.target === event.currentTarget;
@@ -138,6 +148,22 @@ export function ActionButton(props: {
   );
 }
 
+export function TaskDetailPanel(props: { open: boolean; title: string; onClose: () => void; children: ComponentChildren }) {
+  const ref = useRef<HTMLElement>(null);
+  const closeRef = useRef(props.onClose); closeRef.current = props.onClose;
+  useLayoutEffect(() => {
+    if (!props.open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    ref.current?.focus({ preventScroll: true });
+    return () => { if (previous?.isConnected && (document.activeElement === document.body || ref.current?.contains(document.activeElement))) previous.focus({ preventScroll: true }); };
+  }, [props.open]);
+  if (!props.open) return null;
+  return <aside ref={ref} class="task-detail-panel task-detail-modal" aria-label={props.title} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); closeRef.current(); } }}>
+    <header class="settings-modal-head"><strong class="settings-modal-title">{props.title}</strong><button type="button" class="settings-close" aria-label="Close task details" onClick={props.onClose}>×</button></header>
+    <div class="task-detail-panel-body">{props.children}</div>
+  </aside>;
+}
+
 export function ModalShell(props: {
   open: boolean;
   title: string;
@@ -148,6 +174,7 @@ export function ModalShell(props: {
   children: ComponentChildren;
 }) {
   const accessibility = useModalAccessibility(props.open, props.onClose);
+  if (!props.open) return null;
 
   return (
     <div

@@ -75,3 +75,15 @@ it('keeps the runtime explorer and HTTP validation catalogue in sync with every 
   const names = [...declaration.matchAll(/"([^"]+)"/g)].map(match => match[1]);
   expect([...new Set(DASHBOARD_API_ACTIONS)].sort()).toEqual(names.sort());
 });
+
+it('enforces multiple project scopes on actions, settings and refreshed results', async () => {
+  const { record, token } = await createDashboardApiToken(context, { name: 'Two projects', projectPaths: [process.cwd(), root], permissions: ['state', 'getProjectBoard'] });
+  expect((await readDashboardApiToken(context, token))?.projectPaths).toEqual([process.cwd(), root]);
+  await expect(authorizeApiMessage(record, message('getProjectBoard'))).rejects.toThrow(/Choose a projectPath/);
+  await expect(authorizeApiMessage(record, message('getProjectBoard', { projectPath: process.cwd() }))).resolves.toMatchObject({ payload: { projectPath: process.cwd() } });
+  await expect(authorizeApiMessage(record, message('getProjectBoard', { projectPath: '/not-granted' }))).rejects.toThrow(/another project/);
+  await expect(authorizeApiMessage({ ...record, permissions: ['*'] }, { type: 'dashboard:setting', key: 'apiAccessEnabled', value: false })).rejects.toThrow(/global settings/);
+  const result = scopeApiResults(record, [{ type: 'dashboard:action-result', requestId: 'list', action: 'listCodexCliSessions', status: 'completed', payload: { cliSessions: [process.cwd(), root, '/not-granted'].map((projectPath, index) => ({ id: String(index), title: 'Task', status: 'idle', projectPath })) } }]);
+  expect((result[0] as Extract<DashboardHostMessage, { type: 'dashboard:action-result' }>).payload?.cliSessions).toHaveLength(2);
+  await expect(createDashboardApiToken(context, { name: 'Invalid', projectPaths: [], permissions: ['state'] })).rejects.toThrow(/project folders/);
+});

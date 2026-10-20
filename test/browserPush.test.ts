@@ -1,4 +1,5 @@
 import { createECDH, randomBytes } from "node:crypto";
+import { hostname } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const send = vi.hoisted(() => vi.fn());
 vi.mock("web-push", async (original) => {
@@ -120,14 +121,23 @@ describe("persistent browser push", () => {
     service.notify({ level: "info", title: "Fix SMS end to end", message: "Session completed. Open the dashboard to review the turn." });
     await settle();
     const payload = JSON.parse(send.mock.calls[0]![1]);
-    expect(payload.title).toBe("Fix SMS end to end");
+    expect(payload.title).toBe(`${hostname()} · Fix SMS end to end`);
     expect(payload.body).toContain("Session completed");
   });
   it("uses the first recovered title for an auto-resume push", async () => {
     await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
     service.notify({ level: "info", message: "Auto resume reopened 1 running VS Code Codex session: “Fix SMS end to end”." });
     await settle();
-    expect(JSON.parse(send.mock.calls[0]![1]).title).toBe("Fix SMS end to end");
+    expect(JSON.parse(send.mock.calls[0]![1]).title).toBe(`${hostname()} · Fix SMS end to end`);
+  });
+  it("prefixes a remote system without replacing it with the relay host", async () => {
+    await service.subscribe(subscription(), "phone", "https://dashboard.example", password);
+    service.notify({ level: "error", title: "Build task", systemName: "Worker Two", message: "Session failed" });
+    await settle();
+    expect(JSON.parse(send.mock.calls[0]![1]).title).toBe("Worker Two · Build task");
+    send.mockClear();
+    await service.sendTest();
+    expect(JSON.parse(send.mock.calls[0]![1]).title).toBe(`${hostname()} · Codex Manager`);
   });
   it("rejects arbitrary endpoints, private hosts, credentials, and malformed keys", () => {
     const valid = subscription();

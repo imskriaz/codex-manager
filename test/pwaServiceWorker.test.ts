@@ -38,6 +38,13 @@ function createWorker(fetchMock: (request: { url: string }) => Promise<Response>
 }
 
 describe("browser PWA cache boundary", () => {
+  it("displays the originating system and subject from the push payload", async () => {
+    const worker = createWorker(async () => new Response("{}"));
+    let work: Promise<unknown> | undefined;
+    worker.handlers.get("push")?.({ data: { json: () => ({ title: "Worker Two · Build task", body: "Session failed" }) }, waitUntil: promise => { work = promise; } });
+    await work;
+    expect(worker.self.registration.showNotification).toHaveBeenCalledWith("Worker Two · Build task", expect.objectContaining({ body: "Session failed", data: expect.objectContaining({ title: "Worker Two · Build task" }) }));
+  });
   it("returns live assets despite unavailable or full cache storage", async () => {
     const worker = createWorker(async () => new Response("live-css", { headers: { "content-type": "text/css" } }));
     worker.caches.match.mockRejectedValueOnce(new Error("Storage disabled"));

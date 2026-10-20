@@ -13,7 +13,7 @@ It is an independent, community project. It is not an official OpenAI product.
 | Sessions and goals | See all running parent sessions across projects and PCs, keep list order stable, inspect transcripts, view native goals above the composer, start/stop/fork turns, and continue from another VS Code window. |
 | Remote dashboard | Open the password-protected dashboard from any desktop or mobile browser through HTTPS and Cloudflare Tunnel. Live WebSocket updates, PC labels, session counts, account claims, and remote actions stay in one interface. |
 | Sync and claims | Authenticate peer connections, sync encrypted account state, reserve only the current account on a PC, and show which PC owns a claim. VS Code Settings Sync remains the durable fallback. |
-| Notifications and PWA | Subscribe per device to major switches, reloads, failures, and completed sessions; send a delivery test; install the dashboard as a PWA; and recover to an offline shell while the host is unavailable. |
+| Notifications and PWA | Receive major switches, reloads, failures, and completed sessions with the source system name; send a delivery test; install the dashboard as a PWA; and recover to an offline shell while the host is unavailable. |
 | Sharing and workspace | Create expiring read-only conversation links, browse project files, review Git changes, run project terminals, and keep actions visibly successful, cancelled, or failed. |
 | Project task management | Plan ideas and tasks, organize sessions as nested subtasks, follow live activity, review files and Git history, and share a project with feature permissions and optional embedding. |
 | Dashboard API | Create multiple named API tokens, restrict projects and operations, revoke access, explore actions, and test requests. API access is off by default. |
@@ -195,6 +195,8 @@ Browser conversations show the saved native Codex goal above the composer, inclu
 
 In the browser dashboard, open General settings and choose **Enable notifications** on each device. Major account changes, warnings, failures, completed sessions, and available notification actions use background Web Push. Delivery requires the dashboard host and network to be available; subscriptions are local to that host and expire after 30 days unless renewed. Logging out revokes that login's subscriptions.
 
+Notification titles start with the originating system name. Session notifications also keep the conversation title, so notifications from multiple systems are easy to distinguish.
+
 Use **Install app** where available, or your browser's **Add to Home Screen** option. On iPhone and iPad, open the installed Home Screen app before enabling notifications. The offline recovery screen reconnects automatically after a host restart. Saved read views remain available offline after a successful visit. Live actions require an authenticated connection; notifications never automatically repeat an uncertain action.
 
 Browser notification setup appears when an unsubscribed device opens the HTTPS dashboard. Choose **Enable notifications**, then allow the browser permission prompt. You can also use **Settings → General → Browser notifications**. Major Codex Manager notices in VS Code, including account switches and reloads, are mirrored to subscribed devices; delivery attempts run in parallel and are drained before managed reloads.
@@ -227,25 +229,25 @@ Browser Share creates an explicit read-only snapshot link. Anyone with its token
 
 Each discovered parent session has one database task. Create custom tasks or ideas without starting Codex. In a task, choose **Parent task** and **Move under task** to group it beneath another task or session; **Move to board** makes it standalone again. Use **Subtask** to create work directly beneath a parent. Moving a task preserves its native session and transcript. Child agents remain session activity. Running descendants mark their parent as running; idle work alone does not complete a task.
 
-Open a task or subtask for **Messages**, **Activities**, **Files**, **Changes**, and **Git history**. Activities include tool calls, command output, reasoning, and provider failures. Older transcript pages remain reachable without loading an entire conversation at once. Files and Git show project state; recorded edits belong to the selected session. Comments support offline drafting. **Start in Codex** runs a saved Planned task and attaches its session as a subtask; an unconfirmed start requires review before another attempt.
+Open a task or subtask in the right panel for **Activities**, **Files**, **Changes**, and **Git history**. Activities combine messages, tool calls, command output, reasoning, and provider failures. Older transcript pages remain reachable without loading an entire conversation at once. Files lists conversation files; Changes and Git show repository state. Archived sessions are available in the separate **Archive** view. Comments support offline drafting. **Start in Codex** runs a saved Planned task and attaches its session as a subtask; an unconfirmed start requires review before another attempt.
 
 In the **Running Sessions** flyout, use the Auto Resume icon beside running sessions and the queue icon beside interrupted sessions. Global Auto Resume off makes every effective session switch off. Queue priorities run in ascending order; equal priorities start together in groups of up to eight once other work finishes. Unknown activity or an unconfirmed queue start waits for verification. Explicitly paused goals stay paused. Recording and scheduling run in the extension host even when no dashboard window is open; VS Code must remain running.
 
 ### Public projects and embedding
 
-Choose **Share project** to open the permission modal. Task titles, prompts, stages, and subtask structure are shared by the link. Choose whether visitors may read messages, activities, project files, changes, and Git history, add comments, or submit ideas. Links expire after 1, 7, or 30 days. **Revoke all project links** disables every link for that project. Server checks apply to direct API requests as well as the visible controls.
+Choose **Share project** to open the permission modal. Task titles, prompts, stages, and subtask structure are shared by the link. Choose whether visitors may read messages, activities, conversation files, changes, and Git history, add comments, or submit ideas. Public views use the workspace message renderer and open task details in a right panel. Links expire after 1, 7, or 30 days. **Revoke all project links** disables every link for that project. Server checks apply to direct API requests as well as the visible controls.
 
 **Allow embedding** is separate and off by default. Enable it when creating a link to receive iframe code for another website. Embedded views have exactly the link's feature permissions and expiry. Shared links never grant account, terminal, session execution, or token administration access.
 
 ### API tokens, scopes, and requests
 
-Enable **Dashboard API** in Settings, then open **API** from the account center or dashboard. The token table supports up to 32 named tokens. Choose all projects or an existing project folder and select operation permissions. Copy a newly created token immediately; only its hash is saved. Revoke individual tokens when access is no longer needed. Turning API access off disables every bearer token.
+Enable **Dashboard API** in Settings, then open **API** from the account center or dashboard. The token table supports up to 32 named tokens. Open **Create token** to choose all projects or check up to 32 existing project folders and select operation permissions. **Check all permissions** checks individual operations so you can uncheck any afterward. Copy a newly created token immediately; only its hash is saved. Revoke individual tokens when access is no longer needed. Turning API access off disables every bearer token.
 
 Use **Explorer** for the action catalogue and **Test** in the browser dashboard to send a request once. Reads and writes use the existing dashboard operations and their validation/confirmation requirements. Project tokens can access only their project's sessions and workspace; account administration, global settings, remote-system targets, and global terminal operations require an all-project token with the corresponding permission.
 
 | Endpoint | Permission and behavior |
 | --- | --- |
-| `GET /api/state` | `state`; returns the dashboard, or only the token's scoped project. |
+| `GET /api/state` | `state`; returns the dashboard, or only a scoped project. Multi-project tokens require `?projectPath=` with a granted folder. |
 | `GET /api/schema` | Returns the token's permitted operation catalogue. |
 | `POST /api/message` | Requires permission for the requested action; settings require `settings`. |
 

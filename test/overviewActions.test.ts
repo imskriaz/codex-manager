@@ -34,7 +34,7 @@ describe("overview actions", () => {
     expect(readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8")).toContain('configured ? "Change Password" : "Set Password"');
   });
 
-  it("moves system switching to the dashboard icon and hides it for a single system", () => {
+  it("keeps system switching available from the dashboard icon", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const overview = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
@@ -46,7 +46,7 @@ describe("overview actions", () => {
     expect(main).toContain("Number.isFinite(peer.sessionCount)");
     expect(main).toContain("${disabledLabel}${sessionSummary}");
     expect(main).toContain('class="brand"');
-    expect(main).toContain("selectedPeer && pcOptions.length > 1");
+    expect(main).not.toContain("selectedPeer && pcOptions.length > 1");
     expect(main).toContain('id="codexDashboardButton"');
     expect(main).toContain("dashboard-system-count");
     expect(main).not.toContain("dashboard-pc-picker-trigger");

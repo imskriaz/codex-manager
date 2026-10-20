@@ -26,6 +26,10 @@ export function renderSwitchIcon() {
   );
 }
 
+export function renderSyncIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" /></svg>;
+}
+
 export function renderRefreshIcon() {
   return (
     <svg viewBox="0 0 1024 1024" aria-hidden="true">

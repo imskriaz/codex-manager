@@ -1,5 +1,6 @@
 import type webPush from "web-push";
 import type * as vscode from "vscode";
+import { hostname } from "node:os";
 import { compactNotificationMessage, type MirroredNotification } from "../utils/notificationMirror";
 
 const STORAGE_KEY = "codexManager.browserPush.v1";
@@ -169,7 +170,7 @@ export class BrowserPushService {
           ? notice.message.match(/[“"]([^”"]{1,80})[”"]/)?.[1]
           : undefined;
         const payload = JSON.stringify({
-          title: compactNotificationMessage(notice.title ?? inferredTitle ?? "Codex Manager", 80),
+          title: compactNotificationMessage(`${notice.systemName?.trim() || hostname()} · ${notice.title ?? inferredTitle ?? "Codex Manager"}`, 120),
           body: compactNotificationMessage(notice.message, 180),
           tag: `codex-manager-${key.slice(0, 150)}`,
           notificationId: notice.notificationId,
@@ -229,7 +230,7 @@ export class BrowserPushService {
         subscription.expiresAt > Date.now() && (subscription.password === undefined || subscription.password === password));
       const result = { subscriptions: subscriptions.length, accepted: 0, failed: 0 };
       const expired = new Set<string>();
-      const payload = JSON.stringify({ title: "Codex Manager", body: "Test notification: this device is connected.", tag: "codex-manager-delivery-test", url: "/", createdAt: Date.now() });
+      const payload = JSON.stringify({ title: `${hostname()} · Codex Manager`, body: "Test notification: this device is connected.", tag: "codex-manager-delivery-test", url: "/", createdAt: Date.now() });
       await Promise.all(subscriptions.map(async subscription => {
         try {
           await webPush.sendNotification(validateBrowserPushSubscription(subscription), payload, {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "fs";
 import {
   copyOAuthAuthorizationLink,
   openOAuthAuthorizationWindow,
@@ -41,5 +42,11 @@ describe("browser dashboard OAuth authorization", () => {
     expect(resolveOAuthCopyActionOutcome(actionResult("failed", "copyText"), true)).toBe("failed");
     expect(resolveOAuthCopyActionOutcome(actionResult("completed", "copyText"), false)).toBeUndefined();
     expect(resolveOAuthCopyActionOutcome(actionResult("completed", "startOAuthAutoFlow"), true)).toBeUndefined();
+  });
+
+  it("allows manual callback submission while the automatic listener is waiting", () => {
+    const source = readFileSync("webview-src/dashboard/oauthSessionHook.ts", "utf8");
+    expect(source).toContain("|| actionRequestIds.current.complete)");
+    expect(source).not.toContain("!oauthState.oauthCallbackUrl.trim() || actionInFlight.current)");
   });
 });

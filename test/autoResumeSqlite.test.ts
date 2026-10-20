@@ -69,11 +69,12 @@ it("captures quota-stopped parents, survives a fresh connection, verifies native
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
 });
 
-it.each([true, false])("keeps native capacity errors durable through capture and restart with goal-only=%s", async goalOnly => {
+it.each(["active", "paused", "none"])("keeps native capacity errors durable through capture and restart with goal=%s", async status => {
+  const goalOnly = status !== "none";
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string) => key === "autoResumeGoalOnlyEnabled" ? goalOnly : key !== "cliIntegrationEnabled" } as never);
   const goals = new DatabaseSync(path.join(root, "goals_1.sqlite"));
   goals.exec("UPDATE thread_goals SET status='complete'");
-  if (goalOnly) goals.prepare("UPDATE thread_goals SET status='active' WHERE thread_id=?").run(ids[0]!);
+  if (goalOnly) goals.prepare("UPDATE thread_goals SET status=? WHERE thread_id=?").run(status, ids[0]!);
   else goals.prepare("DELETE FROM thread_goals WHERE thread_id=?").run(ids[0]!);
   goals.close();
   const transcript = path.join(root, "sessions", `rollout-${ids[0]}.jsonl`);

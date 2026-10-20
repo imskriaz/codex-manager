@@ -27,10 +27,11 @@ export async function readSharedProjectTask(share: ProjectShare, taskId: string,
   const details = await readProjectTaskDetails(share.projectPath, taskId, view as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>, before);
   if (filePath !== undefined) {
     if (view !== 'files') throw new Error('File access is not enabled for this view.');
+    if (!details.files.some(file => file.path === filePath)) throw new Error('This file is not part of the shared conversation history.');
     return { file: await readWorkspaceFile(share.projectPath, filePath) };
   }
   return {
-    messages: details.messages.filter(item => view === 'messages' ? !item.kind || item.kind === 'message' : view === 'activities' ? item.kind && item.kind !== 'message' && item.kind !== 'file-change' : view === 'changes' && item.changes?.length).map(item => ({
+    messages: details.messages.filter(item => view === 'messages' ? !item.kind || item.kind === 'message' : view === 'activities' ? (!item.kind || item.kind === 'message' ? share.permissions.includes('messages') : item.kind !== 'file-change') : view === 'changes' && item.changes?.length).map(item => ({
       id: item.id, role: item.role, kind: item.kind, text: item.text, title: item.title, status: item.status,
       ...(view === 'activities' ? { command: item.command, output: item.output, result: item.result, arguments: item.arguments } : {}),
       ...(view === 'changes' ? { changes: item.changes } : {})

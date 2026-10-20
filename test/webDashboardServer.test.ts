@@ -32,7 +32,7 @@ it("uses local title metadata for completion push and never substitutes an ID or
   const id = "01a04882-d037-7a42-ad24-9afb61901188";
   const read = vi.spyOn(sessionMetadata, "readCodexCliSessionRecoveryMetadata").mockResolvedValue({ [id]: { title: "Fix startup tabs", updatedAt: Date.now() } });
   const notify = vi.fn();
-  const server = Object.assign(Object.create(WebDashboardServer.prototype), { browserPush: { notify }, getRemoteCliSessions: () => [{ id, deviceId: "other", title: "Wrong system" }] }) as WebDashboardServer & { notifySessionCompletion: (state: unknown) => Promise<void> };
+  const server = Object.assign(Object.create(WebDashboardServer.prototype), { browserPush: { notify }, peerSessions: new Map([["target", { deviceName: "Worker Two" }]]), getRemoteCliSessions: () => [{ id, deviceId: "other", title: "Wrong system" }] }) as WebDashboardServer & { notifySessionCompletion: (state: unknown) => Promise<void> };
   const state = { sessionId: id, streamId: "stream", status: "completed" };
   try {
     await server.notifySessionCompletion(state);
@@ -42,7 +42,7 @@ it("uses local title metadata for completion push and never substitutes an ID or
     expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Codex conversation", message: expect.not.stringContaining(id.slice(0, 8)) }));
     read.mockClear();
     await server.notifySessionCompletion({ ...state, deviceId: "target" });
-    expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Codex conversation" }));
+    expect(notify).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Codex conversation", systemName: "Worker Two" }));
     expect(read).not.toHaveBeenCalled();
   } finally { read.mockRestore(); }
 });

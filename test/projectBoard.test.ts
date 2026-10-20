@@ -61,3 +61,10 @@ it('rejects an account-home change during discovery instead of importing the old
   await expect(readProjectBoard(root)).rejects.toThrow(/home changed/);
   expect(readProjectTasks(root).tasks).toEqual([]);
 });
+
+it('does not turn conversation-file sharing into unrestricted project file access', async () => {
+  const board = await readProjectBoard(root), task = board.tasks[0]!;
+  const share = { projectPath: root, expiresAt: Date.now() + 60000, permissions: ['files' as const] };
+  await expect(readSharedProjectTask(share, task.id, 'files', undefined, 'private.env')).rejects.toThrow(/not part/);
+  expect(workspace.readWorkspaceFile).not.toHaveBeenCalled();
+});

@@ -104,10 +104,11 @@ self.addEventListener("push", (event) => {
     const body = typeof payload?.body === "string" ? payload.body.slice(0, 900) : "A major dashboard update is available. Open the app to review it.";
     const actions = typeof payload?.notificationId === "string" && Array.isArray(payload?.actions)
       ? payload.actions.filter((action) => typeof action === "string").slice(0, 2).map((title) => ({ action: title, title })) : [];
-    await self.registration.showNotification("Codex Manager", {
+    const title = typeof payload?.title === "string" && payload.title.trim() ? payload.title.trim().slice(0, 120) : "Codex Manager";
+    await self.registration.showNotification(title, {
       body, icon: "/assets/icon-192.png", badge: "/assets/icon-192.png",
       tag: typeof payload?.tag === "string" ? payload.tag : "codex-manager-update", actions,
-      data: { notificationId: payload?.notificationId, actions: actions.map((action) => action.action), createdAt: payload?.createdAt }
+      data: { title, notificationId: payload?.notificationId, actions: actions.map((action) => action.action), createdAt: payload?.createdAt }
     });
   })());
 });
@@ -128,7 +129,7 @@ self.addEventListener("notificationclick", (event) => {
         feedback = "Your choice was accepted. Open the dashboard to see the result.";
       } catch (error) { feedback = error.message || "The host is unavailable. Open the dashboard and retry when connected."; }
       finally { clearTimeout(timer); }
-      await self.registration.showNotification("Codex Manager", { body: feedback, tag: "codex-manager-action-result" });
+      await self.registration.showNotification(typeof data.title === "string" && data.title.trim() ? data.title.slice(0, 120) : "Codex Manager", { body: feedback, tag: "codex-manager-action-result" });
     }
     const target = new URL("/", self.location.origin).href;
     const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });

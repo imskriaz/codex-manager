@@ -382,7 +382,8 @@ async function runDashboardAction(
       if (!getCodexManagerConfiguration().get<boolean>("apiAccessEnabled", false)) {
         throw new Error("Enable API access in Settings before generating a token.");
       }
-      return { apiToken: (await createDashboardApiToken(ctx.context, { name: payload?.tokenName, permissions: payload?.tokenPermissions, projectPath: payload?.projectPath ? await resolveWorkspaceProjectPathAsync(payload.projectPath) : undefined })).token,
+      if (payload?.tokenProjectPaths !== undefined && (!Array.isArray(payload.tokenProjectPaths) || !payload.tokenProjectPaths.length || payload.tokenProjectPaths.length > 32 || payload.tokenProjectPaths.some(item => typeof item !== 'string' || !item.trim()))) throw new Error('Choose between 1 and 32 project folders.');
+      return { apiToken: (await createDashboardApiToken(ctx.context, { name: payload?.tokenName, permissions: payload?.tokenPermissions, projectPaths: payload?.tokenProjectPaths ? await Promise.all(payload.tokenProjectPaths.map(project => resolveWorkspaceProjectPathAsync(project))) : undefined, projectPath: payload?.projectPath ? await resolveWorkspaceProjectPathAsync(payload.projectPath) : undefined })).token,
         apiTokens: await listDashboardApiTokens(ctx.context), apiEndpoint: '/api/message (POST)' };
     case 'listApiTokens':
       return { apiTokens: await listDashboardApiTokens(ctx.context) };
@@ -2031,7 +2032,7 @@ async function handleRenameCodexCliSession(sessionId: string | undefined, name: 
   const refreshed = await refreshSessionListAfterMutation();
   return {
     ...refreshed,
-    cliSession: refreshed.cliSessions?.find((candidate) => candidate.id === sessionId) ?? { ...session, title: name?.trim() ?? session.title },
+    cliSession: { ...(refreshed.cliSessions?.find((candidate) => candidate.id === sessionId) ?? session), title: name!.trim().replace(/\s+/g, ' ') },
     notice: refreshed.notice ?? { level: "info" as const, message: "Session renamed." }
   };
 }

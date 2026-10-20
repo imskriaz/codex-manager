@@ -125,6 +125,7 @@ type ComposerDraft = CliComposerDraft;
 
 export type CliSessionsPageProps = {
   dashboardMode?: boolean;
+  taskBoardActive?: boolean;
   taskBoardEnabled?: boolean;
   onTasks?: () => void;
   onApi?: () => void;
@@ -287,6 +288,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const [mobileLayout, setMobileLayout] = useState(() => window.matchMedia("(max-width: 760px)").matches);
   const [railCollapsed, setRailCollapsed] = useState(() => window.matchMedia("(max-width: 760px)").matches);
+  useEffect(() => { if (props.taskBoardActive) setRailCollapsed(true); }, [props.taskBoardActive]);
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerWidth < 1180);
@@ -796,15 +798,16 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         <aside ref={sidebarRef} id="cli-session-sidebar" class={`cli-session-rail ${props.selectedSession ? "has-selection" : ""}`} role={mobileLayout ? "dialog" : undefined} aria-modal={mobileLayout && !railCollapsed || undefined} aria-hidden={railCollapsed || undefined} inert={railCollapsed || undefined} aria-label="Codex sessions">
           <div class="cli-rail-header">
             <button type="button" class="cli-rail-brand" aria-label="Open dashboard" title="Open dashboard" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{!props.dashboardMode ? (props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>) : null}<strong>Codex</strong></button>
+            <label class="cli-rail-system" title="Switch system"><span aria-hidden="true">▣</span><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select></label>
+          </div>
             <nav class="cli-primary-nav" aria-label="Workspace navigation">
               <div class="cli-sidebar-toolbar">
-                <button type="button" class="cli-dashboard-nav" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
+                <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
                 <button type="button" class="cli-dashboard-nav cli-workspace-nav" aria-current={props.selectedSession ? "page" : undefined} onClick={() => { if (mobileLayout) setRailCollapsed(true); returnToSessionList(); }} title="Open workspace"><SidebarIcon /><span>Workspace</span></button>
-                {props.taskBoardEnabled ? <button type="button" class="cli-dashboard-nav cli-task-nav" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onTasks?.(); }} title="Project task board"><SessionListIcon /><span>Kanban</span></button> : null}
+                {props.taskBoardEnabled ? <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => { setRailCollapsed(true); props.onTasks?.(); }} title="Project task board"><SessionListIcon /><span>Kanban</span></button> : null}
                 <div class="cli-sidebar-actions" role="group" aria-label="Session list controls"><button type="button" class="cli-icon-button cli-new-chat-icon" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><IconButton label={props.loading ? "Refreshing sessions" : "Refresh sessions"} disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class={`cli-icon-button cli-session-section-toggle ${section === "archived" ? "is-active" : ""}`} aria-pressed={section === "archived"} aria-label={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} title={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} onClick={() => setSection((current) => current === "active" ? "archived" : "active")}><ArchiveIcon /></button><button type="button" class="cli-icon-button cli-session-view-toggle" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} onClick={() => setLayout((current) => ({ ...current, sessionView: current.sessionView === "projects" ? "compact" : "projects" }))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button></div>
               </div>
             </nav>
-          </div>
           <div class="cli-session-filters">
             <div class="cli-session-search-line"><div class="cli-session-search-wrap"><SearchIcon /><input class="cli-session-search" name="session-search" type="search" autoComplete="off" value={search} placeholder="Search sessions…" aria-label="Search sessions" onInput={(event) => setSearch(event.currentTarget.value)} /></div></div>
 
@@ -1207,7 +1210,7 @@ function LiveTurnDetails({ state, loading, onLoadHistory }: { state?: DashboardC
   const counts = tokens ? [["Input", tokens.input], ["Cached", tokens.cachedInput], ["Output", tokens.output], ["Reasoning", tokens.reasoningOutput], ["Total", tokens.total], ["Context", tokens.contextWindow]].filter((entry) => typeof entry[1] === "number") : [];
   return <div class="cli-turn-details">
     {state?.error ? <p class="cli-composer-unavailable" role="alert">{state.error}</p> : null}
-    {state?.truncated ? <p class="settings-note">Showing recent live activity. <button type="button" disabled={loading} onClick={onLoadHistory}>{loading ? "Loading history…" : "Load saved history"}</button></p> : null}
+    {state?.truncated ? <p class="settings-note cli-history-load"><button type="button" disabled={loading} onClick={onLoadHistory}>{loading ? "Loading history…" : "Load history"}</button></p> : null}
     {state?.plan?.steps.length ? <details class="cli-activity is-plan"><summary><strong>Current plan</strong></summary><div class="cli-activity-body">{state.plan.explanation ? <p>{state.plan.explanation}</p> : null}<ol>{state.plan.steps.map((step, index) => <li key={index}>{step.status === "completed" ? "✓ " : step.status === "inProgress" ? "In progress · " : "Pending · "}{step.step}</li>)}</ol></div></details> : null}
     {state?.diff ? <details class="cli-activity is-file-change"><summary><strong>Turn changes</strong></summary><DiffPreview diff={state.diff} /></details> : null}
     {counts.length || state?.rateLimits ? <details class="cli-activity"><summary><strong>Turn usage</strong></summary><div class="cli-activity-body">{counts.map(([label, count]) => <span key={String(label)}>{label}: {Number(count).toLocaleString()} · </span>)}{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p key={window}>{window === "primary" ? "Primary" : "Secondary"} window: {Math.round(limit.usedPercent)}% used{limit.resetsAt ? ` · resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : ""}</p> : null) : null}</div></details> : null}
@@ -1792,10 +1795,8 @@ function AgentWorkspace(props: { sessions: DashboardCliSessionSummary[]; data: R
   const agent = props.sessions.find((item) => item.id === props.activeId);
   const state = agent ? props.data[cliSessionTargetKey(agent)] : undefined;
   useEffect(() => {
-    if (!agent) return;
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible" && navigator.onLine && !state?.loading) props.onRefresh?.(agent); }, 5000);
-    return () => clearInterval(timer);
-  }, [agent?.id, agent?.status, state?.loading]);
+    if (agent && document.visibilityState === "visible" && navigator.onLine) props.onRefresh?.(agent);
+  }, [agent?.id, agent?.deviceId, agent?.status, agent?.updatedAt]);
   return <div class="cli-agent-workspace">{props.activeId ? agent ? <><header><strong>{agent.agentName ?? "Agent"}</strong><span class={`cli-state-pill ${agent.status === "running" ? "is-running" : ""}`}>{agent.status === "running" ? "Running" : "Ready"}</span><button type="button" disabled={state?.loading} onClick={() => props.onRefresh?.(agent)}>Refresh</button></header>{state?.error ? <div role="alert" class="cli-agent-error">{state.error}</div> : null}{state?.loading ? <div role="status">Refreshing agent messages…</div> : null}<div class="cli-agent-transcript">{state?.messages?.map((message) => <SessionMessage key={message.id} message={message} onActionFeedback={props.onFeedback} />)}{!state?.loading && !state?.error && !state?.messages?.length ? <p>No messages recorded yet.</p> : null}</div></> : <p>This agent is no longer in the session list. Refresh sessions to reconnect.</p> : <><header><strong>Agents</strong><span>{props.sessions.length}</span></header>{props.sessions.length ? props.sessions.map((item) => <button type="button" class="cli-agent-row" key={item.id} onClick={() => props.onOpen(item.id)}><ForkIcon /><span><strong>{item.agentName ?? "Agent"}</strong><small>{item.title}</small></span><span>{item.status === "running" ? <span class="cli-session-spinner" aria-label="Running" /> : <CheckIcon />}</span></button>) : <p>No sub-agents recorded for this session.</p>}</>}</div>;
 }
 

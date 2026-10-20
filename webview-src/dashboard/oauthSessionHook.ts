@@ -90,7 +90,9 @@ export function useOAuthSessionModal(params: {
   };
 
   const handleCompleteOAuth = (): void => {
-    if (!oauthState.oauthSession || !oauthState.oauthCallbackUrl.trim() || actionInFlight.current) {
+    // The automatic listener starts as soon as a link is prepared. It must not
+    // prevent a user from submitting the callback URL manually while it waits.
+    if (!oauthState.oauthSession || !oauthState.oauthCallbackUrl.trim() || actionRequestIds.current.complete) {
       return;
     }
     actionInFlight.current = "complete";
@@ -129,7 +131,7 @@ export function useOAuthSessionModal(params: {
       return { handled: false };
     }
     if (message.action === "startOAuthAutoFlow" || message.action === "completeOAuthSession") {
-      actionInFlight.current = undefined;
+      if (actionInFlight.current === (message.action === "startOAuthAutoFlow" ? "start" : "complete")) actionInFlight.current = undefined;
       actionRequestIds.current[message.action === "startOAuthAutoFlow" ? "start" : "complete"] = undefined;
     }
     if (message.action === "prepareOAuthSession") {

@@ -11,6 +11,20 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(primitives).toContain('role="dialog"');
     expect(primitives).toContain('aria-modal="true"');
     expect(primitives).toContain("previouslyFocused.focus({ preventScroll: true })");
+    expect(primitives).not.toContain("if (open && document.activeElement === document.body)");
+  });
+
+  it("does not poll or animate the settings surface while the composer is active", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(main).not.toContain("setInterval(refreshLogConsole");
+    expect(main).toContain("Use Refresh to query again.");
+    expect(css).not.toContain("animation: settings-panel-enter");
+    const actions = readFileSync("webview-src/dashboard/actionHooks.ts", "utf8");
+    const board = readFileSync("webview-src/dashboard/taskBoard.tsx", "utf8");
+    expect(actions).not.toContain("setInterval");
+    expect(board).not.toContain("timer = setTimeout(() => { void poll()");
+    expect(main).not.toContain('window.setInterval(refresh, session.status');
   });
 
   it("gives custom settings dialogs names and keyboard handling", () => {
@@ -93,10 +107,9 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(css).toContain(".saved-card::before { display: none; }");
   });
 
-  it("shows a live indicator only for an active WebSocket and sorts by email address", () => {
+  it("removes the redundant live badge and retains email sorting", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
-    expect(source).toContain("isBrowserDashboard && realtimeConnected");
-    expect(source).toContain("Live updates are active");
+    expect(source).not.toContain('class="dashboard-live-status"');
     expect(source).toContain('if (sort === "email")');
     expect(source).toContain('"Email Address"');
   });

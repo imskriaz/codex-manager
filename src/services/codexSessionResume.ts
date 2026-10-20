@@ -213,6 +213,7 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
   return rows.map(row => {
     const preference = preferences.get(row.id);
     const decorated: DashboardCliSessionSummary = { ...row, title: titles.get(row.id) ?? row.title };
+    delete decorated.autoResumeEnabled; delete decorated.queueEnabled; delete decorated.queuePriority; delete decorated.queueError;
     if (autoResume || preference?.autoResume === false) decorated.autoResumeEnabled = autoResume && preference?.autoResume !== false;
     if (preference?.queue === true) {
       decorated.queueEnabled = true;
@@ -250,7 +251,7 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
   });
   const records = new Map(state.map((record) => [record.id, record]));
   const entries = new Map(index.map((entry) => [entry.id, entry]));
-  for (const record of state) entries.set(record.id, { ...entries.get(record.id), id: record.id, thread_name: normalizeSessionTitle(record.title, record.id, entries.get(record.id)?.thread_name), updated_at: record.updatedAt ?? entries.get(record.id)?.updated_at });
+  for (const record of state) entries.set(record.id, mergeSessionIndexEntry(record, entries.get(record.id)));
   const runningIds = new Set(await readRunningCodexSessionIds(codexHome).catch((error: unknown) => {
     statusError = (error instanceof Error ? error.message : String(error)) || "Session inspection failed.";
     recordPersistentEvent("warning", "session-list", "Running state unavailable; showing local history", { reason: statusError });
@@ -413,10 +414,8 @@ export async function readCodexCliSessionSummary(
   const recent = recentNewSessions.get(sessionId)?.summary;
   if (recent && ownsSessionTurn(codexHome, sessionId)) return recent;
   const state = (await readStateSessionRecords(codexHome, sessionId))[0];
-  const entry = state && normalizeSessionTitle(state.title,sessionId) !== "Untitled conversation"
-    ? { id:state.id,thread_name:state.title,updated_at:state.updatedAt }
-    : (await readCodexCliSessionIndex(codexHome)).find((candidate) => candidate.id === sessionId)
-    ?? (state ? { id: state.id, thread_name: state.title, updated_at: state.updatedAt } : undefined);
+  const indexed = (await readCodexCliSessionIndex(codexHome).catch(error => { if (!state) throw error; return [] as CliSessionIndexEntry[]; })).find(candidate => candidate.id === sessionId);
+  const entry = state ? mergeSessionIndexEntry(state, indexed) : indexed;
   if (!entry) {
     const recent = recentNewSessions.get(sessionId)?.summary;
     return recent ? { ...recent, status: ownsSessionTurn(codexHome, sessionId) ? "running" : "idle", canStop: ownsSessionTurn(codexHome, sessionId) } : (await readCodexCliSessions(codexHome)).find(session => session.id === sessionId);
@@ -424,7 +423,7 @@ export async function readCodexCliSessionSummary(
   const transcriptPath = (await findCliSessionTranscripts(codexHome, new Set([sessionId]))).get(sessionId);
   const archiveRelative = transcriptPath ? path.relative(path.join(codexHome, "archived_sessions"), transcriptPath) : undefined;
   const archived = state?.archived ?? Boolean(archiveRelative && !path.isAbsolute(archiveRelative) && archiveRelative !== ".." && !archiveRelative.startsWith(`..${path.sep}`));
-  const summary = await toCliSessionSummary(codexHome, { ...entry, thread_name: normalizeSessionTitle(state?.title, sessionId, entry.thread_name) }, archived, transcriptPath);
+  const summary = await toCliSessionSummary(codexHome, entry, archived, transcriptPath);
   const goals = await readCodexSessionGoals(codexHome, [sessionId]);
   const title = reconcileCodexSessionTitles(codexHome, [summary]).get(sessionId) ?? summary.title;
   return { ...summary, title, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
@@ -531,8 +530,14 @@ async function inspectRunningCodexSessionIds(codexHome: string, signal?: AbortSi
   return sessionIds.filter(id => running.has(id));
 }
 
+const sessionIndexCache = new Map<string, { signature: string; entries: CliSessionIndexEntry[] }>();
 async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIndexEntry[]> {
   const indexPath = path.join(codexHome, SESSION_INDEX_FILE);
+  let signature: string;
+  try { const stat = await waitWithin(fs.stat(indexPath), 1000, 'Session index metadata is still loading.'); signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; }
+  catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') { sessionIndexCache.delete(indexPath); return []; } throw error; }
+  const cached = sessionIndexCache.get(indexPath);
+  if (cached?.signature === signature) return cached.entries;
   let snapshot;
   try {
     snapshot = await readSafeFileSnapshot(indexPath, {
@@ -557,7 +562,16 @@ async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIn
     if (!unique.has(entry.id)) unique.set(entry.id, entry);
   }
 
-  return [...unique.values()];
+  const rows = [...unique.values()];
+  if (sessionIndexCache.size >= 4) sessionIndexCache.delete(sessionIndexCache.keys().next().value!);
+  sessionIndexCache.set(indexPath, { signature, entries: rows });
+  return rows;
+}
+
+function mergeSessionIndexEntry(state: StateSessionRecord, indexed?: CliSessionIndexEntry): CliSessionIndexEntry {
+  const indexTime = Date.parse(indexed?.updated_at ?? ''), stateTime = Date.parse(state.updatedAt ?? '');
+  const newerIndex = Number.isFinite(indexTime) && (!Number.isFinite(stateTime) || indexTime > stateTime);
+  return { id: state.id, thread_name: newerIndex ? normalizeSessionTitle(indexed?.thread_name, state.id, state.title) : normalizeSessionTitle(state.title, state.id, indexed?.thread_name), updated_at: newerIndex ? indexed?.updated_at : state.updatedAt ?? indexed?.updated_at };
 }
 
 export function getCodexSessionReadNotice(sessions: DashboardCliSessionSummary[] = []): { level: "warning"; message: string } | undefined {
@@ -2885,16 +2899,22 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
         if (["task_complete", "task_completed", "task_failed", "turn_aborted", "turn_failed", "turn/completed", "turn.completed"].includes(type ?? "")) {
           if (!eventTurnId || !turnId || eventTurnId === turnId) {
             const quota = isCodexQuotaInterruption(JSON.stringify([record.error,record.payload?.error, /failed|aborted/.test(type ?? "") ? record.payload?.message : undefined]));
+            const capacity = isCodexCapacityInterruption(JSON.stringify([record.error, record.payload?.error, record.payload?.message]));
             const cancelled = typeof record.payload?.reason === "string" && /user|cancel/i.test(record.payload.reason);
             turnCancelled = cancelled || type === "turn_aborted";
             // Native task_complete can carry a provider error; it is unfinished work, not success.
-            const failed = /failed/.test(type ?? "") || Boolean(record.error ?? record.payload?.error) || state === "failed";
+            const failed = capacity || /failed/.test(type ?? "") || Boolean(record.error ?? record.payload?.error) || state === "failed";
             state = quota || (state === "quota-paused" && !cancelled) ? "quota-paused" : failed && !cancelled ? "failed" : "terminal";
             turnId = eventTurnId ?? turnId;
           }
-        } else if (type === "error" && (!eventTurnId || !turnId || eventTurnId === turnId) && isCodexQuotaInterruption(JSON.stringify(record))) {
-          state = "quota-paused";
-          turnId = eventTurnId ?? turnId;
+        } else if (type === "error" && (!eventTurnId || !turnId || eventTurnId === turnId)) {
+          if (isCodexQuotaInterruption(JSON.stringify(record))) {
+            state = "quota-paused";
+            turnId = eventTurnId ?? turnId;
+          } else if (isCodexCapacityInterruption(JSON.stringify(record))) {
+            state = "failed";
+            turnId = eventTurnId ?? turnId;
+          }
         } else if (["task_started", "turn_started", "turn/started", "turn.started"].includes(type ?? "")) {
           if (!["terminal","failed","quota-paused"].includes(state) || !eventTurnId || eventTurnId !== turnId) {
             if (eventTurnId !== turnId || state !== "active") startedAt = undefined;
@@ -3320,7 +3340,8 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     };
     const timestamp = typeof value.timestamp === "string" ? normalizeTimestamp(value.timestamp) : undefined;
     const eventPayload = value.type === "event_msg" ? value.payload : undefined;
-    if (eventPayload && (eventPayload["type"] === "error" || ["task_complete", "task_completed", "task_failed", "turn_failed", "turn/completed", "turn.completed"].includes(String(eventPayload["type"]))) && isCodexCapacityInterruption(JSON.stringify(eventPayload))) {
+    const eventType = value.type === "event_msg" ? eventPayload?.["type"] : value.type;
+    if (["error", "task_complete", "task_completed", "task_failed", "turn_failed", "turn/completed", "turn.completed"].includes(String(eventType)) && isCodexCapacityInterruption(JSON.stringify(eventPayload ?? value))) {
       return { id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "capacity"}`, kind: "error", title: "Model at capacity", text: "Selected model is at capacity. Try a different model, then retry.", status: "failed", timestamp };
     }
     if (eventPayload?.["type"] === "user_message") {

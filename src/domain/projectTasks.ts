@@ -5,7 +5,7 @@ export type ProjectTask = {
   id: string; title: string; prompt: string; stage: TaskStage; revision: number;
   createdAt: number; updatedAt: number; sessionId?: string; launchPending?: boolean;
   parentTaskId?: string; sourceKey?: string; sourceHome?: string;
-  sessionStatus?: DashboardCliSessionSummary['status'];
+  sessionStatus?: DashboardCliSessionSummary['status']; sessionArchived?: boolean;
 };
 export type ProjectComment = { id: string; taskId: string; author: string; text: string; createdAt: number };
 export type ProjectBoard = { projectPath: string; tasks: ProjectTask[]; comments: ProjectComment[]; sessions: DashboardCliSessionSummary[]; updatedAt: number; revision?: number; homeKey?: string };
@@ -20,7 +20,7 @@ export type ProjectTaskMutation = { id: string; title: string; prompt: string; s
 export const PROJECT_SHARE_FEATURES = [
   { key: 'messages', label: 'Messages', description: 'Read conversation messages and older history.' },
   { key: 'activities', label: 'Activities', description: 'Read reasoning, tool calls, output, and logs.' },
-  { key: 'files', label: 'Project files', description: 'Browse and read project file contents.' },
+  { key: 'files', label: 'Conversation files', description: 'Read files shared or changed in the conversation history.' },
   { key: 'changes', label: 'Changes', description: 'View recorded edits and current project changes.' },
   { key: 'git', label: 'Git history', description: 'Read repository commit history.' },
   { key: 'comments', label: 'Comments', description: 'Read and add task comments.' },
@@ -31,6 +31,7 @@ export type ProjectSharePermission = typeof PROJECT_SHARE_FEATURES[number]['key'
 export function sessionTaskStage(session: DashboardCliSessionSummary): TaskStage {
   if (session.status === 'running') return 'running';
   if (session.archived || session.goal?.status === 'complete') return 'completed';
+  if (session.status === 'idle' && !session.interrupted && !session.goal) return 'completed';
   return 'planned';
 }
 

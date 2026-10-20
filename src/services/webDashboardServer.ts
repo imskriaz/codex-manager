@@ -64,8 +64,8 @@ import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain
 import { isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
 import { authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
 import { readProjectBoard, readSharedProjectTask } from './projectBoard';
-import { getProjectShare, publicProjectBoard, saveProjectTask, addProjectComment } from './projectTasks';
-import { DASHBOARD_API_ACTIONS } from '../domain/dashboard/apiActions';
+import { getProjectShare, publicProjectBoard, saveProjectTask, addProjectComment, projectTaskKey } from './projectTasks';
+import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
 import { ConversationShares, sharedConversationPage } from "./conversationShares";
 import { filterCliSessionsBySection, isCodexSessionRunning } from "../domain/codexSessionState";
@@ -836,7 +836,7 @@ export class WebDashboardServer implements vscode.Disposable {
           response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
           response.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors http: https:; base-uri 'none'");
         }
-        this.sendHtml(response, '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Shared project</title><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"><p role="status">Loading shared project…</p></main><script src="/assets/projectShare.js"></script></body></html>'); return;
+        this.sendHtml(response, '<!doctype html><html lang="en" data-theme="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Shared project</title><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"><p role="status">Loading shared project…</p></main><script src="/assets/dashboard.js"></script><script src="/assets/projectShare.js"></script></body></html>'); return;
       }
       for (const [key, value] of this.publicProjectRequests) if (value.until <= Date.now()) this.publicProjectRequests.delete(key);
       const rateKey = `${token}:${request.socket.remoteAddress ?? ''}`;
@@ -886,7 +886,10 @@ export class WebDashboardServer implements vscode.Disposable {
     if (method === "GET" && path.startsWith("/share/")) {
       const share = await this.conversationShares.get(path.slice(7));
       if (!share) { response.statusCode = 404; response.end("This shared link is invalid, expired, or revoked. Ask the owner for a new link."); return; }
-      this.sendHtml(response, sharedConversationPage(share, path.slice(7)));
+      this.sendHtml(response, sharedConversationPage(share, path.slice(7))
+        .replace('</head>', '<link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head>')
+        .replace('<body>', '<body class="public-conversation">')
+        .replace('<script src="/assets/sharedConversation.js"', '<script src="/assets/dashboard.js" defer></script><script src="/assets/sharedConversation.js"'));
       return;
     }
     if (method === "GET" && path.startsWith("/api/share/")) {
@@ -995,13 +998,18 @@ export class WebDashboardServer implements vscode.Disposable {
     if (method === "GET" && path === "/api/state") {
       if (apiToken) {
         if (!hasApiPermission(apiToken, 'state')) { response.statusCode = 403; this.sendJson(response, { error: 'This token cannot read state.' }); return; }
-        if (apiToken.projectPath) { this.sendJson(response, await readProjectBoard(apiToken.projectPath)); return; }
+        const projects = apiTokenProjects(apiToken);
+        if (projects.length) {
+          const projectPath = requestUrl.searchParams.get('projectPath') ?? (projects.length === 1 ? projects[0] : undefined);
+          if (!projectPath || !projects.some(project => projectTaskKey(project) === projectTaskKey(projectPath))) { response.statusCode = 403; this.sendJson(response, { error: 'Choose a projectPath within this token scope.' }); return; }
+          this.sendJson(response, await readProjectBoard(projectPath)); return;
+        }
       }
       await this.sendState(response);
       return;
     }
     if (method === 'GET' && path === '/api/schema') {
-      this.sendJson(response, { actions: DASHBOARD_API_ACTIONS.filter(action => !apiToken || hasApiPermission(apiToken, action) && (!apiToken.projectPath || PROJECT_API_ACTIONS.has(action))), endpoints: ['GET /api/state', 'POST /api/message'], actionFormat: { type: 'dashboard:action', requestId: 'unique-request-id', action: 'listCodexCliSessions', payload: {} } }); return;
+      this.sendJson(response, { actions: DASHBOARD_API_ACTIONS.filter(action => !apiToken || hasApiPermission(apiToken, action) && (!apiTokenProjects(apiToken).length || PROJECT_API_ACTIONS.has(action))), endpoints: ['GET /api/state', 'POST /api/message'], actionFormat: { type: 'dashboard:action', requestId: 'unique-request-id', action: 'listCodexCliSessions', payload: {} } }); return;
     }
     if (method === "POST" && (path === "/api/share/create" || path === "/api/share/revoke")) {
       try {
@@ -1679,6 +1687,7 @@ export class WebDashboardServer implements vscode.Disposable {
     this.browserPush.notify({
       notificationId: state.streamId,
       title,
+      systemName: state.deviceId ? this.peerSessions.get(state.deviceId)?.deviceName || "Remote system" : os.hostname(),
       level: state.status === "failed" ? "error" : "info",
       message: `Session ${state.status}. Open the dashboard to review “${title}”.`
     });
@@ -1947,7 +1956,8 @@ export class WebDashboardServer implements vscode.Disposable {
     message?: string
   ): void {
     const payload: MirroredNotification =
-      typeof notification === "string" ? { level: notification, message: message ?? "" } : notification;
+      typeof notification === "string" ? { level: notification, message: message ?? "", systemName: os.hostname() }
+        : { ...notification, systemName: notification.systemName ?? os.hostname() };
     this.browserPush.notify(payload);
     const notice = JSON.stringify({ type: "dashboard:notice", ...payload } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {

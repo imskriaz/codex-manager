@@ -4,22 +4,26 @@
   const state = document.getElementById("live-state");
   const count = document.getElementById("message-count");
   const conversation = document.getElementById("conversation");
-  const escape = (value) => String(value).replace(/[&<>"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[character]));
-  const render = messages => messages.map((message, index) => `<article class="message ${message.role === "user" ? "user" : "assistant"}"><div class="message-head"><span class="avatar">${message.role === "user" ? "Y" : "✦"}</span><strong>${message.role === "user" ? "You" : "Codex"}</strong><span class="message-number">${index + 1}</span></div><div class="message-body">${escape(message.text)}</div></article>`).join("");
+  let signature, stopped = false;
   const refresh = async () => {
+    if (stopped) return;
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
     try {
-      const response = await fetch(`/api/share/${encodeURIComponent(token)}`, { cache: "no-store" });
+      const response = await fetch(`/api/share/${encodeURIComponent(token)}`, { cache: "no-store", signal: controller.signal });
+      if (response.status === 404) { stopped = true; conversation.replaceChildren(); state.textContent = 'This link expired or was revoked.'; return; }
       if (!response.ok) throw new Error();
       const data = await response.json();
       if (!Array.isArray(data.messages)) throw new Error();
-      conversation.innerHTML = render(data.messages);
+      const next = JSON.stringify(data.messages);
+      if (next !== signature && window.renderCodexSharedMessages) { window.renderCodexSharedMessages(conversation, data.messages); signature = next; }
       count.textContent = `${data.messages.length} messages`;
-      state.textContent = "● Live snapshot";
+      document.getElementById('conversation-title').textContent = data.title;
+      state.textContent = "Shared conversation";
       state.classList.remove("offline");
     } catch {
       state.textContent = "● Reconnecting";
       state.classList.add("offline");
-    }
+    } finally { clearTimeout(timer); if (!stopped) setTimeout(() => { if (!document.hidden) void refresh(); else setTimeout(refresh, 15000); }, 5000); }
   };
-  setInterval(refresh, 3000);
+  void refresh();
 })();

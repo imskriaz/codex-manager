@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import type * as vscode from 'vscode';
 import { runCrossWindowExclusive } from '../utils/crossWindowOperations';
-import { DASHBOARD_API_ACTIONS, PROJECT_API_ACTIONS, type DashboardApiToken } from '../domain/dashboard/apiActions';
+import { DASHBOARD_API_ACTIONS, PROJECT_API_ACTIONS, apiTokenProjects, type DashboardApiToken } from '../domain/dashboard/apiActions';
 export type { DashboardApiToken } from '../domain/dashboard/apiActions';
 
 export const DASHBOARD_API_TOKEN_SECRET_KEY = 'codexManager.webDashboard.apiTokens.v2';
@@ -14,6 +14,7 @@ async function read(context: vscode.ExtensionContext): Promise<StoredToken[]> {
   if (!Array.isArray(value) || value.length > 32 || value.some((entry: unknown) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return true;
     const row = entry as Record<string, unknown>;
+    if (row['projectPaths'] !== undefined && (!Array.isArray(row['projectPaths']) || row['projectPaths'].length < 1 || row['projectPaths'].length > 32 || row['projectPaths'].some(item => typeof item !== 'string' || !item.trim()))) return true;
     return typeof row['id'] !== 'string' || typeof row['name'] !== 'string' || row['name'].length > 80 || !Number.isFinite(row['createdAt']) || (row['projectPath'] !== undefined && typeof row['projectPath'] !== 'string') || typeof row['hash'] !== 'string' || !/^[a-f0-9]{64}$/.test(row['hash']) || !Array.isArray(row['permissions']) || row['permissions'].some((permission: unknown) => typeof permission !== 'string');
   })) throw new Error('API token storage could not be read. Existing tokens were preserved.');
   return value as StoredToken[];
@@ -21,18 +22,20 @@ async function read(context: vscode.ExtensionContext): Promise<StoredToken[]> {
 export async function listDashboardApiTokens(context: vscode.ExtensionContext): Promise<DashboardApiToken[]> {
   return (await read(context)).map(({ hash: _hash, ...token }) => token);
 }
-export async function createDashboardApiToken(context: vscode.ExtensionContext, input: { name?: string; projectPath?: string; permissions?: string[] } = {}): Promise<{ token: string; record: DashboardApiToken }> {
+export async function createDashboardApiToken(context: vscode.ExtensionContext, input: { name?: string; projectPath?: string; projectPaths?: string[]; permissions?: string[] } = {}): Promise<{ token: string; record: DashboardApiToken }> {
   const name = typeof input.name === 'string' ? input.name.trim() : undefined;
   if (!name || name.length > 80) throw new Error('Name the token using at most 80 characters.');
   if (input.permissions !== undefined && !Array.isArray(input.permissions)) throw new Error('Choose valid API permissions.');
   const permissions = [...new Set(input.permissions ?? ['state', 'getProjectBoard', 'getProjectTaskDetails'])];
   if (!permissions.length || permissions.some(permission => !['*', 'state', 'settings', ...DASHBOARD_API_ACTIONS].includes(permission))) throw new Error('Choose valid API permissions.');
-  if (input.projectPath && permissions.some(permission => permission !== '*' && permission !== 'state' && !PROJECT_API_ACTIONS.has(permission as import('../domain/dashboard/types').DashboardActionName))) throw new Error('Project tokens can only grant operations within that project.');
+  if (input.projectPaths !== undefined && (!Array.isArray(input.projectPaths) || !input.projectPaths.length || input.projectPaths.length > 32 || input.projectPaths.some(item => typeof item !== 'string' || !item.trim()))) throw new Error('Choose between 1 and 32 project folders.');
+  const projects = [...new Set(apiTokenProjects(input))];
+  if (projects.length && permissions.some(permission => permission !== '*' && permission !== 'state' && !PROJECT_API_ACTIONS.has(permission as import('../domain/dashboard/types').DashboardActionName))) throw new Error('Project tokens can only grant operations within that project.');
   return runCrossWindowExclusive('state:dashboard-api-tokens', 'API token creation', async () => {
     const records = await read(context);
     if (records.length >= 32) throw new Error('You already have 32 API tokens. Revoke an unused token first.');
     const token = `cm_${crypto.randomBytes(32).toString('hex')}`;
-    const record: DashboardApiToken = { id: crypto.randomUUID(), name, projectPath: input.projectPath, permissions, createdAt: Date.now() };
+    const record: DashboardApiToken = { id: crypto.randomUUID(), name, ...(projects.length > 1 ? { projectPaths: projects } : projects.length ? { projectPath: projects[0] } : {}), permissions, createdAt: Date.now() };
     await context.secrets.store(DASHBOARD_API_TOKEN_SECRET_KEY, JSON.stringify([...records, { ...record, hash: hash(token) }]));
     return { token, record };
   }, { waitMs: 500 });

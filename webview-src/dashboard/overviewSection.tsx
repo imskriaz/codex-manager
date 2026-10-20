@@ -16,7 +16,7 @@ import { formatRelativeTimestamp, formatTimestamp, getSensitiveDisplayValue, res
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
 import { ActionButton } from "./primitives";
 import { MetricGauge } from "./accountMetricPrimitives";
-import { AccountAccessIcon, CodexSessionsIcon, EyeIcon, EyeOffIcon, renderRefreshIcon, ResetCreditIcon } from "./icons";
+import { AccountAccessIcon, CodexSessionsIcon, EyeIcon, EyeOffIcon, renderRefreshIcon, renderSyncIcon, ResetCreditIcon } from "./icons";
 import { loadUsageGraphPreferences, saveUsageGraphPreferences, type UsageGraphPreferences, type UsageGraphRange } from "./preferences";
 
 export type { DashboardUsageSample } from "../../src/domain/dashboard/types";
@@ -380,7 +380,7 @@ export function OverviewSection(props: {
                 </ActionButton>
                 <ActionButton
                   class="toolbar-btn"
-                  icon={renderRefreshIcon()}
+                  icon={renderSyncIcon()}
                   label={resolveSyncNowLabel(props.lang)}
                   pending={props.syncPending}
                   disabled={props.disabled}

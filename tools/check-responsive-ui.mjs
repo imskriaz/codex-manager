@@ -820,7 +820,8 @@ try {
       window.__uiSnapshot.connectedPeers = [{ id: "local", name: "This PC", connected: true, local: true, sessionCount: 2 }];
       window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
     });
-    await page.waitForFunction(() => !document.querySelector("#codexDashboardButton"));
+    await page.waitForFunction(() => Boolean(document.querySelector("#codexDashboardButton")));
+    assert.equal(await page.locator('#codexDashboardButton').isVisible(), true, 'System selection remains visible for a single system');
     assert.equal(await page.locator("#cliSessionsButton").isVisible(), true, "Sessions stay visible on a single system");
     await page.evaluate(() => {
       window.__uiSnapshot.connectedPeers.push({ id: "fixture-remote", name: "Other system", connected: false, sessionCount: 0 });
@@ -855,13 +856,10 @@ try {
     await page.waitForFunction(() => !document.querySelector(".settings-password-required") && !document.querySelector(".settings-alert-badge"));
     await page.keyboard.press("Escape");
     await page.goto(`${origin}/workspace/${parentId}?missing-transcript`);
-    await page.getByText("This conversation is unavailable. Refresh the session list or choose another conversation.", { exact: true }).waitFor();
+    await page.waitForURL(`${origin}/workspace`);
     assert.equal(await page.locator(".dashboard-notice-stack").count(), 0, "Startup transcript failures do not toast");
-    if (width <= 760) {
-      await page.getByRole("button", { name: "Session actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Refresh conversation", exact: true }).click();
-    } else await page.getByRole("button", { name: "Refresh conversation", exact: true }).click();
-    await page.locator(".dashboard-notice-stack").filter({ hasText: "This conversation is unavailable" }).waitFor();
+    assert.equal(await page.locator('.cli-session-row').filter({ hasText: 'Evaluate stack beyond expectations' }).count(), 0, 'Confirmed missing conversations are retired from the sidebar');
+    assert.equal(await page.getByText("This conversation is unavailable. Refresh the session list or choose another conversation.", { exact: true }).count(), 0, 'Retired conversations do not leave an error block');
     await page.goto(`${origin}/`);
     await page.locator(".hero").waitFor();
     assert.equal(await page.locator("#privacyToggleButton").count(), 0);
@@ -921,6 +919,16 @@ try {
       assert.deepEqual(await page.locator(".settings-tab-panel:not([hidden]) .settings-block-sub").evaluateAll(elements => elements.filter(element => element.getBoundingClientRect().height > 0).filter(element => element.getBoundingClientRect().height > parseFloat(getComputedStyle(element).lineHeight) + 1).map(element => element.textContent)), [], "Every setting description occupies at most one line");
       if (await tab.getAttribute("id") === "settings-tab-general") {
         const domain = page.locator('input[name="cloudflared-domain"]');
+        await domain.fill('ui-focus.example');
+        await domain.evaluate(input => input.setSelectionRange(3, 3));
+        await page.evaluate(async () => {
+          window.__uiSnapshot.settings.cloudflaredDomain = 'ui-focus.example';
+          for (let index = 0; index < 3; index++) {
+            window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: structuredClone(window.__uiSnapshot) } }));
+            await new Promise(resolve => requestAnimationFrame(resolve));
+          }
+        });
+        assert.equal(await domain.evaluate(input => input === document.activeElement && input.selectionStart === 3 && input.value === 'ui-focus.example'), true, 'Background snapshots preserve settings input focus and caret');
         const domainCard = domain.locator("..");
         const domainBounds = await domainCard.boundingBox();
         assert.ok(domainBounds.width > 0, "Web Socket Server card is visible");
@@ -967,6 +975,7 @@ try {
         await page.locator(".log-console-output").filter({ hasText: "old record" }).waitFor();
         const consoleOutput = page.locator(".log-console-output");
         const initialLogs = await consoleOutput.innerText();
+        await page.getByRole("dialog", { name: "System Log", exact: true }).getByRole("button", { name: "Refresh", exact: true }).click();
         await page.waitForFunction(text => document.querySelector(".log-console-output")?.textContent !== text, initialLogs);
         const consoleDialog = page.getByRole("dialog", { name: "System Log", exact: true });
         const refreshesBefore = await page.evaluate(() => window.__uiActions.filter(action => action.action === "refreshAll").length);
@@ -1013,6 +1022,7 @@ try {
         await consoleDialog.getByText("Simulated log storage failure.", { exact: true }).waitFor();
         assert.ok((await consoleOutput.innerText()).includes("old record"), "Storage failures preserve previous logs");
         await page.evaluate(() => { window.__failLogReads = false; });
+        await consoleDialog.getByRole("button", { name: "Refresh", exact: true }).click();
         await consoleDialog.getByText("Simulated log storage failure.", { exact: true }).waitFor({ state: "hidden" });
         await page.evaluate(() => { window.__invalidLogReads = true; });
         await page.waitForFunction(() => !(document.querySelector('.log-console-modal button[aria-busy="true"]')?.disabled));

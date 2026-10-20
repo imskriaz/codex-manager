@@ -35,12 +35,12 @@ export function useDashboardActions(
   actionFeedbackRef.current = { onNotice, accountCount: state.snapshot?.accounts.length ?? 1 };
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") dispatch({ type: "tick", now: Date.now() });
-    }, 30_000);
-
+    const update = () => { if (document.visibilityState === "visible") dispatch({ type: "tick", now: Date.now() }); };
+    window.addEventListener("focus", update);
+    document.addEventListener("visibilitychange", update);
     return () => {
-      window.clearInterval(timer);
+      window.removeEventListener("focus", update);
+      document.removeEventListener("visibilitychange", update);
     };
   }, [dispatch]);
 

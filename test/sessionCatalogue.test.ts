@@ -8,6 +8,7 @@ import { SqliteStateStore, configureSqliteStateStore } from "../src/storage/sqli
 import { getCodexHomeStateKey } from "../src/codex/authFile";
 import { invalidateSessionCatalogue, readSessionCatalogue, saveSessionCatalogue, pruneSessionCache, removeDeletedSessionCache, saveSessionStatus } from "../src/storage/sqliteSessions";
 import { readCodexCliSessions } from "../src/services/codexSessionResume";
+import { writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import { getNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 import type { DashboardCliSessionSummary } from "../src/domain/dashboard/types";
 let root: string, store: SqliteStateStore;
@@ -19,6 +20,15 @@ it("shows persisted metadata immediately after reopening without scanning histor
   store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
   const scan = vi.spyOn(fs, "readdir").mockClear();
   expect(await readCodexCliSessions(root)).toEqual([row]); expect(scan).not.toHaveBeenCalled();
+});
+it('clears removed queue and global recovery settings from cached rows without rescanning', async () => {
+  const generation = invalidateSessionCatalogue(store, root);
+  saveSessionCatalogue(store, root, generation, [{ ...row, queueEnabled: true, queuePriority: 1, queueError: 'Old failure', autoResumeEnabled: true }], Date.now());
+  writeCodexSessionPreference(root, row.id, { queue: false });
+  const scan = vi.spyOn(fs, 'readdir').mockClear();
+  const result = (await readCodexCliSessions(root))[0]!;
+  expect(result.queueEnabled).toBeUndefined(); expect(result.queuePriority).toBeUndefined(); expect(result.queueError).toBeUndefined(); expect(result.autoResumeEnabled).not.toBe(true);
+  expect(scan).not.toHaveBeenCalled();
 });
 it("keeps verified running rows through stale metadata refresh using one batch status query", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });

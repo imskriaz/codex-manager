@@ -6,7 +6,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await page.goto(`${origin}/`);
   await page.locator('#dashboard-main').waitFor();
   if (width <= 760) await page.getByRole('button', { name: 'Show sessions sidebar', exact: true }).click();
-  await page.getByRole('button', { name: 'Task view', exact: true }).click();
+  await page.getByRole('button', { name: 'Project task board', exact: true }).click();
   await page.locator('.task-board-card').filter({ hasText: 'Release work' }).waitFor();
   assert.deepEqual(await page.locator('.task-board-column-heading strong').allTextContents(), ['Idea','Planned','Running','Completed']);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Task board keeps horizontal scrolling inside its columns');
@@ -26,7 +26,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByRole('tab', { name: 'Git history', exact: true }).click();
   await task.getByText('Prepare project tasks', { exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, `task-details-${width}x${height}.png`) });
-  await task.getByRole('button', { name: 'Close', exact: true }).click();
+  await task.getByRole('button', { name: 'Close task details', exact: true }).click();
   await page.getByRole('button', { name: 'Share project', exact: true }).click();
   const share = page.locator('.project-share-modal');
   assert.equal(await share.getByRole('checkbox', { name: /Allow embedding/ }).isChecked(), false);
@@ -47,7 +47,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   if (width === 320) {
     await task.getByText(/Browser storage is full or unavailable/).waitFor();
     assert.equal(await task.getByLabel('Title', { exact: true }).inputValue(), 'Offline task draft', 'Storage failures preserve the open draft');
-    await task.getByRole('button', { name: 'Close', exact: true }).click();
+    await task.getByRole('button', { name: 'Close task details', exact: true }).click();
   } else {
     await task.waitFor({ state: 'hidden' });
     await page.locator('.task-board-card').filter({ hasText: 'Offline task draft' }).waitFor();
@@ -58,15 +58,36 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await page.screenshot({ path: path.join(output, `project-board-${width}x${height}.png`) });
 
   if (width > 760) {
+    await page.getByRole('button', { name: 'Show sessions sidebar', exact: true }).click();
     await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
     await page.locator('#apiOpenButton').click();
     const api = page.locator('.dashboard-api-modal');
     await api.getByText('Project reader', { exact: true }).waitFor();
     assert.equal(await api.locator('tbody tr').count(), 2, 'Named tokens are displayed in a table');
+    await api.getByRole('button', { name: '+ Create token', exact: true }).click();
+    const create = page.locator('.api-create-modal');
+    await create.getByRole('checkbox', { name: 'Check all permissions', exact: true }).check();
+    const operation = create.getByRole('checkbox', { name: 'getProjectBoard', exact: true });
+    assert.equal(await operation.isChecked(), true);
+    await operation.uncheck();
+    assert.equal(await create.getByRole('checkbox', { name: 'Check all permissions', exact: true }).isChecked(), false, 'Check all keeps individual permissions editable');
+    await create.getByRole('checkbox', { name: 'All projects', exact: true }).uncheck();
+    await create.getByRole('checkbox', { name: 'demo', exact: true }).check();
+    await create.getByRole('checkbox', { name: 'getProjectBoard', exact: true }).check();
+    await create.getByRole('textbox', { name: 'Token name', exact: true }).fill('Scoped automation');
+    await page.screenshot({ path: path.join(output, `api-create-${width}x${height}.png`) });
+    await create.getByRole('button', { name: 'Create token', exact: true }).click();
+    await create.getByRole('textbox', { name: 'New API token', exact: true }).waitFor();
+    assert.ok(await page.evaluate(() => window.__uiActions.some(message => message.action === 'generateApiToken' && message.payload?.tokenProjectPaths?.includes('D:/demo'))), 'Token creation sends the selected project checkbox scope');
+    await page.evaluate(() => { window.__savedClipboard = navigator.clipboard; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); });
+    await create.getByRole('button', { name: 'Copy token', exact: true }).click();
+    await create.getByText('Copy blocked. Select the token and copy it manually.', { exact: true }).waitFor();
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: window.__savedClipboard }));
+    await create.getByRole('button', { name: 'Close token form', exact: true }).click();
     await api.getByRole('tab', { name: 'Explorer', exact: true }).click();
     await api.getByText('POST /api/message', { exact: true }).waitFor();
     await api.getByRole('tab', { name: 'Test', exact: true }).click();
-    assert.equal(await api.getByRole('button', { name: 'Send request once', exact: true }).isDisabled(), true, 'API tester requires a bearer token');
+    assert.equal(await api.getByRole('button', { name: 'Send request once', exact: true }).isDisabled(), false, 'API tester can use the newly created token');
     await page.screenshot({ path: path.join(output, `api-access-${width}x${height}.png`) });
     await api.getByRole('button', { name: 'Close', exact: true }).click();
   }

@@ -31,6 +31,18 @@ afterEach(async () => {
 });
 
 describe("session discovery recovery", () => {
+  it('shows a later native index rename in both the session list and direct summary', async () => {
+    const db = new DatabaseSync(path.join(root, 'state_5.sqlite'));
+    try {
+      db.exec('CREATE TABLE threads (id TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER)');
+      db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, 0)').run(id, 'Old title', root, 1700000000);
+      await writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Renamed in Codex', updated_at: new Date().toISOString() }) + '\n');
+      expect((await readCodexCliSessions(root)).find(session => session.id === id)?.title).toBe('Renamed in Codex');
+      expect((await readCodexCliSessionSummary(id))?.title).toBe('Renamed in Codex');
+      await appendFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Renamed again', updated_at: new Date(Date.now() + 1000).toISOString() }) + '\n');
+      expect((await readCodexCliSessionSummary(id))?.title).toBe('Renamed again');
+    } finally { db.close(); }
+  });
   it("keeps older sessions inside each project beyond both previous metadata limits", async () => {
     const db = new DatabaseSync(path.join(root, "state_5.sqlite"));
     const oldest = "00000000-0000-0000-0000-000000000000";

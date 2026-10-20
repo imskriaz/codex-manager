@@ -4,11 +4,16 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 import { saveProjectTask, readProjectTask, readProjectTasks, syncProjectSessions, addProjectComment, claimProjectTaskStart, finishProjectTaskStart, resetProjectTaskStart, createProjectShare, getProjectShare, revokeProjectShares, publicProjectBoard, projectTaskKey } from '../src/services/projectTasks';
-import { projectTaskStages, type ProjectBoard } from '../src/domain/projectTasks';
+import { projectTaskStages, sessionTaskStage, type ProjectBoard } from '../src/domain/projectTasks';
 import { removeTestDirectory } from './testFilesystem';
 
 let root: string, store: SqliteStateStore;
 const sessionId = '11111111-1111-4111-8111-111111111111';
+it('keeps completed sessions distinct from interrupted and unfinished goals', () => {
+  expect(sessionTaskStage({ id: sessionId, title: 'Done', status: 'idle' })).toBe('completed');
+  expect(sessionTaskStage({ id: sessionId, title: 'Stopped', status: 'idle', interrupted: true })).toBe('planned');
+  expect(sessionTaskStage({ id: sessionId, title: 'Goal', status: 'idle', goal: { objective: 'Finish', status: 'paused' } })).toBe('planned');
+});
 const draft = (id: string, expectedRevision = 0) => ({ id, title: id, prompt: 'Do this work', stage: 'planned' as const, expectedRevision });
 beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'manager-tasks-')); store = await SqliteStateStore.open(join(root, 'manager.sqlite')); configureSqliteStateStore(store); });
 afterEach(async () => { vi.restoreAllMocks(); configureSqliteStateStore(undefined); store.close(); await removeTestDirectory(root); });
