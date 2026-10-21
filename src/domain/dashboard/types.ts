@@ -641,7 +641,7 @@ export interface DashboardActionPayload {
   taskBefore?: string;
   sharePermissions?: import('../projectTasks').ProjectSharePermission[];
   shareDays?: number;
-  taskView?: 'messages' | 'activities' | 'files' | 'changes' | 'git';
+  taskView?: 'activities' | 'files' | 'changes';
   comment?: { id: string; taskId: string; text: string; author?: string };
   goalStatus?: "active" | "paused";
   autoResumeEnabled?: boolean;

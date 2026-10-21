@@ -16,3 +16,6 @@ it('starts equal priorities together before the next priority and skips archived
 it('never blindly replays a claimed or failed start after restart', () => {
   for (const uncertain of [{ queue: true, queueClaimedAt: 1 }, { queue: true, queueError: 'Unconfirmed' }]) expect(nextQueuedSessions([row('a'),row('b')], new Map([...preferences, ['b', uncertain]]))).toEqual([]);
 });
+it('never schedules explicitly stopped work', () => {
+  expect(nextQueuedSessions([row('b')], new Map([['b', { queue: true, priority: 1, manualStop: true }]]))).toEqual([]);
+});

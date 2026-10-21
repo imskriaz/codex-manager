@@ -1,7 +1,7 @@
 import type { ProjectBoard, ProjectTaskDetails } from '../domain/projectTasks';
 import { projectTaskKey, readProjectTasks, readProjectTask, syncProjectSessions } from './projectTasks';
 import { readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessagePage, resolveCodexHome } from './codexSessionResume';
-import { resolveWorkspaceProjectPathAsync, readWorkspaceEnvironment, readWorkspaceGitHistory } from './workspaceTools';
+import { resolveWorkspaceProjectPathAsync, readWorkspaceEnvironment } from './workspaceTools';
 import { waitWithin } from '../utils/concurrency';
 import type { ProjectShare } from './projectTasks';
 import { readWorkspaceFile } from './workspaceTools';
@@ -23,18 +23,24 @@ export function readSavedProjectBoard(project: string, session?: ProjectBoard['s
 
 export async function readSharedProjectTask(share: ProjectShare, taskId: string, view: string, before?: string, filePath?: string): Promise<unknown> {
   if (share.expiresAt <= Date.now()) throw new Error('This project link expired.');
-  if (!['messages','activities','files','changes','git'].includes(view) || !share.permissions.includes(view as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>)) throw new Error('This feature is not enabled for this shared link.');
-  const details = await readProjectTaskDetails(share.projectPath, taskId, view as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>, before);
+  const normalizedView = view === 'messages' ? 'activities' : view;
+  const hasViewPermission = normalizedView === 'activities'
+    ? share.permissions.includes('activities') || share.permissions.includes('messages')
+    : share.permissions.includes(normalizedView as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>);
+  if (!['activities','files','changes'].includes(normalizedView) || !hasViewPermission) throw new Error('This feature is not enabled for this shared link.');
+  const details = await readProjectTaskDetails(share.projectPath, taskId, normalizedView as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>, before);
   if (filePath !== undefined) {
-    if (view !== 'files') throw new Error('File access is not enabled for this view.');
+    if (normalizedView !== 'files') throw new Error('File access is not enabled for this view.');
     if (!details.files.some(file => file.path === filePath)) throw new Error('This file is not part of the shared conversation history.');
     return { file: await readWorkspaceFile(share.projectPath, filePath) };
   }
   return {
-    messages: details.messages.filter(item => view === 'messages' ? !item.kind || item.kind === 'message' : view === 'activities' ? (!item.kind || item.kind === 'message' ? share.permissions.includes('messages') : item.kind !== 'file-change') : view === 'changes' && item.changes?.length).map(item => ({
+    messages: details.messages.filter(item => normalizedView === 'activities'
+      ? (!item.kind || item.kind === 'message' ? share.permissions.includes('messages') : share.permissions.includes('activities') && item.kind !== 'file-change')
+      : normalizedView === 'changes' && item.changes?.length).map(item => ({
       id: item.id, role: item.role, kind: item.kind, text: item.text, title: item.title, status: item.status,
-      ...(view === 'activities' ? { command: item.command, output: item.output, result: item.result, arguments: item.arguments } : {}),
-      ...(view === 'changes' ? { changes: item.changes } : {})
+      ...(normalizedView === 'activities' ? { command: item.command, output: item.output, result: item.result, arguments: item.arguments } : {}),
+      ...(normalizedView === 'changes' ? { changes: item.changes } : {})
     })),
     files: details.files, history: details.history, isGitRepository: details.environment?.isGitRepository,
     changes: details.environment?.changes, additions: details.environment?.additions, deletions: details.environment?.deletions,
@@ -53,8 +59,8 @@ export async function readProjectBoard(projectPath: string | undefined): Promise
   savedSessions.set(key, { sessions, checkedAt: Date.now() });
   return boardSnapshot(project, home, sessions);
 }
-export async function readProjectTaskDetails(projectPath: string, taskId: string, view: 'messages' | 'activities' | 'files' | 'changes' | 'git' = 'messages', before?: string): Promise<ProjectTaskDetails> {
-  if (!['messages','activities','files','changes','git'].includes(view)) throw new Error('Unknown task detail view.');
+export async function readProjectTaskDetails(projectPath: string, taskId: string, view: 'activities' | 'files' | 'changes' = 'activities', before?: string): Promise<ProjectTaskDetails> {
+  if (!['activities','files','changes'].includes(view)) throw new Error('Unknown task detail view.');
   const project = await resolveWorkspaceProjectPathAsync(projectPath);
   const task = readProjectTask(project, taskId);
   const sessionId = task?.sessionId;
@@ -65,7 +71,7 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
   }
   const result: ProjectTaskDetails = { task, taskId, messages: [], files: [], history: [], warnings: [] };
   try {
-    if (view === 'messages' || view === 'activities' || view === 'changes') {
+    if (view === 'activities' || view === 'changes') {
       if (sessionId) Object.assign(result, await waitWithin(readCodexCliSessionMessagePage(sessionId, before, task.sourceHome), 5000, 'Task activity is still loading. Retry shortly.'));
     }
     if (view === 'files' && sessionId) {
@@ -77,9 +83,8 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
       }
       result.files = [...files.values()];
     }
-    if (view === 'changes' || view === 'git') {
-      result.environment = await waitWithin(readWorkspaceEnvironment(project, view === 'changes'), 5000, 'Git status is still loading.');
-      if (view === 'git' && result.environment.isGitRepository) result.history = await readWorkspaceGitHistory(project);
+    if (view === 'changes') {
+      result.environment = await waitWithin(readWorkspaceEnvironment(project, true), 5000, 'Project changes are still loading.');
     }
   } catch (error) { result.warnings.push(error instanceof Error ? error.message : String(error)); }
   return result;

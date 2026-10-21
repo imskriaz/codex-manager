@@ -1,9 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import { mkdir, writeFile, appendFile } from 'node:fs/promises';
+import { readManuallyStoppedCodexSessionIds } from '../src/services/codexSessionResume';
+import { filterAutoResumeGoalSessionIds } from '../src/services/codexSessionAutoResumeSelection';
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
-import { isCodexSessionAutoResumeDisabled, orderCodexSessionRecoveryIds, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, claimCodexSessionQueue, finishCodexSessionQueueClaim } from "../src/services/codexSessionPreferences";
+import { clearCodexSessionManualStop, isCodexSessionAutoResumeDisabled, markCodexSessionManualStop, orderCodexSessionRecoveryIds, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, claimCodexSessionQueue, finishCodexSessionQueueClaim } from "../src/services/codexSessionPreferences";
 
 const ids = [
   "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -39,6 +42,54 @@ it("retains a just-renamed title across a catalogue refresh", async () => {
   configureSqliteStateStore(store);
   writeCodexSessionTitleOverride(root, ids[0]!, "Fresh title");
   expect(readCodexSessionTitleOverrides(root, ids).get(ids[0]!)).toBe("Fresh title");
+});
+
+it("persists a manual stop suppression until the user resumes the session", async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), "codex-session-preferences-"));
+  store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
+  markCodexSessionManualStop(root, ids[0]!);
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)?.manualStop).toBe(true);
+  clearCodexSessionManualStop(root, ids[0]!);
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)?.manualStop).toBeUndefined();
+});
+
+it('excludes stopped non-goals with missing transcript metadata after reopening storage', async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), 'codex-stopped-reload-'));
+  const file = path.join(root, 'manager.sqlite');
+  store = await SqliteStateStore.open(file); configureSqliteStateStore(store);
+  writeCodexSessionPreference(root, ids[0]!, { queue: true, priority: 1 });
+  markCodexSessionManualStop(root, ids[0]!, 'stopped-turn');
+  store.close(); store = await SqliteStateStore.open(file); configureSqliteStateStore(store);
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)).toMatchObject({ manualStop: true, manualStopTurnId: 'stopped-turn', queue: false });
+  expect(await filterAutoResumeGoalSessionIds([ids[0]!], root, undefined, false)).toEqual([]);
+});
+
+it('keeps Stop effective when storage fills and persists it once storage recovers', async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), 'codex-stopped-full-'));
+  store = await SqliteStateStore.open(path.join(root, 'manager.sqlite')); configureSqliteStateStore(store);
+  const fail = vi.spyOn(store, 'set').mockImplementation(() => { throw new Error('storage full'); });
+  expect(() => markCodexSessionManualStop(root!, ids[0]!, 'stopped-turn')).toThrow('storage full');
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)?.manualStop).toBe(true);
+  fail.mockRestore();
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)?.manualStop).toBe(true);
+  store.close(); store = await SqliteStateStore.open(path.join(root, 'manager.sqlite')); configureSqliteStateStore(store);
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)?.manualStop).toBe(true);
+  clearCodexSessionManualStop(root, ids[0]!);
+});
+
+it('retires the Stop marker only after a different native turn is recorded', async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), 'codex-stopped-next-'));
+  store = await SqliteStateStore.open(path.join(root, 'manager.sqlite')); configureSqliteStateStore(store);
+  await mkdir(path.join(root, 'sessions'));
+  const transcript = path.join(root, 'sessions', `rollout-${ids[0]}.jsonl`);
+  await writeFile(transcript, JSON.stringify({ type: 'event_msg', payload: { type: 'task_started', turn_id: 'old-turn' } }) + '\n');
+  markCodexSessionManualStop(root, ids[0]!, 'old-turn');
+  expect(await readManuallyStoppedCodexSessionIds(root, [ids[0]!])).toEqual([ids[0]]);
+  await appendFile(transcript, JSON.stringify({ timestamp: new Date(Date.now() - 60000).toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: 'delayed-old-turn' } }) + '\n');
+  expect(await readManuallyStoppedCodexSessionIds(root, [ids[0]!])).toEqual([ids[0]], 'A delayed older turn cannot clear Stop');
+  await appendFile(transcript, JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'task_started', turn_id: 'new-user-turn' } }) + '\n');
+  expect(await readManuallyStoppedCodexSessionIds(root, [ids[0]!])).toEqual([]);
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)?.manualStop).toBeUndefined();
 });
 
 it("retires confirmed title overrides so later native renames are visible", async () => {

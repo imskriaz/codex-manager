@@ -18,7 +18,7 @@ export function nextQueuedSessions(sessions: DashboardCliSessionSummary[], prefe
   const eligible = sessions.filter(session => {
     const preference = preferences.get(session.id);
     return !session.archived && !session.subAgent && !session.parentSessionId && session.goal?.status !== 'complete' &&
-      preference?.queue === true && !preference.queueClaimedAt && !preference.queueError &&
+      preference?.queue === true && !preference.manualStop && !preference.queueClaimedAt && !preference.queueError &&
       Number.isSafeInteger(preference.priority ?? 3) && (preference.priority ?? 3) >= 1;
   });
   if (!eligible.length) return [];
@@ -67,7 +67,7 @@ export function registerCodexSessionQueue(context: vscode.ExtensionContext): voi
           const claimId = claimCodexSessionQueue(home, session.id, preference.queueRevision);
           if (!claimId) return;
           try {
-            const outcome = await resumeCodexSessionWork(session.id, controller.signal, 'automatic');
+            const outcome = await resumeCodexSessionWork(session.id, controller.signal, 'queue');
             finishCodexSessionQueueClaim(home, session.id, claimId, undefined, outcome !== 'idle');
             if (outcome === 'idle') publishDashboardRealtime({ type: 'dashboard:notice', level: 'info', message: `Queued session “${session.title}” has no eligible unfinished work. It was left idle.` });
           } catch (error) {

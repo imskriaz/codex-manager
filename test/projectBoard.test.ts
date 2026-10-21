@@ -33,18 +33,20 @@ it('imports native sessions into the database and reads each detail tab only whe
   expect(await readProjectTaskDetails(root, task.id)).toMatchObject({ olderThan: '200', messages: [{ id: 'message' }, { id: 'tool' }] });
   expect(workspace.listWorkspaceFiles).not.toHaveBeenCalled(); expect(workspace.readWorkspaceEnvironment).not.toHaveBeenCalled();
   await readProjectTaskDetails(root, task.id, 'files'); expect(workspace.listWorkspaceFiles).not.toHaveBeenCalled();
-  await readProjectTaskDetails(root, task.id, 'git'); expect(workspace.readWorkspaceGitHistory).toHaveBeenCalledOnce();
+  await readProjectTaskDetails(root, task.id, 'changes'); expect(workspace.readWorkspaceEnvironment).toHaveBeenCalledOnce();
 });
 
-it('enforces shared features at the service boundary and filters message versus activity contents', async () => {
+it('enforces shared features at the service boundary and exposes one combined activity view', async () => {
   const board = await readProjectBoard(root), task = board.tasks[0]!;
-  const share = { projectPath: root, expiresAt: Date.now() + 60000, permissions: ['messages' as const] };
+  const share = { projectPath: root, expiresAt: Date.now() + 60000, permissions: ['activities' as const, 'messages' as const] };
   await expect(readSharedProjectTask(share, task.id, 'files', undefined, 'src/app.ts')).rejects.toThrow(/not enabled/);
   expect(workspace.readWorkspaceFile).not.toHaveBeenCalled();
   const messages = await readSharedProjectTask(share, task.id, 'messages') as { messages: unknown[] };
-  expect(messages.messages).toHaveLength(1); expect(messages.messages[0]).toMatchObject({ text: 'Answer' });
-  expect(await readSharedProjectTask({ ...share, permissions: ['activities'] }, task.id, 'activities')).toMatchObject({ messages: [{ command: 'echo test', output: 'Command output' }] });
-  await expect(readSharedProjectTask({ ...share, expiresAt: Date.now() - 1 }, task.id, 'messages')).rejects.toThrow(/expired/);
+  expect(messages.messages).toHaveLength(2); expect(messages.messages[0]).toMatchObject({ text: 'Answer' });
+  expect(await readSharedProjectTask({ ...share, permissions: ['activities'] }, task.id, 'activities')).toMatchObject({ messages: expect.arrayContaining([expect.objectContaining({ command: 'echo test', output: 'Command output' })]) });
+  expect(await readSharedProjectTask({ ...share, permissions: ['messages'] }, task.id, 'activities')).toMatchObject({ messages: [{ text: 'Answer' }] });
+  await expect(readSharedProjectTask({ ...share, permissions: ['git'] }, task.id, 'git')).rejects.toThrow(/not enabled/);
+  await expect(readSharedProjectTask({ ...share, expiresAt: Date.now() - 1 }, task.id, 'activities')).rejects.toThrow(/expired/);
 });
 
 it('preserves tasks when discovery fails and reports optional detail failures without claiming completion', async () => {

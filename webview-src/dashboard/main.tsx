@@ -1,3 +1,4 @@
+import { SessionQueueControl } from './sessionQueueControl';
 import { SystemLogConsole } from "./systemLogConsole";
 import { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { render } from "preact";
@@ -80,7 +81,7 @@ import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedba
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
-import { AutoResumeIcon, QueueIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
+import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
 import { filterCliSessionsBySection, mergeDashboardPeers } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
@@ -3339,7 +3340,6 @@ function CliSessionsMenu(props: {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0 });
   const [now, setNow] = useState(Date.now());
-  const [queuePriorityDraft, setQueuePriorityDraft] = useState<Record<string, string>>({});
   const isZh = props.lang === "zh";
   const isHant = props.lang === "zh-hant";
   const menuLabel = isZh ? "运行中的会话" : isHant ? "執行中的工作階段" : "Running sessions";
@@ -3381,7 +3381,7 @@ function CliSessionsMenu(props: {
     }
     const closeOutside = (event: PointerEvent): void => {
       const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target) && !(target instanceof Element && target.closest(".cli-session-queue-menu"))) {
         props.onClose();
       }
     };
@@ -3450,7 +3450,7 @@ function CliSessionsMenu(props: {
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
-                    {running ? <button type="button" class={`cli-icon-button ${(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true) ? "is-active" : ""}`} aria-pressed={props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true} aria-label={`Auto Resume for ${session.title}`} title={!props.autoResumeEnabled ? "Enable Auto Resume for this session" : session.autoResumeEnabled === false ? "Enable Auto Resume" : "Disable Auto Resume"} disabled={!props.connected || offline || props.actionPending} onClick={() => props.onAutoResume(session, !(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true))}><AutoResumeIcon enabled={props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true} goal={!!session.goal} /></button> : <details class="cli-running-queue"><summary aria-label={`Queue priority for ${session.title}`} title="Queue after other sessions finish"><QueueIcon enabled={session.queueEnabled === true} />{session.queueEnabled ? <small>{session.queuePriority ?? 3}</small> : null}</summary><div class="cli-session-queue-menu"><strong>Run after other work</strong>{session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}<label class="cli-queue-priority-field"><span>Priority</span><input type="number" min="1" step="1" inputMode="numeric" value={queuePriorityDraft[session.id] ?? String(session.queuePriority ?? 3)} onInput={event => setQueuePriorityDraft(current => ({ ...current, [session.id]: event.currentTarget.value }))} /></label><button type="button" disabled={!props.connected || offline || props.actionPending || !Number.isSafeInteger(Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3)) || Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3) < 1} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, true, Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3)); }}>Queue session</button><button type="button" disabled={!props.connected || offline || props.actionPending || !session.queueEnabled} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onQueue(session, false); }}>Remove from queue</button></div></details>}
+                    {running ? <button type="button" class={`cli-icon-button is-auto-resume ${(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true) ? "is-enabled is-active" : "is-disabled"}`} aria-pressed={props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true} aria-label={`Auto Resume for ${session.title}`} title={(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true) ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={!props.connected || offline || props.actionPending} onClick={() => props.onAutoResume(session, !(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true))}><AutoResumeIcon enabled={props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true} goal={!!session.goal} /></button> : <SessionQueueControl session={session} disabled={!props.connected || !!offline || props.actionPending} onQueue={props.onQueue} />}
                     </div>
                   </article>;
                 })}

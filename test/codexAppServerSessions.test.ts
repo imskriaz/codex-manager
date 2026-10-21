@@ -12,6 +12,7 @@ import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
 import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, startNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
+import { readCodexSessionPreferences } from '../src/services/codexSessionPreferences';
 
 const id = "01a04882-d037-7a42-ad24-9afb61901199";
 let root: string;
@@ -105,6 +106,7 @@ describe("native App Server new sessions", () => {
       await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
       const first = cancelCodexCliSessionTurn(id), second = cancelCodexCliSessionTurn(id);
       await vi.waitFor(() => expect(cancelNativeCodexSessionTurn).toHaveBeenCalledOnce());
+      expect(readCodexSessionPreferences(root, [id]).get(id)?.manualStop).toBe(true);
       stopped();
       expect(await first).toBe(true); expect(await second).toBe(true); await sending;
       expect(cancelNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, "owned-native-turn");
@@ -302,7 +304,9 @@ describe("native App Server new sessions", () => {
       expect(rpc.request).toHaveBeenCalledWith("thread/start", expect.objectContaining({ cwd: root, sandbox: "read-only" }));
       expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ effort: "high", input: [expect.objectContaining({ type: "text", text: "First prompt" })] }), expect.any(Number), expect.any(Function));
       expect(readNewCodexCliSessionSummary(id)).toMatchObject({ status: "running", canStop: true });
-      await expect(cancelCodexCliSessionTurn(id)).resolves.toBe(true);
+      expect(await Promise.all([cancelCodexCliSessionTurn(id), cancelCodexCliSessionTurn(id)])).toEqual([true, true]);
+      expect(rpc.request.mock.calls.filter(([method]) => method === 'turn/interrupt')).toHaveLength(1);
+      expect(readCodexSessionPreferences(root, [id]).get(id)?.manualStop).toBe(true);
       expect(rpc.request).toHaveBeenCalledWith("turn/interrupt", { threadId: id, turnId: "turn-1" }, 10000);
       expect(mocks.spawn).not.toHaveBeenCalled();
     } finally { finish(); await completed; await new Promise((resolve) => setTimeout(resolve, 0)); }

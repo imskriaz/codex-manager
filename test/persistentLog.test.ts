@@ -367,7 +367,8 @@ it("clears System Log across active writers and rejects queued stale records whi
 it("keeps post-clear records written in the same millisecond and drops another writer's queued generation", async () => {
   const directory = await root(); await enable(directory); await register(directory);
   const { clearPersistentLogs, exportPersistentLogs } = await import("../src/utils/persistentLog");
-  const peer = logger(directory, 3, () => new Date("2026-10-18T12:00:00.000Z")); await peer.initialize();
+  const instant = new Date();
+  const peer = logger(directory, 3, () => instant); await peer.initialize();
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   (peer as unknown as { writeChain: Promise<void> }).writeChain = gate;
   peer.write("info", "test", "queued before clear");

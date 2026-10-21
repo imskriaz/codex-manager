@@ -4,7 +4,7 @@
   const token = location.pathname.split('/').pop();
   const endpoint = '/api/projects/share/' + encodeURIComponent(token);
   let board, loading = false, selected, live = false, showArchive = false;
-  const allowed = feature => Boolean(live && board?.permissions.includes(feature));
+  const allowed = feature => Boolean(live && board?.expiresAt > Date.now() && (board?.permissions.includes(feature) || (feature === 'activities' && board?.permissions.includes('messages'))));
   function node(tag, text, className) { const item = document.createElement(tag); if (text !== undefined) item.textContent = text; if (className) item.className = className; return item; }
   const status = node('p', '', 'task-board-status'); status.setAttribute('role', 'status');
   const heading = node('h1', 'Shared project');
@@ -13,7 +13,8 @@
   const search = node('input'); search.type = 'search'; search.placeholder = 'Search tasks…'; search.setAttribute('aria-label', 'Search tasks');
   const archive = node('button', 'Archive'); archive.type = 'button'; archive.setAttribute('aria-pressed', 'false');
   search.oninput = () => renderBoard(); archive.onclick = () => { showArchive = !showArchive; archive.setAttribute('aria-pressed', String(showArchive)); archive.textContent = showArchive ? 'Back to board' : 'Archive'; renderBoard(); };
-  toolbar.append(search, archive);
+  const refreshButton = node('button', 'Refresh'); refreshButton.type = 'button'; refreshButton.onclick = () => { void refresh(); };
+  toolbar.append(search, archive, refreshButton);
   const form = node('form', undefined, 'public-project-form'); form.hidden = true;
   const title = node('input'); title.placeholder = 'Task or idea title'; title.maxLength = 240; title.required = true; title.setAttribute('aria-label', 'Request title');
   const prompt = node('textarea'); prompt.placeholder = 'Describe what you need…'; prompt.maxLength = 32000; prompt.setAttribute('aria-label', 'Request details');
@@ -28,15 +29,15 @@
   async function request(body, task, view, before, file) {
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
     try {
-      const response = await fetch(endpoint + (task ? '?' + new URLSearchParams({ task, view: view || 'messages', ...(before ? { before } : {}), ...(file ? { file } : {}) }) : ''), { method: body ? 'POST' : 'GET', signal: controller.signal, cache: 'no-store', headers: { 'Content-Type': 'application/json', 'X-Codex-Dashboard': '1' }, ...(body ? { body: JSON.stringify(body) } : {}) });
-      const result = await response.json(); if (!response.ok) { if (response.status === 404) { live = false; columns.replaceChildren(); form.hidden = true; selected?.remove(); selected = undefined; } throw new Error(result.error || 'Project request failed.'); } return result;
+      const response = await fetch(endpoint + (task ? '?' + new URLSearchParams({ task, view: view || 'activities', ...(before ? { before } : {}), ...(file ? { file } : {}) }) : ''), { method: body ? 'POST' : 'GET', signal: controller.signal, cache: 'no-store', headers: { 'Content-Type': 'application/json', 'X-Codex-Dashboard': '1' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      const result = await response.json(); if (!response.ok) { if (response.status === 404) { live = false; columns.replaceChildren(); form.hidden = true; selected?.dispatchEvent(new Event('close')); } throw new Error(result.error || 'Project request failed.'); } return result;
     } finally { clearTimeout(timer); }
   }
   function openTask(task) {
-    selected?.remove();
+    selected?.dispatchEvent(new Event('close'));
     const dialog = node('aside', undefined, 'task-detail-panel public-task-dialog'); selected = dialog;
     dialog.setAttribute('aria-label', task.title); dialog.tabIndex = -1;
-    const close = node('button', '×', 'settings-close'); close.type = 'button'; close.setAttribute('aria-label', 'Close task details'); close.onclick = () => { dialog.remove(); selected = undefined; };
+    const close = node('button', '×', 'settings-close'); close.type = 'button'; close.setAttribute('aria-label', 'Close task details'); close.onclick = () => dialog.dispatchEvent(new Event('close'));
     dialog.onkeydown = event => { if (event.key === 'Escape') { close.click(); event.stopPropagation(); } };
     const activity = node('div', 'Loading activity…', 'task-detail-scroll');
     const comments = node('div', undefined, 'task-comments'); comments.hidden = !allowed('comments'); comments.append(node('h3', 'Comments'));
@@ -88,20 +89,20 @@
           content.append(row);
         }
         if (view === 'changes') content.prepend(node('p', 'Current project changes: ' + (data.changes || 0) + ' · +' + (data.additions || 0) + ' / −' + (data.deletions || 0)));
-        for (const commit of data.history || []) { const entry = node('article', undefined, 'task-activity'); entry.append(node('strong', commit.subject), node('small', commit.hash.slice(0,8) + ' · ' + commit.author + ' · ' + commit.date)); content.append(entry); }
-        if (view === 'git' && data.isGitRepository === false) content.append(node('p', 'This project has no Git repository.'));
         if (!content.childNodes.length) content.append(node('p', 'No activity on this history page.'));
       } catch (error) { if (requestId === generation) feedback.textContent = 'View could not refresh: ' + error.message; }
       finally { if (requestId === generation) pending = false; }
     }
-    const features = [allowed('activities') ? 'activities' : 'messages','files','changes'].filter(allowed);
+    const features = ['activities','files','changes'].filter(allowed);
     tabs.setAttribute('role', 'tablist');
-    for (const feature of features) { const tab = node('button', feature === 'messages' ? 'Activities' : feature === 'git' ? 'Git history' : feature[0].toUpperCase() + feature.slice(1)); tab.type = 'button'; tab.setAttribute('role', 'tab'); tab.onclick = () => { for (const item of tabs.children) item.setAttribute('aria-selected', String(item === tab)); void load(feature); }; tab.setAttribute('aria-selected', String(feature === features[0])); tabs.append(tab); }
+    for (const feature of features) { const tab = node('button', feature[0].toUpperCase() + feature.slice(1)); tab.type = 'button'; tab.setAttribute('role', 'tab'); tab.onclick = () => { for (const item of tabs.children) item.setAttribute('aria-selected', String(item === tab)); void load(feature); }; tab.setAttribute('aria-selected', String(feature === features[0])); tabs.append(tab); }
     const subtasks = board.tasks.filter(child => child.parentTaskId === task.id);
     if (subtasks.length) { const children = node('div', undefined, 'task-subtasks'); children.append(node('h3', 'Subtasks')); for (const child of subtasks) { const link = node('button', child.title); link.type = 'button'; link.onclick = () => openTask(child); children.append(link); } body.insertBefore(children, activity); }
     if (features[0]) void load(features[0]);
-    const timer = setInterval(() => { if (!dialog.isConnected) { clearInterval(timer); return; } if (!document.hidden && ['messages','activities'].includes(view) && !before && !pending && live) void load(view); commentButton.disabled = !allowed('comments'); }, 5000);
-    dialog.addEventListener('close', () => { clearInterval(timer); dialog.remove(); if (selected === dialog) selected = undefined; }, { once: true });
+    const revalidate = () => { if (dialog.isConnected && !document.hidden && view === 'activities' && !before && !pending && live) void load(view); commentButton.disabled = !allowed('comments'); };
+    window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate); window.addEventListener('online', revalidate);
+    dialog.addEventListener('refresh', revalidate);
+    dialog.addEventListener('close', () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); window.removeEventListener('online', revalidate); dialog.remove(); if (selected === dialog) selected = undefined; }, { once: true });
   }
 
   function renderBoard() {
@@ -112,7 +113,7 @@
     const query = search.value.trim().toLowerCase();
     for (const stage of showArchive ? ['archive'] : ['idea','planned','running','completed']) {
       const column = node('section', undefined, 'task-board-column is-' + stage);
-      const rows = board.tasks.filter(task => (showArchive ? task.sessionArchived : !task.sessionArchived && task.stage === stage && (!task.parentTaskId || !ids.has(task.parentTaskId))) && (!query || (task.title + '\n' + task.prompt).toLowerCase().includes(query)));
+      const rows = board.tasks.filter(task => (showArchive ? task.sessionArchived : task.stage === stage && (!task.parentTaskId || !ids.has(task.parentTaskId))) && (!query || (task.title + '\n' + task.prompt).toLowerCase().includes(query)));
       column.append(node('h2', stage[0].toUpperCase() + stage.slice(1) + ' · ' + rows.length, 'task-board-column-heading'));
       const list = node('div', undefined, 'task-board-card-list');
       let visible = 50;
@@ -128,6 +129,7 @@
       const comments = selected?.querySelector('.public-comment-list');
       if (comments && commentsChanged) { comments.replaceChildren(); for (const item of board.comments.filter(comment => comment.taskId === comments.dataset.task)) { const entry = node('article', undefined, 'task-activity'); entry.append(node('small', item.author), node('p', item.text)); comments.append(entry); } }
       status.textContent = 'Shared project · expires ' + new Date(board.expiresAt).toLocaleString();
+      selected?.dispatchEvent(new Event('refresh'));
     } catch (error) { live = false; submit.disabled = true; status.textContent = 'Saved view retained. ' + error.message + ' Reconnect before submitting.'; }
     finally { loading = false; }
   }
@@ -139,5 +141,7 @@
   };
   window.addEventListener('offline', () => { live = false; submit.disabled = true; status.textContent = 'Offline. Your draft is kept; requests are not sent automatically.'; });
   window.addEventListener('online', () => { void refresh(); });
-  void refresh(); setInterval(() => { if (!document.hidden) void refresh(); }, 15000);
+  const revalidate = () => { if (!document.hidden) void refresh(); };
+  window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate); window.addEventListener('online', revalidate);
+  void refresh();
 })();

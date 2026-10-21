@@ -30,9 +30,8 @@ const pendingWrites = new WeakMap<object, Promise<void>>();
 const recoveryIds = new WeakMap<object, string[]>();
 
 function filterSessionAutoResumeIds(home: string, ids: readonly string[]): string[] {
-  if (isAutoResumeEnabled()) return [...ids];
   const preferences = readCodexSessionPreferences(home, ids);
-  return ids.filter(id => isCodexSessionAutoResumeEnabled(home, id) && preferences.get(id)?.autoResume === true);
+  return ids.filter(id => !preferences.get(id)?.manualStop && isCodexSessionAutoResumeEnabled(home, id));
 }
 const openRecoveryIds = new WeakMap<object, string[]>();
 const unrestoredOpenSnapshots = new WeakSet<object>();
@@ -613,8 +612,8 @@ export function resumePersistedCodexSessions(
       const missingTitles = savedIds.filter(id => !savedTitles[id]);
       if (missingTitles.length) Object.assign(savedTitles, await captureRecoveryMetadata(missingTitles, controller.signal));
       const queuedIds = readQueuedCodexSessionPreferences(resolveCodexHome());
-      const ids = orderCodexSessionRecoveryIds(resolveCodexHome(), await bounded(() => readAutoResumeCodexSessionIds(undefined, undefined, savedIds, controller.signal, "recovery", goalOnly), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
-        "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal)).filter(id => !queuedIds.has(id));
+      const ids = orderCodexSessionRecoveryIds(resolveCodexHome(), filterSessionAutoResumeIds(resolveCodexHome(), await bounded(() => readAutoResumeCodexSessionIds(undefined, undefined, savedIds, controller.signal, "recovery", goalOnly), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
+        "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal))).filter(id => !queuedIds.has(id));
       if (!isAutoResumeAvailable()) {
         await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
         return { attempted: 0, opened: 0, failed: [] };

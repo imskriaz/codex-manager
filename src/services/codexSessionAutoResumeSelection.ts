@@ -7,6 +7,7 @@ import {
   readRunningCodexSessionIds,
   readCompletedCodexSessionIds,
   readQuotaInterruptedCodexSessionIds,
+  readManuallyStoppedCodexSessionIds,
   resolveCodexHome,
   SESSION_ID_PATTERN
 } from "./codexSessionResume";
@@ -35,15 +36,17 @@ export async function filterAutoResumeGoalSessionIds(
   if (!ids.length) return ids;
   let db: SqliteDatabase | undefined;
   try {
+    const stopped = new Set(await readManuallyStoppedCodexSessionIds(home, ids, signal));
+    const preferences = readCodexSessionPreferences(home, ids);
+    ids = ids.filter(id => !stopped.has(id) && preferences.get(id)?.autoResume !== false);
+    if (!ids.length) return [];
     db = await openGoalDatabase(home);
     if (!db) {
       return goalOnly ? [] : ids;
     }
     const statement = db.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
-    const preferences = readCodexSessionPreferences(home, ids);
     return ids.filter((id) => {
       signal?.throwIfAborted();
-      if (preferences.get(id)?.autoResume === false) return false;
       const status = statement.get(id)?.["status"];
       const eligible = status === "active" || status === "usage_limited" || (status === "paused" && includeInterruptedPaused && !isExplicitSessionGoalPause(home, id)) || (status === undefined && !goalOnly);
       return eligible;

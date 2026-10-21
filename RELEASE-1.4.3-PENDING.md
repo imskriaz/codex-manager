@@ -7,6 +7,35 @@ an updated artifact until every release gate is satisfied.
 
 ## Repository inventory (2026-10-20)
 
+### Follow-up evidence (2026-10-21)
+
+- The delivered baseline is commit `7a255b8` on `main`; the current follow-up
+  fixes manual Stop recovery, cached per-session overrides, floating queue
+  controls, distinct Auto Resume states, and public task permission/lifecycle
+  gaps. Their verification is recorded below; the broader live gates remain open.
+- Focused recovery/queue/task verification: 223 tests across 10 suites pass.
+  Follow-up logging/Stop verification: 53 tests across 2 suites pass.
+- Both TypeScript targets and production compilation pass. Lint has zero
+  errors (the repository still has style warnings).
+- Full regression: 174 test files and 2,066 tests pass. The previous failure
+  used a fixed log timestamp outside the current retention window; its fixture
+  now freezes one instant from the current test run instead.
+- Responsive checks pass at 1440x1000, 1024x768, 768x1024, 390x844, 320x667,
+  and 844x390, including queue panel bounds and distinct Auto Resume shapes.
+  Public task checks pass at 1440px and 390px, including permissions and revocation.
+- A real browser session reached completion without runtime errors. The local
+  state endpoint currently reports one connected system, so physical two-PC
+  discovery, switching, and phone delivery are still unverified.
+- Final read-only live checks pass with 341 real sessions and browser reconnect
+  at desktop/mobile sizes; host connection measured 821 ms / 575 ms. The final
+  VSIX builds successfully and its dependency layout check passes.
+- Real cold reboot/capacity recovery, live account reset, live cross-project API
+  denial, share embedding/expiry, and browser storage exhaustion still need
+  runtime evidence. Passing fixtures do not close those hardware/live gates.
+- Seven stashes remain preserved. Their changed source files exist in current
+  code except the retired announcement service; full semantic equivalence is
+  still unproven. No stash was blindly applied or deleted.
+
 - One worktree: the current checkout on `main`.
 - No local branches unmerged into `main` at inventory time.
 - The current working diff and new UI checks, renderer and regression tests

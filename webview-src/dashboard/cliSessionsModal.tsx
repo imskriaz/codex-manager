@@ -1,3 +1,4 @@
+import { SessionQueueControl } from './sessionQueueControl';
 import { createPortal } from "preact/compat";
 import type { JSX } from "preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -231,16 +232,7 @@ export function shouldShowLatestButton(scrollHeight: number, clientHeight: numbe
 export function CliSessionsPage(props: CliSessionsPageProps) {
   const [section, setSection] = useState<CliSessionSection>("active");
   const [search, setSearch] = useState("");
-  const [queueMenuSession, setQueueMenuSession] = useState<string>();
-  const [queuePriorityDraft, setQueuePriorityDraft] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (!queueMenuSession) return;
-    const close = (event: PointerEvent): void => { if (!(event.target as Element).closest(".cli-session-queue-wrap")) setQueueMenuSession(undefined); };
-    const escape = (event: KeyboardEvent): void => { if (event.key === "Escape") setQueueMenuSession(undefined); };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", escape);
-    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
-  }, [queueMenuSession]);
+
   const [attachmentReading, setAttachmentReading] = useState(false);
   const submittedDrafts = useRef(new Map<string, ComposerDraft & { key: string }>());
   const attachmentReadRef = useRef(false);
@@ -638,9 +630,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const running = isCodexSessionRunning(session);
       const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
       const hasGoal = Boolean(session.goal && ["active", "usage_limited", "paused"].includes(session.goal.status));
-      const autoResumeLabel = !props.autoResumeEnabled
-        ? `Auto Resume is off globally for ${session.title} (default)`
-        : `${autoResume ? "Disable" : "Enable"} Auto Resume for ${session.title}${hasGoal ? " (goal included)" : ""}`;
+      const autoResumeLabel = `${autoResume ? "Disable" : "Enable"} Auto Resume for ${session.title}${hasGoal ? " (goal included)" : ""}`;
       return <div role="listitem" draggable class={`cli-session-row ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta"><span>{sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small></span>
@@ -650,11 +640,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </span> : null}
       <span class="cli-session-row-actions">
         {running ? <>
-          <IconButton label={autoResumeLabel} title={autoResumeLabel} disabled={props.mutating} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={hasGoal} /></IconButton>
-          <span class="cli-session-queue-wrap">
-            <IconButton label={`${session.queueEnabled ? "Edit" : "Add"} ${session.title} to recovery queue`} disabled={props.mutating} onClick={() => setQueueMenuSession((current) => current === session.id ? undefined : session.id)}><QueueIcon enabled={session.queueEnabled === true} /></IconButton>
-            {queueMenuSession === session.id ? <div class="cli-session-queue-menu" role="menu" onClick={(event) => event.stopPropagation()}><strong>Recovery order</strong>{session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}<label class="cli-queue-priority-field"><span>Priority</span><input type="number" min="1" step="1" inputMode="numeric" value={queuePriorityDraft[session.id] ?? String(session.queuePriority ?? 3)} onInput={(event) => setQueuePriorityDraft(current => ({ ...current, [session.id]: event.currentTarget.value }))} /></label><button type="button" role="menuitem" disabled={!Number.isSafeInteger(Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3)) || Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3) < 1} onClick={() => { setQueueMenuSession(undefined); props.onQueue(session, true, Number(queuePriorityDraft[session.id] ?? session.queuePriority ?? 3)); }}>Queue session</button>{session.queueEnabled ? <button type="button" role="menuitem" class="is-muted" onClick={() => { setQueueMenuSession(undefined); props.onQueue(session, false); }}>Remove from queue</button> : null}</div> : null}
-          </span>
+          <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={autoResumeLabel} title={autoResumeLabel} disabled={props.mutating} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={hasGoal} /></IconButton>
+          <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} />
           {session.canStop ? <IconButton label={`Stop ${session.title}`} disabled={props.mutating} onClick={() => props.onStop(session)}><StopIcon /></IconButton> : null}
         </> : <>
           <IconButton label={`Open ${session.title} in Codex`} disabled={props.mutating} onClick={() => props.onOpenInCodex(session)}><RestoreIcon /></IconButton>
@@ -2277,7 +2264,7 @@ function UsageBanner(props: { account?: DashboardAccountViewModel; onAction: (me
 }
 function SessionRailSkeleton() { return <div class="cli-skeleton-list" aria-label="Loading sessions"><i /><i /><i /><i /></div>; }
 function MessageSkeleton() { return <div class="cli-message-skeleton" aria-label="Loading messages"><i /><i /><i /></div>; }
- function IconButton(props: { label: string; title?: string; disabled?: boolean; danger?: boolean; onClick: () => void; children: preact.ComponentChildren }) { return <button type="button" class={`cli-icon-button ${props.danger ? "is-danger" : ""}`} disabled={props.disabled} aria-label={props.label} title={props.title ?? props.label} onClick={props.onClick}>{props.children}</button>; }
+function IconButton(props: { label: string; title?: string; disabled?: boolean; danger?: boolean; className?: string; pressed?: boolean; onClick: () => void; children: preact.ComponentChildren }) { return <button type="button" class={`cli-icon-button ${props.className ?? ""} ${props.danger ? "is-danger" : ""}`} disabled={props.disabled} aria-label={props.label} aria-pressed={props.pressed} title={props.title ?? props.label} onClick={props.onClick}>{props.children}</button>; }
 
 function formatTime(value: string | undefined): string { if (!value) return ""; const parsed = Date.parse(value); return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : ""; }
 function formatDuration(durationMs: number): string { if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))} ms`; if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`; return `${Math.floor(durationMs / 60_000)}m ${Math.round((durationMs % 60_000) / 1000)}s`; }
@@ -2362,8 +2349,7 @@ function ReasoningIcon() { return <Icon><path d="M9 18h6M10 21h4M8.5 15.5C6.9 14
 function ShieldIcon() { return <Icon><path d="M12 3 5 6v5c0 4.6 2.9 8.2 7 10 4.1-1.8 7-5.4 7-10V6l-7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></Icon>; }
 function SendIcon() { return <Icon><path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function StopIcon() { return <Icon><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></Icon>; }
-export function AutoResumeIcon(_props: { enabled: boolean; goal: boolean }) { return <Icon><path d="M19 8V4h-4M5 16v4h4M18.4 5.6A8 8 0 0 0 5.6 8.2M5.6 18.4a8 8 0 0 0 12.8-2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="m10 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
-export function QueueIcon(_props: { enabled: boolean }) { return <Icon><path d="M5 6h10M5 12h10M5 18h10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="m18 15 3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
+export function AutoResumeIcon(props: { enabled: boolean; goal: boolean }) { return <Icon><path d="M19 8V4h-4M5 16v4h4M18.4 5.6A8 8 0 0 0 5.6 8.2M5.6 18.4a8 8 0 0 0 12.8-2.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="17.5" cy="17.5" r="4" fill={props.enabled ? "currentColor" : "none"} opacity={props.enabled ? "0.16" : "0.04"}/>{props.enabled ? <path d="m15.5 17.5 1.3 1.3 2.5-2.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/> : <path d="m15.3 15.3 4.4 4.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>}</Icon>; }
 function SwitchAccountIcon() { return <Icon><path d="M5 8h11l-2.5-2.5M19 16H8l2.5 2.5M16 8l2.5 2.5L16 13M8 16l-2.5-2.5L8 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function EmptyFolderIcon() { return <Icon><path d="M3 7h7l2 2h9v10H3V7Zm0 0V5h7l2 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></Icon>; }
 function PlusIcon() { return <Icon><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></Icon>; }

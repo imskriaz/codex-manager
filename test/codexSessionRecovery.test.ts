@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ summary: vi.fn(), send: vi.fn(), goal: vi.fn(), observe: vi.fn(), files: vi.fn(), log: vi.fn() }));
-vi.mock("../src/services/codexSessionResume", () => ({ observeRunningCodexSession: mocks.observe, readCodexCliSessionSummary: mocks.summary, sendCodexCliSessionMessage: mocks.send, resumeCodexSessionGoal: mocks.goal, resolveCodexHome: () => "recovery-test", toSessionLogRef: () => "session-ref" }));
+const mocks = vi.hoisted(() => ({ summary: vi.fn(), stopped: vi.fn(), send: vi.fn(), goal: vi.fn(), observe: vi.fn(), files: vi.fn(), log: vi.fn() }));
+vi.mock("../src/services/codexSessionResume", () => ({ observeRunningCodexSession: mocks.observe, readManuallyStoppedCodexSessionIds: mocks.stopped, readCodexCliSessionSummary: mocks.summary, sendCodexCliSessionMessage: mocks.send, resumeCodexSessionGoal: mocks.goal, resolveCodexHome: () => "recovery-test", toSessionLogRef: () => "session-ref" }));
 vi.mock("node:fs/promises", () => ({ readdir: mocks.files }));
 vi.mock("../src/utils/persistentLog", () => ({ recordPersistentEvent: mocks.log }));
 import { resumeCodexSessionWork } from "../src/services/codexSessionRecovery";
@@ -10,12 +10,20 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.summary.mockResolvedValue({ id: "session", title: "Pending task", status: "idle", interrupted: true, goal: null, projectPath: "project" });
   mocks.files.mockResolvedValue([]);
+  mocks.stopped.mockResolvedValue([]);
   mocks.goal.mockResolvedValue(undefined);
   mocks.send.mockImplementation(async options => { options.onStarted(); });
 });
 afterEach(() => vi.useRealTimers());
 
 describe("post-load session recovery", () => {
+  it('keeps a manually stopped active goal idle during automatic recovery', async () => {
+    mocks.stopped.mockResolvedValue(['session']);
+    mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', interrupted: true, goal: { status: 'active' } });
+    expect(await resumeCodexSessionWork('session')).toBe('idle');
+    expect(mocks.goal).not.toHaveBeenCalled(); expect(mocks.send).not.toHaveBeenCalled();
+    expect(await resumeCodexSessionWork('session', undefined, 'user')).toBe('goal');
+  });
   it("sends exactly Continue if not completed and records title after provider acceptance", async () => {
     expect(await resumeCodexSessionWork("session")).toBe("continued");
     expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ text: "Continue if not completed", projectPath: "project" }));

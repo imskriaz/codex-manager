@@ -6,7 +6,8 @@
 
 - Record verified native sessions and goals in SQLite in the background while the dashboard is closed. Keep running counts stable during partial discovery, preserve newer activity under recording-queue pressure, and retain recovery across reloads, storage contention, and unconfirmed starts.
 - Resume eligible recorded interruptions and unfinished active goals after native readiness is verified. Respect explicit Pause actions and exclude archived, child, completed, blocked, and budget-limited work. Treat model-capacity failures as interruptions and preserve provider errors until a later successful turn.
-- Add per-session Auto Resume and queue controls to the Running Sessions flyout. Global Auto Resume off disables effective per-session recovery. Deferred sessions wait for other active work, follow priorities 1–3, and start equal priorities together in bounded groups. Durable claims prevent blind replay after an uncertain start or restart.
+- Keep a user Stop durable across delayed recording and reloads so it cannot be mistaken for recoverable interruption work; an explicit resume or new message clears that suppression.
+- Add per-session Auto Resume and queue controls to the Running Sessions flyout. Global Auto Resume supplies the default; each session can opt in or out independently. Deferred sessions wait for other active work, follow positive numeric priorities, and start equal priorities together in bounded groups. Durable claims prevent blind replay after an uncertain start or restart.
 - Update externally changed session titles and retire temporary rename overrides after native confirmation. Reapply current preferences to cached lists across windows.
 - Validate closed-project paths asynchronously for files, terminals, and Git operations. Preserve symlink containment, file revisions, ownership checks, cancellation, and timeout safeguards. Automatically create a terminal in the session project when the selected terminal has a different or unverifiable folder.
 
@@ -14,8 +15,8 @@
 
 - Add project Kanban with **Idea, Planned, Running, Completed**, enabled by default. Store custom tasks, discovered sessions, and comments in indexed Manager SQLite tables with revision checks and idempotent retries.
 - Organize sessions and custom tasks as nested subtasks at any level, or move them back to the board. Preserve session identity and history; grouped sessions appear once. Reject cycles, cross-project parents, missing tasks, and conflicting edits.
-- Open task details in a right panel for combined Activities, conversation files, recorded changes, and Git history. Keep archived sessions in a separate Archive view. Read tabs on demand, keep history pages bounded, preserve saved views when refreshes fail, and push committed task/comment updates to connected dashboards.
-- Create expiring public project links with selectable message, activity, file, change, Git, comment, and submission permissions. Visitors can submit ideas and comment when allowed. Revoke project links and enforce permissions on the server. A separate embedding permission enables iframe integration with the same access rules.
+- Open task details in a right panel for combined Activities, conversation files, and recorded changes. Keep archived sessions in Completed with an additional Archive filter. Read tabs on demand, keep history pages bounded, preserve saved views when refreshes fail, and push committed task/comment updates to connected dashboards.
+- Create expiring public project links with selectable activity, conversation file, change, comment, and submission permissions. Visitors can submit ideas and comment when allowed. Revoke project links and enforce permissions on the server. A separate embedding permission enables iframe integration with the same access rules.
 
 ### API and offline behavior
 

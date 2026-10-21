@@ -102,12 +102,12 @@ it('keeps saved data on a failed write and rejects invalid or full storage', () 
 
 it('hashes public links, enforces expiry and project revocation, and omits unshared comments', () => {
   saveProjectTask(root, draft('a')); addProjectComment(root, { id: 'c', taskId: 'a', text: 'Private comment' });
-  const link = createProjectShare(root, ['messages', 'embed'], 1);
+  const link = createProjectShare(root, ['activities', 'embed'], 1);
   const other = createProjectShare(join(root, 'other'), [], 30);
   expect(store.keys('project-shares')).not.toContain(link.token);
   const share = getProjectShare(link.token)!;
   const board: ProjectBoard = { projectPath: root, ...readProjectTasks(root), sessions: [], updatedAt: 1 };
-  expect(publicProjectBoard(board, share)).toMatchObject({ comments: [], permissions: ['messages','embed'] });
+  expect(publicProjectBoard(board, share)).toMatchObject({ comments: [], permissions: ['activities','embed','messages'] });
   expect(() => createProjectShare(root, ['unknown' as never])).toThrow(/permissions/);
   vi.spyOn(Date, 'now').mockReturnValue(link.expiresAt);
   expect(getProjectShare(link.token)).toBeUndefined(); vi.restoreAllMocks();

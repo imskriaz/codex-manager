@@ -92,10 +92,11 @@ describe("auto resume selection", () => {
     expect(await selectSessions(home, undefined, ids, undefined, "running", true, [], undefined, ids)).toEqual([ids[0]]);
     expect(await filterAutoResumeGoalSessionIds(ids, home, undefined, true)).toEqual([ids[0], ids[1]]);
     await appendFile(path.join(home,"sessions",`rollout-${ids[0]}.jsonl`),JSON.stringify({type:"event_msg",payload:{type:"turn_aborted",reason:"user_cancelled"}})+"\n");
-    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [], undefined, ids)).toEqual([ids[0]]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", true, [], undefined, ids)).toEqual([]);
+    expect(await selectSessions(home, undefined, ids, undefined, "recovery", true)).toEqual([]);
   });
 
-  it("recovers interrupted quota and cancelled work without treating completed sessions as running", async () => {
+  it("recovers quota interruptions but respects user cancellation across capture and restore", async () => {
     const home = await fixture();
     const transcript = path.join(home, "sessions", `rollout-${ids[0]}.jsonl`);
     const event = (type: string, extra = {}) => JSON.stringify({type:"event_msg",payload:{type,turn_id:"turn-1",...extra}})+"\n";
@@ -104,7 +105,8 @@ describe("auto resume selection", () => {
     expect(await sessionEditor.readRunningCodexSessionIds(home,undefined,[ids[0]!])).toEqual([]);
     expect(await selectSessions(home, undefined, ids, undefined, "running", false, [], undefined, ids)).toEqual([ids[0]]);
     await appendFile(transcript,event("turn_aborted",{reason:"user_cancelled"}));
-    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [], undefined, ids)).toEqual([ids[0]]);
+    expect(await selectSessions(home, undefined, ids, undefined, "running", false, [], undefined, ids)).toEqual([]);
+    expect(await selectSessions(home, undefined, [ids[0]!], undefined, "recovery", false)).toEqual([]);
     await appendFile(transcript,JSON.stringify({type:"event_msg",payload:{type:"task_started",turn_id:"turn-2"}})+"\n"+JSON.stringify({type:"event_msg",payload:{type:"task_complete",turn_id:"turn-2"}})+"\n");
     expect(await selectSessions(home, undefined, ids, undefined, "running", false, [])).toEqual([]);
   });

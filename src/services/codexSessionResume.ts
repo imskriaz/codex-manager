@@ -31,7 +31,7 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, type SqliteStateStore } from "../storage/sqliteState";
 import { normalizeNativePath } from "../utils/nativePaths";
-import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles } from "./codexSessionPreferences";
+import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, markCodexSessionManualStop, clearCodexSessionManualStop } from "./codexSessionPreferences";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 
@@ -76,7 +76,7 @@ const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,127}$/i;
 const REASONING_EFFORT_PATTERN = /^(minimal|low|medium|high|xhigh|max|ultra)$/;
 const recentNewSessions = new Map<string, { summary: DashboardCliSessionSummary; text: string }>();
 const newSessionFailures = new Map<string, Error>();
-const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean }>();
+const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; stop?: Promise<boolean> }>();
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean> }>();
 const nativeTurnObservers = new Map<string, Promise<void>>();
 
@@ -215,7 +215,7 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
     const preference = preferences.get(row.id);
     const decorated: DashboardCliSessionSummary = { ...row, title: titles.get(row.id) ?? row.title };
     delete decorated.autoResumeEnabled; delete decorated.queueEnabled; delete decorated.queuePriority; delete decorated.queueError;
-    if (autoResume || preference?.autoResume !== undefined) decorated.autoResumeEnabled = autoResume || preference?.autoResume === true;
+    if (autoResume || preference?.autoResume !== undefined) decorated.autoResumeEnabled = (autoResume || preference?.autoResume === true) && preference?.autoResume !== false;
     if (preference?.queue === true) {
       decorated.queueEnabled = true;
       decorated.queuePriority = preference.priority ?? 3;
@@ -300,7 +300,7 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
   return summaries.filter(Boolean).map((summary) => {
     const preference = preferences.get(summary.id);
     return { ...summary, title: titleOverrides.get(summary.id) ?? summary.title,
-      ...(autoResume || preference?.autoResume !== undefined ? { autoResumeEnabled: autoResume || preference?.autoResume === true } : {}),
+      ...(autoResume || preference?.autoResume !== undefined ? { autoResumeEnabled: (autoResume || preference?.autoResume === true) && preference?.autoResume !== false } : {}),
       ...(preference?.queue === true ? { queueEnabled: true, queuePriority: preference.priority ?? 3, queueError: preference.queueError ?? (preference.queueClaimedAt ? 'A queued start was not confirmed. Review the session before requeuing.' : undefined) } : {}),
     };
   });
@@ -380,7 +380,10 @@ export async function setCodexSessionGoalStatus(sessionId: string, status: "acti
       await runCodexAppServerRequest<{ goal?: { status?: string } }>("thread/goal/set", params);
     if (result.goal?.status !== status) throw new Error("Codex did not confirm the goal change. Refresh before retrying.");
     if (status === "paused") markExplicitSessionGoalPause(resolveCodexHome(), sessionId);
-    else clearExplicitSessionGoalPause(resolveCodexHome(), sessionId);
+    else {
+      clearExplicitSessionGoalPause(resolveCodexHome(), sessionId);
+      clearCodexSessionManualStop(resolveCodexHome(), sessionId);
+    }
   });
 }
 
@@ -759,6 +762,7 @@ export async function sendCodexCliSessionMessage(options: {
   projectPath?: string;
   onStarted?: () => void;
   signal?: AbortSignal;
+  clearManualStop?: boolean;
 }): Promise<void> {
   options.signal?.throwIfAborted();
   validateSessionId(options.sessionId);
@@ -779,6 +783,7 @@ export async function sendCodexCliSessionMessage(options: {
   }
   const cwd = await resolveRecordedSessionProject(options.sessionId, options.projectPath);
   options.signal?.throwIfAborted();
+  if (options.clearManualStop) clearCodexSessionManualStop(resolveCodexHome(), options.sessionId);
   await sendAppServerSessionMessage(options, cwd);
 }
 
@@ -940,6 +945,8 @@ async function sendAppServerSessionMessage(options: {
 }, cwd: string): Promise<void> {
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
   options.signal?.throwIfAborted();
+  if (readCodexSessionPreferences(resolveCodexHome(), [options.sessionId]).get(options.sessionId)?.manualStop)
+    throw new Error('This session was explicitly stopped. Resume it or send a new message to continue.');
   if (await isCliSessionRunning(resolveCodexHome(), options.sessionId)) throw new Error("Codex is already working in this session. Wait for it to finish or stop the current turn.");
   const params = {
     threadId: options.sessionId, input: appServerChatInput(options.text.trim(), options.attachments), cwd,
@@ -978,6 +985,8 @@ async function sendAppServerSessionMessage(options: {
       live.finish("completed"); return;
     }
     options.signal?.throwIfAborted();
+    if (readCodexSessionPreferences(home, [options.sessionId]).get(options.sessionId)?.manualStop)
+      throw new Error('This session was explicitly stopped while starting. It was left stopped.');
     await rpc.startAndWaitForTurn(options.sessionId, params, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(options.sessionId);
       if (active) active.turnId = turnId;
@@ -1006,6 +1015,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
   validateSessionId(session.id);
   signal?.throwIfAborted();
   const home = resolveCodexHome();
+  if (origin === "user") clearCodexSessionManualStop(home, session.id);
   const nativeStarted = (turnId: string) => nativeTurnStarted(home, session.id, turnId);
   const cwd = await resolveRecordedSessionProject(session.id, session.projectPath);
   signal?.throwIfAborted();
@@ -1032,6 +1042,8 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
   try {
     await waitWithin(runCrossWindowExclusive(`codex:goal:${session.id.toLowerCase()}`, "Resume Codex goal", () => runCliSessionMutation(session.id, "Resume Codex goal", async () => {
       signal?.throwIfAborted();
+      if (readCodexSessionPreferences(home, [session.id]).get(session.id)?.manualStop)
+        throw new Error('This session was explicitly stopped. Resume it to continue the goal.');
       if (await isCliSessionRunning(resolveCodexHome(), session.id)) {
         observeRunningCodexSession({ ...session, status: "running" });
         return;
@@ -1190,24 +1202,39 @@ function toAppServerSandbox(mode: DashboardCliSandboxMode, cwd: string): Record<
 
 export async function cancelCodexCliSessionTurn(sessionId: string): Promise<boolean> {
   validateSessionId(sessionId);
-  const native = ownedNativeTurn(resolveCodexHome(), sessionId);
+  sessionId = sessionId.toLowerCase();
+  const home = resolveCodexHome();
+  const suppressRecovery = (turnId?: string) => {
+    try { markCodexSessionManualStop(home, sessionId, turnId); }
+    catch (error) {
+      recordPersistentEvent("warning", "session-stop", "Stop recovery suppression could not be saved", { sessionRef: toSessionLogRef(sessionId) }, error);
+      publishDashboardRealtime({ type: "dashboard:notice", level: "warning", message: "Stop was requested, but its recovery preference could not be saved. Keep this window open until storage recovers before reloading." });
+    }
+  };
+  const native = ownedNativeTurn(home, sessionId);
   if (native) {
-    if (!native.stop) native.stop = cancelNativeCodexSessionTurn(native.home, sessionId, native.turnId).finally(() => { native.stop = undefined; });
+    if (!native.stop) {
+      suppressRecovery(native.turnId);
+      native.stop = cancelNativeCodexSessionTurn(native.home, sessionId, native.turnId).finally(() => { native.stop = undefined; });
+    }
     return native.stop;
   }
   const activeAppServer = activeAppServerTurns.get(sessionId);
   if (activeAppServer) {
+    if (activeAppServer.stop) return activeAppServer.stop;
+    suppressRecovery(activeAppServer.turnId);
     activeAppServer.cancelRequested = true;
     if (!activeAppServer.turnId) { activeAppServer.rpc.close(); return true; }
     recordPersistentEvent("info", "session-stop", "App-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: "app-server-stdio" });
-    try {
-      await activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000);
+    activeAppServer.stop = activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000).then(() => {
       cancelCodexAppServerPrompts(sessionId);
-    } catch (error) {
+      return true;
+    }).catch(error => {
       activeAppServer.cancelRequested = false;
+      activeAppServer.stop = undefined;
       throw error;
-    }
-    return true;
+    });
+    return activeAppServer.stop;
   }
   return false;
 }
@@ -1377,6 +1404,7 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
 
 export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): void {
   validateSessionId(sessionId);
+  if (enabled) clearCodexSessionManualStop(resolveCodexHome(), sessionId);
   writeCodexSessionPreference(resolveCodexHome(), sessionId, { autoResume: enabled ? (isAutoResumeEnabled() ? undefined : true) : false });
 }
 
@@ -1388,6 +1416,7 @@ export function setCodexSessionQueue(sessionId: string, enabled: boolean, priori
   store.transaction(() => {
     const queued = readQueuedCodexSessionPreferences(home);
     if (enabled && !queued.has(sessionId) && queued.size >= 256) throw new Error('The session queue is full. Remove an entry before adding another.');
+    if (enabled) clearCodexSessionManualStop(home, sessionId);
     writeCodexSessionPreference(home, sessionId, { queue: enabled, priority: enabled ? priority : undefined, queueClaimedAt: undefined, queueClaimId: undefined, queueError: undefined, queueRevision: randomUUID() });
   });
 }
@@ -2724,7 +2753,7 @@ async function inspectCliSessionRunning(
   const transcript = knownTranscriptPath ?? await findCliSessionTranscript(codexHome, sessionId, signal);
   const turnState = await readRecentTranscriptTurnState(transcript);
   // A loaded conversation can retain its writer lock after its turn finishes.
-  if (turnState === "terminal" || turnState === "failed" || turnState === "quota-paused") return false;
+  if (turnState === "terminal" || turnState === "stopped" || turnState === "failed" || turnState === "quota-paused") return false;
   const nativeRunning = await readNativeCodexSessionRunning(codexHome, sessionId, signal);
   signal?.throwIfAborted();
   if (nativeRunning !== undefined) return nativeRunning;
@@ -2834,7 +2863,7 @@ async function isWriterLockHeld(lockPath: string): Promise<boolean> {
   }
 }
 
-type RecentTranscriptTurnState = "active" | "terminal" | "failed" | "quota-paused" | "unknown";
+type RecentTranscriptTurnState = "active" | "terminal" | "stopped" | "failed" | "quota-paused" | "unknown";
 const cliTranscriptTurnStateCache = new Map<string, {
   size: number; mtimeMs: number; offset: number;
   state: RecentTranscriptTurnState; resumeState: RecentTranscriptTurnState;
@@ -2904,7 +2933,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
             turnCancelled = cancelled || type === "turn_aborted";
             // Native task_complete can carry a provider error; it is unfinished work, not success.
             const failed = capacity || /failed/.test(type ?? "") || Boolean(record.error ?? record.payload?.error) || state === "failed";
-            state = quota || (state === "quota-paused" && !cancelled) ? "quota-paused" : failed && !cancelled ? "failed" : "terminal";
+            state = cancelled && !quota && !capacity ? "stopped" : quota || (state === "quota-paused" && !cancelled) ? "quota-paused" : failed && !cancelled ? "failed" : "terminal";
             turnId = eventTurnId ?? turnId;
           }
         } else if (type === "error" && (!eventTurnId || !turnId || eventTurnId === turnId)) {
@@ -2916,7 +2945,7 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
             turnId = eventTurnId ?? turnId;
           }
         } else if (["task_started", "turn_started", "turn/started", "turn.started"].includes(type ?? "")) {
-          if (!["terminal","failed","quota-paused"].includes(state) || !eventTurnId || eventTurnId !== turnId) {
+          if (!["terminal","stopped","failed","quota-paused"].includes(state) || !eventTurnId || eventTurnId !== turnId) {
             if (eventTurnId !== turnId || state !== "active") startedAt = undefined;
             const timestamp = Date.parse(typeof record.timestamp === "string" ? record.timestamp : "");
             if (startedAt === undefined && Number.isFinite(timestamp) && timestamp > 0 && timestamp <= Date.now() + 5 * 60_000) startedAt = timestamp;
@@ -2939,6 +2968,26 @@ async function readRecentTranscriptTurnState(transcriptPath: string | undefined)
   }
 }
 
+/** A user cancellation is terminal intent, even when the native goal remains active. */
+export async function readManuallyStoppedCodexSessionIds(home: string, ids: readonly string[], signal?: AbortSignal): Promise<string[]> {
+  const preferences = readCodexSessionPreferences(home, ids);
+  const transcripts = await findCliSessionTranscripts(home, new Set(ids), signal);
+  const stopped: string[] = [];
+  for (const id of ids) {
+    signal?.throwIfAborted();
+    const transcript = transcripts.get(id);
+    const state = await readRecentTranscriptTurnState(transcript);
+    const turn = transcript ? cliTranscriptTurnStateCache.get(transcript) : undefined;
+    const preference = preferences.get(id);
+    if (preference?.manualStop && turn?.turnId && turn.turnId !== preference.manualStopTurnId &&
+        turn.startedAt !== undefined && preference.manualStoppedAt !== undefined && turn.startedAt >= preference.manualStoppedAt && state !== "unknown") {
+      clearCodexSessionManualStop(home, id);
+    } else if (preference?.manualStop) { stopped.push(id); continue; }
+    if (state === "stopped") stopped.push(id);
+  }
+  return stopped;
+}
+
 /** Successful native completion makes an old recovery entry ineligible for replay. */
 export async function readCompletedCodexSessionIds(home: string, ids: readonly string[], signal?: AbortSignal): Promise<string[]> {
   const transcripts = await findCliSessionTranscripts(home, new Set(ids), signal);
@@ -2954,7 +3003,8 @@ export async function readCompletedCodexSessionIds(home: string, ids: readonly s
 export async function readQuotaInterruptedCodexSessionIds(home = resolveCodexHome(), ids?: readonly string[], signal?: AbortSignal, limitedGoalIds: readonly string[] = [], includeInterrupted = false): Promise<string[]> {
   signal?.throwIfAborted();
   const transcripts = await findCliSessionTranscripts(home, ids ? new Set(ids) : undefined, signal);
-  const interrupted = new Set(limitedGoalIds.filter(id => !ids || ids.includes(id)));
+  const preferences = readCodexSessionPreferences(home, ids ? [...ids] : [...transcripts.keys(), ...limitedGoalIds]);
+  const interrupted = new Set(limitedGoalIds.filter(id => (!ids || ids.includes(id)) && preferences.get(id)?.manualStop !== true));
   for (const [id, transcript] of transcripts) {
     const state = await readRecentTranscriptTurnState(transcript);
     const modifiedAt = cliTranscriptTurnStateCache.get(transcript)?.mtimeMs;
@@ -2963,6 +3013,7 @@ export async function readQuotaInterruptedCodexSessionIds(home = resolveCodexHom
       recordPersistentEvent("debug", "auto-resume", "Future-dated recovery skipped", { sessionId: id });
       continue;
     }
+    if (preferences.get(id)?.manualStop === true) { interrupted.delete(id); continue; }
     if (state === "quota-paused" || (includeInterrupted && (state === "active" || state === "failed" || cliTranscriptTurnStateCache.get(transcript)?.cancelled))) interrupted.add(id);
     else if (state === "terminal") interrupted.delete(id);
   }

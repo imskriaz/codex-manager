@@ -1895,7 +1895,8 @@ async function handleSendCodexCliSessionMessage(payload: DashboardActionPayload 
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
     sandboxMode: payload.sandboxMode,
-    projectPath: sessionProjectPath
+    projectPath: sessionProjectPath,
+    clearManualStop: true
   });
   let cliSessionMessages;
   let notice: DashboardNotice = { level: "info", message: "Codex completed the turn." };

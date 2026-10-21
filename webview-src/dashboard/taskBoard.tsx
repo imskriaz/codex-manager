@@ -14,7 +14,7 @@ type DetailTab = NonNullable<DashboardActionPayload['taskView']>;
 const stages: TaskStage[] = ['idea', 'planned', 'running', 'completed'];
 const tabs: DetailTab[] = ['activities', 'files', 'changes'];
 const basename = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() || value;
-const label = (value: string) => value === 'git' ? 'Git history' : value[0]!.toUpperCase() + value.slice(1);
+const label = (value: string) => value[0]!.toUpperCase() + value.slice(1);
 const boardScope = (device: string | undefined, project: string) => JSON.stringify([device ?? 'local', project]);
 
 export function TaskBoard(props: {
@@ -39,7 +39,7 @@ export function TaskBoard(props: {
   const [file, setFile] = useState<DashboardActionResultPayload['workspaceFile']>();
   const [status, setStatus] = useState(''), [busy, setBusy] = useState(false);
   const [shareOpen, setShareOpen] = useState(false), [share, setShare] = useState<{ url: string; expiresAt: number; permissions: ProjectSharePermission[] }>();
-  const [sharePermissions, setSharePermissions] = useState<ProjectSharePermission[]>(['messages', 'activities', 'comments', 'submissions']);
+  const [sharePermissions, setSharePermissions] = useState<ProjectSharePermission[]>(['activities', 'comments', 'submissions']);
   const [shareDays, setShareDays] = useState(7);
   const scope = boardScope(props.targetDeviceId, project), active = useRef(scope); active.current = scope;
   const deviceRef = useRef(props.targetDeviceId); deviceRef.current = props.targetDeviceId;
@@ -324,7 +324,6 @@ export function TaskBoard(props: {
           {tab === 'activities' ? details?.messages.map(item => <SessionMessage key={item.id} message={item} onActionFeedback={notice => setStatus(notice.message)} />) : null}
           {tab === 'files' ? <><p class="settings-note">Files shared or changed in this conversation · read-only</p>{details?.files.map(entry => <button type="button" class="task-file-row" key={entry.path} disabled={entry.type !== 'file'} onClick={() => { void openFile(entry.path); }}><span>{entry.path}</span><small>Chat file</small></button>)}{details && !details.files.length ? <p class="task-board-empty">No files were shared or changed in this conversation.</p> : null}{file ? <article class="task-activity"><strong>{file.path}</strong>{file.kind === 'image' && file.dataUrl ? <img src={file.dataUrl} alt={file.path} /> : <pre>{file.content}</pre>}</article> : null}</> : null}
           {tab === 'changes' ? <><p>Current project: {details?.environment?.changes ?? 0} changed files · +{details?.environment?.additions ?? 0} / −{details?.environment?.deletions ?? 0}</p>{details?.environment?.branchDiff ? <details><summary>Current branch differences</summary><pre>{details.environment.branchDiff}</pre></details> : null}{details?.messages.filter(item => item.changes?.length).map(item => <SessionMessage key={item.id} message={item} />)}</> : null}
-          {tab === 'git' ? details?.environment?.isGitRepository ? details.history.map(commit => <article class="task-activity" key={commit.hash}><strong>{commit.subject}</strong><small>{commit.hash.slice(0,8)} · {commit.author} · {commit.date}</small></article>) : details ? <p>This project has no Git repository.</p> : null : null}
           {detailLoading ? <p role="status" class="settings-note">Refreshing {label(tab).toLowerCase()}…</p> : !details ? <p class="task-board-empty">{selected.id ? 'No cached details yet. Reconnect to load this view.' : 'Save this task to add comments and start Codex.'}</p> : !details.messages.length && tab === 'activities' ? <p class="task-board-empty">No activity on this history page.</p> : null}
         </div>
         <div class="task-comments"><strong>Comments</strong>{comments.map(item => <article class="task-activity" key={item.id}><small>{item.author}</small><p>{item.text}</p></article>)}<textarea aria-label="Add a comment" value={comment} maxLength={8000} placeholder="Leave a comment…" onInput={event => setComment(event.currentTarget.value)} /><button type="button" disabled={busy || !selected.id || !comment.trim()} onClick={() => { void submitComment(); }}>Add comment</button></div>

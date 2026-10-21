@@ -184,9 +184,11 @@ export function finishProjectTaskStart(project: string, id: string, sessionId: s
 }
 
 export type ProjectShare = { projectPath: string; expiresAt: number; permissions: ProjectSharePermission[] };
-export function createProjectShare(projectPath: string, permissions: ProjectSharePermission[] = ['messages','activities','comments','submissions'], days = 7): { token: string; expiresAt: number; permissions: ProjectSharePermission[] } {
+export function createProjectShare(projectPath: string, permissions: ProjectSharePermission[] = ['activities','comments','submissions'], days = 7): { token: string; expiresAt: number; permissions: ProjectSharePermission[] } {
   if (!Array.isArray(permissions) || permissions.length > PROJECT_SHARE_FEATURES.length || permissions.some(permission => !PROJECT_SHARE_FEATURES.some(feature => feature.key === permission)) || ![1,7,30].includes(days)) throw new Error('Choose valid share permissions and an expiry of 1, 7, or 30 days.');
   permissions = [...new Set(permissions)];
+  // The combined Activities tab grants both parts; existing links retain their original grants.
+  if (permissions.includes('activities')) permissions.push('messages');
   const store = storage(), token = randomBytes(32).toString('hex'), expiresAt = Date.now() + days * 24 * 60 * 60_000;
   store.transaction(() => {
     const records = store.keys('project-shares');

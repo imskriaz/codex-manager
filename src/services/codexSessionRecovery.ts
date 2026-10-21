@@ -1,13 +1,14 @@
 import * as fs from "node:fs/promises";
-import { observeRunningCodexSession, readCodexCliSessionSummary, resolveCodexHome, resumeCodexSessionGoal, sendCodexCliSessionMessage, toSessionLogRef } from "./codexSessionResume";
+import { observeRunningCodexSession, readCodexCliSessionSummary, readManuallyStoppedCodexSessionIds, resolveCodexHome, resumeCodexSessionGoal, sendCodexCliSessionMessage, toSessionLogRef } from "./codexSessionResume";
 import { waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { isExplicitSessionGoalPause } from "./codexSessionGoals";
+import { clearCodexSessionManualStop, readCodexSessionPreferences } from "./codexSessionPreferences";
 
 const recovering = new Map<string, Promise<"running" | "continued" | "goal" | "idle">>();
 
 /** Recheck after the native editor loads; never replace an active writer or resend after acceptance. */
-export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" = "automatic"): Promise<"running" | "continued" | "goal" | "idle"> {
+export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, origin: "user" | "automatic" | "queue" = "automatic"): Promise<"running" | "continued" | "goal" | "idle"> {
   const home = resolveCodexHome();
   const key = `${home}:${sessionId}`;
   const identity = { sessionId, sessionRef: toSessionLogRef(sessionId) };
@@ -38,9 +39,12 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
       return "running" as const;
     }
     if (session.status === "unknown") throw new Error("Running state could not be verified. Recovery was kept; refresh before retrying.");
+    if (origin === "user") clearCodexSessionManualStop(home, sessionId);
+    else if (readCodexSessionPreferences(home, [sessionId]).get(sessionId)?.manualStop ||
+      (origin === "automatic" && (await readManuallyStoppedCodexSessionIds(home, [sessionId], controller.signal)).length)) return "idle" as const;
     const recoverablePausedGoal = session.goal?.status === "paused" && (origin === "user" || (session.interrupted === true && !isExplicitSessionGoalPause(resolveCodexHome(), session.id)));
     if (session.goal && (["active", "usage_limited"].includes(session.goal.status) || recoverablePausedGoal)) {
-      await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
+      await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin === "user" ? "user" : "automatic"), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
       recordPersistentEvent("info", "session-resume", "Goal continuation accepted", { ...identity, title: session.title });
       return "goal" as const;
     }
@@ -61,7 +65,7 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     recordPersistentEvent("info", "session-resume", "Requesting non-goal continuation", { ...identity, title });
     let accepted!: () => void;
     const started = new Promise<void>(resolve => { accepted = resolve; });
-    const turn = sendCodexCliSessionMessage({ sessionId, text: "Continue if not completed", projectPath: session.projectPath, signal: controller.signal, onStarted: accepted });
+    const turn = sendCodexCliSessionMessage({ sessionId, text: "Continue if not completed", projectPath: session.projectPath, signal: controller.signal, onStarted: accepted, clearManualStop: origin === "user" });
     void turn.catch(error => recordPersistentEvent("warning", "session-resume", "Continuation turn failed", { ...identity, title: session.title }, error));
     await waitWithin(Promise.race([started, turn]), 15_000, "Continue was not confirmed. Check this session before retrying.", controller.signal);
     recordPersistentEvent("info", "session-resume", "Continue accepted", { ...identity, title: session.title });

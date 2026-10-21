@@ -6,6 +6,9 @@ import { isAutoResumeEnabled } from '../infrastructure/config/extensionSettings'
 
 export type CodexSessionPreference = {
   autoResume?: boolean;
+  manualStop?: boolean;
+  manualStopTurnId?: string;
+  manualStoppedAt?: number;
   queue?: boolean;
   priority?: number;
   queueClaimedAt?: number;
@@ -16,12 +19,13 @@ export type CodexSessionPreference = {
 
 const NAMESPACE = "codex-session-preferences";
 const TITLE_NAMESPACE = "codex-session-title-overrides";
+const pendingManualStops = new Map<string, CodexSessionPreference>();
 type TitleOverride = { title: string; writtenAt: number };
 const key = (home: string, id: string) => `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`;
 
 function read(store: ReturnType<typeof getSqliteStateStore>, home: string, id: string): CodexSessionPreference {
-  const value = store?.get<CodexSessionPreference>(NAMESPACE, key(home, id));
-  return normalizePreference(value);
+  const value = normalizePreference(store?.get<CodexSessionPreference>(NAMESPACE, key(home, id)));
+  return { ...value, ...pendingManualStops.get(key(home, id)) };
 }
 
 function normalizePreference(value: unknown): CodexSessionPreference {
@@ -35,6 +39,12 @@ function readNamespace(home: string, namespace: string): Map<string, unknown> {
   const store = getSqliteStateStore();
   const result = new Map<string, unknown>();
   if (!store) return result;
+  if (namespace === NAMESPACE) for (const [pendingKey, patch] of pendingManualStops) {
+    try {
+      store.transaction(() => store.set(NAMESPACE, pendingKey, { ...normalizePreference(store.get(NAMESPACE, pendingKey)), ...patch }));
+      pendingManualStops.delete(pendingKey);
+    } catch { /* Keep Stop effective in this host until durable storage recovers. */ }
+  }
   const prefix = `${getCodexHomeStateKey(home)}:`;
   for (const row of store.prepare("SELECT key,value FROM state WHERE namespace=? AND key LIKE ? LIMIT 30000").all(namespace, `${prefix}%`)) {
     const keyValue = String(row["key"]);
@@ -48,7 +58,7 @@ export function readCodexSessionPreferences(home: string, ids: readonly string[]
   const result = new Map<string, CodexSessionPreference>();
   for (const id of ids) {
     const value = values.get(id.toLowerCase());
-    result.set(id, normalizePreference(value));
+    result.set(id, { ...normalizePreference(value), ...pendingManualStops.get(key(home, id)) });
   }
   return result;
 }
@@ -59,10 +69,25 @@ export function writeCodexSessionPreference(home: string, id: string, patch: Par
   if (!store) throw new Error('Session preference storage is unavailable. The change was not saved.');
   return store.transaction(() => {
     const next = { ...read(store, home, id), ...patch };
-    if (next.autoResume === undefined && next.queue !== true && next.priority === undefined && !next.queueClaimedAt && !next.queueError) store.set(NAMESPACE, key(home, id), undefined);
+    if (next.autoResume === undefined && next.manualStop !== true && next.queue !== true && next.priority === undefined && !next.queueClaimedAt && !next.queueError) store.set(NAMESPACE, key(home, id), undefined);
     else store.set(NAMESPACE, key(home, id), next);
     return next;
   });
+}
+
+export function markCodexSessionManualStop(home: string, id: string, turnId?: string): void {
+  const patch = { manualStop: true, manualStopTurnId: turnId, manualStoppedAt: Date.now(), queue: false, priority: undefined,
+    queueClaimId: undefined, queueClaimedAt: undefined, queueError: undefined, queueRevision: randomUUID() };
+  pendingManualStops.set(key(home, id), patch);
+  writeCodexSessionPreference(home, id, patch);
+  pendingManualStops.delete(key(home, id));
+}
+
+export function clearCodexSessionManualStop(home: string, id: string): void {
+  if (read(getSqliteStateStore(), home, id).manualStop === true) {
+    writeCodexSessionPreference(home, id, { manualStop: undefined, manualStopTurnId: undefined, manualStoppedAt: undefined });
+    pendingManualStops.delete(key(home, id));
+  }
 }
 
 export function claimCodexSessionQueue(home: string, id: string, revision: string | undefined): string | undefined {

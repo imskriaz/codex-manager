@@ -35,7 +35,7 @@ try {
     assert.equal(await page.locator('.task-detail-panel table').count(), 1);
     await page.screenshot({ path:path.join(output,`task-${width}.png`) });
     await page.getByRole('button',{name:'Close task details',exact:true}).click();
-    assert.equal(await page.getByText('Archived work',{exact:true}).count(), 0);
+    assert.equal(await page.getByText('Archived work',{exact:true}).count(), 1, 'Archived sessions stay in Completed');
     await page.getByRole('button',{name:'Archive',exact:true}).click();
     await page.getByText('Archived work',{exact:true}).waitFor();
     revoked = true;
