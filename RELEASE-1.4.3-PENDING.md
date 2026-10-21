@@ -25,8 +25,22 @@ scope; publication does not close outstanding hardware or runtime checks.
   targets pass, and lint reports zero errors with 2,837 existing style warnings.
   Packaging and VSIX dependency validation pass. Read-only live browser checks
   load 341 sessions, reconnect successfully, and connect in 978 ms / 588 ms.
-- Public views refresh on focus, reconnect, visibility and explicit Refresh;
-  a continuously focused public page still needs a scoped live event channel.
+- Public views now use a scoped event channel while visible, with focus,
+  reconnect and explicit Refresh fallbacks. Streams expose invalidations only;
+  all content still passes permission checks. Connections and buffers are
+  bounded; expiry, revocation, disconnect and shutdown release subscriptions.
+- Focused stream, sharing, board and viewer checks pass, including real HTTP
+  streaming, cross-connection SQLite edits/revocation, 30-day timer bounds,
+  duplicate/slow viewers and revocation during an in-flight browser read.
+  Task details merge the recorded live turn using the conversation viewer's
+  existing reconciliation; older pages and source-home isolation are preserved.
+- Final event-stream build: 175 files / 2,080 tests pass. Both TypeScript
+  targets and VSIX layout checks pass; lint has zero errors and 2,854 style
+  warnings. All six responsive sizes and public desktop/mobile checks pass.
+  Read-only live reconnect passes with 341 sessions and one connected system.
+- Workspace Files pagination still needs review: the service supplies a history
+  cursor, but the workspace task-panel navigation currently exposes it only for
+  Activities and Changes. Public Files already exposes its cursor.
 - Focused recovery/queue/task verification: 223 tests across 10 suites pass.
   Follow-up logging/Stop verification: 53 tests across 2 suites pass.
 - Both TypeScript targets and production compilation pass. Lint has zero

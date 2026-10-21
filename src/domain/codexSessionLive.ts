@@ -221,3 +221,32 @@ function bounded(value: unknown, depth = 0, onTruncated: () => void = () => unde
   if (item && Object.keys(item).length > 64) onTruncated();
   return item ? Object.fromEntries(Object.entries(item).slice(0, 64).map(([key, item]) => [key, bounded(item, depth + 1, onTruncated)])) : undefined;
 }
+
+/** Replace the current turn suffix instead of accumulating duplicate streamed/transcript items. */
+export function combineCliLiveMessages(history: DashboardCliSessionMessage[], live: DashboardCodexSessionLiveState | undefined): DashboardCliSessionMessage[] {
+  if (!live?.messages.length) return history;
+  const exactTurn = live.turnId ? history.findIndex((item) => item.turnId === live.turnId) : -1;
+  const ids = new Set(live.messages.map((item) => item.id));
+  const exactItem = history.findIndex((item) => ids.has(item.id));
+  // A bounded live snapshot contains only a suffix, not the whole saved turn.
+  if (live.truncated) {
+    const replacements = new Map(live.messages.map(item => [item.id, item]));
+    const savedIds = new Set(history.map(item => item.id));
+    return [...history.map(item => replacements.get(item.id) ?? item), ...live.messages.filter(item => !savedIds.has(item.id))];
+  }
+  let boundary = exactTurn >= 0 ? exactTurn : exactItem;
+  if (boundary < 0) {
+    const prompt = live.messages.find((item) => item.role === "user" && (!item.kind || item.kind === "message"));
+    if (prompt) {
+      for (let index = history.length - 1; index >= 0; index--) {
+        const item = history[index]!;
+        if (item.role !== "user" || (item.kind && item.kind !== "message")) continue;
+        const currentTurnEvidence = (prompt.timestamp && item.timestamp === prompt.timestamp)
+          || history.slice(index).some((activity) => activity.status === "inProgress");
+        if (item.text === prompt.text && currentTurnEvidence && (!item.turnId || !live.turnId || item.turnId === live.turnId)) boundary = index;
+        break;
+      }
+    }
+  }
+  return [...(boundary >= 0 ? history.slice(0, boundary) : history), ...live.messages];
+}

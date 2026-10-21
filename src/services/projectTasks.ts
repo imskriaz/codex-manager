@@ -28,6 +28,12 @@ function projectStorage(project: string): { store: SqliteStateStore; key: string
       project TEXT NOT NULL,id TEXT NOT NULL,task_id TEXT NOT NULL,created_at REAL NOT NULL,data TEXT NOT NULL,PRIMARY KEY(project,id));
       CREATE INDEX IF NOT EXISTS project_comment_task ON project_comments(project,task_id,created_at);`);
     store.watchTable('project_tasks', 'state'); store.watchTable('project_comments', 'state');
+    for (const table of ['project_tasks','project_comments']) for (const operation of ['INSERT','UPDATE','DELETE']) {
+      const row = operation === 'DELETE' ? 'OLD' : 'NEW';
+      store.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_${table}_project_${operation} AFTER ${operation} ON ${table}
+        BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('project:'||${row}.project,1)
+        ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
+    }
     initialized.add(store);
   }
   if (!store.get('project-migrations', key)) store.transaction(() => {

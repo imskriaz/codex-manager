@@ -237,6 +237,8 @@ In the **Running Sessions** flyout, use the Auto Resume icon beside running sess
 
 Choose **Share project** to open the permission modal. Task titles, prompts, stages, and subtask structure are shared by the link. Choose whether visitors may read activities, conversation files, or changes, add comments, or submit ideas. Public views use the workspace message renderer and open task details in a right panel. Links expire after 1, 7, or 30 days. **Revoke all project links** disables every link for that project. Server checks apply to direct API requests as well as the visible controls.
 
+Public boards and activity update from scoped change events while visible. Hidden and offline pages release their live connections and refresh on return. Expiry and revocation close open views; pending older responses cannot restore them. Streams carry change notices, and every content read still checks the link's permissions.
+
 **Allow embedding** is separate and off by default. Enable it when creating a link to receive iframe code for another website. Embedded views have exactly the link's feature permissions and expiry. Shared links never grant account, terminal, session execution, or token administration access.
 
 ### API tokens, scopes, and requests

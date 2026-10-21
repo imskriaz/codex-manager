@@ -5,6 +5,9 @@ import { resolveWorkspaceProjectPathAsync, readWorkspaceEnvironment } from './wo
 import { waitWithin } from '../utils/concurrency';
 import type { ProjectShare } from './projectTasks';
 import { readWorkspaceFile } from './workspaceTools';
+import { getSqliteStateStore } from '../storage/sqliteState';
+import { readStoredSessionLive } from '../storage/sqliteSessions';
+import { combineCliLiveMessages } from '../domain/codexSessionLive';
 
 const savedSessions = new Map<string, { sessions: ProjectBoard['sessions']; checkedAt: number }>();
 function boardSnapshot(project: string, home: string, sessions: ProjectBoard['sessions'], checkedAt = Date.now()): ProjectBoard {
@@ -65,20 +68,26 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
   const task = readProjectTask(project, taskId);
   const sessionId = task?.sessionId;
   if (!task) throw new Error('This task was not found. Refresh the project.');
+  const session = sessionId ? await waitWithin(readCodexCliSessionSummary(sessionId, task.sourceHome), 5000, 'The session project could not be verified.') : undefined;
   if (sessionId) {
-    const session = await waitWithin(readCodexCliSessionSummary(sessionId, task.sourceHome), 5000, 'The session project could not be verified.');
     if (!session?.projectPath || projectTaskKey(session.projectPath) !== projectTaskKey(project)) throw new Error('This session does not belong to this project.');
   }
   const result: ProjectTaskDetails = { task, taskId, messages: [], files: [], history: [], warnings: [] };
   try {
-    if (view === 'activities' || view === 'changes') {
-      if (sessionId) Object.assign(result, await waitWithin(readCodexCliSessionMessagePage(sessionId, before, task.sourceHome), 5000, 'Task activity is still loading. Retry shortly.'));
+    if (sessionId) {
+      try { Object.assign(result, await waitWithin(readCodexCliSessionMessagePage(sessionId, before, task.sourceHome), 5000, 'Task activity is still loading. Retry shortly.')); }
+      catch (error) { result.warnings.push(error instanceof Error ? error.message : String(error)); }
+      if (before === undefined) {
+        try {
+          const store = getSqliteStateStore();
+          const live = store ? readStoredSessionLive(store, task.sourceHome ?? resolveCodexHome(), sessionId) : undefined;
+          if (live && !(Date.parse(session?.updatedAt ?? '') > live.updatedAt)) result.messages = combineCliLiveMessages(result.messages, live);
+        } catch (error) { result.warnings.push(`Live activity is unavailable: ${error instanceof Error ? error.message : String(error)}`); }
+      }
     }
     if (view === 'files' && sessionId) {
-      const page = await waitWithin(readCodexCliSessionMessagePage(sessionId, before, task.sourceHome), 5000, 'Chat files are still loading. Retry shortly.');
-      Object.assign(result, page);
       const files = new Map<string, ProjectTaskDetails['files'][number]>();
-      for (const message of page.messages) for (const change of message.changes ?? []) {
+      for (const message of result.messages) for (const change of message.changes ?? []) {
         if (!files.has(change.path)) files.set(change.path, { path: change.path, name: change.path.split(/[\\/]/).pop() ?? change.path, type: 'file', depth: change.path.split(/[\\/]/).length - 1 });
       }
       result.files = [...files.values()];

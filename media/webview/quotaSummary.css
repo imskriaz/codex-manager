@@ -15278,6 +15278,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .public-conversation .cli-session-messages { max-width:none; }
 .public-project { max-width:none; padding:16px; }
 .public-project-form[hidden] { display:none; }
+.public-project-form > [role="status"]:empty { display:none; }
 .cli-workspace.cli-message-surface { position:static; display:block; inset:auto; width:auto; height:auto; min-height:0; max-height:none; overflow:visible; background:transparent; z-index:auto; }
 .cli-message-surface .cli-session-messages { width:100%; max-width:none; }
 .public-project .task-board-subtoolbar input { min-width:0; border:1px solid var(--border-muted); border-radius:6px; padding:7px 9px; color:var(--text-primary); background:var(--bg-surface); font:inherit; font-size:11px; }

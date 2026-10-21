@@ -13,6 +13,15 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   for (const width of [1440,390]) {
     const page = await browser.newPage({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
+    await page.addInitScript(() => {
+      window.__projectStreams = [];
+      window.EventSource = class extends EventTarget {
+        static CLOSED = 2;
+        readyState = 1;
+        constructor(url) { super(); this.url = url; window.__projectStreams.push(this); queueMicrotask(() => { if (this.readyState !== 2) this.dispatchEvent(new Event('ready')); }); }
+        close() { this.readyState = 2; }
+      };
+    });
     const errors = [], privateRequests = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => { if (/\/api\/(?:state|message|events)(?:[?]|$)/.test(request.url())) privateRequests.push(request.url()); });
@@ -26,6 +35,8 @@ try {
     await page.screenshot({ path:path.join(output,`conversation-${width}.png`) });
     let revoked = false, failWrites = false, holdWrite = false, releaseWrite;
     let permissions = ['messages','activities'];
+    let taskMessages = [...messages], holdRead = false, releaseRead;
+    const comments = [];
     const writes = [];
     async function waitForHeldWrite() {
       for (let attempt = 0; !releaseWrite && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
@@ -40,15 +51,29 @@ try {
         await route.fulfill(failWrites ? { status:503,json:{ error:'Temporarily unavailable' } } : { json:{ ok:true } });
         return;
       }
-      await route.fulfill(revoked ? { status:404,json:{ error:'Revoked' } } : { json:new URL(route.request().url()).searchParams.has('task') ? { messages, files:[],history:[],warnings:[] } : {title:'Project work',tasks,comments:[],permissions,expiresAt:Date.now()+60000} });
+      const isTask = new URL(route.request().url()).searchParams.has('task'), wasRevoked = revoked;
+      const snapshot = JSON.parse(JSON.stringify(isTask ? { messages:taskMessages, files:[],history:[],warnings:[] } : {title:'Project work',tasks,comments,permissions,expiresAt:Date.now()+60000}));
+      if (!isTask && holdRead) { holdRead = false; await new Promise(resolve => { releaseRead = resolve; }); }
+      await route.fulfill(wasRevoked ? { status:404,json:{ error:'Revoked' } } : { json:snapshot });
     });
     await page.goto(`${origin}/projects/share/fixture`);
     await page.getByRole('button', {name:'Release work Review the release'}).click();
     await page.locator('.task-detail-panel .cli-session-message').nth(1).waitFor();
     assert.equal(await page.getByRole('tab', {name:'Messages',exact:true}).count(), 0, 'Task history has a combined Activities tab');
     assert.equal(await page.locator('.task-detail-panel table').count(), 1);
+    taskMessages = [...taskMessages,{id:'live',role:'assistant',kind:'message',text:'Live public activity without focus changes'}];
+    await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
+    await page.getByText('Live public activity without focus changes',{exact:true}).waitFor();
     await page.screenshot({ path:path.join(output,`task-${width}.png`) });
     await page.getByRole('button',{name:'Close task details',exact:true}).click();
+    holdRead = true;
+    await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
+    for (let attempt = 0; !releaseRead && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve,20));
+    assert.equal(typeof releaseRead,'function','The pending read reached its fixture');
+    tasks.push({id:'live-board',title:'Task added during refresh',prompt:'',stage:'idea'});
+    await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
+    releaseRead(); releaseRead = undefined;
+    await page.getByText('Task added during refresh',{exact:true}).waitFor();
     permissions = [...permissions,'submissions','comments'];
     await page.getByRole('button',{name:'Refresh',exact:true}).click();
     const ideaTitle = page.getByRole('textbox',{name:'Request title',exact:true});
@@ -74,9 +99,13 @@ try {
     await page.getByRole('button',{name:'Refresh',exact:true}).click();
     assert.equal(await submitIdea.isDisabled(),true,'Refresh cannot re-enable a pending submission');
     assert.equal(writes.length,writeCount,'Duplicate submits do not dispatch another write');
-    releaseWrite(); releaseWrite = undefined; holdWrite = false;
+    holdRead = true; releaseWrite(); releaseWrite = undefined; holdWrite = false;
     await page.getByRole('status').filter({hasText:'Idea submitted'}).waitFor();
     assert.equal(await ideaTitle.inputValue(),'');
+    assert.equal(await ideaTitle.evaluate(input => input.readOnly),false,'Confirmed writes never wait for optional board refresh');
+    for (let attempt = 0; !releaseRead && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve,20));
+    assert.equal(typeof releaseRead,'function','The confirmed write refresh reached its fixture');
+    releaseRead(); releaseRead = undefined;
     await page.getByRole('button',{name:'Release work Review the release'}).click();
     const comment = page.getByRole('textbox',{name:'Comment',exact:true});
     const postComment = page.getByRole('button',{name:'Add comment',exact:true});
@@ -91,6 +120,7 @@ try {
     await page.waitForFunction(() => !navigator.onLine);
     assert.equal(await postComment.isDisabled(),true,'Offline comment actions disable immediately');
     assert.equal(await submitIdea.isDisabled(),true,'Offline idea actions disable immediately');
+    assert.equal(await page.evaluate(() => window.__projectStreams.every(stream => stream.readyState === 2)),true,'Offline pages release their live connections');
     await page.context().setOffline(false);
     await page.getByRole('button',{name:'Close task details',exact:true}).click();
     await page.evaluate(() => { window.__setItem = Storage.prototype.setItem; Storage.prototype.setItem = () => { throw new DOMException('Full','QuotaExceededError'); }; });
@@ -101,11 +131,18 @@ try {
     assert.equal(await page.getByText('Archived work',{exact:true}).count(), 1, 'Archived sessions stay in Completed');
     await page.getByRole('button',{name:'Archive',exact:true}).click();
     await page.getByText('Archived work',{exact:true}).waitFor();
+    holdRead = true;
+    await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
+    for (let attempt = 0; !releaseRead && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve,20));
+    assert.equal(typeof releaseRead,'function','Revocation races a pending read');
     revoked = true;
-    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('revoked')));
+    releaseRead(); releaseRead = undefined;
+    await page.getByRole('status').filter({hasText:'Reconnect before submitting.'}).waitFor();
     await page.waitForFunction(() => document.querySelectorAll('.task-board-card').length === 0);
     await page.getByRole('searchbox',{name:'Search tasks'}).fill('work');
     assert.equal(await page.locator('.task-board-card').count(),0,'Search cannot restore a revoked board from memory');
+    assert.equal(await page.evaluate(() => window.__projectStreams.every(stream => stream.readyState === 2)),true,'Revocation closes every stream');
     assert.deepEqual(privateRequests, [], 'Public views never start authenticated dashboard requests');
     assert.deepEqual(errors, [], 'Public views have no runtime errors');
     console.log(`${width}px public rich history, draft/retry/reload, duplicate submit, offline, archive, and revocation passed`);

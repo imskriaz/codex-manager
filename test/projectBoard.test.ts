@@ -8,6 +8,7 @@ import { saveProjectTask, readProjectTasks } from '../src/services/projectTasks'
 import * as sessions from '../src/services/codexSessionResume';
 import * as workspace from '../src/services/workspaceTools';
 import { removeTestDirectory } from './testFilesystem';
+import { saveSessionLive } from '../src/storage/sqliteSessions';
 
 const state = vi.hoisted(() => ({ project: '', home: '', id: '11111111-1111-4111-8111-111111111111' }));
 vi.mock('../src/services/codexSessionResume', () => ({
@@ -78,4 +79,31 @@ it('does not turn conversation-file sharing into unrestricted project file acces
   const share = { projectPath: root, expiresAt: Date.now() + 60000, permissions: ['files' as const] };
   await expect(readSharedProjectTask(share, task.id, 'files', undefined, 'private.env')).rejects.toThrow(/not part/);
   expect(workspace.readWorkspaceFile).not.toHaveBeenCalled();
+});
+
+it('merges bounded live activity and file changes without modifying older history pages', async () => {
+  const board = await readProjectBoard(root), task = board.tasks[0]!;
+  saveSessionLive(store, root, { sessionId: state.id, streamId: '22222222-2222-4222-8222-222222222222', sequence: 1, updatedAt: Date.now(), status: 'running', truncated: true, messages: [
+    { id: 'message', kind: 'message', role: 'assistant', text: 'Live answer' },
+    { id: 'edit', kind: 'file-change', text: 'Edited', changes: [{ path: 'src/live.ts', kind: 'update' }] }
+  ] });
+  const details = await readProjectTaskDetails(root, task.id);
+  expect(details.messages.map(message => message.id)).toEqual(['message','tool','edit']);
+  expect(details.messages[0]?.text).toBe('Live answer');
+  expect((await readProjectTaskDetails(root, task.id, 'files')).files).toMatchObject([{ path: 'src/live.ts' }]);
+  expect((await readProjectTaskDetails(root, task.id, 'activities', '100')).messages[0]?.text).toBe('Answer');
+  const shared = await readSharedProjectTask({ projectPath: root, expiresAt: Date.now() + 60000, permissions: ['messages'] }, task.id, 'activities') as { messages: Array<{ text: string }> };
+  expect(shared.messages).toEqual([expect.objectContaining({ text: 'Live answer' })]);
+});
+
+it('retains live activity when saved history fails and ignores another home or newer native turn', async () => {
+  const board = await readProjectBoard(root), task = board.tasks[0]!;
+  const live = { sessionId: state.id, streamId: '22222222-2222-4222-8222-222222222222', sequence: 1, updatedAt: Date.now(), status: 'running' as const, messages: [{ id: 'live', text: 'Live only', role: 'assistant' as const }] };
+  saveSessionLive(store, join(root, 'other-home'), live);
+  expect((await readProjectTaskDetails(root, task.id)).messages.some(message => message.id === 'live')).toBe(false);
+  saveSessionLive(store, root, live);
+  vi.mocked(sessions.readCodexCliSessionMessagePage).mockRejectedValueOnce(new Error('Transcript busy'));
+  expect(await readProjectTaskDetails(root, task.id)).toMatchObject({ messages: [{ text: 'Live only' }], warnings: ['Transcript busy'] });
+  vi.mocked(sessions.readCodexCliSessionSummary).mockResolvedValueOnce({ id: state.id, projectPath: root, status: 'running', updatedAt: new Date(live.updatedAt + 1000).toISOString() });
+  expect((await readProjectTaskDetails(root, task.id)).messages.some(message => message.id === 'live')).toBe(false);
 });

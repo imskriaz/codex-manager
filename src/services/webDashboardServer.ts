@@ -63,7 +63,8 @@ import { recordSessionLive } from "./sessionRecording";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import { isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
 import { authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
-import { readProjectBoard, readSharedProjectTask } from './projectBoard';
+import { readProjectBoard, readSavedProjectBoard, readSharedProjectTask } from './projectBoard';
+import { ProjectShareEvents } from './projectShareEvents';
 import { getProjectShare, publicProjectBoard, saveProjectTask, addProjectComment, projectTaskKey } from './projectTasks';
 import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
@@ -445,6 +446,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private readonly loginAttempts = new Map<string, LoginAttempt>();
   private readonly publicProjectRequests = new Map<string, { until: number; reads: number; writes: number }>();
   private publicProjectInflight = 0;
+  private readonly projectShareEvents = new ProjectShareEvents();
   private readonly settingsStore = new ExtensionSettingsStore();
   private readonly oauth: DashboardOAuthCoordinator;
   private notificationMirrorSubscription: vscode.Disposable | undefined;
@@ -611,6 +613,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   async stop(): Promise<void> {
+    this.projectShareEvents.close();
     this.peerStopped = true;
     this.peerConnectionRevision += 1;
     this.sessions.clear();
@@ -827,7 +830,9 @@ export class WebDashboardServer implements vscode.Disposable {
     const path = requestUrl.pathname;
     if (path.startsWith('/projects/share/') || path.startsWith('/api/projects/share/')) {
       const api = path.startsWith('/api/');
-      const token = path.slice(api ? '/api/projects/share/'.length : '/projects/share/'.length);
+      const suffix = path.slice(api ? '/api/projects/share/'.length : '/projects/share/'.length);
+      const events = api && suffix.endsWith('/events');
+      const token = events ? suffix.slice(0, -'/events'.length) : suffix;
       const share = getProjectShare(token);
       if (!share) { response.statusCode = 404; this.sendJson(response, { error: 'This project link expired or was revoked.' }); return; }
       if (!api && method === 'GET') {
@@ -842,13 +847,22 @@ export class WebDashboardServer implements vscode.Disposable {
       const rateKey = `${token}:${request.socket.remoteAddress ?? ''}`;
       let rate = this.publicProjectRequests.get(rateKey);
       if (!rate && this.publicProjectRequests.size < 256) { rate = { until: Date.now() + 60_000, reads: 0, writes: 0 }; this.publicProjectRequests.set(rateKey, rate); }
-      if (!rate || this.publicProjectInflight >= 8 || (method === 'POST' ? ++rate.writes > 20 : ++rate.reads > 120)) { response.statusCode = 429; response.setHeader('Retry-After', '60'); this.sendJson(response, { error: 'Too many shared project requests. Keep your draft and retry shortly.' }); return; }
+      if (!rate || this.publicProjectInflight >= 8 || (method === 'POST' ? ++rate.writes > 20 : ++rate.reads > 240)) { response.statusCode = 429; response.setHeader('Retry-After', '60'); this.sendJson(response, { error: 'Too many shared project requests. Keep your draft and retry shortly.' }); return; }
       this.publicProjectInflight++;
       const sendShared = (value: unknown) => {
         if (!getProjectShare(token)) { response.statusCode = 404; this.sendJson(response, { error: 'This project link expired or was revoked.' }); }
         else this.sendJson(response, value);
       };
       try {
+        if (events) {
+          if (method !== 'GET') { response.statusCode = 405; this.sendJson(response, { error: 'Method not allowed.' }); return; }
+          // Initialize task storage before attaching its committed-change feed.
+          readSavedProjectBoard(share.projectPath);
+          if (!this.projectShareEvents.open(response, token, share, request.socket.remoteAddress ?? '')) {
+            response.statusCode = 429; response.setHeader('Retry-After', '60'); this.sendJson(response, { error: 'Too many live project views. Close another view and retry.' });
+          }
+          return;
+        }
         if (api && method === 'GET') {
           const taskId = requestUrl.searchParams.get('task');
           if (taskId) {
@@ -1272,6 +1286,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private startWebSocketHeartbeat(): void {
     if (this.webSocketHeartbeatTimer) return;
     this.webSocketHeartbeatTimer = setInterval(() => {
+      this.projectShareEvents.heartbeat();
       const now = Date.now();
       let workspacePresenceChanged = false;
       for (const [socket, lastSeenAt] of this.workspaceViewerLastSeen) {

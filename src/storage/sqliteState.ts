@@ -52,6 +52,9 @@ export class SqliteStateStore {
       this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_session_preferences_${operation} AFTER ${operation} ON state
         WHEN ${row}.namespace='codex-session-preferences'
         BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('session-preferences',1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
+      this.database.exec(`CREATE TRIGGER IF NOT EXISTS manager_project_shares_${operation} AFTER ${operation} ON state
+        WHEN ${row}.namespace='project-shares'
+        BEGIN INSERT INTO manager_revisions(topic,revision) VALUES('state',1) ON CONFLICT(topic) DO UPDATE SET revision=revision+1; END`);
     }
     this.notificationsReady = true;
   }
