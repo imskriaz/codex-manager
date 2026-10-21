@@ -250,8 +250,12 @@ function App() {
   const cliLiveStatesRef = useRef<Record<string, DashboardCodexSessionLiveState>>({});
   const liveAuthority = useRef(new Set<string>());
   const [submissionResults, setSubmissionResults] = useState<CliSubmissionResult[]>([]);
-  const recordSubmissionResult = (requestId: string, status: CliSubmissionResult["status"]) =>
-    setSubmissionResults((current) => [...current.filter((result) => result.requestId !== requestId), { requestId, status }].slice(-128));
+  const recordSubmissionResult = (requestId: string, status: CliSubmissionResult["status"], message?: string, fileRevision?: string) =>
+    setSubmissionResults((current) => [...current.filter((result) => result.requestId !== requestId), { requestId, status, message, fileRevision }].slice(-128));
+  const workspaceScopeRef = useRef<string>();
+  const workspaceGeneration = useRef(0);
+  const workspaceRequests = useRef(new Map<string, { scope: string; generation: number; family: string; fileContent?: string }>());
+  const latestWorkspaceRequests = useRef(new Map<string, string>());
   const acceptLiveSnapshot = (live: DashboardCodexSessionLiveState, replay = false): void => {
     const key = cliSessionTargetKey({ id: live.sessionId, deviceId: live.deviceId });
     const previous = cliLiveStatesRef.current[key];
@@ -413,7 +417,10 @@ function App() {
         if (id) setAgentMessages((current) => ({ ...current, [id]: { ...current[id], loading: false, error: "Agent messages timed out. Try Refresh." } }));
       }
       if (action === "listCodexCliSessions") setCliSessionsError("Sessions did not refresh in time. Try again.");
-      if (action === "runWorkspaceTerminalCommand") recordSubmissionResult(requestId, "failed");
+      const workspaceRequest = workspaceRequests.current.get(requestId);
+      if (workspaceRequest && latestWorkspaceRequests.current.get(workspaceRequest.family) === requestId) latestWorkspaceRequests.current.delete(workspaceRequest.family);
+      workspaceRequests.current.delete(requestId);
+      if (["runWorkspaceTerminalCommand", "commitWorkspaceChanges", "pushWorkspaceBranch", "saveWorkspaceFile"].includes(action)) recordSubmissionResult(requestId, "failed", "The action timed out and may have completed. Your draft was kept; verify the result before retrying.");
       if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
         explicitCliRefreshRef.current = undefined;
         showCliSessionFeedback({
@@ -553,15 +560,42 @@ function App() {
     },
     [sendAction]
   );
+  const sendWorkspaceAction: typeof sendAction = useCallback((action, accountId, payload) => {
+    const requestId = sendAction(action, accountId, payload);
+    if (requestId && workspaceScopeRef.current && action !== 'runWorkspaceTerminalCommand') {
+      const family = ['getWorkspaceEnvironment', 'commitWorkspaceChanges', 'pushWorkspaceBranch'].includes(action) ? 'environment'
+        : ['readWorkspaceFile', 'saveWorkspaceFile', 'deleteWorkspaceFile'].includes(action) ? `file:${payload?.filePath ?? ''}`
+          : /WorkspaceTerminal/.test(action) ? 'terminals' : `${action}:${payload?.filePath ?? ''}`;
+      if (workspaceRequests.current.size >= 256) {
+        const oldest = workspaceRequests.current.keys().next().value!, previous = workspaceRequests.current.get(oldest)!;
+        if (latestWorkspaceRequests.current.get(previous.family) === oldest) latestWorkspaceRequests.current.delete(previous.family);
+        workspaceRequests.current.delete(oldest);
+      }
+      workspaceRequests.current.set(requestId, { scope: workspaceScopeRef.current, generation: workspaceGeneration.current, family, ...(action === 'saveWorkspaceFile' ? { fileContent: payload?.fileContent } : {}) });
+      latestWorkspaceRequests.current.set(family, requestId);
+    }
+    return requestId;
+  }, [sendAction]);
+  const isWorkspaceActionPending = (action: DashboardActionName): boolean => state.pendingActions.some(request => {
+    const workspace = workspaceRequests.current.get(request.requestId);
+    return request.action === action && workspace?.scope === workspaceScopeRef.current && workspace?.generation === workspaceGeneration.current;
+  });
+  const changeWorkspaceContext = useCallback((key: string) => {
+    if (workspaceScopeRef.current === key) return;
+    workspaceScopeRef.current = key;
+    workspaceGeneration.current++;
+    latestWorkspaceRequests.current.clear();
+    setWorkspaceEnvironment(undefined); setWorkspaceFiles([]); setWorkspaceFilesByPath({}); setWorkspaceTerminals([]);
+  }, []);
   const requestWorkspaceEnvironment = useCallback(
     (projectPath?: string, includeBranchDiff?: boolean, automatic = false): void => {
-      sendAction("getWorkspaceEnvironment", undefined, { sessionId: selectedCliSession?.id, projectPath: projectPath ?? selectedCliSession?.projectPath, includeBranchDiff, automatic, targetDeviceId: workspaceTargetDeviceId });
+      sendWorkspaceAction("getWorkspaceEnvironment", undefined, { sessionId: selectedCliSession?.id, projectPath: projectPath ?? selectedCliSession?.projectPath, includeBranchDiff, automatic, targetDeviceId: workspaceTargetDeviceId });
     },
-    [sendAction, workspaceTargetDeviceId, selectedCliSession?.id, selectedCliSession?.projectPath]
+    [sendWorkspaceAction, workspaceTargetDeviceId, selectedCliSession?.id, selectedCliSession?.projectPath]
   );
   const requestWorkspaceTerminals = useCallback((): void => {
-    sendAction("listWorkspaceTerminals", undefined, { targetDeviceId: workspaceTargetDeviceId });
-  }, [sendAction, workspaceTargetDeviceId]);
+    sendWorkspaceAction("listWorkspaceTerminals", undefined, { targetDeviceId: workspaceTargetDeviceId });
+  }, [sendWorkspaceAction, workspaceTargetDeviceId]);
   const lastAutomaticWorkspaceLoadRef = useRef<string>();
   const modals = useDashboardModals({
     dispatch,
@@ -1040,6 +1074,26 @@ function App() {
               : (message.error ?? "The turn could not be stopped.")
         });
       }
+      if (message.type === 'dashboard:action-result') {
+        if (message.action === 'commitWorkspaceChanges' || message.action === 'pushWorkspaceBranch') recordSubmissionResult(message.requestId, message.status, message.error ?? message.payload?.notice?.message);
+        const requestedScope = workspaceRequests.current.get(message.requestId);
+        if (message.action === 'saveWorkspaceFile') recordSubmissionResult(message.requestId, message.status, message.error ?? message.payload?.notice?.message,
+          requestedScope?.fileContent === message.payload?.workspaceFile?.content ? message.payload?.workspaceFile?.revision : undefined);
+        workspaceRequests.current.delete(message.requestId);
+        const scopedAction = ['getWorkspaceEnvironment', 'commitWorkspaceChanges', 'pushWorkspaceBranch', 'listWorkspaceFiles', 'readWorkspaceFile', 'saveWorkspaceFile', 'deleteWorkspaceFile', 'listWorkspaceTerminals', 'createWorkspaceTerminal', 'focusWorkspaceTerminal', 'closeWorkspaceTerminal', 'cancelWorkspaceTerminalCommand'].includes(message.action);
+        const mutation = scopedAction && !['getWorkspaceEnvironment', 'readWorkspaceFile', 'listWorkspaceFiles', 'listWorkspaceTerminals'].includes(message.action);
+        if (mutation && message.status === 'completed' && requestedScope && requestedScope.scope === workspaceScopeRef.current) {
+          if (requestedScope.generation === workspaceGeneration.current) {
+            latestWorkspaceRequests.current.set(requestedScope.family, message.requestId);
+            if (message.action === 'deleteWorkspaceFile') latestWorkspaceRequests.current.delete('listWorkspaceFiles:');
+          } else {
+            requestWorkspaceEnvironment(selectedCliSession?.projectPath, undefined, true);
+            if (message.payload?.workspaceFile) sendWorkspaceAction('readWorkspaceFile', undefined, { sessionId: selectedCliSession?.id, projectPath: selectedCliSession?.projectPath, filePath: message.payload.workspaceFile.path, targetDeviceId: workspaceTargetDeviceId });
+          }
+        }
+        if (scopedAction && (!requestedScope || requestedScope.scope !== workspaceScopeRef.current || requestedScope.generation !== workspaceGeneration.current || latestWorkspaceRequests.current.get(requestedScope.family) !== message.requestId)) return;
+        if (requestedScope) latestWorkspaceRequests.current.delete(requestedScope.family);
+      }
       if (
         message.type === "dashboard:action-result" &&
         ["getWorkspaceEnvironment", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(message.action)
@@ -1049,7 +1103,7 @@ function App() {
           if (message.action !== "getWorkspaceEnvironment") {
             showCliSessionFeedback({
               key: Date.now(),
-              level: "info",
+              level: message.payload?.notice?.level ?? "info",
               message: message.payload?.notice?.message ?? "Environment action completed."
             });
           }
@@ -1062,7 +1116,7 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "runWorkspaceTerminalCommand") {
-        recordSubmissionResult(message.requestId, message.status === 'completed' && message.payload?.terminalResult?.status === 'completed' ? 'completed' : 'failed');
+        recordSubmissionResult(message.requestId, message.status === 'completed' && message.payload?.terminalResult ? 'completed' : 'failed');
         if (message.payload?.terminalResult && message.payload.terminalResult.status !== "running") {
           const completed = message.payload.terminalResult;
           dispatchTerminalActivity({ result: completed });
@@ -1086,7 +1140,7 @@ function App() {
       }
       if (
         message.type === "dashboard:action-result" &&
-        ["listWorkspaceTerminals", "createWorkspaceTerminal", "focusWorkspaceTerminal"].includes(message.action)
+        ["listWorkspaceTerminals", "createWorkspaceTerminal", "focusWorkspaceTerminal", "closeWorkspaceTerminal"].includes(message.action)
       ) {
         if (message.status === "completed") {
           const epoch = message.payload?.terminalActivityEpoch;
@@ -2787,17 +2841,19 @@ function App() {
               messagesError={cliSessionMessagesError}
               feedback={cliSessionFeedback}
               environment={workspaceEnvironment}
+              workspaceScopeKey={workspaceScopeRef.current}
+              onWorkspaceContextChange={changeWorkspaceContext}
               terminalResults={terminalResults.filter((result) => selectedPeer?.local !== false ? !result.deviceId : result.deviceId === selectedPeer.id)}
               terminalLiveOutputs={Object.values(terminalLiveOutputs).filter((output) => selectedPeer?.local !== false ? !output.deviceId : output.deviceId === selectedPeer.id)}
               workspaceTerminals={workspaceTerminals}
-              environmentLoading={isActionPending("getWorkspaceEnvironment")}
+              environmentLoading={isWorkspaceActionPending("getWorkspaceEnvironment")}
               terminalRunning={isActionPending("runWorkspaceTerminalCommand")}
               terminalStopping={isActionPending("cancelWorkspaceTerminalCommand")}
               workspaceFiles={workspaceFiles}
               workspaceFilesByPath={workspaceFilesByPath}
-              workspaceFilesLoading={isActionPending("listWorkspaceFiles")}
-              workspaceFileLoading={isActionPending("readWorkspaceFile")}
-              workspaceFileSaving={isActionPending("saveWorkspaceFile")}
+              workspaceFilesLoading={isWorkspaceActionPending("listWorkspaceFiles")}
+              workspaceFileLoading={isWorkspaceActionPending("readWorkspaceFile")}
+              workspaceFileSaving={isWorkspaceActionPending("saveWorkspaceFile")}
               logoUri={snapshot.logoUri}
               account={overviewAccount}
               localAccounts={snapshot.accounts}
@@ -2835,27 +2891,27 @@ function App() {
               }
               onListTerminals={requestWorkspaceTerminals}
               onCreateTerminal={(profile, projectPath) =>
-                sendAction("createWorkspaceTerminal", undefined, { sessionId: selectedCliSession?.id, terminalProfile: profile, projectPath, targetDeviceId: workspaceTargetDeviceId })
+                sendWorkspaceAction("createWorkspaceTerminal", undefined, { sessionId: selectedCliSession?.id, terminalProfile: profile, projectPath, targetDeviceId: workspaceTargetDeviceId })
               }
-              onFocusTerminal={(terminalId) => sendAction("focusWorkspaceTerminal", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
-              onCloseTerminal={(terminalId) => sendAction("closeWorkspaceTerminal", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
-              onCancelTerminal={(terminalId) => sendAction("cancelWorkspaceTerminalCommand", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
+              onFocusTerminal={(terminalId) => sendWorkspaceAction("focusWorkspaceTerminal", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
+              onCloseTerminal={(terminalId) => sendWorkspaceAction("closeWorkspaceTerminal", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
+              onCancelTerminal={(terminalId) => sendWorkspaceAction("cancelWorkspaceTerminalCommand", undefined, { terminalId, targetDeviceId: workspaceTargetDeviceId })}
               onCommitWorkspace={(commitMessage, projectPath) =>
-                sendAction("commitWorkspaceChanges", undefined, { sessionId: selectedCliSession?.id, commitMessage, projectPath, confirmed: true, targetDeviceId: workspaceTargetDeviceId })
+                sendWorkspaceAction("commitWorkspaceChanges", undefined, { sessionId: selectedCliSession?.id, commitMessage, projectPath, confirmed: true, targetDeviceId: workspaceTargetDeviceId })
               }
               onPushWorkspace={(projectPath) =>
-                sendAction("pushWorkspaceBranch", undefined, { sessionId: selectedCliSession?.id, projectPath, confirmed: true, targetDeviceId: workspaceTargetDeviceId })
+                sendWorkspaceAction("pushWorkspaceBranch", undefined, { sessionId: selectedCliSession?.id, projectPath, confirmed: true, targetDeviceId: workspaceTargetDeviceId })
               }
               onClearTerminal={() => dispatchTerminalActivity({ clear: true, deviceId: workspaceTargetDeviceId ?? "local" })}
               onListFiles={(projectPath) =>
-                sendAction("listWorkspaceFiles", undefined, {
+                sendWorkspaceAction("listWorkspaceFiles", undefined, {
                   sessionId: selectedCliSession?.id,
                   projectPath,
                   targetDeviceId: workspaceTargetDeviceId
                 })
               }
               onReadFile={(filePath, projectPath) =>
-                sendAction("readWorkspaceFile", undefined, {
+                sendWorkspaceAction("readWorkspaceFile", undefined, {
                   filePath,
                   sessionId: selectedCliSession?.id,
                   projectPath,
@@ -2864,7 +2920,7 @@ function App() {
               }
               onClearFile={() => setWorkspaceFilesByPath({})}
               onDeleteFile={(filePath, projectPath) =>
-                sendAction("deleteWorkspaceFile", undefined, {
+                sendWorkspaceAction("deleteWorkspaceFile", undefined, {
                   filePath,
                   sessionId: selectedCliSession?.id,
                   projectPath,
@@ -2873,7 +2929,7 @@ function App() {
                 })
               }
               onSaveFile={(filePath, fileContent, fileRevision, projectPath) =>
-                sendAction("saveWorkspaceFile", undefined, {
+                sendWorkspaceAction("saveWorkspaceFile", undefined, {
                   filePath,
                   fileContent,
                   fileRevision,

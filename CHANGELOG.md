@@ -2,6 +2,14 @@
 
 ## 1.4.3
 
+- Replace the Environment flyout with a fixed first Env tab and one header toggle for the right inspector. Add a compact Git tab for branch/status, changed files, commit, push review and comparison; keep terminal profiles in Terminal and tool selection in a floating menu.
+- Keep Git closable, place the add button immediately after open tabs, and summarize every inspector tool in Env's aligned list, including agent status and unsaved file drafts. Compact session rows and goal/queue strips, including smaller unboxed pause controls, without shrinking phone session touch targets.
+- Rebuild the project session hierarchy as a flat, dense tree: single-row system/project headings, one collapse control per project, inline counts, minimal indentation and status/time below each title. Remove duplicated project/system metadata, stacked selection cards and tree-divider clutter.
+- Apply terminal-close acknowledgements immediately and exclude the disposed terminal while VS Code updates its native list. Keep inspector content inside its width and mobile viewport height.
+- Keep optional notification-subscription prompts behind active sidebars and modal flows so they cannot cover account controls; retain action errors and warnings.
+- Keep inspector responses and drafts scoped to their project and system. Reject replies from an earlier context or replaced read, retain commit/file drafts through failures, and advance file revisions only after an acknowledged save without dropping newer edits. Clear terminal drafts on accepted streaming starts.
+- Parse bounded NUL-delimited Git status so renamed files and names with spaces/newlines remain accurate. Limit status and commits to the selected subproject, retaining staged work elsewhere in the repository.
+
 ### Compact task workspace and public parity
 
 - Use compact, full-height task columns with two-line cards, subtask counts, floating actions and information, and functional Board, List, Gantt, and Calendar views. Read dates and durations from observed session runs in the existing manager.sqlite database; show unavailable historical duration explicitly.

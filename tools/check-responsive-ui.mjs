@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { checkInspectorUi } from "./check-inspector-ui.mjs";
 import { checkTaskUi } from "./check-task-ui.mjs";
 import { listConversationFiles } from '../out/domain/conversationFiles.js';
 import { dashboardCopyResources } from "../out/localization/resources/dashboard.js";
@@ -69,6 +70,8 @@ const mockHost = `(() => {
   const toolJobs = new Map();
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
   window.__uiActions = []; window.__uiSessions = sessions; window.__uiSnapshot = state; window.__uiSettingResults = [];
+  const environmentFor = projectPath => ({projectPath,projectName:projectPath?.split('/').pop()||'demo',isGitRepository:true,branch:'main',changes:window.__inspectorMode?2:0,additions:1,deletions:0,ahead:0,behind:0,hasRemote:!!window.__inspectorMode,...(window.__inspectorMode?{changedFiles:[{path:'src/app.ts',index:' ',worktree:'M'},{path:'untracked/',index:'?',worktree:'?'}]}:{})});
+
   window.__setUiPaths = customPath => {
     Object.assign(state.settings, {codexCliPath:customPath,codexAppPath:customPath,resolvedCodexAppPath:customPath});
     dispatch({type:'dashboard:snapshot',state});
@@ -124,7 +127,7 @@ const mockHost = `(() => {
         else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token',name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
         else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
         else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined});payload={cliSession:session};}}
-        else if(message.action==='readWorkspaceFile') payload={workspaceFile:{path:message.payload.filePath,content:message.payload.filePath.endsWith('older.ts')?'const older = 2;':'const task = 1;',kind:'text',language:'typescript',mimeType:'text/plain',size:15,revision:'fixture'}};
+        else if(message.action==='readWorkspaceFile') payload={workspaceFile:{path:message.payload.filePath,content:message.payload.filePath.endsWith('older.ts')?'const older = 2;':'const task = 1;',kind:'text',language:'typescript',mimeType:'text/plain',size:15,revision:window.__fileRevision||'fixture'}};
         else         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
           if(message.action === 'viewLogs') logReads++;
           if(window.__failLogReads || window.__failNextLogRead) { window.__failNextLogRead = false; error = 'Simulated log storage failure.'; }
@@ -168,17 +171,25 @@ const mockHost = `(() => {
           if(location.search.includes('missing-transcript')) error = 'The session transcript was not found on this PC.';
           payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages};
         } else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:[{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
+        else if(message.action === 'saveWorkspaceFile') {if(window.__failFileSave)error='Simulated revision conflict. Your draft was kept.';else payload={workspaceFile:{path:message.payload.filePath,content:message.payload.fileContent,kind:'text',language:'typescript',mimeType:'text/plain',size:message.payload.fileContent.length,revision:'saved-revision'},notice:{level:'info',message:'File saved.'}};}
+        else if(message.action === 'commitWorkspaceChanges' || message.action === 'pushWorkspaceBranch') {if(window.__failCommit)error='Simulated commit failure';else payload={workspaceEnvironment:environmentFor(message.payload.projectPath),notice:{level:'info',message:message.action==='commitWorkspaceChanges'?'Project committed.':'Branch pushed.'}};}
+        else if(message.action === 'runWorkspaceTerminalCommand' && window.__inspectorMode) payload={terminalResult:{id:'fixture-command',terminalId:'fixture-terminal',command:message.payload.command,cwd:message.payload.projectPath,output:'',durationMs:0,status:'running',finishedAt:new Date().toISOString()}};
+        else if(message.action === 'createWorkspaceTerminal' && window.__inspectorMode) {window.__terminalCreated=true;payload={workspaceTerminal:{id:'fixture-terminal',name:'Project terminal',state:'idle',isActive:true},workspaceTerminals:[{id:'fixture-terminal',name:'Project terminal',state:'idle',isActive:true}]};}
+        else if(message.action === 'closeWorkspaceTerminal' && window.__inspectorMode) {window.__terminalCreated=false;payload={workspaceTerminals:[]};}
         else if(message.action === 'getWorkspaceEnvironment') {
           if(message.payload?.includeBranchDiff && window.__failNextComparison) {
             window.__failNextComparison = false;
             error = 'Simulated Git comparison failure.';
-          } else payload = {workspaceEnvironment:{projectPath:message.payload?.projectPath,projectName:'demo',isGitRepository:true,branch:'main',changes:0,additions:0,deletions:0,ahead:0,behind:0,hasRemote:false,...(message.payload?.includeBranchDiff ? {branchDiff:'diff --git a/compare.ts b/compare.ts\\n--- a/compare.ts\\n+++ b/compare.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n',branchDiffBase:'origin/main'} : {})}};
+          } else payload = {workspaceEnvironment:{...environmentFor(message.payload?.projectPath),...(message.payload?.includeBranchDiff ? {branchDiff:'diff --git a/compare.ts b/compare.ts\\n--- a/compare.ts\\n+++ b/compare.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n',branchDiffBase:'origin/main'} : {})}};
         }
-        else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:[]};
-        else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:[]};
+        else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:window.__terminalCreated?[{id:'fixture-terminal',name:'Project terminal',state:'idle',isActive:true}]:[]};
+        else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0}]:[]};
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action==='getWorkspaceEnvironment' && window.__holdNextEnvironment) {window.__holdNextEnvironment=false;window.__heldEnvironmentResult=result;return;}
+        if(message.action==='commitWorkspaceChanges' && window.__holdNextCommit) {window.__holdNextCommit=false;window.__heldCommitResult=result;return;}
+        if(message.action==='saveWorkspaceFile' && window.__holdNextSave) {window.__holdNextSave=false;window.__heldSaveResult=result;return;}
         if(message.action==='shareProjectBoard' && window.__holdProjectShare) {window.__holdProjectShare=false;window.__heldProjectShareResult=result;return;}
         if(message.action==='readWorkspaceFile' && window.__holdNextWorkspaceFileRead) {window.__holdNextWorkspaceFileRead=false;window.__heldWorkspaceFileResult=result;return;}
         if(message.action === 'archiveCodexCliSession') {
@@ -233,6 +244,13 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    if (process.argv.includes('--inspector')) {
+      await checkInspectorUi(page, {origin,parentId,width,height,output});
+      assert.deepEqual(errors, [], 'Inspector browser runtime errors');
+      assert.deepEqual(errors,[], 'Inspector browser runtime errors');
+      results.push({width,height,checks:'Fixed Env, Git, scoped drafts/results, file revision conflicts, pending saves, top-layer tools, terminal lifecycle, offline/reconnect'});
+      await context.close(); continue;
+    }
     if (process.argv.includes('--queue')) {
       await page.goto(`${origin}/`);
       await page.locator('#cliSessionsButton').waitFor();
@@ -575,6 +593,8 @@ try {
     await page.locator(".cli-compact-session-list").waitFor();
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Compact view keeps only distinct parents");
     await page.locator(".cli-compact-session-list .cli-session-row-meta").first().waitFor({ state: "visible" });
+    const compactRowHeights = await page.locator('.cli-compact-session-list .cli-session-row').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().height));
+    assert.ok(compactRowHeights.every(height => height <= (width <= 760 ? 44 : 34)), 'Session rows keep a compact two-line height');
     if (width <= 760) {
       const titleBounds = await page.locator(".cli-session-row-main > strong").first().boundingBox();
       const metaBounds = await page.locator(".cli-session-row-meta").first().boundingBox();
@@ -629,6 +649,10 @@ try {
     await page.getByRole("button", { name: "Show active sessions (2)", exact: true }).click();
     await page.getByRole("button", { name: "Expand demo", exact: true }).click();
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Only distinct parent sessions should appear");
+    const projectHeader = await page.locator('.is-dense-tree .cli-project-row').first().boundingBox();
+    assert.ok(projectHeader.height <= (width <= 760 ? 32 : 28), 'Project heading uses one dense row');
+    assert.deepEqual(await page.locator('.is-dense-tree .cli-session-row-meta > span:first-child').allTextContents(), ['Ready', 'Running'], 'Grouped rows show status without repeating their system/project headings');
+    await page.screenshot({ path: path.join(output, `project-sessions-${width}x${height}.png`), animations: 'disabled' });
     assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 1, "Running parent needs an icon");
     assert.equal(await page.locator(".cli-session-row:not(.is-running) .cli-session-row-status").count(), 0, "Idle rows have no completion ticks");
     const runningRow = page.locator(".cli-session-row.is-running").first();
@@ -663,7 +687,7 @@ try {
       const header = await page.locator(".cli-conversation-header").boundingBox();
       assert.ok(header.height <= 44, `Mobile session header fits one row (${header.height}px)`);
       assert.equal(await page.locator(".cli-mobile-back").count(), 0, "Sidebar icon replaces duplicate Sessions button");
-      assert.equal(await page.locator(".cli-conversation-actions > button:visible").count(), 0, "Secondary actions live in the mobile menu");
+      assert.equal(await page.locator(".cli-conversation-actions > button:not(.cli-inspector-toggle):visible").count(), 0, "Secondary actions live in the mobile menu");
       const title = await page.locator(".cli-conversation-title h1").boundingBox();
       const project = await page.locator(".cli-conversation-project").boundingBox();
       assert.ok(project.y > title.y && project.x <= title.x + 2, "Title and project meta stay left-aligned on two compact rows");
@@ -688,6 +712,9 @@ try {
     await page.getByRole("button", { name: "Pause goal", exact: true }).waitFor();
     if(width===390){await page.evaluate(()=>{window.__failNextGoal=true;});await page.getByRole('button',{name:'Pause goal',exact:true}).click();await page.getByText('Goal storage unavailable.',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Pause goal',exact:true}).count(),1,'Failed pause retains the confirmed goal state');await page.getByRole('button',{name:'Dismiss message',exact:true}).click();}
     const goalBounds = await page.locator(".cli-goal-strip").boundingBox();
+    assert.ok(goalBounds.height <= (width <= 760 ? 38 : 32), 'Goal strip stays one compact row');
+    const pauseBounds = await page.getByRole('button', { name: 'Pause goal', exact: true }).boundingBox();
+    assert.ok(pauseBounds.width <= (width <= 760 ? 32 : 24) && pauseBounds.height <= (width <= 760 ? 32 : 24), 'Pause control does not inflate the goal strip');
     const composerBounds = await page.locator(".cli-composer").boundingBox();
     assert.ok(goalBounds.y >= 0 && goalBounds.y + goalBounds.height <= height && goalBounds.y + goalBounds.height <= composerBounds.y + 1, "Goal is visible above composer on every viewport");
     const imageTrigger = page.getByRole("button", { name: "Preview Attachment preview", exact: true });
@@ -777,11 +804,10 @@ try {
     await page.getByRole("menuitem", { name: "Copy link", exact: true }).waitFor();
     await page.keyboard.press("Escape");
     await page.locator(".cli-session-menu").waitFor({ state: "detached" });
-    if (width <= 760) {
-      await page.getByRole("button", { name: "Session actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Show Environment", exact: true }).click();
-    } else await page.getByRole("button", { name: "Show Environment", exact: true }).click();
-    await page.locator(".cli-environment-popover").waitFor();
+    if (await page.getByRole('button',{name:'Show workspace tools',exact:true}).count()) await page.getByRole('button',{name:'Show workspace tools',exact:true}).click();
+    await page.getByRole('tab',{name:'Env',exact:true}).click();
+    assert.equal(await page.locator('.cli-environment-popover').count(),0,'Environment is a fixed tab, not a flyout');
+    await page.getByRole('button',{name:'Open Git',exact:true}).click();
     await page.getByRole("button", { name: "Compare branch", exact: true }).click();
     await page.locator(".cli-branch-comparison .cli-diff-surface").waitFor();
     await page.evaluate(() => { window.__failNextComparison = true; });
@@ -792,11 +818,7 @@ try {
     await page.locator(".cli-branch-comparison .cli-diff-surface").waitFor();
     await page.getByRole("button", { name: "Show turn changes", exact: true }).click();
     assert.equal(await page.locator(".cli-branch-comparison").count(), 0);
-    if (width <= 1180) await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
-    if (width <= 760) {
-      await page.getByRole("button", { name: "Session actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Show Environment", exact: true }).click();
-    } else await page.getByRole("button", { name: "Show Environment", exact: true }).click();
+    await page.getByRole('tab',{name:'Env',exact:true}).click();
     console.log(`Checking ${width}x${height}: Agent tabs`);
     await page.getByRole("button", { name: /^Agents/ }).click();
     await page.getByRole("tab", { name: /^Agents/ }).click();
@@ -804,18 +826,11 @@ try {
     await page.getByRole("tab", { name: "Agent: Reviewer" }).waitFor();
     await page.getByText("Agent reviewer message", { exact: true }).waitFor();
     assert.equal(await page.getByText("Get codex sub agent messages completed.", { exact: true }).count(), 0, "Agent loading must not cover the composer with redundant success feedback");
-    await page.evaluate(() => document.querySelector('.cli-environment-popover button[aria-label="Close Environment"]')?.click());
-    await page.locator(".cli-environment-popover").waitFor({ state: "detached" });
     await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
-    if (width <= 760) {
-      await page.getByRole("button", { name: "Session actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Show workspace tools", exact: true }).click();
-    } else {
-      await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
-    }
+    await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "New VS Code terminal", exact: true }).count(), 0, "Only one panel creation control");
     for (const tool of ["files", "reviews"]) {
-      await page.getByRole("button", { name: "Add workspace tool or terminal", exact: true }).click();
+      await page.getByRole("button", { name: "Add workspace tool", exact: true }).click();
       const menuItem = page.getByRole("menuitem", { name: new RegExp(`^${tool}$`, "i") });
       if (await menuItem.count()) {
         await menuItem.click();
@@ -1501,15 +1516,12 @@ try {
     await page.goto(`${origin}/workspace/${parentId}?closed-project`);
     await page.waitForFunction(() => window.__uiActions.some(action => action.action === "getWorkspaceEnvironment" && action.payload?.projectPath === "D:/closed-worktree"));
     if (width <= 1180) {
-      if (width <= 760) {
-        await page.getByRole("button", { name: "Session actions", exact: true }).click();
-        await page.getByRole("menuitem", { name: "Show workspace tools", exact: true }).click();
-      } else await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
+      await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
     }
     const closedFiles = page.getByRole("tab", { name: "Files", exact: true });
     if (await closedFiles.count()) await closedFiles.click();
     else {
-      await page.getByRole("button", { name: "Add workspace tool or terminal", exact: true }).click();
+      await page.getByRole("button", { name: "Add workspace tool", exact: true }).click();
       await page.getByRole("menuitem", { name: "Files", exact: true }).click();
     }
     await page.waitForFunction(() => window.__uiActions.some(action => action.action === "listWorkspaceFiles" && action.payload?.projectPath === "D:/closed-worktree"));

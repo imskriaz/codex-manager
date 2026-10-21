@@ -30,6 +30,59 @@ scope; publication does not close outstanding hardware or runtime checks.
 
 ### Follow-up evidence (2026-10-21)
 
+- Workspace inspector follow-up replaces the Environment flyout with a fixed
+  first Env tab and one header visibility toggle. Git is closable; the plus
+  follows the open tabs. Env uses a compact tool list with Git, recorded edits,
+  unsaved drafts, observed terminals, agent counts/status and direct agent access.
+  Session rows retain two compact lines, and goal/queue controls use slim rows
+  with small unboxed pause/resume controls. Phone session targets remain larger.
+  Native terminal profiles and close controls stay in Terminal. Closed terminal
+  acknowledgements update the dashboard immediately. Inspector content is bounded
+  to its panel track and the remaining mobile viewport height.
+  The project session list is rebuilt as a dense flat hierarchy with single-row
+  system/project headings, one project collapse control, inline counts and minimal
+  indentation. Grouped session metadata shows status/time instead of repeating
+  the system/project context; selection no longer stacks card outlines.
+  Secondary row actions use small borderless controls beside metadata. Optional
+  subscription offers yield to active sidebar/modal flows and remain available
+  after those flows close; action warnings and errors are not suppressed.
+- Inspector reads are fenced by project/system, context generation and replacement
+  request. Commit and file drafts survive tab closure, project navigation and
+  failures; late save acknowledgements preserve newer edits and advance their
+  base revision. Existing commit/push/compare actions are exposed through Git;
+  NUL-delimited status preserves renamed and unusual filenames. Status and commits
+  are scoped to the selected subproject, preserving staged work elsewhere.
+  New UI checks intercept all mutations; they do not send messages, run real
+  terminal commands, switch accounts, or commit user projects on either PC.
+- Inspector verification: 196 focused checks, 49 updated layout checks and 48
+  encrypted-sync recovery checks pass. The final full suite passes all 2,167
+  tests across 183 files. Both TypeScript targets and the production bundle build;
+  lint reports zero errors and 3,031 style warnings. Six inspector sizes pass,
+  including Git close/reopen, project-scoped drafts and stale replies, concurrent
+  save edits, revision conflicts, untracked-directory navigation, terminal close,
+  keyboard flyouts, inspector Escape/focus restoration and offline/reconnect.
+  Closed Settings markup retains a layout box, so Escape/Tab guards now check
+  computed visibility as well as layout. Hidden dialogs no longer block the
+  inspector or mobile sidebar keyboard controls.
+  Six broader workspace/settings/board
+  sizes and public desktop/mobile checks pass; seven notification scenarios also
+  verify that an active modal hides the optional offer and closing it restores it.
+  Desktop/mobile light and dark inspector/sidebar screenshots were reviewed.
+  An earlier full run used an outdated metadata-markup assertion; it was updated
+  for grouped status/time. A concurrent verification run timed out in an unchanged
+  encrypted-sync fixture and cascaded into the next case. The isolated 48 checks
+  and final full run pass without changing their assertions or timeouts.
+- Final read-only live checks using workspace assets load 341 real sessions,
+  identify 230 child sessions, open saved conversation content and reconnect at
+  desktop/mobile sizes without runtime errors. Initial host connection measured
+  716 ms / 603 ms. No chat creation or messages were requested. The packaged-asset
+  phone workspace and desktop/mobile public checks also pass.
+- The inspector VSIX builds and passes dependency-layout verification. The local
+  `output/1.4.3/codex-manager-1.4.3.vsix` is 4,011,550 bytes, SHA-256
+  `b9a774f6c3665b58b5d7b0d3e098f711e62e9366999037f520f4626b3070c76b`.
+  Its manifest and root lock remain 1.4.3, and it excludes the terminal prototype,
+  unused xterm dependencies and local output artifacts. This follow-up is not
+  installed or published as a completed release; the live gates below remain open.
 - PandaCode reference review requested: inspected its board renderer/styles,
   conversation/board screenshots, design, GitHub/worktree, saved changes, terminal,
   attachments and team documentation. Candidate improvements include shared
@@ -65,8 +118,9 @@ scope; publication does not close outstanding hardware or runtime checks.
   actions; no real account was switched or real archive deleted during checks.
 - The unfinished terminal-renderer prototype is preserved locally under ignored
   `output/1.4.3/terminal-prototype`; it is not wired into this build. Its unused
-  dependency additions were removed. Env/Git tabs and native terminal parity
-  remain explicitly open below; this checkpoint does not claim they are done.
+  dependency additions were removed. Fixed Env and core Git tabs are implemented
+  in the inspector follow-up above. Full native terminal rendering parity and
+  broader Git/GitHub tools remain open; this checkpoint does not claim them.
 - Active goal revised: prioritize Auto Resume/queue scheduling, task/public sharing,
   cache/offline/reconnect/storage reliability, cross-PC WebSockets, compact UI and
   1.4.3 documentation. Dashboard layout remains excluded except the explicitly
@@ -95,11 +149,12 @@ scope; publication does not close outstanding hardware or runtime checks.
   reports zero errors and 2,976 warnings. The VSIX build and dependency-layout
   check pass. This package is a local review artifact; the remaining workspace
   redesign has not been installed or published as a completed release.
-- Remaining workspace redesign work includes the fixed first Env tab, Git tab,
-  right-sidebar visibility toggle, terminal renderer integration/native API limits,
-  tool-menu alignment and final inline maintenance-workspace interaction checks.
-  These changes and the broader pending UI work are not represented by the
-  previously published artifact; do not treat a share-menu check as release completion.
+- Remaining workspace redesign work includes terminal renderer integration/native
+  API limits, broader Git/GitHub tools and final inline maintenance-workspace
+  interaction checks. The inspector follow-up implements fixed Env, core Git,
+  right-sidebar visibility and aligned tool selection. These additions and the
+  broader pending UI work are not represented by the previously published artifact;
+  do not treat a share-menu or inspector check as release completion.
 - Latest screenshot follow-up removes the inline offline confirmation in favor
   of a dismissible toast, hides empty subtask counts, reduces card gaps/heights,
   and compacts shared modal, task, API and sharing spacing. Mobile title clearance

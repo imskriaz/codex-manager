@@ -675,6 +675,29 @@ describe("executeDashboardActionMessage", () => {
     }
   });
 
+  it("acknowledges a closed terminal even before the native terminal list updates", async () => {
+    const close = vi.spyOn(workspaceTools, "closeWorkspaceTerminal").mockReturnValue(true);
+    vi.spyOn(workspaceTools, "listWorkspaceTerminals").mockReturnValue([
+      { id: "closed", name: "Closed", state: "idle", isActive: true },
+      { id: "remaining", name: "Remaining", state: "idle", isActive: false }
+    ]);
+    const result = await executeDashboardActionMessage(createContext(), {
+      type: "dashboard:action", action: "closeWorkspaceTerminal", requestId: "close-terminal",
+      payload: { terminalId: "closed" }
+    });
+    expect(close).toHaveBeenCalledWith("closed");
+    expect(result.status).toBe("completed");
+    expect(result.payload?.workspaceTerminals?.map(terminal => terminal.id)).toEqual(["remaining"]);
+    expect(result.payload?.notice?.message).toBe("VS Code terminal closed.");
+    close.mockReturnValueOnce(false);
+    const missing = await executeDashboardActionMessage(createContext(), {
+      type: "dashboard:action", action: "closeWorkspaceTerminal", requestId: "close-missing-terminal",
+      payload: { terminalId: "closed" }
+    });
+    expect(missing.status).toBe("failed");
+    expect(missing.errorMessage).toMatch(/no longer open/);
+  });
+
   it("returns captured output and success feedback for a workspace terminal command", async () => {
     const command =
       process.platform === "win32" ? "Write-Output dashboard-terminal-success" : "printf dashboard-terminal-success";

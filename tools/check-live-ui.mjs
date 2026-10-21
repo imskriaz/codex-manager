@@ -75,9 +75,9 @@ try {
     const childIds = sessions.filter(session => session.subAgent || session.parentSessionId).map(session => session.id);
 
     assert.equal(await page.locator(".cli-session-row-select").count(), 0, "Real projects start collapsed");
-    if (sessions.some(session => !session.archived && !session.subAgent && !session.parentSessionId)) await page.locator(".cli-project-collapse").first().waitFor();
+    if (sessions.some(session => !session.archived && !session.subAgent && !session.parentSessionId)) await page.locator(".cli-project-select").first().waitFor();
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const collapsedProjects = page.locator('.cli-project-collapse[aria-expanded="false"]');
+      const collapsedProjects = page.locator('.cli-project-select[aria-expanded="false"]');
       while (await collapsedProjects.count()) await collapsedProjects.first().click();
     }
     const expectedParentRows = new Set(sessions.filter(session => !session.archived && !session.subAgent && !session.parentSessionId).map(session => `${session.deviceId || "local"}:${session.id}`)).size;

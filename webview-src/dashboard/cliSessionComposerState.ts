@@ -8,7 +8,7 @@ export type CliComposerDraft = {
   reasoningEffort?: string;
   sandboxMode?: DashboardCliSandboxMode;
 };
-export type CliSubmissionResult = { requestId: string; status: "completed" | "failed" | "cancelled" };
+export type CliSubmissionResult = { requestId: string; status: "completed" | "failed" | "cancelled"; message?: string; fileRevision?: string };
 
 export function cliComposerDraftKey(deviceId: string | undefined, sessionId: string | undefined, projectPath?: string): string {
   return JSON.stringify([deviceId ?? "local", sessionId ? "session" : "new", sessionId ?? projectPath?.trim() ?? ""]);

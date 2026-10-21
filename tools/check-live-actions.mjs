@@ -93,7 +93,7 @@ const waitIdle = async id => {
 const addTool = async name => {
   const tab = page.getByRole("tab", { name, exact: true });
   if (await tab.count()) return tab.click();
-  await page.getByRole("button", { name: "Add workspace tool or terminal", exact: true }).click();
+  await page.getByRole("button", { name: "Add workspace tool", exact: true }).click();
   await page.getByRole("menuitem", { name, exact: true }).click();
 };
 let terminalId;
@@ -329,9 +329,11 @@ try {
     assert.equal(await page.getByRole("textbox", { name: "Terminal command", exact: true }).isEnabled(), true);
   });
   await record("Git Environment, commit and local-remote push", async () => {
-    await page.getByRole("button", { name: "Show Environment", exact: true }).click();
+    if(await page.getByRole("button",{name:"Show workspace tools",exact:true}).count()) await page.getByRole("button",{name:"Show workspace tools",exact:true}).click();
+    await addTool("Env");
     const inspected = await clickAction("getWorkspaceEnvironment", () => page.getByRole("button", { name: "Refresh Environment", exact: true }).click());
     assert.equal(path.resolve(inspected.payload.workspaceEnvironment.projectPath).toLowerCase(), path.resolve(project).toLowerCase(), "Only commit the disposable repository");
+    await addTool("Git");
     const compared = await clickAction("getWorkspaceEnvironment", () => page.getByRole("button", { name: "Compare branch", exact: true }).click());
     assert.ok(compared.payload.workspaceEnvironment.branchDiff.includes("+newer external content"));
     await page.locator(".cli-branch-comparison").filter({ hasText: "newer external content" }).waitFor();
@@ -342,15 +344,16 @@ try {
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "Mobile branch comparison fits the viewport");
     await page.screenshot({ path: path.join(output, "mobile-comparison.png") });
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole("button", { name: "Show Environment", exact: true }).click();
-    await page.getByRole("button", { name: "Commit changes", exact: true }).click();
+    if(await page.getByRole("button",{name:"Show workspace tools",exact:true}).count()) await page.getByRole("button",{name:"Show workspace tools",exact:true}).click();
+    await addTool("Env");
+    await addTool("Git");
     await page.getByRole("textbox", { name: "Commit message", exact: true }).fill("Verified disposable browser changes");
     await clickAction("commitWorkspaceChanges", () => page.getByRole("button", { name: "Commit all", exact: true }).click());
     assert.equal(git("status", "--porcelain"), "");
     await page.getByRole("button", { name: "Push branch", exact: true }).click();
     await clickAction("pushWorkspaceBranch", () => page.getByRole("button", { name: "Push", exact: true }).click());
     assert.equal(git("rev-parse", "HEAD"), git("rev-parse", "origin/main"));
-    await page.getByRole("button", { name: "Close Environment", exact: true }).click();
+    await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
   });
   await record("Reviews and Agents states and tool tabs", async () => {
     await addTool("Reviews");

@@ -225,6 +225,31 @@ Manual account switching and ownership renewal do not request session inspection
 Browser Share creates an explicit read-only snapshot link. Anyone with its token can view the conversation messages without signing in; it grants no dashboard access. Links expire after 30 days. Create a replacement or use **Revoke shared link** to invalidate the previous link. The session-share endpoint can refresh available saved messages. Project sharing below provides separate feature permissions and optional submissions.
 
 
+### Workspace inspector
+
+The header's workspace-tools icon shows or hides the right sidebar. **Env** stays
+first and cannot be closed; it summarizes the selected project, system, session,
+repository, goal, Auto Resume and queue. **Git**, Files, Reviews, Agents and
+Terminal are closable tabs. The **+** follows the open tabs and opens a floating
+tool menu. Terminal profiles and terminal-close controls stay inside Terminal.
+Session rows use a compact two-line layout, with the title above project/system
+metadata and time. Goal and queue controls use slim rows above the composer.
+Project-grouped sessions use one-line system/project headings and show status/time
+under each title rather than repeating their parent context.
+Narrow screens retain larger session touch targets. Env's tools overview includes
+Git state, recorded file edits, unsaved drafts, observed terminals, and agent
+counts/status, with direct access to recorded agents. Unavailable information is
+marked explicitly; the overview does not scan every project file in the background.
+
+Each project and system keeps its own tabs, commit draft, terminal command and
+unsaved file edits while navigating the workspace. Late responses from another
+context cannot replace the current inspector. Saving retains edits made while
+the save is pending; conflicting file revisions keep the draft for review.
+Git shows changed files, branch tracking and comparison, with confirmed commit
+and push actions. Commits include the selected project folder and preserve
+staged changes elsewhere in the repository. These tools require a connected host;
+they do not replay Git, terminal or file writes after reconnect.
+
 ### Project Kanban and task details
 
 **Task view**, beside Dashboard in the browser workspace, opens the selected project's **Idea, Planned, Running, Completed** board. Kanban is on by default and can be turned off in Settings. Choose a discovered project or add an existing project folder, including a closed worktree.

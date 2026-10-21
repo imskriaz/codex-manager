@@ -65,7 +65,7 @@ try {
       assert.equal(await offer.count(), 0, "Registered devices are not prompted again");
       if (scenario === "login-conflict") assert.equal(await page.evaluate(() => window.__unsubscribes), 1, "Login conflict is repaired quietly in this browser");
     } else {
-      await offer.waitFor().catch(async error => { console.log("Offer state", calls, await page.locator("body").textContent(), errors); throw error; });
+      await offer.waitFor().catch(async error => { console.log("Offer state", calls, await page.locator('[aria-modal="true"]').evaluateAll(items => items.map(item => ({ className: item.className, visible: !!item.getClientRects().length }))), errors); throw error; });
       console.log(`${scenario}: offer visible`);
       const card = await offer.boundingBox();
       assert.ok(card.x >= 0 && card.y >= 0 && card.x + card.width <= 390 && card.y + card.height <= 844, "Notification card fits mobile");
@@ -76,6 +76,10 @@ try {
       assert.ok(await enableButton.evaluate(element => element.scrollWidth <= element.clientWidth + 1), "Button text is not clipped");
       if (scenario === "subscribe") await page.screenshot({ path: path.join(screenshots, "notification-offer-mobile.png") });
       if (scenario === "subscribe") {
+        await page.evaluate(() => { const modal = document.createElement('div'); modal.id = 'notification-modal-check'; modal.className = 'overlay open'; modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); document.body.append(modal); });
+        assert.equal(await offer.isVisible(), false, 'Optional notification offer yields to a modal');
+        await page.evaluate(() => document.getElementById('notification-modal-check').remove());
+        await offer.waitFor();
         for (const [width, height] of [[320, 667], [844, 390], [1440, 1000]]) {
           await page.setViewportSize({ width, height });
           const bounds = await offer.boundingBox();

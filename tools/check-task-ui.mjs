@@ -182,6 +182,9 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await page.locator('#apiOpenButton').click();
   } else {
     await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+    await page.evaluate(() => { const offer = document.createElement('aside'); offer.className = 'browser-notification-offer'; offer.id = 'notification-overlap-check'; offer.textContent = 'Optional notification offer'; document.body.append(offer); });
+    assert.equal(await page.locator('#notification-overlap-check').isVisible(), false, 'Optional notification offers cannot cover the active sidebar');
+    await page.evaluate(() => document.getElementById('notification-overlap-check').remove());
     await page.getByRole('button',{name:'Open account center',exact:true}).click();
     await page.locator('.cli-account-center').getByRole('button',{name:'API',exact:true}).click();
   }

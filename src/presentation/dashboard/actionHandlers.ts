@@ -1020,7 +1020,7 @@ async function runDashboardAction(
       return { notice: { level: "warning" as const, message: "Stopping the terminal command…" } };
     case "closeWorkspaceTerminal":
       if (!closeWorkspaceTerminal(payload?.terminalId)) throw new Error("That VS Code terminal is no longer open. Refresh the terminal list.");
-      return { workspaceTerminals: listWorkspaceTerminals(), notice: { level: "info" as const, message: "VS Code terminal closed." } };
+      return { workspaceTerminals: listWorkspaceTerminals().filter(terminal => terminal.id !== payload?.terminalId), notice: { level: "info" as const, message: "VS Code terminal closed." } };
     case "commitWorkspaceChanges":
       return {
         workspaceEnvironment: await commitWorkspaceChanges(

@@ -13,7 +13,8 @@ import {
   consolidatedActivityLabel,
   splitMessageParagraphs,
   filterCliSessionsBySection,
-  shouldShowLatestButton
+  shouldShowLatestButton,
+  canonicalWebPath
 } from "../webview-src/dashboard/cliSessionsModal";
 import { reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
@@ -92,10 +93,12 @@ describe("sessions sidebar layout", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const renderSession = source.slice(source.indexOf("const renderSession ="), source.indexOf("const returnToSessionList"));
     expect(renderSession).toContain('class="cli-session-row-main has-project"');
-    expect(renderSession).toContain("{sessionMeta(session, props.peers)}");
+    expect(renderSession).toContain("sessionMeta(session, props.peers)");
+    expect(renderSession).toContain("grouped ? session.archived ? 'Archived'");
+    expect(source).toContain('sessions.map(session => renderSession(session, true))');
     expect(renderSession).toContain("{relativeTime(session.updatedAt)}");
     expect(css).toContain(".cli-session-row-meta > span");
-    expect(css).toContain(".cli-workspace .cli-project-sessions .cli-session-row { min-height: 27px;");
+    expect(css).toContain('.cli-workspace :is(.cli-project-sessions,.cli-compact-session-list) .cli-session-row { min-height:32px;');
   });
 
   it("offers one copy target with the complete text only after an assistant turn ends", () => {
@@ -138,7 +141,7 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const filters = source.indexOf('class="cli-session-filters"');
-    const projects = source.indexOf('class="cli-project-list cli-pc-project-list"');
+    const projects = source.indexOf('class="cli-project-list cli-pc-project-list is-dense-tree"');
 
     expect(filters).toBeGreaterThan(-1);
     expect(projects).toBeGreaterThan(filters);
@@ -173,7 +176,8 @@ describe("sessions sidebar layout", () => {
     const composer = source.slice(composerStart, source.indexOf("function SessionMessage", composerStart));
     expect(composer).not.toContain("<SparkIcon />");
     expect(composer).not.toContain("<ReasoningIcon />");
-    expect(source).toContain('class="cli-environment-popover"');
+    expect(source).toContain('function WorkspaceEnvironmentView');
+    expect(source).not.toContain('function EnvironmentPopover');
     expect(source).toContain('aria-label="Environment"');
     expect(source).toContain('aria-label="Workspace tools"');
     expect(source).toContain('role="separator"');
@@ -318,7 +322,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("--cli-rail-width");
     expect(css).toContain("--cli-terminal-width");
     expect(css).toContain(".cli-panel-resizer");
-    expect(css).toContain(".cli-environment-popover");
+    expect(css).toContain(".cli-inspector-view");
     expect(css).toContain(".cli-terminal-panel");
     expect(css).toContain(".cli-account-footer");
     expect(css).toContain(".cli-workspace .cli-account-footer { margin: 0;");
@@ -338,7 +342,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-review-detail");
     expect(source).toContain('aria-label="Show workspace tools"');
     expect(source).toContain('!props.selectedSession && contextCollapsed');
-    expect(source).toContain('.filter((tab) => !props.tabs.includes(tab))');
+    expect(source).toContain('.filter(tab => !props.tabs.includes(tab))');
     expect(main).toContain('onClearFile={() => setWorkspaceFilesByPath({})}');
     expect(main).toContain("setWorkspaceFilesByPath((current) => ({ ...current, [workspaceFile.path]: workspaceFile }))");
     expect(css).toContain('width: min(var(--cli-terminal-width), 92vw)');
@@ -383,7 +387,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain(".cli-conversation-empty > img");
     expect(css).toContain("width: 30px;");
     expect(css).toContain("height: 30px;");
-    expect(css).toContain(":has(.cli-environment-popover) .cli-workspace-feedback");
+    expect(css).not.toContain(".cli-environment-popover");
     expect(css).toMatch(/\.cli-workspace \.cli-context-add-menu\s*\{[\s\S]*?right:\s*0;[\s\S]*?left:\s*auto;/);
     expect(css).toContain("width: min(124px, calc(100vw - 16px));");
     expect(css).toContain('.cli-account-popover-wide');
@@ -395,7 +399,7 @@ describe("sessions sidebar layout", () => {
 
     expect(source).not.toContain('class="cli-tool-tabs"');
     expect(source).toContain("WorkspaceContextPanel");
-    expect(source).toContain('["terminal", "files", "reviews", "agents"]');
+    expect(source).toContain("['git', 'terminal', 'files', 'reviews', 'agents']");
     expect(source).toContain("WorkspaceFilesView");
     expect(source).toContain("WorkspaceReviewsView");
     expect(source).toContain('class="cli-context-tab-scroll"');
@@ -405,7 +409,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("onTab={selectContextTab}");
     expect(source).toContain("if (filePath) props.onReadFile(filePath, toolProjectPath)");
     expect(source).toContain("target.scrollLeft += event.deltaY");
-    expect(source).toContain('scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" })');
+    expect(source).toContain('scrollIntoView({ block: "nearest", inline: "nearest" })');
     expect(source).toContain("SessionShareModal");
     expect(source).toContain("cli-session-images");
     expect(source).toContain("composerBlockedByOwner");
@@ -438,11 +442,11 @@ describe("sessions sidebar layout", () => {
     const handlers = readFileSync("src/presentation/dashboard/actionHandlers.ts", "utf8");
 
     expect(source).toContain("props.onRunTerminal(command");
-    expect(source).toContain("props.onCommit(message");
-    expect(source).toContain("props.onPush(props.projectPath)");
+    expect(source).toContain("props.onCommitWorkspace(text");
+    expect(source).toContain("props.onPushWorkspace(toolProjectPath)");
     expect(main).toContain('sendAction("runWorkspaceTerminalCommand"');
-    expect(main).toContain('sendAction("commitWorkspaceChanges"');
-    expect(main).toContain('sendAction("pushWorkspaceBranch"');
+    expect(main).toContain('sendWorkspaceAction("commitWorkspaceChanges"');
+    expect(main).toContain('sendWorkspaceAction("pushWorkspaceBranch"');
     expect(handlers).toContain('case "getWorkspaceEnvironment"');
     expect(handlers).toContain('case "cancelWorkspaceTerminalCommand"');
   });
@@ -702,10 +706,14 @@ describe("sessions sidebar layout", () => {
     expect(getSessionGoal([{ id: "plan", kind: "plan", text: "Ordinary plan" }])).toBeUndefined();
   });
 
-  it("keeps the Environment inspector closed until the user opens it", () => {
+  it("keeps Env fixed and makes the header toggle control the workspace inspector", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
-    expect(source).toContain("const [environmentOpen, setEnvironmentOpen] = useState(false);");
-    expect(source).toContain('label={props.environmentOpen ? "Hide Environment" : "Show Environment"}');
+    expect(source).toContain("tabs: ['env'], active: 'env'");
+    expect(source).toContain("tab !== 'env'");
+    expect(source).toContain('class="cli-icon-button cli-inspector-toggle"');
+    expect(source).not.toContain('label="Hide workspace tools" onClick={props.onCollapse}');
+    expect(canonicalWebPath('D:\\Work\\Project\\')).toBe('d:/work/project');
+    expect(canonicalWebPath('/work/Project')).not.toBe(canonicalWebPath('/work/project'));
   });
 
   it("renders every persisted Codex activity family with an explicit detail path", () => {

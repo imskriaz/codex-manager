@@ -867,6 +867,8 @@ export interface DashboardWorkspaceEnvironment {
   ahead: number;
   behind: number;
   hasRemote: boolean;
+  changedFiles?: Array<{ path: string; originalPath?: string; index: string; worktree: string }>;
+  changedFilesTruncated?: boolean;
   branchDiff?: string;
   branchDiffBase?: string;
   branchDiffTruncated?: boolean;

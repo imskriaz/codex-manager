@@ -5,6 +5,7 @@ import { promises as fs } from "fs";
 import * as fsSync from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
+import { parseWorkspaceGitStatus } from '../domain/workspaceGitStatus';
 import { readSafeFileSnapshot, SafeFileReadTimeoutError } from "../utils/safeFileReads";
 import type {
   DashboardWorkspaceEnvironment,
@@ -455,9 +456,10 @@ function languageForFile(filePath: string): string {
 
 async function readWorkspaceEnvironmentInternal(cwd: string): Promise<DashboardWorkspaceEnvironment> {
   const projectName = path.basename(cwd) || cwd;
-  const status = await runProcess("git", ["status", "--porcelain=v1", "--branch"], cwd, GIT_TIMEOUT_MS);
+  const status = await runProcess("git", ["status", "--porcelain=v1", "--branch", "-z", "--", "."], cwd, GIT_TIMEOUT_MS);
   if (status.timedOut) throw new Error("Git status timed out. Refresh the workspace to try again.");
   if (status.exitCode !== 0) {
+    if (!/not a git repository/i.test(status.stderr)) throw new Error(status.stderr.trim() || 'Git status could not be verified. Refresh Git before retrying.');
     return {
       projectPath: cwd,
       projectName,
@@ -471,16 +473,15 @@ async function readWorkspaceEnvironmentInternal(cwd: string): Promise<DashboardW
     };
   }
 
-  const lines = status.stdout.split(/\r?\n/).filter(Boolean);
-  const branchLine = lines[0]?.startsWith("## ") ? lines.shift()?.slice(3) : undefined;
-  const branchMatch = branchLine?.match(/^(.+?)(?:\.\.\.([^\s]+))?(?:\s+\[(.+)\])?$/);
-  const relationship = branchMatch?.[3] ?? "";
-  const ahead = Number(relationship.match(/ahead\s+(\d+)/)?.[1] ?? 0);
-  const behind = Number(relationship.match(/behind\s+(\d+)/)?.[1] ?? 0);
-  const [diff, remotes] = await Promise.all([
-    runProcess("git", ["diff", "--numstat", "HEAD"], cwd, GIT_TIMEOUT_MS),
-    runProcess("git", ["remote"], cwd, GIT_TIMEOUT_MS)
+  const gitStatus = parseWorkspaceGitStatus(status.stdout);
+  const [diff, remotes, prefixResult] = await Promise.all([
+    runProcess("git", ["diff", "--numstat", "--relative", "HEAD", "--", "."], cwd, GIT_TIMEOUT_MS),
+    runProcess("git", ["remote"], cwd, GIT_TIMEOUT_MS),
+    runProcess("git", ["rev-parse", "--show-prefix"], cwd, GIT_TIMEOUT_MS)
   ]);
+  if (prefixResult.timedOut || prefixResult.exitCode !== 0) throw new Error('Git project paths could not be verified. Refresh Git before retrying.');
+  const prefix = prefixResult.stdout.replace(/\r?\n$/, '');
+  const changedFiles = gitStatus.changedFiles.filter(file => file.path.startsWith(prefix)).map(file => ({ ...file, path: file.path.slice(prefix.length), originalPath: file.originalPath?.startsWith(prefix) ? file.originalPath.slice(prefix.length) : undefined }));
   let additions = 0;
   let deletions = 0;
   if (diff.exitCode === 0) {
@@ -494,13 +495,11 @@ async function readWorkspaceEnvironmentInternal(cwd: string): Promise<DashboardW
     projectPath: cwd,
     projectName,
     isGitRepository: true,
-    branch: branchMatch?.[1] === "HEAD" ? "Detached HEAD" : branchMatch?.[1],
-    upstream: branchMatch?.[2],
-    changes: lines.length,
+    ...gitStatus,
+    changedFiles,
+    changedFilesTruncated: gitStatus.changedFilesTruncated || Buffer.byteLength(status.stdout, 'utf8') >= MAX_OUTPUT_BYTES,
     additions,
     deletions,
-    ahead,
-    behind,
     hasRemote: remotes.exitCode === 0 && Boolean(remotes.stdout.trim())
   };
 }
@@ -794,8 +793,8 @@ export async function commitWorkspaceChanges(
   if (repository.exitCode !== 0 || repository.timedOut) throw new Error("Git repository could not be verified. Retry after Git responds.");
   const canonical = await fs.realpath(path.resolve(cwd, repository.stdout.trim()));
   return runCrossWindowExclusive(sharedPathKey("workspace-git", canonical), "Git repository change", async () => {
-  await requireSuccessfulGit(["add", "--all"], cwd, "Workspace changes could not be staged.");
-  await requireSuccessfulGit(["commit", "-m", message], cwd, "Git could not create the commit.");
+  await requireSuccessfulGit(["add", "--all", "--", "."], cwd, "Workspace changes could not be staged.");
+  await requireSuccessfulGit(["commit", "-m", message, "--only", "--", "."], cwd, "Git could not create the commit.");
   environmentReads.delete(cwd);
   return readEnvironmentAfterGitMutation(cwd);
   });

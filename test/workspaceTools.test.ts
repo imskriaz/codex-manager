@@ -65,6 +65,26 @@ describe("workspace tools", () => {
     expect(environment.additions).toBeGreaterThanOrEqual(0);
     expect(environment.deletions).toBeGreaterThanOrEqual(0);
   });
+  it('scopes changed files and commits to the selected subproject while preserving other staged changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-project-commit-'));
+    const restore = exposeWorkspaceRoot(root);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+    try {
+      await mkdir(join(root, 'project'));
+      await writeFile(join(root, 'project', 'inside file.txt'), 'initial\n');
+      await writeFile(join(root, 'outside.txt'), 'initial\n');
+      git('init', '--initial-branch=main'); git('config', 'user.name', 'Workspace Test'); git('config', 'user.email', 'workspace@example.invalid');
+      git('add', '--all'); git('commit', '-m', 'Initial');
+      await writeFile(join(root, 'project', 'inside file.txt'), 'project edit\n');
+      await writeFile(join(root, 'outside.txt'), 'other staged edit\n'); git('add', 'outside.txt');
+      const environment = await readWorkspaceEnvironment(join(root, 'project'));
+      expect(environment.changes).toBe(1);
+      expect(environment.changedFiles).toEqual([{ path: 'inside file.txt', index: ' ', worktree: 'M' }]);
+      await commitWorkspaceChanges(join(root, 'project'), 'Project only', true);
+      expect(git('show', '--pretty=', '--name-only', 'HEAD')).toBe('project/inside file.txt');
+      expect(git('diff', '--cached', '--name-only')).toBe('outside.txt');
+    } finally { restore(); await rm(root, { recursive: true, force: true }); }
+  });
   it("requires an explicit absolute project for every workspace action", async () => {
     expect(() => resolveWorkspaceProjectPath(undefined)).toThrow("session's project folder");
     expect(() => resolveWorkspaceProjectPath("relative-folder")).toThrow("session's project folder");
