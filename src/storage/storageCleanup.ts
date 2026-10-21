@@ -7,6 +7,7 @@ import { isManagedStatePath, SqliteStateStore } from "./sqliteState";
 import { initializeUsageStorage, readUsageRows, readDailyUsageRows } from "./sqliteUsage";
 import { pruneSessionCache } from "./sqliteSessions";
 import { compactManagerDatabase } from "./databaseMaintenance";
+import { pruneManagerCache } from './managerCache';
 export { pruneManagerLogRows } from "./logRetention";
 
 export async function maintainManagerDatabases(store: SqliteStateStore): Promise<void> {
@@ -31,6 +32,8 @@ export async function maintainManagerDatabases(store: SqliteStateStore): Promise
 /** Short SQL-only sweeps of expendable Manager state; recovery and unknown namespaces stay intact. */
 export function pruneManagerCaches(store: SqliteStateStore, now = Date.now()): void {
   pruneSessionCache(store, now);
+  try { pruneManagerCache(store, now); }
+  catch (error) { console.warn('[codexManager] optional read cache cleanup deferred', error); }
   store.transaction(() => {
     store.prepare("DELETE FROM state WHERE namespace='shared-reads' AND (CASE WHEN json_valid(value) THEN COALESCE(json_extract(value,'$.completedAt'),0) NOT BETWEEN ? AND ? ELSE 1 END)").run(now - 60_000, now + 5_000);
     store.prepare("DELETE FROM state WHERE namespace='once-operations' AND (CASE WHEN json_valid(value) THEN json_type(value) NOT IN ('integer','real') OR json_extract(value,'$') NOT BETWEEN ? AND ? ELSE 1 END)").run(now - 10 * 60_000, now + 60_000);

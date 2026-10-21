@@ -38,9 +38,15 @@ scope; publication does not close outstanding hardware or runtime checks.
   targets and VSIX layout checks pass; lint has zero errors and 2,854 style
   warnings. All six responsive sizes and public desktop/mobile checks pass.
   Read-only live reconnect passes with 341 sessions and one connected system.
-- Workspace Files pagination still needs review: the service supplies a history
-  cursor, but the workspace task-panel navigation currently exposes it only for
-  Activities and Changes. Public Files already exposes its cursor.
+- Workspace Files now exposes older conversation-file pages. Task refreshes
+  coalesce events received during an active read, and partial live results stay
+  visible when saved history warns. All six responsive sizes verify these paths.
+- Cache follow-up: 55 focused checks and all 2,090 tests across 176 files pass.
+  Both TypeScript targets pass; lint has zero errors and 2,857 style warnings.
+  All six responsive sizes and public desktop/mobile checks pass. Read-only
+  live checks load 341 sessions and reconnect at both sizes; connection measured
+  1,657 ms / 1,621 ms while regression and responsive checks also ran.
+  The stable 1.4.3 VSIX and its dependency-layout verification also pass.
 - Focused recovery/queue/task verification: 223 tests across 10 suites pass.
   Follow-up logging/Stop verification: 53 tests across 2 suites pass.
 - Both TypeScript targets and production compilation pass. Lint has zero
@@ -60,34 +66,62 @@ scope; publication does not close outstanding hardware or runtime checks.
 - Real cold reboot/capacity recovery, live account reset, live cross-project API
   denial, share embedding/expiry, and browser storage exhaustion still need
   runtime evidence. Passing fixtures do not close those hardware/live gates.
-- Seven stashes remain preserved. Their changed source files exist in current
-  code except the retired announcement service; full semantic equivalence is
-  still unproven. No stash was blindly applied or deleted.
+- Seven stashes remain preserved. Source behavior and preserved untracked files
+  have been compared with current implementations and regression coverage.
+  Incorporated and intentionally superseded work is recorded below; no stash
+  was blindly applied or deleted.
 
 - One worktree: the current checkout on `main`.
 - No local branches unmerged into `main` at inventory time.
 - The baseline VSIX was installed, committed and pushed on `main`, and its
   GitHub Release artifact/tag were verified. Follow-up delivery is recorded with
   its verification results; it does not close the broader runtime checks above.
-- Seven preserved stashes need a semantic audit against current code. Keep them
-  intact; do not apply old version/lockfile changes over the release.
+- Seven preserved stashes have been semantically reviewed. Keep them intact;
+  old version/lockfile changes must not overwrite the requested release.
 
 | Stash | Preserved work | Audit status |
 | --- | --- | --- |
-| 0 | Usage graph reads, caches, aggregation, storage, and chart UI | Pending comparison |
-| 1 | 1.2.6 preview, sharing/project bindings, isolation, import, sorting/header | Pending comparison |
-| 2 | Same patch ID as stash 1, preserved after storage cleanup | Duplicate verified; retain intact |
-| 3 | Overlapping 15-file patch preserved during announcement removal | Pending comparison |
-| 4 | SQLite migration, recording, storage, relay, diagnostics, sorting/header | Pending comparison |
-| 5 | Earlier SQLite migration plus sharing/isolation/import work | Pending comparison |
-| 6 | Auto Sync, native recovery, manual scheduling and cross-window coordination | Pending comparison |
+| 0 | Usage graph reads, caches, aggregation, storage, and chart UI | Incorporated; current verified-token units, bounded SQL queries and configurable refresh supersede older cache behavior |
+| 1 | 1.2.6 preview, sharing/project bindings, isolation, import, sorting/header | Incorporated; project bindings now use short SQLite transactions; old preview/styles superseded |
+| 2 | Same patch ID as stash 1, preserved after storage cleanup | Duplicate source patch reviewed with stash 1; retained |
+| 3 | Overlapping 15-file patch preserved during announcement removal | Same substantive source patch as 1/2; reviewed and retained |
+| 4 | SQLite migration, recording, storage, relay, diagnostics, sorting/header | Incorporated; current bounded recording, source validation and notification batching supersede older implementations |
+| 5 | Earlier SQLite migration plus sharing/isolation/import work | Incorporated with 1/4; shutdown snapshot identical, isolation fixture uses current initializer |
+| 6 | Auto Sync, native recovery, manual scheduling and cross-window coordination | Incorporated; cancellation, SQLite leases and stale-response guards supersede old file locks and unconditional disconnects |
 
-All newly exported source symbols from these stashes exist in their current
-files; this is preliminary inventory evidence, not a semantic equivalence proof.
-Also audit preserved untracked snapshots: `dailyTokenUsage.ts` in stash 0;
-`extensionIsolationFailure.test.ts` and `workbenchShutdown.test.ts` in stash 5;
-and `webDashboardPeerDomain.test.ts` in stash 6. These files now exist in the
-checkout and must be compared before declaring the stashes fully covered.
+The comparison followed behavior and callers, including replaced implementations,
+rather than relying only on matching filenames or exported symbols:
+
+- Usage: `dashboardUsageHistory`, `sqliteUsage`, `dailyTokenUsage` and graph UI
+  retain indexed range/source reads, stale-response guards and bounded retention.
+  Coverage: `usageQueries`, `dailyTokenUsage`, `dailyUsageResponse`,
+  `dashboardUsageHistory`, and `usageGraph` suites. Stash 0's untracked service
+  is superseded by verified units, abortable reads and cooldown-aware refresh.
+- Sharing/isolation: conversation share bounds, fail-closed missing window slots,
+  foreign-claim sorting and project-binding transactions remain in current code.
+  Existing share, account sorting, header and window-account-mode suites cover
+  them. Retired announcements and old preview versions/styles stay removed.
+- Storage: migration validates sources, conflicts and bytes before cleanup;
+  SQLite recording batches bounded newer states and preserves retries. Current
+  storage migration, recording, SQLite context, persistence, logging, registry
+  and relay tests retain these behaviors. Stash 5's shutdown fixture is identical;
+  its isolation fixture differs only by the current retrying initializer.
+- Scheduling: current `manualActionScheduling`, `crossWindowOperations`,
+  `accountQuotaRefresh`, `codexSessionRunningState`, `codexNativeSessionStatus`,
+  `encryptedSyncCurrentAccount` and `codexSessionAutoResume` suites cover shared
+  demand, cancellation, bounded waits/queues, dead-owner recovery, local-first
+  switching and retained recovery. Normal/forced duplicate account switches now
+  intentionally join one auth write; active native sessions intentionally remain
+  observed with the dashboard closed. Both supersede older stash behavior.
+- Stash 6's untracked peer-domain fixture is covered and extended by current
+  `webDashboardPeerDomain` checks for multi-system aggregation, relay failures,
+  malformed peers and stale generation replies.
+
+Current cache work moves optional shared results into indexed `manager_cache`
+rows with expiry and byte/count caps. It retains authoritative leases and recovery
+separately and removes the completed-result memory map. Cache failures preserve
+fresh source results. Focused cache/failure/cross-process checks and the complete
+2,090-test regression pass; this does not close the physical/runtime gates above.
 
 ## Session reliability and automation
 

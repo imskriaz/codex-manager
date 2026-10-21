@@ -86,7 +86,17 @@ const mockHost = `(() => {
         if(message.action === 'switch' && window.__holdNextSwitch) { window.__holdNextSwitch = false; window.__heldSwitch = message; return; }
         let payload = {}, error;
         if(message.action==='getProjectBoard') payload={projectBoard:projectBoard()};
-        else if(message.action==='getProjectTaskDetails') payload={projectTaskDetails:{taskId:message.payload.taskId,messages:['messages','activities','changes'].includes(message.payload.taskView||'messages')?messages:[],files:message.payload.taskView==='files'?[{path:'src/app.ts',name:'app.ts',type:'file',depth:1}]:[],environment:['git','changes'].includes(message.payload.taskView)?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:message.payload.taskView==='git'?[{hash:'abcdef012345',author:'Project owner',date:'2026-10-20',subject:'Prepare project tasks'}]:[],warnings:[]}};
+        else if(message.action==='getProjectTaskDetails') {
+          const older=!!message.payload.taskBefore;
+          const details={taskId:message.payload.taskId,messages:['activities','changes'].includes(message.payload.taskView||'activities')?messages:[],files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1}]:[],environment:message.payload.taskView==='changes'?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
+          if(window.__holdNextTaskDetails) {
+            window.__holdNextTaskDetails=false; window.__heldTaskDetails=message;
+            window.__releaseTaskDetails=()=>dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectTaskDetails:details}});
+            return;
+          }
+          if(window.__partialTaskDetails) {details.messages=[{id:'partial-live',kind:'message',role:'assistant',text:'Latest live activity despite saved-history warning'}];details.warnings=['Saved history is temporarily unavailable.'];}
+          payload={projectTaskDetails:details};
+        }
         else if(message.action==='saveProjectTask') {
           if(window.__failTaskSaves) error='This task changed in another browser. Your draft was kept.';
           else {const input=message.payload.task,index=projectTasks.findIndex(task=>task.id===input.id),task={...input,parentTaskId:input.parentTaskId||undefined,revision:input.expectedRevision+1,createdAt:Date.now(),updatedAt:Date.now()};if(index<0)projectTasks.push(task);else projectTasks[index]=task;projectRevision++;payload={projectBoard:projectBoard()};}
@@ -98,7 +108,7 @@ const mockHost = `(() => {
         else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token',name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
         else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
         else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.sessionQueuePriority});payload={cliSession:session};}}
-        else if(message.action==='readWorkspaceFile') payload={workspaceFile:{path:message.payload.filePath,content:'const task = 1;',kind:'text',language:'typescript',mimeType:'text/plain',size:15,revision:'fixture'}};
+        else if(message.action==='readWorkspaceFile') payload={workspaceFile:{path:message.payload.filePath,content:message.payload.filePath.endsWith('older.ts')?'const older = 2;':'const task = 1;',kind:'text',language:'typescript',mimeType:'text/plain',size:15,revision:'fixture'}};
         else         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
           if(message.action === 'viewLogs') logReads++;
           if(window.__failLogReads || window.__failNextLogRead) { window.__failNextLogRead = false; error = 'Simulated log storage failure.'; }

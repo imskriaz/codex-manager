@@ -2,14 +2,15 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SqliteStateStore } from "../src/storage/sqliteState";
 import { compactManagerDatabase } from "../src/storage/databaseMaintenance";
 import { pruneManagerCaches, pruneManagerLogRows } from "../src/storage/storageCleanup";
+import { writeManagerCacheEntry, peekManagerCacheId } from '../src/storage/managerCache';
 
 let root: string, store: SqliteStateStore;
 beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "manager-maintenance-")); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); });
-afterEach(async () => { store.close(); await rm(root, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); store.close(); await rm(root, { recursive: true, force: true }); });
 
 it("prunes expired Manager caches while preserving settings, credentials and pending work", () => {
   const now = Date.now();
@@ -19,11 +20,27 @@ it("prunes expired Manager caches while preserving settings, credentials and pen
   store.set("global", "codexManager.autoResumeSessionIds", ["keep"]);
   store.set("secrets", "token", "keep"); store.set("settings:local", "theme", "dark");
   store.set("unknown", "keep", { completedAt: 1 });
+  writeManagerCacheEntry(store, 'expire', { id: 'one', completedAt: now, value: 'cached' });
   pruneManagerCaches(store, now);
+  expect(peekManagerCacheId(store, 'expire')).toBe('one');
+  pruneManagerCaches(store, now + 60_000);
+  expect(peekManagerCacheId(store, 'expire')).toBeUndefined();
   expect(store.keys("shared-reads")).toEqual(["current"]); expect(store.keys("once-operations")).toEqual(["current"]);
   expect(store.get("global", "codexManager.autoResumeSessionIds")).toEqual(["keep"]);
   expect(store.get("secrets", "token")).toBe("keep"); expect(store.get("settings:local", "theme")).toBe("dark");
   expect(store.get("unknown", "keep")).toEqual({ completedAt: 1 });
+});
+
+it('continues other maintenance when the optional read cache cannot be pruned', () => {
+  const now = Date.now(), prepare = store.prepare.bind(store);
+  writeManagerCacheEntry(store, 'one', { id: 'one', completedAt: now, value: 1 });
+  store.set('once-operations', 'expired', now - 601_000);
+  vi.spyOn(store, 'prepare').mockImplementation(sql => {
+    if (sql.startsWith('DELETE FROM manager_cache')) throw new Error('cache busy');
+    return prepare(sql);
+  });
+  expect(() => pruneManagerCaches(store, now)).not.toThrow();
+  expect(store.get('once-operations', 'expired')).toBeUndefined();
 });
 
 it("caps a noisy log day in SQLite and retains only current diagnostic archives", () => {

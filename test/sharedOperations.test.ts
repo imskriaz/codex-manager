@@ -13,6 +13,7 @@ import {
   sharedResourceKey
 } from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
+import { writeManagerCacheEntry } from '../src/storage/managerCache';
 
 let root: string;
 let store: SqliteStateStore;
@@ -209,25 +210,53 @@ describe("shared operations across extension hosts", () => {
   });
 
   it("evicts a full read cache and preserves a completed response after cache storage fails", async () => {
-    store.transaction(() => {
-      for (let i = 0; i < 128; i++)
-        store.set("shared-reads", String(i), { id: String(i), completedAt: Date.now(), value: i });
-    });
+    for (let i = 0; i < 128; i++)
+      writeManagerCacheEntry(store, String(i), { id: String(i), completedAt: Date.now(), value: i });
     const reader = new CrossWindowOperationCoordinator(root),
       signal = new AbortController().signal;
     await expect(reader.shareRead("overflow", "Read", async () => 1, signal, 0)).resolves.toBe(1);
-    expect(store.keys("shared-reads")).toHaveLength(128);
-    store.transaction(() => {
-      for (const key of store.keys("shared-reads")) store.set("shared-reads", key, undefined);
-    });
+    expect(store.prepare('SELECT COUNT(*) AS n FROM manager_cache').get()?.['n']).toBe(128);
     const prepare = store.prepare.bind(store);
     const failure = vi.spyOn(store, "prepare").mockImplementation(sql => {
-      if (sql.startsWith("INSERT INTO state(namespace,key,value) VALUES('shared-reads'")) throw new Error("storage full");
+      if (sql.startsWith("INSERT INTO manager_cache")) throw new Error("storage full");
       return prepare(sql);
     });
     await expect(reader.shareRead("storage", "Read", async () => 2, signal, 0)).resolves.toBe(2);
     failure.mockRestore();
     await expect(reader.shareRead("storage", "Read", async () => 3, signal, 0)).resolves.toBe(3);
+  });
+
+  it('returns fresh source data when cache reads fail and retries caching on a later operation', async () => {
+    const prepare = store.prepare.bind(store), reader = new CrossWindowOperationCoordinator(root);
+    const failure = vi.spyOn(store, 'prepare').mockImplementation(sql => {
+      if (sql.startsWith('SELECT id FROM manager_cache')) throw new Error('cache unavailable');
+      return prepare(sql);
+    });
+    const source = vi.fn(async () => 42), signal = new AbortController().signal;
+    await expect(reader.shareRead('cache-failure', 'Read', source, signal, 1000)).resolves.toBe(42);
+    failure.mockRestore();
+    await expect(reader.shareRead('cache-failure', 'Read', source, signal, 1000)).resolves.toBe(42);
+    await expect(reader.shareRead('cache-failure', 'Read', source, signal, 1000)).resolves.toBe(42);
+    expect(source).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not store a cancelled read or fail a successful oversized source response', async () => {
+    const reader = new CrossWindowOperationCoordinator(root), controller = new AbortController();
+    await expect(reader.shareRead('cancel-cache', 'Read', async () => { controller.abort(); return 1; }, controller.signal, 1000)).rejects.toThrow();
+    const large = 'x'.repeat(2 * 1024 * 1024), source = vi.fn(async () => large);
+    await expect(reader.shareRead('large-cache', 'Read', source, new AbortController().signal, 1000)).resolves.toBe(large);
+    await expect(reader.shareRead('large-cache', 'Read', source, new AbortController().signal, 1000)).resolves.toBe(large);
+    expect(source).toHaveBeenCalledTimes(2);
+    expect(store.prepare('SELECT COUNT(*) AS n FROM manager_cache').get()?.['n']).toBe(0);
+  });
+
+  it('uses source data when the optional cache schema cannot be initialized', async () => {
+    const exec = store.database.exec.bind(store.database);
+    vi.spyOn(store.database, 'exec').mockImplementation(sql => {
+      if (sql.startsWith('CREATE TABLE IF NOT EXISTS manager_cache')) throw new Error('cache schema unavailable');
+      exec(sql);
+    });
+    await expect(new CrossWindowOperationCoordinator(root).shareRead('schema-failure', 'Read', async () => 42, new AbortController().signal, 1000)).resolves.toBe(42);
   });
 
   it("canonicalizes compatible keys without exposing credentials", () => {

@@ -215,12 +215,13 @@ export function TaskBoard(props: {
     setDetails(undefined); setFile(undefined); setDetailLoading(false);
     if (!selected?.id || !selected.revision || props.active === false) return;
     const taskId = selected.id, origin = scope;
-    let disposed = false, loading = false, received = false, signature: string | undefined;
+    let disposed = false, loading = false, refreshQueued = false, received = false, signature: string | undefined;
     const current = () => !disposed && generation === detailGeneration.current && origin === active.current && taskId === selection.current;
     const key = `task:${JSON.stringify([props.targetDeviceId ?? 'local', project, taskId, tab, cursor ?? 'latest'])}`;
     void readBrowserCache<ProjectTaskDetails>(key).then(saved => { if (current() && !received && saved) setDetails(saved); });
     const poll = async () => {
-      if (!current() || !props.connected || loading || document.hidden) return;
+      if (!current() || !props.connected || document.hidden) return;
+      if (loading) { refreshQueued = true; return; }
       loading = true;
       if (!received) setDetailLoading(true);
       try {
@@ -230,11 +231,14 @@ export function TaskBoard(props: {
           const value = JSON.stringify(next);
           if (signature === value) return;
           signature = value;
-          if (next.warnings.length) setDetails(previous => previous ? { ...previous, warnings: next.warnings } : next);
+          if (next.warnings.length) setDetails(previous => previous && !next.messages.length && !next.files.length && !next.environment ? { ...previous, warnings: next.warnings } : next);
           else { setDetails(next); void writeBrowserCache(key, next); }
         }
       } catch (error) { if (current()) setStatus((error as Error).message); }
-      finally { loading = false; if (current()) setDetailLoading(false); }
+      finally {
+        loading = false; if (current()) setDetailLoading(false);
+        if (refreshQueued) { refreshQueued = false; if (current()) void poll(); }
+      }
     };
     detailRefreshRef.current = tab === 'activities' && !cursor ? poll : () => Promise.resolve();
     const changed = () => { void poll(); };
@@ -320,7 +324,7 @@ export function TaskBoard(props: {
         {children.get(selected.id)?.length ? <div class="task-subtasks"><strong>Subtasks</strong>{children.get(selected.id)!.map(task => <button key={task.id} type="button" onClick={() => open(task)}>{task.title}<small>{label(effectiveStages.get(task.id) ?? task.stage)}</small></button>)}</div> : null}
         <div class="task-detail-tabs" role="tablist" aria-label="Task details">{tabs.map(value => <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => { detailGeneration.current++; setTab(value); setCursor(undefined); }}>{label(value)}</button>)}</div>
         <div class="task-detail-scroll cli-workspace cli-message-surface" role="tabpanel">{details?.warnings.map(warning => <p key={warning} class="settings-note" role="status">{warning}</p>)}
-          {cursor ? <button type="button" disabled={detailLoading} onClick={() => setCursor(undefined)}>Latest activity</button> : null}{details?.olderThan && ['activities','changes'].includes(tab) ? <button type="button" disabled={detailLoading} onClick={() => setCursor(details.olderThan)}>Older history</button> : null}
+          {cursor ? <button type="button" disabled={detailLoading} onClick={() => setCursor(undefined)}>Latest activity</button> : null}{details?.olderThan ? <button type="button" disabled={detailLoading} onClick={() => setCursor(details.olderThan)}>Older history</button> : null}
           {tab === 'activities' ? details?.messages.map(item => <SessionMessage key={item.id} message={item} onActionFeedback={notice => setStatus(notice.message)} />) : null}
           {tab === 'files' ? <><p class="settings-note">Files shared or changed in this conversation · read-only</p>{details?.files.map(entry => <button type="button" class="task-file-row" key={entry.path} disabled={entry.type !== 'file'} onClick={() => { void openFile(entry.path); }}><span>{entry.path}</span><small>Chat file</small></button>)}{details && !details.files.length ? <p class="task-board-empty">No files were shared or changed in this conversation.</p> : null}{file ? <article class="task-activity"><strong>{file.path}</strong>{file.kind === 'image' && file.dataUrl ? <img src={file.dataUrl} alt={file.path} /> : <pre>{file.content}</pre>}</article> : null}</> : null}
           {tab === 'changes' ? <><p>Current project: {details?.environment?.changes ?? 0} changed files · +{details?.environment?.additions ?? 0} / −{details?.environment?.deletions ?? 0}</p>{details?.environment?.branchDiff ? <details><summary>Current branch differences</summary><pre>{details.environment.branchDiff}</pre></details> : null}{details?.messages.filter(item => item.changes?.length).map(item => <SessionMessage key={item.id} message={item} />)}</> : null}
