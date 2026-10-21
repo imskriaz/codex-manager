@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn(), spawn: vi.fn() }));
 vi.mock("child_process", async (original) => ({ ...await original<typeof import("child_process")>(), spawn: mocks.spawn }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { observeRunningCodexSession, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal } from "../src/services/codexSessionResume";
+import { observeRunningCodexSession, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
 import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, startNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
@@ -33,6 +33,93 @@ afterEach(async () => {
 });
 
 describe("native App Server new sessions", () => {
+  it.each(['completed', 'missing', 'during-resume', 'writer-conflict', 'truncated', 'cancelled', 'home-changed', 'resume-failed'])('does not send recovery after completion or unsafe startup (%s)', async scenario => {
+    await mkdir(path.join(root, 'sessions'));
+    const transcript = path.join(root, 'sessions', `rollout-${id}.jsonl`);
+    const event = (type: string) => JSON.stringify({ type: 'event_msg', payload: { type, turn_id: 'finished-turn' } }) + '\n';
+    await writeFile(transcript, JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n' +
+      (scenario === 'missing' ? '' : event('task_started') + event(scenario === 'completed' ? 'task_complete' : 'task_failed')));
+    const controller = new AbortController();
+    const rpc = {
+      request: vi.fn(async () => {
+        if (scenario === 'resume-failed') throw new Error('Storage full');
+        if (scenario === 'truncated') await writeFile(transcript, '');
+        else await appendFile(transcript, event('task_started').replaceAll('finished-turn', 'successful-turn') + event('task_complete').replaceAll('finished-turn', 'successful-turn'));
+        if (scenario === 'cancelled') controller.abort(new Error('Recovery cancelled'));
+        if (scenario === 'home-changed') process.env['CODEX_HOME'] = path.join(root, 'other');
+        if (scenario === 'writer-conflict') throw new Error('thread already has an active writer');
+        return {};
+      }),
+      close: vi.fn(), onNotification: () => () => undefined, onServerRequest: () => () => undefined, startAndWaitForTurn: vi.fn()
+    };
+    if (scenario === 'completed') vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    mocks.open.mockResolvedValue(rpc);
+    const accepted = vi.fn(), updates = vi.fn();
+    const off = subscribeDashboardRealtime(message => { if (message.type === 'dashboard:codex-session-live') updates(message); });
+    try {
+      const sending = sendCodexCliSessionMessage({ sessionId: id, text: 'Continue if not completed', interruptedOnly: true, onStarted: accepted, signal: controller.signal });
+      const errors: Record<string, string> = { missing: 'could not be verified', truncated: 'could not be verified', cancelled: 'Recovery cancelled', 'home-changed': 'home changed', 'resume-failed': 'Storage full' };
+      if (errors[scenario]) await expect(sending).rejects.toThrow(errors[scenario]); else await sending;
+      expect(mocks.open).toHaveBeenCalledTimes(['completed', 'missing'].includes(scenario) ? 0 : 1);
+      expect(rpc.startAndWaitForTurn).not.toHaveBeenCalled(); expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+      expect(accepted).not.toHaveBeenCalled(); expect(updates).not.toHaveBeenCalled();
+      if (mocks.open.mock.calls.length) expect(rpc.close).toHaveBeenCalled();
+    } finally { off(); process.env['CODEX_HOME'] = root; }
+  });
+
+  it('allows an explicit user message after a completed turn', async () => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n' +
+      ['task_started', 'task_complete'].map(type => JSON.stringify({ type: 'event_msg', payload: { type, turn_id: 'old-turn' } })).join('\n') + '\n');
+    const rpc = { request: vi.fn(async () => ({})), close: vi.fn(), onNotification: () => () => undefined, onServerRequest: () => () => undefined,
+      startAndWaitForTurn: vi.fn(async (_id: string, _params: unknown, _timeout: number, started: (id: string) => void) => { started('new-user-turn'); }) };
+    mocks.open.mockResolvedValue(rpc);
+    const accepted = vi.fn();
+    await sendCodexCliSessionMessage({ sessionId: id, text: 'New instructions', onStarted: accepted });
+    expect(rpc.startAndWaitForTurn).toHaveBeenCalledOnce(); expect(accepted).toHaveBeenCalledOnce();
+  });
+
+  it("reuses and closes one native process for concurrent cleanup without bypassing running protection", async () => {
+    const secondId = "01a04882-d037-7a42-ad24-9afb61901200";
+    const rpc = { request: vi.fn(async () => ({})), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    await withCodexSessionMaintenance([id, secondId], () => Promise.all([deleteCodexCliSession(id), unarchiveCodexCliSession(secondId)]));
+    expect(mocks.open).toHaveBeenCalledExactlyOnceWith(expect.anything(), root);
+    expect(rpc.request.mock.calls.map(([method]) => method).sort()).toEqual(["thread/delete", "thread/unarchive"]);
+    expect(rpc.close).toHaveBeenCalledOnce();
+    mocks.open.mockClear(); rpc.close.mockClear(); rpc.request.mockClear();
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+    await expect(withCodexSessionMaintenance([id], () => deleteCodexCliSession(id))).rejects.toThrow("Stop the active");
+    expect(mocks.open).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed cleanup outcomes and closes its process without replaying mutations", async () => {
+    const rpc = { request: vi.fn().mockRejectedValueOnce(new Error("Storage full")).mockResolvedValue({}), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    await withCodexSessionMaintenance([id], async () => {
+      await expect(deleteCodexCliSession(id)).rejects.toThrow("Storage full");
+      await unarchiveCodexCliSession(id);
+    });
+    expect(mocks.open).toHaveBeenCalledOnce(); expect(rpc.close).toHaveBeenCalledOnce();
+    expect(rpc.request).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not open cleanup processes for missing selection, changed home, or failed startup", async () => {
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    await expect(withCodexSessionMaintenance([], () => deleteCodexCliSession(id))).rejects.toThrow("cleanup context changed");
+    await expect(withCodexSessionMaintenance([id], async () => {
+      process.env["CODEX_HOME"] = path.join(root, "other");
+      try { await unarchiveCodexCliSession(id); } finally { process.env["CODEX_HOME"] = root; }
+    })).rejects.toThrow("cleanup context changed");
+    expect(mocks.open).not.toHaveBeenCalled();
+    mocks.open.mockRejectedValue(new Error("Codex unavailable"));
+    await withCodexSessionMaintenance([id], async () => {
+      await expect(deleteCodexCliSession(id)).rejects.toThrow("Codex unavailable");
+      await expect(unarchiveCodexCliSession(id)).rejects.toThrow("Codex unavailable");
+    });
+    expect(mocks.open).toHaveBeenCalledOnce();
+  });
+
   it.each(["active", "finished", "delayed", "cancelled", "changed", "raced"])("observes restored native work without another prompt or Stop ownership (%s)", async scenario => {
     await mkdir(path.join(root, "sessions"));
     const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`), startedAt = Date.now();

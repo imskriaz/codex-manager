@@ -55,13 +55,13 @@ const mockHost = `(() => {
   const messages = ${JSON.stringify(messages)};
   const config = ${JSON.stringify(config)};
   if(location.search.includes('closed-project')) { sessions[0].projectPath = 'D:/closed-worktree'; sessions[0].title = 'Closed worktree task'; }
-  const taskComments = [], projectTasks = [
-    {id:'release-group',title:'Release work',prompt:'Prepare the release',stage:'planned',revision:1,createdAt:1,updatedAt:2},
-    {id:'idea-fixture',title:'Idea collection',prompt:'A visitor suggestion',stage:'idea',revision:1,createdAt:1,updatedAt:1},
-    ...[...new Map(sessions.filter(session=>!session.parentSessionId).map(session=>[session.id,session])).values()].map(session=>({id:'session:'+session.id,title:session.title,prompt:'',stage:session.status==='running'?'running':session.archived?'completed':'planned',revision:1,createdAt:1,updatedAt:1,sessionId:session.id,sourceKey:'fixture:'+session.id,parentTaskId:session.id===${JSON.stringify(parentId)}?'release-group':undefined}))
+  const taskSessions = [], taskComments = [], projectTasks = [
+    {id:'release-group',title:'Release work',prompt:'Prepare the release',stage:'planned',manualStage:'planned',revision:1,createdAt:Date.now()-7200000,updatedAt:Date.now()-600000},
+    {id:'idea-fixture',title:'Idea collection',prompt:'A visitor suggestion',stage:'idea',manualStage:'idea',revision:1,createdAt:Date.now()-3600000,updatedAt:Date.now()-300000},
+    ...[...new Map(sessions.filter(session=>!session.parentSessionId).map(session=>[session.id,session])).values()].map(session=>({id:'session:'+session.id,title:session.title,prompt:'',stage:session.status==='running'?'running':session.archived?'completed':'planned',revision:1,createdAt:1,updatedAt:1,sessionId:session.id,sourceKey:'fixture:'+session.id,timing:{firstStartedAt:Date.now()-3600000,lastObservedAt:Date.now()-600000,durationMs:1200000,runCount:2},parentTaskId:session.id===${JSON.stringify(parentId)}?'release-group':undefined}))
   ];
-  let projectRevision=1;
-  const projectBoard = () => ({projectPath:'D:/demo',homeKey:'fixture',revision:projectRevision,tasks:projectTasks,comments:taskComments,sessions:sessions.filter(session=>!session.parentSessionId),updatedAt:Date.now()});
+  let projectRevision=1; window.__advanceBoard=()=>{projectTasks.find(task=>task.id==='idea-fixture').title='Idea collection updated';projectRevision++;};
+  const projectBoard = () => ({projectPath:'D:/demo',homeKey:'fixture',revision:projectRevision,tasks:projectTasks,comments:taskComments,sessions:[...sessions.filter(session=>!session.parentSessionId),...taskSessions],updatedAt:Date.now()});
   const apiTokens=[{id:'token-project',name:'Project reader',projectPath:'D:/demo',permissions:['state','getProjectBoard'],createdAt:1},{id:'token-all',name:'Owner operations',permissions:['*'],createdAt:1}];
   let messageReads = 0;
   let logReads = 0;
@@ -86,10 +86,14 @@ const mockHost = `(() => {
       } else if(message.type === 'dashboard:action') {
         if(message.action === 'switch' && window.__holdNextSwitch) { window.__holdNextSwitch = false; window.__heldSwitch = message; return; }
         let payload = {}, error;
-        if(message.action==='getProjectBoard') payload={projectBoard:projectBoard()};
+        if(message.action==='getProjectBoard') {
+          const result={type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectBoard:projectBoard()}};
+          if(window.__holdNextBoard) {window.__holdNextBoard=false;window.__heldBoardResult=structuredClone(result);return;}
+          payload=result.payload;
+        }
         else if(message.action==='getProjectTaskDetails') {
           const older=!!message.payload.taskBefore;
-          const details={taskId:message.payload.taskId,messages:older?[]:messages,files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:message.payload.taskView==='changes'?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
+          const details={taskId:message.payload.taskId,initialPrompt:projectTasks.find(task=>task.id===message.payload.taskId)?.prompt||'Original request for this session',messages:older?[]:messages,files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:message.payload.taskView==='changes'?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
           if(window.__holdNextTaskDetails===message.payload.taskView) {
             window.__holdNextTaskDetails=false; window.__heldTaskDetails=message;
             window.__releaseTaskDetails=()=>dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectTaskDetails:details}});
@@ -100,15 +104,26 @@ const mockHost = `(() => {
         }
         else if(message.action==='saveProjectTask') {
           if(window.__failTaskSaves) error='This task changed in another browser. Your draft was kept.';
-          else {const input=message.payload.task,index=projectTasks.findIndex(task=>task.id===input.id),task={...input,parentTaskId:input.parentTaskId||undefined,revision:input.expectedRevision+1,createdAt:Date.now(),updatedAt:Date.now()};if(index<0)projectTasks.push(task);else projectTasks[index]=task;projectRevision++;payload={projectBoard:projectBoard()};}
+          else {const input=message.payload.task,index=projectTasks.findIndex(task=>task.id===input.id),task={...projectTasks[index],...input,manualStage:projectTasks[index]?.sourceKey?projectTasks[index].manualStage:input.stage,parentTaskId:input.parentTaskId||undefined,revision:input.expectedRevision+1,createdAt:Date.now(),updatedAt:Date.now()};if(index<0)projectTasks.push(task);else projectTasks[index]=task;projectRevision++;payload={projectBoard:projectBoard()};}
+        }
+        else if(message.action==='moveProjectTask') {
+          const task=projectTasks.find(task=>task.id===message.payload.taskId);
+          if(!task || task.revision!==message.payload.taskRevision) error='This task changed. Refresh before retrying.';
+          else {task.stage=message.payload.taskStage;task.manualStage=task.stage;task.archived=false;task.revision++;if(message.payload.taskToBoard)task.parentTaskId=undefined;projectRevision++;payload={projectBoard:projectBoard()};}
+        }
+        else if(message.action==='startProjectSubtask') {
+          const id='33333333-3333-4333-8333-333333333333';
+          taskSessions.push({id,title:message.payload.text,status:'running',canStop:true,projectPath:'D:/demo',updatedAt:new Date().toISOString()});
+          projectTasks.push({id:'session:'+id,title:message.payload.text,prompt:message.payload.text,sessionId:id,sourceKey:'fixture:'+id,parentTaskId:message.payload.taskId,stage:'running',revision:1,createdAt:Date.now(),updatedAt:Date.now()});
+          projectRevision++;payload={projectBoard:projectBoard()};
         }
         else if(message.action==='addProjectComment') {if(!taskComments.some(item=>item.id===message.payload.comment.id))taskComments.push({...message.payload.comment,author:'Owner',createdAt:Date.now()});projectRevision++;payload={projectBoard:projectBoard()};}
-        else if(message.action==='shareProjectBoard') payload={projectShare:{token:'b'.repeat(64),expiresAt:Date.now()+86400000,permissions:message.payload.sharePermissions}};
-        else if(message.action==='revokeProjectShares') payload={notice:{level:'info',message:'All project links revoked.'}};
+        else if(message.action==='shareProjectBoard') payload=window.__partialProjectShare ? {} : {projectShare:{token:'b'.repeat(64),expiresAt:Date.now()+86400000,permissions:message.payload.sharePermissions}};
+        else if(message.action==='revokeProjectShares') { if(window.__failProjectRevoke) error='Revocation was not confirmed.'; else payload={notice:{level:'info',message:'All project links revoked.'}}; }
         else if(message.action==='listApiTokens') payload={apiTokens};
         else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token',name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
         else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
-        else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.sessionQueuePriority});payload={cliSession:session};}}
+        else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined});payload={cliSession:session};}}
         else if(message.action==='readWorkspaceFile') payload={workspaceFile:{path:message.payload.filePath,content:message.payload.filePath.endsWith('older.ts')?'const older = 2;':'const task = 1;',kind:'text',language:'typescript',mimeType:'text/plain',size:15,revision:'fixture'}};
         else         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
           if(message.action === 'viewLogs') logReads++;
@@ -164,6 +179,7 @@ const mockHost = `(() => {
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action==='shareProjectBoard' && window.__holdProjectShare) {window.__holdProjectShare=false;window.__heldProjectShareResult=result;return;}
         if(message.action==='readWorkspaceFile' && window.__holdNextWorkspaceFileRead) {window.__holdNextWorkspaceFileRead=false;window.__heldWorkspaceFileResult=result;return;}
         if(message.action === 'archiveCodexCliSession') {
           window.__heldArchiveResult = {...result,status:'completed',error:undefined,payload:{notice:{level:'info',message:'Original chat archived.'}}};
@@ -202,8 +218,11 @@ try {
     page.on("pageerror", (error) => errors.push(error.message));
     await page.route("**/api/**", (route) => route.abort());
     const shareRequests = [];
-    await page.route("**/api/share/*", route => {
+    let heldShare, releaseShare, shareResponse;
+    await page.route("**/api/share/*", async route => {
       shareRequests.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+      if (heldShare) await heldShare;
+      if (shareResponse) return route.fulfill(shareResponse);
       return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/create") ? { token: "a".repeat(64) } : { ok: true } });
     });
     await page.route("**/assets/browserHost.js*", (route) => route.fulfill({ contentType: "text/javascript", body: mockHost }));
@@ -214,6 +233,323 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    if (process.argv.includes('--queue')) {
+      await page.goto(`${origin}/`);
+      await page.locator('#cliSessionsButton').waitFor();
+      await page.evaluate(() => {
+        window.__uiSessions.push({id:'recovery',title:'Interrupted workspace task',status:'idle',interrupted:true,projectPath:'D:/demo'});
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',requestId:'dashboard-auto-fixture',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
+      });
+      await page.locator('#cliSessionsButton').click();
+      const row = page.locator('.cli-sessions-running-row').filter({hasText:'Interrupted workspace task'});
+      const trigger = row.getByRole('button',{name:'Queue priority for Interrupted workspace task',exact:true});
+      const panel = page.getByRole('dialog',{name:'Queue Interrupted workspace task',exact:true});
+      const field = panel.getByRole('spinbutton',{name:'Queue priority',exact:true});
+      const layoutBefore = await row.boundingBox();
+      const iconSizes = await page.locator('.cli-sessions-running-row .cli-icon-button svg').evaluateAll(icons=>icons.map(icon=>[icon.getBoundingClientRect().width,icon.getBoundingClientRect().height]));
+      assert.ok(iconSizes.length>=2 && iconSizes.every(([w,h])=>w===16&&h===16),'Running and queued session icons have identical dimensions');
+      await trigger.click();
+      assert.deepEqual(await row.boundingBox(),layoutBefore,'Opening the priority control never shifts session content');
+      assert.equal(await panel.evaluate(node=>node.matches(':popover-open')),true,'Queue controls use the top layer');
+      await panel.getByRole('button',{name:'Priority 1 First',exact:true}).click();
+      assert.equal(await field.inputValue(),'1');
+      for(const invalid of ['', '0', '-1', '1.5', '9007199254740992']) {
+        await field.fill(invalid); assert.equal(await panel.getByRole('button',{name:'Queue session',exact:true}).isDisabled(),true);
+      }
+      await field.fill('19');
+      let box = await panel.boundingBox();
+      assert.ok(box.x>=8&&box.y>=8&&box.x+box.width<=width-7&&box.y+box.height<=height-7,'Priority control fits viewport');
+      assert.equal(await panel.evaluate(node=>{const r=node.getBoundingClientRect();return node.contains(document.elementFromPoint(r.left+10,r.top+10));}),true,'Priority control is above its parent container');
+      await page.evaluate(() => {
+        window.__queueViewport=window.visualViewport;
+        Object.defineProperty(window,'visualViewport',{configurable:true,value:{offsetLeft:innerWidth-Math.min(innerWidth,300),offsetTop:0,width:Math.min(innerWidth,300),height:210}});
+        window.dispatchEvent(new Event('resize'));
+      });
+      await page.waitForFunction(()=>{const node=document.querySelector('.cli-session-queue-menu'),r=node?.getBoundingClientRect(),v=visualViewport;return r&&r.left>=v.offsetLeft+8&&r.right<=v.offsetLeft+v.width-8&&r.top>=8&&r.bottom<=v.height-8;});
+      await page.evaluate(()=>{Object.defineProperty(window,'visualViewport',{configurable:true,value:window.__queueViewport});window.dispatchEvent(new Event('resize'));});
+      await page.keyboard.press('Escape');
+      assert.equal(await panel.count(),0); assert.equal(await trigger.evaluate(node=>node===document.activeElement),true);
+      assert.equal(await page.locator('.cli-sessions-popover').count(),1,'Escape only closes the nested flyout');
+      await trigger.click(); await field.fill('19'); await field.press('Enter');
+      await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.queuePriority===19);
+      await trigger.click(); assert.equal(await field.inputValue(),'19');
+      await field.fill('2'); await panel.getByRole('button',{name:'Save priority',exact:true}).click();
+      await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.queuePriority===2);
+      await trigger.click();
+      await page.screenshot({path:path.join(output,`queue-options-${width}x${height}.png`)});
+      if (width===1440 || width===390) {
+        const previousTheme=await page.evaluate(()=>{const value=document.documentElement.dataset.theme;document.documentElement.dataset.theme='dark';return value;});
+        await page.screenshot({path:path.join(output,`queue-options-dark-${width}x${height}.png`),animations:'disabled'});
+        await page.evaluate(value=>{document.documentElement.dataset.theme=value;},previousTheme);
+      }
+      await panel.getByRole('button',{name:'Remove from queue',exact:true}).click();
+      await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.queueEnabled===false);
+      await page.evaluate(()=>{window.__failQueue=true;});
+      await trigger.click(); await panel.getByRole('button',{name:'Queue session',exact:true}).click();
+      await page.getByText('The session queue is full. Remove an entry before adding another.',{exact:true}).filter({visible:true}).first().waitFor();
+      assert.equal(await page.evaluate(()=>window.__uiSessions.find(s=>s.id==='recovery')?.queueEnabled),false,'A failed queue action is never shown as saved');
+      if(!await page.locator('.cli-sessions-popover').count()) await page.locator('#cliSessionsButton').click();
+      await trigger.click();
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})));
+      await panel.waitFor({state:'detached'}); assert.equal(await trigger.isDisabled(),true,'Disconnect closes and disables queue controls');
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
+      await page.waitForFunction(()=>!document.querySelector('.cli-sessions-running-row .cli-session-queue-wrap button')?.disabled);
+      await trigger.click();
+      await page.getByRole('button',{name:'Close queue options',exact:true}).click();
+      assert.deepEqual(errors,[]);
+      results.push({width,height,checks:'Top-layer queue, no layout shift, consistent icons, validation, keyboard, custom priority, update/remove, queue full, disconnect/reconnect'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--account-warning')) {
+      await page.goto(`${origin}/`);
+      await page.locator('#dashboard-main').waitFor();
+      await page.evaluate(() => {
+        const state = window.__uiSnapshot, template = state.accounts[0];
+        const active = { ...template, id: 'warning-active', email: 'active@example.com', enabled: true, isActive: true, isCurrentWindowAccount: true, runningOnThisDevice: true, runningDeviceName: undefined, switchQueued: false, hasQuota402: false, healthKind: 'healthy', hasQuotaError: false, hasPendingResetCreditAttempt: false, lastQuotaAt: Date.now()-10000, sessionStartedAt: undefined, subscriptionExpiresAt: Date.now()/1000+30*86400, resetCreditsAvailable: 2, metrics: [{key:'hourly',period:'hourly',visible:true,percentage:90},{key:'weekly',period:'weekly',visible:true,percentage:90}] };
+        const ready = { ...active, id: 'warning-ready', email: 'ready@example.com', isActive: false, isCurrentWindowAccount: false, runningOnThisDevice: false };
+        state.accounts = [active, ready];
+        state.connectedPeers = [{id:'local',name:'This PC',local:true,connected:true,sessionCount:2},{id:'warning-remote',name:'Remote PC',connected:true,sessionCount:0}];
+        state.peerAccounts = { 'warning-remote': [{...ready,id:'remote-ready',email:'remote@example.com'}] };
+        window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:snapshot',state}}));
+      });
+      await page.locator('#codexDashboardButton').click();
+      await page.locator('.dashboard-pc-picker-popover').getByRole('option').nth(1).click();
+      const warn = async (targetDeviceId = 'local') => page.evaluate(targetDeviceId => {
+        window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:notice',notificationId:'warning-'+targetDeviceId,level:'warning',message:'Account quota is low.',actions:['Switch account','Select Account','Later'],actionPrompt:{kind:'quotaWarning',targetDeviceId,accountId:'warning-active',message:'Account quota is low.',switchAccountId:targetDeviceId==='local'?'warning-ready':'remote-ready',switchLabel:'Switch account',resetLabel:'Reset usage',selectLabel:'Select Account',laterLabel:'Later'}}}));
+      }, targetDeviceId);
+      const warning = page.getByRole('dialog', {name:'Quota warning',exact:true});
+      await warn();
+      await warning.waitFor();
+      assert.equal(await page.getByText('Account quota is low.',{exact:true}).count(),1,'The actionable warning is not duplicated in a toast');
+      assert.equal(await warning.getByRole('button',{name:'Later',exact:true}).count(),0,'Account warnings have no Later button');
+      await warning.getByRole('button',{name:'Select Account',exact:true}).click();
+      const picker = page.getByRole('dialog',{name:'Switch account',exact:true});
+      await picker.waitFor();
+      assert.equal(await picker.getByRole('option').count(),1,'The browser picker lists capable accounts on the warning system');
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:notification-dismissed',notificationId:'warning-local'}})));
+      assert.equal(await picker.isVisible(),true,'A native dismissal cannot close the replacement browser picker');
+      assert.ok(await page.evaluate(() => window.__uiActions.some(message => message.type==='dashboard:notification-response' && message.notificationId==='warning-local' && message.action===undefined)), 'The browser dismisses the native choice without executing it');
+      await page.evaluate(() => { window.__holdNextSwitch=true; window.__heldSwitch=undefined; });
+      await picker.getByRole('option').click();
+      await page.waitForFunction(() => !!window.__heldSwitch);
+      assert.deepEqual(await page.evaluate(() => ({account:window.__heldSwitch.accountId,target:window.__heldSwitch.payload?.targetDeviceId??'local'})),{account:'warning-ready',target:'local'},'A local warning stays local while the dashboard displays another PC');
+      const failSwitch = async () => page.evaluate(() => { const request=window.__heldSwitch; window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',requestId:request.requestId,action:'switch',accountId:request.accountId,status:'failed',error:'Switch was not confirmed. No test account was changed.'}})); });
+      await failSwitch();
+      await warn('warning-remote');
+      await warning.getByRole('button',{name:'Select Account',exact:true}).click();
+      await picker.waitFor();
+      await page.evaluate(() => { window.__holdNextSwitch=true; window.__heldSwitch=undefined; });
+      await picker.getByRole('option').click();
+      await page.waitForFunction(() => !!window.__heldSwitch);
+      assert.deepEqual(await page.evaluate(() => ({account:window.__heldSwitch.accountId,target:window.__heldSwitch.payload?.targetDeviceId})),{account:'remote-ready',target:'warning-remote'},'Remote warnings retain their originating PC');
+      await failSwitch();
+      await warn();
+      const resetsBefore=await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='consumeResetCredit').length);
+      await warning.getByRole('button',{name:'Reset usage',exact:true}).click();
+      const reset=page.getByRole('dialog',{name:'Reset your usage?',exact:true});
+      await reset.waitFor();
+      await reset.getByRole('button',{name:'Cancel',exact:true}).click();
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='consumeResetCredit').length),resetsBefore,'Cancelling a reset from the warning consumes no credit');
+      await page.evaluate(() => { window.__uiSnapshot.peerAccounts['warning-remote'][0].runningDeviceName='Another PC'; window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}})); });
+      await warn('warning-remote');
+      await warning.getByRole('button',{name:'Switch account',exact:true}).click();
+      const rescue=page.getByRole('dialog',{name:'Switch claimed account',exact:true});
+      await rescue.waitFor();
+      await rescue.getByLabel('Password',{exact:true}).fill('fixture-only-password');
+      await page.evaluate(() => { window.__holdNextSwitch=true; window.__heldSwitch=undefined; });
+      await rescue.getByRole('button',{name:'Continue',exact:true}).click();
+      await page.waitForFunction(() => !!window.__heldSwitch);
+      assert.equal(await page.evaluate(()=>window.__heldSwitch.payload.targetDeviceId),'warning-remote','Rescue stays in the browser and targets the same PC');
+      await failSwitch();
+      await warn('warning-remote');
+      await page.evaluate(() => { window.__uiSnapshot.connectedPeers[1].connected=false; window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}})); });
+      const switchesBefore=await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='switch').length);
+      await warning.getByRole('button',{name:'Select Account',exact:true}).click();
+      await page.getByText('This system is offline. Reconnect it before switching accounts.',{exact:true}).waitFor();
+      assert.equal(await picker.count(),0,'Offline systems never open a native or stale picker');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='switch').length),switchesBefore);
+      await warn();
+      await page.screenshot({path:path.join(output,`account-warning-${width}x${height}.png`)});
+      await warning.getByRole('button',{name:snapshot.copy.closeModal,exact:true}).click();
+      await page.evaluate(() => { window.__uiSnapshot.accounts[1].enabled=false; window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}})); });
+      await warn();
+      await warning.getByRole('button',{name:'Select Account',exact:true}).click();
+      await page.getByText('No account to switch — no capable account has enough quota remaining.',{exact:true}).waitFor();
+      assert.equal(await picker.count(),0,'Missing or unavailable candidates never fall back to a native picker');
+      assert.deepEqual(errors,[],'Browser account warning runtime errors');
+      results.push({width,height,checks:'No Later, browser picker, local/remote affinity, claimed-account password, reset cancellation, offline target'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--share-menu')) {
+      await page.goto(`${origin}/tasks`);
+      await page.locator('.task-board-card').first().waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Share project', exact: true }).count(), 0);
+      const boardActions = page.getByRole('button', { name: 'Board actions', exact: true });
+      await boardActions.focus(); await page.keyboard.press('Enter');
+      const boardShare = page.getByRole('menuitem', { name: 'Share project', exact: true });
+      assert.equal(await boardShare.locator('svg').count(), 1);
+      const boardMenu = await page.getByRole('menu', { name: 'Board actions', exact: true }).boundingBox();
+      assert.ok(boardMenu.x >= 0 && boardMenu.x + boardMenu.width <= width, 'Board actions stay inside the viewport');
+      await page.screenshot({ path: path.join(output, `board-share-menu-${width}x${height}.png`) });
+      await boardShare.click();
+      const projectDialog = page.getByRole('dialog', { name: 'Share project', exact: true });
+      await projectDialog.waitFor();
+      assert.equal(await page.getByRole('menu', { name: 'Board actions', exact: true }).count(), 0);
+      const checkAll = projectDialog.getByRole('checkbox', { name: 'Check all', exact: true });
+      assert.equal(await checkAll.evaluate(input => input.indeterminate), true);
+      await checkAll.check();
+      await projectDialog.getByRole('checkbox', { name: /Allow embedding/ }).uncheck();
+      assert.equal(await checkAll.evaluate(input => input.indeterminate), true, 'Selecting all keeps individual choices editable');
+      if (width === 1440) {
+        await page.evaluate(() => { window.__partialProjectShare = true; });
+        await projectDialog.getByRole('button', { name: 'Create link', exact: true }).click();
+        await projectDialog.getByRole('alert').filter({ hasText: 'Link creation was not confirmed' }).waitFor();
+        assert.equal(await projectDialog.getByRole('textbox', { name: 'Public link', exact: true }).count(), 0);
+        await page.evaluate(() => { window.__partialProjectShare = false; });
+      }
+      await page.evaluate(() => { window.__holdProjectShare = true; });
+      const createsBefore = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'shareProjectBoard').length);
+      await projectDialog.getByRole('button', { name: 'Create link', exact: true }).click();
+      await page.waitForFunction(() => !!window.__heldProjectShareResult);
+      await page.keyboard.press('Escape');
+      assert.equal(await projectDialog.isVisible(), true, 'A pending project link keeps its initiating dialog open');
+      assert.equal(await projectDialog.getByRole('button', { name: 'Close', exact: true }).isDisabled(), true);
+      assert.equal(await checkAll.isDisabled(), true);
+      assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'shareProjectBoard').length), createsBefore + 1);
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldProjectShareResult })));
+      await projectDialog.getByRole('textbox', { name: 'Public link', exact: true }).waitFor();
+      await projectDialog.getByRole('button', { name: 'Copy shared link', exact: true }).click();
+      await projectDialog.getByRole('status').filter({ hasText: 'Shared link copied.' }).waitFor();
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${origin}/projects/share/${'b'.repeat(64)}`);
+      const revokesBefore = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'revokeProjectShares').length);
+      await projectDialog.getByRole('button', { name: 'Revoke all project links', exact: true }).click();
+      const projectReview = projectDialog.getByRole('group', { name: 'Confirm link revocation', exact: true });
+      assert.equal(await projectReview.getByRole('button', { name: 'Cancel', exact: true }).evaluate(element => document.activeElement === element), true, 'Revocation review focuses the safe action');
+      await projectReview.getByRole('button', { name: 'Cancel', exact: true }).click();
+      assert.equal(await projectDialog.getByRole('button', { name: 'Revoke all project links', exact: true }).evaluate(element => document.activeElement === element), true, 'Cancel restores the initiating control');
+      assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'revokeProjectShares').length), revokesBefore, 'Cancelling revocation sends no mutation');
+      await page.screenshot({ path: path.join(output, `project-share-dialog-${width}x${height}.png`) });
+      if (width === 1440 || width === 390) {
+        const previousTheme = await page.evaluate(() => { const value = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'dark'; return value; });
+        await page.screenshot({ path: path.join(output, `project-share-dialog-dark-${width}x${height}.png`), animations: 'disabled' });
+        await page.evaluate(value => { document.documentElement.dataset.theme = value; }, previousTheme);
+      }
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
+      assert.equal(await projectDialog.getByRole('button', { name: 'Create link', exact: true }).isDisabled(), true);
+      assert.equal(await projectDialog.getByRole('button', { name: 'Revoke all project links', exact: true }).isDisabled(), true);
+      assert.equal(await projectDialog.getByRole('checkbox', { name: /Allow embedding/ }).isChecked(), false, 'Offline transitions preserve permission choices');
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
+      await projectDialog.getByRole('button', { name: 'Revoke all project links', exact: true }).click();
+      if (width === 1440) {
+        await page.evaluate(() => { window.__failProjectRevoke = true; });
+        await projectReview.getByRole('button', { name: 'Revoke access', exact: true }).click();
+        await projectDialog.getByRole('alert').filter({ hasText: 'Revocation was not confirmed.' }).waitFor();
+        assert.equal(await projectReview.isVisible(), true, 'An unconfirmed revoke preserves the review and link');
+        await page.evaluate(() => { window.__failProjectRevoke = false; });
+      }
+      if (width === 1440) {
+        await page.evaluate(() => { window.__beforePendingCopy = navigator.clipboard; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => new Promise(resolve => { window.__resolvePendingCopy = resolve; }) } }); });
+        await projectDialog.getByRole('button', { name: 'Link copied', exact: true }).click();
+      }
+      await projectReview.getByRole('button', { name: 'Revoke access', exact: true }).click();
+      await projectDialog.getByRole('status').filter({ hasText: 'All project links revoked.' }).waitFor();
+      assert.equal(await projectDialog.getByRole('textbox', { name: 'Public link', exact: true }).count(), 0);
+      if (width === 1440) {
+        await page.evaluate(async () => { window.__resolvePendingCopy(); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: window.__beforePendingCopy }); await new Promise(resolve => requestAnimationFrame(resolve)); });
+        assert.ok((await projectDialog.getByRole('status').textContent()).includes('All project links revoked.'), 'A late clipboard result cannot replace the revocation outcome');
+      }
+      await page.keyboard.press('Escape');
+      await page.goto(`${origin}/workspace`);
+      if (width <= 760) await page.getByRole('button', { name: 'Show sessions sidebar', exact: true }).click();
+      await page.getByRole('button', { name: 'Expand demo', exact: true }).click();
+      await page.locator('.cli-session-row-select').filter({ hasText: 'Evaluate stack' }).click();
+      await page.getByRole('textbox', { name: 'Message Codex', exact: true }).waitFor();
+      assert.equal(await page.getByRole('button', { name: 'Share', exact: true }).count(), 0);
+      const sessionActions = page.getByRole('button', { name: 'Session actions', exact: true });
+      await sessionActions.focus(); await page.keyboard.press('Enter');
+      const sessionShare = page.getByRole('menuitem', { name: 'Share', exact: true });
+      assert.equal(await sessionShare.locator('svg').count(), 1);
+      const sessionMenu = await page.getByRole('menu').boundingBox();
+      assert.ok(sessionMenu.x >= 0 && sessionMenu.x + sessionMenu.width <= width, 'Session actions stay inside the viewport');
+      await page.screenshot({ path: path.join(output, `session-share-menu-${width}x${height}.png`) });
+      await sessionShare.click();
+      await page.getByRole('dialog', { name: 'Share session', exact: true }).waitFor();
+      assert.equal(await page.getByRole('menu').count(), 0);
+      await page.getByRole('button', { name: 'Create read-only link', exact: true }).click();
+      await page.getByRole('textbox', { name: 'Session link', exact: true }).waitFor();
+      assert.equal(shareRequests.length, 1);
+      const sessionDialog = page.getByRole('dialog', { name: 'Share session', exact: true });
+      await sessionDialog.getByRole('textbox', { name: 'Session link', exact: true }).focus();
+      await page.evaluate(async () => { window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state: window.__uiSnapshot } })); await new Promise(resolve => requestAnimationFrame(resolve)); });
+      assert.equal(await sessionDialog.getByRole('textbox', { name: 'Session link', exact: true }).evaluate(element => document.activeElement === element), true, 'Background snapshots preserve the current share-dialog focus');
+      await page.screenshot({ path: path.join(output, `session-share-dialog-${width}x${height}.png`) });
+      if (width === 1440 || width === 390) {
+        const previousTheme = await page.evaluate(() => { const value = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'dark'; return value; });
+        await page.screenshot({ path: path.join(output, `session-share-dialog-dark-${width}x${height}.png`), animations: 'disabled' });
+        await page.evaluate(value => { document.documentElement.dataset.theme = value; }, previousTheme);
+      }
+      await sessionDialog.getByRole('button', { name: 'Copy shared link', exact: true }).click();
+      await sessionDialog.getByRole('status').filter({ hasText: 'Shared link copied.' }).waitFor();
+      await page.evaluate(() => { window.__savedClipboard = navigator.clipboard; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); });
+      await sessionDialog.getByRole('button', { name: 'Link copied', exact: true }).click();
+      await sessionDialog.getByRole('alert').filter({ hasText: 'Copy was blocked.' }).waitFor();
+      await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: window.__savedClipboard }));
+      await page.screenshot({ path: path.join(output, `share-menu-${width}x${height}.png`) });
+      await sessionDialog.getByRole('button', { name: 'Revoke shared link', exact: true }).click();
+      const sessionReview = sessionDialog.getByRole('group', { name: 'Confirm link revocation', exact: true });
+      await sessionReview.getByRole('button', { name: 'Cancel', exact: true }).click();
+      assert.equal(shareRequests.length, 1, 'Cancel does not revoke a session link');
+      if (width === 1440) {
+        shareResponse = { json: {} };
+        await sessionDialog.getByRole('button', { name: 'Create replacement link', exact: true }).click();
+        await sessionDialog.getByRole('alert').filter({ hasText: 'Link creation was not confirmed.' }).waitFor();
+        assert.equal(await sessionDialog.getByRole('textbox', { name: 'Session link', exact: true }).count(), 0, 'An uncertain replacement cannot present an earlier token as current');
+        shareResponse = { status: 401, json: { error: 'Sign in again to share this conversation.' } };
+        await sessionDialog.getByRole('button', { name: 'Create read-only link', exact: true }).click();
+        await sessionDialog.getByRole('alert').filter({ hasText: 'Sign in again' }).waitFor();
+        shareResponse = undefined;
+        heldShare = new Promise(resolve => { releaseShare = resolve; });
+        await sessionDialog.getByRole('button', { name: 'Create read-only link', exact: true }).click();
+        await sessionDialog.getByRole('alert').filter({ hasText: 'Sharing was not confirmed.' }).waitFor({ timeout: 20000 });
+        assert.equal(await sessionDialog.getByRole('button', { name: 'Close share dialog', exact: true }).isDisabled(), false, 'Timeout returns control to the user');
+        releaseShare(); heldShare = undefined;
+        await sessionDialog.getByRole('button', { name: 'Create read-only link', exact: true }).click();
+        await sessionDialog.getByRole('textbox', { name: 'Session link', exact: true }).waitFor();
+      }
+      const sessionRequestsBeforeOffline = shareRequests.length;
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
+      assert.equal(await sessionDialog.getByRole('button', { name: 'Create replacement link', exact: true }).isDisabled(), true);
+      assert.equal(await sessionDialog.getByRole('button', { name: 'Revoke shared link', exact: true }).isDisabled(), true);
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
+      assert.equal(shareRequests.length, sessionRequestsBeforeOffline, 'Reconnect never creates or revokes public links automatically');
+      await sessionDialog.getByRole('button', { name: 'Revoke shared link', exact: true }).click();
+      if (width === 1440) {
+        shareResponse = { json: {} };
+        await sessionReview.getByRole('button', { name: 'Revoke access', exact: true }).click();
+        await sessionDialog.getByRole('alert').filter({ hasText: 'Revocation was not confirmed.' }).waitFor();
+        assert.equal(await sessionReview.isVisible(), true, 'An incomplete revocation response is recoverable and never claims success');
+        shareResponse = undefined;
+      }
+      await sessionReview.getByRole('button', { name: 'Revoke access', exact: true }).click();
+      await sessionDialog.getByRole('status').filter({ hasText: 'Shared link revoked.' }).waitFor();
+      assert.equal(await sessionDialog.getByRole('textbox', { name: 'Session link', exact: true }).count(), 0);
+      assert.ok(await sessionDialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Sharing has no horizontal overflow');
+      await page.keyboard.press('Escape');
+      await page.getByRole('textbox', { name: 'Message Codex', exact: true }).fill('Held share-menu test turn');
+      await page.evaluate(() => { window.__holdNextSend = true; });
+      await page.getByRole('button', { name: 'Send message', exact: true }).click();
+      await page.waitForFunction(() => !!window.__heldSendResult);
+      await sessionActions.click();
+      assert.equal(await sessionShare.isDisabled(), true, 'Share cannot bypass the pending-turn guard through the menu');
+      await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: window.__heldSendResult })));
+      await page.waitForFunction(() => [...document.querySelectorAll('.cli-session-menu button')].some(button => button.textContent.trim() === 'Share' && !button.disabled));
+      assert.equal(await sessionShare.isDisabled(), false, 'Share becomes available after the turn acknowledgement');
+      await page.keyboard.press('Escape');
+      assert.deepEqual(errors, [], 'Share menu runtime errors');
+      results.push({ width, height, checks: 'compact share dialogs, permission choices, copy fallback, revoke/cancel/retry, offline/reconnect, partial/auth/timeout outcomes, keyboard menus' });
+      await context.close();
+      continue;
+    }
     await checkTaskUi(page, {origin,width,height,output});
     await page.goto(`${origin}/workspace`);
     await page.locator(".cli-workspace").waitFor();
@@ -415,17 +751,24 @@ try {
     assert.equal(await documentation.getAttribute("target"), "_blank");
     assert.match(await documentation.getAttribute("rel"), /noopener/);
     assert.equal(await page.locator(".cli-message-markdown table").first().getByRole("cell", { name: "Ready", exact: true }).count(), 1);
-    if (width <= 760) {
-      await page.getByRole("button", { name: "Session actions", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Share", exact: true }).click();
-    } else await page.getByRole("button", { name: "Share", exact: true }).click();
+    assert.equal(await page.locator('.cli-conversation-actions > button').filter({ hasText: 'Share' }).count(), 0, "Share uses the session menu at every width");
+    await page.getByRole("button", { name: "Session actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Share", exact: true }).click();
     await page.getByRole("dialog", { name: "Share session" }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Create read-only link", exact: true }).count(), 1, "Public sharing is explicit");
+    heldShare = new Promise(resolve => { releaseShare = resolve; });
     await page.getByRole("button", { name: "Create read-only link", exact: true }).click();
+    assert.equal(await page.getByRole("button", { name: "Close share dialog", exact: true }).isDisabled(), true, "Sharing keeps its outcome visible while pending");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.getByRole("dialog", { name: "Share session" }).isVisible(), true, "Pending sharing cannot be dismissed by Escape");
+    releaseShare(); heldShare = undefined;
     await page.getByRole("textbox", { name: "Session link", exact: true }).waitFor();
     assert.equal(await page.getByRole("textbox", { name: "Session link", exact: true }).inputValue(), `${origin}/share/${"a".repeat(64)}`);
-    assert.ok(shareRequests[0].body.messages.every(message => ["user", "assistant"].includes(message.role) && Object.keys(message).length === 2), "Sharing excludes tool state and account metadata");
+    assert.equal(shareRequests[0].body.includeActivities,true,"New session links explicitly include full activity");
+    assert.equal(shareRequests[0].body.messages,undefined,"Local sharing binds the source session without copying a large transcript into the request");
+    assert.deepEqual(Object.keys(shareRequests[0].body).sort(),['includeActivities','sessionKey','title'],"Sharing does not include account or dashboard state");
     await page.getByRole("button", { name: "Revoke shared link", exact: true }).click();
+    await page.getByRole("group", { name: "Confirm link revocation", exact: true }).getByRole("button", { name: "Revoke access", exact: true }).click();
     await page.getByRole("dialog", { name: "Share session" }).getByRole("status").filter({ hasText: "Shared link revoked" }).waitFor();
     assert.equal(await page.getByRole("textbox", { name: "Session link", exact: true }).count(), 0);
     await page.keyboard.press("Escape");
@@ -718,6 +1061,15 @@ try {
       await page.waitForFunction(() => window.__openedLinks.some(url => new URL(url).searchParams.get("sendAmount") === "17.50"));
       await page.keyboard.press("Escape");
     }
+    const aboutLabel=await page.locator('#aboutOpenButton').getAttribute('aria-label');
+    if(width<=760) { await page.locator('.dashboard-mobile-actions>summary').click(); await page.getByRole('menuitem',{name:aboutLabel,exact:true}).click(); }
+    else await page.locator('#aboutOpenButton').click();
+    const about=page.locator('.about-modal'); await about.waitFor();
+    assert.ok(await about.evaluate(element=>element.scrollWidth<=element.clientWidth+1),'About dialog contains its layout at this viewport');
+    const modalHeader=await about.locator('.settings-modal-head').boundingBox();
+    assert.ok(modalHeader.height<=64,'Shared dialog header stays compact');
+    await page.screenshot({path:path.join(output,`about-${width}x${height}.png`)});
+    await page.keyboard.press('Escape'); await about.waitFor({state:'hidden'});
     console.log(`Checking ${width}: compact overview and floating controls`);
     const dashboardHero = await page.locator(".hero").boundingBox();
     const overviewDetails = page.locator(".overview-shell > .overview-account:not(.overview-inline-add-panel)");
@@ -1102,9 +1454,9 @@ try {
       }
       if (await tab.getAttribute("id") === "settings-tab-tools") {
         assert.equal(await page.locator(".maintenance-tool").count(), 7, "Tools contain Codex utilities instead of duplicated dashboard shortcuts");
-        const archiveCard = page.locator(".maintenance-tool").filter({ hasText: "Archive manager" });
-        await archiveCard.getByRole("button", { name: "Manage", exact: true }).click();
-        const archive = page.getByRole("dialog", { name: "Archive manager", exact: true });
+        await page.locator('.maintenance-tool').filter({ hasText: 'Archive manager' }).click();
+        const archive = page.getByRole("region", { name: "Archive manager", exact: true });
+        assert.equal(await page.getByRole('dialog').count(), 1, 'Maintenance stays in Settings instead of nesting a dialog');
         await archive.getByRole("checkbox").first().waitFor();
         assert.equal(await archive.getByRole("checkbox").count(), 50, "Archive management loads one bounded page");
         await archive.getByRole("button", { name: "Next", exact: true }).click();
@@ -1122,19 +1474,19 @@ try {
         await archive.getByRole("button", { name: "Restore selected", exact: true }).click();
         await archive.getByText("Restore complete", { exact: true }).waitFor();
         assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "runMaintenance" && action.payload.maintenanceOperation === "restore" && action.payload.maintenanceIds.length === 1)), "Restore preserves the reviewed selection");
-        await page.keyboard.press("Escape");
-        assert.equal(await page.locator(".overlay.open").count(), 1, "Escape closes only the tool modal");
+        await archive.getByRole('button', { name: 'All tools', exact: true }).click();
+        assert.equal(await page.locator(".overlay.open").count(), 1, "Returning to the tool navigator keeps Settings open");
         for (const title of ["Conversation cleanup", "Goal manager", "Shell snapshot cleanup"]) {
-          await page.locator(".maintenance-tool").filter({ hasText: title }).getByRole("button", { name: "Manage", exact: true }).click();
-          const dialog = page.getByRole("dialog", { name: title, exact: true });
-          await dialog.getByRole("checkbox").first().waitFor();
-          await dialog.getByRole("button", { name: "Close tool", exact: true }).click();
+          await page.locator(".maintenance-tool").filter({ hasText: title }).click();
+          const workspace = page.getByRole("region", { name: title, exact: true });
+          await workspace.getByRole("checkbox").first().waitFor();
+          await workspace.getByRole("button", { name: "All tools", exact: true }).click();
         }
         for (const [card, title] of [["Find missing projects", "Missing projects"], ["Find large conversations", "Largest conversations"], ["Check Codex storage", "Codex storage check"]]) {
-          await page.locator(".maintenance-tool").filter({ hasText: card }).getByRole("button", { name: "Inspect", exact: true }).click();
-          const dialog = page.getByRole("dialog", { name: title, exact: true });
-          await dialog.getByText("Healthy · 2 MB", { exact: true }).waitFor();
-          await dialog.getByRole("button", { name: "Close tool", exact: true }).click();
+          await page.locator(".maintenance-tool").filter({ hasText: card }).click();
+          const workspace = page.getByRole("region", { name: title, exact: true });
+          await workspace.getByText("Healthy · 2 MB", { exact: true }).waitFor();
+          await workspace.getByRole("button", { name: "All tools", exact: true }).click();
         }
       }
       await page.screenshot({ path: path.join(output, `settings-${await tab.getAttribute("id")}-${width}x${height}.png`) });

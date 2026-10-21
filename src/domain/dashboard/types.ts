@@ -555,7 +555,9 @@ export type DashboardActionName =
   | "getProjectTaskDetails"
   | "saveProjectTask"
   | "addProjectComment"
+  | "startProjectSubtask"
   | "startProjectTask"
+  | "moveProjectTask"
   | "resetProjectTaskStart"
   | "shareProjectBoard"
   | "revokeProjectShares"
@@ -638,6 +640,9 @@ export interface DashboardActionPayload {
   task?: import('../projectTasks').ProjectTaskMutation;
   taskId?: string;
   taskRevision?: number;
+  taskStage?: import('../projectTasks').TaskStage;
+  taskToBoard?: boolean;
+  taskSavedOnly?: boolean;
   taskBefore?: string;
   sharePermissions?: import('../projectTasks').ProjectSharePermission[];
   shareDays?: number;
@@ -1000,6 +1005,7 @@ export interface DashboardActionResultPayload {
 export type DashboardActionPrompt =
   | {
       kind: "quotaWarning";
+      targetDeviceId?: string;
       accountId: string;
       message: string;
       switchAccountId?: string;
@@ -1010,6 +1016,7 @@ export type DashboardActionPrompt =
     }
   | {
       kind: "disabledActiveAccount";
+      targetDeviceId?: string;
       accountId: string;
       message: string;
       unloadLabel: string;
@@ -1022,6 +1029,7 @@ export interface DashboardNotice {
   systemName?: string;
   notificationId?: string;
   actions?: string[];
+  actionPrompt?: DashboardActionPrompt;
 }
 
 export type DashboardHostMessage =

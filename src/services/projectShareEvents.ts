@@ -8,6 +8,63 @@ import { resolveCodexHome } from './codexSessionResume';
 export class ProjectShareEvents {
   private readonly clients = new Map<ServerResponse, { key: string; close: () => void; heartbeat: () => void }>();
 
+  openConversation(response: ServerResponse, token: string, expiresAt: number, sessionId: string | undefined, address: string, valid: () => Promise<unknown>): boolean {
+    const key = `${token}:${address}`;
+    if (this.clients.size >= 32 || [...this.clients.values()].filter(client => client.key === key).length >= 2) return false;
+    let stopped = false, checking = false, notifyAfterCheck = false, lastSent = 0;
+    let pending: NodeJS.Timeout | undefined, expiry: NodeJS.Timeout | undefined;
+    let unsubscribe = () => {}, unwatch = () => {};
+    const close = () => {
+      if (stopped) return;
+      stopped = true; clearTimeout(pending); clearTimeout(expiry); unsubscribe(); unwatch();
+      this.clients.delete(response); response.off('close', close); response.off('error', close);
+      if (!response.writableEnded && !response.destroyed) response.end();
+    };
+    const send = (event: string) => {
+      if (stopped) return;
+      if (response.destroyed || response.writableEnded) { close(); return; }
+      if (response.writableLength > 16 * 1024) { response.destroy(); close(); return; }
+      try { response.write(`event: ${event}\ndata: {}\n\n`); } catch { response.destroy(); close(); }
+    };
+    const check = async (changed: boolean) => {
+      if (stopped) return;
+      notifyAfterCheck ||= changed;
+      if (checking) return;
+      checking = true;
+      try {
+        const current = await valid();
+        if (stopped) return;
+        if (!current || Date.now() >= expiresAt) { send('revoked'); close(); return; }
+        if (notifyAfterCheck) { notifyAfterCheck = false; lastSent = Date.now(); send('change'); }
+        else send('keepalive');
+      } catch { send('unavailable'); close(); }
+      finally { checking = false; }
+    };
+    const notify = () => {
+      if (stopped || pending) return;
+      pending = setTimeout(() => { pending = undefined; void check(true); }, Math.max(0, 1500 - (Date.now() - lastSent)));
+      pending.unref?.();
+    };
+    const expire = () => {
+      if (stopped) return;
+      if (Date.now() >= expiresAt) { send('revoked'); close(); return; }
+      expiry = setTimeout(expire, Math.min(expiresAt - Date.now(), 2_147_483_647)); expiry.unref?.();
+    };
+    try {
+      response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      response.setHeader('Cache-Control', 'no-store'); response.setHeader('X-Accel-Buffering', 'no');
+      response.on('close', close); response.on('error', close);
+      this.clients.set(response, { key, close, heartbeat: () => { void check(false); } });
+      if (sessionId) {
+        unsubscribe = subscribeDashboardRealtime(message => {
+          if (message.type === 'dashboard:codex-session-live' && !message.state.deviceId && message.state.sessionId === sessionId) notify();
+        });
+        unwatch = getSqliteStateStore()?.subscribe(['sessions','session-status'], notify) ?? (() => {});
+      }
+      send('ready'); expire(); return true;
+    } catch { send('unavailable'); close(); return true; }
+  }
+
   open(response: ServerResponse, token: string, share: ProjectShare, address: string): boolean {
     const key = `${token}:${address}`;
     if (this.clients.size >= 32 || [...this.clients.values()].filter(client => client.key === key).length >= 2) return false;

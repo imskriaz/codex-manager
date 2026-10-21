@@ -85,7 +85,7 @@ beforeEach(() => {
   fetchResetCreditsMock.mockReset();
   refreshQuotaMock.mockReset();
   unloadAuthFileMock.mockReset().mockResolvedValue(undefined);
-  sendCodexCliSessionMessageMock.mockReset().mockResolvedValue(undefined);
+  sendCodexCliSessionMessageMock.mockReset().mockImplementation(async options => { options.onStarted?.(); });
   steerCodexCliSessionTurnMock.mockReset().mockResolvedValue(undefined);
 });
 
@@ -176,6 +176,16 @@ describe("manual Codex navigation and recovery", () => {
     await vi.waitFor(() => expect(sendCodexCliSessionMessageMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId: id, text: "Continue if not completed" })));
     expect(open).toHaveBeenCalledOnce();
     expect(result.payload?.notice?.message).toContain("continuation prompt was sent");
+  });
+  it("does not report a continuation when completion wins before provider acceptance", async () => {
+    enableSessions();
+    vi.spyOn(sessionEditors, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+    readCodexCliSessionSummaryMock.mockResolvedValue({ id, title: "Finished while opening", status: "idle", interrupted: true, goal: null });
+    sendCodexCliSessionMessageMock.mockResolvedValueOnce(undefined);
+    const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", requestId: "completed-before-send", action: "resumeCodexSessions", payload: { sessionId: id } });
+    expect(result.status).toBe("completed");
+    expect(result.payload?.notice).toMatchObject({ level: "info", message: "1 conversation opened in VS Code." });
+    expect(sendCodexCliSessionMessageMock).toHaveBeenCalledWith(expect.objectContaining({ interruptedOnly: true }));
   });
   it("continues a cold manual opener after thirty seconds without sending duplicate prompts", async () => {
     enableSessions();

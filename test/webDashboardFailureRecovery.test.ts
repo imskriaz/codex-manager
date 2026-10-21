@@ -11,6 +11,7 @@ vi.mock("../src/presentation/dashboard/actionHandlers", () => ({ executeDashboar
 import { WebDashboardServer } from "../src/services/webDashboardServer";
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as usageHistory from "../src/services/dashboardUsageHistory";
+import { recordDashboardActionPrompt, shouldSuppressDashboardNotifications } from "../src/utils/notificationPolicy";
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -24,6 +25,24 @@ function createServer() {
 }
 
 describe("browser action completion during state failure", () => {
+  it("returns peer account prompts to the browser with their originating system", async () => {
+    const { server } = createServer(), send = vi.fn(), enableRescue = vi.fn().mockResolvedValue(true);
+    Reflect.set(server, 'encryptedSync', { setRegistryOverrideEnabled: enableRescue });
+    executeAction.mockImplementationOnce(async context => {
+      expect(context.hostKind).toBe('browser');
+      expect(shouldSuppressDashboardNotifications()).toBe(true);
+      expect(await context.setEncryptedSyncRegistryOverride(true, 'fixture-only-password')).toBe(true);
+      expect(recordDashboardActionPrompt({ kind: 'quotaWarning', accountId: 'remote-account', message: 'Quota low', selectLabel: 'Select Account', laterLabel: 'Later' })).toBe(true);
+      return { status: 'completed' };
+    });
+    try {
+      await Reflect.get(server, 'executePeerAction').call(server, { requestId: 'peer-quota', action: 'refresh', accountId: 'remote-account' }, send);
+      expect(JSON.parse(send.mock.calls[0]![0])).toMatchObject({ type: 'peer:action-result', status: 'completed', payload: { actionPrompts: [{ accountId: 'remote-account', targetDeviceId: Reflect.get(server, 'deviceId') }] } });
+      expect(shouldSuppressDashboardNotifications()).toBe(false);
+      expect(enableRescue).toHaveBeenCalledWith(true, { passphrase: 'fixture-only-password' });
+    } finally { Reflect.set(server, 'encryptedSync', undefined); server.dispose(); }
+  });
+
   it("serves HTTP pages, assets and account state while local session discovery never responds", async () => {
     const { server } = createServer();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);

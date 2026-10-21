@@ -64,10 +64,15 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     }
     recordPersistentEvent("info", "session-resume", "Requesting non-goal continuation", { ...identity, title });
     let accepted!: () => void;
-    const started = new Promise<void>(resolve => { accepted = resolve; });
-    const turn = sendCodexCliSessionMessage({ sessionId, text: "Continue if not completed", projectPath: session.projectPath, signal: controller.signal, onStarted: accepted, clearManualStop: origin === "user" });
+    let didStart = false;
+    const started = new Promise<void>(resolve => { accepted = () => { didStart = true; resolve(); }; });
+    const turn = sendCodexCliSessionMessage({ sessionId, text: "Continue if not completed", projectPath: session.projectPath, signal: controller.signal, onStarted: accepted, clearManualStop: origin === "user", interruptedOnly: true });
     void turn.catch(error => recordPersistentEvent("warning", "session-resume", "Continuation turn failed", { ...identity, title: session.title }, error));
     await waitWithin(Promise.race([started, turn]), 15_000, "Continue was not confirmed. Check this session before retrying.", controller.signal);
+    if (!didStart) {
+      recordPersistentEvent("info", "session-resume", "Session completed before continuation; no prompt sent", { ...identity, title });
+      return "idle" as const;
+    }
     recordPersistentEvent("info", "session-resume", "Continue accepted", { ...identity, title: session.title });
     return "continued" as const;
   })().catch(error => {

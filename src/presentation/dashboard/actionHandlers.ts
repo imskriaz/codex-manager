@@ -1,3 +1,4 @@
+import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
 import { getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
 import { resumeCodexSessionWork } from "../../services/codexSessionRecovery";
@@ -87,7 +88,7 @@ import { updateAutoSwitchLock } from "../workbench/autoSwitchState";
 import { getTokenAutomationSnapshot } from "../workbench/tokenAutomationState";
 import { createDashboardApiToken, listDashboardApiTokens, revokeDashboardApiToken } from '../../services/dashboardApiToken';
 import { readProjectBoard, readSavedProjectBoard, readProjectTaskDetails } from '../../services/projectBoard';
-import { saveProjectTask, addProjectComment, createProjectShare, revokeProjectShares, claimProjectTaskStart, finishProjectTaskStart, resetProjectTaskStart } from '../../services/projectTasks';
+import { saveProjectTask, addProjectComment, createProjectShare, revokeProjectShares, resetProjectTaskStart } from '../../services/projectTasks';
 import { resolveWorkspaceProjectPathAsync } from '../../services/workspaceTools';
 import {
   clearQueuedAccountSwitch,
@@ -99,7 +100,7 @@ import { homedir } from "node:os";
 
 const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "addAccount",
-  "generateApiToken", "listApiTokens", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
+  "generateApiToken", "listApiTokens", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "resetProjectTaskStart", "shareProjectBoard", "revokeProjectShares",
   "setPrivacyMode",
   "setCrossPcSyncEnabled",
   "importCurrent",
@@ -394,7 +395,7 @@ async function runDashboardAction(
       await revokeDashboardApiToken(ctx.context, payload?.tokenId);
       return { apiTokens: await listDashboardApiTokens(ctx.context), notice: { level: 'info', message: 'API token revoked.' } };
     case 'getProjectBoard':
-      return { projectBoard: await readProjectBoard(payload?.projectPath) };
+      return { projectBoard: payload?.taskSavedOnly === true ? readSavedProjectBoard(await resolveWorkspaceProjectPathAsync(payload.projectPath)) : await readProjectBoard(payload?.projectPath) };
     case 'getProjectTaskDetails':
       if (!payload?.taskId) throw new Error('Choose a task first.');
       return { projectTaskDetails: await readProjectTaskDetails(await resolveWorkspaceProjectPathAsync(payload.projectPath), payload.taskId, payload.taskView, payload.taskBefore) };
@@ -410,14 +411,19 @@ async function runDashboardAction(
       addProjectComment(project, payload.comment);
       return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: 'Comment added.' } };
     }
+    case 'moveProjectTask': {
+      ensureCliIntegrationEnabled();
+      const project = await resolveWorkspaceProjectPathAsync(payload?.projectPath);
+      if (!payload?.taskId) throw new Error('Choose a task to move.');
+      return { projectBoard: await moveProjectTask(project, payload.taskId, payload.taskRevision, payload.taskStage, payload.taskToBoard === true), notice: { level: 'info', message: 'Task move confirmed.' } };
+    }
+    case 'startProjectSubtask':
     case 'startProjectTask': {
       ensureCliIntegrationEnabled();
       const project = await resolveWorkspaceProjectPathAsync(payload?.projectPath);
-      if (!payload?.taskId) throw new Error('Choose a planned task first.');
-      const task = claimProjectTaskStart(project, payload.taskId, payload.taskRevision);
-      const sessionId = await startCodexCliSession({ projectPath: project, text: task.prompt });
-      finishProjectTaskStart(project, task.id, sessionId, resolveCodexHome());
-      return { projectBoard: readSavedProjectBoard(project, readNewCodexCliSessionSummary(sessionId)), notice: { level: 'info', message: 'Task started in Codex.' } };
+      if (!payload?.taskId) throw new Error('Choose a custom task before starting a session.');
+      if (action === 'startProjectSubtask' && typeof payload.text !== 'string') throw new Error('Write an initial prompt for this session subtask.');
+      return { projectBoard: await startProjectTaskSession(project, payload.taskId, payload.taskRevision, action === 'startProjectSubtask' ? payload.text : undefined), notice: { level: 'info', message: action === 'startProjectSubtask' ? 'Subtask session created and started.' : 'Task started in Codex.' } };
     }
     case 'shareProjectBoard':
       return { projectShare: createProjectShare(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.sharePermissions, payload?.shareDays) };

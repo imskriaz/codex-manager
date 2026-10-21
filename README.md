@@ -14,8 +14,8 @@ It is an independent, community project. It is not an official OpenAI product.
 | Remote dashboard | Open the password-protected dashboard from any desktop or mobile browser through HTTPS and Cloudflare Tunnel. Live WebSocket updates, PC labels, session counts, account claims, and remote actions stay in one interface. |
 | Sync and claims | Authenticate peer connections, sync encrypted account state, reserve only the current account on a PC, and show which PC owns a claim. VS Code Settings Sync remains the durable fallback. |
 | Notifications and PWA | Receive major switches, reloads, failures, and completed sessions with the source system name; send a delivery test; install the dashboard as a PWA; and recover to an offline shell while the host is unavailable. |
-| Sharing and workspace | Create expiring read-only conversation links, browse project files, review Git changes, run project terminals, and keep actions visibly successful, cancelled, or failed. |
-| Project task management | Plan ideas and tasks, organize sessions as nested subtasks, follow live activity, review conversation files and recorded changes, and share a project with feature permissions and optional embedding. |
+| Sharing and workspace | Create expiring read-only conversation links with the workspace transcript and full tool activity, browse project files, review Git changes, run project terminals, and keep actions visibly successful, cancelled, or failed. |
+| Project task management | Plan ideas and tasks, use Board, List, Gantt, and Calendar views, group session subtasks under top-level custom tasks, create prompted session subtasks, inspect recorded running time, follow live activity, review conversation files and recorded changes, and share a project with feature permissions and optional embedding. |
 | Dashboard API | Create multiple named API tokens, restrict projects and operations, revoke access, explore actions, and test requests. API access is off by default. |
 | Offline browser | Reload a saved dashboard, read cached task/session views, keep task drafts and comments, and resolve reconnect conflicts without replaying live-only actions. |
 | Privacy and diagnostics | Keep credentials local, redact persistent logs, enforce bounded requests, and expose no account controls through a share link. |
@@ -178,6 +178,8 @@ Important combinations:
 
 Codex Manager is available under the [MIT License](LICENSE). The project was originally based on [codex-manager](https://github.com/wannanbigpig/codex-manager).
 
+[PandaCode](https://github.com/aicodeking/pandacode) is a design reference for the workspace and task-board experience. Source reuse is subject to its [PandaCode License](https://github.com/aicodeking/pandacode/blob/main/LICENSE), which includes an additional attribution requirement for forks.
+
 
 ### Session-aware switching and current-account claims
 
@@ -227,11 +229,11 @@ Browser Share creates an explicit read-only snapshot link. Anyone with its token
 
 **Task view**, beside Dashboard in the browser workspace, opens the selected project's **Idea, Planned, Running, Completed** board. Kanban is on by default and can be turned off in Settings. Choose a discovered project or add an existing project folder, including a closed worktree.
 
-Each discovered parent session has one database task. Create custom tasks or ideas without starting Codex. In a task, choose **Parent task** and **Move under task** to group it beneath another task or session; **Move to board** makes it standalone again. Use **Subtask** to create work directly beneath a parent. Moving a task preserves its native session and transcript. Child agents remain session activity. Running descendants mark their parent as running; idle work alone does not complete a task.
+Each discovered parent session has one database task. Create custom tasks or ideas without starting Codex. Group a session beneath a custom task using **Parent task** and **Move under task**; **Move to board** makes the session standalone again. Custom tasks stay at the top level and cannot be nested. **Subtask** starts a new session beneath a custom task. Board moves change classification without starting, pausing, resuming or stopping Codex. Child agents remain session activity. Running descendants mark their parent as running; idle work alone does not complete a task.
 
 Open a task or subtask in the right panel for **Activities**, **Files**, and **Changes**. Activities combine messages, tool calls, command output, reasoning, and provider failures. Older transcript pages remain reachable without loading an entire conversation at once. Files includes supported uploaded text snapshots, conversation images, and recorded edit paths; upload previews read the conversation snapshot rather than a same-named project file. Changes shows recorded edits and current project state. Archived sessions remain in **Completed** and are also available through the **Archive** filter. Comments support offline drafting. **Start in Codex** runs a saved Planned task and attaches its session as a subtask; an unconfirmed start requires review before another attempt.
 
-In the **Running Sessions** flyout, use the Auto Resume icon beside running sessions and the queue icon beside interrupted sessions. Global Auto Resume supplies the default; a session can opt in or out independently. Queue priorities run in ascending order; equal priorities start together in groups of up to eight once other work finishes. Unknown activity or an unconfirmed queue start waits for verification. Explicitly paused goals stay paused. Recording and scheduling run in the extension host even when no dashboard window is open; VS Code must remain running.
+In the **Running Sessions** flyout, use the Auto Resume icon beside running sessions and the queue icon beside interrupted sessions. Global Auto Resume supplies the default; a session can opt in or out independently. Auto Resume restores unfinished work at startup or reload; finishing a session during normal use does not trigger recovery. Queue priorities run in ascending order; equal priorities start together in groups of up to eight once other work finishes. Each accepted queue request is consumed once; queue the session again to request another run. Unknown activity or an unconfirmed queue start waits for verification. Recovery rechecks completion immediately before starting and sends no continuation when the session has finished. Explicitly paused goals stay paused. Recording and scheduling run in the extension host even when no dashboard window is open; VS Code must remain running.
 
 ### Public projects and embedding
 

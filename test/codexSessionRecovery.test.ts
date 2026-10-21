@@ -26,8 +26,13 @@ describe("post-load session recovery", () => {
   });
   it("sends exactly Continue if not completed and records title after provider acceptance", async () => {
     expect(await resumeCodexSessionWork("session")).toBe("continued");
-    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ text: "Continue if not completed", projectPath: "project" }));
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ text: "Continue if not completed", projectPath: "project", interruptedOnly: true }));
     expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Continue accepted", { sessionId: "session", sessionRef: "session-ref", title: "Pending task" });
+  });
+  it("leaves a session idle when it finishes before provider acceptance", async () => {
+    mocks.send.mockResolvedValue(undefined);
+    expect(await resumeCodexSessionWork("session")).toBe("idle");
+    expect(mocks.log).not.toHaveBeenCalledWith("info", "session-resume", "Continue accepted", expect.anything());
   });
   it("resumes an eligible native goal without a prompt", async () => {
     mocks.summary.mockResolvedValue({ id: "session", title: "Goal task", status: "idle", goal: { status: "usage_limited" } });

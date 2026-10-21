@@ -9,10 +9,12 @@
   let lastProbeAt = 0;
   let snapshotInFlight;
   let latestSnapshot;
+  let snapshotRevision = 0;
   let authenticationRequired = false;
   let hiddenAt;
   const pendingSocketActions = new Map();
-  const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage", "startProjectTask"].includes(message?.action)
+  const pendingHttpActions = new Set();
+  const requestTimeoutMs = (message) => ["startCodexCliSession", "sendCodexCliSessionMessage", "startProjectTask", "startProjectSubtask"].includes(message?.action)
     ? 15 * 60_000 + 15_000
     : ["addAccount", "importCurrent", "startOAuthAutoFlow"].includes(message?.action)
       ? 10 * 60_000 + 30_000
@@ -28,6 +30,7 @@
 
   const dispatch = (message) => {
     if (message?.type === "dashboard:snapshot") {
+      if (message !== latestSnapshot) snapshotRevision++;
       latestSnapshot = message;
       lastAccountCount = message.state?.accounts?.length || 1;
     }
@@ -77,6 +80,7 @@
   const loadSnapshot = () => {
     if (authenticationRequired) return Promise.resolve(false);
     if (snapshotInFlight) return snapshotInFlight;
+    const revision = snapshotRevision;
     snapshotInFlight = (async () => {
       const { response, state } = await fetchSnapshot();
       if (authenticationRequired) return false;
@@ -86,7 +90,7 @@
       }
       if (!response.ok) throw new Error(`Dashboard refresh failed (${response.status})`);
       lastSyncAt = Date.now();
-      dispatch({ type: "dashboard:snapshot", state });
+      if (revision === snapshotRevision) dispatch({ type: "dashboard:snapshot", state });
       publishConnection();
       publishStatus(isRealtimeOpen() ? "live" : "degraded");
       return true;
@@ -239,10 +243,12 @@
         if (!popup) throw new Error("Allow pop-ups for this dashboard, then try the link again.");
         popup.opener = null;
         popup.location.replace(url.href);
+        await Promise.resolve();
         dispatch({ type: "dashboard:action-result", requestId: message.requestId, action: message.action, accountId: message.accountId,
           status: "completed", payload: { notice: { level: "info", message: "Opened the link in this browser." } } });
       } catch (error) {
         popup?.close();
+        await Promise.resolve();
         dispatch({ type: "dashboard:action-result", requestId: message.requestId, action: message.action, accountId: message.accountId,
           status: "failed", error: error instanceof TypeError ? "This link could not be opened. Check the address and try again." : error.message });
       }
@@ -269,15 +275,17 @@
     }
     let reachedHost = false;
     let timer;
+    let httpRequestId;
+    let awaitingHttpResponse = false;
+    if (message?.type === "dashboard:action" && (pendingSocketActions.has(message.requestId) || pendingHttpActions.has(message.requestId))) return;
     try {
       if (authenticationRequired) throw new Error("Dashboard session expired. This action was not sent. Sign in again before retrying.");
       if (isBrowserOffline()) throw new Error("The browser is offline. This action was not sent; reconnect and try again.");
+      if (message?.type === "dashboard:action" && pendingSocketActions.size + pendingHttpActions.size >= 128) throw new Error("The dashboard request queue is full. This action was not sent. Wait for pending actions before retrying.");
       // Manual view recovery must work even when an open socket stops responding.
       if (realtimeSocket && realtimeSocket.readyState === window.WebSocket.OPEN && message?.action !== "refreshView") {
         reachedHost = true;
         if (message?.type === "dashboard:action" && message.requestId) {
-          if (pendingSocketActions.has(message.requestId)) return;
-          if (pendingSocketActions.size >= 128) throw new Error("The dashboard request queue is full. Wait for pending actions before retrying.");
           const actionTimer = window.setTimeout?.(() => {
             forgetSocketAction(message.requestId);
             dispatch({ type: "dashboard:action-result", requestId: message.requestId, action: message.action, accountId: message.accountId, status: "failed", error: "This action was not confirmed in time. Its outcome is unknown; refresh and verify before retrying." });
@@ -288,7 +296,13 @@
         return;
       }
       const controller = typeof AbortController === "undefined" ? undefined : new AbortController();
+      if (message?.type === "dashboard:action" && message.requestId) {
+        httpRequestId = message.requestId;
+        pendingHttpActions.add(httpRequestId);
+      }
       timer = controller ? window.setTimeout(() => controller.abort(), requestTimeoutMs(message)) : undefined;
+      const revision = snapshotRevision;
+      awaitingHttpResponse = true;
       const response = await fetch("/api/message", {
         method: "POST",
         cache: "no-store",
@@ -299,6 +313,7 @@
         body: JSON.stringify(message),
         ...(controller ? { signal: controller.signal } : {})
       });
+      awaitingHttpResponse = false;
       reachedHost = true;
       if (response.status === 401) {
         void response.body?.cancel().catch(() => undefined);
@@ -306,17 +321,23 @@
       }
       if (!response.ok) throw new Error(`Dashboard action failed (${response.status})`);
       const payload = await parseJsonResponse(response, "Dashboard action");
-      if (!Array.isArray(payload.messages)) throw new Error("Dashboard action returned no result. Reload the dashboard and try again.");
+      if (!Array.isArray(payload.messages)) throw new Error("This action returned no result. Its outcome is unknown; refresh and verify before retrying.");
+      if (authenticationRequired) return;
+      if (message?.type === "dashboard:action" && !payload.messages.some(result => result?.type === "dashboard:action-result" && result.requestId === message.requestId && ["completed", "failed", "cancelled"].includes(result.status)))
+        throw new Error("This action returned no confirmation. Its outcome is unknown; refresh and verify before retrying.");
       publishConnection();
       publishStatus(isRealtimeOpen() ? "live" : "degraded");
-      payload.messages.forEach(dispatch);
+      const acceptSnapshot = revision === snapshotRevision;
+      payload.messages.forEach(result => { if (result?.type !== "dashboard:snapshot" || acceptSnapshot) dispatch(result); });
     } catch (error) {
-      if (!reachedHost) publishStatus("unreachable");
+      if (!reachedHost && (awaitingHttpResponse || isBrowserOffline())) publishStatus("unreachable");
       console.error("[codex-manager] browser dashboard bridge", error);
       const detail = error?.name === "AbortError"
         ? "This action was not confirmed in time. Its outcome is unknown; refresh and verify before retrying."
-        : error instanceof Error ? error.message : "The dashboard action failed. Please try again.";
+        : awaitingHttpResponse && httpRequestId ? "The connection failed before this action was confirmed. Its outcome is unknown; reconnect and verify before retrying."
+          : error instanceof Error ? error.message : "The dashboard action failed. Please try again.";
       if (message?.type === "dashboard:action") {
+        await Promise.resolve();
         forgetSocketAction(message.requestId);
         dispatch({
           type: "dashboard:action-result",
@@ -333,6 +354,7 @@
       if (error?.authenticationRequired) requireSignIn();
     } finally {
       if (timer !== undefined) window.clearTimeout?.(timer);
+      if (httpRequestId) pendingHttpActions.delete(httpRequestId);
     }
   };
 

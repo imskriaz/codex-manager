@@ -94,6 +94,9 @@ export function initializeSessionStorage(store: SqliteStateStore): void {
     PRIMARY KEY(home,session_id)
   ); CREATE INDEX IF NOT EXISTS session_running ON session_status(home,status,checked_at);
   CREATE INDEX IF NOT EXISTS session_status_fresh ON session_status(home,checked_at);`);
+  const columns = new Set(store.prepare('PRAGMA table_info(session_turns)').all().map(row => row['name']));
+  if (!columns.has('started_at')) store.database.exec('ALTER TABLE session_turns ADD COLUMN started_at REAL');
+  if (!columns.has('turn_id')) store.database.exec('ALTER TABLE session_turns ADD COLUMN turn_id TEXT');
   store.database.exec("CREATE TABLE IF NOT EXISTS running_turns (session_id TEXT PRIMARY KEY,started_at REAL NOT NULL,owner_pid INTEGER,child_pid INTEGER,project_path TEXT NOT NULL,data TEXT NOT NULL)");
   store.watchTable("session_turns","sessions");
   store.watchTable("session_status","session-status");
@@ -120,13 +123,13 @@ export function saveSessionLive(store: SqliteStateStore, home: string, state: Da
     const current = !latest || isNewerCodexSessionLiveState(state,latest);
     if (current) store.prepare("UPDATE session_turns SET status='disconnected',data=json_set(data,'$.status','disconnected') WHERE home=? AND device_id=? AND session_id=? AND stream_id!=? AND status IN ('starting','running')").run(scope,device,state.sessionId,state.streamId);
     const snapshot = !current && (state.status === "running" || state.status === "starting") ? { ...state,status:"disconnected" as const } : state;
-    store.prepare(`INSERT INTO session_turns(home,device_id,session_id,stream_id,sequence,updated_at,status,account_id,owner_pid,owner_instance,boot_at,input_tokens,output_tokens,cached_tokens,total_tokens,data)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(home,device_id,stream_id) DO UPDATE SET
+    store.prepare(`INSERT INTO session_turns(home,device_id,session_id,stream_id,sequence,updated_at,status,account_id,owner_pid,owner_instance,boot_at,input_tokens,output_tokens,cached_tokens,total_tokens,data,started_at,turn_id)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(home,device_id,stream_id) DO UPDATE SET
       sequence=excluded.sequence,updated_at=excluded.updated_at,status=excluded.status,
       account_id=COALESCE(session_turns.account_id,excluded.account_id),owner_pid=excluded.owner_pid,owner_instance=excluded.owner_instance,boot_at=excluded.boot_at,
-      input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,cached_tokens=excluded.cached_tokens,total_tokens=excluded.total_tokens,data=excluded.data,compacted=0`)
+      input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,cached_tokens=excluded.cached_tokens,total_tokens=excluded.total_tokens,data=excluded.data,compacted=0,started_at=COALESCE(session_turns.started_at,excluded.started_at),turn_id=COALESCE(session_turns.turn_id,excluded.turn_id)`)
       .run(scope,device,state.sessionId,state.streamId,state.sequence,state.updatedAt,snapshot.status,accountId ?? null,process.pid,instance,Date.now()-os.uptime()*1000,
-        state.tokenUsage?.input ?? null,state.tokenUsage?.output ?? null,state.tokenUsage?.cachedInput ?? null,state.tokenUsage?.total ?? null,JSON.stringify(snapshot));
+        state.tokenUsage?.input ?? null,state.tokenUsage?.output ?? null,state.tokenUsage?.cachedInput ?? null,state.tokenUsage?.total ?? null,JSON.stringify(snapshot), ['starting','running'].includes(state.status) ? state.updatedAt : null, state.turnId ?? null);
     if (!device && current) saveSessionStatus(store,home,state.sessionId,state.status === "running" ? "running" : state.status === "starting" ? "starting" : state.status === "disconnected" ? "unknown" : "idle",state.updatedAt);
     if (Date.now() - (lastPruned.get(store) ?? 0) > 60_000) {
       // Codex owns full transcripts; retain durable turn statistics after the replay window.
@@ -287,4 +290,21 @@ export function saveRunningTurnRows(store:SqliteStateStore,turns:readonly Tracke
     store.set("migrations","running-turn-rows-v1",true);
     store.set("files","codex-manager-running-turns.json",undefined);
   });
+}
+
+/** Read timing metadata only; compacted transcripts retain their recorded run spans. */
+export function readSessionRunTimings(store: SqliteStateStore, home: string, ids: string[]): Map<string, { firstStartedAt: number; lastObservedAt: number; durationMs: number; runCount: number }> {
+  initializeSessionStorage(store);
+  const result = new Map<string, { firstStartedAt: number; lastObservedAt: number; durationMs: number; runCount: number }>();
+  const unique = [...new Set(ids.map(id => id.toLowerCase()))];
+  for (let offset = 0; offset < unique.length; offset += 200) {
+    const chunk = unique.slice(offset, offset + 200);
+    const rows = store.prepare(`SELECT session_id,MIN(first_at) AS first_at,MAX(last_at) AS last_at,
+      SUM(MAX(0,last_at-first_at)) AS duration,COUNT(*) AS runs FROM (
+      SELECT session_id,MIN(started_at) AS first_at,MAX(updated_at) AS last_at FROM session_turns
+      WHERE home=? AND device_id='' AND session_id IN (${chunk.map(() => '?').join(',')}) AND started_at IS NOT NULL
+      AND started_at<=updated_at GROUP BY session_id,COALESCE(NULLIF(turn_id,''),stream_id)) GROUP BY session_id`).all(getCodexHomeStateKey(home), ...chunk);
+    for (const row of rows) result.set(String(row['session_id']), { firstStartedAt: Number(row['first_at']), lastObservedAt: Number(row['last_at']), durationMs: Number(row['duration']), runCount: Number(row['runs']) });
+  }
+  return result;
 }

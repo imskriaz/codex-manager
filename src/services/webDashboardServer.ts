@@ -60,7 +60,8 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { listPendingCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import { recordSessionLive } from "./sessionRecording";
-import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
+import { isCodexSessionLiveState, isNewerCodexSessionLiveState, combineCliLiveMessages } from "../domain/codexSessionLive";
+import { readStoredSessionLive } from '../storage/sqliteSessions';
 import { isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
 import { authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
 import { readProjectBoard, readSavedProjectBoard, readSharedProjectTask } from './projectBoard';
@@ -68,7 +69,7 @@ import { ProjectShareEvents } from './projectShareEvents';
 import { getProjectShare, publicProjectBoard, saveProjectTask, addProjectComment, projectTaskKey } from './projectTasks';
 import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
-import { ConversationShares, sharedConversationPage } from "./conversationShares";
+import { ConversationShares, sharedConversationPage, publicShareMessages } from "./conversationShares";
 import { filterCliSessionsBySection, isCodexSessionRunning } from "../domain/codexSessionState";
 import { AccountClaimAuthority, isAccountClaimRequest, type AccountClaimResult } from "./accountClaimAuthority";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
@@ -104,10 +105,10 @@ export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount
   if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession", "resumeCodexSessions", "setCodexSessionGoalStatus"].includes(action)) return 75_000;
   if (action === "cancelCodexCliSessionTurn") return 40_000;
   if (action === "steerCodexCliSessionTurn") return 40_000;
-  if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession" || action === 'startProjectTask') {
+  if (action === "sendCodexCliSessionMessage" || action === "startCodexCliSession" || ['startProjectTask','startProjectSubtask'].includes(action)) {
     return 15 * 60_000 + 15_000;
   }
-  if (['getProjectBoard','getProjectTaskDetails','saveProjectTask','addProjectComment'].includes(action)) return 65_000;
+  if (['moveProjectTask','getProjectBoard','getProjectTaskDetails','saveProjectTask','addProjectComment'].includes(action)) return 65_000;
   if (["runWorkspaceTerminalCommand", "saveWorkspaceFile", "pushWorkspaceBranch"].includes(action)) {
     return 135_000;
   }
@@ -900,23 +901,30 @@ export class WebDashboardServer implements vscode.Disposable {
     if (method === "GET" && path.startsWith("/share/")) {
       const share = await this.conversationShares.get(path.slice(7));
       if (!share) { response.statusCode = 404; response.end("This shared link is invalid, expired, or revoked. Ask the owner for a new link."); return; }
-      this.sendHtml(response, versionPublicAssets(sharedConversationPage(share, path.slice(7))
-        .replace('</head>', '<link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head>')
-        .replace('<body>', '<body class="public-conversation">')
-        .replace('<script src="/assets/sharedConversation.js"', '<script src="/assets/dashboard.js" defer></script><script src="/assets/sharedConversation.js"'), this.assetVersion));
+      this.sendHtml(response, versionPublicAssets(sharedConversationPage(share, path.slice(7)), this.assetVersion));
       return;
     }
     if (method === "GET" && path.startsWith("/api/share/")) {
-      const token = path.slice("/api/share/".length);
+      const suffix = path.slice("/api/share/".length), events = suffix.endsWith('/events');
+      const token = events ? suffix.slice(0, -'/events'.length) : suffix;
       const share = await this.conversationShares.get(token);
       if (!share) { response.statusCode = 404; this.sendJson(response, { error: "This shared link is invalid, expired, or revoked." }); return; }
       let target: unknown;
       try { target = JSON.parse(share.sessionKey); } catch { /* Older links keep their saved snapshot. */ }
       const sessionId = Array.isArray(target) && target[0] === "local" && typeof target[1] === "string" ? target[1] : undefined;
-      const current = sessionId ? await readCodexCliSessionMessages(sessionId).catch(() => undefined) : undefined;
-      const updated = current ? await this.conversationShares.refresh(token, current) : await this.conversationShares.get(token);
+      if (events) {
+        if (!this.projectShareEvents.openConversation(response, token, share.expiresAt, sessionId, request.socket.remoteAddress ?? '', () => this.conversationShares.get(token))) {
+          response.statusCode = 429; response.setHeader('Retry-After', '15'); this.sendJson(response, { error: 'Too many live shared views. Close another view and refresh.' });
+        }
+        return;
+      }
+      let current = sessionId ? await waitWithin(readCodexCliSessionMessages(sessionId, share.sourceHome), 5000, 'Shared activity is still loading.').catch(() => undefined) : undefined;
+      if (share.includeActivities && sessionId && share.sourceHome) {
+        try { const store = getSqliteStateStore(); if (store) { const live=readStoredSessionLive(store,share.sourceHome,sessionId); if (live) current=combineCliLiveMessages(current ?? [],live); } } catch { /* Keep the published snapshot when live storage is unavailable. */ }
+      }
+      const updated = !share.nativeSession && current ? await this.conversationShares.refresh(token, current) : await this.conversationShares.get(token);
       if (!updated) { response.statusCode = 404; this.sendJson(response, { error: "This shared link is invalid, expired, or revoked." }); return; }
-      this.sendJson(response, { title: updated.title, expiresAt: updated.expiresAt, messages: updated.messages });
+      this.sendJson(response, { title: updated.title, expiresAt: updated.expiresAt, messages: updated.nativeSession && current ? publicShareMessages(current) : updated.messages, ...(updated.nativeSession && !current ? {warning:'Activity is temporarily unavailable. Refresh to retry.'} : {}) });
       return;
     }
     if (method === "POST" && path === "/api/peer-account-claim") {
@@ -1029,8 +1037,9 @@ export class WebDashboardServer implements vscode.Disposable {
       try {
         if (request.headers["x-codex-dashboard"] !== "1") throw new Error("Invalid share request.");
         const body = JSON.parse(await readDashboardRequestBody(request, 272 * 1024)) as { sessionKey?: unknown };
-        if (path === "/api/share/create") this.sendJson(response, await this.conversationShares.create(body));
+        if (path === "/api/share/create") this.sendJson(response, await this.conversationShares.create(body, resolveCodexHome()));
         else { await this.conversationShares.revoke(body.sessionKey); this.sendJson(response, { ok: true }); }
+        this.projectShareEvents.heartbeat();
       } catch (error) {
         response.statusCode = error instanceof RequestBodyTooLargeError ? 413 : 400;
         this.sendJson(response, { error: error instanceof Error ? error.message : "Sharing failed. Retry when connected." });
@@ -1377,7 +1386,7 @@ export class WebDashboardServer implements vscode.Disposable {
       });
       const result = collected.result;
       const payload = collected.actionPrompts.length
-        ? { ...(result.payload ?? {}), actionPrompts: collected.actionPrompts }
+        ? { ...(result.payload ?? {}), actionPrompts: collected.actionPrompts.map(prompt => ({ ...prompt, targetDeviceId: "local" })) }
         : result.payload;
       messages.push({
         type: "dashboard:action-result",
@@ -1433,7 +1442,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "closeWorkspaceTerminal"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "closeWorkspaceTerminal"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -1972,7 +1981,7 @@ export class WebDashboardServer implements vscode.Disposable {
   ): void {
     const payload: MirroredNotification =
       typeof notification === "string" ? { level: notification, message: message ?? "", systemName: os.hostname() }
-        : { ...notification, systemName: notification.systemName ?? os.hostname() };
+        : { ...notification, systemName: notification.systemName ?? os.hostname(), ...(notification.actionPrompt ? { actionPrompt: { ...notification.actionPrompt, targetDeviceId: "local" } } : {}) };
     this.browserPush.notify(payload);
     const notice = JSON.stringify({ type: "dashboard:notice", ...payload } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
@@ -2520,36 +2529,47 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async executePeerAction(message: Partial<PeerActionMessage>, send: (value: string) => void): Promise<void> {
     if (typeof message.requestId !== "string" || typeof message.action !== "string") return;
+    const requestId = message.requestId;
     try {
-      const result = await executeDashboardActionMessage(
-        {
-          context: this.context,
-          repo: this.repo,
-          resolveLanguage: () => this.settingsStore.resolveLanguage(),
-          schedulePublishState: () => this.publishRealtimeState(),
-          publishState: () => Promise.resolve(),
-          oauth: this.oauth,
-          hostKind: "browser",
-          configureEncryptedSync: this.encryptedSync
-            ? (passphrase, confirmation, currentPassphrase) =>
-                this.encryptedSync!.configure({ passphrase, confirmation, currentPassphrase })
-            : undefined,
-          syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false, true) : undefined
-        },
-        {
-          type: "dashboard:action",
-          requestId: message.requestId,
-          action: message.action as never,
-          accountId: message.accountId,
-          payload: message.payload
-        }
-      );
+      const collected = await withDashboardNotificationSuppression(async () => {
+        const result = await executeDashboardActionMessage(
+          {
+            context: this.context,
+            repo: this.repo,
+            resolveLanguage: () => this.settingsStore.resolveLanguage(),
+            schedulePublishState: () => this.publishRealtimeState(),
+            publishState: () => Promise.resolve(),
+            oauth: this.oauth,
+            hostKind: "browser",
+            configureEncryptedSync: this.encryptedSync
+              ? (passphrase, confirmation, currentPassphrase) =>
+                  this.encryptedSync!.configure({ passphrase, confirmation, currentPassphrase })
+              : undefined,
+            syncEncryptedAccounts: this.encryptedSync ? () => this.encryptedSync!.syncNow(false, false, true) : undefined,
+            setEncryptedSyncRegistryOverride: this.encryptedSync
+              ? (enabled, passphrase) => this.encryptedSync!.setRegistryOverrideEnabled(enabled, { passphrase })
+              : undefined
+          },
+          {
+            type: "dashboard:action",
+            requestId,
+            action: message.action as never,
+            accountId: message.accountId,
+            payload: message.payload
+          }
+        );
+        return { result, actionPrompts: consumeDashboardActionPrompts() };
+      });
+      const result = collected.result;
+      const payload = collected.actionPrompts.length
+        ? { ...(result.payload ?? {}), actionPrompts: collected.actionPrompts.map(prompt => ({ ...prompt, targetDeviceId: this.deviceId })) }
+        : result.payload;
       send(
         JSON.stringify({
           type: "peer:action-result",
-          requestId: message.requestId,
+          requestId,
           status: result.status,
-          payload: result.payload,
+          payload,
           error: result.errorMessage
         } satisfies PeerActionResultMessage)
       );
@@ -2571,7 +2591,7 @@ export class WebDashboardServer implements vscode.Disposable {
       send(
         JSON.stringify({
           type: "peer:action-result",
-          requestId: message.requestId,
+          requestId,
           status: "failed",
           error: error instanceof Error ? error.message : String(error)
         } satisfies PeerActionResultMessage)

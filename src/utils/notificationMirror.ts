@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
 import * as vscode from "vscode";
+import type { DashboardActionPrompt } from "../domain/dashboard/types";
 
 export type MirroredNotificationLevel = "info" | "warning" | "error";
 
@@ -12,6 +13,7 @@ export interface MirroredNotification {
   systemName?: string;
   message: string;
   actions?: string[];
+  actionPrompt?: DashboardActionPrompt;
 }
 
 /** Keep passive notifications readable in VS Code, the dashboard, and push. */
@@ -59,6 +61,12 @@ export async function flushNotificationDelivery(timeoutMs: number): Promise<bool
 const resolutionListeners = new Set<NotificationResolutionListener>();
 const pendingResponses = new Map<string, (action?: string) => void>();
 const commandNotificationContext = new AsyncLocalStorage<boolean>();
+const promptContext = new AsyncLocalStorage<DashboardActionPrompt>();
+
+/** Preserve account actions so a browser never has to invoke a native picker. */
+export function withMirroredActionPrompt<T>(prompt: DashboardActionPrompt, show: () => T): T {
+  return promptContext.run(prompt, show);
+}
 const TRANSIENT_NOTICE_DURATION_MS = 10_000;
 let installed = false;
 let transientNoticeUsers = 0;
@@ -155,7 +163,8 @@ function wrap(level: MirroredNotificationLevel, original: NotificationMethod): N
 
     const notificationId = listeners.size > 0 && actions.length > 0 ? crypto.randomUUID() : undefined;
     if (listeners.size) {
-      const notification: MirroredNotification = { notificationId, level, message, ...(actions.length ? { actions } : {}) };
+      const actionPrompt = promptContext.getStore();
+      const notification: MirroredNotification = { notificationId, level, message, ...(actions.length ? { actions } : {}), ...(actionPrompt ? { actionPrompt } : {}) };
       for (const listener of listeners) {
         try {
           listener(notification);
@@ -192,21 +201,16 @@ function wrap(level: MirroredNotificationLevel, original: NotificationMethod): N
       ? showLatestNativeChoice(original, compactArgs)
       : Promise.resolve(original.apply(vscode.window, compactArgs));
     if (!notificationId) return nativeResult;
-    const mirroredNativeResult = nativeResult.finally(() => {
-      for (const listener of resolutionListeners) {
-        try {
-          listener(notificationId);
-        } catch (error) {
-          console.warn("[codexManager] notification resolution listener failed", error);
-        }
-      }
-    });
     const browserResult = new Promise<string | undefined>((resolve) => {
       pendingResponses.set(notificationId, resolve);
     });
-    return Promise.race([mirroredNativeResult, browserResult.then((action) => actions.find((candidate) => candidate === action))]).finally(
-      () => pendingResponses.delete(notificationId)
-    );
+    return Promise.race([nativeResult, browserResult.then((action) => actions.find((candidate) => candidate === action))]).finally(() => {
+      pendingResponses.delete(notificationId);
+      for (const listener of resolutionListeners) {
+        try { listener(notificationId); }
+        catch (error) { console.warn("[codexManager] notification resolution listener failed", error); }
+      }
+    });
   };
 }
 

@@ -498,4 +498,65 @@ describe("browser dashboard bridge", () => {
     expect(socket.send).toHaveBeenCalledOnce();
   });
 
+  it("never lets an older HTTP read replace a newer live snapshot", async () => {
+    const events: any[] = [], sockets: Socket[] = [];
+    const reads: Array<(response: unknown) => void> = [];
+    class Socket {
+      static readonly OPEN = 1; readyState = 1;
+      listeners = new Map<string, (event?: any) => void>(); send = vi.fn(); close = vi.fn();
+      constructor() { sockets.push(this); }
+      addEventListener(name: string, callback: (event?: any) => void) { this.listeners.set(name, callback); }
+    }
+    const windowMock = { dispatchEvent: (event: any) => events.push(event.data), WebSocket: Socket,
+      setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { protocol: 'http:', host: 'localhost' },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: any) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync('media/webview/browserHost.js', 'utf8'), { window: windowMock, MessageEvent: Event,
+      fetch: vi.fn(() => new Promise(resolve => reads.push(resolve))), console, JSON, Date, Map, Error, Array });
+    sockets[0]!.listeners.get('open')!();
+    const post = windowMock.acquireVsCodeApi!().postMessage;
+    const state = post({ type: 'dashboard:ready' });
+    const live = (n: number) => sockets[0]!.listeners.get('message')!({ data: JSON.stringify({ type: 'dashboard:snapshot', state: { revision: n } }) });
+    const response = (data: unknown) => ({ ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => data });
+    live(2); reads[0]!(response({ revision: 1 })); await state;
+    const action = post({ type: 'dashboard:action', action: 'refreshView', requestId: 'refresh-race' });
+    live(3); reads[1]!(response({ messages: [{ type: 'dashboard:snapshot', state: { revision: 2 } }, { type: 'dashboard:action-result', requestId: 'refresh-race', action: 'refreshView', status: 'completed' }] })); await action;
+    expect(events.filter(event => event.type === 'dashboard:snapshot').map(event => event.state.revision)).toEqual([2, 3]);
+    expect(events).toContainEqual(expect.objectContaining({ requestId: 'refresh-race', status: 'completed' }));
+  });
+
+  it('bounds and deduplicates HTTP fallback actions without marking a full queue offline', async () => {
+    const events: any[] = [], reads: Array<(response: unknown) => void> = [];
+    const windowMock = { dispatchEvent: (event: any) => events.push(event.data), setTimeout: vi.fn(), clearTimeout: vi.fn(), location: {},
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: any) {} get data() { return this.options.data; } }
+    const fetchMock = vi.fn(() => new Promise(resolve => reads.push(resolve)));
+    runInNewContext(readFileSync('media/webview/browserHost.js', 'utf8'), { window: windowMock, MessageEvent: Event, fetch: fetchMock, console, JSON, Date, Map, Error, Array });
+    const post = windowMock.acquireVsCodeApi!().postMessage;
+    const action = (n: number) => ({ type: 'dashboard:action', action: 'refresh', requestId: `http-${n}` });
+    const pending = Array.from({ length: 128 }, (_, n) => post(action(n)));
+    await post(action(0)); await post(action(128));
+    expect(fetchMock).toHaveBeenCalledTimes(128);
+    expect(events.some(event => event.stage === 'unreachable')).toBe(false);
+    expect(events).toContainEqual(expect.objectContaining({ requestId: 'http-128', error: expect.stringContaining('was not sent') }));
+    reads.forEach((resolve, n) => resolve({ ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ messages: [{ type: 'dashboard:action-result', requestId: `http-${n}`, status: 'completed' }] }) }));
+    await Promise.all(pending);
+    const next = post(action(129)); expect(fetchMock).toHaveBeenCalledTimes(129);
+    reads[128]!({ ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ messages: [] }) }); await next;
+    expect(events).toContainEqual(expect.objectContaining({ requestId: 'http-129', status: 'failed', error: expect.stringContaining('outcome is unknown') }));
+  });
+
+  it('delivers local link results after callers can register their request', async () => {
+    const events: any[] = [];
+    const windowMock = { dispatchEvent: (event: any) => events.push(event.data), location: {}, setTimeout: vi.fn(),
+      open: () => ({ opener: null, location: { replace: vi.fn() }, close: vi.fn() }),
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: any) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync('media/webview/browserHost.js', 'utf8'), { window: windowMock, MessageEvent: Event, fetch: vi.fn(), URL, console, JSON, Date, Map, Error, Array });
+    const pending = windowMock.acquireVsCodeApi!().postMessage({ type: 'dashboard:action', requestId: 'link', action: 'openExternalUrl', payload: { url: 'https://example.com' } });
+    expect(events.some(event => event.requestId === 'link')).toBe(false);
+    await pending;
+    expect(events).toContainEqual(expect.objectContaining({ requestId: 'link', status: 'completed' }));
+  });
+
 });

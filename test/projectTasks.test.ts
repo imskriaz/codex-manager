@@ -34,17 +34,20 @@ it('persists custom tasks and native identities exactly once, including nesting 
   expect(readProjectTasks(root).tasks.filter(task => task.sessionId)).toHaveLength(2);
 });
 
-it('rejects cycles, missing and foreign parents, forged session tasks, and stale revisions atomically', () => {
-  saveProjectTask(root, draft('a'));
-  saveProjectTask(root, { ...draft('b'), parentTaskId: 'a' });
+it('allows only session children under custom parents and rejects stale or foreign grouping atomically', () => {
+  saveProjectTask(root, draft('a')); saveProjectTask(root, draft('b'));
+  expect(() => saveProjectTask(root, { ...draft('b',1), parentTaskId: 'a' })).toThrow(/top-level/);
+  syncProjectSessions(root, root, [{ id: sessionId, title: 'Child', status: 'idle', interrupted: true }]);
+  const child = readProjectTasks(root).tasks.find(task => task.sessionId)!;
   saveProjectTask(join(root, 'other'), draft('foreign'));
-  expect(() => saveProjectTask(root, { ...draft('a', 1), parentTaskId: 'b' })).toThrow(/descendants/);
-  expect(() => saveProjectTask(root, { ...draft('a', 1), parentTaskId: 'foreign' })).toThrow(/another project/);
+  expect(() => saveProjectTask(root, { ...child, expectedRevision: child.revision, parentTaskId: 'foreign' })).toThrow(/another project/);
+  expect(() => saveProjectTask(root, { ...child, expectedRevision: child.revision, parentTaskId: child.id })).toThrow(/descendants/);
+  saveProjectTask(root, { ...child, expectedRevision: child.revision, parentTaskId: 'a' });
+  expect(() => saveProjectTask(root, { ...draft('b',1), parentTaskId: child.id })).toThrow(/top-level/);
   expect(() => saveProjectTask(root, draft(`session:${sessionId}`))).toThrow(/discovery/);
   expect(() => saveProjectTask(root, { ...draft('a'), title: 'Overwrite' })).toThrow(/changed/);
-  expect(readProjectTask(root, 'a')).toMatchObject({ revision: 1, title: 'a' });
-  expect(() => saveProjectTask(root, { ...draft('a', 1), stage: 'completed' })).toThrow(/unfinished subtasks/);
-  expect(() => saveProjectTask(root, { ...draft('manual'), stage: 'running' })).toThrow(/Start the task/);
+  expect(saveProjectTask(root, { ...draft('a', 1), stage: 'completed' })).toMatchObject({stage:'completed',manualStage:'completed'});
+  expect(saveProjectTask(root, { ...draft('manual'), stage: 'running' })).toMatchObject({stage:'running',manualStage:'running'});
 });
 
 it('retries acknowledged drafts and comments without duplicate writes or author replacement', () => {
@@ -69,7 +72,7 @@ it('fences unconfirmed startup across reload and attaches the discovered session
   expect(rows).toHaveLength(2);
   expect(rows.find(item => item.sessionId === sessionId)).toMatchObject({ parentTaskId: 'a', sourceHome: root });
   expect(readProjectTask(root, 'a')?.launchPending).toBe(false);
-  expect(projectTaskStages(rows).get('a')).toBe('running');
+  expect(projectTaskStages(rows).get('a')).toBe('planned'); expect(rows.find(item=>item.sessionId===sessionId)?.stage).toBe('running');
   expect(() => resetProjectTaskStart(root, 'a', 3)).toThrow(/unconfirmed/);
 });
 
@@ -120,4 +123,44 @@ it('does not treat unknown or idle work as completed, and propagates verified ru
   const child = { ...parent, id: 'child', parentTaskId: 'parent', stage: 'running' as const, sessionStatus: 'unknown' as const };
   expect(projectTaskStages([parent, child]).get('parent')).toBe('planned');
   expect(projectTaskStages([parent, { ...child, sessionStatus: 'running' }]).get('parent')).toBe('running');
+});
+
+it('preserves an explicit board column when native work resumes', () => {
+  syncProjectSessions(root, root, [{ id: sessionId, title: 'Work', status: 'running' }]);
+  const task = readProjectTasks(root).tasks.find(task => task.sessionId)!;
+  store.prepare("UPDATE project_tasks SET data=json_set(data,'$.manualStage','idea','$.stage','idea') WHERE project=? AND id=?").run(projectTaskKey(root),task.id);
+  syncProjectSessions(root, root, [{ id: sessionId, title: 'Work', status: 'idle', interrupted: true }]);
+  expect(readProjectTask(root, task.id)).toMatchObject({ stage:'idea',manualStage:'idea' });
+  syncProjectSessions(root, root, [{ id: sessionId, title: 'Work', status: 'running' }]);
+  expect(readProjectTask(root, task.id)).toMatchObject({stage:'idea',manualStage:'idea'});
+});
+
+it('creates additional session subtasks from completed custom containers and preserves their initial prompt', () => {
+  const task = saveProjectTask(root, { ...draft('container'), stage:'completed' });
+  claimProjectTaskStart(root,task.id,task.revision,true);
+  finishProjectTaskStart(root,task.id,sessionId,root,'Original subtask prompt','Subtask title');
+  const child = readProjectTasks(root).tasks.find(task => task.sessionId)!;
+  expect(child).toMatchObject({ title:'Subtask title',prompt:'Original subtask prompt',parentTaskId:task.id });
+  expect(() => claimProjectTaskStart(root,child.id,child.revision,true)).toThrow(/already started/);
+});
+
+it('promotes legacy custom nesting without losing its description or comments', () => {
+  const key=projectTaskKey(root);
+  store.set(`project:${key}:tasks`,'parent',{...draft('parent'),revision:1,createdAt:1,updatedAt:1});
+  store.set(`project:${key}:tasks`,'nested',{...draft('nested'),revision:1,parentTaskId:'parent',createdAt:1,updatedAt:1});
+  store.set(`project:${key}:comments`,'comment',{id:'comment',taskId:'nested',author:'Owner',text:'Keep this comment',createdAt:1});
+  expect(readProjectTask(root,'nested')).toMatchObject({prompt:'Do this work',revision:2});
+  expect(readProjectTask(root,'nested')?.parentTaskId).toBeUndefined();
+  expect(readProjectTasks(root).comments[0]?.text).toBe('Keep this comment');
+});
+
+it('archives and restores custom tasks without changing children or their workflow classification', () => {
+  const task=saveProjectTask(root,draft('archive-container'));
+  syncProjectSessions(root,root,[{id:sessionId,title:'Running child',status:'running'}]);const child=readProjectTasks(root).tasks.find(task=>task.sessionId)!;
+  saveProjectTask(root,{...child,parentTaskId:task.id,expectedRevision:child.revision});
+  const archived=saveProjectTask(root,{...task,expectedRevision:task.revision,archived:true});
+  expect(archived).toMatchObject({archived:true,stage:'planned',manualStage:'planned'});
+  expect(projectTaskStages(readProjectTasks(root).tasks).get(task.id)).toBe('completed');
+  const restored=saveProjectTask(root,{...archived,expectedRevision:archived.revision,archived:false});
+  expect(restored).toMatchObject({archived:false,stage:'planned'});expect(readProjectTask(root,child.id)?.stage).toBe('running');
 });

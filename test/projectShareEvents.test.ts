@@ -140,3 +140,36 @@ it('keeps idle transports alive without requesting content and revalidates their
   expect(response.write).toHaveBeenLastCalledWith('event: revoked\ndata: {}\n\n');
   expect(response.end).toHaveBeenCalledOnce();
 });
+
+it('bounds legacy conversation streams, coalesces native hints and validates without loading content', async () => {
+  const token = 'c'.repeat(64), response = new Response(), valid = vi.fn(async () => ({}));
+  expect(streams.openConversation(response as unknown as ServerResponse, token, Date.now() + 86400000, 'legacy', 'local', valid)).toBe(true);
+  expect(streams.openConversation(new Response() as unknown as ServerResponse, token, Date.now() + 86400000, undefined, 'local', valid)).toBe(true);
+  expect(streams.openConversation(new Response() as unknown as ServerResponse, token, Date.now() + 86400000, undefined, 'local', valid)).toBe(false);
+  const live = { sessionId: 'legacy', streamId: 's', sequence: 1, status: 'running' as const, updatedAt: Date.now(), messages: [{ id: 'secret', role: 'assistant' as const, text: 'Private output' }] };
+  publishDashboardRealtime({ type: 'dashboard:codex-session-live', state: { ...live, deviceId: 'remote' } });
+  publishDashboardRealtime({ type: 'dashboard:codex-session-live', state: { ...live, sessionId: 'different' } });
+  await vi.advanceTimersByTimeAsync(0); expect(valid).not.toHaveBeenCalled();
+  for (let n = 0; n < 30; n++) publishDashboardRealtime({ type: 'dashboard:codex-session-live', state: live });
+  await vi.advanceTimersByTimeAsync(0); expect(valid).toHaveBeenCalledOnce();
+  expect(response.write).toHaveBeenLastCalledWith('event: change\ndata: {}\n\n');
+  expect(response.write.mock.calls.flat().join('')).not.toContain('Private');
+  await vi.advanceTimersByTimeAsync(10000); expect(valid).toHaveBeenCalledOnce();
+  valid.mockResolvedValue(undefined as never); streams.heartbeat(); await Promise.resolve();
+  expect(response.write).toHaveBeenLastCalledWith('event: revoked\ndata: {}\n\n'); expect(response.end).toHaveBeenCalledOnce();
+});
+
+it('releases legacy subscriptions on expiry, failure, slow clients and late validation', async () => {
+  let complete!: (value: unknown) => void;
+  const response = new Response(), valid = vi.fn(() => new Promise(resolve => { complete = resolve; }));
+  streams.openConversation(response as unknown as ServerResponse, 'd'.repeat(64), Date.now() + 1000, 'legacy', 'local', valid);
+  streams.heartbeat(); streams.heartbeat(); expect(valid).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1000); expect(response.end).toHaveBeenCalledOnce();
+  complete({}); await Promise.resolve(); expect(response.write).toHaveBeenCalledTimes(2);
+  const broken = new Response(); streams.openConversation(broken as unknown as ServerResponse, 'e'.repeat(64), Date.now() + 1000, undefined, 'local', async () => { throw new Error('Storage unavailable'); });
+  streams.heartbeat(); await Promise.resolve(); expect(broken.end).toHaveBeenCalledOnce();
+  expect(broken.write).toHaveBeenLastCalledWith('event: unavailable\ndata: {}\n\n');
+  const slow = new Response(); slow.writableLength = 17 * 1024;
+  streams.openConversation(slow as unknown as ServerResponse, 'f'.repeat(64), Date.now() + 1000, undefined, 'local', async () => ({}));
+  expect(slow.destroyed).toBe(true);
+});

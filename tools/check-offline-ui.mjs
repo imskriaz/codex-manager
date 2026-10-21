@@ -109,7 +109,9 @@ try {
   await page.screenshot({ path: path.join(output, 'dashboard-cold-offline.png') });
   console.log('Cold offline dashboard restored');
   await page.goto(origin + '/tasks'); await page.locator('.task-board-card').first().waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Share project', exact: true }).isDisabled(), true, 'Sharing remains live-only offline');
+  await page.getByRole('button', { name: 'Board actions', exact: true }).click();
+  assert.equal(await page.getByRole('menuitem', { name: 'Share project', exact: true }).isDisabled(), true, 'Sharing remains live-only offline');
+  await page.keyboard.press('Escape');
   await page.screenshot({ path: path.join(output, 'tasks-cold-offline.png') });
   console.log('Cold offline task board restored');
   const cachePaths = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async name => (await (await caches.open(name)).keys()).map(request => new URL(request.url).pathname)))).flat());

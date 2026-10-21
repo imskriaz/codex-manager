@@ -13,13 +13,14 @@ export type BrowserActionRequest =
     }
   | {
       kind: "quotaWarning";
+      notificationId?: string;
+      targetDeviceId?: string;
       action: "switch";
       accountId: string;
       switchAccountId?: string;
       switchLabel?: string;
       resetLabel?: string;
       selectLabel: string;
-      laterLabel: string;
       title: string;
       message: string;
     }
@@ -32,6 +33,7 @@ export type BrowserActionRequest =
     }
   | {
       kind: "disabledActiveAccount";
+      targetDeviceId?: string;
       accountId: string;
       title: string;
       message: string;
@@ -40,6 +42,7 @@ export type BrowserActionRequest =
     }
   | {
       kind: "confirm";
+      targetDeviceId?: string;
       action: Extract<DashboardActionName, "reloadPrompt" | "remove" | "batchRemove" | "consumeResetCredit">;
       accountId?: string;
       accountIds?: string[];
@@ -255,9 +258,6 @@ export function BrowserActionModal(props: {
             ) : null}
             <button class="modal-secondary-btn" type="button" onClick={() => props.onConfirm(request, ["select"])}>
               {request.selectLabel}
-            </button>
-            <button class="modal-secondary-btn" type="button" onClick={() => props.onCancel(request)}>
-              {request.laterLabel}
             </button>
           </div>
         </div>

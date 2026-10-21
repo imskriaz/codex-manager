@@ -5,6 +5,8 @@ import {
   compactNotificationMessage,
   resolveMirroredNotification,
   runWithNativeCommandWarnings,
+  withMirroredActionPrompt,
+  subscribeToVscodeNotificationResolutions,
   subscribeToVscodeNotifications,
   type MirroredNotification
 } from "../src/utils/notificationMirror";
@@ -53,6 +55,32 @@ describe("VS Code notification mirror", () => {
     await expect(resultPromise).resolves.toBe("Reload");
     releaseNative(undefined);
     subscription.dispose();
+  });
+
+  it("carries account actions to the browser and dismisses the native callback without invoking its picker", async () => {
+    let release!: (value: string | undefined) => void;
+    vi.mocked(vscode.window.showWarningMessage).mockReturnValue(new Promise<string | undefined>(resolve => { release = resolve; }) as never);
+    const notices: MirroredNotification[] = [], resolved = vi.fn();
+    const subscription = subscribeToVscodeNotifications(notice => notices.push(notice));
+    const resolution = subscribeToVscodeNotificationResolutions(resolved);
+    const prompt = { kind: 'quotaWarning', accountId: 'active', message: 'Quota low', selectLabel: 'Select Account', laterLabel: 'Later' } as const;
+    try {
+      const choice = withMirroredActionPrompt(prompt, () => vscode.window.showWarningMessage('Quota low', 'Select Account', 'Later'));
+      const nativePicker = vi.fn();
+      void choice.then(value => { if (value === 'Select Account') nativePicker(); });
+      expect(notices[0]?.actionPrompt).toEqual(prompt);
+      expect(resolveMirroredNotification(notices[0]!.notificationId!)).toBe(true);
+      await expect(choice).resolves.toBeUndefined();
+      expect(resolved).toHaveBeenCalledTimes(1);
+      expect(resolved).toHaveBeenCalledWith(notices[0]!.notificationId);
+      release('Select Account');
+      await Promise.resolve();
+      expect(resolved).toHaveBeenCalledTimes(1);
+      expect(nativePicker).not.toHaveBeenCalled();
+      expect(resolveMirroredNotification(notices[0]!.notificationId!, 'Select Account')).toBe(false);
+      await vscode.window.showInformationMessage('Unrelated notice');
+      expect(notices.at(-1)?.actionPrompt).toBeUndefined();
+    } finally { resolution.dispose(); subscription.dispose(); }
   });
 
   it("replaces passive notices and clears the last one on extension shutdown", async () => {

@@ -39,6 +39,8 @@ import { clearTokenAutomationError } from "../../presentation/workbench/tokenAut
 import { getCommandCopy, getLanguage, getQuotaWarningCopy, resolveLongQuotaLabel } from "../../utils";
 import { getQuotaIssueKind } from "../../utils/quotaIssue";
 import { recordDashboardActionPrompt, shouldSuppressDashboardNotifications } from "../../utils/notificationPolicy";
+import { withMirroredActionPrompt } from "../../utils/notificationMirror";
+import type { DashboardActionPrompt } from "../../domain/dashboard/types";
 import { getDashboardCopy } from "../dashboard/copy";
 import { redeemAccountResetCredit, verifyAccountResetCredit } from "./resetCreditRedemption";
 import {
@@ -1423,9 +1425,7 @@ export async function maybeWarnForAccount(
       (check.dimension !== "weekly" && weeklyLabel
         ? ` ${copy.balanceSummary(weeklyLabel, account.quotaSummary.weeklyPercentage)}`
         : "");
-    if (
-      shouldSuppressDashboardNotifications() &&
-      recordDashboardActionPrompt({
+    const prompt: DashboardActionPrompt = {
         kind: "quotaWarning",
         accountId: account.id,
         message: warningMessage,
@@ -1434,11 +1434,11 @@ export async function maybeWarnForAccount(
         resetLabel: resetAvailable ? resetAccount : undefined,
         selectLabel: copy.selectAccount,
         laterLabel: copy.later
-      })
-    ) {
+    };
+    if (shouldSuppressDashboardNotifications() && recordDashboardActionPrompt(prompt)) {
       continue;
     }
-    void vscode.window.showWarningMessage(warningMessage, ...actions).then((selection) => {
+    void withMirroredActionPrompt(prompt, () => vscode.window.showWarningMessage(warningMessage, ...actions)).then((selection) => {
       if (switchAccount && switchTarget && selection === switchAccount) {
         void vscode.commands.executeCommand("codexManager.switchAccount", switchTarget);
       } else if (selection === resetAccount) {

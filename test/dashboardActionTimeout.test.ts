@@ -52,6 +52,8 @@ describe("dashboard action timeouts", () => {
   });
 
   it("allows a CLI start or send to finish its full 15-minute run and report a result", () => {
+    for (const action of ["startProjectTask","startProjectSubtask"] as const) { expect(getActionTimeoutMs(action)).toBe(915_000); expect(getPeerActionTimeoutMs(action)).toBe(915_000); }
+    expect(getActionTimeoutMs('moveProjectTask')).toBe(65_000); expect(getPeerActionTimeoutMs('moveProjectTask')).toBe(65_000);
     expect(getActionTimeoutMs("startCodexCliSession")).toBe(915_000);
     expect(getActionTimeoutMs("sendCodexCliSessionMessage")).toBe(915_000);
   });

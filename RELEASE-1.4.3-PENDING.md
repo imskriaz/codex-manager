@@ -1,5 +1,25 @@
 # 1.4.3 completion checklist
 
+Recovery follow-up: accepted queue requests are now consumed once rather than
+retained for replay on subsequent status events. Non-goal recovery checks the
+transcript again after native startup and before sending a continuation, and
+reports idle when completion wins the race. Explicit user messages remain
+available after completion. Startup/reload restoration and background state
+recording remain separate. The reported message on the other PC has not been
+matched to a specific log event; it is not attributed to either recovery or a
+live test without that evidence.
+
+Verification: 270 focused service/UI-layout tests and 134 caller/recovery checks
+pass, including a regression distinguishing provider acceptance from completion
+before send. All 2,162 tests across 182 files pass. Both TypeScript targets build;
+lint reports zero errors and 2,997 warnings. Six responsive queue checks pass,
+including reduced visual-viewport bounds, top-layer placement, keyboard focus,
+priority validation, queue-full and disconnect/reconnect handling. These checks
+use intercepted browser actions and temporary session stores, without sending
+messages to either real PC. The preceding full run exposed an outdated caller
+mock; it was corrected to signal provider acceptance, and a separate no-send
+assertion was added before the passing final regression run.
+
 This checklist preserves the full active release goal and later user requests.
 An unchecked item needs implementation, review, or current verification; it is
 not a claim that the feature is absent. Do not mark the overall goal complete
@@ -9,6 +29,105 @@ scope; publication does not close outstanding hardware or runtime checks.
 ## Repository inventory (2026-10-20)
 
 ### Follow-up evidence (2026-10-21)
+
+- PandaCode reference review requested: inspected its board renderer/styles,
+  conversation/board screenshots, design, GitHub/worktree, saved changes, terminal,
+  attachments and team documentation. Candidate improvements include shared
+  workspace surfaces, on-demand task panels, compact activity/approval rows,
+  keyboard project selection, GitHub-linked tasks, bounded incremental caches and
+  real terminal lifecycle handling. Selective source reuse is authorized with
+  README credit, retaining its license and any required fork/About attribution.
+  This checkpoint uses it as a design reference; no PandaCode source is imported.
+  The feature inventory does not add every external feature to scope. Existing browser,
+  cross-PC, public-sharing, hierarchy and metadata-only drag requirements remain.
+- Latest queue/archive follow-up: 97 focused tests and all 2,145 tests across
+  181 files pass. Both TypeScript targets compile. Six queue viewport checks pass,
+  covering top-layer hit testing, no layout shift, matching 16px action icons,
+  keyboard navigation, invalid/custom priorities, save/remove, queue-full errors
+  and disconnect/reconnect. Desktop/mobile dark screenshots were reviewed.
+  The complete six-size workspace/settings/board UI harness also passes after
+  these changes. Final lint reports zero errors and 2,989 style warnings.
+  Archive cleanup now shares one lazily opened native process per job, bounded
+  to the selected session IDs and original home, and closes it on completion or
+  failure. Running-session checks and per-session leases remain mandatory.
+  Real archive deletion throughput has not been benchmarked against user data.
+  The VSIX was rebuilt from locked dependencies and passes dependency-layout
+  verification. Version stays 1.4.3 in both manifests; the 4,004,179-byte local
+  checkpoint excludes the unused terminal prototype/dependencies. The final
+  recovery follow-up rebuild is 4,004,660 bytes (SHA-256
+  `aa6564b85ce82a5275624596fc11f864faf40adb3564b6091b626528bd79be1c`).
+  This checkpoint is not a completed or newly published release.
+- Account-warning/share follow-up is verified: all six account-warning browser
+  checks and six share-dialog checks pass, including stale callbacks, origin-PC
+  affinity, reset cancellation, password confirmation, malformed responses,
+  timeout, offline/reconnect, permissions and revocation. Rich public session
+  and project views pass at desktop/mobile sizes. These are intercepted browser
+  actions; no real account was switched or real archive deleted during checks.
+- The unfinished terminal-renderer prototype is preserved locally under ignored
+  `output/1.4.3/terminal-prototype`; it is not wired into this build. Its unused
+  dependency additions were removed. Env/Git tabs and native terminal parity
+  remain explicitly open below; this checkpoint does not claim they are done.
+- Active goal revised: prioritize Auto Resume/queue scheduling, task/public sharing,
+  cache/offline/reconnect/storage reliability, cross-PC WebSockets, compact UI and
+  1.4.3 documentation. Dashboard layout remains excluded except the explicitly
+  requested account-warning fix: remove Later and keep account selection in the
+  browser. Account prompts now carry structured choices and origin system IDs;
+  peer actions collect prompts instead of opening native account UI. Browser
+  choices dismiss the mirrored native callback and retain browser password/reset
+  confirmation flows. Current verification is recorded above.
+- Confirmed UI/UX scope: the main account dashboard stays unchanged. The audit
+  includes session headers/transcripts/composers and action flows; both sidebars;
+  every right-sidebar tab and flyout; all Board/List/Gantt/Calendar views and task
+  panels; all workspace/board forms, dialogs and menus; session/project share
+  dialogs and public screens; Settings, API, About and System Tools. Review
+  keyboard/focus behavior, context/draft preservation, narrow/dark layouts,
+  feedback, pending actions, cancellation and failure recovery as well as styling.
+- Share-dialog redesign includes common link/copy controls, explicit
+  content/access/expiry summaries, editable permission check-all, inline revoke
+  review, pending-close protection, initiating-dialog outcomes, and incomplete
+  response/clipboard/offline/timeout handling. Earlier test counts below predate
+  this redesign; current focused and full verification is recorded above.
+- Share-menu follow-up removes standalone Share buttons from session and board
+  headers. Their icon-only three-dot triggers open labeled sharing actions, with
+  busy/offline guards and public permission restrictions preserved. Six responsive
+  share-menu checks and desktop/mobile public checks pass; 70 focused tests pass.
+  Both TypeScript targets compile. All 2,140 tests across 181 files pass; lint
+  reports zero errors and 2,976 warnings. The VSIX build and dependency-layout
+  check pass. This package is a local review artifact; the remaining workspace
+  redesign has not been installed or published as a completed release.
+- Remaining workspace redesign work includes the fixed first Env tab, Git tab,
+  right-sidebar visibility toggle, terminal renderer integration/native API limits,
+  tool-menu alignment and final inline maintenance-workspace interaction checks.
+  These changes and the broader pending UI work are not represented by the
+  previously published artifact; do not treat a share-menu check as release completion.
+- Latest screenshot follow-up removes the inline offline confirmation in favor
+  of a dismissible toast, hides empty subtask counts, reduces card gaps/heights,
+  and compacts shared modal, task, API and sharing spacing. Mobile title clearance
+  now has an explicit logo-bounds assertion. Verification is being refreshed.
+- Dialog follow-up unifies Settings, account, API, sharing, About and task-detail
+  surfaces; splits API token identity/scope from permissions; fixes stretched
+  sharing checkboxes; and reuses the dialog shell for session sharing with pending
+  close protection. Task details now use aligned context/parent controls and a
+  compact comment composer. Layout, keyboard and outcome verification is pending.
+- Current workspace follow-up: 197 focused tests and all 2,140 tests across
+  181 files pass. Both TypeScript targets compile; lint reports zero errors
+  and 2,955 existing style warnings. All six responsive sizes and public
+  desktop/mobile checks pass, including actual drag/drop, custom archive/restore,
+  shared-screen permission gates, rich activity and retry/reload lifecycle cases.
+  Read-only live/offline reload/reconnect and worker-update checks also pass.
+  Physical two-PC switching and cold reboot recovery remain unverified.
+- Browser transport/share follow-up is verified by those checks: HTTP fallback now shares
+  duplicate/capacity guards, newer live snapshots fence older reads, missing
+  confirmations report uncertain outcomes, and local results arrive after caller
+  registration. Legacy shares use scoped invalidations and recovery screens
+  recheck on events. Server expiry/auth, stale/partial reads, bounded queues,
+  offline drafts and cleanup remain required. Active maintenance progress and
+  presence/configured quota schedules are separate remaining loop audit items.
+- Commit `64af1fe` was pushed and installed. Its stable 1.4.3 release/tag and
+  3,985,973-byte VSIX were verified; SHA-256
+  `53f06196174a5d6ed4ace68b4d0e72ac43940cda95a69285a49299c69a6f9688`.
+  That delivered artifact predates the current browser follow-up.
+
 
 - Attachment follow-up: 80 focused checks and all 2,109 tests across 178 files
   pass. Both TypeScript targets pass; lint has zero errors and 2,871 style
@@ -157,6 +276,50 @@ separately and removes the completed-result memory map. Cache failures preserve
 fresh source results. Focused cache/failure/cross-process checks and the complete
 2,090-test regression pass; this does not close the physical/runtime gates above.
 
+## Latest requested interactive workspace (implemented and verified)
+
+- Match the provided workspace reference: compact header/toolbar, full-height
+  columns, neutral borders, one-line titles and two-line session metadata rows.
+- Keep icon/title/system metadata left and project picker/search/actions right;
+  move secondary controls into floating menus that never shift board content.
+- Add functional Board, List, Gantt and Calendar tabs with shared task details,
+  search, status filters, recorded run dates and durations.
+- Latest user instruction supersedes start/stop-on-drop: column moves change classification only and never start, pause, resume or stop Codex. Preserve explicit Start/Resume/Stop controls, revision conflicts and uncertain-start fences. Custom tasks support Idea, Planned, Running, Completed, and independent archive/restore; their children keep running.
+- Persist run start metadata in existing `session_turns` rows in manager.sqlite;
+  query timing metadata only, retain it after transcript compaction, and show
+  missing historical duration explicitly. No second transcript database/cache.
+- Sessions begin as standalone tasks. Only session tasks may become children of custom tasks; custom-under-custom and session parents are rejected. Promote legacy invalid links to the board without losing descriptions/comments.
+- Use the session initial prompt as its description. The custom task's New subtask action creates and starts a real prompted session, with a durable uncertain-start fence.
+- Public project shares now mount the main TaskBoard and task-detail components with permission gates, rather than a second board/details implementation. Public session shares reuse the workspace header and grouped transcript; full-activity grants are explicit for new links, while older links retain message-only access.
+- Remove the saved-history inline block. Keep true action failures and history loading separate from transcript text.
+- UI/UX Pro Max was installed as a local design skill; the user reference and compact layout requirements remain the design contract.
+- Follow-up polish aligns card metadata with subtask counts and uses consistent SVG add/menu/agent icons. Custom archive/restore is independent from native session execution. Local full-activity shares now bind the session/home and load authorized native history without duplicating it in SecretStorage.
+- Current verification passes 197 focused tests, all 2,140 tests across 181 files,
+  both TypeScript targets and lint with zero errors. All six responsive sizes and
+  public desktop/mobile lifecycle checks pass. Actual drags, all four views,
+  compact card alignment, custom archive/restore and explicit subtask creation
+  are covered. Board moves make no native execution calls and preserve paused goals.
+- The browser follow-up's earlier full regression passed 179 files/2,118 tests;
+  this predates the latest UI/movement/timing additions and is not release proof.
+
+## Browser operation audit map (2026-10-21)
+
+This is the current audit scope, not a claim that every physical-device action
+has passed. Shared transport checks apply to every dashboard action. Mutation
+smokes use intercepted fixtures or owned disposable data, never existing work.
+
+| Surface | Paths reviewed / coverage | Remaining live evidence |
+| --- | --- | --- |
+| Browser bridge | WebSocket and HTTP fallback, auth expiry, reconnect, duplicate/capacity limits, action deadlines, stale snapshots, missing results, no write replay (`browserHost`, failure recovery and timeout suites) | Host restart during an accepted write |
+| Sessions / goals | Open/history/live merge, composer drafts/uploads, start/send/stop/resume, queue priorities, goal pause and capacity classification (session/recovery/queue suites and responsive UI) | Cold reboot/capacity recovery and real queue continuation |
+| Workspace | Project-scoped tabs, terminal ownership/close, files/read/write revisions, Git checks, stale responses (workspace suites and disposable live harness) | Remote physical PC actions |
+| Tasks | Hierarchy/cycle/revision guards, per-card drag targets, sidebar identity, details/attachments, coalesced events, outbox conflicts and storage limits (board suites and responsive UI) | Cross-PC custom task invalidation |
+| Sharing | Project permissions/embedding/submissions/comments, legacy scoped streams, expiry/revocation, partial reads, duplicate writes, hidden/offline cleanup (share suites and public UI) | External embedding/expiry with real viewers |
+| API | Multi-token project scopes and operation permissions, denial/exposure rules, create table/explorer/test UI, revocation (HTTP and responsive suites) | Runtime remote scoped-token actions |
+| Accounts / settings | Immediate dispatch, modal focus retention, OAuth callback coordination, switching/reset ownership, quotas and cancellation (account/settings/OAuth suites and UI fixtures) | Live credit reset and physical OAuth callback |
+| Offline / notifications | IndexedDB bounds, task/comment-only outbox, worker upgrade rollback, offline reload/reconnect, system notification titles (cache/worker tests and real read-only browser checks) | Phone push delivery and physical storage exhaustion |
+| Remaining loops | Legacy share and recovery-page polling removed in this follow-up. Presence is a lease heartbeat; quota refresh follows configured schedules. Active maintenance progress still polls and needs a scoped event path across peers. | Maintenance/peer event follow-up |
+
 ## Session reliability and automation
 
 - [ ] Audit background session/goal/live recording while dashboard and windows
@@ -202,12 +365,13 @@ fresh source results. Focused cache/failure/cross-process checks and the complet
 ## Project task management and sharing
 
 - [ ] Verify Idea, Planned, Running, Completed plus an additional Archive filter; DB tasks,
-  sessions as tasks/subtasks, arbitrary hierarchy, moving back to board, cycle
+  session subtasks under top-level custom tasks, moving back to board, cycle
   checks, search and cross-project/system boundaries.
 - [ ] Verify drag/drop from sidebar, within board and onto parent tasks; expose
-  understandable outcomes where activity determines a session's column.
-  Known follow-up: nested task cards currently bubble drops to the root group;
-  add a drop target per card and exercise actual sidebar/board/nested drags.
+  understandable classification outcomes independent from native execution.
+  Follow-up implemented: session-only parent drop targets, cycle/pending guards and
+  coalesced board invalidation. Actual sidebar/board/nested drag checks are added;
+  all six responsive fixture checks now pass. Real cross-system gates remain open.
 - [ ] Verify right task panel, combined Activities, comments, conversation-shared
   files (not a project tree) and recorded changes with live updates. Messages
   and tool activity share Activities; Git history was removed by later request.

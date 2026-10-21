@@ -39,7 +39,8 @@ import { validateChatAttachments, prepareChatInput, type ChatAttachment } from "
 import { readSubAgentMetadata } from "../../src/domain/sessionSource";
 import { cliSessionTargetKey } from "./cliSessionRoute";
 import { isCliTurnActive, isCliLiveStateCurrent, reconcileCliSessionStatuses } from "./cliSessionLiveState";
-import { useModalAccessibility } from "./primitives";
+import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
+import { ShareAccessReview, ShareLinkField } from "./shareControls";
 import { getSensitiveDisplayValue } from "./helpers";
 import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
@@ -187,7 +188,7 @@ export type CliSessionsPageProps = {
   onBackToList: () => void;
   onRefreshMessages: () => void;
   onRefreshEnvironment: (projectPath?: string, includeBranchDiff?: boolean) => void;
-  onRunTerminal: (command: string, projectPath?: string, terminalId?: string) => void;
+  onRunTerminal: (command: string, projectPath?: string, terminalId?: string) => string | undefined;
   onListTerminals: () => void;
   onCreateTerminal: (profile: "default" | "powershell" | "cmd" | "bash", projectPath?: string) => void;
   onFocusTerminal: (terminalId: string) => void;
@@ -287,7 +288,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerWidth < 1180);
-  const [contextTabsByProject, setContextTabsByProject] = useState<Record<string, { tabs: WorkspaceTab[]; active: WorkspaceTab }>>({});
+  const [contextTabsByProject, setContextTabsByProject] = useState<Record<string, { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string }>>({});
+  const submittedTerminalDrafts = useRef(new Map<string, { key: string; text: string }>());
   const [branchReview, setBranchReview] = useState(false);
   useEffect(() => setBranchReview(false), [props.selectedSession?.id, props.selectedSession?.deviceId]);
   const [contextAddOpen, setContextAddOpen] = useState(false);
@@ -297,7 +299,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   // viewport changes after mount.
   const [environmentOpen, setEnvironmentOpen] = useState(false);
   const [layout, setLayout] = useState(loadWorkspaceLayout);
-  const [terminalDraft, setTerminalDraft] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [deleteTarget, setDeleteTarget] = useState<DashboardCliSessionSummary>();
   const [localFeedback, setLocalFeedback] = useState<DashboardNotice>();
@@ -336,6 +337,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [composerDrafts, draftReadyKeys]);
   useEffect(() => {
     for (const result of props.submissionResults ?? []) {
+      const terminal = submittedTerminalDrafts.current.get(result.requestId);
+      if (terminal) {
+        submittedTerminalDrafts.current.delete(result.requestId);
+        if (result.status === 'completed') setContextTabsByProject(current => {
+          const entry = current[terminal.key];
+          return entry?.draft?.trim() === terminal.text ? { ...current, [terminal.key]: { ...entry, draft: '' } } : current;
+        });
+      }
       const submitted = submittedDrafts.current.get(result.requestId);
       if (!submitted) continue;
       submittedDrafts.current.delete(result.requestId);
@@ -522,18 +531,19 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (prompt !== undefined) draftFromMessage(prompt, false);
     else reportLocalFeedback({ level: "warning", message: "No user prompt is available to retry." });
   };
-  const turnCopyText = useMemo(() => getCompletedTurnCopyText(props.messages, props.sending || isCodexSessionRunning(props.selectedSession)), [props.messages, props.sending, props.selectedSession?.status, props.selectedSession?.locked]);
   const currentTurnRunning = Boolean(props.sending || ownedLiveTurn || isCodexSessionRunning(props.selectedSession));
-  const transcriptItems = useMemo(() => groupCompletedTurns(consolidateSessionMessages(props.messages), currentTurnRunning), [props.messages, currentTurnRunning]);
   const goal = useMemo(() => props.selectedSession?.goal !== undefined ? normalizeCodexSessionGoal(props.selectedSession.goal) : getSessionGoal(props.messages), [props.messages, props.selectedSession?.goal]);
   const turnChanges = useMemo(() => summarizeTurnChanges(props.messages, props.liveState?.turnId), [props.messages, props.liveState?.turnId]);
   const showWorking = currentTurnRunning && !hasInProgressActivity;
   const selectedProjectPath = props.selectedSession ? props.selectedSession.projectPath : newChatProject ?? projectPath;
   const toolProjectPath = selectedProjectPath;
-  const contextProjectKey = canonicalWebPath(toolProjectPath ?? "__workspace__") || "__workspace__";
+  const contextProjectKey = JSON.stringify([props.selectedSession?.deviceId ?? props.selectedPeerId ?? 'local', canonicalWebPath(toolProjectPath ?? '__workspace__')]);
   const contextProjectState = contextTabsByProject[contextProjectKey] ?? { tabs: [], active: "terminal" as WorkspaceTab };
   const contextTabs = contextProjectState.tabs;
   const activeContextTab = contextProjectState.active;
+  const terminalDraft = contextProjectState.draft ?? '';
+  const setTerminalDraft = (draft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? { tabs: [], active: 'terminal' as WorkspaceTab }), draft } }));
+  useEffect(() => { setContextAddOpen(false); }, [contextProjectKey]);
   const setContextTabs = (next: WorkspaceTab[] | ((current: WorkspaceTab[]) => WorkspaceTab[])): void => {
     setContextTabsByProject(current => {
       const entry = current[contextProjectKey] ?? { tabs: [], active: "terminal" as WorkspaceTab };
@@ -846,7 +856,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                if (unassigned.length > 0) projectGroups.unshift({ project: { id: `${pc.id}:recents`, label: "Recent", path: "" }, sessions: unassigned });
                return <section class="cli-pc-group" key={pc.id}>
                  <div class="cli-pc-group-heading">
-                     <button type="button" class={`cli-pc-group-toggle ${props.selectedPeerId === pc.id ? "is-selected" : ""}`} aria-expanded={!pcCollapsed} onClick={() => { props.onPeerChange?.(pc.id); toggleGroup(`pc:${pc.id}`); }}>
+                     <button type="button" class={`cli-pc-group-toggle ${props.selectedPeerId === pc.id ? "is-selected" : ""}`} aria-expanded={!pcCollapsed} onClick={() => toggleGroup(`pc:${pc.id}`)}>
                      <ChevronIcon /><span><strong>{getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}</strong><small>{`${pc.sessions.length} session${pc.sessions.length === 1 ? "" : "s"} · ${pc.connected ? "online" : "offline"}`}</small></span>
                    </button>
                    <button type="button" class="cli-pc-switch" aria-label={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} title={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} onClick={(event) => { event.stopPropagation(); props.onSwitchAccount(pc.local ? "local" : pc.id); }}><SwitchAccountIcon /></button>
@@ -952,11 +962,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 {props.messagesError ? <InlineError text={props.messagesError} retry={props.onRefreshMessages} /> : null}
                 {!props.messagesLoading && !props.messagesError && props.messages.length === 0 ? <ConversationEmpty archived={selectedArchived} logoUri={props.logoUri} /> : null}
                 <div ref={messagesContentRef} class="cli-session-messages" onPointerDownCapture={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }} onClick={(event) => { if ((event.target as Element).closest("summary,button,img")) followLatestRef.current = false; }}>
-                  {transcriptItems.map((item) => "items" in item
-                    ? <CompletedTurn key={item.id} turn={item} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? () => retryMessage(item.answer.id) : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />
-                    : "messages" in item
-                    ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />
-                    : <SessionMessage key={item.id} message={item} logoUri={props.logoUri} turnCopyText={turnCopyText.get(item.id)} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? () => retryMessage(item.id) : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={(filePath) => openContextTab("files", filePath)} onOpenReviews={(filePath) => openContextTab("reviews", filePath)} />)}
+                  <SessionTranscript messages={props.messages} running={currentTurnRunning} logoUri={props.logoUri} onActionFeedback={reportLocalFeedback} onRetryPrompt={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? retryMessage : undefined} onDraftMessage={!props.sending && !currentTurnRunning && !props.selectedSession?.archived ? draftFromMessage : undefined} onOpenFile={filePath => openContextTab('files', filePath)} onOpenReviews={filePath => openContextTab('reviews', filePath)} />
                   {showWorking ? <WorkingMessage /> : null}
                   <LiveTurnDetails state={props.liveState} loading={props.messagesLoading} onLoadHistory={props.onRefreshMessages} />
                   <div />
@@ -1057,7 +1063,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           fileLoading={props.workspaceFileLoading}
           fileSaving={props.workspaceFileSaving}
           onDraft={setTerminalDraft}
-          onRun={(command, terminalId) => { props.onRunTerminal(command, toolProjectPath, terminalId); setTerminalDraft(""); }}
+          onRun={(command, terminalId) => { const id = props.onRunTerminal(command, toolProjectPath, terminalId); if (id) submittedTerminalDrafts.current.set(id, { key: contextProjectKey, text: command }); else reportLocalFeedback({ level:'error', message:'Command was not sent. Your terminal draft was kept.' }); }}
           onListTerminals={props.onListTerminals}
           onCreateTerminal={(profile) => props.onCreateTerminal(profile, toolProjectPath)}
           onFocusTerminal={props.onFocusTerminal}
@@ -1082,17 +1088,17 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onResizeReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}
         />
       </div>
-      {shareOpen && props.selectedSession ? <SessionShareModal title={props.selectedSession.title} sessionKey={cliSessionTargetKey(props.selectedSession)} messages={props.messages} onClose={() => setShareOpen(false)} onFeedback={reportLocalFeedback} /> : null}
+      {shareOpen && props.selectedSession ? <SessionShareModal connected={props.connected !== false} key={cliSessionTargetKey(props.selectedSession)} title={props.selectedSession.title} sessionKey={cliSessionTargetKey(props.selectedSession)} messages={props.messages} onClose={() => setShareOpen(false)} /> : null}
     </div>
   );
 }
 
-function ConversationHeader(props: {
-  session: DashboardCliSessionSummary; archived: boolean; busy: boolean; sending: boolean;
-  onBack: () => void; onRefresh: () => void;
-  onRename: (name: string) => void; onFork: () => void; onCopyLink: () => void; onShare: () => void;
-  onArchive: () => void; onRestore: () => void; onDelete: () => void; onRenameCancelled: () => void;
-  environmentOpen: boolean; terminalCollapsed: boolean; onToggleEnvironment: () => void; onToggleTerminal: () => void;
+export function ConversationHeader(props: {
+  session: DashboardCliSessionSummary; readOnly?: boolean; archived?: boolean; busy?: boolean; sending?: boolean;
+  onBack?: () => void; onRefresh: () => void;
+  onRename?: (name: string) => void; onFork?: () => void; onCopyLink?: () => void; onShare?: () => void;
+  onArchive?: () => void; onRestore?: () => void; onDelete?: () => void; onRenameCancelled?: () => void;
+  environmentOpen?: boolean; terminalCollapsed?: boolean; onToggleEnvironment?: () => void; onToggleTerminal?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -1109,34 +1115,34 @@ function ConversationHeader(props: {
   useEffect(() => setName(props.session.title), [props.session.id, props.session.title]);
   const statusLabel = props.archived ? "Archived" : props.session.status === "unknown" ? "Status unavailable" : props.session.status === "running" ? "Running" : "Ready";
   return <header class="cli-conversation-header">
-    <div class="cli-conversation-title"><div class="cli-conversation-title-line"><h1>{props.session.title}</h1><span title={statusLabel} aria-label={statusLabel} class={`cli-state-pill ${props.archived ? "is-archived" : props.session.status === "running" ? "is-running" : ""}`}>{statusLabel}</span></div>{props.session.projectPath ? <div class="cli-conversation-project" title={props.session.projectPath}><EmptyFolderIcon /><strong>{projectDisplayName(props.session.projectPath)}</strong><span>{props.session.projectPath}</span></div> : null}</div>
+    <div class="cli-conversation-title"><div class="cli-conversation-title-line"><h1>{props.session.title}</h1>{!props.readOnly || props.session.status !== 'unknown' ? <span title={statusLabel} aria-label={statusLabel} class={`cli-state-pill ${props.archived ? "is-archived" : props.session.status === "running" ? "is-running" : ""}`}>{statusLabel}</span> : null}</div>{props.session.projectPath ? <div class="cli-conversation-project" title={props.session.projectPath}><EmptyFolderIcon /><strong>{projectDisplayName(props.session.projectPath)}</strong><span>{props.session.projectPath}</span></div> : null}</div>
     <div class="cli-conversation-actions">
-      {!props.archived ? <><IconButton label="Refresh conversation" disabled={props.busy} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class="cli-secondary-button" disabled={props.busy || props.sending} onClick={props.onShare}><ShareIcon /> Share</button></> : <button type="button" class="cli-secondary-button" disabled={props.busy} onClick={props.onRestore}><RestoreIcon /> Restore</button>}
-      <IconButton label={props.environmentOpen ? "Hide Environment" : "Show Environment"} onClick={props.onToggleEnvironment}><ChangesIcon /></IconButton>
-      {props.terminalCollapsed ? <IconButton label="Show workspace tools" title="Show Terminal, Files, and Reviews" onClick={props.onToggleTerminal}><PanelIcon /></IconButton> : null}
+      {props.readOnly || !props.archived ? <IconButton label="Refresh conversation" disabled={props.busy} onClick={props.onRefresh}><RefreshIcon /></IconButton> : <button type="button" class="cli-secondary-button" disabled={props.busy} onClick={props.onRestore}><RestoreIcon /> Restore</button>}
+      {!props.readOnly ? <><IconButton label={props.environmentOpen ? "Hide Environment" : "Show Environment"} onClick={() => props.onToggleEnvironment?.()}><ChangesIcon /></IconButton>
+      {props.terminalCollapsed ? <IconButton label="Show workspace tools" title="Show Terminal, Files, and Reviews" onClick={() => props.onToggleTerminal?.()}><PanelIcon /></IconButton> : null}
       <div class="cli-session-menu-wrap" ref={menuRef}>
         <button type="button" class="cli-icon-button" aria-label="Session actions" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreIcon /></button>
         {menuOpen ? <div class="cli-session-menu" role="menu">
           {!props.archived ? <>
             <button type="button" role="menuitem" class="cli-mobile-menu-item" disabled={props.busy} onClick={() => { setMenuOpen(false); props.onRefresh(); }}><RefreshIcon /> Refresh conversation</button>
-            <button type="button" role="menuitem" class="cli-mobile-menu-item" onClick={() => { setMenuOpen(false); props.onToggleEnvironment(); }}><ChangesIcon /> {props.environmentOpen ? "Hide Environment" : "Show Environment"}</button>
-            {props.terminalCollapsed ? <button type="button" role="menuitem" class="cli-mobile-menu-item" onClick={() => { setMenuOpen(false); props.onToggleTerminal(); }}><PanelIcon /> Show workspace tools</button> : null}
+            <button type="button" role="menuitem" class="cli-mobile-menu-item" onClick={() => { setMenuOpen(false); props.onToggleEnvironment?.(); }}><ChangesIcon /> {props.environmentOpen ? "Hide Environment" : "Show Environment"}</button>
+            {props.terminalCollapsed ? <button type="button" role="menuitem" class="cli-mobile-menu-item" onClick={() => { setMenuOpen(false); props.onToggleTerminal?.(); }}><PanelIcon /> Show workspace tools</button> : null}
             <span class="cli-mobile-menu-item" />
-          </> : <button type="button" role="menuitem" class="cli-mobile-menu-item" disabled={props.busy} onClick={() => { setMenuOpen(false); props.onRestore(); }}><RestoreIcon /> Restore</button>}
+          </> : <button type="button" role="menuitem" class="cli-mobile-menu-item" disabled={props.busy} onClick={() => { setMenuOpen(false); props.onRestore?.(); }}><RestoreIcon /> Restore</button>}
           {!props.archived ? <>
             <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); setRenaming(true); }}><PencilIcon /> Rename</button>
-            <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onFork(); }}><ForkIcon /> Fork session</button>
-            <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onArchive(); }}><ArchiveIcon /> Archive</button>
+            <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onFork?.(); }}><ForkIcon /> Fork session</button>
+            <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onArchive?.(); }}><ArchiveIcon /> Archive</button>
             <span />
-            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); props.onShare(); }}><ShareIcon /> Share</button>
-            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); props.onCopyLink(); }}><LinkIcon /> Copy link</button>
+            <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onShare?.(); }}><ShareIcon /> Share</button>
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); props.onCopyLink?.(); }}><LinkIcon /> Copy link</button>
             <span />
           </> : null}
-          <button type="button" role="menuitem" class="is-danger" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onDelete(); }}><TrashIcon /> Delete</button>
+          <button type="button" role="menuitem" class="is-danger" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onDelete?.(); }}><TrashIcon /> Delete</button>
         </div> : null}
       </div>
-    </div>
-    {renaming ? <form class="cli-rename-form" onSubmit={(event) => { event.preventDefault(); const normalized = name.trim(); if (normalized) { props.onRename(normalized); setRenaming(false); } }}><PencilIcon /><input value={name} maxLength={160} autoFocus aria-label="Session name" onInput={(event) => setName(event.currentTarget.value)} /><button type="button" onClick={() => { setName(props.session.title); setRenaming(false); props.onRenameCancelled(); }}>Cancel</button><button type="submit" disabled={!name.trim()}>Save</button></form> : null}
+    </> : null}</div>
+    {renaming ? <form class="cli-rename-form" onSubmit={(event) => { event.preventDefault(); const normalized = name.trim(); if (normalized) { props.onRename?.(normalized); setRenaming(false); } }}><PencilIcon /><input value={name} maxLength={160} autoFocus aria-label="Session name" onInput={(event) => setName(event.currentTarget.value)} /><button type="button" onClick={() => { setName(props.session.title); setRenaming(false); props.onRenameCancelled?.(); }}>Cancel</button><button type="submit" disabled={!name.trim()}>Save</button></form> : null}
   </header>;
 }
 
@@ -1216,9 +1222,9 @@ function Composer(props: {
 function LiveTurnDetails({ state }: { state?: DashboardCodexSessionLiveState; loading?: boolean; onLoadHistory?: () => void }) {
   const tokens = state?.tokenUsage;
   const counts = tokens ? [["Input", tokens.input], ["Cached", tokens.cachedInput], ["Output", tokens.output], ["Reasoning", tokens.reasoningOutput], ["Total", tokens.total], ["Context", tokens.contextWindow]].filter((entry) => typeof entry[1] === "number") : [];
+  if (!state?.error && !state?.plan?.steps.length && !state?.diff && !counts.length && !state?.rateLimits) return null;
   return <div class="cli-turn-details">
     {state?.error ? <p class="cli-composer-unavailable" role="alert">{state.error}</p> : null}
-    {state?.truncated ? <p class="settings-note cli-history-truncated" role="status">Earlier activity is available in the saved conversation history.</p> : null}
     {state?.plan?.steps.length ? <details class="cli-activity is-plan"><summary><strong>Current plan</strong></summary><div class="cli-activity-body">{state.plan.explanation ? <p>{state.plan.explanation}</p> : null}<ol>{state.plan.steps.map((step, index) => <li key={index}>{step.status === "completed" ? "✓ " : step.status === "inProgress" ? "In progress · " : "Pending · "}{step.step}</li>)}</ol></div></details> : null}
     {state?.diff ? <details class="cli-activity is-file-change"><summary><strong>Turn changes</strong></summary><DiffPreview diff={state.diff} /></details> : null}
     {counts.length || state?.rateLimits ? <details class="cli-activity cli-turn-usage"><summary><span class="cli-activity-icon" aria-hidden="true" title="Token usage">Σ</span><span class="cli-activity-heading"><strong>Turn usage</strong><small>Tokens and rate windows</small></span><ChevronIcon /></summary><div class="cli-activity-body"><div class="cli-usage-grid">{counts.map(([label, count]) => <span key={String(label)} title={`${label} tokens`}><i aria-hidden="true">{String(label).toLowerCase().includes("cache") ? "◌" : String(label).toLowerCase().includes("output") ? "↑" : String(label).toLowerCase().includes("input") ? "↓" : "•"}</i><b>{label}</b><strong>{Number(count).toLocaleString()}</strong></span>)}</div>{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p class="cli-rate-window" key={window}><span>{window === "primary" ? "Primary" : "Secondary"} window</span><strong>{Math.round(limit.usedPercent)}% used</strong><small>{limit.resetsAt ? `Resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : "Reset time unavailable"}</small></p> : null) : null}</div></details> : null}
@@ -1602,7 +1608,7 @@ function DiffPreview({ diff }: { diff: string }) {
   return <div class="cli-code-surface cli-diff-surface"><div class="cli-code-surface-head"><span>Diff</span><CopySnippet text={diff} label="Copy diff" /></div><pre class="cli-activity-output is-diff"><code>{lines.map((line, index) => <span key={index} class={`cli-diff-line is-${line.kind}`}><span class="cli-diff-line-number" aria-hidden="true" title={`Old: ${line.oldLine ?? "—"} · New: ${line.newLine ?? "—"}`}>{line.newLine ?? line.oldLine ?? ""}</span><span>{line.text || " "}</span></span>)}</code></pre></div>;
 }
 
-function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetryPrompt, onOpenFile, onOpenReviews }: { turn: CompletedTranscriptTurn; onRetryPrompt?: () => void; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile: (path: string) => void; onOpenReviews: (path?: string) => void }) {
+function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetryPrompt, onOpenFile, onOpenReviews }: { turn: CompletedTranscriptTurn; onRetryPrompt?: () => void; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
   const messages = turn.items.flatMap((item) => "messages" in item ? item.messages : [item]);
   const start = Date.parse(turn.startedAt ?? messages.find((message) => message.timestamp)?.timestamp ?? "");
   const end = Date.parse(turn.answer.timestamp ?? messages.filter((message) => message.timestamp).at(-1)?.timestamp ?? "");
@@ -1611,8 +1617,15 @@ function CompletedTurn({ turn, logoUri, onActionFeedback, onDraftMessage, onRetr
   return <div class="cli-completed-turn">
     <details class="cli-completed-work"><summary><span>{duration !== undefined ? `Worked for ${formatDuration(duration)}` : "Worked"}</span><ChevronIcon /></summary><div class="cli-completed-work-body">{turn.items.map((item) => "messages" in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} /> : <SessionMessage key={item.id} message={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />)}</div></details>
     <SessionMessage message={turn.answer} logoUri={logoUri} turnCopyText={turnCopy} onRetryPrompt={onRetryPrompt} onActionFeedback={onActionFeedback} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />
-    <CompletedTurnChanges messages={messages} onOpenReviews={onOpenReviews} />
+    {onOpenReviews ? <CompletedTurnChanges messages={messages} onOpenReviews={onOpenReviews} /> : null}
   </div>;
+}
+
+/** One transcript renderer; public views omit callbacks for private operations. */
+export function SessionTranscript({ messages, running = false, logoUri, onActionFeedback, onRetryPrompt, onDraftMessage, onOpenFile, onOpenReviews }: { messages: DashboardCliSessionMessage[]; running?: boolean; logoUri?: string; onActionFeedback: (notice: DashboardNotice) => void; onRetryPrompt?: (id: string) => void; onDraftMessage?: (text: string, quote: boolean) => void; onOpenFile?: (path: string) => void; onOpenReviews?: (path?: string) => void }) {
+  const items = useMemo(() => groupCompletedTurns(consolidateSessionMessages(messages), running), [messages, running]);
+  const copies = useMemo(() => getCompletedTurnCopyText(messages, running), [messages, running]);
+  return <>{items.map(item => 'items' in item ? <CompletedTurn key={item.id} turn={item} logoUri={logoUri} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.answer.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : 'messages' in item ? <ActivityGroup key={item.id} messages={item.messages} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/> : <SessionMessage key={item.id} message={item} logoUri={logoUri} turnCopyText={copies.get(item.id)} onActionFeedback={onActionFeedback} onRetryPrompt={onRetryPrompt ? () => onRetryPrompt(item.id) : undefined} onDraftMessage={onDraftMessage} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews}/>)}</>;
 }
 
 function CompletedTurnChanges({ messages, onOpenReviews }: { messages: DashboardCliSessionMessage[]; onOpenReviews: (path?: string) => void }) {
@@ -1771,7 +1784,7 @@ function WorkspaceContextPanel(props: {
   const activePath = workspaceTabPath(props.activeTab);
   return <aside class="cli-terminal-panel cli-context-panel-v3" aria-label="Workspace tools">
     <div class="cli-context-edge-resizer" role="separator" aria-label="Resize terminal panel" aria-orientation="vertical" aria-valuemin={280} aria-valuenow={Math.round(props.terminalWidth)} tabIndex={0} onPointerDown={props.onResizePointerDown} onKeyDown={props.onResizeKeyDown} onDblClick={props.onResizeReset}><span /></div>
-    <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={(event) => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{props.tabs.map((tab) => { const kind = workspaceTabKind(tab); const path = workspaceTabPath(tab); const label = kind === "agents" && path ? `Agent: ${props.agentSessions.find((agent) => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind); return <span class={props.activeTab === tab ? "is-active" : ""} key={tab}><button type="button" role="tab" aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={path ?? kind}>{kind === "terminal" ? <TerminalIcon /> : kind === "files" ? <FileIcon /> : kind === "agents" ? <ForkIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button><button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button></span>; })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool or terminal" title="Add a workspace tool" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div class="cli-context-add-menu" role="menu">{(["terminal", "files", "reviews", "agents"] as const).filter((tab) => !props.tabs.includes(tab)).map((tab) => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === "terminal" ? <TerminalIcon /> : tab === "files" ? <FileIcon /> : tab === "agents" ? <ForkIcon /> : <ReviewIcon />}{capitalize(tab)}</button>)}{activeKind !== "terminal" && (["terminal", "files", "reviews", "agents"] as const).every((tab) => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><span class="cli-terminal-header-actions"><IconButton label="Hide workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></span></header>
+    <header class="cli-context-tabbar"><div class="cli-context-tabs-v3" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Workspace tools"><div ref={tabsRef} class="cli-context-tab-scroll" onWheel={(event) => { const target = event.currentTarget; if (target.scrollWidth <= target.clientWidth || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return; event.preventDefault(); target.scrollLeft += event.deltaY; }}>{props.tabs.map((tab) => { const kind = workspaceTabKind(tab); const path = workspaceTabPath(tab); const label = kind === "agents" && path ? `Agent: ${props.agentSessions.find((agent) => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind); return <span class={props.activeTab === tab ? "is-active" : ""} key={tab}><button type="button" role="tab" aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={path ?? kind}>{kind === "terminal" ? <TerminalIcon /> : kind === "files" ? <FileIcon /> : kind === "agents" ? <ForkIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button><button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button></span>; })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool or terminal" title="Add a workspace tool" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div class="cli-context-add-menu" role="menu">{(["terminal", "files", "reviews", "agents"] as const).filter((tab) => !props.tabs.includes(tab)).map((tab) => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === "terminal" ? <TerminalIcon /> : tab === "files" ? <FileIcon /> : tab === "agents" ? <ForkIcon /> : <ReviewIcon />}{capitalize(tab)}</button>)}{activeKind !== "terminal" && (["terminal", "files", "reviews", "agents"] as const).every((tab) => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><span class="cli-terminal-header-actions"><IconButton label="Hide workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></span></header>
     {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onOpen={(id) => props.onAdd("agents", id)} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <>
     <div class="cli-terminal-toolbar"><label>VS Code terminal<select aria-label="Select VS Code terminal" disabled={props.connected === false} value={props.terminals.find((terminal) => terminal.isActive)?.id ?? ""} onChange={(event) => { const id = event.currentTarget.value; if (id) props.onFocusTerminal(id); }}><option value="">Select terminal…</option>{props.terminals.map((terminal) => <option value={terminal.id}>{terminal.name} · {terminal.state}</option>)}</select></label>{props.terminals.find((terminal) => terminal.isActive) ? <IconButton label="Close terminal" title="Close terminal" disabled={props.connected === false} onClick={() => props.onCloseTerminal(props.terminals.find((terminal) => terminal.isActive)!.id)}><CloseIcon /></IconButton> : null}<details class="cli-terminal-new-menu"><summary>＋ New</summary><div role="menu">{(["default", "powershell", "cmd", "bash"] as const).map((profile) => <button type="button" role="menuitem" disabled={props.connected === false} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onCreateTerminal(profile); }}>{profile === "default" ? "Default" : profile === "powershell" ? "PowerShell" : profile.toUpperCase()}</button>)}</div></details><button type="button" class="cli-terminal-refresh" onClick={props.onListTerminals} title="Refresh running terminals"><RefreshIcon /></button></div>
     <div ref={outputRef} class="cli-terminal-output" role="log" aria-live="polite" onScroll={(event) => {
@@ -2155,43 +2168,50 @@ function SessionAccountFooter(props: {
   </footer>;
 }
 
-function SessionShareModal(props: { title: string; sessionKey: string; messages: DashboardCliSessionMessage[]; onClose: () => void; onFeedback: (notice: DashboardNotice) => void }) {
+function SessionShareModal(props: { connected: boolean; title: string; sessionKey: string; messages: DashboardCliSessionMessage[]; onClose: () => void }) {
   const [url, setUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const accessibility = useModalAccessibility(true, () => { if (!busy) props.onClose(); });
-  useLayoutEffect(() => {
-    const modal = accessibility.modalRef.current;
-    if (!busy && modal && !modal.contains(document.activeElement)) modal.querySelector<HTMLButtonElement>('[aria-label="Close share dialog"]')?.focus({ preventScroll: true });
-  }, [busy]);
-  const [feedback, setFeedback] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [pending, setPending] = useState<"create" | "revoke">();
+  const [feedback, setFeedback] = useState<DashboardNotice>();
+  const inflight = useRef<AbortController>();
+  const mounted = useRef(true);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; inflight.current?.abort(); }; }, []);
   const browser = document.documentElement.dataset["dashboardHost"] === "browser";
-  const request = async (action: "create" | "revoke") => {
-    if (busy) return;
-    setBusy(true); setFeedback("");
-    const controller = new AbortController();
+  const request = async (action: "create" | "revoke"): Promise<boolean> => {
+    if (inflight.current) return false;
+    if (!browser || !props.connected) { setFeedback({ level: 'warning', message: 'Reconnect in the browser dashboard to manage public links.' }); return false; }
+    const controller = new AbortController(); inflight.current = controller;
+    setPending(action); setFeedback(undefined); setUrl("");
     const timer = window.setTimeout(() => controller.abort(), 15_000);
     try {
       const response = await fetch(`/api/share/${action}`, { method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal,
         headers: { "Content-Type": "application/json", "X-Codex-Dashboard": "1" },
         body: JSON.stringify({ sessionKey: props.sessionKey, ...(action === "create" ? { title: props.title,
-          messages: props.messages.filter(message => (!message.kind || message.kind === "message") && message.role).map(message => ({ role: message.role, text: message.text })) } : {}) }) });
-      const result = await response.json() as { token?: string; error?: string };
-      if (!response.ok || (action === "create" && !result.token)) throw new Error(result.error ?? "Sharing failed. Sign in again or retry when connected.");
-      setUrl(action === "create" ? new URL(`/share/${result.token}`, window.location.origin).href : "");
-      setCopied(false);
-      const notice = action === "create" ? "Read-only link created. It expires in 30 days. Creating another link revokes the previous one." : "Shared link revoked. It can no longer be opened.";
-      setFeedback(notice); props.onFeedback({ level: "info", message: notice });
+          includeActivities: true, ...((JSON.parse(props.sessionKey) as unknown[])[0] === 'local' ? {} : { messages: props.messages }) } : {}) }) });
+      const result = await response.json().catch(() => { throw new Error("Sharing returned an unreadable response. Check the connection before retrying."); }) as { token?: string; error?: string; ok?: boolean } | null;
+      if (!response.ok) throw new Error(result?.error ?? "Sharing failed. Sign in again or retry when connected.");
+      if (action === "create" && (typeof result?.token !== 'string' || !/^[a-f0-9]{64}$/.test(result.token))) throw new Error("Link creation was not confirmed. Create a new link or revoke access before sharing again.");
+      if (action === "revoke" && result?.ok !== true) throw new Error("Revocation was not confirmed. Reconnect and revoke access again before assuming the link is closed.");
+      if (!mounted.current) return false;
+      setUrl(action === "create" ? new URL(`/share/${result!.token}`, window.location.origin).href : "");
+      setFeedback({ level: 'info', message: action === "create" ? "Read-only link created. It expires in 30 days." : "Shared link revoked. It can no longer be opened." });
+      return true;
     } catch (error) {
-      const notice = error instanceof Error && error.name !== "AbortError" ? error.message : "Sharing was not confirmed. Reconnect and retry, or revoke this conversation’s link.";
-      setFeedback(notice); props.onFeedback({ level: "error", message: notice });
-    } finally { window.clearTimeout(timer); setBusy(false); }
+      if (mounted.current) setFeedback({ level: 'error', message: error instanceof Error && error.name !== "AbortError" ? error.message : "Sharing was not confirmed. An earlier link may have changed. Reconnect, then create a new link or revoke access." });
+      return false;
+    } finally { window.clearTimeout(timer); inflight.current = undefined; if (mounted.current) setPending(undefined); }
   };
-  const copy = async (): Promise<void> => {
-    try { await navigator.clipboard.writeText(url); setCopied(true); props.onFeedback({ level: "info", message: "Shared conversation link copied." }); }
-    catch { props.onFeedback({ level: "error", message: "Session link could not be copied. Select it and copy manually." }); }
-  };
-  return <div ref={accessibility.modalRef} onKeyDown={accessibility.onKeyDown} class="cli-share-overlay" role="presentation" onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}><section class="cli-share-modal" role="dialog" aria-modal="true" aria-labelledby="cli-share-title"><header><span><ShareIcon /><strong id="cli-share-title">Share session</strong></span><IconButton label="Close share dialog" disabled={busy} onClick={props.onClose}><CloseIcon /></IconButton></header><p>Anyone with the token link can read a snapshot of <strong>{props.title}</strong> without signing in. Only conversation messages are included. Review their contents before sharing.</p>{browser ? <><button type="button" class="cli-secondary-button" disabled={busy} onClick={() => void request("create")}>{busy ? "Please wait…" : url ? "Create replacement link" : "Create read-only link"}</button><button type="button" class="cli-secondary-button" disabled={busy} onClick={() => void request("revoke")}>Revoke shared link</button>{url && <div class="cli-share-link-row"><input value={url} readOnly aria-label="Session link" onFocus={(event) => event.currentTarget.select()} /><button type="button" onClick={() => void copy()}><CopyIcon /> {copied ? "Copied" : "Copy"}</button></div>}</> : <p>Open this conversation in the browser dashboard to create a public link using its reachable address.</p>}{feedback && <p role="status">{feedback}</p>}</section></div>;
+  return <ModalShell open title="Share session" closeLabel="Close share dialog" className="cli-share-modal share-dialog" closeDisabled={!!pending} onClose={props.onClose}>
+    <div class="share-context"><span class="share-context-icon"><ShareIcon /></span><div><strong title={props.title}>{props.title}</strong><small>Conversation and recorded activity</small></div><span class="share-access-badge">Read only</span></div>
+    <p class="dialog-description">Anyone with the link can read this conversation. Review its contents before sharing.</p>
+    <div class="share-included"><div><strong>Included</strong><span>Messages, tool calls, output and shared files</span></div><div><strong>Access</strong><span>No editing or workspace sidebars</span></div><div><strong>Expires</strong><span>30 days after creation</span></div></div>
+    {browser ? <>
+      <div class="share-create-row"><p>A new link replaces the previous session link.</p><button type="button" class="modal-primary-btn" disabled={!!pending || !props.connected} onClick={() => void request("create")}>{pending === 'create' ? 'Creating link…' : url ? 'Create replacement link' : 'Create read-only link'}</button></div>
+      {url ? <div class="task-share-result"><ShareLinkField url={url} label="Session link" disabled={!!pending} onFeedback={setFeedback}/><div class="share-link-meta"><small>Anyone with the link · Read only</small><a href={url} target="_blank" rel="noopener noreferrer">Open conversation ↗</a></div></div> : null}
+    </> : <p class="share-outcome">Open this conversation in the browser dashboard to create a public link using its reachable address.</p>}
+    {!props.connected ? <p class="share-outcome" role="status">Reconnect to manage public links.</p> : null}
+    {feedback ? <p class={`share-outcome ${feedback.level === 'error' ? 'is-error' : ''}`} role={feedback.level === 'error' ? 'alert' : 'status'}>{feedback.message}</p> : null}
+    {browser ? <ShareAccessReview description="End public access to this conversation, including previously created links." label="Revoke shared link" busy={!!pending} disabled={!props.connected} onConfirm={() => request('revoke')}/> : null}
+  </ModalShell>;
 }
 
 function WorkingMessage() {

@@ -21,13 +21,40 @@ it("publishes only escaped read-only messages and persists across a host restart
   const share = await new ConversationShares(secrets).get(token);
   expect(share!.messages[1]).toEqual({ role: "assistant", text: "Answer\nnext line" });
   const page = sharedConversationPage(share!, token);
-  expect(page).toContain("Read-only snapshot");
-  expect(page).toContain("message-head");
-  expect(page).toContain("Anyone with this link can view");
+  expect(page).toContain('cli-public-session');
+  expect(page).toContain('cli-conversation-header');
+  expect(page).not.toMatch(/class="hero"|class="topbar"|cli-session-rail|cli-context-panel/);
   expect(page).toContain("&lt;script&gt;"); expect(page).not.toContain("<script>");
-  expect(page).not.toMatch(/<form|<button|secret|pc:thread/);
+  expect(page).not.toMatch(/<form|secret|pc:thread/);
   expect(page).toContain("/assets/sharedConversation.js");
   expect(page).toContain("noindex,nofollow,noarchive");
+});
+it('publishes rich activities only for an explicitly created full-activity link and preserves that grant on refresh', async () => {
+  const activity = { id:'tool', kind:'tool-call', text:'Used a tool', title:'Tool', arguments:'{"query":"test"}', result:'Tool result', debug:'Provider output', secret:'excluded' };
+  const { token } = await service.create({ ...input(), includeActivities:true, messages:[...input().messages,activity] }, 'private-source-home');
+  const share = await new ConversationShares(secrets).get(token);
+  expect(share).toMatchObject({ includeActivities:true,sourceHome:'private-source-home',messages:expect.arrayContaining([expect.objectContaining({kind:'tool-call',arguments:activity.arguments,result:'Tool result',debug:'Provider output'})]) });
+  expect(JSON.stringify(share?.messages)).not.toContain('excluded');
+  await service.refresh(token,[{ id:'command',kind:'command',text:'Ran a command',command:'echo test',output:'test',exitCode:0,durationMs:100 }]);
+  expect((await service.get(token))?.messages[0]).toMatchObject({command:'echo test',output:'test'});
+  const old = await service.create(input('old-link'));
+  await service.refresh(old.token,[activity,...input().messages]);
+  expect((await service.get(old.token))?.messages).toEqual(input().messages.map(({role,text})=>({role,text})));
+  expect(sharedConversationPage(share!,token)).not.toContain('private-source-home');
+});
+
+it('rejects malformed rich activities and strips native image paths without granting filesystem access', async () => {
+  await expect(service.create({ ...input(),includeActivities:true,messages:[{id:'bad',kind:'unknown',text:'Invalid'}] })).rejects.toThrow('messages');
+  const { token } = await service.create({ ...input(),includeActivities:true,messages:[{id:'image',role:'user',text:'Upload',images:[{src:'file:///private/image.png'},{src:'https://example.test/image.png'}]}] });
+  expect((await service.get(token))?.messages[0]?.images).toEqual([{src:'https://example.test/image.png'}]);
+});
+
+it('binds local full-activity links without copying their transcript into SecretStorage', async () => {
+  const sessionKey=JSON.stringify(['local','11111111-1111-4111-8111-111111111111']);
+  const {token}=await service.create({sessionKey,title:'Large conversation',includeActivities:true},'original-home');
+  expect(await new ConversationShares(secrets).get(token)).toMatchObject({nativeSession:true,sourceHome:'original-home',messages:[]});
+  expect(Buffer.byteLength([...stored.values()].join())).toBeLessThan(1024);
+  await expect(service.create({sessionKey,title:'No source',includeActivities:true})).rejects.toThrow('messages');
 });
 it("replaces only this conversation's token, revokes persistently, and rejects malformed tokens", async () => {
   const first = await service.create(input()); const other = await service.create(input("other:thread"));

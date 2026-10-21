@@ -5,6 +5,7 @@ import type {
   DashboardState
 } from "../../src/domain/dashboard/types";
 import { useState } from "preact/hooks";
+import { createPortal } from "preact/compat";
 import {
   SettingsDiscreteSlider,
   SettingsLanguageBlock,
@@ -15,7 +16,7 @@ import {
 } from "./components";
 import { formatTemplate } from "./helpers";
 import { renderRemoveIcon } from "./icons";
-import { useModalAccessibility } from "./primitives";
+import { handleTabKeyDown, useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
 
 import { BrowserNotifications } from "./browserNotifications";
@@ -101,7 +102,7 @@ export function SettingsOverlay(props: {
   const tabs = [...navigationCopy.tabs, { id: "tools" as const, label: "Tools", heading: "System tools", description: "Cleanup, diagnostics, and recovery." }];
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
 
-  return (
+  return createPortal(
     <div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
       <div
         ref={accessibility.modalRef}
@@ -124,7 +125,7 @@ export function SettingsOverlay(props: {
             ×
           </button>
         </div>
-        <div class="settings-tab-list" role="tablist" aria-label={navigationCopy.tabListLabel}>
+        <div class="settings-tab-list" role="tablist" onKeyDown={handleTabKeyDown} aria-label={navigationCopy.tabListLabel}>
           {tabs.map((tab, index) => (
             <button
               key={tab.id}
@@ -785,7 +786,7 @@ export function SettingsOverlay(props: {
           </div>
         </fieldset></div>
       </div>
-    </div>
+    </div>, document.body
   );
 }
 

@@ -13,6 +13,7 @@ import { saveSessionLive } from '../src/storage/sqliteSessions';
 const state = vi.hoisted(() => ({ project: '', home: '', id: '11111111-1111-4111-8111-111111111111' }));
 vi.mock('../src/services/codexSessionResume', () => ({
   resolveCodexHome: vi.fn(() => state.home),
+  readCodexCliSessionInitialPrompt: vi.fn(async () => 'Initial user request'),
   readCodexCliSessions: vi.fn(async () => [{ id: state.id, title: 'Session', status: 'running', projectPath: state.project }]),
   readCodexCliSessionSummary: vi.fn(async () => ({ id: state.id, projectPath: state.project, status: 'idle' })),
   readCodexCliSessionMessagePage: vi.fn(async () => ({ messages: [{ id: 'message', kind: 'message', role: 'assistant', text: 'Answer' }, { id: 'tool', kind: 'command', text: 'Run', output: 'Command output', command: 'echo test' }], olderThan: '200', warnings: [] }))

@@ -9,7 +9,9 @@ import { SqliteStateStore, configureSqliteStateStore } from '../src/storage/sqli
 import { createProjectShare, revokeProjectShares, readProjectTasks, saveProjectTask } from '../src/services/projectTasks';
 import * as boardService from '../src/services/projectBoard';
 import { removeTestDirectory } from './testFilesystem';
+import { ConversationShares } from '../src/services/conversationShares';
 import { ProjectShareEvents } from '../src/services/projectShareEvents';
+import * as sessionEditor from '../src/services/codexSessionResume';
 
 let root: string, store: SqliteStateStore, events: ProjectShareEvents, server: { handle(request: unknown, response: unknown): Promise<void>; publicProjectInflight: number };
 beforeEach(async () => {
@@ -97,4 +99,39 @@ it('streams real HTTP invalidations, bounds duplicate views, and closes immediat
     clearTimeout(deadline); controller.abort(); events.close(); network.closeAllConnections();
     await new Promise<void>(resolve => network.close(() => resolve()));
   }
+});
+
+it('streams legacy conversation invalidations through HTTP and rejects revoked tokens', async () => {
+  let saved: string | undefined;
+  const shares = new ConversationShares({ get: async () => saved, store: async (_key, value) => { saved = value; } });
+  Object.assign(server, { conversationShares: shares });
+  const { token } = await shares.create({ sessionKey: 'legacy:snapshot', title: 'Shared', messages: [{ role: 'user', text: 'Private message' }] });
+  const network = createServer((incoming, response) => { void server.handle(incoming, response); });
+  await new Promise<void>(resolve => network.listen(0, '127.0.0.1', resolve));
+  const address = network.address() as { port: number };
+  const endpoint = `http://127.0.0.1:${address.port}/api/share/${token}/events`;
+  const controller = new AbortController(), deadline = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(endpoint, { signal: controller.signal });
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    const reader = response.body!.getReader(), decode = new TextDecoder();
+    expect(decode.decode((await reader.read()).value)).toBe('event: ready\ndata: {}\n\n');
+    await shares.revoke('legacy:snapshot'); events.heartbeat();
+    expect(decode.decode((await reader.read()).value)).toBe('event: revoked\ndata: {}\n\n');
+    expect((await reader.read()).done).toBe(true);
+    expect((await fetch(endpoint, { signal: controller.signal })).status).toBe(404);
+  } finally { clearTimeout(deadline); controller.abort(); events.close(); network.closeAllConnections(); await new Promise<void>(resolve => network.close(() => resolve())); }
+});
+
+it('serves full native share activity from its original home without rewriting a transcript snapshot', async () => {
+  let saved: string | undefined;
+  const write=vi.fn(async (_key:string,value:string)=>{saved=value;});
+  const shares=new ConversationShares({get:async()=>saved,store:write});Object.assign(server,{conversationShares:shares});
+  const id='11111111-1111-4111-8111-111111111111';
+  const {token}=await shares.create({sessionKey:JSON.stringify(['local',id]),title:'Native task',includeActivities:true},root);
+  vi.spyOn(sessionEditor,'resolveCodexHome').mockReturnValue(join(root,'different-home'));
+  const read=vi.spyOn(sessionEditor,'readCodexCliSessionMessages').mockResolvedValue([{id:'tool',kind:'tool-call',text:'Tool',arguments:'{"full":true}',result:'Full result',command:'echo test',output:'Full output'}]);
+  const response=await request('/api/share/'+token);expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body)).toMatchObject({messages:[{kind:'tool-call',arguments:'{"full":true}',result:'Full result',output:'Full output'}]});
+  expect(read).toHaveBeenCalledExactlyOnceWith(id,root);expect(write).toHaveBeenCalledOnce();expect(response.body).not.toContain('sourceHome');
 });

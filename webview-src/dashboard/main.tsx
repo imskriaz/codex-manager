@@ -413,6 +413,7 @@ function App() {
         if (id) setAgentMessages((current) => ({ ...current, [id]: { ...current[id], loading: false, error: "Agent messages timed out. Try Refresh." } }));
       }
       if (action === "listCodexCliSessions") setCliSessionsError("Sessions did not refresh in time. Try again.");
+      if (action === "runWorkspaceTerminalCommand") recordSubmissionResult(requestId, "failed");
       if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
         explicitCliRefreshRef.current = undefined;
         showCliSessionFeedback({
@@ -575,7 +576,8 @@ function App() {
         dashboardCacheHydratedRef.current = true;
         if (isBrowserDashboard) setBrowserLastSyncAt(Date.now());
       }
-      modals.handleHostMessage(message);
+      if (message.type === 'dashboard:notice' && message.actionPrompt) pushBrowserNotification(message);
+      else modals.handleHostMessage(message);
       if (onboardingOpen && message.type === "dashboard:action-result") {
         const onboardingAction = message.action;
         if (onboardingAction === "completeOnboarding" && onboardingPendingRef.current.has(onboardingAction)) {
@@ -673,11 +675,11 @@ function App() {
       }
       if (message.type === "dashboard:notification-dismissed") {
         setBrowserActionRequest((current) =>
-          current?.kind === "notification" && current.notificationId === message.notificationId ? undefined : current
+          (current?.kind === "notification" || current?.kind === "quotaWarning") && current.notificationId === message.notificationId ? undefined : current
         );
         return;
       }
-      if (message.type === "dashboard:notice" && message.notificationId && message.actions?.length) {
+      if (message.type === "dashboard:notice" && message.notificationId && message.actions?.length && !message.actionPrompt) {
         setBrowserActionRequest({
           kind: "notification",
           notificationId: message.notificationId,
@@ -686,17 +688,18 @@ function App() {
           actions: message.actions
         });
       }
-      const actionPrompt = message.type === "dashboard:action-result" ? message.payload?.actionPrompts?.[0] : undefined;
+      const actionPrompt = message.type === "dashboard:action-result" ? message.payload?.actionPrompts?.[0] : message.type === "dashboard:notice" ? message.actionPrompt : undefined;
       if (actionPrompt?.kind === "quotaWarning") {
         setBrowserActionRequest({
           kind: "quotaWarning",
           action: "switch",
+          notificationId: message.type === 'dashboard:notice' ? message.notificationId : undefined,
+          targetDeviceId: actionPrompt.targetDeviceId ?? 'local',
           accountId: actionPrompt.accountId,
           switchAccountId: actionPrompt.switchAccountId,
           switchLabel: actionPrompt.switchLabel,
           resetLabel: actionPrompt.resetLabel,
           selectLabel: actionPrompt.selectLabel,
-          laterLabel: actionPrompt.laterLabel,
           title: "Quota warning",
           message: actionPrompt.message
         });
@@ -704,6 +707,7 @@ function App() {
       if (actionPrompt?.kind === "disabledActiveAccount") {
         setBrowserActionRequest({
           kind: "disabledActiveAccount",
+          targetDeviceId: actionPrompt.targetDeviceId ?? 'local',
           accountId: actionPrompt.accountId,
           title: "Current account disabled",
           message: actionPrompt.message,
@@ -1058,6 +1062,7 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "runWorkspaceTerminalCommand") {
+        recordSubmissionResult(message.requestId, message.status === 'completed' && message.payload?.terminalResult?.status === 'completed' ? 'completed' : 'failed');
         if (message.payload?.terminalResult && message.payload.terminalResult.status !== "running") {
           const completed = message.payload.terminalResult;
           dispatchTerminalActivity({ result: completed });
@@ -1707,14 +1712,17 @@ function App() {
     accountId?: string,
     payload?: DashboardActionPayload
   ): void => {
+    const targetDeviceId = payload && Object.hasOwn(payload, 'targetDeviceId') ? payload.targetDeviceId : selectedPeer?.local ? undefined : selectedPeer?.id;
+    const accountsForAction = targetDeviceId ? snapshot.peerAccounts?.[targetDeviceId] ?? [] : snapshot.accounts;
     if (action === "switch" && accountId) {
-      const account = displayedAccounts.find((candidate) => candidate.id === accountId);
+      const account = accountsForAction.find((candidate) => candidate.id === accountId);
       const claimedElsewhere = Boolean(account?.runningDeviceName && !account.runningOnThisDevice);
       if (claimedElsewhere && !snapshot.settings.encryptedSyncRegistryOverrideEnabled) {
         setBrowserActionRequest({
           kind: "password",
           action: "switch",
           accountId,
+          targetDeviceId,
           title: "Switch claimed account",
           message: `Enter the shared password to enable Rescue on this PC and switch to ${getSensitiveDisplayValue(account?.email, state.privacyMode, "email", "this account")}. Automation will continue to avoid foreign-claimed accounts.`,
           confirmPassword: false
@@ -1727,16 +1735,17 @@ function App() {
       return;
     }
     if (action === "reauthorize" && accountId) {
-      const account = displayedAccounts.find((candidate) => candidate.id === accountId);
+      const account = accountsForAction.find((candidate) => candidate.id === accountId);
       modals.openReauthorizeModal(accountId, account?.email ?? "");
       return;
     }
     if (action === "remove" && accountId) {
-      const account = displayedAccounts.find((candidate) => candidate.id === accountId);
+      const account = accountsForAction.find((candidate) => candidate.id === accountId);
       setBrowserActionRequest({
         kind: "confirm",
         action,
         accountId,
+        targetDeviceId,
         title: "Remove account",
         message: `Remove ${getSensitiveDisplayValue(account?.email, state.privacyMode, "email", "this account")} from Codex Manager?`,
         confirmLabel: "Remove",
@@ -1745,12 +1754,13 @@ function App() {
       return;
     }
     if (action === "consumeResetCredit" && accountId) {
-      const account = displayedAccounts.find((candidate) => candidate.id === accountId);
+      const account = accountsForAction.find((candidate) => candidate.id === accountId);
       const available = account?.resetCreditsAvailable ?? 0;
       setBrowserActionRequest({
         kind: "confirm",
         action,
         accountId,
+        targetDeviceId,
         title: "Reset your usage?",
         message: `Reset the rate limit for ${getSensitiveDisplayValue(account?.email, state.privacyMode, "email", "this account")}? ${available} reset${available === 1 ? "" : "s"} available.`,
         confirmLabel: "Reset Rate Limit"
@@ -1762,6 +1772,7 @@ function App() {
         kind: "confirm",
         action,
         accountId,
+        targetDeviceId,
         title: "Reload VS Code",
         message: "Reload the VS Code extension host so this window uses the active account?",
         confirmLabel: "Reload"
@@ -1814,13 +1825,15 @@ function App() {
   const confirmBrowserAction = (request: BrowserActionRequest, submittedValues?: string[]): void => {
     setBrowserActionRequest(undefined);
     if (request.kind === "quotaWarning") {
+      if (request.notificationId) postMessageToHost({ type: "dashboard:notification-response", notificationId: request.notificationId });
+      const targetDeviceId = request.targetDeviceId === 'local' ? undefined : request.targetDeviceId;
       const choice = submittedValues?.[0];
       if (choice === "switch" && request.switchAccountId) {
-        sendAction("switch", request.switchAccountId);
+        confirmBrowserAction({ kind: 'switch', accountIds: [request.switchAccountId], targetDeviceId });
       } else if (choice === "reset") {
-        sendAction("consumeResetCredit", request.accountId);
+        handleAccountAction("consumeResetCredit", request.accountId, { targetDeviceId });
       } else if (choice === "select") {
-        openBrowserSwitchPicker();
+        openBrowserSwitchPicker(request.targetDeviceId ?? 'local');
       }
       return;
     }
@@ -1834,7 +1847,7 @@ function App() {
     }
     if (request.kind === "disabledActiveAccount") {
       if (submittedValues?.[0] === "unload") {
-        sendAction("unloadAuth");
+        sendAction("unloadAuth", undefined, { targetDeviceId: request.targetDeviceId === 'local' ? undefined : request.targetDeviceId });
       } else {
         showNotice({
           level: "warning",
@@ -1845,6 +1858,9 @@ function App() {
       return;
     }
     if (request.kind === "switch") {
+      if (request.targetDeviceId && !pcOptions.some(peer => peer.id === request.targetDeviceId && peer.connected)) {
+        showNotice({ level: 'warning', message: 'This system is offline. Reconnect it before switching accounts.' }); return;
+      }
       const accountId = request.accountIds[0];
       if (accountId) {
         const account = (
@@ -1880,6 +1896,7 @@ function App() {
     }
     sendAction(request.action, request.accountId, {
       accountIds: request.accountIds,
+      ...('targetDeviceId' in request ? { targetDeviceId: request.targetDeviceId } : {}),
       confirmed: true
     });
     if (request.action === "reloadPrompt") {
@@ -1889,6 +1906,7 @@ function App() {
 
   const cancelBrowserAction = (request: BrowserActionRequest): void => {
     setBrowserActionRequest(undefined);
+    if ((request.kind === 'notification' || request.kind === 'quotaWarning') && request.notificationId) postMessageToHost({ type: 'dashboard:notification-response', notificationId: request.notificationId });
     const message =
       request.kind === "switch"
         ? "Account switch cancelled."
@@ -2092,7 +2110,7 @@ function App() {
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard active={browserPath === '/tasks'}
-          sessions={cliSessions} projects={cliComposerConfig?.projects}
+          sessions={cliSessions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           connected={!isBrowserDashboard || realtimeConnected}
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
@@ -2153,7 +2171,7 @@ function App() {
                   browser={isBrowserDashboard}
                   autoResumeEnabled={snapshot.settings.autoResumeEnabled === true}
                   onAutoResume={(session, enabled) => requestSessionAction("setCodexSessionAutoResume", session, { autoResumeEnabled: enabled })}
-                  onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 0 })}
+                  onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 3 })}
                   sessions={runningCliSessions}
                   peers={pcOptions}
                   ready={liveSessionListReceived.current}
@@ -2754,7 +2772,7 @@ function App() {
               goalUpdating={isActionPending("setCodexSessionGoalStatus")}
               onGoalStatus={(status) => selectedCliSession && requestSessionAction("setCodexSessionGoalStatus", selectedCliSession, { goalStatus: status })}
               onAutoResume={(session, enabled) => requestSessionAction("setCodexSessionAutoResume", session, { autoResumeEnabled: enabled })}
-              onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 0 })}
+              onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 3 })}
               error={cliSessionsError}
               agentMessages={agentMessages}
               onReadAgent={(agent) => {

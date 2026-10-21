@@ -22,8 +22,10 @@ export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1
       return 8_000;
     case "sendCodexCliSessionMessage":
     case "startCodexCliSession":
+    case "startProjectSubtask":
     case "startProjectTask":
       return 15 * 60_000 + 15_000;
+    case "moveProjectTask":
     case "getProjectBoard":
     case "getProjectTaskDetails":
     case "saveProjectTask":

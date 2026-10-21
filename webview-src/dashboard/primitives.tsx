@@ -1,5 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
+import { createPortal } from "preact/compat";
 
 const MODAL_FOCUSABLE = [
   "a[href]",
@@ -9,6 +10,15 @@ const MODAL_FOCUSABLE = [
   "textarea:not([disabled])",
   '[tabindex]:not([tabindex="-1"])'
 ].join(",");
+
+export function handleTabKeyDown(event: JSX.TargetedKeyboardEvent<HTMLElement>): void {
+  if (event.altKey || event.ctrlKey || event.metaKey || !['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+  const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)'));
+  const index = tabs.indexOf(document.activeElement as HTMLButtonElement);
+  if (index < 0) return;
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault(); tabs[next]?.focus(); tabs[next]?.click();
+}
 
 export function useModalAccessibility(open: boolean, onClose: () => void) {
   const modalRef = useRef<HTMLDivElement>(null);
@@ -158,10 +168,10 @@ export function TaskDetailPanel(props: { open: boolean; title: string; onClose: 
     return () => { if (previous?.isConnected && (document.activeElement === document.body || ref.current?.contains(document.activeElement))) previous.focus({ preventScroll: true }); };
   }, [props.open]);
   if (!props.open) return null;
-  return <aside ref={ref} class="task-detail-panel task-detail-modal" aria-label={props.title} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); closeRef.current(); } }}>
+  return createPortal(<aside ref={ref} class="task-detail-panel task-detail-modal" aria-label={props.title} tabIndex={-1} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); closeRef.current(); } }}>
     <header class="settings-modal-head"><strong class="settings-modal-title">{props.title}</strong><button type="button" class="settings-close" aria-label="Close task details" onClick={props.onClose}>×</button></header>
     <div class="task-detail-panel-body">{props.children}</div>
-  </aside>;
+  </aside>, document.body);
 }
 
 export function ModalShell(props: {
@@ -169,14 +179,15 @@ export function ModalShell(props: {
   title: string;
   closeLabel: string;
   className?: string;
+  closeDisabled?: boolean;
   closeOnBackdrop?: boolean;
   onClose: () => void;
   children: ComponentChildren;
 }) {
-  const accessibility = useModalAccessibility(props.open, props.onClose);
+  const accessibility = useModalAccessibility(props.open, () => { if (!props.closeDisabled) props.onClose(); });
   if (!props.open) return null;
 
-  return (
+  return createPortal(
     <div
       class={`overlay ${props.open ? "open" : ""}`}
       aria-hidden={!props.open}
@@ -196,12 +207,12 @@ export function ModalShell(props: {
       >
         <div class="settings-modal-head">
           <div class="settings-modal-title">{props.title}</div>
-          <button class="settings-close" type="button" aria-label={props.closeLabel} onClick={props.onClose}>
+          <button class="settings-close" type="button" aria-label={props.closeLabel} disabled={props.closeDisabled} onClick={props.onClose}>
             ×
           </button>
         </div>
         <div class="settings-modal-body dashboard-modal-body">{props.children}</div>
       </div>
-    </div>
+    </div>, document.body
   );
 }

@@ -42,6 +42,16 @@ function projectStorage(project: string): { store: SqliteStateStore; key: string
       store.prepare('INSERT OR IGNORE INTO project_comments VALUES(?,?,?,?,?)').run(key, comment.id, comment.taskId, comment.createdAt, JSON.stringify(comment));
     store.set('project-migrations', key, true);
   });
+  if (!store.get('project-session-parents-v1', key)) store.transaction(() => {
+    const rows = store.prepare('SELECT child.data AS child_data,parent.data AS parent_data FROM project_tasks child LEFT JOIN project_tasks parent ON parent.project=child.project AND parent.id=child.parent_id WHERE child.project=? AND child.parent_id IS NOT NULL').all(key);
+    for (const row of rows) {
+      const task = JSON.parse(String(row['child_data'])) as ProjectTask;
+      const parent = typeof row['parent_data'] === 'string' ? JSON.parse(row['parent_data']) as ProjectTask : undefined;
+      if ((!task.sourceKey && !task.sessionId) || !parent || parent.sourceKey || parent.sessionId)
+        putTask(store, key, { ...task, parentTaskId: undefined, revision: task.revision + 1, updatedAt: Date.now() });
+    }
+    store.set('project-session-parents-v1', key, true);
+  });
   return { store, key };
 }
 function identifier(id: unknown): asserts id is string {
@@ -82,11 +92,11 @@ export function syncProjectSessions(project: string, home: string, sessions: Pro
       const sourceKey = `${homeKey}:${session.id.toLowerCase()}`;
       const current = sources.get(sourceKey) ?? legacyLinks.get(session.id);
       if (!current && ++count > 30000) throw new Error('Project task storage is full. Saved tasks were preserved.');
-      const stage = session.status === 'unknown' && current ? current.stage : sessionTaskStage(session);
+      const stage = current?.manualStage ?? (session.status === 'unknown' && current ? current.stage : sessionTaskStage(session));
       const title = session.title;
       if (current?.sourceKey === sourceKey && current.title === title && current.stage === stage && current.sessionArchived === (session.archived === true)) continue;
       const next: ProjectTask = { ...current, id: current?.id ?? `session:${digest(sourceKey).slice(0, 16)}:${session.id}`, title,
-        prompt: current?.prompt ?? '', sessionId: session.id, sourceKey, sourceHome: home, stage, sessionArchived: session.archived === true, revision: (current?.revision ?? 0) + 1,
+        prompt: current?.prompt ?? '', sessionId: session.id, sourceKey, sourceHome: home, stage, manualStage: current?.manualStage, sessionArchived: session.archived === true, revision: (current?.revision ?? 0) + 1,
         createdAt: current?.createdAt ?? Date.now(), updatedAt: Date.now() };
       putTask(store, key, next);
     }
@@ -99,18 +109,19 @@ export function saveProjectTask(project: string, input: ProjectTaskMutation): Pr
   if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 240 ||
       typeof input.prompt !== 'string' || input.prompt.length > 32_000 || !['idea','planned','running','completed'].includes(input.stage) ||
       !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) throw new Error('Enter a title and keep the task prompt under 32,000 characters.');
+  if (input.archived !== undefined && typeof input.archived !== 'boolean') throw new Error('Choose whether this custom task is archived.');
   if (input.parentTaskId !== undefined && input.parentTaskId !== null) identifier(input.parentTaskId);
   const { store, key } = projectStorage(project);
   const task = store.transaction(() => {
     const current = getTask(store, key, input.id);
     const parentTaskId = input.parentTaskId === null ? undefined : input.parentTaskId ?? current?.parentTaskId;
-    if (current && current.revision === input.expectedRevision + 1 && current.title === input.title.trim() && current.prompt === input.prompt && current.stage === input.stage && current.parentTaskId === parentTaskId) return current;
+    if (current && current.revision === input.expectedRevision + 1 && current.title === input.title.trim() && current.prompt === input.prompt && current.stage === input.stage && current.parentTaskId === parentTaskId && (input.archived === undefined || current.archived === input.archived)) return current;
     if ((current?.revision ?? 0) !== input.expectedRevision) throw new Error('This task changed in another browser. Your draft was kept; refresh and review it before saving.');
     if (!current && input.id.startsWith('session:')) throw new Error('Session tasks are created by discovery. Refresh the project first.');
     if (!current && Number(store.prepare('SELECT COUNT(*) AS n FROM project_tasks WHERE project=? AND source IS NULL').get(key)?.['n']) >= 500) throw new Error('This project already has 500 custom tasks. Project task storage is full.');
     if (current?.launchPending) throw new Error('Task startup is unconfirmed. Check the session list before changing this task.');
-    if (current?.sourceKey && (input.title !== current.title || input.prompt !== current.prompt || input.stage !== current.stage)) throw new Error('Session titles and state are managed in the conversation. Only task grouping can be changed here.');
-    if (!current?.sessionId && input.stage === 'running') throw new Error('Start the task in Codex to mark it running.');
+    if (parentTaskId && !current?.sourceKey && !current?.sessionId) throw new Error('Only session tasks can be subtasks. Custom tasks stay on the top-level board.');
+    if ((current?.sourceKey || current?.sessionId) && (input.archived !== undefined || input.title !== current.title || input.prompt !== current.prompt || input.stage !== current.stage)) throw new Error('Session titles and state are managed in the conversation. Only task grouping can be changed here.');
     let ancestor = parentTaskId;
     const seen = new Set([input.id]);
     while (ancestor) {
@@ -118,13 +129,10 @@ export function saveProjectTask(project: string, input: ProjectTaskMutation): Pr
       seen.add(ancestor);
       const parent = getTask(store, key, ancestor);
       if (!parent) throw new Error('The parent task is missing or belongs to another project.');
+      if (ancestor === parentTaskId && (parent.sourceKey || parent.sessionId)) throw new Error('Choose a custom task as the parent. Sessions cannot contain task subtasks.');
       ancestor = parent.parentTaskId;
     }
-    if (input.stage === 'completed' && current?.stage !== 'completed') {
-      const descendants = store.prepare(`WITH RECURSIVE children(id,data) AS (SELECT id,data FROM project_tasks WHERE project=? AND parent_id=? UNION ALL SELECT t.id,t.data FROM project_tasks t JOIN children c ON t.parent_id=c.id WHERE t.project=?) SELECT data FROM children`).all(key, input.id, key);
-      if (descendants.some(row => (JSON.parse(String(row['data'])) as { stage?: unknown }).stage !== 'completed')) throw new Error('Complete unfinished subtasks before completing this parent.');
-    }
-    const task: ProjectTask = { ...current, id: input.id, title: input.title.trim(), prompt: input.prompt, stage: input.stage, parentTaskId,
+    const task: ProjectTask = { ...current, manualStage: current?.sourceKey || current?.sessionId ? current.manualStage : input.stage, archived: input.archived ?? current?.archived, id: input.id, title: input.title.trim(), prompt: input.prompt, stage: input.stage, parentTaskId,
       revision: (current?.revision ?? 0) + 1, createdAt: current?.createdAt ?? Date.now(), updatedAt: Date.now() };
     putTask(store, key, task); return task;
   });
@@ -151,14 +159,14 @@ export function addProjectComment(project: string, input: { id: string; taskId: 
   publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
   return comment;
 }
-export function claimProjectTaskStart(project: string, id: string, expectedRevision: number | undefined): ProjectTask {
+export function claimProjectTaskStart(project: string, id: string, expectedRevision: number | undefined, subtask = false): ProjectTask {
   identifier(id);
   const { store, key } = projectStorage(project);
   const task = store.transaction(() => {
     const task = getTask(store, key, id);
     if (!Number.isSafeInteger(expectedRevision) || task?.revision !== expectedRevision) throw new Error('This task changed. Review the latest prompt before starting it.');
-    if (!task || task.stage !== 'planned' || task.sessionId || task.launchPending) throw new Error('This task already started or its startup is unconfirmed. Refresh sessions before retrying.');
-    if (!task.prompt.trim()) throw new Error('Add a prompt before starting this task.');
+    if (!task || task.sessionId || task.sourceKey || task.archived || task.launchPending) throw new Error('This task already started or its startup is unconfirmed. Refresh sessions before retrying.');
+    if (!subtask && !task.prompt.trim()) throw new Error('Add a prompt before starting this task.');
     const next = { ...task, launchPending: true, revision: task.revision + 1, updatedAt: Date.now() };
     putTask(store, key, next); return next;
   });
@@ -174,7 +182,7 @@ export function resetProjectTaskStart(project: string, id: string, expectedRevis
   });
   publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
 }
-export function finishProjectTaskStart(project: string, id: string, sessionId: string, home: string): void {
+export function finishProjectTaskStart(project: string, id: string, sessionId: string, home: string, prompt?: string, title?: string): void {
   const { store, key } = projectStorage(project);
   store.transaction(() => {
     const task = getTask(store, key, id);
@@ -182,7 +190,7 @@ export function finishProjectTaskStart(project: string, id: string, sessionId: s
     const sourceKey = `${projectTaskKey(home)}:${sessionId.toLowerCase()}`;
     const existing = store.prepare('SELECT data FROM project_tasks WHERE project=? AND source=?').get(key, sourceKey);
     const child = existing ? JSON.parse(String(existing['data'])) as ProjectTask : undefined;
-    putTask(store, key, { ...child, id: child?.id ?? `session:${digest(sourceKey).slice(0,16)}:${sessionId}`, title: child?.title ?? task.title, prompt: '',
+    putTask(store, key, { ...child, id: child?.id ?? `session:${digest(sourceKey).slice(0,16)}:${sessionId}`, title: child?.title ?? title ?? task.title, prompt: child?.prompt || prompt || task.prompt,
       sessionId, sourceKey, sourceHome: home, parentTaskId: id, stage: 'running', revision: (child?.revision ?? 0) + 1, createdAt: child?.createdAt ?? Date.now(), updatedAt: Date.now() });
     putTask(store, key, { ...task, launchPending: false, revision: task.revision + 1, updatedAt: Date.now() });
   });
@@ -218,6 +226,18 @@ export function revokeProjectShares(project: string): void {
 }
 export function publicProjectBoard(board: ProjectBoard, share: ProjectShare): unknown {
   const stages = projectTaskStages(board.tasks);
-  return { title: path.basename(board.projectPath), tasks: board.tasks.map(({ id, title, prompt, stage, parentTaskId, sessionArchived }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId, sessionArchived })),
+  return { title: path.basename(board.projectPath), tasks: board.tasks.map(({ id, title, prompt, stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage })),
     comments: share.permissions.includes('comments') ? board.comments : [], permissions: share.permissions, expiresAt: share.expiresAt, updatedAt: board.updatedAt };
+}
+
+/** Board classification never changes native work, goals or recovery state. */
+export function recordProjectTaskStage(project: string, id: string, revision: number, stage: import('../domain/projectTasks').TaskStage, toBoard = false): ProjectTask {
+  const { store, key } = projectStorage(project);
+  const task = store.transaction(() => {
+    const current = getTask(store, key, id);
+    if (!current || current.revision !== revision || current.launchPending) throw new Error('This task changed or has an unconfirmed start. Refresh before moving it. No Codex work was started or stopped.');
+    const next: ProjectTask = { ...current, stage, parentTaskId: toBoard ? undefined : current.parentTaskId, manualStage: stage, archived: current.sourceKey ? current.archived : false, revision: current.revision + 1, updatedAt: Date.now() };
+    putTask(store, key, next); return next;
+  });
+  publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project }); return task;
 }

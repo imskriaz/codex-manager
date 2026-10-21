@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeTestDirectory } from "./testFilesystem";
 
 const mocks = vi.hoisted(() => ({ home: "", sessions: vi.fn(), summary: vi.fn(), goals: vi.fn(), clear: vi.fn(), remove: vi.fn(), restore: vi.fn() }));
-vi.mock("../src/services/codexSessionResume", () => ({ resolveCodexHome: () => mocks.home, SESSION_ID_PATTERN: /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i, readCodexSessionMaintenanceCandidates: mocks.sessions, readCodexCliSessionSummary: mocks.summary, clearCodexSessionGoal: mocks.clear, deleteCodexCliSession: mocks.remove, unarchiveCodexCliSession: mocks.restore }));
+vi.mock("../src/services/codexSessionResume", () => ({ resolveCodexHome: () => mocks.home, SESSION_ID_PATTERN: /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i, readCodexSessionMaintenanceCandidates: mocks.sessions, readCodexCliSessionSummary: mocks.summary, clearCodexSessionGoal: mocks.clear, deleteCodexCliSession: mocks.remove, unarchiveCodexCliSession: mocks.restore, withCodexSessionMaintenance: async (_ids: string[], task: () => Promise<unknown>) => task() }));
 vi.mock("../src/services/codexSessionGoals", () => ({ readCodexSessionGoals: mocks.goals }));
 vi.mock("../src/utils/persistentLog", () => ({ recordPersistentEvent: vi.fn() }));
 vi.mock("../src/utils/crossWindowOperations", () => ({ runCrossWindowExclusive: async (_key: string, _label: string, task: (signal: AbortSignal) => Promise<void>) => task(new AbortController().signal) }));

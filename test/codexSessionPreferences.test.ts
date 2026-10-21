@@ -110,10 +110,23 @@ it("does not let an old scheduler claim overwrite a later user queue change", as
   expect(claim).toBeTruthy(); expect(claimCodexSessionQueue(root, ids[0]!, 'first')).toBeUndefined();
   writeCodexSessionPreference(root, ids[0]!, { queue: true, priority: 3, queueRevision: 'second', queueClaimId: undefined, queueClaimedAt: undefined });
   finishCodexSessionQueueClaim(root, ids[0]!, claim, 'Old failure');
+  finishCodexSessionQueueClaim(root, ids[0]!, claim);
   expect(readCodexSessionPreferences(root, ids).get(ids[0]!)).toMatchObject({ queue: true, priority: 3, queueRevision: 'second' });
   expect(readCodexSessionPreferences(root, ids).get(ids[0]!)?.queueError).toBeUndefined();
   expect(claimCodexSessionQueue(root, ids[0]!, 'first')).toBeUndefined();
   const second = claimCodexSessionQueue(root, ids[0]!, 'second')!;
   finishCodexSessionQueueClaim(root, ids[0]!, second, 'Unconfirmed start');
   expect(claimCodexSessionQueue(root, ids[0]!, 'second')).toBeUndefined();
+});
+
+it("consumes a confirmed queue claim durably instead of scheduling it again", async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), "codex-session-preferences-"));
+  const database = path.join(root, "manager.sqlite");
+  store = await SqliteStateStore.open(database); configureSqliteStateStore(store);
+  writeCodexSessionPreference(root, ids[0]!, { queue: true, priority: 1, queueRevision: 'once', autoResume: false });
+  const claim = claimCodexSessionQueue(root, ids[0]!, 'once')!;
+  finishCodexSessionQueueClaim(root, ids[0]!, claim);
+  store.close(); store = await SqliteStateStore.open(database); configureSqliteStateStore(store);
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)).toMatchObject({ queue: false, autoResume: false });
+  expect(claimCodexSessionQueue(root, ids[0]!, 'once')).toBeUndefined();
 });

@@ -12,6 +12,7 @@ import {
   readCodexCliComposerConfig,
   readCodexCliSessionMessages,
   readCodexCliSessionMessagePage,
+  readCodexCliSessionInitialPrompt,
   readCodexCliSessionSummary,
   readNewCodexCliSessionSummary,
   renameCodexCliSession,
@@ -38,6 +39,12 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it('reads only the initial prompt, excluding injected context and uploaded file bodies', async () => {
+    const root=await mkdtemp(path.join(os.tmpdir(),'codex-initial-prompt-'));roots.push(root);await mkdir(path.join(root,'sessions'));
+    const record=(text:string)=>JSON.stringify({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}});
+    await writeFile(path.join(root,'sessions',`rollout-${sessionId}.jsonl`),[record('# AGENTS.md instructions for project'),record('<environment_context>Private context</environment_context>'),record('Original request\n\n<attached_file name="brief.txt">\nPrivate file body\n</attached_file>'),record('Later follow-up')].join('\n')+'\n');
+    expect(await readCodexCliSessionInitialPrompt(sessionId,root)).toBe('Original request');
+  });
   it('hydrates local previews sequentially so pending reads cannot exceed the image page budget', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'codex-image-buffers-')); roots.push(root);
     await mkdir(path.join(root, 'sessions'));

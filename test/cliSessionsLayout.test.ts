@@ -302,7 +302,7 @@ describe("sessions sidebar layout", () => {
     const sessionRowStart = source.indexOf("const renderSession =");
     const sessionRowEnd = source.indexOf("const returnToSessionList", sessionRowStart);
     expect(source.slice(sessionRowStart, sessionRowEnd)).not.toContain('label={`Archive ${session.title}`}');
-    expect(source).toContain("props.onArchive()");
+    expect(source).toContain("props.onArchive?.()");
     expect(source).toContain('<strong>Thinking</strong><span>for {formatElapsed(elapsed)}</span>');
     expect(source).not.toContain('<strong>Working</strong><span>for {formatElapsed(elapsed)}</span>');
     expect(source).toContain('label: "Recent"');

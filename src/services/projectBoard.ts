@@ -1,12 +1,12 @@
 import type { ProjectBoard, ProjectTaskDetails } from '../domain/projectTasks';
 import { projectTaskKey, readProjectTasks, readProjectTask, syncProjectSessions } from './projectTasks';
-import { readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessagePage, resolveCodexHome } from './codexSessionResume';
+import { readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessagePage, readCodexCliSessionInitialPrompt, resolveCodexHome } from './codexSessionResume';
 import { resolveWorkspaceProjectPathAsync, readWorkspaceEnvironment } from './workspaceTools';
 import { waitWithin } from '../utils/concurrency';
 import type { ProjectShare } from './projectTasks';
 import { readWorkspaceFile } from './workspaceTools';
 import { getSqliteStateStore } from '../storage/sqliteState';
-import { readStoredSessionLive } from '../storage/sqliteSessions';
+import { readStoredSessionLive, readSessionRunTimings } from '../storage/sqliteSessions';
 import { combineCliLiveMessages } from '../domain/codexSessionLive';
 import { listConversationFiles, readConversationAttachment, safeConversationImage } from '../domain/conversationFiles';
 import { withoutChatTextAttachments } from '../domain/chatAttachments';
@@ -15,14 +15,22 @@ const savedSessions = new Map<string, { sessions: ProjectBoard['sessions']; chec
 function boardSnapshot(project: string, home: string, sessions: ProjectBoard['sessions'], checkedAt = Date.now()): ProjectBoard {
   const rows = readProjectTasks(project), homeKey = projectTaskKey(home);
   const byId = new Map(sessions.map(session => [session.id, session]));
-  rows.tasks = rows.tasks.map(task => task.sessionId ? { ...task, sessionStatus: Date.now() - checkedAt < 5000 && task.sourceKey?.startsWith(`${homeKey}:`) ? byId.get(task.sessionId)?.status ?? 'unknown' : 'unknown' } : task);
+  let timings = new Map<string, NonNullable<ProjectBoard['tasks'][number]['timing']>>();
+  try { const store = getSqliteStateStore(); if (store) timings = readSessionRunTimings(store, home, rows.tasks.filter(task => task.sourceKey?.startsWith(`${homeKey}:`)).flatMap(task => task.sessionId ? [task.sessionId] : [])); } catch { /* Optional timing must not block task access. */ }
+  rows.tasks = rows.tasks.map(task => task.sessionId ? { ...task, timing: timings.get(task.sessionId.toLowerCase()), sessionStatus: Date.now() - checkedAt < 5000 && task.sourceKey?.startsWith(`${homeKey}:`) ? byId.get(task.sessionId)?.status ?? 'unknown' : 'unknown' } : task);
   return { projectPath: project, ...rows, sessions, updatedAt: Date.now(), homeKey };
 }
 
 /** A committed task edit never waits for optional native session discovery. */
-export function readSavedProjectBoard(project: string, session?: ProjectBoard['sessions'][number]): ProjectBoard {
+export function readSavedProjectBoard(project: string, session?: ProjectBoard['sessions'][number] | ProjectBoard['sessions']): ProjectBoard {
   const home = resolveCodexHome(), saved = savedSessions.get(`${projectTaskKey(project)}:${projectTaskKey(home)}`);
-  const sessions = session ? [session, ...(saved?.sessions ?? []).filter(item => item.id !== session.id)] : saved?.sessions ?? [];
+  const updated = session ? Array.isArray(session) ? session : [session] : [];
+  const ids = new Set(updated.map(item => item.id));
+  const sessions = updated.length ? [...updated, ...(saved?.sessions ?? []).filter(item => !ids.has(item.id))] : saved?.sessions ?? [];
+  if (updated.length) {
+    if (savedSessions.size >= 8) savedSessions.delete(savedSessions.keys().next().value!);
+    savedSessions.set(`${projectTaskKey(project)}:${projectTaskKey(home)}`, { sessions, checkedAt: saved?.checkedAt ?? 0 });
+  }
   return boardSnapshot(project, home, sessions, session ? Date.now() : saved?.checkedAt ?? 0);
 }
 
@@ -56,6 +64,7 @@ export async function readSharedProjectTask(share: ProjectShare, taskId: string,
     })),
     files: details.files, history: details.history, isGitRepository: details.environment?.isGitRepository,
     changes: details.environment?.changes, additions: details.environment?.additions, deletions: details.environment?.deletions,
+    initialPrompt: details.initialPrompt ? withoutChatTextAttachments(details.initialPrompt) : undefined,
     olderThan: details.olderThan, warnings: details.warnings
   };
 }
@@ -82,6 +91,7 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
     if (!session?.projectPath || projectTaskKey(session.projectPath) !== projectTaskKey(project)) throw new Error('This session does not belong to this project.');
   }
   const result: ProjectTaskDetails = { task, taskId, messages: [], files: [], history: [], warnings: [] };
+  const initialPromptRead = sessionId ? Promise.resolve(task.prompt || readCodexCliSessionInitialPrompt(sessionId, task.sourceHome)).catch(() => undefined) : undefined;
   try {
     if (sessionId) {
       try { Object.assign(result, await waitWithin(readCodexCliSessionMessagePage(sessionId, before, task.sourceHome), 5000, 'Task activity is still loading. Retry shortly.')); }
@@ -101,5 +111,6 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
       result.environment = await waitWithin(readWorkspaceEnvironment(project, true), 5000, 'Project changes are still loading.');
     }
   } catch (error) { result.warnings.push(error instanceof Error ? error.message : String(error)); }
+  if (initialPromptRead) result.initialPrompt = await waitWithin(initialPromptRead, 150, 'Initial prompt is still loading.').catch(() => undefined) || 'The initial prompt is currently unavailable. Reopen the task to retry.';
   return result;
 }

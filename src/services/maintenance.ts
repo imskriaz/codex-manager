@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { CODEX_INSPECTIONS, MAINTENANCE_TOOLS, type CodexInspection, type MaintenanceJob, type MaintenancePreview, type MaintenancePage, type MaintenanceTool, type MaintenanceReport } from "../domain/maintenance";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { readCodexSessionGoals } from "./codexSessionGoals";
-import { clearCodexSessionGoal, deleteCodexCliSession, unarchiveCodexCliSession, readCodexCliSessionSummary, readCodexSessionMaintenanceCandidates, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { clearCodexSessionGoal, deleteCodexCliSession, unarchiveCodexCliSession, readCodexCliSessionSummary, readCodexSessionMaintenanceCandidates, resolveCodexHome, SESSION_ID_PATTERN, withCodexSessionMaintenance } from "./codexSessionResume";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
@@ -214,7 +214,7 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
     const children = new Map<string, string[]>();
     for (const session of currentSessions) if (session.parentSessionId) children.set(session.parentSessionId, [...children.get(session.parentSessionId) ?? [], session.id]);
     const selected = new Set(items.map(item => item.id));
-    await runWithConcurrencyLimit(items, 3, async item => {
+    await withCodexSessionMaintenance(items.map(item => item.sessionId ?? item.id), () => runWithConcurrencyLimit(items, 3, async item => {
       if (controller.signal.aborted) return;
       try {
         check();
@@ -248,7 +248,7 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
         state.failed++;
         if (state.errors.length < 20) state.errors.push(`${item.title}: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`);
       } finally { state.processed++; job.updatedAt = Date.now(); }
-    });
+    }));
   }).then(() => {
     state.status = controller.signal.aborted ? "cancelled" : state.failed ? "failed" : "completed";
   }).catch(error => {

@@ -44,12 +44,12 @@ export function isNewerCodexSessionLiveState(next: LiveRevision, previous: LiveR
   return next.streamId === previous.streamId ? next.sequence > previous.sequence && !(terminal(previous.status) && !terminal(next.status)) : next.updatedAt > previous.updatedAt;
 }
 
-function validMessage(value: unknown): boolean {
+export function validMessage(value: unknown, maxText = MAX_TEXT): boolean {
   const message = record(value);
-  if (!message || typeof message["id"] !== "string" || !message["id"] || message["id"].length > 256 || typeof message["text"] !== "string" || message["text"].length > MAX_TEXT) return false;
+  if (!message || typeof message["id"] !== "string" || !message["id"] || message["id"].length > 256 || typeof message["text"] !== "string" || message["text"].length > maxText) return false;
   for (const [key, value] of Object.entries(message)) {
     if (value === undefined) continue;
-    if (["id", "turnId", "text", "title", "subtitle", "command", "cwd", "output", "arguments", "result", "debug", "timestamp"].includes(key)) { if (typeof value !== "string" || value.length > (key === "turnId" ? 256 : MAX_TEXT)) return false; }
+    if (["id", "turnId", "text", "title", "subtitle", "command", "cwd", "output", "arguments", "result", "debug", "timestamp"].includes(key)) { if (typeof value !== "string" || value.length > (key === "turnId" || key === "id" ? 256 : maxText)) return false; }
     else if (key === "kind") { if (typeof value !== "string" || !["message", "reasoning", "plan", "command", "file-change", "tool-call", "collaboration", "web-search", "image", "review", "compaction", "error"].includes(value)) return false; }
     else if (key === "role") { if (value !== "user" && value !== "assistant") return false; }
     else if (key === "status") { if (typeof value !== "string" || !["inProgress", "completed", "failed", "declined", "interrupted", "unknown"].includes(value)) return false; }
@@ -64,7 +64,7 @@ function validMessage(value: unknown): boolean {
         const item = record(value);
         const required = key === "changes" ? ["path", "kind"] : ["src"];
         const allowed = key === "changes" ? ["path", "kind", "diff"] : ["src", "alt"];
-        return !item || required.some((field) => typeof item[field] !== "string") || Object.entries(item).some(([field, value]) => !allowed.includes(field) || (value !== undefined && (typeof value !== "string" || value.length > MAX_TEXT)));
+        return !item || required.some((field) => typeof item[field] !== "string") || Object.entries(item).some(([field, value]) => !allowed.includes(field) || (value !== undefined && (typeof value !== "string" || value.length > maxText)));
       })) return false;
     } else return false;
   }

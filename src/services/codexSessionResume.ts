@@ -9,8 +9,9 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { execFile, spawn } from "child_process";
 import { createHash, randomUUID } from "crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
-import { prepareChatInput, readChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
+import { prepareChatInput, readChatTextAttachments, withoutChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
 import { appServerChatInput } from "./codexChatAttachments";
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
@@ -79,6 +80,17 @@ const newSessionFailures = new Map<string, Error>();
 const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; stop?: Promise<boolean> }>();
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean> }>();
 const nativeTurnObservers = new Map<string, Promise<void>>();
+const maintenanceConnection = new AsyncLocalStorage<{ home: string; ids: Set<string>; rpc?: Promise<CodexAppServerRpc> }>();
+
+/** Reuse one native process for a bounded cleanup job, never for session turns. */
+export async function withCodexSessionMaintenance<T>(ids: string[], task: () => Promise<T>): Promise<T> {
+  ids.forEach(validateSessionId);
+  const context = { home: resolveCodexHome(), ids: new Set(ids), rpc: undefined as Promise<CodexAppServerRpc> | undefined };
+  return maintenanceConnection.run(context, async () => {
+    try { return await task(); }
+    finally { if (context.rpc) await context.rpc.then(rpc => rpc.close(), () => undefined); }
+  });
+}
 
 function ownedNativeTurn(home: string, id: string) {
   const turn = activeNativeTurns.get(id);
@@ -763,6 +775,7 @@ export async function sendCodexCliSessionMessage(options: {
   onStarted?: () => void;
   signal?: AbortSignal;
   clearManualStop?: boolean;
+  interruptedOnly?: boolean;
 }): Promise<void> {
   options.signal?.throwIfAborted();
   validateSessionId(options.sessionId);
@@ -942,6 +955,7 @@ async function sendAppServerSessionMessage(options: {
   projectPath?: string;
   onStarted?: () => void;
   signal?: AbortSignal;
+  interruptedOnly?: boolean;
 }, cwd: string): Promise<void> {
   return runCliSessionMutation(options.sessionId, "Codex turn", async () => {
   options.signal?.throwIfAborted();
@@ -957,6 +971,17 @@ async function sendAppServerSessionMessage(options: {
   await readRecentTranscriptTurnState(transcript);
   const previous = transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
   const home = resolveCodexHome();
+  const needsContinuation = async (): Promise<boolean> => {
+    if (!options.interruptedOnly) return true;
+    const state = await readRecentTranscriptTurnState(transcript);
+    options.signal?.throwIfAborted();
+    if (resolveCodexHome() !== home) throw new Error("The active account home changed. No continuation was sent.");
+    if (readCodexSessionPreferences(home, [options.sessionId]).get(options.sessionId)?.manualStop)
+      throw new Error("This session was explicitly stopped while starting. It was left stopped.");
+    if (state === "unknown") throw new Error("Interrupted work could not be verified. No continuation was sent.");
+    return state !== "terminal" || cliTranscriptTurnStateCache.get(transcript!)?.cancelled === true;
+  };
+  if (!await needsContinuation()) return;
   const nativeStarted = (turnId: string) => nativeTurnStarted(home, options.sessionId, turnId);
   if ((getNativeCodexSessionRunning(home, options.sessionId) !== undefined || readOpenCodexSessionIds().includes(options.sessionId.toLowerCase())) && await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) {
     options.onStarted?.();
@@ -971,12 +996,13 @@ async function sendAppServerSessionMessage(options: {
   try {
     rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd, options.signal);
     options.signal?.throwIfAborted();
-    live.attach(options.sessionId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
     detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
     activeAppServerTurns.set(options.sessionId, { rpc });
     try { await rpc.request("thread/resume", { threadId: options.sessionId, cwd }); }
     catch (error) {
-      if (!(error instanceof Error) || !/already has an active writer/i.test(error.message) || !await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) throw error;
+      if (!(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
+      if (!await needsContinuation()) return;
+      if (!await startNativeCodexSessionTurn(home, options.sessionId, params, options.signal, nativeStarted)) throw error;
       options.signal?.removeEventListener("abort", abort);
       live.dispose(true);
       activeAppServerTurns.delete(options.sessionId); rpc.close();
@@ -987,6 +1013,8 @@ async function sendAppServerSessionMessage(options: {
     options.signal?.throwIfAborted();
     if (readCodexSessionPreferences(home, [options.sessionId]).get(options.sessionId)?.manualStop)
       throw new Error('This session was explicitly stopped while starting. It was left stopped.');
+    if (!await needsContinuation()) return;
+    live.attach(options.sessionId, rpc, parseCodexAppServerThreadItems, () => activeAppServerTurns.get(options.sessionId)?.cancelRequested === true && !activeAppServerTurns.get(options.sessionId)?.turnId);
     await rpc.startAndWaitForTurn(options.sessionId, params, CLI_TURN_TIMEOUT_MS, (turnId) => {
       const active = activeAppServerTurns.get(options.sessionId);
       if (active) active.turnId = turnId;
@@ -1466,6 +1494,31 @@ export async function deleteCodexCliSession(sessionId: string): Promise<void> {
 }
 
 /** Read a bounded history page without locking the writer or retaining the complete transcript. */
+/** The initial prompt is immutable: read a bounded transcript head on demand. */
+export async function readCodexCliSessionInitialPrompt(sessionId: string, home = resolveCodexHome()): Promise<string | undefined> {
+  validateSessionId(sessionId);
+  const value = await runCrossWindowSharedRead(sharedResourceKey('session-initial-prompt', [getCodexHomeStateKey(home), sessionId.toLowerCase()]), 'Initial session prompt', async signal => {
+    const recent = home === resolveCodexHome() ? recentNewSessions.get(sessionId)?.text : undefined;
+    if (recent) return withoutChatTextAttachments(recent).slice(0,32000);
+    const file = await findCliSessionTranscript(home, sessionId, signal);
+    signal.throwIfAborted(); if (!file) return null;
+    const snapshot = await readSafeFileSnapshot(file, { maxBytes: 512 * 1024, startOffset: 0, timeoutMs: 3000 });
+    const raw = snapshot.endOffset < snapshot.size ? splitCompleteJsonlRecords(snapshot.buffer).complete : snapshot.buffer;
+    for (const [line] of raw.toString('utf8').matchAll(/[^\n]+/g)) {
+      signal.throwIfAborted();
+      const message = parseCliSessionMessage(line, 0);
+      if (message?.role === 'user' && message.text.trim() && !/^(?:# AGENTS\.md instructions|<user_instructions>)/.test(message.text.trimStart())) {
+        const value = JSON.parse(line) as { payload?: Record<string, unknown> };
+        const payload = value.payload ?? {}, item = payload['item'] && typeof payload['item'] === 'object' ? payload['item'] as Record<string, unknown> : payload;
+        const original = typeof payload['message'] === 'string' ? payload['message'] : parseUserInputs(item['content'], 32000).text || message.text;
+        return withoutChatTextAttachments(original).slice(0,32000);
+      }
+    }
+    return null;
+  }, { maxAgeMs: 60000, timeoutMs: 5000 });
+  return value ?? undefined;
+}
+
 export async function readCodexCliSessionMessagePage(sessionId: string, before?: string, home = resolveCodexHome()): Promise<{ messages: DashboardCliSessionMessage[]; olderThan?: string; warnings: string[] }> {
   if (!SESSION_ID_PATTERN.test(sessionId) || (before !== undefined && !/^\d{1,16}$/.test(before))) throw new Error('The session history cursor is invalid.');
   const transcript = await findCliSessionTranscript(home, sessionId);
@@ -1899,7 +1952,7 @@ function parseCliFileChanges(value: unknown): NonNullable<DashboardCliSessionMes
   });
 }
 
-function parseUserInputs(value: unknown): { text: string; images: Array<{ src: string; alt?: string }>; textAttachments?: DashboardCliSessionMessage['textAttachments'] } {
+function parseUserInputs(value: unknown, maxChars = MAX_SESSION_MESSAGE_CHARS): { text: string; images: Array<{ src: string; alt?: string }>; textAttachments?: DashboardCliSessionMessage['textAttachments'] } {
   const parts: string[] = [];
   const images: Array<{ src: string; alt?: string }> = [];
   if (!Array.isArray(value)) return { text: "", images };
@@ -1928,7 +1981,7 @@ function parseUserInputs(value: unknown): { text: string; images: Array<{ src: s
     } else if (item["type"] === "skill" && typeof item["name"] === "string") parts.push(`[Skill: ${item["name"]}]`);
   }
   const text = parts.join("\n\n").trim(), textAttachments = readChatTextAttachments(text);
-  return { text: text.slice(0, MAX_SESSION_MESSAGE_CHARS), images: images.slice(0, 20), ...(textAttachments.length ? { textAttachments } : {}) };
+  return { text: text.slice(0, maxChars), images: images.slice(0, 20), ...(textAttachments.length ? { textAttachments } : {}) };
 }
 
 function readSafeImageSource(item: Record<string, unknown>): string | undefined {
@@ -2544,6 +2597,20 @@ async function runCodexAppServerRequest<T = unknown>(
   params: unknown,
   timeoutMs = APP_SERVER_REQUEST_TIMEOUT_MS
 ): Promise<T> {
+  const maintenance = maintenanceConnection.getStore();
+  if (maintenance && ["thread/delete", "thread/unarchive", "thread/goal/clear"].includes(method)) {
+    const id = (params as { threadId?: string } | null)?.threadId;
+    if (!id || !maintenance.ids.has(id) || maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
+    maintenance.rpc ??= (async () => {
+      await assertUsableCliProjectPath(maintenance.home);
+      const executable = await resolveCodexCliExecutable();
+      if (maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
+      return CodexAppServerRpc.open(executable, maintenance.home);
+    })();
+    const rpc = await maintenance.rpc;
+    if (maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
+    return rpc.request<T>(method, params, timeoutMs);
+  }
   const executable = await resolveCodexCliExecutable();
   const sessionId = (params as { threadId?: unknown } | null)?.threadId;
   let cwd: string;

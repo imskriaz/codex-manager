@@ -2,19 +2,34 @@
 
 ## 1.4.3
 
+### Compact task workspace and public parity
+
+- Use compact, full-height task columns with two-line cards, subtask counts, floating actions and information, and functional Board, List, Gantt, and Calendar views. Read dates and durations from observed session runs in the existing manager.sqlite database; show unavailable historical duration explicitly.
+- Move cards between columns to change board classification only. Moving never starts, pauses, resumes, or stops Codex; execution controls stay explicit. Archive and restore custom tasks independently, preserving session children and their running work. Custom tasks remain top-level containers; their New subtask action creates a session with its initial prompt as the description.
+- Render public project links with the main TaskBoard and task-detail code, conditionally restricting operations to the link's permissions. Reuse the session header and grouped transcript for public session links, hide both sidebars and private controls, and include tool calls, arguments, output, edits and images on newly created full-activity links. Existing message-only links keep their original grant. Local full-activity links bind their original source home instead of uploading and repeatedly persisting large transcript snapshots.
+- Remove the saved-history availability block from the conversation; retain actual history loading and action errors.
+- Move session and project sharing into their icon-only three-dot action menus. Keep sharing unavailable during conflicting work or offline project access, and omit private sharing from public views.
+- Redesign both share dialogs with content/access/expiry summaries, shared link-copy controls, editable permission check-all, and in-place revoke confirmation. Keep pending actions visible, preserve focus and choices, and report clipboard, offline, timeout, authentication and incomplete-response failures in the initiating dialog.
+- Keep task action feedback in a dismissible toast without inserting board or detail rows. Tighten two-line cards, omit empty subtask counts, reserve mobile logo clearance, and compact modal headers, task details, API tables and sharing controls.
+- Unify dialog typography, surfaces and action rows; split token creation into identity/project scope and operation permissions. Keep sharing checkboxes next to their descriptions. Use the common dialog shell for session links and preserve pending-request close protection. Reorganize task details with aligned properties, contextual conversation access and a compact comment composer.
+
 ### Sessions, recovery, and workspace
 
+- Keep account-warning choices in the browser dashboard, including warnings returned by another PC. Remove the warning's Later button, preserve the originating system for switching and reset confirmation, and dismiss mirrored native choices without opening a VS Code account picker.
 - Record verified native sessions and goals in SQLite in the background while the dashboard is closed. Keep running counts stable during partial discovery, preserve newer activity under recording-queue pressure, and retain recovery across reloads, storage contention, and unconfirmed starts.
 - Resume eligible recorded interruptions and unfinished active goals after native readiness is verified. Respect explicit Pause actions and exclude archived, child, completed, blocked, and budget-limited work. Treat model-capacity failures as interruptions and preserve provider errors until a later successful turn.
 - Keep a user Stop durable across delayed recording and reloads so it cannot be mistaken for recoverable interruption work; an explicit resume or new message clears that suppression.
 - Add per-session Auto Resume and queue controls to the Running Sessions flyout. Global Auto Resume supplies the default; each session can opt in or out independently. Deferred sessions wait for other active work, follow positive numeric priorities, and start equal priorities together in bounded groups. Durable claims prevent blind replay after an uncertain start or restart.
+- Consume accepted queue requests once so later status updates cannot send another continuation. Recheck the saved turn after native startup and before recovery starts; completed work stays idle, while explicit new user messages remain available. Auto Resume restoration runs at startup or reload, independently of status recording.
+- Keep priority controls in a viewport-bounded top-layer flyout, beside the session list where space permits. Standardize session action icons, provide priority presets and custom-number validation, preserve keyboard focus, and distinguish queue creation from priority editing.
+- Reuse one scoped Codex app-server connection throughout archive cleanup, restore and goal cleanup instead of starting a process for every item. Retain per-session locks, running-state checks, selection/home restrictions, bounded concurrency and explicit failure reporting; close the process when the job finishes.
 - Update externally changed session titles and retire temporary rename overrides after native confirmation. Reapply current preferences to cached lists across windows.
 - Validate closed-project paths asynchronously for files, terminals, and Git operations. Preserve symlink containment, file revisions, ownership checks, cancellation, and timeout safeguards. Automatically create a terminal in the session project when the selected terminal has a different or unverifiable folder.
 
 ### Project tasks and sharing
 
 - Add project Kanban with **Idea, Planned, Running, Completed**, enabled by default. Store custom tasks, discovered sessions, and comments in indexed Manager SQLite tables with revision checks and idempotent retries.
-- Organize sessions and custom tasks as nested subtasks at any level, or move them back to the board. Preserve session identity and history; grouped sessions appear once. Reject cycles, cross-project parents, missing tasks, and conflicting edits.
+- Keep custom tasks on the top-level board and group session subtasks beneath them, or return a session to the board. Preserve session identity and history; grouped sessions appear once. Reject cycles, cross-project parents, missing tasks, and conflicting edits.
 - Open task details in a right panel for combined Activities, conversation files, and recorded changes. Keep archived sessions in Completed with an additional Archive filter. Read tabs on demand, keep history pages bounded, preserve saved views when refreshes fail, and push committed task/comment updates to connected dashboards.
 - Include uploaded text snapshots and conversation images in task Files alongside recorded edits. Preserve complete supported text uploads before display truncation, preview attachments without filesystem lookups, and keep saved attachment hydration through partial live updates. Reject stale preview responses and show unavailable files explicitly.
 - Hydrate local conversation images sequentially within the page budget so concurrent buffers cannot multiply memory use. Count failed image decoding against the read budget to bound disk work as well as successful previews.
@@ -23,8 +38,12 @@
 - Preserve public submission drafts and retry identities across reloads; use a new identity for edited retries. Prevent duplicate submissions and edits during pending writes, disable offline actions immediately, and keep revoked boards cleared after search or filtering.
 - Update focused public boards and activity from scoped change events. Recheck permissions on every content read, close expired/revoked streams, coalesce bursts and overlapping refreshes, and release hidden/offline viewers. Bound connections and slow-client buffers without adding browser polling.
 
+- Make nested task cards their own drop targets, reject cyclic grouping, and catch up once when task-board changes arrive during a pending read. Preserve sidebar drag identity and revision checks.
+- Update legacy conversation shares through bounded event streams with expiry, revocation, slow-viewer limits and hidden/offline cleanup. Recovery screens recheck on focus, reconnect and return events instead of polling.
+
 ### API and offline behavior
 
+- Prevent slow HTTP reads from replacing newer live snapshots. Bound and deduplicate HTTP fallback actions alongside WebSocket actions; report missing confirmations and network failures as uncertain outcomes without replaying writes.
 - Add optional dashboard API access, off by default. Manage multiple named tokens in a compact table with a separate creation modal, scope them to selected projects or all projects, check all permissions and uncheck individual operations, revoke tokens, browse operations, and test requests in the browser dashboard. Store token hashes and filter every scoped request and result.
 - Require the state permission for appended dashboard snapshots even when an API token covers all projects; an operation-only token receives its action result without unrelated dashboard state.
 - Cache the data-free browser shell and bounded saved read views for offline reload. Reconcile task drafts and comments on reconnect with stable request IDs and visible conflict review. Preserve unsynced outbox entries when storage fills; never silently evict them.

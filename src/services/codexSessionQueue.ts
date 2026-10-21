@@ -68,11 +68,12 @@ export function registerCodexSessionQueue(context: vscode.ExtensionContext): voi
           if (!claimId) return;
           try {
             const outcome = await resumeCodexSessionWork(session.id, controller.signal, 'queue');
-            finishCodexSessionQueueClaim(home, session.id, claimId, undefined, outcome !== 'idle');
+            finishCodexSessionQueueClaim(home, session.id, claimId);
             if (outcome === 'idle') publishDashboardRealtime({ type: 'dashboard:notice', level: 'info', message: `Queued session “${session.title}” has no eligible unfinished work. It was left idle.` });
           } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            finishCodexSessionQueueClaim(home, session.id, claimId, detail);
+            let detail = error instanceof Error ? error.message : String(error);
+            try { finishCodexSessionQueueClaim(home, session.id, claimId, detail); }
+            catch (storageError) { detail += ` Result storage failed: ${storageError instanceof Error ? storageError.message : String(storageError)}`; }
             publishDashboardRealtime({ type: 'dashboard:notice', level: 'warning', message: `Queued session “${session.title}” was not confirmed: ${detail}. Review the session before requeuing it.` });
           }
         });
