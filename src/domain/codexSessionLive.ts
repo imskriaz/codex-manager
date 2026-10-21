@@ -1,4 +1,5 @@
 import type { DashboardCliSessionMessage, DashboardCodexSessionLiveState } from "./dashboard/types";
+import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_TEXT_ATTACHMENT_BYTES } from './chatAttachments';
 
 export const MAX_CODEX_LIVE_STATE_BYTES = 1024 * 1024;
 export const MAX_CODEX_LIVE_ITEMS = 200;
@@ -53,7 +54,12 @@ function validMessage(value: unknown): boolean {
     else if (key === "role") { if (value !== "user" && value !== "assistant") return false; }
     else if (key === "status") { if (typeof value !== "string" || !["inProgress", "completed", "failed", "declined", "interrupted", "unknown"].includes(value)) return false; }
     else if (key === "exitCode" || key === "durationMs") { if (typeof value !== "number" || !Number.isFinite(value) || (key === "durationMs" && value < 0)) return false; }
-    else if (key === "changes" || key === "images") {
+    else if (key === 'textAttachments') {
+      if (!Array.isArray(value) || value.length > MAX_CHAT_ATTACHMENTS || value.some(value => {
+        const file = record(value);
+        return !file || typeof file['name'] !== 'string' || !file['name'].trim() || file['name'].length > 160 || /[\\/\0]/.test(file['name']) || typeof file['text'] !== 'string' || file['text'].includes('\0') || encoder.encode(file['text']).length > MAX_CHAT_TEXT_ATTACHMENT_BYTES || Object.keys(file).some(key => !['name', 'text'].includes(key));
+      })) return false;
+    } else if (key === "changes" || key === "images") {
       if (!Array.isArray(value) || value.length > 100 || value.some((value) => {
         const item = record(value);
         const required = key === "changes" ? ["path", "kind"] : ["src"];
@@ -204,35 +210,43 @@ export class CodexSessionLiveReducer {
 }
 
 function append(value: unknown, delta: string): string { return `${typeof value === "string" ? value : ""}${delta}`.slice(0, MAX_TEXT); }
-function bounded(value: unknown, depth = 0, onTruncated: () => void = () => undefined): unknown {
+function bounded(value: unknown, depth = 0, onTruncated: () => void = () => undefined, textLimit = MAX_TEXT): unknown {
   if (typeof value === "string") {
     if (value.length > MAX_TEXT) onTruncated();
     // An incomplete data URL cannot render. Persisted history hydrates full images.
-    return value.startsWith("data:image/") && value.length > MAX_TEXT ? undefined : value.slice(0, MAX_TEXT);
+    return value.startsWith("data:image/") && value.length > MAX_TEXT ? undefined : value.slice(0, textLimit);
   }
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
   if (depth > 6) { onTruncated(); return undefined; }
   if (Array.isArray(value)) {
     if (value.length > 100) onTruncated();
-    return value.slice(0, 100).map((item) => bounded(item, depth + 1, onTruncated));
+    return value.slice(0, 100).map((item) => bounded(item, depth + 1, onTruncated, textLimit));
   }
   const item = record(value);
   if (item && Object.keys(item).length > 64) onTruncated();
-  return item ? Object.fromEntries(Object.entries(item).slice(0, 64).map(([key, item]) => [key, bounded(item, depth + 1, onTruncated)])) : undefined;
+  return item ? Object.fromEntries(Object.entries(item).slice(0, 64).map(([key, value]) => [key, bounded(value, depth + 1, onTruncated, item['type'] === 'userMessage' && key === 'content' ? 64_000 : textLimit)])) : undefined;
 }
 
 /** Replace the current turn suffix instead of accumulating duplicate streamed/transcript items. */
 export function combineCliLiveMessages(history: DashboardCliSessionMessage[], live: DashboardCodexSessionLiveState | undefined): DashboardCliSessionMessage[] {
   if (!live?.messages.length) return history;
+  const saved = new Map(history.map(item => [item.id, item]));
+  const messages = live.messages.map(item => {
+    const previous = saved.get(item.id);
+    return previous && previous.text === item.text && previous.role === item.role && (!previous.turnId || !item.turnId || previous.turnId === item.turnId)
+      && ((!item.textAttachments?.length && previous.textAttachments?.length) || (!item.images?.length && previous.images?.length)) ? { ...item,
+      ...(!item.textAttachments?.length && previous.textAttachments?.length ? { textAttachments: previous.textAttachments } : {}),
+      ...(!item.images?.length && previous.images?.length ? { images: previous.images } : {}) } : item;
+  });
   const exactTurn = live.turnId ? history.findIndex((item) => item.turnId === live.turnId) : -1;
   const ids = new Set(live.messages.map((item) => item.id));
   const exactItem = history.findIndex((item) => ids.has(item.id));
   // A bounded live snapshot contains only a suffix, not the whole saved turn.
   if (live.truncated) {
-    const replacements = new Map(live.messages.map(item => [item.id, item]));
+    const replacements = new Map(messages.map(item => [item.id, item]));
     const savedIds = new Set(history.map(item => item.id));
-    return [...history.map(item => replacements.get(item.id) ?? item), ...live.messages.filter(item => !savedIds.has(item.id))];
+    return [...history.map(item => replacements.get(item.id) ?? item), ...messages.filter(item => !savedIds.has(item.id))];
   }
   let boundary = exactTurn >= 0 ? exactTurn : exactItem;
   if (boundary < 0) {
@@ -248,5 +262,5 @@ export function combineCliLiveMessages(history: DashboardCliSessionMessage[], li
       }
     }
   }
-  return [...(boundary >= 0 ? history.slice(0, boundary) : history), ...live.messages];
+  return [...(boundary >= 0 ? history.slice(0, boundary) : history), ...messages];
 }

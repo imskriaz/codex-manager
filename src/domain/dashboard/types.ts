@@ -800,6 +800,7 @@ export interface DashboardCliSessionMessage {
     src: string;
     alt?: string;
   }>;
+  textAttachments?: Array<{ name: string; text: string }>;
   timestamp?: string;
 }
 

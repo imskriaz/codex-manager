@@ -9,9 +9,10 @@ export type ProjectTask = {
 };
 export type ProjectComment = { id: string; taskId: string; author: string; text: string; createdAt: number };
 export type ProjectBoard = { projectPath: string; tasks: ProjectTask[]; comments: ProjectComment[]; sessions: DashboardCliSessionSummary[]; updatedAt: number; revision?: number; homeKey?: string };
+export type ProjectTaskFile = DashboardWorkspaceFileEntry & { attachment?: boolean };
 export type ProjectTaskDetails = {
   task?: ProjectTask;
-  taskId: string; messages: DashboardCliSessionMessage[]; files: DashboardWorkspaceFileEntry[];
+  taskId: string; messages: DashboardCliSessionMessage[]; files: ProjectTaskFile[];
   environment?: DashboardWorkspaceEnvironment; history: Array<{ hash: string; author: string; date: string; subject: string }>;
   warnings: string[];
   olderThan?: string;

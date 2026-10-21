@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodexSessionLiveReducer, isCodexSessionLiveState, isNewerCodexSessionLiveState, MAX_CODEX_LIVE_STATE_BYTES } from "../src/domain/codexSessionLive";
+import { CodexSessionLiveReducer, combineCliLiveMessages, isCodexSessionLiveState, isNewerCodexSessionLiveState, MAX_CODEX_LIVE_STATE_BYTES } from "../src/domain/codexSessionLive";
 import { parseCodexAppServerThreadItems } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState, listCodexSessionLiveStates, reserveCodexSessionLive } from "../src/services/codexSessionLive";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
@@ -12,6 +12,22 @@ const params = (values: Record<string, unknown>) => ({ threadId: sessionId, turn
 afterEach(() => vi.useRealTimers());
 
 describe("Codex live current turn", () => {
+  it('retains bounded text uploads while keeping message text and total live-state limits', () => {
+    const live = reducer(), text = 'x'.repeat(20000); live.started('turn-1');
+    live.accept('item/completed', params({ item: { id: 'upload', type: 'userMessage', content: [{ type: 'text', text: '<attached_file name="brief.txt">\n' + text + '\n</attached_file>' }] } }));
+    const state = live.snapshot();
+    expect(state.messages[0]?.text).toHaveLength(12000);
+    expect(state.truncated).toBe(true);
+    expect(state.messages[0]?.textAttachments).toEqual([{ name: 'brief.txt', text }]);
+    expect(isCodexSessionLiveState(state)).toBe(true); expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThanOrEqual(MAX_CODEX_LIVE_STATE_BYTES);
+    expect(isCodexSessionLiveState({ ...state, messages: [{ ...state.messages[0], textAttachments: [{ name: '../escape', text }] }] })).toBe(false);
+  });
+  it('keeps saved attachment hydration when a matching live item omits it without copying it to another turn', () => {
+    const saved = { id: 'user', role: 'user' as const, text: 'Review', turnId: 'turn-1', textAttachments: [{ name: 'brief.txt', text: 'Snapshot' }], images: [{ src: 'data:image/png;base64,iVBORw0KGgo=' }] };
+    const state = { ...reducer().snapshot(), turnId: 'turn-1', messages: [{ id: 'user', role: 'user' as const, text: 'Review', turnId: 'turn-1' }] };
+    for (const truncated of [false, true]) expect(combineCliLiveMessages([saved], { ...state, truncated })[0]).toMatchObject({ textAttachments: saved.textAttachments, images: saved.images });
+    expect(combineCliLiveMessages([saved], { ...state, messages: [{ ...state.messages[0]!, turnId: 'other' }] })[0]?.textAttachments).toBeUndefined();
+  });
   it("keeps active command output moving after its text and item limits", () => {
     const live = reducer(); live.started("turn-1");
     live.accept("item/started", params({ item: { id: "active", type: "commandExecution", command: "long task" } }));

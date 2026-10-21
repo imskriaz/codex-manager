@@ -4,6 +4,7 @@ import path from "node:path";
 import * as vscode from "vscode";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as safeReads from '../src/utils/safeFileReads';
 import {
   parseCodexAppServerThreadItems,
   getCodexCliPathCandidates,
@@ -37,6 +38,56 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it('hydrates local previews sequentially so pending reads cannot exceed the image page budget', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-image-buffers-')); roots.push(root);
+    await mkdir(path.join(root, 'sessions'));
+    const images = [0, 1, 2].map(index => path.join(root, `image-${index}.png`));
+    for (const image of images) await writeFile(image, Buffer.from('iVBORw0KGgo=', 'base64'));
+    const snapshot = safeReads.readSafeFileSnapshot; let active = 0, maximum = 0;
+    const spy = vi.spyOn(safeReads, 'readSafeFileSnapshot').mockImplementation(async (file, options) => {
+      if (!images.includes(file)) return snapshot(file, options);
+      active++; maximum = Math.max(maximum, active);
+      try { await new Promise(resolve => setTimeout(resolve, 10)); return await snapshot(file, options); }
+      finally { active--; }
+    });
+    try {
+      await writeFile(path.join(root, 'sessions', `rollout-${sessionId}.jsonl`), images.map((image, index) => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Image ' + index }, { type: 'input_image', image_url: image }] } })).join('\n') + '\n');
+      const page = await readCodexCliSessionMessagePage(sessionId, undefined, root);
+      expect(maximum).toBe(1); expect(page.messages).toHaveLength(3);
+      for (const message of page.messages) expect(message.images?.[0]?.src).toBe('data:image/png;base64,iVBORw0KGgo=');
+    } finally { spy.mockRestore(); }
+  });
+  it('preserves text upload snapshots beyond the display-text limit in native and saved transcript formats', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-upload-history-')); roots.push(root);
+    await mkdir(path.join(root, 'sessions'));
+    const content = 'x'.repeat(20000), text = '<attached_file name="brief.txt">\n' + content + '\n</attached_file>';
+    const native = parseCodexAppServerThreadItems({ thread: { turns: [{ id: 'turn', items: [{ id: 'user', type: 'userMessage', content: [{ type: 'text', text }] }] }] } });
+    expect(native[0]?.text).toHaveLength(12000); expect(native[0]?.textAttachments).toEqual([{ name: 'brief.txt', text: content }]);
+    const lines = [
+      { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } },
+      { type: 'event_msg', payload: { type: 'user_message', message: text + '\n\n' } }
+    ];
+    await writeFile(path.join(root, 'sessions', `rollout-${sessionId}.jsonl`), lines.map(line => JSON.stringify(line)).join('\n') + '\n');
+    const page = await readCodexCliSessionMessagePage(sessionId, undefined, root);
+    expect(page.messages.length).toBeGreaterThan(0);
+    for (const message of page.messages) expect(message.textAttachments).toEqual([{ name: 'brief.txt', text: content }]);
+  });
+  it('charges failed image decoding against the page budget instead of scanning an unlimited set of invalid files', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'codex-invalid-images-')); roots.push(root);
+    await mkdir(path.join(root, 'sessions'));
+    const image = path.join(root, 'invalid.png'); await writeFile(image, 'not an image');
+    const snapshot = safeReads.readSafeFileSnapshot; let reads = 0;
+    const spy = vi.spyOn(safeReads, 'readSafeFileSnapshot').mockImplementation(async (file, options) => {
+      const result = await snapshot(file, options);
+      if (file !== image) return result;
+      reads++; return { ...result, size: 8 * 1024 * 1024 };
+    });
+    try {
+      await writeFile(path.join(root, 'sessions', `rollout-${sessionId}.jsonl`), Array.from({length:8}, (_, index) => JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Image ' + index }, { type: 'input_image', image_url: image }] } })).join('\n') + '\n');
+      expect((await readCodexCliSessionMessagePage(sessionId, undefined, root)).messages).toHaveLength(8);
+      expect(reads).toBe(2);
+    } finally { spy.mockRestore(); }
+  });
   it("pages saved history across oversized records without gaps or a stuck cursor", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codex-history-pages-")); roots.push(root);
     await mkdir(path.join(root, "sessions"));

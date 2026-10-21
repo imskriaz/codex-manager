@@ -839,9 +839,9 @@ export class WebDashboardServer implements vscode.Disposable {
         if (share.permissions.includes('embed')) {
           response.removeHeader('X-Frame-Options');
           response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-          response.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors http: https:; base-uri 'none'");
+          response.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors http: https:; base-uri 'none'");
         }
-        this.sendHtml(response, '<!doctype html><html lang="en" data-theme="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Shared project</title><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"><p role="status">Loading shared project…</p></main><script src="/assets/dashboard.js"></script><script src="/assets/projectShare.js"></script></body></html>'); return;
+        this.sendHtml(response, versionPublicAssets('<!doctype html><html lang="en" data-theme="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Shared project</title><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"><p role="status">Loading shared project…</p></main><script src="/assets/dashboard.js"></script><script src="/assets/projectShare.js"></script></body></html>', this.assetVersion)); return;
       }
       for (const [key, value] of this.publicProjectRequests) if (value.until <= Date.now()) this.publicProjectRequests.delete(key);
       const rateKey = `${token}:${request.socket.remoteAddress ?? ''}`;
@@ -900,10 +900,10 @@ export class WebDashboardServer implements vscode.Disposable {
     if (method === "GET" && path.startsWith("/share/")) {
       const share = await this.conversationShares.get(path.slice(7));
       if (!share) { response.statusCode = 404; response.end("This shared link is invalid, expired, or revoked. Ask the owner for a new link."); return; }
-      this.sendHtml(response, sharedConversationPage(share, path.slice(7))
+      this.sendHtml(response, versionPublicAssets(sharedConversationPage(share, path.slice(7))
         .replace('</head>', '<link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head>')
         .replace('<body>', '<body class="public-conversation">')
-        .replace('<script src="/assets/sharedConversation.js"', '<script src="/assets/dashboard.js" defer></script><script src="/assets/sharedConversation.js"'));
+        .replace('<script src="/assets/sharedConversation.js"', '<script src="/assets/dashboard.js" defer></script><script src="/assets/sharedConversation.js"'), this.assetVersion));
       return;
     }
     if (method === "GET" && path.startsWith("/api/share/")) {
@@ -2990,6 +2990,10 @@ export function readDashboardRequestBody(request: http.IncomingMessage, maxBytes
 function loginPage(configured: boolean, error = "", returnPath = "/"): string {
   const action = `/login?returnTo=${encodeURIComponent(normalizeWebDashboardReturnPath(returnPath))}`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#111827"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><style>${BASE_CSS}</style></head><body><main class="login"><h1>Codex Manager</h1>${configured ? `<p id="login-hint">Enter your Codex Manager password.</p><form method="post" action="${action}"><label for="dashboard-password">Password</label><input id="dashboard-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-hint" autofocus required><button type="submit">Unlock dashboard</button></form>${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}` : `<p>Access is locked until a password is set in General settings.</p>`}</main></body></html>`;
+}
+
+function versionPublicAssets(html: string, version: string): string {
+  return html.replace(/(src|href)="(\/assets\/[^"?]+)"/g, (_match, attribute: string, asset: string) => `${attribute}="${asset}?v=${encodeURIComponent(version)}"`);
 }
 
 function dashboardPage(showLogout: boolean, version: string): string {

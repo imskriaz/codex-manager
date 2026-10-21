@@ -36,6 +36,9 @@ it('allows framing only for links with embedding permission and always disables 
   expect(allowed.headers.has('x-frame-options')).toBe(false);
   expect(allowed.headers.get('content-security-policy')).toContain('frame-ancestors http: https:');
   expect(allowed.headers.get('cache-control')).toBe('no-store');
+  expect(allowed.body).toContain('/assets/dashboard.js?v=');
+  expect(allowed.body).toContain('/assets/projectShare.js?v=');
+  expect(allowed.headers.get('content-security-policy')).toContain("img-src 'self' https: data:");
   revokeProjectShares(root);
   expect((await request(`/projects/share/${embedded.token}`)).statusCode).toBe(404);
 });

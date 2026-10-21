@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { checkTaskUi } from "./check-task-ui.mjs";
+import { listConversationFiles } from '../out/domain/conversationFiles.js';
 import { dashboardCopyResources } from "../out/localization/resources/dashboard.js";
 
 // Only GET the canonical local snapshot. All browser actions are intercepted
@@ -39,7 +40,7 @@ sessions.push(sessions[0]);
 const previewImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
 const longArguments = JSON.stringify({ cmd: `rg ${"preserved-whitespace ".repeat(80)}`, workdir: "D:/demo" });
 const messages = [
-  { id: "user", kind: "message", role: "user", text: "Review the workspace and explain the result.", images: [{ src: previewImage, alt: "Attachment preview" }] },
+  { id: "user", kind: "message", role: "user", text: "Review the workspace and explain the result.", textAttachments: [{ name: 'brief.txt', text: 'Original uploaded brief' }], images: [{ src: previewImage, alt: "Attachment preview" }] },
   { id: "tool", kind: "tool-call", title: "exec", text: "Script completed", status: "completed", arguments: longArguments, result: `Output:\n${"wide output ".repeat(100)}` },
   { id: "command", kind: "command", text: "node tools/check-ui.mjs", command: "node tools/check-ui.mjs", output: ("Line of shell output " + "wide ".repeat(40) + "\n").repeat(70), cwd: "D:/demo", status: "completed", durationMs: 2500 },
   { id: "changes", kind: "file-change", text: "Updated files", status: "completed", changes: ["one.ts", "two.ts", "three.ts", "four.ts"].map(path => ({ path, kind: "update", diff: "@@ -1 +1 @@\n-old\n+new\n" })) },
@@ -88,7 +89,7 @@ const mockHost = `(() => {
         if(message.action==='getProjectBoard') payload={projectBoard:projectBoard()};
         else if(message.action==='getProjectTaskDetails') {
           const older=!!message.payload.taskBefore;
-          const details={taskId:message.payload.taskId,messages:['activities','changes'].includes(message.payload.taskView||'activities')?messages:[],files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1}]:[],environment:message.payload.taskView==='changes'?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
+          const details={taskId:message.payload.taskId,messages:older?[]:messages,files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:message.payload.taskView==='changes'?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
           if(window.__holdNextTaskDetails===message.payload.taskView) {
             window.__holdNextTaskDetails=false; window.__heldTaskDetails=message;
             window.__releaseTaskDetails=()=>dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectTaskDetails:details}});
@@ -163,6 +164,7 @@ const mockHost = `(() => {
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action==='readWorkspaceFile' && window.__holdNextWorkspaceFileRead) {window.__holdNextWorkspaceFileRead=false;window.__heldWorkspaceFileResult=result;return;}
         if(message.action === 'archiveCodexCliSession') {
           window.__heldArchiveResult = {...result,status:'completed',error:undefined,payload:{notice:{level:'info',message:'Original chat archived.'}}};
           return;

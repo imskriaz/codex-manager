@@ -21,8 +21,25 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.locator('.cli-activity > summary').first().click();
   await task.getByText('Script completed', { exact: true }).waitFor();
   await task.getByRole('tab', { name: 'Files', exact: true }).click();
+  const readsBeforeAttachments = await page.evaluate(() => window.__uiActions.filter(message => message.action === 'readWorkspaceFile').length);
+  await task.locator('.task-file-row').filter({ hasText: 'brief.txt' }).click();
+  await task.getByText('Original uploaded brief', { exact: true }).waitFor();
+  await task.locator('.task-file-row').filter({ hasText: 'Attachment preview' }).click();
+  await task.getByRole('button', { name: 'Preview Attachment preview', exact: true }).click();
+  await page.getByRole('button', { name: 'Close image preview', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'readWorkspaceFile').length), readsBeforeAttachments, 'Upload previews use their conversation snapshot without filesystem reads');
   await task.locator('.task-file-row').filter({ hasText: 'src/app.ts' }).click();
   await task.getByText('const task = 1;', { exact: true }).waitFor();
+  await page.evaluate(() => { window.__holdNextWorkspaceFileRead = true; });
+  await task.locator('.task-file-row').filter({ hasText: 'src/app.ts' }).click();
+  await page.waitForFunction(() => !!window.__heldWorkspaceFileResult);
+  await task.locator('.task-file-row').filter({ hasText: 'brief.txt' }).click();
+  await task.getByText('Original uploaded brief', { exact: true }).waitFor();
+  await page.evaluate(() => {
+    window.dispatchEvent(new MessageEvent('message', { data: window.__heldWorkspaceFileResult }));
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  assert.equal(await task.getByText('const task = 1;', { exact: true }).count(), 0, 'A late project-file read cannot replace the selected upload snapshot');
   await task.getByRole('button', { name: 'Older history', exact: true }).click();
   await task.locator('.task-file-row').filter({ hasText: 'src/older.ts' }).click();
   await task.getByText('const older = 2;', { exact: true }).waitFor();

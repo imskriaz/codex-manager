@@ -3,6 +3,34 @@ export const MAX_CHAT_ATTACHMENT_BYTES = 1024 * 1024;
 export const MAX_CHAT_ATTACHMENTS = 8;
 export const MAX_CHAT_TEXT_ATTACHMENT_BYTES = 32 * 1024;
 
+/** Recover complete Manager upload blocks before conversation display text is shortened. */
+export function readChatTextAttachments(text: string): Array<{ name: string; text: string }> {
+  const files: Array<{ name: string; text: string }> = [];
+  const source = text.slice(0, 64_000), closing = '\n</attached_file>';
+  const pattern = /<attached_file name=("(?:\\.|[^"\\])*")(?: chars=(\d{1,5}))?>\n/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source))) {
+    try {
+      const name: unknown = JSON.parse(match[1]!);
+      const start = pattern.lastIndex;
+      const legacyEnd = /\n<\/attached_file>(?=\s*(?:<attached_file name=|$))/g;
+      legacyEnd.lastIndex = start;
+      const end = match[2] === undefined ? legacyEnd.exec(source)?.index : start + Number(match[2]);
+      if (end === undefined || source.slice(end, end + closing.length) !== closing) continue;
+      const content = source.slice(start, end);
+      pattern.lastIndex = end + closing.length;
+      if (typeof name !== 'string' || !name.trim() || name.length > 160 || /[\\/\0]/.test(name) || content.includes('\0') || new TextEncoder().encode(content).length > MAX_CHAT_TEXT_ATTACHMENT_BYTES) continue;
+      files.push({ name, text: content });
+      if (files.length === MAX_CHAT_ATTACHMENTS) break;
+    } catch { /* Incomplete or invalid historical upload metadata is not a file. */ }
+  }
+  return files;
+}
+
+export function withoutChatTextAttachments(text: string): string {
+  return text.replace(/\s*<attached_file name="[\s\S]*$/, '').trimEnd();
+}
+
 /** Validate on both sides of the bridge; never trust browser size/type claims. */
 export function validateChatAttachments(value: unknown): ChatAttachment[] {
   if (value === undefined) return [];
@@ -40,7 +68,7 @@ export function validateChatAttachments(value: unknown): ChatAttachment[] {
 export function prepareChatInput(text: string, attachments?: unknown): { text: string; attachments: ChatAttachment[] } {
   if (typeof text !== "string") throw new Error("The message is invalid. Write your message again.");
   const files = validateChatAttachments(attachments);
-  const content = [text.trim(), ...files.filter((file) => file.kind === "text").map((file) => `<attached_file name=${JSON.stringify(file.name)}>\n${file.data}\n</attached_file>`)].filter(Boolean).join("\n\n");
+  const content = [text.trim(), ...files.filter((file) => file.kind === "text").map((file) => `<attached_file name=${JSON.stringify(file.name)} chars=${file.data.length}>\n${file.data}\n</attached_file>`)].filter(Boolean).join("\n\n");
   if (!content && !files.length) throw new Error("Write a message or attach a file before sending it to Codex.");
   if (content.length > 64_000) throw new Error("The message and attached text are too long. Keep them under 64,000 characters.");
   return { text: content || "Please review the attached image files.", attachments: files };

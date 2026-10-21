@@ -9,7 +9,7 @@ const text = { id: "text", name: "sample.ts", kind: "text" as const, mimeType: "
 describe("chat attachments", () => {
   it("derives size, embeds text once, and sends images through the app-server protocol", () => {
     const prepared = prepareChatInput("Review", [text, image]);
-    expect(prepared.text).toContain('<attached_file name="sample.ts">');
+    expect(prepared.text).toContain(`<attached_file name="sample.ts" chars=${text.data.length}>`);
     expect(prepared.attachments[1]?.size).toBe(8);
     expect(appServerChatInput(prepared.text, prepared.attachments)[1]).toEqual({ type: "image", url: image.data });
     expect(prepareChatInput("", [image]).text).toContain("attached image");

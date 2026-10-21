@@ -8,6 +8,8 @@ import { readWorkspaceFile } from './workspaceTools';
 import { getSqliteStateStore } from '../storage/sqliteState';
 import { readStoredSessionLive } from '../storage/sqliteSessions';
 import { combineCliLiveMessages } from '../domain/codexSessionLive';
+import { listConversationFiles, readConversationAttachment, safeConversationImage } from '../domain/conversationFiles';
+import { withoutChatTextAttachments } from '../domain/chatAttachments';
 
 const savedSessions = new Map<string, { sessions: ProjectBoard['sessions']; checkedAt: number }>();
 function boardSnapshot(project: string, home: string, sessions: ProjectBoard['sessions'], checkedAt = Date.now()): ProjectBoard {
@@ -34,14 +36,21 @@ export async function readSharedProjectTask(share: ProjectShare, taskId: string,
   const details = await readProjectTaskDetails(share.projectPath, taskId, normalizedView as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>, before);
   if (filePath !== undefined) {
     if (normalizedView !== 'files') throw new Error('File access is not enabled for this view.');
-    if (!details.files.some(file => file.path === filePath)) throw new Error('This file is not part of the shared conversation history.');
+    const entry = details.files.find(file => file.path === filePath);
+    if (!entry) throw new Error('This file is not part of the shared conversation history.');
+    if (entry.attachment) {
+      const file = readConversationAttachment(details.messages, filePath);
+      if (!file) throw new Error('This attachment is unavailable. Refresh this history page.');
+      return { file };
+    }
     return { file: await readWorkspaceFile(share.projectPath, filePath) };
   }
   return {
     messages: details.messages.filter(item => normalizedView === 'activities'
       ? (!item.kind || item.kind === 'message' ? share.permissions.includes('messages') : share.permissions.includes('activities') && item.kind !== 'file-change')
       : normalizedView === 'changes' && item.changes?.length).map(item => ({
-      id: item.id, role: item.role, kind: item.kind, text: item.text, title: item.title, status: item.status,
+      id: item.id, role: item.role, kind: item.kind, text: item.role === 'user' ? withoutChatTextAttachments(item.text) : item.text, title: item.title, status: item.status,
+      ...(share.permissions.includes('files') && item.images?.length ? { images: item.images.filter(image => safeConversationImage(image.src)) } : {}),
       ...(normalizedView === 'activities' && share.permissions.includes('activities') ? { command: item.command, output: item.output, result: item.result, arguments: item.arguments } : {}),
       ...(normalizedView === 'changes' ? { changes: item.changes } : {})
     })),
@@ -86,11 +95,7 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
       }
     }
     if (view === 'files' && sessionId) {
-      const files = new Map<string, ProjectTaskDetails['files'][number]>();
-      for (const message of result.messages) for (const change of message.changes ?? []) {
-        if (!files.has(change.path)) files.set(change.path, { path: change.path, name: change.path.split(/[\\/]/).pop() ?? change.path, type: 'file', depth: change.path.split(/[\\/]/).length - 1 });
-      }
-      result.files = [...files.values()];
+      result.files = listConversationFiles(result.messages);
     }
     if (view === 'changes') {
       result.environment = await waitWithin(readWorkspaceEnvironment(project, true), 5000, 'Project changes are still loading.');

@@ -60,6 +60,8 @@
     const activity = node('div', 'Loading activity…', 'task-detail-scroll');
     const comments = node('div', undefined, 'task-comments'); comments.hidden = !allowed('comments'); comments.append(node('h3', 'Comments'));
     const feedback = node('p'); feedback.setAttribute('role', 'status');
+    const viewFeedback = node('p'); viewFeedback.setAttribute('role', 'status');
+    const reportView = text => { viewFeedback.textContent = text; viewFeedback.hidden = !text; }; reportView('');
     const commentList = node('div', undefined, 'public-comment-list'); commentList.dataset.task = task.id;
     for (const item of board.comments.filter(comment => comment.taskId === task.id)) { const entry = node('article', undefined, 'task-activity'); entry.append(node('small', item.author), node('p', item.text)); commentList.append(entry); }
     comments.append(commentList);
@@ -76,13 +78,15 @@
     };
     comments.append(input, commentButton, feedback);
     const head = node('header', undefined, 'settings-modal-head'); head.append(node('strong', task.title, 'settings-modal-title'), close);
-    const body = node('div', undefined, 'task-detail-panel-body'); body.append(node('p', task.prompt || ''), activity, comments);
+    const body = node('div', undefined, 'task-detail-panel-body'); body.append(node('p', task.prompt || ''), activity, viewFeedback, comments);
     dialog.append(head, body); root.append(dialog); dialog.focus();
     const tabs = node('div', undefined, 'task-detail-tabs'), content = node('div');
     activity.replaceChildren(tabs, content);
-    let view, before, generation = 0, pending = false, reloadPending = false, renderedSignature;
+    let view, before, generation = 0, pending = false, reloadPending = false, renderedSignature, renderedView, renderedBefore, filePreview, activityMessages, fileMessages, fileRequest = 0;
+    const clearMessages = () => { if (activityMessages) window.clearCodexSharedMessages?.(activityMessages); if (fileMessages) window.clearCodexSharedMessages?.(fileMessages); activityMessages = fileMessages = undefined; };
     async function load(nextView, cursor) {
       view = nextView; before = cursor;
+      reportView('');
       const requestId = ++generation;
       if (!allowed(view)) { content.replaceChildren(node('p', 'This feature is not shared.')); return; }
       pending = true;
@@ -91,36 +95,62 @@
         if (requestId !== generation || !dialog.isConnected) return;
         const signature = JSON.stringify([view, cursor, data]);
         if (signature === renderedSignature) return;
+        if (renderedView === view && renderedBefore === cursor && data.warnings?.length && !data.messages?.length && !data.files?.length && data.isGitRepository === undefined) {
+          reportView(data.warnings.join(' ')); return;
+        }
         renderedSignature = signature;
-        content.replaceChildren();
+        const retainedMessages = view === 'activities' && renderedView === view && renderedBefore === cursor ? activityMessages : undefined;
+        if (retainedMessages) activityMessages = undefined;
+        clearMessages(); content.replaceChildren();
+        renderedView = view; renderedBefore = cursor;
         for (const warning of data.warnings || []) content.append(node('p', warning));
         if (cursor) { const latest = node('button', 'Latest activity'); latest.type = 'button'; latest.onclick = () => { void load(view); }; content.append(latest); }
         if (data.olderThan) { const older = node('button', 'Older history'); older.type = 'button'; older.onclick = () => { void load(view, data.olderThan); }; content.append(older); }
-        if (window.renderCodexSharedMessages && data.messages?.length) { const messages = node('div'); content.append(messages); window.renderCodexSharedMessages(messages, data.messages); }
+        if (window.renderCodexSharedMessages && data.messages?.length) { activityMessages = retainedMessages || node('div'); content.append(activityMessages); window.renderCodexSharedMessages(activityMessages, data.messages); }
         else for (const item of data.messages || []) {
           const entry = node('article', undefined, 'task-activity'); entry.append(node('strong', item.role || item.kind), node('pre', [item.title,item.text,item.command,item.output,item.result,item.arguments].filter(Boolean).join('\n')));
           for (const change of item.changes || []) entry.append(node('strong', change.path), node('pre', change.diff || change.kind)); content.append(entry);
         }
+        if (retainedMessages && !activityMessages) window.clearCodexSharedMessages?.(retainedMessages);
         for (const file of data.files || []) {
-          const row = node('button', file.path, 'task-file-row'); row.type = 'button'; row.disabled = file.type !== 'file';
-          row.onclick = async () => { try { const result = await request(undefined, task.id, 'files', cursor, file.path); if (dialog.isConnected && view === 'files') { const preview = node('article', undefined, 'task-activity'); preview.append(node('strong', result.file.path), node('pre', result.file.content)); content.append(preview); } } catch (error) { feedback.textContent = error.message; } };
+          const row = node('button', file.attachment ? file.name : file.path, 'task-file-row'); row.type = 'button'; row.disabled = file.type !== 'file';
+          row.onclick = async () => {
+            const fileId = ++fileRequest;
+            reportView('Loading file…');
+            row.disabled = true;
+            try {
+              const result = await request(undefined, task.id, 'files', cursor, file.path);
+              if (fileId !== fileRequest || requestId !== generation || !dialog.isConnected || view !== 'files') return;
+              if (fileMessages) window.clearCodexSharedMessages?.(fileMessages); fileMessages = undefined;
+              const preview = node('article', undefined, 'task-activity'); preview.append(node('strong', result.file.path));
+              if (result.file.kind === 'image' && result.file.dataUrl && window.renderCodexSharedMessages) {
+                const image = node('div'); preview.append(image);
+                fileMessages = image;
+                window.renderCodexSharedMessages(image, [{ id: file.path, kind: 'message', role: 'user', text: '', images: [{ src: result.file.dataUrl, alt: result.file.path }] }]);
+              } else preview.append(node('pre', result.file.content));
+              if (filePreview?.isConnected) filePreview.replaceWith(preview); else content.append(preview);
+              filePreview = preview;
+              reportView('');
+            } catch (error) { if (fileId === fileRequest && requestId === generation && dialog.isConnected) reportView(error.message); }
+            finally { if (row.isConnected) row.disabled = false; }
+          };
           content.append(row);
         }
         if (view === 'changes') content.prepend(node('p', 'Current project changes: ' + (data.changes || 0) + ' · +' + (data.additions || 0) + ' / −' + (data.deletions || 0)));
         if (!content.childNodes.length) content.append(node('p', 'No activity on this history page.'));
-      } catch (error) { if (requestId === generation) feedback.textContent = 'View could not refresh: ' + error.message; }
+      } catch (error) { if (requestId === generation) reportView('View could not refresh: ' + error.message); }
       finally { if (requestId === generation) { pending = false; if (reloadPending) { reloadPending = false; revalidate(); } } }
     }
     const features = ['activities','files','changes'].filter(allowed);
     tabs.setAttribute('role', 'tablist');
     for (const feature of features) { const tab = node('button', feature[0].toUpperCase() + feature.slice(1)); tab.type = 'button'; tab.setAttribute('role', 'tab'); tab.onclick = () => { for (const item of tabs.children) item.setAttribute('aria-selected', String(item === tab)); void load(feature); }; tab.setAttribute('aria-selected', String(feature === features[0])); tabs.append(tab); }
-    const subtasks = board.tasks.filter(child => child.parentTaskId === task.id);
+    const subtasks = board.tasks.filter(child => child.parentTaskId === task.id && !child.sessionArchived);
     if (subtasks.length) { const children = node('div', undefined, 'task-subtasks'); children.append(node('h3', 'Subtasks')); for (const child of subtasks) { const link = node('button', child.title); link.type = 'button'; link.onclick = () => openTask(child); children.append(link); } body.insertBefore(children, activity); }
     if (features[0]) void load(features[0]);
     const revalidate = () => { if (dialog.isConnected && !document.hidden && view === 'activities' && !before && live) { if (pending) reloadPending = true; else void load(view); } commentButton.disabled = commenting || !allowed('comments'); };
     window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate); window.addEventListener('online', revalidate); window.addEventListener('offline', revalidate);
     dialog.addEventListener('refresh', revalidate);
-    dialog.addEventListener('close', () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); window.removeEventListener('online', revalidate); window.removeEventListener('offline', revalidate); dialog.remove(); if (selected === dialog) selected = undefined; }, { once: true });
+    dialog.addEventListener('close', () => { clearMessages(); window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); window.removeEventListener('online', revalidate); window.removeEventListener('offline', revalidate); dialog.remove(); if (selected === dialog) selected = undefined; }, { once: true });
   }
 
   function renderBoard() {
@@ -131,7 +161,7 @@
     const query = search.value.trim().toLowerCase();
     for (const stage of showArchive ? ['archive'] : ['idea','planned','running','completed']) {
       const column = node('section', undefined, 'task-board-column is-' + stage);
-      const rows = board.tasks.filter(task => (showArchive ? task.sessionArchived : task.stage === stage && (!task.parentTaskId || !ids.has(task.parentTaskId))) && (!query || (task.title + '\n' + task.prompt).toLowerCase().includes(query)));
+      const rows = board.tasks.filter(task => (showArchive ? task.sessionArchived : task.stage === stage && (task.sessionArchived || !task.parentTaskId || !ids.has(task.parentTaskId))) && (!query || (task.title + '\n' + task.prompt).toLowerCase().includes(query)));
       column.append(node('h2', stage[0].toUpperCase() + stage.slice(1) + ' · ' + rows.length, 'task-board-column-heading'));
       const list = node('div', undefined, 'task-board-card-list');
       let visible = 50;

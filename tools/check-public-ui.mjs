@@ -33,16 +33,18 @@ try {
     assert.equal(await page.locator('#conversation table').count(), 1, 'Public conversation uses rich workspace markdown');
     assert.equal(await page.evaluate(() => window.bad), undefined, 'Shared markdown cannot execute HTML');
     await page.screenshot({ path:path.join(output,`conversation-${width}.png`) });
-    let revoked = false, failWrites = false, holdWrite = false, releaseWrite;
-    let permissions = ['messages','activities'];
+    let revoked = false, failWrites = false, holdWrite = false, releaseWrite, failFile = false, historyWarningsOnly = false;
+    let permissions = ['messages','activities','files'];
     let taskMessages = [...messages], holdRead = false, releaseRead;
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
+    taskMessages[0] = { ...taskMessages[0], images: [{ src: image, alt: 'Shared attachment' }] };
     const comments = [];
     const writes = [];
     async function waitForHeldWrite() {
       for (let attempt = 0; !releaseWrite && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
       assert.equal(typeof releaseWrite, 'function', 'The test request reached the pending-write fixture');
     }
-    const tasks = [{ id:'task', title:'Release work', prompt:'Review the release', stage:'planned' },{id:'archive',title:'Archived work',prompt:'',stage:'completed',sessionArchived:true}];
+    const tasks = [{ id:'task', title:'Release work', prompt:'Review the release', stage:'planned' },{id:'archive',title:'Archived work',prompt:'',stage:'completed',sessionArchived:true,parentTaskId:'task'}];
     await page.route('**/projects/share/fixture', route => route.fulfill({ contentType:'text/html', body:'<!doctype html><html data-theme="auto"><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"></main><script src="/assets/dashboard.js"></script><script src="/assets/projectShare.js"></script></body></html>' }));
     await page.route('**/api/projects/share/fixture*', async route => {
       if (route.request().method() === 'POST') {
@@ -51,8 +53,12 @@ try {
         await route.fulfill(failWrites ? { status:503,json:{ error:'Temporarily unavailable' } } : { json:{ ok:true } });
         return;
       }
-      const isTask = new URL(route.request().url()).searchParams.has('task'), wasRevoked = revoked;
-      const snapshot = JSON.parse(JSON.stringify(isTask ? { messages:taskMessages, files:[],history:[],warnings:[] } : {title:'Project work',tasks,comments,permissions,expiresAt:Date.now()+60000}));
+      const query = new URL(route.request().url()).searchParams, isTask = query.has('task'), wasRevoked = revoked;
+      if (query.has('file') && failFile) { await route.fulfill({status:503,json:{error:'Attachment is temporarily unavailable.'}}); return; }
+      const files = [{ path:'@attachment/upload/text/0',name:'brief.txt',type:'file',attachment:true },{path:'@attachment/upload/image/0',name:'Screenshot',type:'file',attachment:true}];
+      const file = query.get('file')?.includes('/image/') ? {path:'Screenshot',kind:'image',dataUrl:image,content:''} : {path:'brief.txt',kind:'text',content:'Shared uploaded snapshot'};
+      const warningOnly = historyWarningsOnly && query.get('view') === 'activities';
+      const snapshot = JSON.parse(JSON.stringify(isTask ? query.has('file') ? {file} : { messages:query.get('view')==='files'||warningOnly?[]:taskMessages, files:query.get('view')==='files'?files:[],history:[],warnings:warningOnly?['Saved history is temporarily unavailable.']:[] } : {title:'Project work',tasks,comments,permissions,expiresAt:Date.now()+60000}));
       if (!isTask && holdRead) { holdRead = false; await new Promise(resolve => { releaseRead = resolve; }); }
       await route.fulfill(wasRevoked ? { status:404,json:{ error:'Revoked' } } : { json:snapshot });
     });
@@ -61,11 +67,33 @@ try {
     await page.locator('.task-detail-panel .cli-session-message').nth(1).waitFor();
     assert.equal(await page.getByRole('tab', {name:'Messages',exact:true}).count(), 0, 'Task history has a combined Activities tab');
     assert.equal(await page.locator('.task-detail-panel table').count(), 1);
+    await page.getByRole('button',{name:'Preview Shared attachment',exact:true}).click();
     taskMessages = [...taskMessages,{id:'live',role:'assistant',kind:'message',text:'Live public activity without focus changes'}];
     await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
     await page.getByText('Live public activity without focus changes',{exact:true}).waitFor();
+    assert.equal(await page.locator('.cli-image-lightbox').count(),1,'A live activity update preserves the open image viewer');
+    historyWarningsOnly = true;
+    await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
+    await page.getByRole('status').filter({hasText:'Saved history is temporarily unavailable.'}).waitFor();
+    assert.equal(await page.getByText('Live public activity without focus changes',{exact:true}).count(),1,'A partial history failure preserves saved messages');
+    assert.equal(await page.locator('.cli-image-lightbox').count(),1,'A partial history failure preserves the active image viewer');
+    historyWarningsOnly = false;
+    await page.getByRole('button',{name:'Close image preview',exact:true}).click();
     await page.screenshot({ path:path.join(output,`task-${width}.png`) });
-    await page.getByRole('button',{name:'Close task details',exact:true}).click();
+    await page.getByRole('tab',{name:'Files',exact:true}).click();
+    failFile = true;
+    await page.getByRole('button',{name:'brief.txt',exact:true}).click();
+    await page.getByRole('status').filter({hasText:'Attachment is temporarily unavailable.'}).waitFor();
+    failFile = false;
+    await page.getByRole('button',{name:'brief.txt',exact:true}).click();
+    await page.getByText('Shared uploaded snapshot',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Screenshot',exact:true}).click();
+    await page.getByRole('button',{name:'Preview Screenshot',exact:true}).click();
+    await page.getByRole('button',{name:'Close image preview',exact:true}).click();
+    assert.equal(await page.locator('.task-detail-panel .task-activity').count(),1,'File previews replace the previous preview');
+    await page.getByRole('button',{name:'Preview Screenshot',exact:true}).click();
+    await page.evaluate(() => document.querySelector('.task-detail-panel').dispatchEvent(new Event('close')));
+    assert.equal(await page.locator('.cli-image-lightbox').count(),0,'Closing a shared task unmounts its image viewer');
     holdRead = true;
     await page.evaluate(() => window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
     for (let attempt = 0; !releaseRead && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve,20));

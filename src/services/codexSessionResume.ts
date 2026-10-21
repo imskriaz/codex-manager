@@ -10,7 +10,7 @@ import * as vscode from "vscode";
 import { execFile, spawn } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
-import { prepareChatInput, type ChatAttachment } from "../domain/chatAttachments";
+import { prepareChatInput, readChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
 import { appServerChatInput } from "./codexChatAttachments";
 import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
@@ -1620,7 +1620,7 @@ function parseAppServerThreadItem(
   if (type === "userMessage") {
     const content = parseUserInputs(item["content"]);
     return content.text || content.images.length
-      ? { id, kind: "message", role: "user", text: content.text, images: content.images, timestamp }
+      ? { id, kind: "message", role: "user", text: content.text, images: content.images, ...(content.textAttachments?.length ? { textAttachments: content.textAttachments } : {}), timestamp }
       : undefined;
   }
   if (type === "agentMessage") {
@@ -1899,7 +1899,7 @@ function parseCliFileChanges(value: unknown): NonNullable<DashboardCliSessionMes
   });
 }
 
-function parseUserInputs(value: unknown): { text: string; images: Array<{ src: string; alt?: string }> } {
+function parseUserInputs(value: unknown): { text: string; images: Array<{ src: string; alt?: string }>; textAttachments?: DashboardCliSessionMessage['textAttachments'] } {
   const parts: string[] = [];
   const images: Array<{ src: string; alt?: string }> = [];
   if (!Array.isArray(value)) return { text: "", images };
@@ -1927,7 +1927,8 @@ function parseUserInputs(value: unknown): { text: string; images: Array<{ src: s
       else parts.push("[Image unavailable]");
     } else if (item["type"] === "skill" && typeof item["name"] === "string") parts.push(`[Skill: ${item["name"]}]`);
   }
-  return { text: parts.join("\n\n").trim().slice(0, MAX_SESSION_MESSAGE_CHARS), images: images.slice(0, 20) };
+  const text = parts.join("\n\n").trim(), textAttachments = readChatTextAttachments(text);
+  return { text: text.slice(0, MAX_SESSION_MESSAGE_CHARS), images: images.slice(0, 20), ...(textAttachments.length ? { textAttachments } : {}) };
 }
 
 function readSafeImageSource(item: Record<string, unknown>): string | undefined {
@@ -2008,47 +2009,44 @@ function mediaDisplayLabel(source: string): string {
 
 async function hydrateSessionImages(messages: DashboardCliSessionMessage[]): Promise<DashboardCliSessionMessage[]> {
   let totalBytes = 0;
-  return Promise.all(
-    messages.map(async (message) => {
-      if (!message.images?.length) return message;
-      const images: Array<{ src: string; alt?: string }> = [];
-      for (const image of message.images) {
-        if (/^(?:https?:\/\/|data:image\/)/i.test(image.src)) {
-          images.push(image);
-          continue;
-        }
-        if (totalBytes >= MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
-        let localPath: string;
-        try {
-          localPath = image.src.startsWith("file:") ? localPathFromSource(image.src) : image.src;
-        } catch {
-          continue;
-        }
-        try {
-          const snapshot = await readSafeFileSnapshot(localPath, {
-            maxBytes: MAX_SESSION_IMAGE_BYTES,
-            rejectIfLarger: true
-          });
-          if (totalBytes + snapshot.size > MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
-          totalBytes += snapshot.size;
-          const buffer = snapshot.buffer;
-          const mimeType = sniffImageMime(buffer);
-          if (!mimeType) {
-            totalBytes -= snapshot.size;
-            continue;
-          }
-          images.push({
-            src: `data:${mimeType};base64,${buffer.toString("base64")}`,
-            alt: image.alt ?? mediaDisplayLabel(image.src)
-          });
-        } catch {
-          /* A deleted temp image is a normal unavailable preview. */
-        }
+  const hydrated: DashboardCliSessionMessage[] = [];
+  // Keep in-flight local image buffers bounded while applying the page budget.
+  for (const message of messages) {
+    if (!message.images?.length) { hydrated.push(message); continue; }
+    const images: Array<{ src: string; alt?: string }> = [];
+    for (const image of message.images) {
+      if (/^(?:https?:\/\/|data:image\/)/i.test(image.src)) {
+        images.push(image);
+        continue;
       }
-      if (images.length) return { ...message, images };
-      return message;
-    })
-  );
+      if (totalBytes >= MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
+      let localPath: string;
+      try {
+        localPath = image.src.startsWith("file:") ? localPathFromSource(image.src) : image.src;
+      } catch {
+        continue;
+      }
+      try {
+        const snapshot = await readSafeFileSnapshot(localPath, {
+          maxBytes: MAX_SESSION_IMAGE_BYTES,
+          rejectIfLarger: true
+        });
+        totalBytes += snapshot.size;
+        if (totalBytes > MAX_SESSION_IMAGE_TOTAL_BYTES) continue;
+        const buffer = snapshot.buffer;
+        const mimeType = sniffImageMime(buffer);
+        if (!mimeType) continue;
+        images.push({
+          src: `data:${mimeType};base64,${buffer.toString("base64")}`,
+          alt: image.alt ?? mediaDisplayLabel(image.src)
+        });
+      } catch {
+        /* A deleted temp image is a normal unavailable preview. */
+      }
+    }
+    hydrated.push(images.length ? { ...message, images } : message);
+  }
+  return hydrated;
 }
 
 function localPathFromSource(source: string): string {
@@ -3517,11 +3515,13 @@ function parseCliSessionMessage(line: string, sequence: number): DashboardCliSes
     const text = parts.join("\n\n").trim();
     if (!text && images.length === 0) return undefined;
     if (role === "user" && isInternalSessionContext(text, payload)) return undefined;
+    const textAttachments = role === 'user' ? readChatTextAttachments(text) : [];
     return {
       id: `${sequence}-${typeof value.timestamp === "string" ? value.timestamp : "message"}`,
       role,
       text: text.slice(0, MAX_SESSION_MESSAGE_CHARS),
       ...(images.length ? { images: images.slice(0, 20) } : {}),
+      ...(textAttachments.length ? { textAttachments } : {}),
       timestamp
     };
   } catch {
@@ -3569,6 +3569,7 @@ function parsePersistedUserMessage(
       content.images.push({ src, alt: "Attached image" });
   }
   const text = content.text || (typeof payload["message"] === "string" ? payload["message"].trim() : "");
+  const textAttachments = content.textAttachments ?? readChatTextAttachments(typeof payload['message'] === 'string' ? payload['message'] : '');
   return text || content.images.length
     ? {
         id,
@@ -3576,6 +3577,7 @@ function parsePersistedUserMessage(
         role: "user",
         text: text.slice(0, MAX_SESSION_MESSAGE_CHARS),
         ...(content.images.length ? { images: content.images.slice(0, 20) } : {}),
+        ...(textAttachments.length ? { textAttachments } : {}),
         timestamp
       }
     : undefined;

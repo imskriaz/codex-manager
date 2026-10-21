@@ -10,7 +10,7 @@
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
     try {
       const response = await fetch(`/api/share/${encodeURIComponent(token)}`, { cache: "no-store", signal: controller.signal });
-      if (response.status === 404) { stopped = true; conversation.replaceChildren(); state.textContent = 'This link expired or was revoked.'; return; }
+      if (response.status === 404) { stopped = true; window.clearCodexSharedMessages?.(conversation); conversation.replaceChildren(); state.textContent = 'This link expired or was revoked.'; return; }
       if (!response.ok) throw new Error();
       const data = await response.json();
       if (!Array.isArray(data.messages)) throw new Error();

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { DashboardCliProject, DashboardCliSessionSummary, DashboardHostMessage, DashboardActionName, DashboardActionPayload, DashboardActionResultPayload } from '../../src/domain/dashboard/types';
-import type { ProjectBoard, ProjectTask, ProjectTaskDetails, ProjectTaskMutation, TaskStage, ProjectSharePermission } from '../../src/domain/projectTasks';
+import type { ProjectBoard, ProjectTask, ProjectTaskDetails, ProjectTaskFile, ProjectTaskMutation, TaskStage, ProjectSharePermission } from '../../src/domain/projectTasks';
+import { readConversationAttachment } from '../../src/domain/conversationFiles';
 import { projectTaskStages, sessionTaskStage, PROJECT_SHARE_FEATURES } from '../../src/domain/projectTasks';
 import { readBrowserCache, writeBrowserCache, listBrowserOutbox, deleteBrowserCache } from './cliSessionCache';
 import { ModalShell, TaskDetailPanel } from './primitives';
@@ -45,6 +46,7 @@ export function TaskBoard(props: {
   const deviceRef = useRef(props.targetDeviceId); deviceRef.current = props.targetDeviceId;
   const selection = useRef(selected?.id); selection.current = selected?.id;
   const detailGeneration = useRef(0), receivedBoard = useRef(false), syncing = useRef(false);
+  const fileRequest = useRef(0);
   const failedChanges = useRef(new Map<string, string>());
   const refreshing = useRef<{ scope: string; work: Promise<void> }>();
   const currentBoard = useRef(board); currentBoard.current = board;
@@ -284,15 +286,22 @@ export function TaskBoard(props: {
     } catch (error) { if (origin === active.current) setStatus((error as Error).message); return false; }
     finally { setBusy(false); }
   };
-  const openFile = async (filePath: string) => {
+  const openFile = async (entry: ProjectTaskFile) => {
+    const request = ++fileRequest.current;
+    if (entry.attachment) {
+      const preview = readConversationAttachment(details?.messages ?? [], entry.path);
+      if (preview) setFile(preview); else setStatus('This attachment is unavailable. Open its history page when connected.');
+      return;
+    }
+    const filePath = entry.path;
     const generation = detailGeneration.current, key = `file:${JSON.stringify([props.targetDeviceId ?? 'local', project, filePath])}`;
     try {
       const cached = await readBrowserCache<NonNullable<DashboardActionResultPayload['workspaceFile']>>(key);
-      if (generation === detailGeneration.current && cached) setFile(cached);
-      if (!props.connected) { if (!cached) setStatus('This file has no offline copy. Open it when connected.'); return; }
+      if (request === fileRequest.current && generation === detailGeneration.current && cached) setFile(cached);
+      if (!props.connected) { if (!cached && request === fileRequest.current && generation === detailGeneration.current) setStatus('This file has no offline copy. Open it when connected.'); return; }
       const next = (await call('readWorkspaceFile', { filePath })).workspaceFile;
-      if (next && generation === detailGeneration.current) { setFile(next); void writeBrowserCache(key, next); }
-    } catch (error) { setStatus((error as Error).message); }
+      if (next && request === fileRequest.current && generation === detailGeneration.current) { setFile(next); void writeBrowserCache(key, next); }
+    } catch (error) { if (request === fileRequest.current && generation === detailGeneration.current) setStatus((error as Error).message); }
   };
   if (props.active === false) return null;
   const comments = [...(board?.comments ?? []), ...rows.flatMap(row => row.value.comment && !(board?.comments.some(item => item.id === row.value.comment!.id)) ? [{ ...row.value.comment, author: 'You · pending', createdAt: 0 }] : [])].filter(item => item.taskId === selected?.id);
@@ -326,7 +335,7 @@ export function TaskBoard(props: {
         <div class="task-detail-scroll cli-workspace cli-message-surface" role="tabpanel">{details?.warnings.map(warning => <p key={warning} class="settings-note" role="status">{warning}</p>)}
           {cursor ? <button type="button" disabled={detailLoading} onClick={() => setCursor(undefined)}>Latest activity</button> : null}{details?.olderThan ? <button type="button" disabled={detailLoading} onClick={() => setCursor(details.olderThan)}>Older history</button> : null}
           {tab === 'activities' ? details?.messages.map(item => <SessionMessage key={item.id} message={item} onActionFeedback={notice => setStatus(notice.message)} />) : null}
-          {tab === 'files' ? <><p class="settings-note">Files shared or changed in this conversation · read-only</p>{details?.files.map(entry => <button type="button" class="task-file-row" key={entry.path} disabled={entry.type !== 'file'} onClick={() => { void openFile(entry.path); }}><span>{entry.path}</span><small>Chat file</small></button>)}{details && !details.files.length ? <p class="task-board-empty">No files were shared or changed in this conversation.</p> : null}{file ? <article class="task-activity"><strong>{file.path}</strong>{file.kind === 'image' && file.dataUrl ? <img src={file.dataUrl} alt={file.path} /> : <pre>{file.content}</pre>}</article> : null}</> : null}
+          {tab === 'files' ? <><p class="settings-note">Files shared or changed in this conversation · read-only</p>{details?.files.map(entry => <button type="button" class="task-file-row" key={entry.path} disabled={entry.type !== 'file'} onClick={() => { void openFile(entry); }}><span>{entry.attachment ? entry.name : entry.path}</span><small>{entry.attachment ? 'Attachment' : 'Changed file'}</small></button>)}{details && !details.files.length ? <p class="task-board-empty">No files were shared or changed in this conversation.</p> : null}{file ? <article class="task-activity"><strong>{file.path}</strong>{file.kind === 'image' && file.dataUrl ? <SessionMessage key={file.revision} message={{ id: file.revision, kind: 'message', role: 'user', text: '', images: [{ src: file.dataUrl, alt: file.path }] }} /> : <pre>{file.content}</pre>}</article> : null}</> : null}
           {tab === 'changes' ? <><p>Current project: {details?.environment?.changes ?? 0} changed files · +{details?.environment?.additions ?? 0} / −{details?.environment?.deletions ?? 0}</p>{details?.environment?.branchDiff ? <details><summary>Current branch differences</summary><pre>{details.environment.branchDiff}</pre></details> : null}{details?.messages.filter(item => item.changes?.length).map(item => <SessionMessage key={item.id} message={item} />)}</> : null}
           {detailLoading ? <p role="status" class="settings-note">Refreshing {label(tab).toLowerCase()}…</p> : !details ? <p class="task-board-empty">{selected.id ? 'No cached details yet. Reconnect to load this view.' : 'Save this task to add comments and start Codex.'}</p> : !details.messages.length && tab === 'activities' ? <p class="task-board-empty">No activity on this history page.</p> : null}
         </div>

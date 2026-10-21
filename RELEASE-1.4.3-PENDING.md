@@ -10,6 +10,23 @@ scope; publication does not close outstanding hardware or runtime checks.
 
 ### Follow-up evidence (2026-10-21)
 
+- Attachment follow-up: 80 focused checks and all 2,109 tests across 178 files
+  pass. Both TypeScript targets pass; lint has zero errors and 2,871 style
+  warnings. Complete supported text-upload snapshots survive display truncation
+  and live updates; new length-delimited upload records preserve literal nested
+  markers while older records remain readable. Lightweight Files entries preview
+  uploads without filesystem reads. Missing/unsupported images retain metadata
+  and report unavailable. Final VSIX packaging and dependency checks pass.
+- Local image reads are sequential and failed decoding consumes the page budget.
+  Regression coverage checks peak concurrency and bounded invalid-image reads.
+  The transcript cache's existing 8 MiB budget includes the new attachment fields;
+  live snapshots and browser cache limits remain in effect.
+- All six responsive sizes pass attachment/image previews and stale file-read
+  rejection. Public desktop/mobile checks cover Files permissions, visible
+  read-only preview failures/retries, open-image retention across live updates,
+  partial history failure, preview replacement/cleanup, and archived subtasks in Completed. Real installed
+  offline reload/reconnect and workspace-worker update checks pass. Read-only
+  live browser checks load 341 sessions and reconnect, measured at 1,188/1,210 ms.
 - API/offline follow-up: 2,099 tests across 177 files pass. Real HTTP routing
   checks cover operation-only state exclusion, multiple project scopes, session
   ownership, remote targets, cross-origin requests, invalid/revoked/disabled
@@ -189,15 +206,17 @@ fresh source results. Focused cache/failure/cross-process checks and the complet
   checks, search and cross-project/system boundaries.
 - [ ] Verify drag/drop from sidebar, within board and onto parent tasks; expose
   understandable outcomes where activity determines a session's column.
+  Known follow-up: nested task cards currently bubble drops to the root group;
+  add a drop target per card and exercise actual sidebar/board/nested drags.
 - [ ] Verify right task panel, combined Activities, comments, conversation-shared
   files (not a project tree) and recorded changes with live updates. Messages
   and tool activity share Activities; Git history was removed by later request.
 - [ ] Verify public project permission modal, shared features, submissions,
   comments, expiry, revocation, embedding and server-side authorization.
 - [ ] Verify public board/task rendering matches rich workspace presentation.
-- [ ] Finish attachment parity: Files currently derives entries from transcript
-  change paths, and the public task serializer omits message image attachments.
-  Audit uploaded conversation files/images and permission-safe public rendering.
+- [x] Finish attachment parity for supported text uploads and conversation images;
+  include snapshots and changed paths, enforce public Files permission, retain
+  live hydration, and clean up image viewers on task close or link revocation.
 
 ## API and offline safety
 

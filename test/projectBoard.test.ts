@@ -81,6 +81,31 @@ it('does not turn conversation-file sharing into unrestricted project file acces
   expect(workspace.readWorkspaceFile).not.toHaveBeenCalled();
 });
 
+it('previews conversation uploads as snapshots and gates public image/data exposure behind Files permission', async () => {
+  const board = await readProjectBoard(root), task = board.tasks[0]!;
+  const image = 'data:image/png;base64,iVBORw0KGgo=', page = { messages: [{ id: 'upload', kind: 'message' as const, role: 'user' as const,
+    text: 'Review\n\n<attached_file name="private.env">\nPRIVATE UPLOAD', textAttachments: [{ name: 'private.env', text: 'PRIVATE UPLOAD' }],
+    images: [{ src: image, alt: 'Screenshot' }, { src: 'file:///private/missing.png', alt: 'Missing' }] }], warnings: [], olderThan: '100' };
+  const share = { projectPath: root, expiresAt: Date.now() + 60000, permissions: ['messages' as const] };
+  vi.mocked(sessions.readCodexCliSessionMessagePage).mockResolvedValueOnce(page);
+  const privateFiles = await readProjectTaskDetails(root, task.id, 'files');
+  expect(privateFiles.files.map(file => file.name)).toEqual(['private.env', 'Screenshot', 'Missing']);
+  vi.mocked(sessions.readCodexCliSessionMessagePage).mockResolvedValueOnce(page);
+  const messageOnly = JSON.stringify(await readSharedProjectTask(share, task.id, 'activities'));
+  for (const secret of ['PRIVATE UPLOAD', image, 'file:///private']) expect(messageOnly).not.toContain(secret);
+  vi.mocked(sessions.readCodexCliSessionMessagePage).mockResolvedValueOnce(page);
+  expect(await readSharedProjectTask({ ...share, permissions: ['messages', 'files'] }, task.id, 'activities')).toMatchObject({ messages: [{ text: 'Review', images: [{ src: image }] }] });
+  for (const [index, expected] of [[0, { path: 'private.env', content: 'PRIVATE UPLOAD', kind: 'text' }], [1, { path: 'Screenshot', dataUrl: image, kind: 'image' }]] as const) {
+    vi.mocked(sessions.readCodexCliSessionMessagePage).mockResolvedValueOnce(page);
+    expect(await readSharedProjectTask({ ...share, permissions: ['files'] }, task.id, 'files', undefined, privateFiles.files[index]!.path)).toMatchObject({ file: expected });
+  }
+  vi.mocked(sessions.readCodexCliSessionMessagePage).mockResolvedValueOnce(page);
+  await expect(readSharedProjectTask({ ...share, permissions: ['files'] }, task.id, 'files', undefined, privateFiles.files[2]!.path)).rejects.toThrow(/unavailable/);
+  vi.mocked(sessions.readCodexCliSessionMessagePage).mockResolvedValueOnce({ messages: [], warnings: [] });
+  await expect(readSharedProjectTask({ ...share, permissions: ['files'] }, task.id, 'files', '100', privateFiles.files[0]!.path)).rejects.toThrow(/not part/);
+  expect(workspace.readWorkspaceFile).not.toHaveBeenCalled();
+});
+
 it('merges bounded live activity and file changes without modifying older history pages', async () => {
   const board = await readProjectBoard(root), task = board.tasks[0]!;
   saveSessionLive(store, root, { sessionId: state.id, streamId: '22222222-2222-4222-8222-222222222222', sequence: 1, updatedAt: Date.now(), status: 'running', truncated: true, messages: [
