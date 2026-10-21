@@ -17,6 +17,7 @@
 - Organize sessions and custom tasks as nested subtasks at any level, or move them back to the board. Preserve session identity and history; grouped sessions appear once. Reject cycles, cross-project parents, missing tasks, and conflicting edits.
 - Open task details in a right panel for combined Activities, conversation files, and recorded changes. Keep archived sessions in Completed with an additional Archive filter. Read tabs on demand, keep history pages bounded, preserve saved views when refreshes fail, and push committed task/comment updates to connected dashboards.
 - Create expiring public project links with selectable activity, conversation file, change, comment, and submission permissions. Visitors can submit ideas and comment when allowed. Revoke project links and enforce permissions on the server. A separate embedding permission enables iframe integration with the same access rules.
+- Preserve public submission drafts and retry identities across reloads; use a new identity for edited retries. Prevent duplicate submissions and edits during pending writes, disable offline actions immediately, and keep revoked boards cleared after search or filtering.
 
 ### API and offline behavior
 

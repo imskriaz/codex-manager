@@ -39,7 +39,7 @@ export async function readSharedProjectTask(share: ProjectShare, taskId: string,
       ? (!item.kind || item.kind === 'message' ? share.permissions.includes('messages') : share.permissions.includes('activities') && item.kind !== 'file-change')
       : normalizedView === 'changes' && item.changes?.length).map(item => ({
       id: item.id, role: item.role, kind: item.kind, text: item.text, title: item.title, status: item.status,
-      ...(normalizedView === 'activities' ? { command: item.command, output: item.output, result: item.result, arguments: item.arguments } : {}),
+      ...(normalizedView === 'activities' && share.permissions.includes('activities') ? { command: item.command, output: item.output, result: item.result, arguments: item.arguments } : {}),
       ...(normalizedView === 'changes' ? { changes: item.changes } : {})
     })),
     files: details.files, history: details.history, isGitRepository: details.environment?.isGitRepository,

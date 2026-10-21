@@ -58,6 +58,15 @@ it('preserves tasks when discovery fails and reports optional detail failures wi
   expect(await readProjectTaskDetails(root, 'draft', 'files')).toMatchObject({ warnings: [], files: [] });
 });
 
+it('keeps tool fields private on message-only links even when a mixed transcript row contains them', async () => {
+  const board = await readProjectBoard(root), task = board.tasks[0]!;
+  vi.mocked(sessions.readCodexCliSessionMessagePage).mockResolvedValueOnce({ messages: [{ id: 'mixed', kind: 'message', role: 'assistant', text: 'Answer', command: 'private command', output: 'private output', result: 'private result', arguments: 'private arguments' }], warnings: [] });
+  const shared = await readSharedProjectTask({ projectPath: root, expiresAt: Date.now() + 60000, permissions: ['messages'] }, task.id, 'activities') as { messages: Array<Record<string, unknown>> };
+  expect(shared.messages).toHaveLength(1);
+  expect(shared.messages[0]).toMatchObject({ text: 'Answer' });
+  for (const field of ['command','output','result','arguments']) expect(shared.messages[0]).not.toHaveProperty(field);
+});
+
 it('rejects an account-home change during discovery instead of importing the old catalogue into the new identity', async () => {
   vi.mocked(sessions.readCodexCliSessions).mockImplementationOnce(async () => { state.home = join(root, 'changed'); return []; });
   await expect(readProjectBoard(root)).rejects.toThrow(/home changed/);

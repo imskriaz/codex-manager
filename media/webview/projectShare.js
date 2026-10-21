@@ -4,7 +4,7 @@
   const token = location.pathname.split('/').pop();
   const endpoint = '/api/projects/share/' + encodeURIComponent(token);
   let board, loading = false, selected, live = false, showArchive = false;
-  const allowed = feature => Boolean(live && board?.expiresAt > Date.now() && (board?.permissions.includes(feature) || (feature === 'activities' && board?.permissions.includes('messages'))));
+  const allowed = feature => Boolean(navigator.onLine && live && board?.expiresAt > Date.now() && (board?.permissions.includes(feature) || (feature === 'activities' && board?.permissions.includes('messages'))));
   function node(tag, text, className) { const item = document.createElement(tag); if (text !== undefined) item.textContent = text; if (className) item.className = className; return item; }
   const status = node('p', '', 'task-board-status'); status.setAttribute('role', 'status');
   const heading = node('h1', 'Shared project');
@@ -23,19 +23,20 @@
   form.append(node('h2', 'Suggest an idea'), title, prompt, author, submit);
   root.replaceChildren(heading, status, toolbar, columns, form);
   const draftKey = 'codexManager.publicDraft:' + token.slice(0, 12);
-  let draftId = crypto.randomUUID();
-  try { const draft = JSON.parse(localStorage.getItem(draftKey) || '{}'); title.value = draft.title || ''; prompt.value = draft.prompt || ''; author.value = draft.author || ''; draftId = draft.id || draftId; } catch { /* storage optional */ }
-  form.addEventListener('input', () => { try { localStorage.setItem(draftKey, JSON.stringify({ id: draftId, title: title.value, prompt: prompt.value, author: author.value })); } catch { status.textContent = 'Draft is kept in this tab only. Copy it before closing.'; } });
+  let draftId = crypto.randomUUID(), draftAttempt, submitting = false;
+  try { const draft = JSON.parse(localStorage.getItem(draftKey) || '{}'); title.value = draft.title || ''; prompt.value = draft.prompt || ''; author.value = draft.author || ''; draftId = draft.id || draftId; draftAttempt = draft.attempt; } catch { /* storage optional */ }
+  function saveDraft() { try { localStorage.setItem(draftKey, JSON.stringify({ id: draftId, attempt: draftAttempt, title: title.value, prompt: prompt.value, author: author.value })); } catch { status.textContent = 'Draft is kept in this tab only. Copy it before closing.'; } }
+  form.addEventListener('input', saveDraft);
   async function request(body, task, view, before, file) {
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
     try {
       const response = await fetch(endpoint + (task ? '?' + new URLSearchParams({ task, view: view || 'activities', ...(before ? { before } : {}), ...(file ? { file } : {}) }) : ''), { method: body ? 'POST' : 'GET', signal: controller.signal, cache: 'no-store', headers: { 'Content-Type': 'application/json', 'X-Codex-Dashboard': '1' }, ...(body ? { body: JSON.stringify(body) } : {}) });
-      const result = await response.json(); if (!response.ok) { if (response.status === 404) { live = false; columns.replaceChildren(); form.hidden = true; selected?.dispatchEvent(new Event('close')); } throw new Error(result.error || 'Project request failed.'); } return result;
+      const result = await response.json(); if (!response.ok) { if (response.status === 404) { live = false; board = undefined; columns.replaceChildren(); form.hidden = true; selected?.dispatchEvent(new Event('close')); } throw new Error(result.error || 'Project request failed.'); } return result;
     } finally { clearTimeout(timer); }
   }
   function openTask(task) {
     selected?.dispatchEvent(new Event('close'));
-    const dialog = node('aside', undefined, 'task-detail-panel public-task-dialog'); selected = dialog;
+    const dialog = node('aside', undefined, 'task-detail-panel public-task-dialog'); selected = dialog; dialog.dataset.task = task.id;
     dialog.setAttribute('aria-label', task.title); dialog.tabIndex = -1;
     const close = node('button', '×', 'settings-close'); close.type = 'button'; close.setAttribute('aria-label', 'Close task details'); close.onclick = () => dialog.dispatchEvent(new Event('close'));
     dialog.onkeydown = event => { if (event.key === 'Escape') { close.click(); event.stopPropagation(); } };
@@ -47,14 +48,14 @@
     comments.append(commentList);
     const input = node('textarea'); input.placeholder = 'Add a comment…'; input.maxLength = 8000; input.setAttribute('aria-label', 'Comment');
     const commentButton = node('button', 'Add comment'); commentButton.type = 'button';
-    let commentId = crypto.randomUUID(), savedText = '';
+    let commentId = crypto.randomUUID(), savedText = '', commenting = false;
     commentButton.onclick = async () => {
-      if (!input.value.trim() || !allowed('comments')) return;
+      if (commenting || !input.value.trim() || !allowed('comments')) return;
       if (savedText && savedText !== input.value) commentId = crypto.randomUUID(); savedText = input.value;
-      commentButton.disabled = true;
-      try { await request({ kind: 'comment', id: commentId, taskId: task.id, text: input.value, author: author.value }); commentList.append(node('p', input.value)); input.value = ''; commentId = crypto.randomUUID(); savedText = ''; status.textContent = 'Comment added.'; await refresh(); }
+      commenting = true; input.readOnly = true; commentButton.disabled = true; feedback.textContent = 'Posting comment…';
+      try { await request({ kind: 'comment', id: commentId, taskId: task.id, text: input.value, author: author.value }); commentList.append(node('p', input.value)); input.value = ''; commentId = crypto.randomUUID(); savedText = ''; feedback.textContent = 'Comment added.'; await refresh(); }
       catch (error) { feedback.textContent = 'Comment not confirmed: ' + error.message + ' Your text was kept. Retry sends the same request safely.'; }
-      finally { commentButton.disabled = !allowed('comments'); }
+      finally { commenting = false; input.readOnly = false; commentButton.disabled = !allowed('comments'); }
     };
     comments.append(input, commentButton, feedback);
     const head = node('header', undefined, 'settings-modal-head'); head.append(node('strong', task.title, 'settings-modal-title'), close);
@@ -99,10 +100,10 @@
     const subtasks = board.tasks.filter(child => child.parentTaskId === task.id);
     if (subtasks.length) { const children = node('div', undefined, 'task-subtasks'); children.append(node('h3', 'Subtasks')); for (const child of subtasks) { const link = node('button', child.title); link.type = 'button'; link.onclick = () => openTask(child); children.append(link); } body.insertBefore(children, activity); }
     if (features[0]) void load(features[0]);
-    const revalidate = () => { if (dialog.isConnected && !document.hidden && view === 'activities' && !before && !pending && live) void load(view); commentButton.disabled = !allowed('comments'); };
-    window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate); window.addEventListener('online', revalidate);
+    const revalidate = () => { if (dialog.isConnected && !document.hidden && view === 'activities' && !before && !pending && live) void load(view); commentButton.disabled = commenting || !allowed('comments'); };
+    window.addEventListener('focus', revalidate); document.addEventListener('visibilitychange', revalidate); window.addEventListener('online', revalidate); window.addEventListener('offline', revalidate);
     dialog.addEventListener('refresh', revalidate);
-    dialog.addEventListener('close', () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); window.removeEventListener('online', revalidate); dialog.remove(); if (selected === dialog) selected = undefined; }, { once: true });
+    dialog.addEventListener('close', () => { window.removeEventListener('focus', revalidate); document.removeEventListener('visibilitychange', revalidate); window.removeEventListener('online', revalidate); window.removeEventListener('offline', revalidate); dialog.remove(); if (selected === dialog) selected = undefined; }, { once: true });
   }
 
   function renderBoard() {
@@ -125,19 +126,22 @@
   async function refresh() {
     if (loading) return; loading = true;
     try {
-      const next = await request(); const changed = !board || JSON.stringify(next.tasks) !== JSON.stringify(board.tasks), commentsChanged = !board || JSON.stringify(next.comments) !== JSON.stringify(board.comments); board = next; live = true; heading.textContent = board.title; form.hidden = !allowed('submissions'); submit.disabled = !allowed('submissions'); if (changed) renderBoard();
+      const next = await request(); const changed = !board || JSON.stringify(next.tasks) !== JSON.stringify(board.tasks), commentsChanged = !board || JSON.stringify(next.comments) !== JSON.stringify(board.comments); board = next; live = navigator.onLine; heading.textContent = board.title; form.hidden = !board.permissions.includes('submissions'); submit.disabled = submitting || !allowed('submissions'); if (changed) renderBoard();
+      if (selected && !board.tasks.some(task => task.id === selected.dataset.task)) selected.dispatchEvent(new Event('close'));
       const comments = selected?.querySelector('.public-comment-list');
       if (comments && commentsChanged) { comments.replaceChildren(); for (const item of board.comments.filter(comment => comment.taskId === comments.dataset.task)) { const entry = node('article', undefined, 'task-activity'); entry.append(node('small', item.author), node('p', item.text)); comments.append(entry); } }
-      status.textContent = 'Shared project · expires ' + new Date(board.expiresAt).toLocaleString();
-      selected?.dispatchEvent(new Event('refresh'));
-    } catch (error) { live = false; submit.disabled = true; status.textContent = 'Saved view retained. ' + error.message + ' Reconnect before submitting.'; }
-    finally { loading = false; }
+      status.textContent = (live ? 'Shared project · expires ' : 'Offline. Saved view · expires ') + new Date(board.expiresAt).toLocaleString();
+    } catch (error) { live = false; submit.disabled = true; status.textContent = (board ? 'Saved view retained. ' : '') + error.message + ' Reconnect before submitting.'; }
+    finally { loading = false; selected?.dispatchEvent(new Event('refresh')); }
   }
   form.onsubmit = async event => {
-    event.preventDefault(); if (!allowed('submissions')) return; submit.disabled = true;
-    try { await request({ kind: 'task', id: draftId, title: title.value, prompt: prompt.value }); title.value = ''; prompt.value = ''; draftId = crypto.randomUUID(); try { localStorage.removeItem(draftKey); } catch { /* optional */ } await refresh(); status.textContent = 'Idea submitted for the project owner to review.'; }
+    event.preventDefault(); if (submitting || !allowed('submissions')) return;
+    const attempt = JSON.stringify([title.value, prompt.value]);
+    if (draftAttempt && draftAttempt !== attempt) draftId = crypto.randomUUID();
+    draftAttempt = attempt; saveDraft(); submitting = true; title.readOnly = true; prompt.readOnly = true; submit.disabled = true; status.textContent = 'Submitting idea…';
+    try { await request({ kind: 'task', id: draftId, title: title.value, prompt: prompt.value }); title.value = ''; prompt.value = ''; draftId = crypto.randomUUID(); draftAttempt = undefined; try { localStorage.removeItem(draftKey); } catch { /* optional */ } await refresh(); status.textContent = 'Idea submitted for the project owner to review.'; }
     catch (error) { status.textContent = 'Submission not confirmed: ' + error.message + ' Your draft was kept. Retry safely using the same form.'; }
-    finally { submit.disabled = !allowed('submissions'); }
+    finally { submitting = false; title.readOnly = false; prompt.readOnly = false; submit.disabled = !allowed('submissions'); }
   };
   window.addEventListener('offline', () => { live = false; submit.disabled = true; status.textContent = 'Offline. Your draft is kept; requests are not sent automatically.'; });
   window.addEventListener('online', () => { void refresh(); });

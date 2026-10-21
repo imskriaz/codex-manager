@@ -2,17 +2,31 @@
 
 This checklist preserves the full active release goal and later user requests.
 An unchecked item needs implementation, review, or current verification; it is
-not a claim that the feature is absent. Do not mark the goal complete or publish
-an updated artifact until every release gate is satisfied.
+not a claim that the feature is absent. Do not mark the overall goal complete
+while required checks remain open. Published artifacts record their verified
+scope; publication does not close outstanding hardware or runtime checks.
 
 ## Repository inventory (2026-10-20)
 
 ### Follow-up evidence (2026-10-21)
 
-- The delivered baseline is commit `7a255b8` on `main`; the current follow-up
+- The delivered baseline is commit `04812a6` on `main`; that follow-up
   fixes manual Stop recovery, cached per-session overrides, floating queue
   controls, distinct Auto Resume states, and public task permission/lifecycle
   gaps. Their verification is recorded below; the broader live gates remain open.
+- The latest sharing audit protects pending idea/comment edits, prevents duplicate
+  sends, preserves retry identities across reloads, and uses a new identity for
+  edited retries. Offline controls disable immediately, revoked boards cannot
+  reappear through search, and legacy message-only links exclude tool fields.
+- Desktop/mobile sharing checks cover failed/retried submissions, reload,
+  duplicate submit, background refresh during a pending write, storage-full
+  drafts, offline controls, and revocation. Focused task/share/API tests: 25 pass.
+- Final follow-up regression: 174 files / 2,067 tests pass; both TypeScript
+  targets pass, and lint reports zero errors with 2,837 existing style warnings.
+  Packaging and VSIX dependency validation pass. Read-only live browser checks
+  load 341 sessions, reconnect successfully, and connect in 978 ms / 588 ms.
+- Public views refresh on focus, reconnect, visibility and explicit Refresh;
+  a continuously focused public page still needs a scoped live event channel.
 - Focused recovery/queue/task verification: 223 tests across 10 suites pass.
   Follow-up logging/Stop verification: 53 tests across 2 suites pass.
 - Both TypeScript targets and production compilation pass. Lint has zero
@@ -38,8 +52,9 @@ an updated artifact until every release gate is satisfied.
 
 - One worktree: the current checkout on `main`.
 - No local branches unmerged into `main` at inventory time.
-- The current working diff and new UI checks, renderer and regression tests
-  remain pending delivery.
+- The baseline VSIX was installed, committed and pushed on `main`, and its
+  GitHub Release artifact/tag were verified. Follow-up delivery is recorded with
+  its verification results; it does not close the broader runtime checks above.
 - Seven preserved stashes need a semantic audit against current code. Keep them
   intact; do not apply old version/lockfile changes over the release.
 
@@ -104,13 +119,14 @@ checkout and must be compared before declaring the stashes fully covered.
 
 ## Project task management and sharing
 
-- [ ] Verify Idea, Planned, Running, Completed and separate Archive; DB tasks,
+- [ ] Verify Idea, Planned, Running, Completed plus an additional Archive filter; DB tasks,
   sessions as tasks/subtasks, arbitrary hierarchy, moving back to board, cycle
   checks, search and cross-project/system boundaries.
 - [ ] Verify drag/drop from sidebar, within board and onto parent tasks; expose
   understandable outcomes where activity determines a session's column.
 - [ ] Verify right task panel, combined Activities, comments, conversation-shared
-  files (not a project tree), recorded changes and Git history with live updates.
+  files (not a project tree) and recorded changes with live updates. Messages
+  and tool activity share Activities; Git history was removed by later request.
 - [ ] Verify public project permission modal, shared features, submissions,
   comments, expiry, revocation, embedding and server-side authorization.
 - [ ] Verify public board/task rendering matches rich workspace presentation.
@@ -129,7 +145,7 @@ checkout and must be compared before declaring the stashes fully covered.
 
 ## Edge cases and release gates
 
-Current verified evidence for this work slice: 174 test files / 2,057 tests pass;
+Baseline verified evidence: 174 test files / 2,066 tests pass;
 lint reports warnings with zero errors; both TypeScript checks and VSIX
 dependency layout checks pass. The six-size responsive run and desktop/mobile
 public share run passed. A final responsive repeat additionally checks token
