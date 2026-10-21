@@ -58,6 +58,18 @@ it('filters global refreshed state and secret-bearing fields from scoped mutatio
   expect(payload).not.toHaveProperty('authJson'); expect(payload).not.toHaveProperty('apiTokens'); expect(payload).not.toHaveProperty('apiToken');
 });
 
+it('requires state permission for appended snapshots even when an operation token allows every project', () => {
+  const token = { id: 'a', name: 'Rename only', permissions: ['renameCodexCliSession'], createdAt: 1 };
+  const messages: DashboardHostMessage[] = [
+    { type: 'dashboard:action-result', action: 'renameCodexCliSession', requestId: 'r', status: 'completed', payload: { notice: { level: 'info', message: 'Renamed.' } } },
+    { type: 'dashboard:snapshot', state: { accounts: [{ id: 'private-account' }] } as never }
+  ];
+  expect(scopeApiResults(token, messages)).toEqual([messages[0]]);
+  expect(scopeApiResults({ ...token, permissions: [...token.permissions, 'state'] }, messages)).toEqual(messages);
+  expect(scopeApiResults({ ...token, permissions: ['*'] }, messages)).toEqual(messages);
+  expect(scopeApiResults({ ...token, projectPath: process.cwd(), permissions: ['*'] }, messages)).toEqual([messages[0]]);
+});
+
 it('preserves corrupt storage and enforces the token cap', async () => {
   secrets.set(DASHBOARD_API_TOKEN_SECRET_KEY, '[{"id":"broken"}]');
   await expect(createDashboardApiToken(context, { name: 'New' })).rejects.toThrow(/preserved/);

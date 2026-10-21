@@ -394,7 +394,7 @@
     "verify": "npm run lint && npm run typecheck:webview && tsc -p ./",
     "format": "prettier --write \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"webview-src/**/*.{ts,tsx}\"",
-    "test:ui": "npm run compile && node tools/check-responsive-ui.mjs && node tools/check-browser-notifications.mjs",
+    "test:ui": "npm run compile && node tools/check-responsive-ui.mjs && node tools/check-browser-notifications.mjs && node tools/check-offline-ui.mjs",
     "test:ui:live": "node tools/check-live-ui.mjs",
     "test:ui:actions": "node tools/check-live-actions.mjs --mutate"
   },

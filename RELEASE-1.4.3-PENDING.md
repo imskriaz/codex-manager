@@ -10,6 +10,23 @@ scope; publication does not close outstanding hardware or runtime checks.
 
 ### Follow-up evidence (2026-10-21)
 
+- API/offline follow-up: 2,099 tests across 177 files pass. Real HTTP routing
+  checks cover operation-only state exclusion, multiple project scopes, session
+  ownership, remote targets, cross-origin requests, invalid/revoked/disabled
+  tokens, and ungranted global settings. Both TypeScript targets pass; lint has
+  zero errors and 2,857 existing style warnings.
+  The 1.4.3 VSIX and dependency-layout checks pass. UI verification scripts are
+  excluded from the production package; three required runtime tools remain.
+- All six responsive sizes, public desktop/mobile, and seven notification
+  scenarios pass. The activity refresh fixture now holds the intended view,
+  avoiding a late cached Files response consuming the Activities hold.
+- A disposable real-browser context cold-loads the installed dashboard and task
+  board offline, reconnects over WebSocket, sends no mutations, and verifies
+  that Cache Storage excludes private API responses. A real HTTP/browser
+  fixture using the current workspace worker verifies newer-version asset
+  requests, a failed required asset, retention of the old controller/cache, and
+  cold offline fallback after that failed update. Browser storage-full and
+  malformed-cache paths remain covered by focused regressions.
 - The delivered baseline is commit `04812a6` on `main`; that follow-up
   fixes manual Stop recovery, cached per-session overrides, floating queue
   controls, distinct Auto Resume states, and public task permission/lifecycle
@@ -148,7 +165,7 @@ fresh source results. Focused cache/failure/cross-process checks and the complet
   signature so changes also push reliably to other open dashboard clients.
 - [ ] Verify settings tabs stay one row; narrow screens use the active label and
   other icons. Verify About links and all navigation remain compact/readable.
-- [ ] Verify settings and stacked dialogs do not steal typing focus during
+- [x] Verify settings and stacked dialogs do not steal typing focus during
   background updates, preserve keyboard navigation and restore focus on close.
 - [ ] Replace avoidable UI polling with state/file/live/reconnect/focus events;
   finish auditing remaining maintenance, public-share and server reconciliation
@@ -156,10 +173,10 @@ fresh source results. Focused cache/failure/cross-process checks and the complet
 - [ ] Verify removal of unnecessary pulse/transition effects.
 - [ ] Verify pinned account footer, system switching/remote identity, compact
   sidebar, separate tool context bar, queue menu placement and title actions.
-- [ ] Verify distinct Sync and Refresh icons throughout the dashboard.
+- [x] Verify distinct Sync and Refresh icons throughout the dashboard.
 - [ ] Suppress the requested stale refresh/history notices and retire confirmed
   missing sessions without losing drafts or hiding transient errors.
-- [ ] Verify donation links and USD 11 suggestion.
+- [x] Verify donation links and USD 11 suggestion.
 - [ ] Verify manual OAuth URL submission alongside a pending automatic listener,
   duplicate clicks, listener failure, retry, cancellation and stale results.
 - [ ] Prefix browser and background push titles with the originating system;
@@ -178,6 +195,9 @@ fresh source results. Focused cache/failure/cross-process checks and the complet
 - [ ] Verify public project permission modal, shared features, submissions,
   comments, expiry, revocation, embedding and server-side authorization.
 - [ ] Verify public board/task rendering matches rich workspace presentation.
+- [ ] Finish attachment parity: Files currently derives entries from transcript
+  change paths, and the public task serializer omits message image attachments.
+  Audit uploaded conversation files/images and permission-safe public rendering.
 
 ## API and offline safety
 
@@ -202,9 +222,9 @@ still need verification. These results do not close the unchecked audit items.
 
 - [ ] Audit normal, offline, stale, missing, partial, reconnect, retry, duplicate,
   queue-full, storage-full, reboot, timeout and failure paths for changes.
-- [ ] Run focused regressions after implementation, then the full regression
+- [x] Run focused regressions after implementation, then the full regression
   suite; fix failures without weakening behavior checks.
-- [ ] Run lint and both TypeScript checks. Review all intended diffs.
+- [x] Run lint and both TypeScript checks. Review all intended diffs.
 - [ ] Run read-only local dashboard, responsive, public UI, console and timing
   smoke checks; record any unavailable real-device/cross-PC verification.
 - [ ] Consolidate CHANGELOG/README/features/SEO under the requested 1.4.3 version;

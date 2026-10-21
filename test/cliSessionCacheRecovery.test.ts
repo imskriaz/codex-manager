@@ -2,6 +2,54 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); });
 describe("browser cache recovery", () => {
+  it('reads only the outbox key range and keeps old unsynced entries available', async () => {
+    const range = {}, bound = vi.fn(() => range);
+    vi.stubGlobal('IDBKeyRange', { bound });
+    const openCursor = vi.fn((requestedRange: unknown) => {
+      expect(requestedRange).toBe(range);
+      const row = { key: 'browser:outbox:old', updatedAt: 1, value: { task: { title: 'Keep unsynced' } } };
+      const request = { result: undefined as undefined | { value: unknown; continue(): void }, onsuccess: undefined as undefined | (() => void) };
+      request.result = { value: row, continue: () => queueMicrotask(() => { request.result = undefined; request.onsuccess?.(); transaction.oncomplete?.(); }) };
+      queueMicrotask(() => request.onsuccess?.()); return request;
+    });
+    const transaction = { oncomplete: undefined as undefined | (() => void), objectStore: () => ({ openCursor }) };
+    vi.stubGlobal('indexedDB', { open: () => {
+      const request = { result: { transaction: () => transaction }, onsuccess: undefined as undefined | (() => void) };
+      queueMicrotask(() => request.onsuccess?.()); return request;
+    } });
+    const cache = await import('../webview-src/dashboard/cliSessionCache');
+    await expect(cache.listBrowserOutbox()).resolves.toEqual([{ key: 'outbox:old', value: { task: { title: 'Keep unsynced' } } }]);
+    expect(bound).toHaveBeenCalledWith('browser:outbox:', 'browser:outbox:\uffff');
+    expect(openCursor).toHaveBeenCalledOnce();
+  });
+
+  it('skips malformed cache rows and prunes invalid read timestamps without deleting drafts', async () => {
+    const now = Date.now(), removed: string[] = [], put = vi.fn();
+    const values = [{ key: ['unknown'] }, { key: 'future', updatedAt: now + 60_000 }, { key: 'invalid', updatedAt: NaN },
+      { key: 'browser:outbox:keep', updatedAt: 1 }, { key: 'composer:keep', updatedAt: 1 }];
+    const transaction = { oncomplete: undefined as undefined | (() => void), objectStore: () => ({
+      put: (record: unknown) => { put(record); queueMicrotask(() => transaction.oncomplete?.()); },
+      openCursor: () => {
+        let index = 0;
+        const request = { result: undefined as undefined | { value: unknown; delete(): void; continue(): void }, onsuccess: undefined as undefined | (() => void) };
+        const next = () => {
+          const value = values[index++];
+          request.result = value ? { value, delete: () => { removed.push(String(value.key)); }, continue: () => queueMicrotask(next) } : undefined;
+          request.onsuccess?.();
+        };
+        queueMicrotask(next); return request;
+      }
+    }) };
+    vi.stubGlobal('indexedDB', { open: () => {
+      const request = { result: { transaction: () => transaction }, onsuccess: undefined as undefined | (() => void) };
+      queueMicrotask(() => request.onsuccess?.()); return request;
+    } });
+    const cache = await import('../webview-src/dashboard/cliSessionCache');
+    await cache.writeCliSessionMessagesCache('one', []);
+    expect(removed).toEqual(['future', 'invalid']);
+    expect(put).toHaveBeenCalledWith(expect.objectContaining({ key: 'messages:["local","one"]' }));
+  });
+
   it("keeps recovery metadata while omitting graph histories from saved and restored dashboard caches", async () => {
     const records = new Map<string, unknown>();
     const db = { transaction: () => {

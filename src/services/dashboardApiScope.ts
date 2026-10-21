@@ -36,7 +36,7 @@ export async function authorizeApiMessage(token: DashboardApiToken, message: Das
 /** Mutations can return a global refreshed session list; never leak it through a project token. */
 export function scopeApiResults(token: DashboardApiToken, messages: DashboardHostMessage[]): DashboardHostMessage[] {
   const projects = apiTokenProjects(token);
-  if (!projects.length) return messages;
+  if (!projects.length) return messages.filter(message => message.type !== 'dashboard:snapshot' || hasApiPermission(token, 'state'));
   const keys = new Set(projects.map(projectTaskKey));
   const owns = (session: { projectPath?: string } | undefined) => Boolean(session?.projectPath && keys.has(projectTaskKey(session.projectPath)));
   return messages.filter(message => message.type === 'dashboard:action-result').map(message => {

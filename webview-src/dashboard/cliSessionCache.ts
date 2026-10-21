@@ -296,9 +296,10 @@ async function writeRecord(record: CacheRecord): Promise<void> {
     cursor.onsuccess = () => {
       const row = cursor.result;
       if (row) {
-        const value = row.value as CacheRecord;
+        const value = row.value as CacheRecord | undefined;
+        if (typeof value?.key !== 'string') { row.continue(); return; }
         if (!value.key.startsWith('composer:') && !value.key.startsWith('browser:outbox:') && value.key !== record.key) {
-          if (Date.now() - value.updatedAt > MAX_CACHE_AGE_MS) row.delete();
+          if (!Number.isFinite(value.updatedAt) || value.updatedAt > Date.now() || Date.now() - value.updatedAt > MAX_CACHE_AGE_MS) row.delete();
           else prior.push({ key: value.key, at: value.updatedAt, bytes: value.sizeBytes ?? JSON.stringify(value).length * 2 });
         }
         row.continue(); return;
@@ -363,7 +364,7 @@ export async function listBrowserOutbox<T>(): Promise<Array<{ key: string; value
   return new Promise<Array<{ key: string; value: T }>>(resolve => {
     const tx = db.transaction(STORE_NAME, 'readonly'), rows: Array<{ key: string; value: T }> = [];
     const timer = setTimeout(() => { try { tx.abort(); } catch { /* settled */ } resolve([]); }, 3000);
-    const cursor = tx.objectStore(STORE_NAME).openCursor();
+    const cursor = tx.objectStore(STORE_NAME).openCursor(IDBKeyRange.bound('browser:outbox:', 'browser:outbox:\uffff'));
     cursor.onsuccess = () => {
       const row = cursor.result; if (!row) return;
       const record = row.value as CacheRecord;

@@ -41,9 +41,5 @@ out/**/*.d.ts.map
 out/services/announcements.*
 
 tools/benchmark-sqlite.mjs
-tools/check-usage-ui.mjs
-tools/check-session-continue-ui.mjs
-
-tools/check-task-ui.mjs
-tools/check-public-ui.mjs
+tools/check-*.mjs
 RELEASE-1.4.3-PENDING.md

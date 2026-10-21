@@ -264,11 +264,11 @@ Send `Authorization: Bearer <token>`. For example:
 }
 ```
 
-API tokens use HTTP endpoints; they cannot open an unrestricted dashboard WebSocket. Project-scoped responses exclude other projects' session lists and account/credential payloads. A timeout is an unconfirmed outcome: inspect current state before retrying a live operation.
+API tokens use HTTP endpoints; they cannot open an unrestricted dashboard WebSocket. Project-scoped responses exclude other projects' session lists and account/credential payloads. Operation-only tokens covering all projects do not receive appended dashboard snapshots unless they also grant `state`. A timeout is an unconfirmed outcome: inspect current state before retrying a live operation.
 
 ### Offline cache and reconnect
 
-After visiting the browser dashboard online, supported browsers cache its data-free shell and bounded read views. Offline reload shows saved data with a stale/offline indicator. New host state replaces cached views after reconnect. Browser storage access and available space depend on the browser; a storage failure is visible and leaves an open draft intact.
+After visiting the browser dashboard online, supported browsers cache its data-free shell and bounded read views. Offline reload shows saved data with a stale/offline indicator. New host state replaces cached views after reconnect. A worker update activates only after its required shell assets are saved; an incomplete update preserves the working worker. Older workers never substitute their cached bundle for an explicitly newer asset version. Browser storage access and available space depend on the browser; a storage failure is visible and leaves an open draft intact.
 
 Only **task drafts and comments** enter the durable offline outbox. They use stable IDs and expected revisions; acknowledged writes are removed only after host confirmation. Conflicting edits stay local for review and copying, with an explicit discard option. Unsynced entries are never evicted automatically. The outbox holds up to 100 entries or 8 MiB; ordinary read caches are bounded to 80 records and 24 MiB, with individual browser records limited to 2 MiB.
 

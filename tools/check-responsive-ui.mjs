@@ -89,12 +89,12 @@ const mockHost = `(() => {
         else if(message.action==='getProjectTaskDetails') {
           const older=!!message.payload.taskBefore;
           const details={taskId:message.payload.taskId,messages:['activities','changes'].includes(message.payload.taskView||'activities')?messages:[],files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1}]:[],environment:message.payload.taskView==='changes'?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
-          if(window.__holdNextTaskDetails) {
+          if(window.__holdNextTaskDetails===message.payload.taskView) {
             window.__holdNextTaskDetails=false; window.__heldTaskDetails=message;
             window.__releaseTaskDetails=()=>dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectTaskDetails:details}});
             return;
           }
-          if(window.__partialTaskDetails) {details.messages=[{id:'partial-live',kind:'message',role:'assistant',text:'Latest live activity despite saved-history warning'}];details.warnings=['Saved history is temporarily unavailable.'];}
+          if(window.__partialTaskDetails && message.payload.taskView==='activities') {details.messages=[{id:'partial-live',kind:'message',role:'assistant',text:'Latest live activity despite saved-history warning'}];details.warnings=['Saved history is temporarily unavailable.'];}
           payload={projectTaskDetails:details};
         }
         else if(message.action==='saveProjectTask') {

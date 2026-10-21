@@ -23,8 +23,10 @@
 ### API and offline behavior
 
 - Add optional dashboard API access, off by default. Manage multiple named tokens in a compact table with a separate creation modal, scope them to selected projects or all projects, check all permissions and uncheck individual operations, revoke tokens, browse operations, and test requests in the browser dashboard. Store token hashes and filter every scoped request and result.
+- Require the state permission for appended dashboard snapshots even when an API token covers all projects; an operation-only token receives its action result without unrelated dashboard state.
 - Cache the data-free browser shell and bounded saved read views for offline reload. Reconcile task drafts and comments on reconnect with stable request IDs and visible conflict review. Preserve unsynced outbox entries when storage fills; never silently evict them.
 - Disable live-only actions offline. Session execution, terminal commands, filesystem and Git mutations, account changes, tokens, and public links are never queued for later execution.
+- Keep a working offline worker when an update cannot save its required shell assets. Let explicitly newer asset versions reach the network instead of serving an older controlling worker's bundle. Read only queued outbox entries during sync, and tolerate malformed or future-dated read-cache rows without deleting drafts.
 
 ### Dashboard and account automation
 

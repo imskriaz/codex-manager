@@ -29,17 +29,17 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await task.getByRole('button', { name: 'Older history', exact: true }).count(), 0, 'Last Files page has no further cursor');
   await task.getByRole('button', { name: 'Latest activity', exact: true }).click();
   await task.locator('.task-file-row').filter({ hasText: 'src/app.ts' }).waitFor();
-  await page.evaluate(() => { window.__holdNextTaskDetails = true; });
+  await page.evaluate(() => { window.__holdNextTaskDetails = 'activities'; });
   await task.getByRole('tab', { name: 'Activities', exact: true }).click();
   await page.waitForFunction(() => !!window.__heldTaskDetails);
-  const readsBeforeEvents = await page.evaluate(() => window.__uiActions.filter(message => message.action === 'getProjectTaskDetails').length);
+  const readsBeforeEvents = await page.evaluate(() => window.__uiActions.filter(message => message.action === 'getProjectTaskDetails' && message.payload.taskView === 'activities').length);
   await page.evaluate(() => {
     for (let n = 0; n < 5; n++) window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:project-changed', projectPath: 'D:/demo' } }));
     window.__partialTaskDetails = true;
     window.__releaseTaskDetails();
   });
   await task.getByText('Latest live activity despite saved-history warning', { exact: true }).waitFor();
-  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'getProjectTaskDetails').length), readsBeforeEvents + 1, 'Burst during a pending read produces one final refresh');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'getProjectTaskDetails' && message.payload.taskView === 'activities').length), readsBeforeEvents + 1, 'Burst during a pending activity read produces one final refresh');
   await page.evaluate(() => { window.__partialTaskDetails = false; });
   await task.getByRole('tab', { name: 'Changes', exact: true }).click();
   await task.getByText(/Current project:/).waitFor();

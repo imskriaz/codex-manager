@@ -38,6 +38,30 @@ function createWorker(fetchMock: (request: { url: string }) => Promise<Response>
 }
 
 describe("browser PWA cache boundary", () => {
+  it('leaves explicitly newer assets to the network rather than returning the controlling worker cache', () => {
+    const worker = createWorker(async () => new Response('new bundle'));
+    worker.entries.set(worker.key('/assets/dashboard.js?v=test'), new Response('old bundle'));
+    const respondWith = vi.fn();
+    worker.handlers.get('fetch')?.({ request: { method: 'GET', mode: 'cors', url: 'https://dashboard.example/assets/dashboard.js?v=new-build' }, respondWith });
+    expect(respondWith).not.toHaveBeenCalled(); expect(worker.caches.match).not.toHaveBeenCalled();
+  });
+
+  it('keeps the previous worker when a required offline asset fails or cache storage fills', async () => {
+    for (const storageFull of [false, true]) {
+      const worker = createWorker(async request => {
+        const path = new URL(request.url).pathname;
+        if (!storageFull && path === '/assets/dashboard.js') return new Response('unavailable', { status: 503 });
+        const type = path.endsWith('.css') ? 'text/css' : path.endsWith('.js') ? 'text/javascript' : 'text/html';
+        return new Response(path, { headers: { 'content-type': type } });
+      });
+      if (storageFull) worker.caches.open.mockRejectedValue(new Error('Storage full'));
+      let install: Promise<unknown> | undefined;
+      worker.handlers.get('install')?.({ waitUntil: work => { install = work; } });
+      await expect(install).rejects.toThrow(/incomplete/);
+      expect(worker.self.skipWaiting).not.toHaveBeenCalled(); expect(worker.caches.delete).not.toHaveBeenCalled();
+    }
+  });
+
   it("displays the originating system and subject from the push payload", async () => {
     const worker = createWorker(async () => new Response("{}"));
     let work: Promise<unknown> | undefined;
@@ -120,6 +144,7 @@ describe("browser PWA cache boundary", () => {
       respondWith: (response) => { staticResponse = response; }
     });
     expect(await staticResponse?.then((response) => response.text())).toBe("/assets/dashboard.js");
+    expect(worker.caches.match).toHaveBeenLastCalledWith(expect.anything(), { cacheName: 'codex-manager-static-test', ignoreSearch: true });
     expect(fetchMock).toHaveBeenCalledTimes(before);
 
     let privateResponse: Promise<Response> | undefined;

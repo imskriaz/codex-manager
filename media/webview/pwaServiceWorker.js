@@ -18,6 +18,7 @@ const staticTypes = new Map([
 const warmPaths = [...staticTypes.keys()].map((path) =>
   path === "/offline.html" || path === '/offline-dashboard.html' ? path : `${path}?v=${encodeURIComponent(version)}`
 );
+const requiredShell = ['/offline-dashboard.html', '/assets/shared.css', '/assets/dashboard.css', '/assets/browserHost.js', '/assets/dashboard.js'];
 
 function isCacheable(response, expectedType) {
   if (!response || !response.ok || response.redirected || response.type === "opaque") return false;
@@ -52,6 +53,8 @@ self.addEventListener("install", (event) => {
       if (!expectedType) return;
       await fetchAndCache(new Request(path, { credentials: "same-origin", cache: "reload" }), expectedType);
     }));
+    const shell = await Promise.all(requiredShell.map(path => caches.match(path, { cacheName, ignoreSearch: true })));
+    if (shell.some(response => !response)) throw new Error('Offline shell is incomplete. The previous worker was kept.');
     await self.skipWaiting();
   })());
 });
@@ -77,10 +80,10 @@ self.addEventListener("fetch", (event) => {
       return response;
     }).catch(async () => {
       if (url.pathname === '/' || url.pathname === '/tasks' || url.pathname === '/workspace' || /^\/workspace\/[a-f0-9-]{36}$/.test(url.pathname)) {
-        const shell = await caches.match('/offline-dashboard.html').catch(() => undefined);
+        const shell = await caches.match('/offline-dashboard.html', { cacheName }).catch(() => undefined);
         if (shell) return shell;
       }
-      const offline = await caches.match("/offline.html").catch(() => undefined);
+      const offline = await caches.match("/offline.html", { cacheName }).catch(() => undefined);
       return offline || new Response("The dashboard host is unavailable. Reopen this page when VS Code is running.", {
         status: 503,
         headers: { "Content-Type": "text/plain; charset=utf-8" }
@@ -91,8 +94,10 @@ self.addEventListener("fetch", (event) => {
 
   const expectedType = staticTypes.get(url.pathname);
   if (!expectedType) return;
+  // A controlling older worker must not substitute its assets for a newer page.
+  if (url.searchParams.has('v') && url.searchParams.get('v') !== version) return;
   event.respondWith((async () => {
-    const cached = await caches.match(request, { ignoreSearch: true }).catch(() => undefined);
+    const cached = await caches.match(request, { cacheName, ignoreSearch: true }).catch(() => undefined);
     return cached || fetchAndCache(request, expectedType);
   })());
 });
