@@ -150,6 +150,12 @@ describe("browser cache recovery", () => {
     const reopened = await import("../webview-src/dashboard/cliSessionCache");
     await expect(reopened.readCliComposerDraft("pc-a:chat")).resolves.toEqual(draft);
     await expect(reopened.readCliComposerDraft("pc-b:chat")).resolves.toBeUndefined();
+    const list = { sessions: [{ id: 'remote', title: 'Remote', status: 'idle' as const, deviceId: 'pc-a', remote: true }],
+      composerConfig: { models: [], projects: [{ id: 'project', label: 'Remote project', path: 'E:/remote' }] } };
+    await reopened.writeCliSessionListCache(list, 'pc-a');
+    await expect(reopened.readCliSessionListCache('pc-a')).resolves.toMatchObject(list);
+    await expect(reopened.readCliSessionListCache('pc-b')).resolves.toBeUndefined();
+    await expect(reopened.readCliSessionListCache()).resolves.toBeUndefined();
     const stored = records.get("composer:pc-a:chat") as { updatedAt: number };
     stored.updatedAt = Date.now() + 60_000;
     await expect(reopened.readCliComposerDraft("pc-a:chat")).resolves.toBeUndefined();

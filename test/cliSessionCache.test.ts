@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { mergeCachedCliSession, mergeCachedCliSessions } from "../webview-src/dashboard/cliSessionCache";
 
 describe("CLI session cache merging", () => {
+  it('replaces only the source PC rows and retains equal session IDs on other PCs', () => {
+    const local = { id: 'shared-id', title: 'Local', status: 'idle' as const };
+    const remote = { ...local, deviceId: 'remote', remote: true, title: 'Remote' };
+    const other = { ...remote, deviceId: 'other', title: 'Other' };
+    expect(mergeCachedCliSessions([{ ...remote, title: 'Updated' }], [local, remote, other], 'remote')).toEqual([local, other, { ...remote, title: 'Updated' }]);
+    expect(mergeCachedCliSessions([], [local, remote, other], 'remote')).toEqual([local, other]);
+    expect(mergeCachedCliSessions([local], [local, remote, other], 'remote')).toEqual([local, other]);
+  });
   it("keeps unavailable goal and model metadata without retaining stale runtime status", () => {
     const prior={id:"session",title:"Task",status:"running" as const,model:"gpt-5",reasoningEffort:"high",goal:{objective:"Finish",status:"active"},subAgent:true,parentSessionId:"parent",agentName:"Reviewer"};
     const incoming={id:"session",title:"Task",status:"unknown" as const,canStop:false};

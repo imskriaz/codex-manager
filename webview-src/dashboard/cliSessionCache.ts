@@ -39,13 +39,15 @@ const SESSION_METADATA = ["model","reasoningEffort","goal","sessionSurface","sub
 /** Missing metadata is inconclusive; explicit goal removal and runtime status remain authoritative. */
 export function mergeCachedCliSessions(
   incoming: DashboardCliSessionSummary[],
-  previous: DashboardCliSessionSummary[]
+  previous: DashboardCliSessionSummary[],
+  deviceId?: string
 ): DashboardCliSessionSummary[] {
   const previousByKey = new Map(previous.map((session) => [cliSessionKey(session), session]));
-  return incoming.map((session) => {
+  const merged = incoming.filter(session => !deviceId || session.deviceId === deviceId).map((session) => {
     const prior = previousByKey.get(cliSessionKey(session));
     return mergeCachedCliSession(session,prior);
   });
+  return deviceId ? [...previous.filter(session => session.deviceId !== deviceId), ...merged] : merged;
 }
 
 export function mergeCachedCliSession(
@@ -115,8 +117,8 @@ function openCache(): Promise<IDBDatabase | undefined> {
   }, () => { if (cacheDatabase === opening) cacheDatabase = undefined; return undefined; });
 }
 
-export async function readCliSessionListCache(): Promise<CliSessionListCache | undefined> {
-  const cached = await readFreshRecord<Partial<CliSessionListCache>>("list", MAX_CACHE_AGE_MS);
+export async function readCliSessionListCache(deviceId?: string): Promise<CliSessionListCache | undefined> {
+  const cached = await readFreshRecord<Partial<CliSessionListCache>>(`list:${deviceId ?? "local"}`, MAX_CACHE_AGE_MS);
   if (!cached || !Array.isArray(cached.value.sessions)) return undefined;
   return { sessions: cached.ageMs > 5000 ? cached.value.sessions.map(session => ({ ...session, status: 'unknown', canStop: false })) : cached.value.sessions, composerConfig: cached.value.composerConfig, ageMs: cached.ageMs };
 }
@@ -209,8 +211,8 @@ export async function readCliSessionMessagesCache(
   return cached && Array.isArray(cached.value) ? (cached.value as DashboardCliSessionMessage[]) : undefined;
 }
 
-export async function writeCliSessionListCache(value: CliSessionListCache): Promise<void> {
-  await writeRecord({ key: "list", updatedAt: Date.now(), value });
+export async function writeCliSessionListCache(value: CliSessionListCache, deviceId?: string): Promise<void> {
+  await writeRecord({ key: `list:${deviceId ?? "local"}`, updatedAt: Date.now(), value });
 }
 
 export async function writeCliSessionMessagesCache(
@@ -249,7 +251,8 @@ export async function invalidateCliSessionCache(sessionId?: string, deviceId?: s
     const transaction = db.transaction(STORE_NAME, "readwrite");
     const finish = (): void => { clearTimeout(timer); resolve(); };
     const timer = setTimeout(() => { try { transaction.abort(); } catch { /* settled */ } finish(); }, 3_000);
-    transaction.objectStore(STORE_NAME).delete("list");
+    transaction.objectStore(STORE_NAME).delete(`list:${deviceId ?? "local"}`);
+    transaction.objectStore(STORE_NAME).delete("list:local");
     if (sessionId) transaction.objectStore(STORE_NAME).delete(`messages:${JSON.stringify([deviceId ?? "local", sessionId])}`);
     transaction.oncomplete = transaction.onerror = transaction.onabort = finish;
   }).catch(() => undefined);

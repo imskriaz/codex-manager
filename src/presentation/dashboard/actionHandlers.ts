@@ -517,7 +517,7 @@ async function runDashboardAction(
       return { maintenancePage: readMaintenancePage(payload?.maintenanceToken ?? "", payload?.maintenanceQuery, payload?.maintenanceOffset) };
     case "getMaintenanceStatus":
     case "cancelMaintenance":
-      return { maintenanceJob: getMaintenanceJob(payload?.maintenanceJobId ?? "", action === "cancelMaintenance") };
+      return { maintenanceJob: getMaintenanceJob(payload?.maintenanceJobId ?? "", action === "cancelMaintenance", payload?.maintenanceToken) };
     case "downloadLogs": {
       const logs = await exportPersistentLogs();
       const notice = { level: logs.limited ? "warning" as const : "info" as const,
@@ -793,13 +793,15 @@ async function runDashboardAction(
           throw new Error("That account no longer exists. Refresh the dashboard and try again.");
         }
         if (currentAccount.isActive) {
+          await ctx.repo.recordManualAccountSelection?.(currentAccount.id);
+          const held = await ctx.repo.isAutoSwitchManuallyHeld?.(currentAccount.id);
           const reloadNeeded = deferWindowReloadForAccount(currentAccount.id);
           const reloadScheduled = reloadNeeded && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
           ctx.schedulePublishState();
           return {
             notice: {
               level: "info" as const,
-              message: `${currentAccount.email} is already active.${reloadNeeded ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
+              message: `${currentAccount.email} is already active.${held ? " Auto Switch is paused. Select an account with available quota to resume." : ""}${reloadNeeded ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
             },
             reloadScheduled
           };
@@ -808,6 +810,7 @@ async function runDashboardAction(
           forceTokenRefresh:
             currentAccount.tokenRefreshEnabled === true
         });
+        const held = await ctx.repo.isAutoSwitchManuallyHeld?.(currentAccount.id);
         clearTokenAutomationError(currentAccount.id);
         void handleCodexAppRestartPreference({ allowManualPrompt: false });
         const reloadRequired = deferWindowReloadForAccount(currentAccount.id);
@@ -816,7 +819,7 @@ async function runDashboardAction(
         return {
           notice: {
             level: "info" as const,
-            message: `Switched to ${currentAccount.email}.${rescueEnabledForSwitch ? " Rescue override is enabled on this PC; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
+            message: `Switched to ${currentAccount.email}.${held ? " Auto Switch is paused. Select an account with available quota to resume." : ""}${rescueEnabledForSwitch && !held ? " Rescue override is enabled on this PC; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
           },
           reloadScheduled
         };
@@ -837,10 +840,11 @@ async function runDashboardAction(
           const reloadRequired =
             result.reloadNeeded && !result.reloaded ? deferWindowReloadForAccount(result.account.id) : false;
           const reloadScheduled = reloadRequired && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
+          const held = await ctx.repo.isAutoSwitchManuallyHeld?.(result.account.id);
           return {
             notice: {
               level: "info" as const,
-              message: `${result.status === "already-active" ? `${result.account.email} is already active.` : `Switched to ${result.account.email}.`}${rescueEnabledForSwitch ? " Rescue override is enabled; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
+              message: `${result.status === "already-active" ? `${result.account.email} is already active.` : `Switched to ${result.account.email}.`}${held ? " Auto Switch is paused. Select an account with available quota to resume." : ""}${rescueEnabledForSwitch && !held ? " Rescue override is enabled; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
             },
             reloadScheduled
           };
@@ -962,7 +966,7 @@ async function runDashboardAction(
     case "deleteCodexCliSession":
       return handleDeleteCodexCliSession(payload);
     case "getWorkspaceEnvironment":
-      return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath, payload?.includeBranchDiff === true) };
+      return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath, payload?.includeBranchDiff === true, payload?.gitHistory) };
     case "listWorkspaceFiles":
       return { workspaceFiles: await listWorkspaceFiles(payload?.projectPath) };
     case "readWorkspaceFile":
@@ -2008,7 +2012,7 @@ async function handleSetCodexSessionGoalStatus(context: vscode.ExtensionContext,
   if (!payload?.sessionId || !["active", "paused"].includes(payload.goalStatus ?? "")) throw new Error("Choose a session and Pause or Resume for its goal.");
   const status = payload.goalStatus!;
   const session = await ensureCliSessionIsActive(payload.sessionId);
-  if (session.subAgent || session.parentSessionId || !session.goal || !["active", "paused", "usage_limited"].includes(session.goal.status))
+  if (session.subAgent || session.parentSessionId || !session.goal || !["active", "paused", "blocked", "usage_limited"].includes(session.goal.status))
     throw new Error("This goal cannot be paused or resumed here. Refresh its current state in Codex.");
   await setCodexSessionGoalStatus(session.id, status);
   let notice = { level: "info" as "info" | "warning", message: status === "paused" ? "Goal paused. The current turn can finish." : "Goal resumed." };

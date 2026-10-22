@@ -94,7 +94,7 @@ describe("sessions sidebar layout", () => {
     const renderSession = source.slice(source.indexOf("const renderSession ="), source.indexOf("const returnToSessionList"));
     expect(renderSession).toContain('class="cli-session-row-main has-project"');
     expect(renderSession).toContain("sessionMeta(session, props.peers)");
-    expect(renderSession).toContain("grouped ? session.archived ? 'Archived'");
+    expect(renderSession).toContain('grouped ? <time class="cli-session-row-time"');
     expect(source).toContain('sessions.map(session => renderSession(session, true))');
     expect(renderSession).toContain("{relativeTime(session.updatedAt)}");
     expect(css).toContain(".cli-session-row-meta > span");
@@ -164,14 +164,12 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('aria-label="Good response"');
     expect(source).not.toContain('aria-label="Needs improvement"');
     expect(source).toContain('class="cli-message-actions"');
-    expect(source).toContain('class="cli-message-actions-toggle"');
-    expect(source).toContain('aria-label={actionsOpen ? "Hide message actions" : "Show message actions"}');
+    expect(source).not.toContain('class="cli-message-actions-toggle"');
     expect(source).toContain("isCodexSessionRunning(session)");
     expect(source).toContain('isCodexSessionRunning(props.selectedSession)');
     expect(css).toContain(".cli-turn-copy");
-    expect(css).toContain('.cli-session-message.has-actions-open .cli-message-action-menu');
-    expect(css).toContain('.cli-message-actions-toggle');
-    expect(css).not.toContain('.cli-session-message:hover .cli-message-actions');
+    expect(css).toContain('.cli-session-message:hover .cli-message-actions');
+    expect(css).toContain('.cli-session-message:focus-within .cli-message-actions');
     const composerStart = source.indexOf("function Composer(");
     const composer = source.slice(composerStart, source.indexOf("function SessionMessage", composerStart));
     expect(composer).not.toContain("<SparkIcon />");
@@ -456,7 +454,7 @@ describe("sessions sidebar layout", () => {
     const panel = readFileSync("src/presentation/dashboard/panel.ts", "utf8");
 
     expect(main).toContain(
-      "setCliComposerConfig(message.payload?.cliComposerConfig ?? cliComposerConfig)"
+        "if (appliesToSelectedSystem && message.payload?.cliComposerConfig)"
     );
     expect(main).toContain("classifyCliSessionListResult");
     expect(main).toContain("sessionChanged");
@@ -615,8 +613,9 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('sendAction("openWebDashboard", undefined, { path: "/workspace", targetDeviceId: undefined })');
     expect(source).toContain('onDashboard={() => navigateDashboardPath("/", setBrowserPath)}');
     expect(source).toContain('type: "dashboard:workspace-presence", viewing');
+    expect(source).toContain('if (!isBrowserDashboard || !realtimeConnected) return;');
     expect(source).toContain('return pathname === "/" || pathname === "/tasks" || isCliSessionsPath(pathname);');
-    expect(source).toContain("if (!hasBrowserWorkspaceShell(browserPath)) return;");
+    expect(source).toContain("if (isBrowserDashboard && !hasBrowserWorkspaceShell(browserPath)) return;");
     expect(source).toContain("if (sessionId || hasBrowserWorkspaceShell(path)) requestCliSessions(true);");
     expect(source).toContain("window.setInterval(announceCurrentVisibility, 15_000)");
   });
@@ -815,11 +814,20 @@ describe("sessions sidebar layout", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(source).toContain("}).filter(({ sessions }) => sessions.length > 0)");
     expect(source).toContain("const projectCollapsed = collapsedGroups[groupId] ?? true;");
-    expect(source).toContain('class="cli-project-running"');
+    expect(source).toContain('runningSessions ? "cli-project-running"');
     expect(source).toContain('class="cli-compact-session-list"');
     expect(source).toContain('sessionView: parsed.sessionView === "compact" ? "compact" : "projects"');
     expect(source).not.toContain("PCs · Projects");
     expect(source).not.toContain("No sessions yet");
+  });
+
+  it("routes session discovery and its cache to the selected system", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const cache = readFileSync("webview-src/dashboard/cliSessionCache.ts", "utf8");
+    expect(main).toContain('const targetDeviceId = selectedPeer?.local ? undefined : selectedPeer?.id;');
+    expect(main).toContain('sendAction("listCodexCliSessions", undefined, { automatic: !userInitiated, targetDeviceId });');
+    expect(main).toContain('readCliSessionListCache(targetDeviceId)');
+    expect(cache).toContain('`list:${deviceId ?? "local"}`');
   });
 
 });

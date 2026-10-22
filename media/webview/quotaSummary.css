@@ -14196,17 +14196,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   transform: none; display: flex; flex-direction: row-reverse; justify-content: flex-start; margin: 0; padding: 0;
   opacity: 1; pointer-events: auto;
 }
-.cli-workspace .cli-message-actions-toggle { display: grid; place-items: center; width: 22px; min-width: 22px; height: 22px; min-height: 22px; padding: 3px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
-.cli-workspace .cli-message-actions-toggle:hover,
-.cli-workspace .cli-message-actions-toggle:focus-visible { border-color: var(--border-default); background: var(--bg-hover); color: var(--text-primary); }
-.cli-workspace .cli-message-actions-toggle svg { width: 14px; height: 14px; }
-.cli-workspace .cli-message-action-menu { position: static; display: flex; visibility: hidden; pointer-events: none; gap: 2px; padding: 2px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); }
-.cli-workspace .cli-session-message.has-actions-open .cli-message-action-menu { visibility: visible; pointer-events: auto; }
+.cli-workspace .cli-message-action-menu { position: static; display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-surface); }
 .cli-workspace .cli-message-action-menu button { display: grid; place-items: center; width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 4px; }
 .cli-workspace .cli-message-action-menu button svg { width: 14px; height: 14px; }
 .cli-workspace .cli-message-viewport { padding-top: 32px; }
 @media (hover: none) {
-  .cli-workspace .cli-message-actions-toggle { width: 28px; min-width: 28px; height: 28px; min-height: 28px; }
   .cli-workspace .cli-message-actions { min-height: 38px; }
   .cli-workspace .cli-message-action-menu button { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
 }
@@ -14552,11 +14546,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-file-change-list > details > summary svg { flex: 0 0 13px; }
 .cli-workspace .cli-open-reviews { min-height: 24px; margin: 0; padding: 2px 0; border: 0; background: transparent; font-size: 11px; }
 
-/* Rich content keeps message actions clear of its own copy and preview controls. */
-.cli-workspace .cli-session-message .cli-session-message-body:has(.cli-markdown-code-block, .cli-session-images, .cli-message-markdown img) { padding-bottom: 34px; }
-.cli-workspace .cli-session-message .cli-session-message-body:has(.cli-markdown-code-block, .cli-session-images, .cli-message-markdown img) > .cli-message-actions { top: auto; bottom: 0; margin: 0; }
-@media (hover: none) { .cli-workspace .cli-session-message .cli-session-message-body:has(.cli-markdown-code-block, .cli-session-images, .cli-message-markdown img) { padding-bottom: 42px; } }
-
 .cli-workspace .cli-session-images { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
 .cli-workspace .cli-image-preview-trigger { align-items: center; justify-content: center; min-width: 56px; min-height: 56px; max-width: min(100%, 180px); max-height: 140px; }
 .cli-workspace .cli-image-preview-trigger img { width: auto; max-width: 180px; max-height: 140px; object-fit: contain; }
@@ -14640,9 +14629,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .cli-workspace .cli-composer-options-toggle { max-width: 88px; }
 }
 
-/* Final workspace action placement: keep controls floating after all responsive rules. */
-.cli-workspace .cli-session-message-body { position: relative; }
-.cli-workspace .cli-message-actions {
+/* Final workspace action placement: actions stay out of the transcript flow and appear on hover/focus. */
+.cli-session-message .cli-session-message-body { position: relative; }
+.cli-session-message .cli-message-actions {
   position: absolute;
   z-index: 3;
   right: 4px;
@@ -14650,14 +14639,34 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   min-height: 0;
   margin: 0;
   flex-wrap: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
-.cli-workspace .cli-message-action-menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4px);
+.cli-session-message:hover .cli-message-actions,
+.cli-session-message:focus-within .cli-message-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.cli-session-message .cli-message-actions:focus-within { opacity: 1; pointer-events: auto; }
+.cli-session-message .cli-message-action-menu {
+  position: static;
+  display: flex;
   flex-direction: row;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-default);
+  border-radius: 7px;
+  background: var(--bg-surface);
   white-space: nowrap;
 }
+.cli-session-message .cli-message-action-menu button { display: grid; place-items: center; width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 4px; }
+.cli-session-message .cli-message-action-menu button svg { width: 14px; height: 14px; }
+.cli-session-message .cli-message-markdown p { margin-block: 4px; }
+.cli-session-message .cli-message-markdown ul,
+.cli-session-message .cli-message-markdown ol { margin-block: 4px; }
+.cli-session-message .cli-message-actions .cli-turn-copy { position:static; inset:auto; opacity:1; }
+.cli-session-message .cli-session-message-body:has(.cli-session-images) > .cli-message-actions { top:0; bottom:auto; }
 .cli-workspace .cli-session-row { position: relative; }
 .cli-workspace .cli-session-row-actions {
   position: absolute;
@@ -14787,7 +14796,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
   .settings-tab-description { display: none; }
   .cli-workspace .cli-session-message-text { font-size: 13px; line-height: 1.45; }
   .cli-workspace .cli-message-markdown { line-height: 1.45; }
-  .cli-workspace .cli-message-markdown p, .cli-workspace .cli-message-markdown ul, .cli-workspace .cli-message-markdown ol { margin-block: 5px; }
+  .cli-workspace .cli-message-markdown p, .cli-workspace .cli-message-markdown ul, .cli-workspace .cli-message-markdown ol { margin-block: 4px; }
   .cli-workspace .cli-message-markdown > :first-child { margin-top: 0; }
   .cli-workspace .cli-message-markdown > :last-child { margin-bottom: 0; }
   .cli-workspace .cli-session-row-main { min-height: 0; grid-template-rows: auto auto; row-gap: 1px; }
@@ -15204,6 +15213,19 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-git-summary > span:first-child { margin-right:auto; color:var(--text-primary); }
 .cli-git-summary .is-added { color:var(--success); }
 .cli-git-summary .is-removed { color:var(--danger); }
+.cli-git-views { display:flex; gap:3px; margin-bottom:10px; padding:3px; border:1px solid var(--border-default); border-radius:6px; }
+.cli-inspector-body .cli-git-views > button { flex:1; min-height:26px; padding:3px 8px; border-color:transparent; background:transparent; color:var(--text-muted); }
+.cli-inspector-body .cli-git-views > button[aria-pressed=true] { background:var(--bg-elevated); border-color:var(--border-default); color:var(--text-primary); }
+.cli-git-history { min-width:0; }
+.cli-git-history > header { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
+.cli-git-history h3 { margin:0; }
+.cli-git-history > p { color:var(--text-muted); font-size:12px; overflow-wrap:anywhere; }
+.cli-inspector-body .cli-git-history-row { display:flex; gap:8px; width:100%; min-width:0; padding:7px 3px; border:0; border-bottom:1px solid var(--border-default); border-radius:0; background:transparent; text-align:left; }
+.cli-git-history-row > span { flex:1; min-width:0; display:grid; gap:3px; }
+.cli-git-history-row strong,.cli-git-history-row small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cli-git-history-row strong { font-size:12px; font-weight:500; }
+.cli-git-history-row small,.cli-git-history code { font-size:11px; color:var(--text-muted); }
+.cli-git-history .diff-preview { max-width:100%; }
 .cli-git-commit { display:grid; gap:6px; }
 .cli-git-commit label { font-size:11px; color:var(--text-secondary); }
 .cli-git-commit textarea { box-sizing:border-box; width:100%; min-height:68px; max-height:200px; padding:8px; resize:vertical; border:1px solid var(--border-default); border-radius:5px; background:var(--bg-surface); color:var(--text-primary); font:inherit; }
@@ -15698,4 +15720,16 @@ html[data-theme] body .settings-modal .modal-primary-btn { background:var(--acce
   .share-create-row>.modal-primary-btn { margin-left:auto; }
   .share-dialog .dashboard-modal-body { gap:10px; }
   .share-dialog .share-access-management { gap:6px; }
+}
+
+/* Project rows inherit their folder context, leaving a single line for title and time. */
+.cli-workspace .is-dense-tree .cli-session-row.is-grouped { box-sizing:border-box; height:26px; min-height:26px; padding:0 4px; overflow:hidden; }
+.cli-workspace .is-dense-tree .cli-session-row.is-grouped .cli-session-row-select { min-height:24px; padding:3px 30px 3px 5px; }
+.cli-workspace .is-dense-tree .cli-session-row.is-grouped .cli-session-row-main { display:flex; flex-direction:row; align-items:center; gap:6px; }
+.cli-workspace .is-dense-tree .cli-session-row.is-grouped .cli-session-row-main strong { flex:1; min-width:0; }
+.cli-workspace .cli-session-row-time { flex:none; color:var(--text-muted); font-size:10px; line-height:16px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.cli-workspace .is-dense-tree .cli-session-row.is-grouped.is-archived > .cli-session-row-main { padding:3px 54px 3px 5px; }
+@media(max-width:760px),(hover:none) {
+  .cli-workspace .is-dense-tree .cli-session-row.is-grouped { height:32px; min-height:32px; }
+  .cli-workspace .is-dense-tree .cli-session-row.is-grouped .cli-session-row-select { min-height:30px; }
 }

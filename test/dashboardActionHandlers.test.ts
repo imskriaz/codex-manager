@@ -129,9 +129,9 @@ describe("manual Codex navigation and recovery", () => {
     expect(open).toHaveBeenCalledWith(id, undefined, true);
     expect(result.payload?.cliSessionMessages).toBeUndefined();
   });
-  it("explicitly resumes a paused goal without sending a continuation prompt", async () => {
+  it.each(['paused', 'blocked'])("explicitly resumes a %s goal without sending a continuation prompt", async initialStatus => {
     enableSessions();
-    const goal = { objective: "Finish work", status: "paused" };
+    const goal = { objective: "Finish work", status: initialStatus };
     readCodexCliSessionSummaryMock.mockImplementation(async () => ({ id, title: "Goal task", status: "idle", goal }));
     readCodexCliSessionsMock.mockReset().mockImplementation(() => new Promise(() => undefined));
     vi.spyOn(sessionEditors, "setCodexSessionGoalStatus").mockImplementation(async (_id, status) => { goal.status = status; });
@@ -259,7 +259,7 @@ describe("executeDashboardActionMessage", () => {
     const environment = vi.spyOn(workspaceTools, "readWorkspaceEnvironment").mockResolvedValue({ projectPath: project, projectName: "closed-project", isGitRepository: false, changes: 0, additions: 0, deletions: 0, ahead: 0, behind: 0, hasRemote: false });
     const id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "getWorkspaceEnvironment", requestId: "dashboard-auto-project", payload: { sessionId: id, automatic: true } });
-    expect(result.status).toBe("completed"); expect(resolve).toHaveBeenCalledWith(id, undefined); expect(environment).toHaveBeenCalledWith(project, false);
+    expect(result.status).toBe("completed"); expect(resolve).toHaveBeenCalledWith(id, undefined); expect(environment).toHaveBeenCalledWith(project, false, undefined);
   });
   it.each(["browser", "webview"] as const)("keeps %s history readable and reports why an unverified session cannot send", async (hostKind) => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
@@ -1005,6 +1005,8 @@ describe("executeDashboardActionMessage", () => {
     const current = { ...stale, isActive: true };
     const repo = {
       getAccount: vi.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(current),
+      recordManualAccountSelection: vi.fn(async () => undefined),
+      isAutoSwitchManuallyHeld: vi.fn(async () => true),
       switchAccount: vi.fn(),
       flush: vi.fn().mockResolvedValue(undefined)
     } as unknown as DashboardActionContext["repo"];
@@ -1020,6 +1022,8 @@ describe("executeDashboardActionMessage", () => {
     expect(result.status).toBe("completed");
     expect(repo.switchAccount).not.toHaveBeenCalled();
     expect(result.payload?.notice?.message).toContain("race@example.com is already active.");
+    expect(repo.recordManualAccountSelection).toHaveBeenCalledWith(stale.id);
+    expect(result.payload?.notice?.message).toContain("Auto Switch is paused");
   });
 
   it("keeps the VS Code webview switch on the registered VS Code command", async () => {

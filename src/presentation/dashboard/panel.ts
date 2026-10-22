@@ -151,7 +151,7 @@ export class DashboardPanelController {
       }
     );
     const stopRealtime = subscribeDashboardRealtime((message) => {
-      if (message.type === "dashboard:project-changed" || message.type === "dashboard:notice" || message.type === "dashboard:terminal-output" || message.type === "dashboard:terminal-complete" || message.type === "dashboard:codex-request" || message.type === "dashboard:codex-request-resolved" || message.type === "dashboard:codex-session-live") {
+      if (message.type === 'dashboard:maintenance-progress' || message.type === "dashboard:project-changed" || message.type === "dashboard:notice" || message.type === "dashboard:terminal-output" || message.type === "dashboard:terminal-complete" || message.type === "dashboard:codex-request" || message.type === "dashboard:codex-request-resolved" || message.type === "dashboard:codex-session-live") {
         void this.panel?.webview.postMessage(message);
       }
     });

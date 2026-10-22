@@ -9,6 +9,7 @@ import { parseWorkspaceGitStatus } from '../domain/workspaceGitStatus';
 import { readSafeFileSnapshot, SafeFileReadTimeoutError } from "../utils/safeFileReads";
 import type {
   DashboardWorkspaceEnvironment,
+  DashboardWorkspaceGitRequest,
   DashboardWorkspaceFile,
   DashboardWorkspaceFileEntry,
   DashboardWorkspaceTerminalInfo,
@@ -119,17 +120,40 @@ export async function resolveWorkspaceProjectPathAsync(projectPath: string | und
   throw new Error("The selected project is not an open workspace folder.");
 }
 
-export async function readWorkspaceGitHistory(projectPath: string): Promise<import('../domain/projectTasks').ProjectTaskDetails['history']> {
+export async function readWorkspaceGitHistory(projectPath: string, request: DashboardWorkspaceGitRequest = {}): Promise<Pick<DashboardWorkspaceEnvironment, 'gitHistory' | 'gitCommit'>> {
+  const hashPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
+  // shortcut: preview the first 10,050 project commits; use native Git for deeper history.
+  if (!request || typeof request !== 'object' || Array.isArray(request) ||
+    request.ref !== undefined && (typeof request.ref !== 'string' || !hashPattern.test(request.ref)) ||
+    request.commit !== undefined && (typeof request.commit !== 'string' || !hashPattern.test(request.commit)) ||
+    request.offset !== undefined && (!Number.isSafeInteger(request.offset) || request.offset < 0 || request.offset > 10000)) throw new Error('Choose a valid Git history page or commit.');
   const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
-  const result = await runProcess('git', ['log', '-50', '--format=%H%x00%an%x00%aI%x00%s', '--no-show-signature'], cwd, GIT_TIMEOUT_MS);
+  if (request.commit) {
+    const result = await runProcess('git', ['show', '--format=', '--patch', '--root', '--diff-merges=first-parent', '--no-ext-diff', '--no-textconv', '--no-color', '--relative', `${request.commit}^{commit}`, '--', '.'], cwd, GIT_TIMEOUT_MS);
+    if (result.timedOut || result.exitCode !== 0) throw new Error(result.stderr.trim() || 'This commit is unavailable. Refresh history and select it again.');
+    return { gitCommit: { hash: request.commit, diff: result.stdout, truncated: Buffer.byteLength(result.stdout, 'utf8') >= MAX_OUTPUT_BYTES } };
+  }
+  const offset = request.offset ?? 0;
+  const head = await runProcess('git', ['rev-parse', '--verify', '--quiet', `${request.ref ?? 'HEAD'}^{commit}`], cwd, GIT_TIMEOUT_MS);
+  if (head.timedOut) throw new Error('Git history timed out. Refresh history to retry.');
+  if (head.exitCode !== 0) {
+    if (!request.ref && head.exitCode === 1) return { gitHistory: { offset: 0, hasMore: false, commits: [] } };
+    throw new Error(head.stderr.trim() || 'This history reference is unavailable. Refresh history to retry.');
+  }
+  const ref = head.stdout.trim();
+  if (!hashPattern.test(ref)) throw new Error('The Git history reference could not be verified.');
+  const result = await runProcess('git', ['log', '-51', `--skip=${offset}`, '--format=%H%x00%an%x00%aI%x00%s%x00', '--no-show-signature', ref, '--', '.'], cwd, GIT_TIMEOUT_MS);
   if (result.timedOut || result.exitCode !== 0) throw new Error(result.stderr.trim() || 'Git history could not be read.');
-  return result.stdout.split(/\r?\n/).filter(Boolean).map(line => {
-    const [hash = '', author = '', date = '', subject = ''] = line.split('\0');
-    return { hash, author, date, subject };
-  });
+  const fields = result.stdout.split('\0'), commits: NonNullable<DashboardWorkspaceEnvironment['gitHistory']>['commits'] = [];
+  for (let index = 0; index + 4 < fields.length; index += 4) {
+    const hash = fields[index]!.trim();
+    if (!hashPattern.test(hash)) throw new Error('Git returned an invalid history record. Refresh history to retry.');
+    commits.push({ hash, author: fields[index + 1]!.slice(0, 512), date: fields[index + 2]!.slice(0, 128), subject: fields[index + 3]!.slice(0, 4096) });
+  }
+  return { gitHistory: { ref, offset, hasMore: commits.length > 50 || commits.length > 0 && Buffer.byteLength(result.stdout, 'utf8') >= MAX_OUTPUT_BYTES, commits: commits.slice(0, 50) } };
 }
 
-export async function readWorkspaceEnvironment(projectPath: string | undefined, includeBranchDiff = false): Promise<DashboardWorkspaceEnvironment> {
+export async function readWorkspaceEnvironment(projectPath: string | undefined, includeBranchDiff = false, gitHistory?: DashboardWorkspaceGitRequest): Promise<DashboardWorkspaceEnvironment> {
   const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
   let read = environmentReads.get(cwd);
   if (!read) {
@@ -139,6 +163,10 @@ export async function readWorkspaceEnvironment(projectPath: string | undefined, 
     environmentReads.set(cwd, read);
   }
   const environment = await read;
+  if (gitHistory !== undefined) {
+    if (!environment.isGitRepository) throw new Error('This project is not a Git repository.');
+    return { ...environment, ...await readWorkspaceGitHistory(cwd, gitHistory) };
+  }
   if (!includeBranchDiff) return environment;
   if (!environment.isGitRepository) throw new Error("This project is not a Git repository. Select a Git project before comparing branches.");
   const upstream = await runProcess("git", ["rev-parse", "--verify", "@{upstream}"], cwd, GIT_TIMEOUT_MS);

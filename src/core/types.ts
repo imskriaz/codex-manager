@@ -227,6 +227,8 @@ export interface CodexManagerIndex {
   activeAccountStateVersion?: 1;
   /** Active account selected independently for each resolved CODEX_HOME. */
   activeAccountIdsByCodexHome?: Record<string, string>;
+  /** A manual empty/unknown-quota selection suspends automatic selection for this home. */
+  manualSelectionByCodexHome?: Record<string, { accountId: string; awaitingQuota?: boolean }>;
   /** 账号列表 */
   accounts: CodexManagerAccountRecord[];
 }

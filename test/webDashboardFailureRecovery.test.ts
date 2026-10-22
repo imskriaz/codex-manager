@@ -24,6 +24,63 @@ function createServer() {
   return { server, internal };
 }
 
+it("keeps standby peer heartbeats free of session scans and account builds, then follows browser visibility", async () => {
+  const { server } = createServer();
+  const internal = server as any;
+  vi.spyOn(internal, "refreshCliSessionRealtimeLifecycle").mockImplementation(() => undefined);
+  const sessions = vi.spyOn(internal, "readLocalCliSessions").mockResolvedValue([{ id: "local", title: "Local", status: "idle" }]);
+  buildState.mockClear().mockResolvedValue({ accounts: [{ id: "account" }] });
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+  const browser = { readyState: 1 };
+  try {
+    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [], accounts: [], dashboardTargets: [] });
+    expect(sessions).not.toHaveBeenCalled();
+    expect(buildState).not.toHaveBeenCalled();
+    internal.updateWorkspaceViewer(browser, true);
+    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [{ id: "local" }], accounts: [{ id: "account" }], dashboardTargets: [internal.deviceId] });
+    await internal.readLocalPeerSessions();
+    expect(sessions).toHaveBeenCalledOnce();
+    expect(buildState).toHaveBeenCalledOnce();
+    internal.updateWorkspaceViewer(browser, false);
+    internal.invalidateLocalPeerState();
+    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [], accounts: [], dashboardTargets: [] });
+    expect(sessions).toHaveBeenCalledOnce();
+    expect(buildState).toHaveBeenCalledOnce();
+    internal.updateWorkspaceViewer(browser, true);
+    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [{ id: "local" }] });
+    expect(sessions).toHaveBeenCalledTimes(2);
+    internal.updateWorkspaceViewer(browser, true, "other-pc");
+    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [], accounts: [], dashboardTargets: ["other-pc"] });
+    expect(sessions).toHaveBeenCalledTimes(2);
+  } finally { await server.stop(); server.dispose(); }
+});
+
+it("coalesces file changes during an active read, delivers the last change, and stays idle afterwards", async () => {
+  vi.useFakeTimers();
+  const { server } = createServer(), internal = server as any;
+  let viewing = true, finish!: () => void;
+  vi.spyOn(internal, "hasWorkspaceViewer").mockImplementation(() => viewing);
+  vi.spyOn(internal, "publishLocalStateChange").mockImplementation(() => undefined);
+  const refresh = vi.spyOn(internal, "publishCliSessionsRealtimeCore")
+    .mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }))
+    .mockResolvedValue(undefined);
+  try {
+    const first = internal.publishCliSessionsRealtime();
+    internal.scheduleCliSessionRefresh(); internal.scheduleCliSessionRefresh();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(refresh).toHaveBeenCalledOnce();
+    finish(); await first;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    internal.scheduleCliSessionRefresh();
+    viewing = false; internal.stopCliSessionRealtime();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  } finally { await server.stop(); server.dispose(); vi.useRealTimers(); }
+});
+
 describe("browser action completion during state failure", () => {
   it("returns peer account prompts to the browser with their originating system", async () => {
     const { server } = createServer(), send = vi.fn(), enableRescue = vi.fn().mockResolvedValue(true);

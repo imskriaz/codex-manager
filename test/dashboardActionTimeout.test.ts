@@ -5,6 +5,10 @@ import path from "node:path";
 import { getPeerActionTimeoutMs } from "../src/services/webDashboardServer";
 
 describe("dashboard action timeouts", () => {
+  it('keeps workspace history and diff reads within both local and remote deadlines', () => {
+    expect(getActionTimeoutMs('getWorkspaceEnvironment')).toBe(135_000);
+    expect(getPeerActionTimeoutMs('getWorkspaceEnvironment')).toBe(135_000);
+  });
   it("keeps manual resume within both browser and remote action deadlines", () => {
     expect(getActionTimeoutMs("resumeCodexSessions")).toBe(75_000);
     expect(getPeerActionTimeoutMs("resumeCodexSessions")).toBe(75_000);

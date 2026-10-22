@@ -28,6 +28,7 @@ import type {
   DashboardCodexSessionLiveState,
   DashboardNotice,
   DashboardWorkspaceEnvironment,
+  DashboardWorkspaceGitRequest,
   DashboardWorkspaceFile,
   DashboardWorkspaceFileEntry,
   DashboardWorkspaceTerminalInfo,
@@ -188,7 +189,7 @@ export type CliSessionsPageProps = {
   onSelect: (session: DashboardCliSessionSummary) => void;
   onBackToList: () => void;
   onRefreshMessages: () => void;
-  onRefreshEnvironment: (projectPath?: string, includeBranchDiff?: boolean) => void;
+  onRefreshEnvironment: (projectPath?: string, includeBranchDiff?: boolean, gitHistory?: DashboardWorkspaceGitRequest) => void;
   onRunTerminal: (command: string, projectPath?: string, terminalId?: string) => string | undefined;
   onListTerminals: () => void;
   onCreateTerminal: (profile: "default" | "powershell" | "cmd" | "bash", projectPath?: string) => void;
@@ -689,8 +690,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setContextAddOpen(false);
   };
   const renderSession = (session: DashboardCliSessionSummary, grouped = false): preact.ComponentChildren => session.archived ? (
-    <div role="listitem" class="cli-session-row is-archived" key={`${session.deviceId ?? "local"}:${session.id}`}>
-        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta"><span>{grouped ? session.archived ? 'Archived' : session.status === 'running' ? 'Running' : session.status === 'unknown' ? 'Not verified' : session.interrupted ? 'Interrupted' : 'Ready' : sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small></span>
+    <div role="listitem" class={`cli-session-row is-archived ${grouped ? "is-grouped" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
+        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
       <span class="cli-session-row-actions">
         <IconButton label={`Restore ${session.title}`} disabled={props.mutating} onClick={() => props.onUnarchive(session)}><RestoreIcon /></IconButton>
         <IconButton label={`Delete ${session.title}`} disabled={props.mutating} danger onClick={() => setDeleteTarget(session)}><TrashIcon /></IconButton>
@@ -702,9 +703,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
       const hasGoal = Boolean(session.goal && ["active", "usage_limited", "paused"].includes(session.goal.status));
       const autoResumeLabel = `${autoResume ? "Disable" : "Enable"} Auto Resume for ${session.title}${hasGoal ? " (goal included)" : ""}`;
-      return <div role="listitem" draggable class={`cli-session-row ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
+      return <div role="listitem" draggable class={`cli-session-row ${grouped ? "is-grouped" : ""} ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
-        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong><small class="cli-session-row-meta"><span>{grouped ? session.archived ? 'Archived' : session.status === 'running' ? 'Running' : session.status === 'unknown' ? 'Not verified' : session.interrupted ? 'Interrupted' : 'Ready' : sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small></span>
+        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
       </button>
       {running ? <span class="cli-session-row-status" title={session.status === "unknown" ? session.statusError ?? "Running state unavailable" : "Running"} aria-label={session.status === "unknown" ? "Running state unavailable" : "Running"}>
         {session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />}
@@ -926,11 +927,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                   {projectGroups.map(({ project, sessions }) => {
                     const groupId = `project:${pc.id}:${project.id}`;
                     const projectCollapsed = collapsedGroups[groupId] ?? true;
-                    const runningSessions = sessions.filter((session) => isCodexSessionRunning(session)).length;
+                    const runningSessions = sessions.filter((session) => !session.archived && session.status === "running").length;
                     return <section class="cli-project-group" key={groupId}>
                        <div class={`cli-project-row ${newChatProject === project.path ? "is-selected" : ""}`}>
                          <button type="button" class="cli-project-select" aria-label={`${projectCollapsed ? "Expand" : "Collapse"} ${project.label}`} title={project.path || undefined} aria-expanded={!projectCollapsed} onClick={() => toggleGroup(groupId, true)}>
-                           <EmptyFolderIcon /><span><strong>{project.label}</strong></span><small class="cli-project-count" title={`${sessions.length} sessions`}>{sessions.length}</small>{runningSessions ? <span class="cli-project-running" aria-label={`${runningSessions} running session${runningSessions === 1 ? "" : "s"}`} title={`${runningSessions} running session${runningSessions === 1 ? "" : "s"}`}><span class="cli-session-spinner" aria-hidden="true" />{runningSessions}</span> : null}<span class="cli-project-fold" aria-hidden="true"><ChevronIcon /></span>
+                           <EmptyFolderIcon /><span><strong>{project.label}</strong></span><small class={`cli-project-count ${runningSessions ? "cli-project-running" : ""}`} aria-label={`${runningSessions} running / ${sessions.length} total sessions`} title={`${runningSessions} running / ${sessions.length} total sessions`}>{runningSessions ? <><span class="cli-session-spinner" aria-hidden="true" />{runningSessions} / {sessions.length}</> : sessions.length}</small><span class="cli-project-fold" aria-hidden="true"><ChevronIcon /></span>
                          </button>
                       </div>
                       {!projectCollapsed ? <div class="cli-project-sessions" role="list">{sessions.map(session => renderSession(session, true))}</div> : null}
@@ -956,6 +957,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
             peers={props.peers}
             peerAccounts={props.peerAccounts}
             selectedPeerId={props.selectedPeerId}
+            onPeerChange={props.onPeerChange}
             switching={props.switchingAccount}
             onDashboard={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}
             onSettings={() => { if (mobileLayout) setRailCollapsed(true); props.onSettings(); }}
@@ -1012,7 +1014,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {turnChanges ? <div class="cli-turn-change-bar" role="group" aria-label="Turn changes"><span>{turnChanges.files} file{turnChanges.files === 1 ? "" : "s"} changed <b class="is-added">+{turnChanges.additions}</b> <b class="is-removed">−{turnChanges.deletions}</b></span><button type="button" onClick={() => openContextTab("reviews")}>View changes</button></div> : null}
               {localFeedback ? <div class={`cli-workspace-feedback is-${localFeedback.level}`} role={localFeedback.level === "error" ? "alert" : "status"}><span>{localFeedback.message}</span><button type="button" aria-label="Dismiss message" onClick={() => setLocalFeedback(undefined)}>×</button></div> : null}
               {draftStorageWarning}
-              {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status">◎</span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
+              {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status">◎</span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "blocked", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
               {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session">☷</span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
               {selectedArchived ? (
                 <div class="cli-archived-lock"><ArchiveIcon /><span><strong>This session is archived.</strong> Restore it to open or continue the conversation.</span><button type="button" class="cli-primary-button" disabled={props.mutating} onClick={() => props.onUnarchive(props.selectedSession!)}>Restore session</button></div>
@@ -1020,7 +1022,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 <div class="cli-workspace-feedback is-warning" role="status"><ShieldIcon /><span>Running state unavailable. {props.selectedSession.statusError} Your draft is saved; refresh before sending.</span><button type="button" onClick={props.onRefreshMessages} disabled={props.messagesLoading}>Retry</button></div>
               ) : composerBlockedByOwner || props.connected === false ? (
                 <div class={`cli-composer-unavailable is-running ${props.connected === false ? "is-reconnecting" : ""}`} role="status" title={props.connected === false ? "The live connection is unavailable. Sending resumes after reconnect." : `${props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}. Wait for that run to finish.` : "Session locked. Wait for Codex to release the lock."} Next turn: ${selectedModel?.label ?? model ?? "Default"} · ${reasoningEffort ?? "Default"} · ${sandboxMode}`}>
-                  {props.connected === false ? <span class="cli-live-spinner" aria-hidden="true" /> : props.selectedSession.status === "running" || props.selectedSession.locked ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span><strong>{props.connected === false ? "Reconnecting · live updates paused" : props.selectedSession.status === "running" || props.selectedSession.locked ? "Running elsewhere" : "Session locked"}</strong><small class="cli-locked-turn-settings"> - {selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full access" : sandboxMode === "read-only" ? "Read only" : "Workspace write"}</small></span>
+                  {props.connected === false ? <ShieldIcon /> : props.selectedSession.status === "running" || props.selectedSession.locked ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span><strong>{props.connected === false ? "Reconnecting · live updates paused" : props.selectedSession.status === "running" || props.selectedSession.locked ? "Running elsewhere" : "Session locked"}</strong><small class="cli-locked-turn-settings"> - {selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full access" : sandboxMode === "read-only" ? "Read only" : "Workspace write"}</small></span>
                 </div>
               ) : (
                 <Composer
@@ -1091,7 +1093,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onCommitDraft={setCommitDraft}
           onCommit={() => runGitAction('commit')}
           onPush={() => runGitAction('push')}
-          onRefreshEnvironment={() => props.onRefreshEnvironment(toolProjectPath)}
+          onRefreshEnvironment={(gitHistory) => props.onRefreshEnvironment(toolProjectPath, undefined, gitHistory)}
           onBranchReview={() => { openContextTab('reviews'); setBranchReview(true); props.onRefreshEnvironment(toolProjectPath, true); }}
           terminalWidth={layout.terminalWidth}
           draft={terminalDraft}
@@ -1283,25 +1285,11 @@ function LiveTurnDetails({ state }: { state?: DashboardCodexSessionLiveState; lo
 }
 
 export function SessionMessage({ message, logoUri, turnCopyText, onActionFeedback, onDraftMessage, onRetryPrompt, onOpenFile, onOpenReviews }: { message: DashboardCliSessionMessage; logoUri?: string; turnCopyText?: string; onActionFeedback?: (notice: DashboardNotice) => void; onDraftMessage?: (text: string, quote: boolean) => void; onRetryPrompt?: () => void; onOpenFile?: (filePath: string) => void; onOpenReviews?: (filePath?: string) => void }) {
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const actionsRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!actionsOpen) return;
-    const closeOutside = (event: PointerEvent) => { if (!actionsRef.current?.contains(event.target as Node)) setActionsOpen(false); };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setActionsOpen(false);
-      actionsRef.current?.querySelector<HTMLButtonElement>(".cli-message-actions-toggle")?.focus({ preventScroll: true });
-    };
-    window.addEventListener("pointerdown", closeOutside);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => { window.removeEventListener("pointerdown", closeOutside); window.removeEventListener("keydown", closeOnEscape); };
-  }, [actionsOpen]);
   const renderedText = useMemo(() => (!message.kind || message.kind === "message") && message.role !== "user" ? renderMessageText(message.text) : message.text, [message.text, message.kind, message.role]);
   const questionReplies = useMemo(() => message.role === "user" ? parseQuestionReply(message.text) : undefined, [message.text, message.role]);
   if (!message.kind || message.kind === "message") {
     const isUser = message.role === "user";
-    return <article tabIndex={0} onPointerDown={(event) => { if (event.pointerType === "touch" && !(event.target as Element).closest("button,a,input,textarea,select")) event.currentTarget.focus({ preventScroll: true }); }} aria-label={`${isUser ? "Your" : "Codex"} message; focus for actions`} class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""} ${actionsOpen ? "has-actions-open" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{renderedText}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} />)}</div> : null}<div ref={actionsRef} class="cli-message-actions" role="group" aria-label="Message actions"><button type="button" class="cli-message-actions-toggle" aria-label={actionsOpen ? "Hide message actions" : "Show message actions"} aria-expanded={actionsOpen} onClick={(event) => { event.stopPropagation(); setActionsOpen((open) => !open); }}><MoreIcon /></button><span class="cli-message-action-menu" aria-hidden={!actionsOpen}><TurnCopyButton text={message.text} label="Copy message" onActionFeedback={onActionFeedback} />{turnCopyText && turnCopyText !== message.text ? <TurnCopyButton text={turnCopyText} onActionFeedback={onActionFeedback} /> : null}{onDraftMessage ? <><button type="button" aria-label="Quote" title="Quote" onClick={() => onDraftMessage(message.text, true)}><QuoteIcon /></button>{isUser ? <button type="button" aria-label="Edit and resend" title="Edit and resend" onClick={() => onDraftMessage(message.text, false)}><PencilIcon /></button> : turnCopyText && onRetryPrompt ? <button type="button" aria-label="Retry prompt" title="Retry prompt" onClick={onRetryPrompt}><RefreshIcon /></button> : null}</> : null}</span></div></div></article>;
+    return <article tabIndex={0} onPointerDown={(event) => { if (event.pointerType === "touch" && !(event.target as Element).closest("button,a,input,textarea,select")) event.currentTarget.focus({ preventScroll: true }); }} aria-label={`${isUser ? "Your" : "Codex"} message; focus for actions`} class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{renderedText}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} />)}</div> : null}{message.text || turnCopyText ? <div class="cli-message-actions" role="group" aria-label="Message actions"><span class="cli-message-action-menu">{message.text ? <TurnCopyButton text={message.text} label="Copy message" onActionFeedback={onActionFeedback} /> : null}{turnCopyText && turnCopyText !== message.text ? <TurnCopyButton text={turnCopyText} onActionFeedback={onActionFeedback} /> : null}{onDraftMessage && message.text ? <><button type="button" aria-label="Quote" title="Quote" onClick={() => onDraftMessage(message.text, true)}><QuoteIcon /></button>{isUser ? <button type="button" aria-label="Edit and resend" title="Edit and resend" onClick={() => onDraftMessage(message.text, false)}><PencilIcon /></button> : turnCopyText && onRetryPrompt ? <button type="button" aria-label="Retry prompt" title="Retry prompt" onClick={onRetryPrompt}><RefreshIcon /></button> : null}</> : null}</span></div> : null}</div></article>;
   }
   return <ActivityMessage message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />;
 }
@@ -1503,21 +1491,42 @@ function WorkspaceEnvironmentView(props: {
 function WorkspaceGitView(props: {
   environment?: DashboardWorkspaceEnvironment; connected: boolean; loading: boolean; draft: string;
   pending?: 'commit' | 'push'; notice?: DashboardNotice; onDraft: (value: string) => void;
-  onCommit: () => void; onPush: () => void; onRefresh: () => void; onCompare: () => void; onOpenFile: (path: string) => void;
+  onCommit: () => void; onPush: () => void; onRefresh: (history?: DashboardWorkspaceGitRequest) => void; onCompare: () => void; onOpenFile: (path: string) => void;
 }) {
   const [confirmPush, setConfirmPush] = useState(false);
+  const [view, setView] = useState<'changes' | 'history'>('changes');
+  const [history, setHistory] = useState<DashboardWorkspaceEnvironment['gitHistory']>();
+  const [selected, setSelected] = useState<string>();
+  const [commitDiff, setCommitDiff] = useState<DashboardWorkspaceEnvironment['gitCommit']>();
+  useEffect(() => {
+    const next = props.environment?.gitHistory;
+    if (next) setHistory(next);
+    if (props.environment?.gitCommit) setCommitDiff(props.environment.gitCommit);
+  }, [props.environment]);
   useEffect(() => { if (!props.connected || props.pending) setConfirmPush(false); }, [props.connected, props.pending]);
   const environment = props.environment;
   return <section class="cli-inspector-view" aria-label="Git" aria-busy={Boolean(props.pending || props.loading)}>
-    <header class="cli-inspector-heading"><ForkIcon /><span><strong>{environment?.branch ?? 'Repository'}</strong><small>{environment?.upstream ?? (environment?.isGitRepository ? 'No upstream' : 'Git workspace')}</small></span><IconButton label="Refresh Git" disabled={props.loading || !props.connected} onClick={props.onRefresh}><RefreshIcon /></IconButton></header>
+    <header class="cli-inspector-heading"><ForkIcon /><span><strong>{environment?.branch ?? 'Repository'}</strong><small>{environment?.upstream ?? (environment?.isGitRepository ? 'No upstream' : 'Git workspace')}</small></span><IconButton label="Refresh Git" disabled={props.loading || !props.connected} onClick={() => { if (view === 'history') { setSelected(undefined); props.onRefresh({}); } else props.onRefresh(); }}><RefreshIcon /></IconButton></header>
     <div class="cli-inspector-body">
       {props.notice ? <div class={`cli-inspector-notice is-${props.notice.level}`} role={props.notice.level === 'error' ? 'alert' : 'status'}>{props.notice.message}</div> : null}
       {!props.connected ? <div class="cli-inspector-notice" role="status">Offline · repository actions require a connection.</div> : null}
-      {!environment ? <div class="cli-context-empty" role="status"><ForkIcon /><strong>{props.loading ? 'Reading repository…' : 'Repository state unavailable'}</strong>{!props.loading ? <button type="button" disabled={!props.connected} onClick={props.onRefresh}>Retry</button> : null}</div> : !environment.isGitRepository ? <div class="cli-context-empty"><EmptyFolderIcon /><strong>No Git repository</strong><span>This project is not a Git working tree.</span></div> : <>
+      {!environment ? <div class="cli-context-empty" role="status"><ForkIcon /><strong>{props.loading ? 'Reading repository…' : 'Repository state unavailable'}</strong>{!props.loading ? <button type="button" disabled={!props.connected} onClick={() => props.onRefresh()}>Retry</button> : null}</div> : !environment.isGitRepository ? <div class="cli-context-empty"><EmptyFolderIcon /><strong>No Git repository</strong><span>This project is not a Git working tree.</span></div> : <>
         <div class="cli-git-summary"><span>{environment.changes} changed</span><span title="Commits ahead of upstream">↑ {environment.ahead}</span><span title="Commits behind upstream">↓ {environment.behind}</span><span class="is-added">+{environment.additions}</span><span class="is-removed">−{environment.deletions}</span></div>
+        <div class="cli-git-views" role="group" aria-label="Git view"><button type="button" aria-pressed={view === 'changes'} onClick={() => setView('changes')}>Changes</button><button type="button" aria-pressed={view === 'history'} onClick={() => { setView('history'); if (!history && props.connected) props.onRefresh({}); }}>History</button></div>
+        {view === 'history' ? <section class="cli-git-history" aria-label="Commit history">
+          {selected ? <><header><button type="button" onClick={() => setSelected(undefined)}>← History</button><code title={selected}>{selected.slice(0, 8)}</code></header>{commitDiff?.hash === selected ? <>{commitDiff.truncated ? <p role="status">Diff preview limited to 256 KB. Open the repository in VS Code for the full diff.</p> : null}{commitDiff.diff.trim() ? <DiffPreview diff={commitDiff.diff} /> : <p>No file changes in this project.</p>}</> : <p role="status">{props.loading ? 'Reading commit…' : 'Commit unavailable.'}<button type="button" disabled={!props.connected || props.loading} onClick={() => props.onRefresh({ commit: selected })}>Retry</button></p>}</> : <>
+          <header><h3>Commit history</h3><button type="button" disabled={!props.connected || props.loading} onClick={() => props.onRefresh({})}>Refresh history</button></header>
+          {history?.commits.map(commit => <button class="cli-git-history-row" type="button" key={commit.hash} disabled={!props.connected || props.loading} title={`${commit.subject}\n${commit.author} · ${commit.date}\n${commit.hash}`} onClick={() => { setSelected(commit.hash); setCommitDiff(undefined); props.onRefresh({ commit: commit.hash }); }}><span><strong>{commit.subject || 'Untitled commit'}</strong><small>{commit.author} · {Number.isFinite(Date.parse(commit.date)) ? new Date(commit.date).toLocaleDateString() : commit.date}</small></span><code>{commit.hash.slice(0, 7)}</code></button>)}
+          {!history?.commits.length ? <p role="status">{props.loading ? 'Reading history…' : history ? 'No commits in this project.' : 'History unavailable. Use Refresh history to retry.'}</p> : null}
+          {history && history.offset > 0 ? <button type="button" disabled={!props.connected || props.loading} onClick={() => props.onRefresh({ ref: history.ref, offset: Math.max(0, history.offset - 50) })}>Newer commits</button> : null}
+          {history?.hasMore && history.offset + history.commits.length <= 10000 ? <button type="button" disabled={!props.connected || props.loading} onClick={() => props.onRefresh({ ref: history.ref, offset: history.offset + history.commits.length })}>Load older commits</button> : null}
+          {history?.hasMore && history.offset + history.commits.length > 10000 ? <p role="status">History preview limited to 10,000 commits. Open the repository in VS Code for older history.</p> : null}
+          </>}
+        </section> : <>
         <form class="cli-git-commit" onSubmit={event => { event.preventDefault(); if (props.connected && !props.pending && props.draft.trim() && environment.changes) props.onCommit(); }}><label htmlFor="workspace-commit-message">Commit message</label><textarea id="workspace-commit-message" name="commit-message" aria-label="Commit message" maxLength={200} rows={3} value={props.draft} placeholder="Describe your changes…" onInput={event => props.onDraft(event.currentTarget.value)} /><small>Commit all changes in this project.</small><div><button type="submit" class="cli-inspector-primary" disabled={!props.connected || Boolean(props.pending) || !props.draft.trim() || !environment.changes}>{props.pending === 'commit' ? 'Committing…' : 'Commit all'}</button><button type="button" disabled={!props.connected || Boolean(props.pending) || !environment.hasRemote} onClick={() => setConfirmPush(true)}><SendIcon />{props.pending === 'push' ? 'Pushing…' : 'Push branch'}</button></div></form>
         {confirmPush ? <div class="cli-git-push-review" role="group" aria-label="Confirm push"><strong>Push {environment.branch ?? 'this branch'}?</strong><span>{environment.upstream ?? 'Uses the configured remote for this branch.'}</span><div><button type="button" onClick={() => setConfirmPush(false)}>Cancel</button><button type="button" class="cli-inspector-primary" disabled={!props.connected || Boolean(props.pending)} onClick={props.onPush}>Push</button></div></div> : null}
         <section class="cli-git-changes"><header><h3>Changes <span>{environment.changes}</span></h3><button type="button" disabled={!props.connected} onClick={props.onCompare}><ReviewIcon />Compare branch</button></header>{environment.changedFiles?.length ? environment.changedFiles.map(file => <button type="button" class="cli-git-file" key={file.path} title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path} onClick={() => file.index === 'D' || file.worktree === 'D' ? props.onCompare() : props.onOpenFile(file.path.endsWith('/') ? '' : file.path)}><FileIcon /><span>{file.path}</span><code title={`Index: ${file.index === ' ' ? 'unchanged' : file.index}; working tree: ${file.worktree === ' ' ? 'unchanged' : file.worktree}`}>{`${file.index}${file.worktree}`.trim()}</code></button>) : <p>{environment.changes ? 'Refresh Git to load changed files.' : 'Working tree clean.'}</p>}{environment.changedFilesTruncated ? <p role="status">Changed-file preview is limited. Use Files or VS Code for the complete working tree.</p> : null}</section>
+        </>}
       </>}
     </div>
   </section>;
@@ -1761,7 +1770,7 @@ function WorkspaceContextPanel(props: {
   onCommitDraft: (value: string) => void;
   onCommit: () => void;
   onPush: () => void;
-  onRefreshEnvironment: () => void;
+  onRefreshEnvironment: (history?: DashboardWorkspaceGitRequest) => void;
   onBranchReview: () => void;
   scopeKey: string;
   fileDrafts: Record<string, WorkspaceFileDraft>;
@@ -1874,7 +1883,7 @@ function WorkspaceContextPanel(props: {
       return <span class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'agents' || kind === 'git' ? <ForkIcon /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button>{tab !== 'env' ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
     })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !props.tabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'git' || tab === 'agents' ? <ForkIcon /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).every(tab => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
-    {props.activeTab === 'env' ? <WorkspaceEnvironmentView autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={props.onRefreshEnvironment} onOpen={props.onAdd} /> : props.activeTab === 'git' ? <WorkspaceGitView key={props.scopeKey} environment={props.environment} connected={props.connected !== false} loading={props.environmentLoading} draft={props.commitDraft} pending={props.gitPending} notice={props.gitNotice} onDraft={props.onCommitDraft} onCommit={props.onCommit} onPush={props.onPush} onRefresh={props.onRefreshEnvironment} onCompare={props.onBranchReview} onOpenFile={path => props.onAdd('files', path)} /> : null}
+    {props.activeTab === 'env' ? <WorkspaceEnvironmentView autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : props.activeTab === 'git' ? <WorkspaceGitView key={props.scopeKey} environment={props.environment} connected={props.connected !== false} loading={props.environmentLoading} draft={props.commitDraft} pending={props.gitPending} notice={props.gitNotice} onDraft={props.onCommitDraft} onCommit={props.onCommit} onPush={props.onPush} onRefresh={props.onRefreshEnvironment} onCompare={props.onBranchReview} onOpenFile={path => props.onAdd('files', path)} /> : null}
     {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onOpen={(id) => props.onAdd("agents", id)} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <>
     <div class="cli-terminal-toolbar"><label>VS Code terminal<select aria-label="Select VS Code terminal" disabled={props.connected === false} value={props.terminals.find((terminal) => terminal.isActive)?.id ?? ""} onChange={(event) => { const id = event.currentTarget.value; if (id) props.onFocusTerminal(id); }}><option value="">Select terminal…</option>{props.terminals.map((terminal) => <option value={terminal.id}>{terminal.name} · {terminal.state}</option>)}</select></label>{props.terminals.find((terminal) => terminal.isActive) ? <IconButton label="Close terminal" title="Close terminal" disabled={props.connected === false} onClick={() => props.onCloseTerminal(props.terminals.find((terminal) => terminal.isActive)!.id)}><CloseIcon /></IconButton> : null}<details class="cli-terminal-new-menu"><summary aria-label="New terminal" title="New terminal"><PlusIcon /></summary><div role="menu">{(["default", "powershell", "cmd", "bash"] as const).map((profile) => <button type="button" role="menuitem" disabled={props.connected === false} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onCreateTerminal(profile); }}><TerminalIcon /><span>{profile === "default" ? "Default" : profile === "powershell" ? "PowerShell" : profile.toUpperCase()}</span></button>)}</div></details><button type="button" class="cli-terminal-refresh" disabled={props.connected === false} aria-label="Refresh terminals" onClick={props.onListTerminals} title="Refresh running terminals"><RefreshIcon /></button></div>
     <div ref={outputRef} class="cli-terminal-output" role="log" aria-live="polite" onScroll={(event) => {
@@ -2137,13 +2146,13 @@ function SessionAccountFooter(props: {
   peers?: Array<{ id: string; name: string; connected: boolean; local?: boolean }>;
   peerAccounts?: Record<string, DashboardAccountViewModel[]>;
   selectedPeerId?: string;
+  onPeerChange?: (peerId: string) => void;
   switching: boolean;
   onSwitchAccount: (targetDeviceId?: string, accountId?: string) => void;
   onDashboard: () => void;
   onSettings: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [systemId, setSystemId] = useState(props.selectedPeerId);
   const [search, setSearch] = useState("");
   const [position, setPosition] = useState({ left: 8, bottom: 8, maxHeight: 420, width: 360 });
   const rootRef = useRef<HTMLElement>(null);
@@ -2152,7 +2161,7 @@ function SessionAccountFooter(props: {
   const searchRef = useRef<HTMLInputElement>(null);
   const focusSearchOnOpen = useRef(false);
   const peers = props.peers?.length ? props.peers : [{ id: "local", name: "This PC", connected: true, local: true }];
-  const peer = peers.find(item => item.id === systemId) ?? peers.find(item => item.local) ?? peers[0]!;
+  const peer = peers.find(item => item.id === props.selectedPeerId) ?? peers.find(item => item.local) ?? peers[0]!;
   const accounts = peer.local ? (props.localAccounts ?? props.accounts ?? (props.account ? [props.account] : [])) : (props.peerAccounts?.[peer.id] ?? []);
   const name = (account: DashboardAccountViewModel | undefined, emailFirst = false): string => {
     const raw = (emailFirst ? account?.email : account?.displayName)?.trim() || account?.email?.trim() || account?.displayName?.trim();
@@ -2163,21 +2172,22 @@ function SessionAccountFooter(props: {
     .map(metric => ({ ...metric, value: Math.max(0, Math.min(100, Math.round(metric.percentage!))) }));
   const footerMetrics = metrics(props.account);
   const overall = footerMetrics.length ? Math.min(...footerMetrics.map(metric => metric.value)) : undefined;
-  const footerName = name(props.account);
+  const footerName = name(props.account, true);
+  const footerSystem = getSensitiveDisplayValue(peer.name, props.privacyMode, "name");
+  const footerTitle = props.account ? `${footerName} (${footerSystem})` : footerSystem;
   const currentAccount = accounts.find(account => account.isCurrentWindowAccount || account.runningOnThisDevice) ?? accounts.find(account => account.isActive);
   const currentMetrics = metrics(currentAccount);
   const currentName = name(currentAccount);
   const filtered = accounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   useEffect(() => {
-    if (systemId !== peer.id) { setSystemId(peer.id); setSearch(""); }
-  }, [peer.id, systemId]);
+    setSearch("");
+  }, [peer.id]);
   const closeMenu = (restoreFocus = false): void => {
     setOpen(false);
     if (restoreFocus) triggerRef.current?.focus();
   };
   const openMenu = (focusSearch: boolean): void => {
     focusSearchOnOpen.current = focusSearch;
-    setSystemId(props.selectedPeerId);
     setSearch("");
     setOpen(true);
   };
@@ -2223,13 +2233,15 @@ function SessionAccountFooter(props: {
   }, [open]);
   const choose = (accountId?: string): void => { closeMenu(); props.onSwitchAccount(peer.local ? "local" : peer.id, accountId); };
   return <footer class="cli-account-footer" ref={rootRef}>
-    <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerName} aria-haspopup="dialog" aria-expanded={open} onClick={event => open ? closeMenu() : openMenu(event.detail === 0)}>
+    <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerTitle} aria-haspopup="dialog" aria-expanded={open} onClick={event => open ? closeMenu() : openMenu(event.detail === 0)}>
       <span class="cli-account-avatar" aria-hidden="true">{props.account ? footerName.slice(0, 1).toUpperCase() : "?"}</span>
-      <span class="cli-account-footer-copy"><span><strong>{footerName}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><small>{overall !== undefined ? `${overall}% quota available` : "Manage your accounts"}</small>{overall !== undefined ? <span class="cli-account-quota-track" data-level={overall < 20 ? "low" : "normal"}><i style={{ width: `${overall}%` }} /></span> : null}</span>
+      <span class="cli-account-footer-copy"><span><strong title={footerTitle}>{footerTitle}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><small>{overall !== undefined ? `${overall}% quota available` : "Manage your accounts"}</small>{overall !== undefined ? <span class="cli-account-quota-track" data-level={overall < 20 ? "low" : "normal"}><i style={{ width: `${overall}%` }} /></span> : null}</span>
       <ChevronIcon />
     </button>
     {open ? createPortal(<div ref={menuRef} class="cli-account-menu cli-account-center" role="dialog" aria-label="Account center" style={{ left: `${position.left}px`, bottom: `${position.bottom}px`, maxHeight: `${position.maxHeight}px`, width: `${position.width}px` }}>
       <header class="cli-account-center-header"><span>Account center</span><button type="button" class="cli-icon-button" aria-label="Close account menu" onClick={() => closeMenu(true)}><CloseIcon /></button></header>
+      <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; setSearch(""); props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={peer.connected ? "is-online" : "is-offline"}>{peer.connected ? "Online" : "Offline"}</span></div>
+      {!peer.connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
       <section class="cli-account-current" aria-label="Current account">
         <span class="cli-account-avatar is-large" aria-hidden="true">{currentAccount ? currentName.slice(0, 1).toUpperCase() : "?"}</span>
         <div><strong title={currentName}>{currentName}</strong><small title={name(currentAccount, true)}>{currentAccount ? name(currentAccount, true) : "Add an account from the dashboard"}</small></div>
@@ -2238,8 +2250,6 @@ function SessionAccountFooter(props: {
       <div class="cli-account-quota-grid" aria-label="Current account quota">
         {currentMetrics.length ? currentMetrics.slice(0, 2).map(metric => <div key={metric.key}><span>{metric.label}<strong>{metric.value}%</strong></span><span class="cli-account-quota-track" data-level={metric.value < 20 ? "low" : "normal"} role="meter" aria-label={`${metric.label} quota remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}><i style={{ width: `${metric.value}%` }} /></span></div>) : <small>Quota has not been checked yet.</small>}
       </div>
-      <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { setSystemId(event.currentTarget.value); setSearch(""); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={peer.connected ? "is-online" : "is-offline"}>{peer.connected ? "Online" : "Offline"}</span></div>
-      {!peer.connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
       <div class="cli-account-list-heading"><strong>Accounts <span>{accounts.length}</span></strong><small>{accounts.filter(account => account.enabled).length} enabled</small></div>
       <label class="cli-account-search"><SearchIcon /><input ref={searchRef} type="search" aria-label="Search accounts on selected system" placeholder="Find an account..." value={search} onInput={event => setSearch(event.currentTarget.value)} /></label>
       <div class="cli-account-list" role="group" aria-label="Saved accounts">

@@ -72,7 +72,7 @@ describe("overview actions", () => {
     expect(main).toContain('"resumeCodexSessions", session, { openInVsCode: true }');
     expect(main).toContain("session.deviceName || peer?.name");
     expect(main).toContain('projectDisplayName(session.projectPath?.trim() || "Workspace")');
-    expect(main).toContain('if (selectedCliSession && !sameCliSessionTarget(selectedCliSession, session))');
+    expect(main).toContain('if ((session.deviceId ?? "local") !== (selectedPeer?.local ? "local" : selectedPeer?.id) || selectedCliSession && !sameCliSessionTarget(selectedCliSession, session))');
     expect(main).toContain('if (!initialMessages.length) requestCliSessionMessages(session.id, session.deviceId, true);');
     expect(main).toContain('session.model || "Model unavailable"');
     expect(main).toContain(': "Session dashboard"');

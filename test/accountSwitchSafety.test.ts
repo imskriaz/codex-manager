@@ -165,3 +165,36 @@ it("rejects an automatic switch if the active account changed before the lease w
   await expect(repo.switchAccount(saved.id, { expectedActiveAccountId: null })).rejects.toThrow("active account changed");
   expect(writeAuth).not.toHaveBeenCalled();
 });
+
+it("keeps a manual empty-quota selection across reload and quota recovery until reselected", async () => {
+  const saved = await repo.upsertFromTokens(tokens());
+  const quota = { hourlyWindowPresent: true, hourlyWindowMinutes: 300, hourlyPercentage: 0, weeklyWindowPresent: true, weeklyWindowMinutes: 10080, weeklyPercentage: 80 };
+  await repo.updateQuota(saved.id, quota);
+  await repo.switchAccount(saved.id);
+  expect(await repo.isAutoSwitchManuallyHeld(saved.id, true)).toBe(true);
+  repo.invalidateCachedIndex();
+  expect(Object.keys(JSON.parse(await readFile(repo.accountsIndexPath, "utf8")).manualSelectionByCodexHome)).toHaveLength(1);
+  await repo.updateQuota(saved.id, { ...quota, hourlyPercentage: 90 });
+  expect(await repo.isAutoSwitchManuallyHeld(saved.id, true)).toBe(true);
+  writeAuth.mockClear();
+  await expect(repo.switchAccount(saved.id, { expectedActiveAccountId: saved.id })).rejects.toThrow("Auto Switch is paused");
+  expect(writeAuth).not.toHaveBeenCalled();
+  await repo.recordManualAccountSelection(saved.id);
+  expect(await repo.isAutoSwitchManuallyHeld(saved.id)).toBe(false);
+  await expect(repo.switchAccount(saved.id, { expectedActiveAccountId: saved.id })).resolves.toMatchObject({ id: saved.id });
+});
+
+it("holds an unknown manual selection until a fresh quota snapshot can verify it", async () => {
+  const saved = await repo.upsertFromTokens(tokens());
+  await repo.switchAccount(saved.id);
+  expect(await repo.isAutoSwitchManuallyHeld(saved.id, true)).toBe(true);
+  await repo.updateQuota(saved.id, { hourlyWindowPresent: true, hourlyWindowMinutes: 300, hourlyPercentage: 80, weeklyWindowPresent: false, weeklyPercentage: 0 });
+  expect(await repo.isAutoSwitchManuallyHeld(saved.id, true)).toBe(false);
+  await repo.updateQuota(saved.id, { hourlyWindowPresent: true, hourlyWindowMinutes: 300, hourlyPercentage: 0, weeklyWindowPresent: false, weeklyPercentage: 0 });
+  await repo.recordManualAccountSelection(saved.id);
+  const flush = vi.spyOn(repo, "flush").mockRejectedValueOnce(new Error("storage full"));
+  await expect(repo.recordManualAccountSelection(saved.id)).rejects.toThrow("storage full");
+  flush.mockRestore();
+  expect(await repo.isAutoSwitchManuallyHeld(saved.id)).toBe(true);
+  await repo.flush();
+});

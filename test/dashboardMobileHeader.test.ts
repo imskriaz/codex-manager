@@ -22,14 +22,15 @@ describe("mobile dashboard header", () => {
     expect(css).toMatch(/@media \(min-width: 601px\)\s*\{\s*\.dashboard-mobile-actions\s*\{ display: none;/);
   });
 
-  it("keeps session rows two lines while actions overlay on hover", () => {
+  it("keeps session rows compact while transcript actions overlay on hover", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8").replace(/\r\n/g, "\n");
     expect(css).toContain(".cli-session-spinner { display: inline-block;");
     expect(css).toContain(".cli-workspace .cli-session-row-main { min-height: 27px;");
     expect(css).toContain(".cli-workspace .cli-session-row-actions { top: 50%;");
     expect(css).toContain("padding-right: 8px;");
-    expect(css).toContain(".cli-workspace .cli-message-actions {\n  position: absolute;");
-    expect(css).toContain(".cli-workspace .cli-message-action-menu {\n  position: absolute;");
+    expect(css).toContain(".cli-session-message .cli-message-actions {\n  position: absolute;");
+    expect(css).toContain(".cli-session-message:hover .cli-message-actions,");
+    expect(css).toContain(".cli-session-message .cli-message-actions:focus-within { opacity: 1; pointer-events: auto; }");
   });
 
   it("keeps the rail navigation compact and makes the Codex mark a dashboard home", () => {

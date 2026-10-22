@@ -30,6 +30,27 @@ scope; publication does not close outstanding hardware or runtime checks.
 
 ### Follow-up evidence (2026-10-21)
 
+- Event/history follow-up adds on-demand Git history in the existing Git tab:
+  50-row pages retain a fixed revision while new commits arrive. Commit diffs
+  stay scoped to the selected project; malformed refs and unavailable commits
+  fail explicitly. History survives failed refreshes and live reads are disabled
+  offline. The preview retains one history page and one bounded commit diff.
+  Broader GitHub integration remains pending.
+- Maintenance progress no longer polls every two seconds, and search no longer
+  uses a debounce timer. Bounded lifecycle/progress events carry job revisions
+  through the authenticated peer channel. The UI rejects foreign, stale and
+  malformed updates, preserves cancellation/terminal results, checks status on
+  reopen/reconnect, and can recover a lost start reply by preview token without
+  resending cleanup. Old hosts retain explicit Refresh status. Slow sockets are
+  disconnected instead of accumulating unbounded progress buffers.
+  The first browser run found duplicate preview IDs in its fixture; fixture
+  previews/jobs now use unique IDs, matching the native service.
+- Current review build is `1.4.3-pre.1`; installation and publication remain
+  pending. No real cleanup, session turn, account switch or Git mutation is
+  used by this follow-up's browser checks. Temporary repositories cover real
+  history paging and commit diffs. Physical two-PC progress, accepted-write host
+  restart and the other existing release gates remain unverified.
+
 - Workspace inspector follow-up replaces the Environment flyout with a fixed
   first Env tab and one header visibility toggle. Git is closable; the plus
   follows the open tabs. Env uses a compact tool list with Git, recorded edits,
@@ -150,8 +171,8 @@ scope; publication does not close outstanding hardware or runtime checks.
   check pass. This package is a local review artifact; the remaining workspace
   redesign has not been installed or published as a completed release.
 - Remaining workspace redesign work includes terminal renderer integration/native
-  API limits, broader Git/GitHub tools and final inline maintenance-workspace
-  interaction checks. The inspector follow-up implements fixed Env, core Git,
+  API limits, broader Git/GitHub tools. Maintenance event and inline-panel checks are
+  recorded in the current follow-up above. The inspector follow-up implements fixed Env, core Git,
   right-sidebar visibility and aligned tool selection. These additions and the
   broader pending UI work are not represented by the previously published artifact;
   do not treat a share-menu or inspector check as release completion.
@@ -373,7 +394,7 @@ smokes use intercepted fixtures or owned disposable data, never existing work.
 | API | Multi-token project scopes and operation permissions, denial/exposure rules, create table/explorer/test UI, revocation (HTTP and responsive suites) | Runtime remote scoped-token actions |
 | Accounts / settings | Immediate dispatch, modal focus retention, OAuth callback coordination, switching/reset ownership, quotas and cancellation (account/settings/OAuth suites and UI fixtures) | Live credit reset and physical OAuth callback |
 | Offline / notifications | IndexedDB bounds, task/comment-only outbox, worker upgrade rollback, offline reload/reconnect, system notification titles (cache/worker tests and real read-only browser checks) | Phone push delivery and physical storage exhaustion |
-| Remaining loops | Legacy share and recovery-page polling removed in this follow-up. Presence is a lease heartbeat; quota refresh follows configured schedules. Active maintenance progress still polls and needs a scoped event path across peers. | Maintenance/peer event follow-up |
+| Remaining loops | Legacy share and recovery-page polling removed in this follow-up. Presence is a lease heartbeat; quota refresh follows configured schedules. Tools now receives bounded, source-bound progress across authenticated peers, with explicit search and catch-up status reads on reopen/reconnect. | Physical two-PC cleanup progress during reconnect |
 
 ## Session reliability and automation
 
@@ -471,3 +492,69 @@ still need verification. These results do not close the unchecked audit items.
   on main and push. Report any required step that fails.
 - [ ] Publish/update the authorized 1.4.3 GitHub Release with the verified VSIX;
   verify the release/tag/artifact match the delivered commit.
+
+## Current review build additions
+
+- Browser-demand cross-device checks: visible browser dashboards advertise signed
+  subscriptions for their selected systems. Initial requests load once; file
+  events share subsequent changes without recurring session scans. Unselected
+  systems remain idle. Standby VS Code instances keep authenticated discovery/ownership
+  presence without session scans or account-view builds. Hidden, closed,
+  disconnected, and expired viewers release background session monitoring;
+  explicit actions remain available. Peer interest does not advertise itself as
+  local browser interest. Both PCs need the updated signed protocol for this
+  behavior; mixed-version and physical two-PC checks remain release gates.
+
+- Cross-PC discovery: relay aggregates included the receiving PC's own record;
+  rejecting that record discarded the whole aggregate. Self records are now
+  excluded while validating remote records before applying a complete snapshot.
+  Late responses preserve fresher peer data and cannot repopulate a replaced
+  connection. Physical two-PC validation remains a release gate: the canonical
+  local host currently reports one local system only.
+- Manual empty-quota account selections persist per Codex home in the existing
+  account index/SQLite header. Automatic selection and credit redemption honor
+  the hold; manually selecting an available account releases it. Unknown quota
+  remains held until a fresh snapshot verifies the selected account.
+- Sidebar account identity/system, System-first Account Center, browser-native
+  Running Sessions navigation, and removal of its browser footer are included.
+- Transcript actions are horizontal hover/focus overlays with no ellipsis or
+  reserved message height. Paragraph spacing is reduced. Project session rows
+  use one line for title/time, and project running / total counts animate only
+  for verified running sessions. Paused/blocked goal indicators use Play;
+  explicit resume still requires native confirmation.
+- Further cross-PC audit corrected forced-local session discovery, global list
+  replacement by remote replies, loss of remote rows on local realtime updates,
+  delayed catalogs leaking across switches, unscoped saved list/catalog records,
+  and a startup handshake race that could throttle the first live read. Signed
+  changed peer lists now push immediately; unchanged heartbeats do not resend
+  them. Remote browser links retain their device, workspace requests use that
+  device, and disconnected peers cannot execute live actions.
+- Six system-switch browser sizes pass for remote accounts, session lists,
+  project catalogs, delayed responses, conversation URLs, workspace routing,
+  and target disconnection. These are intercepted UI/transport fixtures, not
+  physical two-PC evidence.
+
+### Current verification (2026-10-22)
+
+- All 2,196 tests across 185 files pass. The first complete run found two
+  outdated source assertions for the shared transcript selector and scoped
+  session-opening guard; corrected expectations pass in the complete rerun.
+- Both TypeScript targets compile. Lint reports zero errors and 3,101 warnings.
+- Six-size system-switch checks verify target subscriptions, hide/show release,
+  remote accounts/catalogs/conversations, late replies, and disconnection.
+  Desktop/mobile maintenance, Git inspector/history, queue, and public-share
+  checks pass. The general six-size responsive matrix also passes.
+- Read-only real-host desktop/mobile checks load 341 session records, keep
+  230 child sessions out of the parent list, render 22 messages, and reconnect successfully.
+  Initial load takes 1,083 ms at desktop width and 606 ms at mobile width.
+  These checks send no session messages and change no real accounts or files.
+- Standby, unrelated-system interest, multiple viewers, lease expiry, replayed
+  or forged subscriptions, and coalesced file changes have focused regressions.
+  No recurring session-scan timer remains; connection health and viewer leases
+  retain bounded heartbeats.
+- Review VSIX `1.4.3-pre.1` builds successfully and passes bundled-dependency
+  validation. SHA-256:
+  `40e13fb2c7144da6b40f4a7339e220fced4809f0e95ada033f8efcce870f46a7`.
+  Installation/publication and physical two-PC verification remain separate;
+  this review build does not close those release gates. The repository still
+  contains one main worktree and seven preserved stashes.

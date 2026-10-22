@@ -1884,6 +1884,25 @@ describe("quota warning window validation", () => {
   });
 });
 
+describe('manual selection hold during automatic quota work', () => {
+  afterEach(() => vi.restoreAllMocks());
+  it.each([false, true])('does not switch or redeem reset credits when held (manual Auto Select: %s)', async userInitiated => {
+    vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({
+      get: (key: string, fallback: unknown) => ['autoSwitchEnabled', 'autoResetEnabled'].includes(key) ? true : fallback
+    } as never);
+    const active = createAccount('manual-held', true, 0, 0);
+    const next = createAccount('manual-ready', false, 90, 90);
+    const held = vi.fn(async () => true);
+    const repo = { listAccounts: vi.fn(async () => [active, next]), isAutoSwitchManuallyHeld: held, switchAccount: vi.fn() };
+    const resetCalls = consumeResetCreditMock.mock.calls.length;
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() }, { userInitiated })).toBe(false);
+    expect(held).toHaveBeenCalledWith(active.id, true);
+    expect(repo.switchAccount).not.toHaveBeenCalled();
+    expect(consumeResetCreditMock.mock.calls.length).toBe(resetCalls);
+    if (userInitiated) expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('paused after your manual selection'));
+  });
+});
+
 function createAccount(id: string, isActive: boolean, hourly: number, weekly: number): CodexManagerAccountRecord {
   return {
     id,

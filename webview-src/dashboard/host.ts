@@ -34,6 +34,7 @@ export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1
     case "runWorkspaceTerminalCommand":
     case "saveWorkspaceFile":
     case "pushWorkspaceBranch":
+    case "getWorkspaceEnvironment":
       return 135_000;
     case "commitWorkspaceChanges":
       return 75_000;

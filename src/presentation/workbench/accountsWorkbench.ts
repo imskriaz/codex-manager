@@ -246,7 +246,7 @@ export class AccountsWorkbench {
       if (!isCrossWindowAccountModeEnabled()) return;
       try {
         const result = await ensureCrossWindowAccountAssignment(await this.repo.listAccounts(), (accountId) =>
-          this.repo.switchAccount(accountId)
+          this.repo.switchAccount(accountId, { manual: false })
         );
         if (!result.assigned) {
           void vscode.window.showWarningMessage(

@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+
+// Uses the intercepted host in check-responsive-ui; no native cleanup runs.
+export async function checkMaintenanceUi(page, { origin, width, height, output }) {
+  const exact = name => ({ name, exact: true });
+  const actionCount = action => page.evaluate(action => window.__uiActions.filter(item => item.action === action).length, action);
+  const open = async () => {
+    const desktop = page.locator('#settingsOpenButton');
+    if (await desktop.isVisible()) await desktop.click();
+    else { await page.locator('.dashboard-mobile-actions > summary').click(); await page.getByRole('menuitem', exact('Settings')).click(); }
+    await page.locator('#settings-tab-tools').click();
+  };
+  const start = async () => {
+    const archive = page.getByRole('region', exact('Archive manager'));
+    await archive.getByRole('checkbox').first().check();
+    await archive.getByRole('button', exact('Restore selected')).click();
+    await archive.getByRole('button', exact('Restore selected')).click();
+  };
+  const progress = async (patch, deviceId = 'fixture-peer') => page.evaluate(({ patch, deviceId }) => {
+    window.dispatchEvent(new MessageEvent('message', { data: {type:'dashboard:maintenance-progress',deviceId,job:{...window.__maintenanceJob,...patch}} }));
+  }, {patch,deviceId});
+  await page.clock.install();
+  await page.goto(`${origin}/`);
+  await page.locator('#settingsOpenButton').waitFor({state:'attached'});
+  await page.evaluate(() => {
+    window.__uiSnapshot.connectedPeers = [...(window.__uiSnapshot.connectedPeers || []), {id:'fixture-peer',name:'Fixture peer',connected:true,local:false,sessionCount:0}];
+    window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));
+  });
+  const showSessions = page.getByRole('button', exact('Show sessions sidebar'));
+  if (await showSessions.isVisible()) await showSessions.click();
+  await page.getByRole('combobox', exact('System')).selectOption('fixture-peer');
+  const closeSessions = page.getByRole('button', exact('Close sessions sidebar'));
+  if (await closeSessions.isVisible()) await page.getByRole('button', exact('Hide sessions sidebar')).click();
+  await open();
+  await page.evaluate(() => {window.__holdNextMaintenancePreview=true;});
+  await page.locator('.maintenance-tool').filter({hasText:'Archive manager'}).click();
+  await page.waitForFunction(() => !!window.__heldMaintenancePreview);
+  await page.getByRole('button', exact('All tools')).click();
+  await page.keyboard.press('Escape');
+  const hiddenPageReads = await actionCount('getMaintenancePage');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message',{data:window.__heldMaintenancePreview})));
+  await page.clock.fastForward(2000);
+  assert.equal(await actionCount('getMaintenancePage'), hiddenPageReads, 'A preview finishing after Settings closes does not start a hidden page read');
+  await open();
+  await page.locator('.maintenance-tool').filter({hasText:'Archive manager'}).click();
+  const archive = page.getByRole('region', exact('Archive manager'));
+  await archive.getByRole('checkbox').first().waitFor();
+  assert.equal(await archive.getByRole('checkbox').count(), 50);
+  const reads = await actionCount('getMaintenancePage');
+  await archive.getByRole('searchbox').fill('task 62');
+  await page.clock.fastForward(700);
+  assert.equal(await actionCount('getMaintenancePage'), reads, 'Typing does not start a debounce timer or background request');
+  await archive.getByRole('searchbox').press('Enter');
+  await page.waitForFunction(() => document.querySelectorAll('.maintenance-items input').length === 1);
+  await page.evaluate(() => {window.__keepMaintenanceRunning=true;window.__loseMaintenanceAck=true;window.__progressBeforeAck=true;});
+  await start();
+  await archive.getByText('Restore in progress', {exact:true}).waitFor();
+  await page.waitForFunction(() => window.__uiActions.some(item => item.action === 'getMaintenanceStatus'));
+  const statusReads = await actionCount('getMaintenanceStatus');
+  await page.clock.fastForward(8000);
+  assert.equal(await actionCount('getMaintenanceStatus'), statusReads, 'Visible running work does not poll');
+  await progress({status:'completed',processed:1,cleared:1,revision:100}, 'other-pc');
+  assert.equal(await archive.getByRole('button', exact('Cancel operation')).isEnabled(), true, 'Another PC cannot complete this job');
+  await archive.getByRole('button', exact('Cancel operation')).click();
+  await archive.getByText('Cancelled. Remaining items were kept.', {exact:true}).waitFor();
+  await progress({status:'running',processed:0,cleared:0,revision:0});
+  assert.equal(await archive.getByRole('button', exact('Cancel operation')).count(), 0, 'Late progress cannot restart a finished job');
+  await archive.getByRole('button', exact('Review current data')).click();
+  await archive.getByRole('checkbox').first().waitFor();
+  await page.evaluate(() => {window.__progressBeforeAck=false;});
+  await start();
+  await page.waitForFunction(() => window.__uiActions.filter(item => item.action === 'runMaintenance').length === 2);
+  await page.clock.fastForward(31000);
+  await archive.getByText(/Connection timed out/).waitFor();
+  await archive.getByRole('button', exact('Check operation status')).click();
+  await archive.getByText('Restore in progress', {exact:true}).waitFor();
+  assert.equal(await actionCount('runMaintenance'), 2, 'Missing acknowledgement is recovered by read-only preview lookup without replay');
+  await archive.getByRole('button', exact('All tools')).click();
+  await page.keyboard.press('Escape');
+  await page.locator('.overlay.open').waitFor({state:'detached'});
+  const hiddenReads = await actionCount('getMaintenanceStatus');
+  await page.clock.fastForward(8000);
+  assert.equal(await actionCount('getMaintenanceStatus'), hiddenReads, 'Closed Settings does not read progress');
+  await open();
+  await page.getByRole('button', exact('View progress')).click();
+  await archive.getByText('Restore in progress', {exact:true}).waitFor();
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:connection',connected:false}})));
+  await page.waitForFunction(() => document.querySelector('.settings-offline-fieldset')?.disabled);
+  assert.equal(await archive.getByRole('button', exact('Cancel operation')).isDisabled(), true, 'Offline cleanup actions stay disabled');
+  await page.evaluate(() => {
+    window.__uiSnapshot.connectedPeers.find(peer => peer.id === 'fixture-peer').connected = false;
+    window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));
+    window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:connection',connected:true}}));
+  });
+  await page.waitForFunction(() => !document.querySelector('.settings-offline-fieldset')?.disabled);
+  assert.equal(await archive.getByRole('button', exact('Cancel operation')).isDisabled(), true, 'A disconnected peer disables cleanup even while the browser is online');
+  await page.evaluate(() => {
+    window.__maintenanceRestarted=true;
+    window.__uiSnapshot.connectedPeers.find(peer => peer.id === 'fixture-peer').connected = true;
+    window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));
+  });
+  await archive.getByText(/host restarted or became unavailable/).waitFor();
+  assert.equal(await actionCount('runMaintenance'), 2, 'Reconnect and host restart never replay a mutation');
+  await progress({status:'completed',processed:1,cleared:1,revision:100});
+  await archive.getByText('Restore complete', {exact:true}).waitFor();
+  await progress({status:'running',processed:0,cleared:0,revision:1});
+  assert.equal(await archive.getByRole('button', exact('Cancel operation')).count(), 0);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Maintenance fits the viewport');
+  await page.screenshot({path:path.join(output,`maintenance-events-${width}x${height}.png`),animations:'disabled'});
+}

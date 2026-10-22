@@ -19,7 +19,8 @@ import {
   markActive,
   scopeActiveAccountState,
   syncActiveAccountState,
-  mergeAccountsIndexChanges
+  mergeAccountsIndexChanges,
+  setManualAccountSelection
 } from "./accountsIndex";
 import {
   dismissAccountHealthIssue,
@@ -37,6 +38,7 @@ import {
   syncLoginAtFromTokens
 } from "./accountProfileMaintenance";
 import { buildAccountRecordDraft, reconcileStatusBarSelections } from "./accountMetadata";
+import { accountQuotaAvailability } from '../utils/quotaWindows';
 import {
   previewSharedEntry,
   resolveSharedAccountIdentity,
@@ -1097,9 +1099,10 @@ export class AccountsRepository {
    */
   async switchAccount(
     accountId: string,
-    options: { forceTokenRefresh?: boolean; expectedActiveAccountId?: string | null } = {}
+    options: { forceTokenRefresh?: boolean; expectedActiveAccountId?: string | null; manual?: boolean } = {}
   ): Promise<CodexManagerAccountRecord> {
-    const key = JSON.stringify([accountId, options.expectedActiveAccountId]);
+    const manual = options.manual ?? options.expectedActiveAccountId === undefined;
+    const key = JSON.stringify([accountId, options.expectedActiveAccountId, manual]);
     const existing = this.switchInFlight.get(key);
     if (existing) return existing;
     cancelCodexSessionAutoResume();
@@ -1114,6 +1117,8 @@ export class AccountsRepository {
             if (active !== options.expectedActiveAccountId)
               throw new Error("The active account changed. Automatic switching was cancelled; refresh and retry.");
           }
+          if (!manual && (await this.readIndex()).manualSelectionByCodexHome?.[this.codexHomeStateKey])
+            throw new Error('Auto Switch is paused after a manual account selection. Select an account with available quota to resume.');
           const parallelMode = isCrossWindowAccountModeEnabled();
           let previousAccountId: string | undefined;
           if (parallelMode) {
@@ -1125,7 +1130,7 @@ export class AccountsRepository {
           let authChanged = false;
           try {
             await this.switchCoordinator?.prepareAccountSwitch(accountId);
-            account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true, () => {
+            account = await this.switchAccountLocked(accountId, options.forceTokenRefresh === true, manual, () => {
               authChanged = true;
             });
             await this.flush();
@@ -1162,6 +1167,35 @@ export class AccountsRepository {
     });
   }
 
+  async recordManualAccountSelection(accountId: string): Promise<void> {
+    await runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, 'Manual account selection', () => this.withAccountCredentials(accountId, async () => {
+      this.invalidateCachedIndex();
+      const index = await this.readIndex(), account = index.accounts.find(item => item.id === accountId);
+      if (!account?.isActive) throw new Error('The active account changed. Refresh and select it again.');
+      setManualAccountSelection(index, this.codexHomeStateKey, account);
+      this.writeIndex(index); await this.flush();
+    }));
+  }
+
+  async isAutoSwitchManuallyHeld(accountId?: string, verifyPendingQuota = false): Promise<boolean> {
+    this.invalidateCachedIndex();
+    const hold = (await this.readIndex()).manualSelectionByCodexHome?.[this.codexHomeStateKey];
+    if (!hold || !verifyPendingQuota || !hold.awaitingQuota || hold.accountId !== accountId) return Boolean(hold);
+    return runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, 'Verify manual account quota', () => this.withAccountCredentials(accountId, async () => {
+      this.invalidateCachedIndex();
+      const index = await this.readIndex(), current = index.manualSelectionByCodexHome?.[this.codexHomeStateKey];
+      if (!current || !current.awaitingQuota || current.accountId !== accountId) return Boolean(current);
+      const account = index.accounts.find(item => item.id === accountId && item.isActive);
+      if (!account || !account.lastQuotaAt || account.lastQuotaAt < (account.lastSelectedAt ?? 0)) return true;
+      const quota = accountQuotaAvailability(account);
+      if (quota === 'unknown') return true;
+      if (quota === 'available') delete index.manualSelectionByCodexHome![this.codexHomeStateKey];
+      else current.awaitingQuota = undefined;
+      this.writeIndex(index); await this.flush();
+      return quota !== 'available';
+    }));
+  }
+
   private async prepareSwitchTokens(accountId: string): Promise<void> {
     const tokens = await this.getTokens(accountId, { bypassCache: true });
     if (!tokens || !needsTokenRefresh(tokens, 0)) return;
@@ -1185,6 +1219,7 @@ export class AccountsRepository {
   private async switchAccountLocked(
     accountId: string,
     forceTokenRefresh: boolean,
+    manual: boolean,
     onAuthWritten: () => void
   ): Promise<CodexManagerAccountRecord> {
     let index = await this.readIndex();
@@ -1239,6 +1274,7 @@ export class AccountsRepository {
       throw createError.accountNotFound(accountId);
     }
 
+    if (manual) setManualAccountSelection(index, this.codexHomeStateKey, nextAccount);
     this.writeIndex(index);
     if (backgroundRotation) {
       void backgroundRotation();

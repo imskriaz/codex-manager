@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
     get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? domain : key === "webDashboardEnabled" ? true : fallback
   } as never);
-  sync = { setOnlineDeviceIds: vi.fn(), setRealtimeSyncPublisher: vi.fn(),
+  sync = { setOnlineDeviceIds: vi.fn(), setRealtimeSyncPublisher: vi.fn(), getRealtimeEnablementRegistry: vi.fn(() => []),
     verifyRealtimePeerPayload: vi.fn(async () => true), signRealtimePeerPayload: vi.fn(async () => "signed"),
     getRealtimeEncryptedVault: vi.fn(async () => "encrypted-vault"), applyRealtimeEncryptedVault: vi.fn(async () => true) };
   server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never, sync);
@@ -50,6 +50,142 @@ afterEach(async () => {
 });
 
 describe("canonical cross-PC WebSocket domain", () => {
+  it("authenticates browser interest, expires it, and never advertises another PC's demand as its own", async () => {
+    const lifecycle = vi.spyOn(internal, "refreshCliSessionRealtimeLifecycle").mockImplementation(() => undefined);
+    internal.readLocalPeerSessions.mockRestore();
+    const standby = await internal.readLocalPeerSessions();
+    expect(standby).toMatchObject({ sessions: [], accounts: [], dashboardTargets: [] });
+    expect(internal.hasWorkspaceViewer()).toBe(false);
+    for (const dashboardTargets of ["yes", [""], [1], ["x", "x"], Array(129).fill("x")])
+      expect(await internal.acceptPeerSession({ ...peer(), dashboardTargets })).toBe(false);
+    sync.verifyRealtimePeerPayload.mockResolvedValueOnce(false);
+    expect(await internal.acceptPeerSession({ ...peer(), dashboardTargets: [internal.deviceId] })).toBe(false);
+    expect(internal.hasWorkspaceViewer()).toBe(false);
+    vi.spyOn(internal, "publishLocalPeerState").mockImplementation(() => undefined);
+    expect(await internal.acceptPeerSession({ ...peer(), dashboardTargets: ["unrelated-pc"] })).toBe(true);
+    expect(internal.hasWorkspaceViewer()).toBe(false);
+    const interested = { ...peer(), sentAt: Date.now() + 1, dashboardTargets: [internal.deviceId] };
+    expect(await internal.acceptPeerSession(interested)).toBe(true);
+    expect(internal.hasWorkspaceViewer()).toBe(true);
+    expect(JSON.parse(sync.verifyRealtimePeerPayload.mock.calls.at(-1)[0])).toMatchObject({ dashboardTargets: [internal.deviceId] });
+    expect(internal.browserDashboardTargets()).toEqual([]);
+    vi.spyOn(internal, "readLocalPeerState").mockResolvedValue({ sessions: [], accounts: [] });
+    expect(await internal.readLocalPeerSessions()).toMatchObject({ dashboardTargets: [] });
+    expect(await internal.acceptPeerSession({ ...interested, dashboardTargets: [], sentAt: interested.sentAt - 1 })).toBe(false);
+    expect(internal.hasWorkspaceViewer()).toBe(true);
+    await vi.advanceTimersByTimeAsync(120_001);
+    expect(internal.hasWorkspaceViewer()).toBe(false);
+    expect(await internal.acceptPeerSession({ ...peer(), dashboardTargets: [internal.deviceId] })).toBe(true);
+    expect(internal.hasWorkspaceViewer()).toBe(true);
+    internal.removePeerPresence("other-pc");
+    expect(internal.hasWorkspaceViewer()).toBe(false);
+    expect(lifecycle).toHaveBeenCalled();
+    const remoteBrowser = { readyState: 1 };
+    internal.updateWorkspaceViewer(remoteBrowser, true, "different-pc");
+    expect(internal.browserDashboardTargets()).toEqual(["different-pc"]);
+    expect(internal.hasWorkspaceViewer()).toBe(false);
+    const browser = { readyState: 1 };
+    internal.updateWorkspaceViewer(browser, true);
+    expect(internal.browserDashboardTargets()).toEqual(["different-pc", internal.deviceId].sort());
+    expect(internal.hasWorkspaceViewer()).toBe(true);
+    internal.updateWorkspaceViewer(remoteBrowser, false);
+    expect(internal.browserDashboardTargets()).toEqual([internal.deviceId]);
+    await vi.advanceTimersByTimeAsync(45_001);
+    expect(internal.hasWorkspaceViewer()).toBe(false);
+  });
+  it('pushes changed remote sessions immediately without waiting for local discovery or republishing unchanged heartbeats', async () => {
+    const browser = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+    internal.webSocketClients.add(browser);
+    const initial = { ...peer(), sessions: [{ id: 'remote-session', title: 'First title', status: 'idle' }] };
+    expect(await internal.acceptPeerSession(initial)).toBe(true);
+    expect(JSON.parse(browser.send.mock.calls[0][0])).toMatchObject({ type: 'dashboard:action-result', action: 'listCodexCliSessions', payload: { cliSessionsDeviceId: 'other-pc', cliSessions: [{ deviceId: 'other-pc', remote: true, title: 'First title' }] } });
+    expect(await internal.acceptPeerSession({ ...initial, sentAt: initial.sentAt + 1 })).toBe(true);
+    expect(browser.send).toHaveBeenCalledOnce();
+    expect(await internal.acceptPeerSession({ ...initial, sentAt: initial.sentAt + 2, sessions: [{ ...initial.sessions[0], title: 'Renamed', status: 'running' }] })).toBe(true);
+    expect(browser.send).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(browser.send.mock.calls[1][0]).payload.cliSessions[0]).toMatchObject({ title: 'Renamed', status: 'running' });
+  });
+  it('marks remote lists with their replacement scope and keeps conversation and terminal ownership', () => {
+    internal.peerSessions.set('other-pc', peer());
+    const result = internal.decoratePeerActionResult({ type: 'peer:action-result', status: 'completed', requestId: 'read', payload: {
+      cliSessions: [{ id: 'same', title: 'Remote', status: 'idle' }], cliComposerConfig: { projects: [{ id: 'remote', path: 'E:/remote', label: 'remote' }], models: [] },
+      cliSession: { id: 'same', title: 'Remote', status: 'idle' }, terminalResults: [{ id: 'terminal' }]
+    } }, 'other-pc');
+    expect(result.payload).toMatchObject({ cliSessionsDeviceId: 'other-pc', cliSessions: [{ deviceId: 'other-pc', remote: true }], cliSession: { deviceId: 'other-pc' }, terminalResults: [{ deviceId: 'other-pc' }], cliComposerConfig: { projects: [{ path: 'E:/remote' }] } });
+  });
+  it('accepts the actual relay aggregate containing the receiver itself over HTTP and WebSocket', async () => {
+    domain = 'dashboard.example';
+    const aggregate = { type: 'peer:aggregate', peers: [peer(), { ...peer(), deviceId: internal.deviceId }] };
+    fetchMock.mockResolvedValue({ ok: true, json: async () => aggregate });
+    await internal.publishPeerHeartbeatHttp();
+    expect(server.getDashboardPeerState().connectedPeers).toHaveLength(2);
+    internal.connectPeerSocket();
+    const socket = sockets[0]; socket.readyState = 1;
+    socket.emit('message', { data: JSON.stringify(aggregate) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(server.getDashboardPeerState().connectedPeers).toHaveLength(2);
+    expect(internal.peerSessions.has(internal.deviceId)).toBe(false);
+  });
+  it('keeps peer data atomic on invalid, duplicate, replayed, and replaced aggregates', async () => {
+    const initial = peer();
+    await internal.acceptPeerSession(initial);
+    expect(await internal.replacePeerAggregate([peer(), { ...peer(), deviceId: 'bad', signature: undefined }])).toBe(false);
+    expect(await internal.replacePeerAggregate([peer(), peer()])).toBe(false);
+    expect([...internal.peerSessions.keys()]).toEqual(['other-pc']);
+    const newer = { ...peer(), sentAt: initial.sentAt + 1, deviceName: 'Renamed PC' };
+    await internal.acceptPeerSession(newer);
+    expect(await internal.replacePeerAggregate([initial])).toBe(true);
+    expect(internal.peerSessions.get('other-pc').deviceName).toBe('Renamed PC');
+    let finish!: (valid: boolean) => void;
+    sync.verifyRealtimePeerPayload.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = internal.replacePeerAggregate([newer]);
+    internal.restartPeerSocket();
+    finish(true);
+    expect(await pending).toBe(false);
+    expect(internal.peerSessions.size).toBe(0);
+  });
+  it('accepts upstream progress only for known peers and fences a replaced relay socket', async () => {
+    domain = 'dashboard.example'; internal.connectPeerSocket();
+    const socket = sockets[0]; socket.readyState = 1;
+    const browser = Object.assign(new EventEmitter(), { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() });
+    internal.webSocketClients.add(browser);
+    const job = { id: 'cleanup', tool: 'goals', operation: 'delete', status: 'running', total: 1, processed: 0, cleared: 0, skipped: 0, failed: 0, errors: [] };
+    const message = { data: JSON.stringify({ type: 'peer:maintenance-progress', deviceId: 'other-pc', job }) };
+    socket.emit('message', message); await vi.advanceTimersByTimeAsync(0);
+    expect(browser.send).not.toHaveBeenCalled();
+    internal.peerSessions.set('other-pc', peer());
+    socket.emit('message', message); await vi.advanceTimersByTimeAsync(0);
+    expect(JSON.parse(browser.send.mock.calls[0][0])).toMatchObject({ type: 'dashboard:maintenance-progress', deviceId: 'other-pc', job });
+    domain = 'replacement.example'; internal.restartPeerSocket();
+    browser.send.mockClear(); socket.emit('message', message); await vi.advanceTimersByTimeAsync(0);
+    expect(browser.send).not.toHaveBeenCalled();
+  });
+  it('routes bounded maintenance progress only from its authenticated device without echoing upstream', async () => {
+    const browser = Object.assign(new EventEmitter(), { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() });
+    const origin = Object.assign(new EventEmitter(), { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() });
+    const other = Object.assign(new EventEmitter(), { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() });
+    const upstream = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+    internal.webSocketClients.add(browser); internal.peerSockets.set('other-pc', origin); internal.peerSockets.set('third-pc', other); internal.authenticatedPeerSockets.add(other);
+    const job = { id: 'cleanup', tool: 'archives', operation: 'delete', status: 'running', total: 2, processed: 1, cleared: 1, failed: 0, skipped: 0, errors: [], revision: 1 };
+    const message = { type: 'peer:maintenance-progress', deviceId: 'other-pc', job };
+    internal.peerSocket = upstream;
+    await internal.handlePeerMessage(JSON.stringify(message), origin);
+    expect(browser.send).not.toHaveBeenCalled();
+    internal.authenticatedPeerSockets.add(origin);
+    await internal.handlePeerMessage(JSON.stringify({ ...message, deviceId: 'third-pc' }), origin);
+    await internal.handlePeerMessage(JSON.stringify({ ...message, job: { ...job, total: 10001 } }), origin);
+    expect(browser.send).not.toHaveBeenCalled();
+    await internal.handlePeerMessage(JSON.stringify(message), origin);
+    expect(JSON.parse(browser.send.mock.calls[0][0])).toMatchObject({ type: 'dashboard:maintenance-progress', deviceId: 'other-pc', job });
+    expect(other.send).toHaveBeenCalledOnce(); expect(origin.send).not.toHaveBeenCalled(); expect(upstream.send).not.toHaveBeenCalled();
+    internal.publishMaintenanceProgress({ type: 'dashboard:maintenance-progress', job });
+    expect(upstream.send).toHaveBeenCalledOnce();
+    browser.bufferedAmount = 5 * 1024 * 1024;
+    internal.publishMaintenanceProgress({ type: 'dashboard:maintenance-progress', job });
+    expect(browser.close).toHaveBeenCalledWith(1013, expect.any(String));
+    expect(browser.send).toHaveBeenCalledTimes(2);
+    internal.peerSocket = undefined;
+  });
   it("publishes an aggregate once so system selection survives heartbeat refreshes", async () => {
     const changed = vi.fn();
     const listener = server.onDidChangeDashboardPeers(changed);

@@ -556,7 +556,8 @@ describe("peer WebSocket failure handling", () => {
   it("publishes CLI session file changes after a short settling debounce", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
     expect(source).toContain("const CLI_SESSION_WATCH_DEBOUNCE_MS = 250;");
-    expect(source).toContain("}, CLI_SESSION_WATCH_DEBOUNCE_MS);");
+    expect(source).toContain("}, Math.max(CLI_SESSION_WATCH_DEBOUNCE_MS, this.cliSessionRefreshAfter - Date.now()));");
+    expect(source).not.toContain("startCliSessionReconciliation");
   });
 
   it("fails pending peer actions immediately when the hub disconnects", () => {
@@ -637,6 +638,7 @@ it("signs the current claim registry even when account and session data stay cac
   const released = { accountId: "one", deviceId: "peer", deviceName: "Other PC", enabled: false, revision: 2, updatedAt: Date.now() };
   const server = Object.create(WebDashboardServer.prototype) as any;
   Object.assign(server, { deviceId: "local", lastPeerSentAt: 0,
+    browserDashboardTargets: () => [],
     readLocalPeerState: vi.fn(async () => ({ sessions: [], accounts: [], enablementRegistry: [{ ...released, enabled: true, revision: 1 }] })),
     encryptedSync: { getRealtimeEnablementRegistry: () => [released], signRealtimePeerPayload: vi.fn(async () => "signed") } });
   const snapshot = await server.readLocalPeerSessions();

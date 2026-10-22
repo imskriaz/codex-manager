@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { checkInspectorUi } from "./check-inspector-ui.mjs";
+import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
 import { listConversationFiles } from '../out/domain/conversationFiles.js';
 import { dashboardCopyResources } from "../out/localization/resources/dashboard.js";
@@ -135,26 +136,31 @@ const mockHost = `(() => {
           window.__invalidNextLogRead = false;
         }
         else if(message.action === 'clearLogs') { logCleared = true; payload={notice:{level:'info',message:'System log cleared.'}}; }
-        else if(message.action === 'previewMaintenance') payload={maintenancePreview:{token:'preview-'+message.payload.maintenanceTool,tool:message.payload.maintenanceTool,count:63,expiresAt:Date.now()+300000,titles:['Archived task 0']}};
+        else if(message.action === 'previewMaintenance') payload={maintenancePreview:{token:message.payload.maintenanceTool+':preview-'+crypto.randomUUID(),tool:message.payload.maintenanceTool,count:63,expiresAt:Date.now()+300000,titles:['Archived task 0']}};
         else if(message.action === 'getMaintenancePage') {
           const query=message.payload.maintenanceQuery||'',offset=message.payload.maintenanceOffset||0;
           const items=Array.from({length:63},(_,i)=>({id:'tool-item-'+i,title:'Archived task '+i,detail:'demo project'})).filter(item=>item.title.toLowerCase().includes(query.toLowerCase()));
           payload={maintenancePage:{token:message.payload.maintenanceToken,query,offset,total:items.length,items:items.slice(offset,offset+50)}};
         }
         else if(message.action === 'runMaintenance') {
-          const job={id:'job-'+Date.now(),tool:message.payload.maintenanceToken.replace('preview-',''),operation:message.payload.maintenanceOperation||'delete',status:'running',total:message.payload.maintenanceIds?.length||63,processed:0,cleared:0,skipped:0,failed:0,errors:[]};
-          toolJobs.set(job.id,job);payload={maintenanceJob:job};
+          const job={id:'job-'+crypto.randomUUID(),previewToken:message.payload.maintenanceToken,revision:0,tool:message.payload.maintenanceToken.split(':')[0],operation:message.payload.maintenanceOperation||'delete',status:'running',total:message.payload.maintenanceIds?.length||63,processed:0,cleared:0,skipped:0,failed:0,errors:[]};
+          toolJobs.set(job.id,job);window.__maintenanceJob=job;payload={maintenanceJob:{...job}};
+          if(window.__progressBeforeAck) dispatch({type:'dashboard:maintenance-progress',deviceId:message.payload.targetDeviceId,job:{...job,revision:1}});
+          if(window.__loseMaintenanceAck) return;
         }
         else if(message.action === 'getMaintenanceStatus' || message.action === 'cancelMaintenance') {
-          const job=toolJobs.get(message.payload.maintenanceJobId);
-          if(job) { job.status=message.action==='cancelMaintenance'?'cancelled':'completed';job.processed=job.total;job.cleared=job.total;payload={maintenanceJob:job}; } else error='This cleanup is no longer available in this window.';
+          const job=toolJobs.get(message.payload.maintenanceJobId)||[...toolJobs.values()].find(job=>job.previewToken===message.payload.maintenanceToken);
+          if(window.__maintenanceRestarted) error='This cleanup is no longer available in this window.';
+          else if(job) { if(!window.__keepMaintenanceRunning||message.action==='cancelMaintenance') {job.status=message.action==='cancelMaintenance'?'cancelled':'completed';job.processed=job.total;job.cleared=job.total;}job.revision++;payload={maintenanceJob:{...job}}; } else error='This cleanup is no longer available in this window.';
         }
         else if(message.action === 'inspectMaintenanceStorage') payload={maintenanceReport:{title:'Codex report',items:[{label:'Recorded projects checked',value:'12'},{label:'Missing projects',value:'1'},{label:'state_5.sqlite',value:'Healthy · 2 MB'}]}};
         else if(message.action === 'getUsageGraph') payload = {usageGraph:{...message.payload.usageGraph,history:[],dailyUsageCache:[],truncated:false}};
         else if(message.action === 'listCodexCliSessions') {
           if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }
+          else if (window.__systemFixture && message.payload?.targetDeviceId === 'fixture-system') payload = {cliSessions:[{id:'44444444-4444-4444-8444-444444444444',title:'Remote system session',status:'idle',projectPath:'E:/remote-project',deviceId:'fixture-system',deviceName:'Remote system',remote:true,updatedAt:new Date().toISOString()}],cliSessionsDeviceId:'fixture-system',cliComposerConfig:{...config,projects:[{id:'remote-project',path:'E:/remote-project',label:'remote-project'}]}};
           else payload = {cliSessions:sessions,cliComposerConfig:config};
         }
+        else if(message.action === 'getCodexCliSessionMessages' && window.__systemFixture && message.payload?.targetDeviceId === 'fixture-system') payload={cliSession:{id:'44444444-4444-4444-8444-444444444444',title:'Remote system session',status:'idle',projectPath:'E:/remote-project',deviceId:'fixture-system',remote:true},cliSessionMessages:[{id:'remote-reply',kind:'message',role:'assistant',text:'Remote system conversation'}]};
         else if(message.action === 'startCodexCliSession') {
           const session = {id:'01a04882-d037-7a42-ad24-9afb61901198',title:'New smoke chat',status:'idle',projectPath:message.payload.projectPath};
           if(!sessions.some(row=>row.id===session.id)) sessions.push(session);
@@ -177,7 +183,11 @@ const mockHost = `(() => {
         else if(message.action === 'createWorkspaceTerminal' && window.__inspectorMode) {window.__terminalCreated=true;payload={workspaceTerminal:{id:'fixture-terminal',name:'Project terminal',state:'idle',isActive:true},workspaceTerminals:[{id:'fixture-terminal',name:'Project terminal',state:'idle',isActive:true}]};}
         else if(message.action === 'closeWorkspaceTerminal' && window.__inspectorMode) {window.__terminalCreated=false;payload={workspaceTerminals:[]};}
         else if(message.action === 'getWorkspaceEnvironment') {
-          if(message.payload?.includeBranchDiff && window.__failNextComparison) {
+          if(message.payload?.gitHistory && window.__failNextHistory) { window.__failNextHistory=false;error='Simulated history read failure.'; }
+          else if(message.payload?.gitHistory) {
+            const request=message.payload.gitHistory,offset=request.offset||0;
+            payload={workspaceEnvironment:{...environmentFor(message.payload.projectPath),...(request.commit?{gitCommit:{hash:request.commit,diff:'diff --git a/proof.txt b/proof.txt\\n--- a/proof.txt\\n+++ b/proof.txt\\n@@ -1 +1 @@\\n-old history\\n+verified history\\n',truncated:false}}:{gitHistory:{ref:request.ref||'a'.repeat(40),offset,hasMore:offset===0,commits:Array.from({length:offset?13:50},(_,i)=>({hash:(offset+i+1).toString(16).padStart(40,'0'),author:'History Author',date:'2026-10-20T12:00:00Z',subject:'Project commit '+(offset+i)}))}})}};
+          } else if(message.payload?.includeBranchDiff && window.__failNextComparison) {
             window.__failNextComparison = false;
             error = 'Simulated Git comparison failure.';
           } else payload = {workspaceEnvironment:{...environmentFor(message.payload?.projectPath),...(message.payload?.includeBranchDiff ? {branchDiff:'diff --git a/compare.ts b/compare.ts\\n--- a/compare.ts\\n+++ b/compare.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n',branchDiffBase:'origin/main'} : {})}};
@@ -187,6 +197,8 @@ const mockHost = `(() => {
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action==='listCodexCliSessions' && window.__holdNextSystemList) {window.__holdNextSystemList=false;window.__heldSystemList=result;return;}
+        if(message.action==='previewMaintenance' && window.__holdNextMaintenancePreview) {window.__holdNextMaintenancePreview=false;window.__heldMaintenancePreview=result;return;}
         if(message.action==='getWorkspaceEnvironment' && window.__holdNextEnvironment) {window.__holdNextEnvironment=false;window.__heldEnvironmentResult=result;return;}
         if(message.action==='commitWorkspaceChanges' && window.__holdNextCommit) {window.__holdNextCommit=false;window.__heldCommitResult=result;return;}
         if(message.action==='saveWorkspaceFile' && window.__holdNextSave) {window.__holdNextSave=false;window.__heldSaveResult=result;return;}
@@ -244,6 +256,71 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    if (process.argv.includes('--systems')) {
+      await page.goto(`${origin}/`);
+      await page.locator('#dashboard-main').waitFor();
+      await page.waitForFunction(()=>window.__uiActions.some(message=>message.type==='dashboard:workspace-presence'&&message.viewing===true));
+      await page.evaluate(()=>{
+        Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.waitForFunction(()=>window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.viewing===false);
+      await page.evaluate(()=>{
+        Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await page.waitForFunction(()=>window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.viewing===true);
+      await page.evaluate(() => {
+        window.__systemFixture=true;
+        const state=window.__uiSnapshot, template=state.accounts[0];
+        state.settings.privacyMode=false;
+        state.connectedPeers=[{id:'local',name:'Local system',local:true,connected:true,sessionCount:2},{id:'fixture-system',name:'Remote system',connected:true,sessionCount:1}];
+        state.peerAccounts={'fixture-system':[{...template,id:'remote-account',displayName:'Remote identity',email:'remote@example.test',isActive:true,isCurrentWindowAccount:true}]};
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}}));
+      });
+      const rail=async()=>{const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});if(await show.isVisible())await show.click();};
+      await rail();
+      const picker=page.getByRole('combobox',{name:'System',exact:true});
+      await picker.selectOption('fixture-system');
+      await page.waitForFunction(()=>window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId==='fixture-system');
+      await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='listCodexCliSessions'&&action.payload?.targetDeviceId==='fixture-system'));
+      await page.getByRole('button',{name:'Expand remote-project',exact:true}).waitFor();
+      await page.getByRole('button',{name:'Open account center',exact:true}).click();
+      const center=page.getByRole('dialog',{name:'Account center',exact:true});
+      assert.equal(await center.getByRole('combobox',{name:'Account system',exact:true}).inputValue(),'fixture-system');
+      await center.getByText('Remote identity',{exact:true}).waitFor();
+      await page.keyboard.press('Escape');
+      await picker.selectOption('local');
+      await page.waitForFunction(()=>!window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId);
+      await page.getByRole('button',{name:'Expand demo',exact:true}).waitFor();
+      await page.evaluate(()=>{window.__holdNextSystemList=true;window.__heldSystemList=undefined;});
+      await picker.selectOption('fixture-system');
+      await page.waitForFunction(()=>!!window.__heldSystemList);
+      await picker.selectOption('local');
+      await page.getByRole('button',{name:'Expand demo',exact:true}).waitFor();
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldSystemList})));
+      await page.getByRole('button',{name:'New chat',exact:true}).click();
+      const projectPicker=page.getByRole('combobox',{name:'Project',exact:true});
+      assert.equal(await projectPicker.locator('option[value="E:/remote-project"]').count(),0,'Delayed remote catalogs do not change local new-chat projects');
+      await rail();await picker.selectOption('fixture-system');
+      await page.getByRole('button',{name:'Expand remote-project',exact:true}).click();
+      await page.locator('.cli-session-row-select').filter({hasText:'Remote system session'}).click();
+      await page.getByText('Remote system conversation',{exact:true}).waitFor();
+      assert.ok(new URL(page.url()).searchParams.get('device')==='fixture-system','Remote conversation retains system in browser URL');
+      await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='getWorkspaceEnvironment'&&action.payload?.targetDeviceId==='fixture-system'&&action.payload?.projectPath==='E:/remote-project'));
+      await page.evaluate(()=>{window.__uiSnapshot.connectedPeers[1].connected=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
+      await page.getByText('Reconnecting · live updates paused',{exact:true}).waitFor();
+      assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).count(),0,'Remote disconnect removes execution controls while browser stays online');
+      assert.deepEqual(errors,[]);
+      results.push({width,height,checks:'Remote accounts, session lists, catalogs, stale replies, browser URL, workspace routing, peer offline'});
+      await context.close();continue;
+    }
+    if (process.argv.includes('--maintenance')) {
+      await checkMaintenanceUi(page, {origin,width,height,output});
+      assert.deepEqual(errors, [], 'Maintenance browser runtime errors');
+      results.push({width,height,checks:'Event-driven progress, no hidden polling, source/revision guards, missing acknowledgement, cancellation, reconnect/restart, explicit search'});
+      await context.close(); continue;
+    }
     if (process.argv.includes('--inspector')) {
       await checkInspectorUi(page, {origin,parentId,width,height,output});
       assert.deepEqual(errors, [], 'Inspector browser runtime errors');
@@ -259,6 +336,7 @@ try {
         window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',requestId:'dashboard-auto-fixture',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
       });
       await page.locator('#cliSessionsButton').click();
+      assert.equal(await page.locator(".cli-sessions-manage").count(), 0, "Browser flyouts omit the Session dashboard footer");
       const row = page.locator('.cli-sessions-running-row').filter({hasText:'Interrupted workspace task'});
       const trigger = row.getByRole('button',{name:'Queue priority for Interrupted workspace task',exact:true});
       const panel = page.getByRole('dialog',{name:'Queue Interrupted workspace task',exact:true});
@@ -314,6 +392,10 @@ try {
       await page.waitForFunction(()=>!document.querySelector('.cli-sessions-running-row .cli-session-queue-wrap button')?.disabled);
       await trigger.click();
       await page.getByRole('button',{name:'Close queue options',exact:true}).click();
+      const nativeActionsBefore = await page.evaluate(() => window.__uiActions.filter(item => ['resumeCodexSessions','openCodexCliSession'].includes(item.action)).length);
+      await row.locator('.cli-sessions-running-title').click();
+      await page.waitForURL('**/workspace/recovery');
+      assert.equal(await page.evaluate(() => window.__uiActions.filter(item => ['resumeCodexSessions','openCodexCliSession'].includes(item.action)).length), nativeActionsBefore, 'Opening an interrupted conversation in browsers never resumes it or launches VS Code');
       assert.deepEqual(errors,[]);
       results.push({width,height,checks:'Top-layer queue, no layout shift, consistent icons, validation, keyboard, custom priority, update/remove, queue full, disconnect/reconnect'});
       await context.close(); continue;
@@ -579,7 +661,28 @@ try {
     assert.equal(await page.locator(".cli-session-row-select").count(), 0, "Projects start collapsed");
     assert.equal(await page.locator(".cli-project-new").count(), 0, "Projects have no extra plus button");
     assert.equal(await page.locator(".cli-sidebar-actions > button").count(), 4, "All session controls share one toolbar group");
-    assert.equal(await page.locator(".cli-project-running").count(), 1, "Collapsed project shows running sessions");
+    await page.locator(".cli-project-running").waitFor();
+    assert.equal(await page.locator(".cli-project-running").count(), 1, "Collapsed project shows verified running sessions after the saved view is revalidated");
+    assert.equal((await page.locator(".cli-project-running").textContent()).trim(), "1 / 2", "Project shows running / total, excluding child agents and duplicates");
+    await page.evaluate(() => {
+      window.__projectStatuses = window.__uiSessions.map(session => ({status:session.status, locked:session.locked}));
+      window.__uiSessions.forEach(session => {session.status='unknown';session.locked=true;});
+      window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
+    });
+    await page.waitForFunction(() => document.querySelectorAll('.cli-project-running').length === 0);
+    assert.equal(await page.locator('.cli-project-select .cli-session-spinner').count(), 0, "Unknown or locked sessions are not evidence of running work");
+    await page.evaluate(() => {
+      window.__uiSessions.forEach((session,index) => Object.assign(session,window.__projectStatuses[index]));
+      window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
+    });
+    await page.waitForFunction(() => document.querySelectorAll('.cli-project-running').length === 1);
+    await page.getByRole('button',{name:'Expand demo',exact:true}).click();
+    assert.equal(await page.locator('.cli-project-sessions .cli-session-row-meta').count(), 0, "Folder rows omit repeated project and system metadata");
+    assert.ok(await page.locator('.cli-project-sessions .cli-session-row').evaluateAll(rows => rows.every(row => {
+      const title=row.querySelector('strong').getBoundingClientRect(), time=row.querySelector('time').getBoundingClientRect();
+      return row.getBoundingClientRect().height <= (innerWidth<=760 ? 34 : 28) && Math.abs((title.top+title.height/2)-(time.top+time.height/2)) <= 2;
+    })), "Folder rows keep title and elapsed time on one compact line");
+    await page.getByRole('button',{name:'Collapse demo',exact:true}).click();
     assert.equal(await page.getByRole("button", { name: "Expand empty-project-with-a-long-name", exact: true }).count(), 0, "Projects without sessions stay hidden");
     const searchBounds = await page.getByRole("searchbox", { name: "Search sessions", exact: true }).boundingBox();
     assert.ok(searchBounds && searchBounds.width >= railBounds.width - 40, "Search keeps full rail width");
@@ -651,7 +754,8 @@ try {
     assert.equal(await page.locator(".cli-session-row-select").count(), 2, "Only distinct parent sessions should appear");
     const projectHeader = await page.locator('.is-dense-tree .cli-project-row').first().boundingBox();
     assert.ok(projectHeader.height <= (width <= 760 ? 32 : 28), 'Project heading uses one dense row');
-    assert.deepEqual(await page.locator('.is-dense-tree .cli-session-row-meta > span:first-child').allTextContents(), ['Ready', 'Running'], 'Grouped rows show status without repeating their system/project headings');
+    assert.equal(await page.locator('.is-dense-tree .cli-session-row-meta').count(), 0, 'Grouped rows omit a second metadata line');
+    assert.equal(await page.locator('.is-dense-tree .cli-session-row-time').count(), 2, 'Each grouped session retains its elapsed time');
     await page.screenshot({ path: path.join(output, `project-sessions-${width}x${height}.png`), animations: 'disabled' });
     assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 1, "Running parent needs an icon");
     assert.equal(await page.locator(".cli-session-row:not(.is-running) .cli-session-row-status").count(), 0, "Idle rows have no completion ticks");
@@ -707,6 +811,7 @@ try {
     assert.ok((await page.locator(".cli-goal-strip").textContent()).includes("from native goal metadata"), "Native goal wins over older history");
     await page.getByRole("button", { name: "Pause goal", exact: true }).click();
     await page.getByRole("button", { name: "Resume goal", exact: true }).waitFor();
+    assert.ok((await page.getByRole("button", { name: "Resume goal", exact: true }).locator("svg path").getAttribute("d")).includes("11 7"), "Paused goals show Play");
     assert.equal(await page.locator(".cli-goal-strip").evaluate(element=>element.open), false, "Goal control does not toggle its details");
     await page.getByRole("button", { name: "Resume goal", exact: true }).click();
     await page.getByRole("button", { name: "Pause goal", exact: true }).waitFor();
@@ -841,8 +946,16 @@ try {
     const userMessage = page.locator(".cli-conversation .cli-session-message.is-user").first();
     const initialMessageHeight = await userMessage.evaluate(element => element.getBoundingClientRect().height);
     await page.mouse.move(width - 2, height - 2);
-    assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).opacity), "1", "Action toggle remains available");
-    await userMessage.getByRole("button", { name: "Show message actions", exact: true }).click();
+    await page.getByRole("textbox", { name: "Message Codex", exact: true }).focus();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.cli-conversation .cli-session-message.is-user .cli-message-actions')).opacity === '0');
+    assert.equal(await userMessage.locator(".cli-message-actions-toggle").count(), 0, "No ellipsis or extra action toggle");
+    await userMessage.hover();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.cli-conversation .cli-session-message.is-user .cli-message-actions')).opacity === '1');
+    assert.ok(await userMessage.locator(".cli-message-action-menu").evaluate(element => {
+      const buttons = [...element.querySelectorAll('button')].map(button => button.getBoundingClientRect());
+      return buttons.length >= 2 && buttons.every(button => button.top === buttons[0].top);
+    }), "All message actions share one horizontal row");
+    await userMessage.focus();
     await userMessage.getByRole("button", { name: "Quote", exact: true }).click();
     assert.equal(await userMessage.evaluate(element => element.getBoundingClientRect().height), initialMessageHeight, "Actions never add message height");
     assert.equal(await userMessage.locator(".cli-message-actions").evaluate(element => getComputedStyle(element).position), "absolute", "Actions float over the message without adding height");
@@ -1000,6 +1113,7 @@ try {
     const systemSelect = accountCenter.getByRole("combobox", { name: "Account system", exact: true });
     assert.equal(await systemSelect.inputValue(), "account-remote", "The account center starts on the selected dashboard system");
     await systemSelect.selectOption("local");
+    assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "listCodexCliSessions" && action.payload?.targetDeviceId === "account-remote")), "Selecting a remote system routes session discovery to that system");
     assert.equal(await accountCenter.locator('.cli-account-choice[aria-current="true"]').isDisabled(), true, "Current accounts are clearly marked without switching again");
     assert.equal(await accountCenter.getByRole("meter").first().getAttribute("aria-valuenow"), "0", "Zero quota stays visible");
     const accountSearch = accountCenter.getByRole("searchbox", { name: "Search accounts on selected system", exact: true });
@@ -1129,7 +1243,7 @@ try {
     assert.ok((await page.locator(".cli-sessions-running-row").getAttribute("title")).includes("Finish the running task"));
     assert.ok((await runningMeta.boundingBox()).height < 20, "Session metadata stays on one compact line");
     assert.ok((await page.locator(".cli-sessions-running-row").boundingBox()).height <= 40, "Session rows use a compact two-line layout");
-    assert.equal(await page.getByRole("button", { name: "Session dashboard", exact: true }).count(), 1);
+    assert.equal(await page.getByRole("button", { name: "Session dashboard", exact: true }).count(), 0, "Browser flyouts keep navigation in the browser and omit the footer");
     await page.screenshot({ path: path.join(output, `running-sessions-${width}x${height}.png`) });
     await page.getByRole("button", { name: "View Running workspace task in browser", exact: true }).click();
     await page.waitForURL(`**/workspace/${runningId}`);
@@ -1157,8 +1271,13 @@ try {
     await queuePanel.getByRole('button',{name:'Queue session',exact:true}).click();
     await page.waitForFunction(()=>window.__uiActions.some(message=>message.action==='setCodexSessionQueue'&&message.payload?.sessionId==='recovery'&&message.payload?.sessionQueuePriority===2));
     await page.screenshot({ path: path.join(output, `compact-recovery-${width}x${height}.png`) });
-    await page.getByRole("button", { name: "Resume Interrupted workspace task in VS Code", exact: true }).click();
-    await page.waitForFunction(() => window.__uiActions.some(message => message.action === "resumeCodexSessions" && message.payload?.sessionId === "recovery"));
+    const resumeRequestsBeforeBrowserOpen = await page.evaluate(() => window.__uiActions.filter(message => message.action === "resumeCodexSessions").length);
+    await page.getByRole("button", { name: "View Interrupted workspace task in browser", exact: true }).click();
+    await page.waitForURL(`**/workspace/recovery`);
+    assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === "resumeCodexSessions").length), resumeRequestsBeforeBrowserOpen, "Browser session navigation never resumes an interrupted session");
+    await page.goBack();
+    await page.locator("#cliSessionsButton").click();
+    await page.locator(".cli-sessions-popover").waitFor();
     assert.equal(await page.locator("#cliSessionsButton .cli-running-count").textContent(), "1", "Interrupted sessions do not inflate the running count");
     await page.evaluate(() => {
       window.__uiSessions.splice(window.__recoveryStart);
@@ -1477,6 +1596,7 @@ try {
         await archive.getByRole("button", { name: "Next", exact: true }).click();
         await page.waitForFunction(() => document.querySelectorAll(".maintenance-items input[type=checkbox]").length === 13);
         await archive.getByRole("searchbox", { name: "Search tool items" }).fill("task 62");
+        await archive.getByRole("searchbox", { name: "Search tool items" }).press('Enter');
         await archive.getByRole("checkbox", { name: "Select Archived task 62", exact: true }).waitFor();
         await archive.getByRole("checkbox", { name: "Select Archived task 62", exact: true }).check();
         await archive.getByRole("button", { name: "Delete selected", exact: true }).click();

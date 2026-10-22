@@ -1,7 +1,19 @@
-import { CodexAdditionalQuotaLimit, CodexCreditsSummary, CodexQuotaSummary } from "../core/types";
+import { CodexAdditionalQuotaLimit, CodexCreditsSummary, CodexQuotaSummary, type CodexManagerAccountRecord } from "../core/types";
+import { parseCreditsOrderValue } from '../domain/autoQueueOrder';
 
 const MAX_HOURLY_WINDOW_MINUTES = 360;
 const MIN_WEEKLY_WINDOW_MINUTES = 1440;
+
+export function accountQuotaAvailability(account: CodexManagerAccountRecord): 'available' | 'exhausted' | 'unknown' {
+  const quota = normalizeQuotaSummary(account.quotaSummary);
+  if (!quota || account.quotaError) return 'unknown';
+  const windows = [quota.hourlyWindowPresent ? quota.hourlyPercentage : undefined, quota.weeklyWindowPresent ? quota.weeklyPercentage : undefined].filter(value => value !== undefined);
+  if (windows.some(value => value === 0)) return 'exhausted';
+  if (windows.some(value => typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100)) return 'unknown';
+  if (windows.length) return 'available';
+  const credits = parseCreditsOrderValue(quota.credits);
+  return credits === undefined ? 'unknown' : credits > 0 ? 'available' : 'exhausted';
+}
 
 /** Counts represent usable credits, already filtered by the provider snapshot. */
 export function normalizeUsableResetCount(value: unknown): number {

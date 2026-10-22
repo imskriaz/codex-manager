@@ -9,6 +9,7 @@ import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { normalizeNativePath } from "../utils/nativePaths";
+import { publishDashboardRealtime } from './dashboardRealtime';
 
 type Item = { id: string; sessionId?: string; title: string; projectPath?: string; detail?: string; goalOnly?: boolean; snapshot?: { file: string; size: number; mtimeMs: number } };
 type Plan = { preview: MaintenancePreview; home: string; items: Item[]; job?: string; jobRequest?: string };
@@ -162,10 +163,20 @@ export function readMaintenancePage(token: string, query = "", offset = 0): Main
   return { token, query, offset, total: items.length, items: items.slice(offset, offset + 50).map(item => ({ id: item.id, title: item.title, detail: item.detail ?? (item.projectPath ? path.basename(item.projectPath) : undefined) })) };
 }
 
-export function getMaintenanceJob(id: string, cancel = false): MaintenanceJob {
+export function getMaintenanceJob(id: string, cancel = false, previewToken?: string): MaintenanceJob {
+  if (!id && !cancel && previewToken) {
+    const plan = plans.get(previewToken);
+    if (!plan || plan.home !== getCodexHomeStateKey(resolveCodexHome())) throw new Error('This cleanup is no longer available in this window. Review current data before starting a new preview.');
+    if (!plan.job) throw new Error('No operation is recorded for this preview. Review current data before retrying.');
+    id = plan.job;
+  }
   const job = jobs.get(id);
   if (!job || job.home !== getCodexHomeStateKey(resolveCodexHome())) throw new Error("This cleanup is no longer available in this window. Review current data before starting a new preview.");
-  if (cancel && job.state.status === "running") { job.controller.abort(); job.state.cancelRequested = true; }
+  if (cancel && job.state.status === "running" && !job.state.cancelRequested) {
+    job.controller.abort(); job.state.cancelRequested = true;
+    job.state.revision = (job.state.revision ?? 0) + 1;
+    publishDashboardRealtime({ type: 'dashboard:maintenance-progress', job: { ...job.state, errors: [...job.state.errors] } });
+  }
   return { ...job.state, errors: [...job.state.errors] };
 }
 
@@ -192,13 +203,23 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
   }
   const id = randomUUID();
   const items = ids ? plan.items.filter(item => ids.has(item.id)) : plan.items;
-  const state: MaintenanceJob = { id, tool: plan.preview.tool, operation, status: "running", total: items.length, processed: 0, cleared: 0, skipped: 0, failed: 0, errors: [] };
+  const state: MaintenanceJob = { id, previewToken: token, revision: 0, tool: plan.preview.tool, operation, status: "running", total: items.length, processed: 0, cleared: 0, skipped: 0, failed: 0, errors: [] };
   const controller = new AbortController(), job = { state, controller, home: plan.home, updatedAt: Date.now() };
   jobs.set(id, job); plan.job = id; plan.jobRequest = fingerprint;
+  let reported = -1;
+  const progress = (force = false) => {
+    state.revision = (state.revision ?? 0) + 1;
+    // Report at most one hundred progress milestones, plus lifecycle changes.
+    if (!force && state.processed - reported < Math.max(1, Math.ceil(state.total / 100))) return;
+    reported = state.processed;
+    publishDashboardRealtime({ type: 'dashboard:maintenance-progress', job: { ...state, errors: [...state.errors] } });
+  };
+  progress(true);
   const timer = setTimeout(() => {
     state.cancelRequested = true;
-    state.errors.push("Cleanup reached its 30 minute limit. Current operations may still finish; remaining items are kept.");
+    if (state.errors.length < 20) state.errors.push("Cleanup reached its 30 minute limit. Current operations may still finish; remaining items are kept.");
     controller.abort(new Error("Cleanup reached its time limit."));
+    progress(true);
   }, 30 * 60_000);
   timer.unref?.();
   void runCrossWindowExclusive(`maintenance:${plan.home}`, "System maintenance", async leaseSignal => {
@@ -235,9 +256,9 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
           const child = descendants.pop()!;
           if (visited.has(child)) continue;
           visited.add(child); descendants.push(...children.get(child) ?? []);
-          if (!selected.has(child)) { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is outside this selection.`); return; }
+          if (!selected.has(child)) { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is outside this selection.`.slice(0, 300)); return; }
           const summary = await waitWithin(readCodexCliSessionSummary(child), 6_000, "A child conversation could not be verified; this conversation was kept.");
-          if (summary && summary.status !== "idle") { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is running or unavailable.`); return; }
+          if (summary && summary.status !== "idle") { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is running or unavailable.`.slice(0, 300)); return; }
         }
         if (item.goalOnly) await clearCodexSessionGoal(item.id);
         if (!item.goalOnly) { check(); await deleteCodexCliSession(item.id); }
@@ -246,16 +267,17 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
         if (controller.signal.aborted || leaseSignal.aborted) { state.skipped++; return; }
         if (item.snapshot && (error as NodeJS.ErrnoException).code === "ENOENT") { state.skipped++; return; }
         state.failed++;
-        if (state.errors.length < 20) state.errors.push(`${item.title}: ${(error instanceof Error ? error.message : String(error)).slice(0, 300)}`);
-      } finally { state.processed++; job.updatedAt = Date.now(); }
+        if (state.errors.length < 20) state.errors.push(`${item.title}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300));
+      } finally { state.processed++; job.updatedAt = Date.now(); progress(); }
     }));
   }).then(() => {
     state.status = controller.signal.aborted ? "cancelled" : state.failed ? "failed" : "completed";
   }).catch(error => {
     state.status = controller.signal.aborted ? "cancelled" : "failed";
-    state.errors.push((error instanceof Error ? error.message : String(error)).slice(0, 300));
+    if (state.errors.length < 20) state.errors.push((error instanceof Error ? error.message : String(error)).slice(0, 300));
   }).finally(() => {
     clearTimeout(timer); job.updatedAt = Date.now();
+    progress(true);
     recordPersistentEvent(state.status === "completed" ? "info" : "warning", "maintenance", "System maintenance finished", state);
   });
   return { ...state, errors: [] };

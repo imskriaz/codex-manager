@@ -17,6 +17,7 @@ import {
   focusWorkspaceTerminal,
   readWorkspaceFile,
   readWorkspaceEnvironment,
+  readWorkspaceGitHistory,
   registerWorkspaceTerminalMonitoring,
   resolveWorkspaceProjectPath,
   resolveWorkspaceProjectPathAsync,
@@ -28,6 +29,35 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import { removeTestDirectory } from "./testFilesystem";
 
 describe("workspace tools", () => {
+  it('pages project history from a stable reference and reads bounded commit diffs without outside-project changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-git-history-')), project = join(root, 'project');
+    const restore = exposeWorkspaceRoot(root);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+    try {
+      await mkdir(project); git('init', '--initial-branch=main'); git('config', 'user.name', 'History Author'); git('config', 'user.email', 'history@example.invalid');
+      expect((await readWorkspaceEnvironment(project, false, {})).gitHistory?.commits).toEqual([]);
+      let history = '';
+      for (let index = 0; index < 52; index++) {
+        const subject = index ? `Change ${index - 1}` : 'First project change';
+        const content = index ? `change ${index - 1}\n` : 'first\n';
+        history += `commit refs/heads/main\ncommitter History Author <history@example.invalid> ${1700000000 + index} +0000\ndata ${subject.length}\n${subject}\nM 100644 inline project/proof.txt\ndata ${content.length}\n${content}`;
+        if (!index) history += 'M 100644 inline outside.txt\ndata 8\noutside\n';
+        history += '\n';
+      }
+      execFileSync('git', ['fast-import', '--quiet'], { cwd: root, input: history + 'done\n' });
+      git('reset', '--hard', 'HEAD');
+      const firstHash = git('rev-parse', 'HEAD~51');
+      const first = (await readWorkspaceGitHistory(project)).gitHistory!;
+      expect(first.commits).toHaveLength(50); expect(first.hasMore).toBe(true); expect(first.commits[0]).toMatchObject({ author: 'History Author', subject: 'Change 50' });
+      await writeFile(join(project, 'proof.txt'), 'new head\n'); git('add', '--all'); git('commit', '-m', 'New head');
+      const older = (await readWorkspaceGitHistory(project, { ref: first.ref, offset: 50 })).gitHistory!;
+      expect(older.commits).toHaveLength(2); expect(older.hasMore).toBe(false); expect(older.commits.at(-1)?.hash).toBe(firstHash); expect(older.ref).toBe(first.ref);
+      const commit = (await readWorkspaceEnvironment(project, false, { commit: firstHash })).gitCommit!;
+      expect(commit.diff).toContain('first'); expect(commit.diff).not.toContain('outside.txt'); expect(commit.hash).toBe(firstHash);
+      for (const request of [{ commit: '--exec=oops' }, { ref: '-HEAD' }, { offset: -1 }, { offset: Infinity }, { offset: 10001 }, { commit: 'f'.repeat(40) }]) await expect(readWorkspaceGitHistory(project, request)).rejects.toThrow();
+      await expect(readWorkspaceGitHistory(project, { ref: 'f'.repeat(40) })).rejects.toThrow('unavailable');
+    } finally { restore(); await removeTestDirectory(root); }
+  });
   it("previews DOCX and retains Mammoth CLI compatibility with the argparse security override",async()=>{
     const root=await mkdtemp(join(tmpdir(),"codex-docx-preview-"));
     const restoreWorkspace=exposeWorkspaceRoot(root);

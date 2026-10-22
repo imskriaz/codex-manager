@@ -232,6 +232,10 @@ export class AccountsCommandService {
       return { status: "cancelled" };
     }
 
+    if (account.isActive) await this.repo.recordManualAccountSelection?.(account.id);
+    if (account.isActive && await this.repo.isAutoSwitchManuallyHeld?.(account.id)) {
+      void vscode.window.showWarningMessage("Auto Switch is paused after your manual selection. Select an account with available quota to resume.");
+    }
     if (account.isActive && !needsWindowReloadForAccount(account.id)) {
       void vscode.window.showInformationMessage(copy.alreadyActive(formatAccountToastLabel(account)));
       return { status: "already-active", account };
@@ -259,6 +263,9 @@ export class AccountsCommandService {
           forceTokenRefresh: account.tokenRefreshEnabled === true
         });
       });
+    }
+    if (!account.isActive && await this.repo.isAutoSwitchManuallyHeld?.(account.id)) {
+      void vscode.window.showWarningMessage("Auto Switch is paused after your manual selection. Select an account with available quota to resume.");
     }
     this.view.markObservedAuthIdentity?.(account.id);
 

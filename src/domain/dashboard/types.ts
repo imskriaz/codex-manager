@@ -691,6 +691,7 @@ export interface DashboardActionPayload {
   projectPath?: string;
   filePath?: string;
   includeBranchDiff?: boolean;
+  gitHistory?: DashboardWorkspaceGitRequest;
   fileContent?: string;
   fileRevision?: string;
   command?: string;
@@ -855,6 +856,13 @@ export interface DashboardCliProject {
   path: string;
 }
 
+export interface DashboardWorkspaceGitRequest { offset?: number; ref?: string; commit?: string }
+export interface DashboardWorkspaceGitHistory {
+  ref?: string;
+  offset: number;
+  hasMore: boolean;
+  commits: Array<{ hash: string; author: string; date: string; subject: string }>;
+}
 export interface DashboardWorkspaceEnvironment {
   projectPath: string;
   projectName: string;
@@ -872,6 +880,8 @@ export interface DashboardWorkspaceEnvironment {
   branchDiff?: string;
   branchDiffBase?: string;
   branchDiffTruncated?: boolean;
+  gitHistory?: DashboardWorkspaceGitHistory;
+  gitCommit?: { hash: string; diff: string; truncated: boolean };
 }
 
 export interface DashboardWorkspaceFileEntry {
@@ -945,6 +955,8 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  /** A relayed session list replaces only this system's rows. */
+  cliSessionsDeviceId?: string;
   projectBoard?: import('../projectTasks').ProjectBoard;
   projectTaskDetails?: import('../projectTasks').ProjectTaskDetails;
   projectShare?: { token: string; expiresAt: number; permissions: import('../projectTasks').ProjectSharePermission[] };
@@ -1035,6 +1047,7 @@ export interface DashboardNotice {
 }
 
 export type DashboardHostMessage =
+  | { type: 'dashboard:maintenance-progress'; job: import('../maintenance').MaintenanceJob; deviceId?: string }
   | { type: 'dashboard:project-changed'; projectPath: string }
   | {
       type: "dashboard:snapshot";
@@ -1083,7 +1096,7 @@ export type DashboardClientMessage =
   | { type: "dashboard:ready" }
   | { type: "dashboard:retry-connection" }
   /** Browser workspace-viewer lease; used to gate CLI session monitoring. */
-  | { type: "dashboard:workspace-presence"; viewing: boolean }
+  | { type: "dashboard:workspace-presence"; viewing: boolean; targetDeviceId?: string }
   | { type: "dashboard:usage-history"; samples: DashboardUsageSample[] }
   | {
       type: "dashboard:action";

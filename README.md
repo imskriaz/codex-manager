@@ -125,7 +125,7 @@ The browser dashboard is disabled by default and listens on `http://127.0.0.1:39
 3. For a public HTTPS address, enable **WS Cross System**, enter the final URL (for example `https://codex.example.com`), and configure the tunnel to forward to `http://127.0.0.1:39875`.
 4. The manager automatically prepares the relay on the system verified to host that tunnel. Other systems connect without preparing a detached host.
 
-The **Tools** tab opens dedicated Codex maintenance dialogs for archives, conversations, goals, and old shell snapshots. Review the selected system and affected items before confirming deletion. Inspection tools report missing projects, large conversations, and native database health without changing data. **System Log** stays in Data & sync; its console contains download and clear controls, and switching logging off clears saved manager history.
+The **Tools** tab opens focused maintenance panels for archives, conversations, goals, and old shell snapshots. Review the selected system and affected items before confirming deletion. Search with Enter or the Search button. Progress arrives through bounded events; reopening a running operation or reconnecting checks its current status without polling. Use Refresh status if the host cannot stream updates. A missing start reply can be checked without resending cleanup. Inspection tools report missing projects, large conversations, and native database health without changing data. **System Log** stays in Data & sync; its console contains download and clear controls, and switching logging off clears saved manager history.
 
 Read Cloudflare’s [Tunnel overview](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/), [downloads](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/), [remotely-managed tunnel guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/), and [Quick Tunnels guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/) first.
 
@@ -151,6 +151,7 @@ Important combinations:
 - **Encrypted sync** uses authenticated peer WebSockets when available and VS Code Settings Sync as its durable cross-PC fallback. Use the same password value on each machine; the password is never uploaded by the extension.
 - **Automatic switching** is off by default. Set the hourly control on only if the 5-hour window should affect switching and status-bar warnings.
 - **WS Cross System** controls cross-PC WebSocket connections using the configured HTTPS origin. Manager prepares the detached relay only after verifying that the configured tunnel reaches this system. Local dashboard WebSockets work independently. The `cloudflared` process and DNS route are managed by you.
+- A visible browser dashboard subscribes to its selected system: one initial load, then file-change updates without recurring session scans. Switching systems or hiding/closing the dashboard releases that subscription. Idle VS Code instances retain lightweight authenticated presence for discovery and account ownership. Update both PCs together for the signed subscription protocol.
 
 ## Privacy and security
 
@@ -246,7 +247,11 @@ unsaved file edits while navigating the workspace. Late responses from another
 context cannot replace the current inspector. Saving retains edits made while
 the save is pending; conflicting file revisions keep the draft for review.
 Git shows changed files, branch tracking and comparison, with confirmed commit
-and push actions. Commits include the selected project folder and preserve
+and push actions. Its **History** view loads 50 commits at a time, showing the
+message, author, date and hash. Select a commit to inspect its project-scoped
+diff; refresh explicitly to see newer commits. Paging stays anchored to the
+loaded revision, and failed reads keep the current history visible.
+Commits include the selected project folder and preserve
 staged changes elsewhere in the repository. These tools require a connected host;
 they do not replay Git, terminal or file writes after reconnect.
 
@@ -311,3 +316,8 @@ Session start/resume/stop, terminal commands, file writes/deletes, Git mutations
 In **Settings → Data & sync**, enable **Save diagnostic logs** and choose **Log level**: Debug includes detailed decisions, Info records normal operations, Warnings records warnings and errors, and Errors records failures only. The level applies immediately and is shared across local windows. Logging stays off until enabled, and retention remains adjustable from 1 to 30 days.
 
 **Download logs** exports recent redacted JSON in the browser or opens a save dialog in VS Code, including when logging has been turned off. Each download includes at most 1,000 recent records and 512 KiB of record data; a warning and `limited` field identify a partial export. Secret fields and emails are redacted. Operation and trace IDs, host-run IDs, timestamps, durations, recovery counts, and Debug session decisions help connect events across windows and reloads. Slow or unavailable log storage reports a failure without blocking unrelated actions; logging queues remain bounded and report skipped records.
+
+Manual account selection respects your choice: selecting an account with no quota
+pauses automatic switching for that Codex home, including automatic reset-credit
+redemption. Select an account with available quota to resume. If quota is unknown,
+a fresh quota check must verify it before automatic switching can resume.

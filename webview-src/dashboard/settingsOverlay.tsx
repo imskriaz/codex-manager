@@ -49,6 +49,7 @@ export function shouldPatchDashboardSettingOptimistically(key: DashboardSettingK
 export function SettingsOverlay(props: {
   open: boolean;
   connected?: boolean;
+  targetConnected?: boolean;
   copy: DashboardCopy;
   lang: DashboardState["lang"];
   settings: DashboardSettings;
@@ -782,7 +783,7 @@ export function SettingsOverlay(props: {
           </div>
           <div class="settings-tab-panel" id="settings-panel-tools" role="tabpanel" aria-labelledby="settings-tab-tools" hidden={activeTab !== "tools"}>
             <SettingsPanelIntro tab={tabs[3]!} />
-            <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open} />
+            <MaintenanceTools sendAction={props.sendAction} targetDeviceId={props.targetDeviceId} targetName={props.targetName} parentOpen={props.open && activeTab === 'tools'} connected={props.connected !== false && props.targetConnected !== false} />
           </div>
         </fieldset></div>
       </div>

@@ -21,6 +21,7 @@ import type {
   DashboardPeerView,
   DashboardUsageGraphData,
   DashboardWorkspaceEnvironment,
+  DashboardWorkspaceGitRequest,
   DashboardWorkspaceFile,
   DashboardWorkspaceFileEntry,
   DashboardWorkspaceTerminalInfo
@@ -238,6 +239,8 @@ function App() {
   const [cliSessions, setCliSessions] = useState<DashboardCliSessionSummary[]>([]);
   const [agentMessages, setAgentMessages] = useState<Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>>({});
   const messageRequests = useRef(new Map<string, CliSessionTarget>());
+  const cliListRequestTargets = useRef(new Map<string, string | undefined>());
+  const cliListViewTarget = useRef<string>();
   const messageRequestStreams = useRef(new Map<string, string | undefined>());
   const historicalStreams = useRef(new Set<string>());
   const turnRequests = useRef(new Map<string, CliSessionTarget>());
@@ -278,7 +281,7 @@ function App() {
     }
   };
   const [selectedCliSession, setSelectedCliSession] = useState<DashboardCliSessionSummary>();
-  const [selectedPeerId, setSelectedPeerId] = useState<string>("local");
+  const [selectedPeerId, setSelectedPeerId] = useState<string>(() => isBrowserDashboard ? new URLSearchParams(window.location.search).get('device') || 'local' : 'local');
   const [pcPickerOpen, setPcPickerOpen] = useState(false);
   const [cliSessionsMenuOpen, setCliSessionsMenuOpen] = useState(false);
   const [cliSessionsError, setCliSessionsError] = useState<string>();
@@ -416,7 +419,10 @@ function App() {
         agentRequests.current.delete(requestId);
         if (id) setAgentMessages((current) => ({ ...current, [id]: { ...current[id], loading: false, error: "Agent messages timed out. Try Refresh." } }));
       }
-      if (action === "listCodexCliSessions") setCliSessionsError("Sessions did not refresh in time. Try again.");
+      if (action === "listCodexCliSessions") {
+        if (cliListRequestTargets.current.get(requestId) === cliListViewTarget.current) setCliSessionsError("Sessions did not refresh in time. Try again.");
+        cliListRequestTargets.current.delete(requestId);
+      }
       const workspaceRequest = workspaceRequests.current.get(requestId);
       if (workspaceRequest && latestWorkspaceRequests.current.get(workspaceRequest.family) === requestId) latestWorkspaceRequests.current.delete(workspaceRequest.family);
       workspaceRequests.current.delete(requestId);
@@ -521,14 +527,19 @@ function App() {
     logConsoleRequestRef.current = undefined;
   }, [selectedPeerId, snapshot?.settings.persistentLoggingEnabled]);
 
-  const lastCliListRequestAtRef = useRef(0);
-  const lastCliRealtimeRevisionRef = useRef(0);
+  const lastCliListRequestAtRef = useRef({ target: "", at: 0 });
+  const latestCliListRequests = useRef(new Map<string, string>());
+  const cliCatalogTarget = useRef<string>();
+  const cliListConnection = useRef(false);
+  const lastCliRealtimeRevisionRef = useRef(new Map<string, number>());
   const lastCliMessageRequestRef = useRef<{ target: CliSessionTarget; at: number }>();
   const cliSessionsRef = useRef(cliSessions);
   cliSessionsRef.current = cliSessions;
   const connectedPeers = mergeDashboardPeers(snapshot?.connectedPeers ?? [], cliSessions);
   const pcOptions = connectedPeers.length > 0 ? connectedPeers : [{ id: "local", name: "This PC", sessionCount: 0, connected: true, local: true }];
   const selectedPeer = pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
+  const browserPresenceTargetDeviceId = selectedPeerId === "local" || snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && peer.local) ? undefined : selectedPeerId;
+  cliListViewTarget.current = selectedPeer?.local ? undefined : selectedPeer?.id;
   const workspaceTargetDeviceId = selectedCliSession ? selectedCliSession.deviceId : selectedPeer?.local ? undefined : selectedPeer?.id;
   const requestSessionAction = (action: DashboardActionName, session: CliSessionTarget, payload?: DashboardActionPayload): void => {
     const requestId = sendAction(action, undefined, { ...payload, sessionId: session.id, targetDeviceId: session.deviceId });
@@ -537,11 +548,15 @@ function App() {
   const requestCliSessions = useCallback(
     (force = false, userInitiated = false): string | undefined => {
       const now = Date.now();
-      if (!force && now - lastCliListRequestAtRef.current < 2_000) return;
-      lastCliListRequestAtRef.current = now;
-      return sendAction("listCodexCliSessions", undefined, { automatic: !userInitiated, targetDeviceId: undefined });
+      const targetDeviceId = selectedPeer?.local ? undefined : selectedPeer?.id;
+      const key = targetDeviceId ?? "local";
+      if (!force && lastCliListRequestAtRef.current.target === key && now - lastCliListRequestAtRef.current.at < 2_000) return;
+      lastCliListRequestAtRef.current = { target: key, at: now };
+      const requestId = sendAction("listCodexCliSessions", undefined, { automatic: !userInitiated, targetDeviceId });
+      if (requestId) { cliListRequestTargets.current.set(requestId, targetDeviceId); latestCliListRequests.current.set(key, requestId); }
+      return requestId;
     },
-    [sendAction]
+    [sendAction, selectedPeer?.id, selectedPeer?.local]
   );
   const requestCliSessionMessages = useCallback(
     (sessionId: string, targetDeviceId?: string, force = false, automatic = true): void => {
@@ -588,8 +603,8 @@ function App() {
     setWorkspaceEnvironment(undefined); setWorkspaceFiles([]); setWorkspaceFilesByPath({}); setWorkspaceTerminals([]);
   }, []);
   const requestWorkspaceEnvironment = useCallback(
-    (projectPath?: string, includeBranchDiff?: boolean, automatic = false): void => {
-      sendWorkspaceAction("getWorkspaceEnvironment", undefined, { sessionId: selectedCliSession?.id, projectPath: projectPath ?? selectedCliSession?.projectPath, includeBranchDiff, automatic, targetDeviceId: workspaceTargetDeviceId });
+    (projectPath?: string, includeBranchDiff?: boolean, automatic = false, gitHistory?: DashboardWorkspaceGitRequest): void => {
+      sendWorkspaceAction("getWorkspaceEnvironment", undefined, { sessionId: selectedCliSession?.id, projectPath: projectPath ?? selectedCliSession?.projectPath, includeBranchDiff, gitHistory, automatic, targetDeviceId: workspaceTargetDeviceId });
     },
     [sendWorkspaceAction, workspaceTargetDeviceId, selectedCliSession?.id, selectedCliSession?.projectPath]
   );
@@ -820,28 +835,39 @@ function App() {
         }
       }
       if (message.type === "dashboard:action-result" && message.action === "listCodexCliSessions") {
+        const requested = cliListRequestTargets.current.has(message.requestId);
+        const listTarget = cliListRequestTargets.current.get(message.requestId);
+        cliListRequestTargets.current.delete(message.requestId);
+        if (requested && latestCliListRequests.current.get(listTarget ?? "local") !== message.requestId) return;
+        const currentListTarget = selectedPeer?.local ? undefined : selectedPeer?.id;
+        const appliesToSelectedSystem = (message.payload?.cliSessionsDeviceId ?? listTarget) === currentListTarget;
         const realtimeRevision = message.payload?.realtimeRevision;
+        const revisionScope = message.payload?.cliSessionsDeviceId ?? 'local';
         const result = classifyCliSessionListResult(
           message.requestId,
           realtimeRevision,
-          lastCliRealtimeRevisionRef.current,
+          lastCliRealtimeRevisionRef.current.get(revisionScope) ?? 0,
           explicitCliRefreshRef.current
         );
         if (!result.apply && !result.explicitRefresh) return;
-        lastCliRealtimeRevisionRef.current = result.nextRealtimeRevision;
+        lastCliRealtimeRevisionRef.current.set(revisionScope, result.nextRealtimeRevision);
         const explicitRefresh = result.explicitRefresh;
         if (explicitRefresh) explicitCliRefreshRef.current = undefined;
         if (message.status === "completed") {
           if (result.apply) {
-            liveSessionListReceived.current = true;
-            const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessions);
+            if (appliesToSelectedSystem) liveSessionListReceived.current = true;
+            const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessionsRef.current, message.payload?.cliSessionsDeviceId);
             setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
             // Realtime list pushes intentionally omit the heavier composer
             // catalog. Preserve the last known catalog so the response box does
             // not disappear while sessions update in the background.
-            setCliComposerConfig(message.payload?.cliComposerConfig ?? cliComposerConfig);
-            void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig });
-            if (explicitRefresh || !message.payload?.cliSessions?.some(session => session.status === "unknown"))
+            if (appliesToSelectedSystem && message.payload?.cliComposerConfig) {
+              cliCatalogTarget.current = currentListTarget ?? "local";
+              setCliComposerConfig(message.payload.cliComposerConfig);
+            }
+            if (requested) void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig }, listTarget);
+            if (!requested && currentListTarget === undefined) void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig });
+            if (appliesToSelectedSystem && (explicitRefresh || !message.payload?.cliSessions?.some(session => session.status === "unknown")))
               setCliSessionsError(message.payload?.cliSessions?.some(session => session.status === "unknown") ? message.payload?.notice?.message ?? "Session running state could not be verified. Refresh before sending." : undefined);
             const routeId = getCliSessionIdFromPath(window.location.pathname);
             if (routeId) {
@@ -875,7 +901,7 @@ function App() {
                 if (typeof realtimeRevision !== "number" || sessionChanged || routeSession.status === "running") {
                   requestCliSessionMessages(routeId, routeSession.deviceId, typeof realtimeRevision !== "number");
                 }
-              } else {
+              } else if (!message.payload?.cliSessionsDeviceId || message.payload.cliSessionsDeviceId === (routeDevice ?? undefined)) {
                 // The refreshed index is authoritative. Do not request a route
                 // that is already gone; that only turns a stale link into a
                 // noisy “session not found” error.
@@ -890,7 +916,7 @@ function App() {
           }
           if (explicitRefresh)
             showCliSessionFeedback({ key: Date.now(), ...(message.payload?.notice ?? { level: "info" as const, message: "Sessions refreshed." }) });
-        } else {
+        } else if (appliesToSelectedSystem) {
           setCliSessionsError(message.error ?? "Sessions could not be loaded.");
           if (explicitRefresh)
             showCliSessionFeedback({
@@ -969,7 +995,7 @@ function App() {
             const remaining = cliSessionsRef.current.filter(session => !sameCliSessionTarget(session, requestedTarget));
             setCliSessions(remaining);
             void invalidateCliSessionCache(requestedTarget.id, requestedTarget.deviceId);
-            void writeCliSessionListCache({ sessions: remaining, composerConfig: cliComposerConfig });
+            void writeCliSessionListCache({ sessions: remaining, composerConfig: cliComposerConfig }, selectedPeer?.local ? undefined : selectedPeer?.id);
             selectedCliSessionRef.current = undefined;
             setSelectedCliSession(undefined); setCliSessionMessages([]); setCliSessionMessagesError(undefined);
             navigateDashboardPath('/workspace', setBrowserPath);
@@ -991,7 +1017,7 @@ function App() {
         }
         if (!sameCliSessionTarget(target, currentSessionTarget())) {
           if (message.status === "completed") {
-            if (message.payload?.cliSessions) setCliSessions((current) => reconcileCliSessionStatuses(mergeCachedCliSessions(message.payload!.cliSessions!, current), cliLiveStatesRef.current));
+            if (message.payload?.cliSessions) setCliSessions((current) => reconcileCliSessionStatuses(mergeCachedCliSessions(message.payload!.cliSessions!, current, message.payload?.cliSessionsDeviceId), cliLiveStatesRef.current));
             if (message.payload?.cliSessionMessages) void writeCliSessionMessagesCache(target.id, message.payload.cliSessionMessages, target.deviceId);
           }
           showCliSessionFeedback({ key: Date.now(), level: message.status === "completed" ? "info" : message.status === "cancelled" ? "warning" : "error", message: message.status === "completed" ? "Codex completed the turn in the original chat." : message.error ?? "The turn in the original chat did not complete. Return to that chat and retry." });
@@ -999,7 +1025,7 @@ function App() {
         }
         messageViewRevision.current++;
         if (message.status === "completed") {
-          const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? cliSessions, cliSessions);
+          const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? cliSessions, cliSessions, message.payload?.cliSessionsDeviceId);
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           setCliSessionMessages(message.payload?.cliSessionMessages ?? cliSessionMessages);
           if (message.payload?.cliSession?.id) {
@@ -1007,7 +1033,7 @@ function App() {
             void writeCliSessionListCache({
               sessions,
               composerConfig: cliComposerConfig
-            });
+            }, selectedPeer?.local ? undefined : selectedPeer?.id);
           }
           setSelectedCliSession(
             message.payload?.cliSession
@@ -1031,10 +1057,10 @@ function App() {
         if (message.payload?.cliSessionLive) acceptLiveSnapshot(message.payload.cliSessionLive, true);
         if (message.status === "completed" && message.payload?.cliSession) {
           const session = message.payload.cliSession;
-          const sessions = mergeCachedCliSessions([session, ...(message.payload.cliSessions ?? cliSessions).filter((candidate) => !sameCliSessionTarget(candidate, session))], cliSessions);
+          const sessions = mergeCachedCliSessions([session, ...(message.payload.cliSessions ?? cliSessions).filter((candidate) => !sameCliSessionTarget(candidate, session))], cliSessions, message.payload.cliSessionsDeviceId);
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
-          setCliComposerConfig(message.payload.cliComposerConfig ?? cliComposerConfig);
-          if (selectedCliSession && !sameCliSessionTarget(selectedCliSession, session)) {
+          if ((session.deviceId ?? "local") === (selectedPeer?.local ? "local" : selectedPeer?.id)) setCliComposerConfig(message.payload.cliComposerConfig ?? cliComposerConfig);
+          if ((session.deviceId ?? "local") !== (selectedPeer?.local ? "local" : selectedPeer?.id) || selectedCliSession && !sameCliSessionTarget(selectedCliSession, session)) {
             showCliSessionFeedback({ key: Date.now(), level: "info", message: "New Codex chat is ready. Open it from the session list." });
             return;
           }
@@ -1266,11 +1292,11 @@ function App() {
               : (message.error ?? "The session action failed.")
         });
         if (message.status === "completed" && message.payload?.cliSessions) {
-          const sessions = mergeCachedCliSessions(message.payload.cliSessions, cliSessions);
+          const sessions = mergeCachedCliSessions(message.payload.cliSessions, cliSessions, message.payload.cliSessionsDeviceId);
           const updated = message.payload.cliSession;
           if (updated) { const index = sessions.findIndex(session => sameCliSessionTarget(session, updated)); if (index >= 0) sessions[index] = mergeCachedCliSession(updated, sessions[index]); }
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
-          void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig });
+          void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig }, selectedPeer?.local ? undefined : selectedPeer?.id);
         }
         if (message.status === "completed" && !message.payload?.cliSessions && target) {
           setCliSessions((current) => {
@@ -1358,9 +1384,9 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!viewingBrowserWorkspace || !realtimeConnected) return;
+    if (!isBrowserDashboard || !realtimeConnected) return;
     const announce = (viewing: boolean): void => {
-      postMessageToHost({ type: "dashboard:workspace-presence", viewing });
+      postMessageToHost({ type: "dashboard:workspace-presence", viewing, targetDeviceId: browserPresenceTargetDeviceId });
     };
     const announceCurrentVisibility = (): void => announce(document.visibilityState === "visible");
     announceCurrentVisibility();
@@ -1372,7 +1398,7 @@ function App() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       announce(false);
     };
-  }, [viewingBrowserWorkspace, realtimeConnected]);
+  }, [isBrowserDashboard, realtimeConnected, browserPresenceTargetDeviceId]);
 
   useEffect(() => {
     const session = selectedCliSession;
@@ -1415,28 +1441,29 @@ function App() {
 
   useEffect(() => {
     if (!snapshot?.settings.cliIntegrationEnabled) return;
-    if (!isBrowserDashboard) {
-      requestCliSessions();
-      return;
+    if (isBrowserDashboard && !hasBrowserWorkspaceShell(browserPath)) return;
+    const targetDeviceId = selectedPeer?.local ? undefined : selectedPeer?.id;
+    const key = targetDeviceId ?? "local";
+    const changedSystem = cliCatalogTarget.current !== key;
+    const reconnected = realtimeConnected && !cliListConnection.current;
+    cliListConnection.current = realtimeConnected;
+    if (changedSystem) {
+      cliCatalogTarget.current = key;
+      setCliComposerConfig(undefined);
+      setCliSessionsError(undefined);
+      liveSessionListReceived.current = false;
     }
-    if (!hasBrowserWorkspaceShell(browserPath)) return;
-    void readCliSessionListCache().then((cached) => {
-      if (cached && !liveSessionListReceived.current) {
-        setCliSessions(reconcileCliSessionStatuses(cached.sessions, cliLiveStatesRef.current));
+    let disposed = false;
+    // Start discovery immediately; the optional cache must not delay a manual switch.
+    if (!isBrowserDashboard || realtimeConnected) requestCliSessions(changedSystem || reconnected);
+    if (isBrowserDashboard) void readCliSessionListCache(targetDeviceId).then((cached) => {
+      if (!disposed && cached && !liveSessionListReceived.current) {
+        setCliSessions(current => mergeCachedCliSessions(cached.sessions, current, targetDeviceId));
         setCliComposerConfig(cached.composerConfig);
       }
-      // Cached content paints immediately, but every page opening revalidates
-      // in the background so a recent cache never makes the UI look stale.
-      requestCliSessions();
     });
-    const routeId = getCliSessionIdFromPath(window.location.pathname);
-    const target = currentSessionTarget();
-    const revision = messageViewRevision.current;
-    if (routeId && target)
-      void readCliSessionMessagesCache(routeId, target.deviceId).then((cached) => {
-        if (cached && revision === messageViewRevision.current && sameCliSessionTarget(target, currentSessionTarget())) setCliSessionMessages(cached);
-      });
-  }, [browserPath, isBrowserDashboard, requestCliSessions, snapshot?.settings.cliIntegrationEnabled]);
+    return () => { disposed = true; };
+  }, [browserPath, isBrowserDashboard, requestCliSessions, selectedPeer?.id, selectedPeer?.local, snapshot?.settings.cliIntegrationEnabled, realtimeConnected]);
 
   useEffect(() => {
     const terminalNotice = snapshot?.terminalNotice;
@@ -1595,6 +1622,7 @@ function App() {
       });
       return;
     }
+    setSelectedPeerId(session.deviceId ?? pcOptions.find(peer => peer.local)?.id ?? "local");
     navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
     selectedCliSessionRef.current = session;
     setSelectedCliSession(reconcileCliSessionStatus(session, cliLiveStatesRef.current));
@@ -2165,7 +2193,7 @@ function App() {
       >
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard active={browserPath === '/tasks'}
           sessions={cliSessions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
-          connected={!isBrowserDashboard || realtimeConnected}
+          connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
         /></div> : null}
@@ -2234,9 +2262,9 @@ function App() {
                   loading={isActionPending("listCodexCliSessions")}
                   actionPending={isActionPending("resumeCodexSessions") || isActionPending("openCodexCliSession") || isActionPending("setCodexSessionAutoResume") || isActionPending("setCodexSessionQueue")}
                   onOpen={(session) => {
-                    if (isBrowserDashboard && session.status === "running") {
+                    if (isBrowserDashboard) {
                       setCliSessionsMenuOpen(false);
-                      navigateDashboardPath(buildCliSessionPath(session), setBrowserPath);
+                      selectCliSession(session);
                     } else requestSessionAction(session.status === "running" ? "openCodexCliSession" : "resumeCodexSessions", session, { openInVsCode: true });
                   }}
                   lang={snapshot.lang}
@@ -2653,6 +2681,7 @@ function App() {
 
       <SettingsOverlay
         connected={!isBrowserDashboard || realtimeConnected}
+        targetConnected={selectedPeer?.connected !== false}
         onSetCrossPcSyncEnabled={(enabled) => sendAction("setCrossPcSyncEnabled", undefined, { enabled })}
         crossPcSyncPending={isActionPending("setCrossPcSyncEnabled")}
         open={state.settingsOpen}
@@ -2805,7 +2834,7 @@ function App() {
               messages={combineCliLiveMessages(cliSessionMessages, selectedCliSession && !historicalStreams.current.has(cliLiveStates[cliSessionTargetKey(selectedCliSession)]?.streamId ?? "") ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined)}
               liveState={selectedCliSession ? cliLiveStates[cliSessionTargetKey(selectedCliSession)] : undefined}
               liveStates={cliLiveStates}
-              connected={realtimeConnected && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected))}
+              connected={realtimeConnected && selectedPeer?.connected !== false && !["offline", "unreachable", "degraded", "reconnecting"].includes(browserHostStage) && (!selectedCliSession?.deviceId || pcOptions.some((peer) => peer.id === selectedCliSession.deviceId && peer.connected))}
               submissionResults={submissionResults}
               steering={isActionPending("steerCodexCliSessionTurn")}
               composerConfig={cliComposerConfig}
@@ -2863,7 +2892,15 @@ function App() {
               peers={pcOptions}
               selectedPeerId={selectedPeer?.id ?? selectedPeerId}
               peerAccounts={snapshot.peerAccounts}
-              onPeerChange={setSelectedPeerId}
+              onPeerChange={(peerId) => {
+                setSelectedPeerId(peerId);
+                if (selectedCliSession && peerId !== (selectedCliSession.deviceId ?? pcOptions.find(peer => peer.local)?.id ?? "local")) {
+                  selectedCliSessionRef.current = undefined;
+                  setSelectedCliSession(undefined);
+                  messageViewRevision.current++;
+                  navigateDashboardPath("/", setBrowserPath);
+                }
+              }}
               onDashboard={() => navigateDashboardPath("/", setBrowserPath)}
               onRefresh={() => {
                 explicitCliRefreshRef.current = requestCliSessions(true, true);
@@ -2881,10 +2918,10 @@ function App() {
                 selectedCliSession &&
                 requestCliSessionMessages(selectedCliSession.id, selectedCliSession.deviceId, true, false)
               }
-              onRefreshEnvironment={(projectPath, includeBranchDiff) => {
+              onRefreshEnvironment={(projectPath, includeBranchDiff, gitHistory) => {
                 if (includeBranchDiff) setWorkspaceEnvironment((current) => current ? { ...current, branchDiff: undefined, branchDiffBase: undefined, branchDiffTruncated: undefined } : current);
                 lastAutomaticWorkspaceLoadRef.current = undefined;
-                requestWorkspaceEnvironment(projectPath, includeBranchDiff);
+                requestWorkspaceEnvironment(projectPath, includeBranchDiff, false, gitHistory);
               }}
               onRunTerminal={(command, projectPath, terminalId) =>
                 sendAction("runWorkspaceTerminalCommand", undefined, { sessionId: selectedCliSession?.id, command, projectPath, terminalId, targetDeviceId: workspaceTargetDeviceId })
@@ -3516,11 +3553,11 @@ function CliSessionsMenu(props: {
                   const time = typeof session.runningSince === "number" && Number.isFinite(session.runningSince) && session.runningSince > 0 && session.runningSince <= now + 5 * 60_000 ? formatElapsed(Math.max(0, now - session.runningSince)) : "Time unavailable";
                   const detail = `Goal: ${session.goal?.objective || (session.goal === null ? "No goal" : "Unavailable")}\nThinking: ${session.reasoningEffort || "Unavailable"}`;
                   const running = session.status === "running";
-                  const destination = running && props.browser ? "browser" : "VS Code";
+                  const destination = props.browser ? "browser" : "VS Code";
                   const offline = session.remote && !props.peers.some(peer => peer.id === session.deviceId && peer.connected);
                   return <article class="cli-sessions-running-row" role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
                     <div class="cli-sessions-running-copy">
-                    <button type="button" class="cli-sessions-running-title" disabled={(!running && !props.connected) || props.actionPending || session.status === 'unknown' || offline} aria-label={`${running ? 'View' : 'Resume'} ${session.title} in ${destination}`} title={offline ? 'System offline' : running ? `View in ${destination}` : 'Resume in VS Code'} onClick={() => props.onOpen(session)}>{session.title}</button>
+                    <button type="button" class="cli-sessions-running-title" disabled={(!running && !props.connected) || props.actionPending || session.status === 'unknown' || offline} aria-label={`${props.browser || running ? 'View' : 'Resume'} ${session.title} in ${destination}`} title={offline ? 'System offline' : props.browser || running ? `View in ${destination}` : 'Resume in VS Code'} onClick={() => props.onOpen(session)}>{session.title}</button>
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
@@ -3529,7 +3566,7 @@ function CliSessionsMenu(props: {
                   </article>;
                 })}
               </div>
-              <button type="button" class="cli-sessions-manage" onClick={props.onManage}>
+              {!props.browser ? <button type="button" class="cli-sessions-manage" onClick={props.onManage}>
                 <span class="cli-sessions-manage-icon" aria-hidden="true">
                   <CodexSessionsIcon />
                 </span>
@@ -3537,7 +3574,7 @@ function CliSessionsMenu(props: {
                 <span class="cli-sessions-manage-arrow" aria-hidden="true">
                   →
                 </span>
-              </button>
+              </button> : null}
             </div>,
             document.body
           )

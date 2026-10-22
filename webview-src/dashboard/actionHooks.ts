@@ -17,6 +17,7 @@ export function useDashboardActions(
   connected = true
 ) {
   const connection = useRef(connected); connection.current = connected;
+  const snapshot = useRef(state.snapshot); snapshot.current = state.snapshot;
   const readRequests = useRef(new Map<string, string>());
   useEffect(() => {
     const receive = (event: MessageEvent<DashboardHostMessage>) => {
@@ -88,6 +89,9 @@ export function useDashboardActions(
 
   const sendAction = useCallback<SendAction>((action, accountId, payload) => {
     const requestId = createActionRequestId(payload?.automatic);
+    const routedPayload = payload && Object.hasOwn(payload, 'targetDeviceId') ? payload : { ...payload, targetDeviceId: targetDeviceId && targetDeviceId !== 'local' ? targetDeviceId : undefined };
+    const peer = routedPayload?.targetDeviceId && routedPayload.targetDeviceId !== 'local'
+      ? snapshot.current?.connectedPeers?.find(item => item.id === routedPayload.targetDeviceId) : undefined;
     dispatch({
       type: "request-action",
       request: {
@@ -95,11 +99,10 @@ export function useDashboardActions(
         action,
         accountId,
         requestedAt: Date.now(),
-        timeoutMs: getActionTimeoutMs(action, payload?.accountIds?.length ?? actionFeedbackRef.current.accountCount)
+        timeoutMs: getActionTimeoutMs(action, payload?.accountIds?.length ?? (peer && !peer.local ? snapshot.current?.peerAccounts?.[peer.id]?.length : undefined) ?? actionFeedbackRef.current.accountCount)
       }
     });
-    const routedPayload = payload && Object.hasOwn(payload, 'targetDeviceId') ? payload : { ...payload, targetDeviceId: targetDeviceId && targetDeviceId !== 'local' ? targetDeviceId : undefined };
-    if (!connection.current) {
+    if (!connection.current || peer?.connected === false) {
       const key = OFFLINE_CACHE_READS.has(action) ? offlineReadCacheKey(action, accountId, routedPayload) : undefined;
       void (key ? readBrowserCache<DashboardActionResultPayload>(key) : Promise.resolve(undefined)).then(cached => {
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action, accountId, requestId,

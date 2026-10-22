@@ -24,6 +24,29 @@ afterEach(async () => { vi.useRealTimers(); await removeTestDirectory(mocks.home
 const finish = async (id: string) => { await vi.waitFor(() => expect(api.getMaintenanceJob(id).status).not.toBe("running")); return api.getMaintenanceJob(id); };
 
 describe("Codex maintenance safety", () => {
+  it('publishes bounded immutable progress and recovers an accepted job by preview without replaying writes', async () => {
+    const { subscribeDashboardRealtime } = await import('../src/services/dashboardRealtime');
+    const { isMaintenanceJob } = await import('../src/domain/maintenance');
+    const events: import('../src/domain/maintenance').MaintenanceJob[] = [];
+    const dispose = subscribeDashboardRealtime(message => { if (message.type === 'dashboard:maintenance-progress') events.push(message.job); });
+    try {
+      mocks.goals.mockResolvedValue(new Map(Array.from({ length: 1000 }, (_, index) => [`${index.toString(16).padStart(8, '0')}-aaaa-aaaa-aaaa-aaaaaaaaaaaa`, { objective: 'Clean goal', status: 'paused' }])));
+      const preview = await api.previewMaintenance('goals');
+      expect(() => api.getMaintenanceJob('', false, preview.token)).toThrow('No operation');
+      const job = api.runMaintenance(preview.token, true);
+      expect(api.getMaintenanceJob('', false, preview.token).id).toBe(job.id);
+      expect(() => api.getMaintenanceJob('', true, preview.token)).toThrow('no longer available');
+      await finish(job.id);
+      expect(events.length).toBeLessThanOrEqual(102);
+      expect(events[0]).toMatchObject({ processed: 0, status: 'running', previewToken: preview.token });
+      expect(events.at(-1)).toMatchObject({ processed: 1000, cleared: 1000, status: 'completed' });
+      expect(events.every(isMaintenanceJob)).toBe(true);
+      expect(events.every((event, index) => !index || event.revision! > events[index - 1]!.revision!)).toBe(true);
+      expect(mocks.clear).toHaveBeenCalledTimes(1000);
+      const home = mocks.home; mocks.home = home + '-other';
+      try { expect(() => api.getMaintenanceJob('', false, preview.token)).toThrow('no longer available'); } finally { mocks.home = home; }
+    } finally { dispose(); }
+  });
   it("coalesces simultaneous previews without starting duplicate storage reads", async () => {
     const first = api.previewMaintenance("archives"), second = api.previewMaintenance("archives");
     expect(first).toBe(second); expect((await first).count).toBe(2); expect(mocks.sessions).toHaveBeenCalledOnce();

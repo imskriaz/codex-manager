@@ -1,7 +1,18 @@
 # Changelog
 
-## 1.4.3
+## 1.4.3-pre.1
 
+- Subscribe to the browser's selected system on demand. Load its sessions once, then share file-change events without recurring session scans. Signed target subscriptions do not wake unrelated PCs or propagate peer demand; switching, closing, hiding, disconnecting, or expiring viewers releases monitoring. Keep lightweight authenticated presence for discovery and account ownership.
+
+- Correct cross-PC relay discovery when aggregates include the receiving PC; validate the full aggregate before applying it and retain newer peer data across delayed replies. Route remote session catalogs, workspace reads, and actions to their PC; replace only that PC's session rows, push changed peer sessions immediately, and keep browser caches/catalogs scoped by system. Revalidate after the browser handshake and reconnect.
+- Keep manually selected empty-quota accounts selected across reloads. A manual selection with available quota resumes automatic switching; uncertain quota waits for verification. Recheck the hold before automatic switching and reset-credit redemption.
+- Show account identity and system in the sidebar footer, put the System selector first in Account Center, and keep browser session navigation in the browser. Omit the Running Sessions footer in browsers.
+- Show transcript actions in a horizontal hover/focus overlay without an ellipsis or reserved height, and tighten paragraph spacing. Use single-line project session rows with time on the right; only verified running sessions animate project counts as running / total. Paused and blocked goals show Play; explicit blocked-goal resume keeps the native confirmation and failure guards.
+
+- Add on-demand project Git history with 50-row pages anchored to a stable revision, author/date/hash metadata, and scoped commit diffs. Preserve loaded history after failed refreshes and disable live reads offline.
+- Replace Tools' recurring status and search timers with bounded progress events, explicit search, and catch-up reads on reopening or reconnecting. Recover lost start acknowledgements by preview token without replaying cleanup; fence stale/foreign progress, retain cancellation, and cap peer progress buffering.
+
+## 1.4.3
 - Replace the Environment flyout with a fixed first Env tab and one header toggle for the right inspector. Add a compact Git tab for branch/status, changed files, commit, push review and comparison; keep terminal profiles in Terminal and tool selection in a floating menu.
 - Keep Git closable, place the add button immediately after open tabs, and summarize every inspector tool in Env's aligned list, including agent status and unsaved file drafts. Compact session rows and goal/queue strips, including smaller unboxed pause controls, without shrinking phone session touch targets.
 - Rebuild the project session hierarchy as a flat, dense tree: single-row system/project headings, one collapse control per project, inline counts, minimal indentation and status/time below each title. Remove duplicated project/system metadata, stacked selection cards and tree-divider clutter.
