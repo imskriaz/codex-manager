@@ -68,7 +68,7 @@ import { authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './das
 import { normalizeAccountTags } from '../domain/accountTags';
 import { readProjectBoard, readSavedProjectBoard, readSharedProjectTask } from './projectBoard';
 import { ProjectShareEvents } from './projectShareEvents';
-import { readProjectTask, getProjectShare, publicProjectBoard, saveProjectTask, addProjectComment, projectTaskKey } from './projectTasks';
+import { readProjectTask, getProjectShare, publicProjectBoard, saveProjectTaskWithAttachments, addProjectCommentWithAttachments, projectTaskKey } from './projectTasks';
 import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
 import { ConversationShares, sharedConversationPage, publicShareMessages } from "./conversationShares";
@@ -884,19 +884,19 @@ export class WebDashboardServer implements vscode.Disposable {
         }
         if (api && method === 'POST') {
           if (!isTrustedWebDashboardOrigin(request, configuredCloudflaredOrigin || undefined) || request.headers['x-codex-dashboard'] !== '1') { response.statusCode = 403; this.sendJson(response, { error: 'Cross-origin project request rejected.' }); return; }
-          const body = JSON.parse(await readDashboardRequestBody(request, 48 * 1024)) as Record<string, unknown>;
+          const body = JSON.parse(await readDashboardRequestBody(request, 2 * 1024 * 1024)) as Record<string, unknown>;
           const bodyText = (key: string): string => typeof body[key] === 'string' ? body[key] as string : '';
           if (!getProjectShare(token)) throw new Error('This project link expired or was revoked.');
           if (body['kind'] === 'task') {
             if (!share.permissions.includes('submissions')) throw new Error('Submissions are disabled for this link.');
-            saveProjectTask(share.projectPath, { id: bodyText('id'), title: bodyText('title'), prompt: bodyText('prompt'), stage: 'idea', expectedRevision: 0 });
+            await saveProjectTaskWithAttachments(share.projectPath, { id: bodyText('id'), title: bodyText('title'), prompt: bodyText('prompt'), stage: 'idea', expectedRevision: 0, uploads: body['uploads'] as import('../domain/chatAttachments').ChatAttachment[] | undefined }, () => { if (!getProjectShare(token)) throw new Error('This project link expired or was revoked.'); });
           } else if (body['kind'] === 'comment') {
             if (!share.permissions.includes('comments')) throw new Error('Comments are disabled for this link.');
             const taskId = bodyText('taskId');
             if (!getProjectShare(token)) throw new Error('This project link expired or was revoked.');
             if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
             const author = bodyText('author') || 'Visitor';
-            addProjectComment(share.projectPath, { id: bodyText('id'), taskId, text: bodyText('text'), author: `Guest · ${author.slice(0, 60)}` });
+            await addProjectCommentWithAttachments(share.projectPath, { id: bodyText('id'), taskId, text: bodyText('text'), author: `Guest · ${author.slice(0, 60)}`, uploads: body['uploads'] as import('../domain/chatAttachments').ChatAttachment[] | undefined }, () => { if (!getProjectShare(token) || readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task or project link is no longer available.'); });
           } else throw new Error('Unknown project request.');
           this.sendJson(response, { ok: true }); return;
         }

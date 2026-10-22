@@ -11,8 +11,9 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   if(width<=760 && await hideSidebar.isVisible()) await hideSidebar.click();
   assert.equal(await page.getByRole('button',{name:'Filter tasks',exact:true}).count(),0);
   assert.equal(await page.locator('.task-context-select small').count(),0,'Context selectors are single-line tabs');
-  assert.match(await page.locator('.task-system-select').getAttribute('title'),/sessions.*running/);
+  assert.equal(await page.locator('.task-system-select').count(),0,'The sidebar owns system switching');
   assert.match(await page.getByLabel('Task project',{exact:true}).getAttribute('title'),/tasks.*running/);
+  assert.ok((await page.locator('.task-project-select').boundingBox()).width<=90,'A short project name does not expand into empty toolbar space');
 
   await page.getByRole('button',{name:'Board actions',exact:true}).click();
   const ideaColumn=page.getByRole('menuitemcheckbox',{name:'Idea',exact:true});
@@ -28,8 +29,11 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await taskSearch.fill('  EVALUATE STACK  ');
   await page.locator('.task-board-card').filter({hasText:'Evaluate stack beyond expectations'}).waitFor();
   assert.equal(await page.locator('.task-board-card').count(),1,'Search finds a grouped session even when its parent is collapsed');
+  const closeSearch=page.getByRole('button',{name:'Close task search',exact:true});
+  if(await closeSearch.isVisible()) await closeSearch.click();
   await page.getByRole('tab',{name:'List',exact:true}).click();
   assert.equal(await page.locator('.task-list-title').count(),1,'The same search filters List');
+  if(!await taskSearch.isVisible()) await page.getByRole('button',{name:'Search tasks',exact:true}).click();
   await taskSearch.fill('no-match-for-this-task');
   await page.getByText('No matching tasks.',{exact:true}).waitFor();
   await taskSearch.press('Escape');
@@ -81,6 +85,16 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByRole('tab',{name:'Overview',exact:true}).waitFor();
   assert.ok(await task.locator('.settings-modal-title').evaluate(element=>{const r=element.getBoundingClientRect();return !!document.elementFromPoint(r.x+2,r.y+4)?.closest('.task-detail-panel');}),'Task title stays above floating workspace controls');
   await task.locator('.task-environment-grid').waitFor();
+  const unsentComment=task.getByRole('textbox',{name:'Add a comment',exact:true});
+  await unsentComment.fill('Keep this unsent comment while live metadata changes');
+  await page.evaluate(()=>{
+    for (const session of window.__uiSessions.filter(item=>item.title==='Evaluate stack beyond expectations' && !item.parentSessionId)) { session.model='live-model'; session.reasoningEffort='high'; }
+    window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'realtime-cli-metadata-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
+  });
+  await task.locator('.task-environment-grid dd').filter({hasText:/^live-model$/}).waitFor();
+  assert.equal(await unsentComment.inputValue(),'Keep this unsent comment while live metadata changes','Live metadata never overwrites a pending comment');
+  await unsentComment.fill('');
+
   const agentTotal=Number(await task.getByRole('tab',{name:/^Agents/}).locator('small').innerText());
   assert.equal(Number(await task.locator('.task-environment-grid dt').filter({hasText:/^Agents$/}).locator('..').locator('dd').innerText()),agentTotal,'Overview and Agents include the same main agent');
   const taskReadsBeforeAgents=await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='getProjectTaskDetails').length);
@@ -211,11 +225,11 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await page.getByRole('button',{name:'Actions for Idea collection updated',exact:true}).click();
   await page.getByRole('menuitem',{name:'Restore task',exact:true}).click();
   await page.locator('.task-board-card').filter({hasText:'Idea collection updated'}).waitFor();
-  const info = page.getByRole('button',{name:'Task info for Release work',exact:true});
-  await info.click();
-  await page.getByRole('dialog',{name:'Task info for Release work',exact:true}).getByText('Model',{exact:true}).waitFor();
-  const menuBounds=await page.getByRole('dialog',{name:'Task info for Release work',exact:true}).boundingBox();
-  assert.ok(menuBounds.x>=0 && menuBounds.x+menuBounds.width<=width+1 && menuBounds.y+menuBounds.height<=height+1,'Info stays within the viewport');
+  assert.equal(await page.getByRole('button',{name:/^Task info for /}).count(),0,'Metadata is visible without an info button');
+  assert.match(await page.locator('.task-board-card').filter({hasText:'Release work'}).locator('.task-card-meta').textContent(),/Task/);
+  await page.getByRole('button',{name:'Actions for Release work',exact:true}).click();
+  const menuBounds=await page.getByRole('menu',{name:'Actions for Release work',exact:true}).boundingBox();
+  assert.ok(menuBounds.x>=0 && menuBounds.x+menuBounds.width<=width+1 && menuBounds.y+menuBounds.height<=height+1,'Actions stay within the viewport');
   await page.keyboard.press('Escape');
   for (const name of ['List','Gantt','Calendar']) {
     await page.getByRole('tab',{name,exact:true}).click();
@@ -226,12 +240,16 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await page.screenshot({path:path.join(output,`tasks-${name.toLowerCase()}-${width}x${height}.png`)});
   }
   await page.getByRole('tab',{name:'Board',exact:true}).click();
-  assert.equal(await page.getByRole('combobox',{name:'Task system',exact:true}).count(),1);
+  assert.equal(await page.getByRole('combobox',{name:'Task system',exact:true}).count(),0);
   assert.equal(await page.getByRole('combobox',{name:'Task project',exact:true}).count(),1);
   if (width <= 760) {
     const inactive = page.getByRole('tab',{name:'List',exact:true}).locator('span');
     assert.equal(await inactive.isVisible(),false,'Only the active view keeps its label on phones');
     await page.getByRole('button',{name:'Search tasks',exact:true}).click();
+    const searchBox=page.locator('.task-board-search');
+    const searchBounds=await searchBox.boundingBox(), headerBounds=await page.locator('.task-board-header').boundingBox();
+    assert.ok(searchBounds.x>=headerBounds.x && searchBounds.x+searchBounds.width<=headerBounds.x+headerBounds.width+1 && searchBounds.y>=headerBounds.y && searchBounds.y+searchBounds.height<=headerBounds.y+headerBounds.height+1,'Phone search stays within the toolbar');
+    await page.screenshot({path:path.join(output,`task-search-${width}x${height}.png`)});
     await page.getByRole('searchbox',{name:'Search tasks',exact:true}).fill('Release');
     await page.getByRole('searchbox',{name:'Search tasks',exact:true}).fill('');
     await page.getByRole('searchbox',{name:'Search tasks',exact:true}).press('Escape');
@@ -244,7 +262,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   const sidebarToggle=page.locator('#task-sidebar-toggle-slot .cli-rail-toggle');
   if (width<=760 && await sidebarToggle.isVisible()) {
     assert.equal(await sidebarToggle.evaluate(element=>getComputedStyle(element).position),'static','Sidebar toggle belongs to the content header');
-    const toggle=await sidebarToggle.boundingBox(), heading=await page.locator('.task-system-select').boundingBox();
+    const toggle=await sidebarToggle.boundingBox(), heading=await page.locator('.task-project-select').boundingBox();
     assert.ok(heading.x>=toggle.x+toggle.width+3,'Workspace title clears the floating sidebar logo');
   }
   assert.ok(columns.height>=height*.58,'Board uses the available height');
@@ -272,15 +290,23 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await page.getByRole('menuitem',{name:'Share project',exact:true}).isDisabled(),true,'Sharing disables offline');
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: '＋ Task', exact: true }).click();
-  await task.getByLabel('Title', { exact: true }).fill('Offline task draft');
-  await task.getByLabel('Prompt / idea', { exact: true }).fill('Keep this work through reconnect.');
-  await task.getByRole('button', { name: 'Save task', exact: true }).click();
+  const create=page.getByRole('dialog',{name:'New task',exact:true});
+  assert.equal(await create.locator('[role=tablist],.task-environment-grid').count(),0,'New task has a focused form without metadata or tabs');
+  assert.equal(await create.getByLabel('Title',{exact:true}).evaluate(input=>input===document.activeElement),true,'New task focuses its title');
+  await create.getByLabel('Title', { exact: true }).fill('Offline task draft');
+  await create.getByLabel('Prompt / idea', { exact: true }).fill('Keep this work through reconnect.');
+  await create.locator('input[type=file]').setInputFiles({name:'task-brief.txt',mimeType:'text/plain',buffer:Buffer.from('Task attachment survives offline save')});
+  await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).waitFor();
+  await page.waitForFunction(()=>!document.querySelector('.task-create-modal button[type=submit]')?.disabled);
+  await page.screenshot({path:path.join(output,`new-task-${width}x${height}.png`)});
+  await create.getByRole('button', { name: 'Save task', exact: true }).click();
   if (width === 320) {
     await page.locator('.dashboard-notice-stack').getByText(/Browser storage is full or unavailable/).waitFor();
-    assert.equal(await task.getByLabel('Title', { exact: true }).inputValue(), 'Offline task draft', 'Storage failures preserve the open draft');
-    await task.getByRole('button', { name: 'Close task details', exact: true }).click();
+    assert.equal(await create.getByLabel('Title', { exact: true }).inputValue(), 'Offline task draft', 'Storage failures preserve the open draft');
+    assert.equal(await create.getByRole('button',{name:'Remove task-brief.txt',exact:true}).count(),1,'Storage failures preserve the attachment');
+    await create.getByRole('button', { name: 'Close new task', exact: true }).click();
   } else {
-    await task.waitFor({ state: 'hidden' });
+    await create.waitFor({ state: 'hidden' });
     await page.locator('.task-board-card').filter({ hasText: 'Offline task draft' }).waitFor();
     await page.locator('.dashboard-notice-stack').getByText('Saved offline.',{exact:true}).waitFor();
   }
@@ -290,6 +316,40 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore, 'Offline drafts never send a live request');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
   if (width !== 320) await page.waitForFunction(before => window.__uiActions.filter(message => message.action === 'saveProjectTask').length === before + 1, sentBefore);
+  if (width === 390) {
+    assert.equal(await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='saveProjectTask'&&item.payload.task.title==='Offline task draft').at(-1).payload.task.uploads[0].data),'Task attachment survives offline save');
+    await page.locator('.task-board-card').filter({hasText:'Offline task draft'}).click();
+    await task.getByRole('button',{name:'task-brief.txt',exact:true}).click();
+    const preview=page.locator('.task-attachment-modal');
+    await preview.getByText('Task attachment survives offline save',{exact:true}).waitFor();
+    const download=page.waitForEvent('download'); await preview.getByRole('link',{name:'Download',exact:true}).click();
+    assert.equal((await download).suggestedFilename(),'task-brief.txt');
+    await preview.getByRole('button',{name:'Close attachment',exact:true}).click();
+    const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+    await task.locator('input[type=file]').setInputFiles({name:'comment.png',mimeType:'image/png',buffer:pixel});
+    await task.getByRole('button',{name:'Remove comment.png',exact:true}).waitFor();
+    await task.getByRole('button',{name:'Add comment',exact:true}).click();
+    await page.waitForFunction(()=>window.__uiActions.some(item=>item.action==='addProjectComment'&&item.payload.comment.uploads?.[0]?.name==='comment.png'&&item.payload.comment.text===''));
+    await task.getByRole('button',{name:'comment.png',exact:true}).click();
+    await preview.locator('img').waitFor();
+    await preview.getByRole('button',{name:'Close attachment',exact:true}).click();
+    await task.getByRole('button',{name:'Close task details',exact:true}).click();
+    await page.evaluate(()=>new Promise((resolve,reject)=>{
+      const request=indexedDB.open('codex-manager-cache',1);
+      request.onerror=()=>reject(request.error);
+      request.onsuccess=()=>{const db=request.result, transaction=db.transaction('cli-sessions','readwrite');transaction.oncomplete=()=>{db.close();resolve();};transaction.onerror=()=>reject(transaction.error);transaction.objectStore('cli-sessions').put({key:'browser:outbox:legacy-fixture',updatedAt:Date.now(),value:{savedAt:Date.now(),project:'D:/demo',device:'local',task:{id:'legacy-task',title:'Review legacy owner',prompt:'Keep this safe',stage:'planned',expectedRevision:0}}});};
+    }));
+    const beforeLegacy=await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='saveProjectTask').length);
+    await page.getByRole('button',{name:'Board actions',exact:true}).click();
+    await page.getByRole('menuitem',{name:/^Sync drafts/}).click();
+    const legacy=page.locator('.task-sync-conflicts').filter({hasText:'Saved changes need a system'});
+    await legacy.locator('summary').click();
+    assert.equal(await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='saveProjectTask').length),beforeLegacy,'An unowned legacy change is never replayed automatically');
+    await legacy.getByRole('button',{name:'Assign to this system',exact:true}).click();
+    await page.getByRole('dialog',{name:'Assign saved change?',exact:true}).getByRole('button',{name:'Assign to this system',exact:true}).click();
+    await page.waitForFunction(()=>window.__uiActions.some(item=>item.action==='saveProjectTask'&&item.payload.task?.id==='legacy-task'));
+    assert.equal(await page.evaluate(()=>window.__uiActions.find(item=>item.action==='saveProjectTask'&&item.payload.task?.id==='legacy-task').payload.targetDeviceId),await page.locator('.cli-rail-system select').inputValue(),'Explicit recovery assigns the actual system ID');
+  }
   await page.screenshot({ path: path.join(output, `project-board-${width}x${height}.png`) });
 
   if (width > 760) {
@@ -308,28 +368,28 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await api.getByText('Project reader', { exact: true }).waitFor();
     assert.equal(await api.locator('tbody tr').count(), 2, 'Named tokens are displayed in a table');
     await api.getByRole('button', { name: '+ Create token', exact: true }).click();
-    const create = page.locator('.api-create-modal');
-    const identity=await create.locator('.api-token-identity').boundingBox(), permissionColumn=await create.locator('.api-token-permission-column').boundingBox();
+    const tokenForm = page.locator('.api-create-modal');
+    const identity=await tokenForm.locator('.api-token-identity').boundingBox(), permissionColumn=await tokenForm.locator('.api-token-permission-column').boundingBox();
     assert.ok(width>650 ? permissionColumn.x>=identity.x+identity.width && Math.abs(identity.y-permissionColumn.y)<=2 : permissionColumn.y>=identity.y+identity.height,'Token form uses aligned columns or a narrow-screen stack');
-    assert.ok(await create.evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Token form has no horizontal overflow');
-    await create.getByRole('checkbox', { name: 'Check all permissions', exact: true }).check();
-    const operation = create.getByRole('checkbox', { name: 'getProjectBoard', exact: true });
+    assert.ok(await tokenForm.evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Token form has no horizontal overflow');
+    await tokenForm.getByRole('checkbox', { name: 'Check all permissions', exact: true }).check();
+    const operation = tokenForm.getByRole('checkbox', { name: 'getProjectBoard', exact: true });
     assert.equal(await operation.isChecked(), true);
     await operation.uncheck();
-    assert.equal(await create.getByRole('checkbox', { name: 'Check all permissions', exact: true }).isChecked(), false, 'Check all keeps individual permissions editable');
-    await create.getByRole('checkbox', { name: 'All projects', exact: true }).uncheck();
-    await create.getByRole('checkbox', { name: 'demo', exact: true }).check();
-    await create.getByRole('checkbox', { name: 'getProjectBoard', exact: true }).check();
-    await create.getByRole('textbox', { name: 'Token name', exact: true }).fill('Scoped automation');
+    assert.equal(await tokenForm.getByRole('checkbox', { name: 'Check all permissions', exact: true }).isChecked(), false, 'Check all keeps individual permissions editable');
+    await tokenForm.getByRole('checkbox', { name: 'All projects', exact: true }).uncheck();
+    await tokenForm.getByRole('checkbox', { name: 'demo', exact: true }).check();
+    await tokenForm.getByRole('checkbox', { name: 'getProjectBoard', exact: true }).check();
+    await tokenForm.getByRole('textbox', { name: 'Token name', exact: true }).fill('Scoped automation');
     await page.screenshot({ path: path.join(output, `api-create-${width}x${height}.png`) });
-    await create.getByRole('button', { name: 'Create token', exact: true }).click();
-    await create.getByRole('textbox', { name: 'New API token', exact: true }).waitFor();
+    await tokenForm.getByRole('button', { name: 'Create token', exact: true }).click();
+    await tokenForm.getByRole('textbox', { name: 'New API token', exact: true }).waitFor();
     assert.ok(await page.evaluate(() => window.__uiActions.some(message => message.action === 'generateApiToken' && message.payload?.tokenProjectPaths?.includes('D:/demo'))), 'Token creation sends the selected project checkbox scope');
     await page.evaluate(() => { window.__savedClipboard = navigator.clipboard; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); });
-    await create.getByRole('button', { name: 'Copy token', exact: true }).click();
-    await create.getByText('Copy blocked. Select the token and copy it manually.', { exact: true }).waitFor();
+    await tokenForm.getByRole('button', { name: 'Copy token', exact: true }).click();
+    await tokenForm.getByText('Copy blocked. Select the token and copy it manually.', { exact: true }).waitFor();
     await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: window.__savedClipboard }));
-    await create.getByRole('button', { name: 'Close token form', exact: true }).click();
+    await tokenForm.getByRole('button', { name: 'Close token form', exact: true }).click();
     await api.getByRole('tab', { name: 'Explorer', exact: true }).click();
     await api.getByText('POST /api/message', { exact: true }).waitFor();
     await api.getByRole('tab', { name: 'Test', exact: true }).click();

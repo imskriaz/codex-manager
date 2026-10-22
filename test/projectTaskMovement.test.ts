@@ -1,10 +1,10 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { DashboardCliSessionSummary } from '../src/domain/dashboard/types';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
-import { saveProjectTask, readProjectTask, readProjectTasks, syncProjectSessions } from '../src/services/projectTasks';
+import { saveProjectTaskWithAttachments, projectTaskKey, saveProjectTask, readProjectTask, readProjectTasks, syncProjectSessions } from '../src/services/projectTasks';
 import { moveProjectTask, startProjectTaskSession } from '../src/services/projectTaskMovement';
 import { removeTestDirectory } from './testFilesystem';
 
@@ -92,4 +92,22 @@ it('does not dispatch a session start when the durable claim cannot be stored', 
 it('keeps an accepted start unlinked when the account home changes, and prevents blind retry', async () => {
   const task=custom();state.start.mockImplementation(async()=>{state.home=join(root,'another-home');return newId;});
   await expect(startProjectTaskSession(root,task.id,task.revision)).rejects.toThrow(/home changed/);expect(readProjectTask(root,task.id)?.launchPending).toBe(true);
+});
+
+it('loads saved task attachments before claiming a start and passes them to the native session', async () => {
+  const upload={id:'brief',name:'brief.txt',kind:'text' as const,mimeType:'text/plain',size:1,data:'Attached requirements'};
+  const task=await saveProjectTaskWithAttachments(root,{id:'attached',title:'Attached task',prompt:'',stage:'planned',expectedRevision:0,uploads:[upload]});
+  await startProjectTaskSession(root,task.id,task.revision);
+  expect(state.start).toHaveBeenCalledWith(expect.objectContaining({attachments:[expect.objectContaining({name:'brief.txt',data:'Attached requirements'})],text:'Review the attached files for Attached task.'}));
+});
+
+it('does not claim or start a session when a task upload is missing', async () => {
+  const upload={id:'brief',name:'brief.txt',kind:'text' as const,mimeType:'text/plain',size:1,data:'Required context'};
+  const input={id:'missing-file',title:'Missing upload',prompt:'Read the attachment',stage:'planned' as const,expectedRevision:0,uploads:[upload]};
+  const task=await saveProjectTaskWithAttachments(root,input);
+  await unlink(join(root,'manager','attachments',projectTaskKey(root),task.attachments![0]!.hash));
+  await expect(startProjectTaskSession(root,task.id,task.revision)).rejects.toThrow('missing');
+  expect(state.start).not.toHaveBeenCalled(); expect(readProjectTask(root,task.id)?.launchPending).not.toBe(true);
+  await saveProjectTaskWithAttachments(root,input);
+  await startProjectTaskSession(root,task.id,task.revision); expect(state.start).toHaveBeenCalledOnce();
 });

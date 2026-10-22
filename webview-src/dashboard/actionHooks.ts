@@ -102,15 +102,18 @@ export function useDashboardActions(
         timeoutMs: getActionTimeoutMs(action, payload?.accountIds?.length ?? (peer && !peer.local ? snapshot.current?.peerAccounts?.[peer.id]?.length : undefined) ?? actionFeedbackRef.current.accountCount)
       }
     });
+    const localSystemId = snapshot.current?.connectedPeers?.find(item => item.local)?.id;
+    const cacheKey = OFFLINE_CACHE_READS.has(action) && (localSystemId || peer?.id)
+      ? offlineReadCacheKey(action, accountId, routedPayload, localSystemId) : undefined;
     if (!connection.current || peer?.connected === false) {
-      const key = OFFLINE_CACHE_READS.has(action) ? offlineReadCacheKey(action, accountId, routedPayload) : undefined;
+      const key = cacheKey;
       void (key ? readBrowserCache<DashboardActionResultPayload>(key) : Promise.resolve(undefined)).then(cached => {
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action, accountId, requestId,
           status: cached ? 'completed' : 'failed', ...(cached ? { payload: { ...cached, notice: { level: 'warning', message: 'Offline saved view. Reconnect to verify the latest state.' } } } : { error: 'The host is offline. This operation was not sent or queued. Reconnect and retry.' }) } }));
       });
       return requestId;
     }
-    if (OFFLINE_CACHE_READS.has(action)) readRequests.current.set(requestId, offlineReadCacheKey(action, accountId, routedPayload));
+    if (cacheKey) readRequests.current.set(requestId, cacheKey);
     try {
       postMessageToHost({
         type: "dashboard:action",

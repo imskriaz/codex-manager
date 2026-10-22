@@ -549,6 +549,37 @@ describe("browser dashboard bridge", () => {
     expect(events).toContainEqual(expect.objectContaining({ requestId: 'refresh-race', status: 'completed' }));
   });
 
+  it('rejects late HTTP and socket confirmations after the origin changes host PC', async () => {
+    const events: any[] = [], sockets: Socket[] = [], reads: Array<(response: unknown) => void> = [];
+    class Socket {
+      static readonly OPEN = 1; readyState = 1;
+      listeners = new Map<string, (event?: any) => void>(); send = vi.fn(); close = vi.fn();
+      constructor() { sockets.push(this); }
+      addEventListener(name: string, callback: (event?: any) => void) { this.listeners.set(name, callback); }
+    }
+    const windowMock = { dispatchEvent: (event: any) => events.push(event.data), WebSocket: Socket,
+      setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { protocol: 'http:', host: 'localhost' },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: any) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync('media/webview/browserHost.js', 'utf8'), { window: windowMock, MessageEvent: Event,
+      fetch: vi.fn(() => new Promise(resolve => reads.push(resolve))), console: { error: vi.fn() }, JSON, Date, Map, Error, Array });
+    const socket = sockets[0]!; socket.listeners.get('open')!();
+    const post = windowMock.acquireVsCodeApi!().postMessage;
+    const push = (data: unknown) => socket.listeners.get('message')!({ data: JSON.stringify(data) });
+    const system = (id: string) => push({ type: 'dashboard:snapshot', state: { connectedPeers: [{ id, local: true }] } });
+    system('host-a');
+    await post({ type: 'dashboard:action', action: 'switch', requestId: 'old-socket' });
+    const http = post({ type: 'dashboard:action', action: 'refreshView', requestId: 'old-http' });
+    system('host-b');
+    push({ type: 'dashboard:action-result', action: 'switch', requestId: 'old-socket', status: 'completed' });
+    reads[0]!({ ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ messages: [{ type: 'dashboard:action-result', requestId: 'old-http', action: 'refreshView', status: 'completed', payload: { cliSessions: [{ id: 'old-host-data' }] } }] }) });
+    await http;
+    expect(events.filter(event => event.requestId === 'old-socket').map(event => event.status)).toEqual(['failed']);
+    expect(events.filter(event => event.requestId === 'old-http').map(event => event.status)).toEqual(['failed']);
+    expect(events.find(event => event.requestId === 'old-http').error).toContain('host changed');
+    expect(socket.send).toHaveBeenCalledTimes(1);
+  });
+
   it('bounds and deduplicates HTTP fallback actions without marking a full queue offline', async () => {
     const events: any[] = [], reads: Array<(response: unknown) => void> = [];
     const windowMock = { dispatchEvent: (event: any) => events.push(event.data), setTimeout: vi.fn(), clearTimeout: vi.fn(), location: {},

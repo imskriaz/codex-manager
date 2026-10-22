@@ -14,6 +14,10 @@ describe("chat attachments", () => {
     expect(appServerChatInput(prepared.text, prepared.attachments)[1]).toEqual({ type: "image", url: image.data });
     expect(prepareChatInput("", [image]).text).toContain("attached image");
   });
+  it("canonicalizes text media metadata before drafts, task storage or session delivery", () => {
+    const [file] = validateChatAttachments([{ ...text, mimeType: "text/html;" + "x".repeat(100_000) }]);
+    expect(file).toEqual({ ...text, mimeType: "text/plain", size: text.data.length });
+  });
   it("rejects forged types, duplicate identities, oversized inputs, and invalid names", () => {
     expect(() => validateChatAttachments([{ ...image, data: "data:image/png;base64,YmFk" }])).toThrow(/format/);
     expect(() => validateChatAttachments([text, text])).toThrow(/invalid/);

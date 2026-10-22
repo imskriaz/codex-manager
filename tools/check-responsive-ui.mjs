@@ -16,6 +16,8 @@ const response = await fetch(`${origin}/api/state`);
 if (!response.ok) throw new Error(`Local dashboard snapshot returned ${response.status}.`);
 const snapshot = await response.json();
 Object.assign(snapshot.copy, dashboardCopyResources.en);
+snapshot.connectedPeers = [{ id: 'fixture-local', name: 'This PC', connected: true, local: true, sessionCount: 2 }];
+snapshot.peerAccounts = {};
 snapshot.settings.cliIntegrationEnabled = true;
 snapshot.settings.webDashboardEnabled = true;
 snapshot.settings.codexAppRestartEnabled = true;
@@ -63,6 +65,8 @@ const mockHost = `(() => {
     {id:'idea-fixture',title:'Idea collection',prompt:'A visitor suggestion',stage:'idea',manualStage:'idea',revision:1,createdAt:Date.now()-3600000,updatedAt:Date.now()-300000},
     ...[...new Map(sessions.filter(session=>!session.parentSessionId).map(session=>[session.id,session])).values()].map(session=>({id:'session:'+session.id,title:session.title,prompt:'',stage:session.status==='running'?'running':session.archived?'completed':'planned',revision:1,createdAt:1,updatedAt:1,sessionId:session.id,sourceKey:'fixture:'+session.id,timing:{firstStartedAt:Date.now()-3600000,lastObservedAt:Date.now()-600000,durationMs:1200000,runCount:2},parentTaskId:session.id===${JSON.stringify(parentId)}?'release-group':undefined}))
   ];
+  const uploadFiles = new Map();
+  const uploadMetadata = files => files?.map(({data,...file})=>{uploadFiles.set(file.id,{...file,data});return {...file,hash:'f'.repeat(64)};});
   let projectRevision=1; window.__advanceBoard=()=>{projectTasks.find(task=>task.id==='idea-fixture').title='Idea collection updated';projectRevision++;};
   const projectBoard = () => ({projectPath:'D:/demo',homeKey:'fixture',revision:projectRevision,tasks:projectTasks,comments:taskComments,sessions:[...sessions.filter(session=>!session.parentSessionId),...taskSessions],updatedAt:Date.now()});
   const apiTokens=[{id:'token-project',name:'Project reader',projectPath:'D:/demo',permissions:['state','getProjectBoard'],createdAt:1},{id:'token-all',name:'Owner operations',permissions:['*'],createdAt:1}];
@@ -150,7 +154,7 @@ const mockHost = `(() => {
         }
         else if(message.action==='saveProjectTask') {
           if(window.__failTaskSaves) error='This task changed in another browser. Your draft was kept.';
-          else {const input=message.payload.task,index=projectTasks.findIndex(task=>task.id===input.id),task={...projectTasks[index],...input,manualStage:projectTasks[index]?.sourceKey?projectTasks[index].manualStage:input.stage,parentTaskId:input.parentTaskId===null?undefined:input.parentTaskId??projectTasks[index]?.parentTaskId,revision:input.expectedRevision+1,createdAt:Date.now(),updatedAt:Date.now()};if(index<0)projectTasks.push(task);else projectTasks[index]=task;projectRevision++;payload={projectBoard:projectBoard(),notice:{level:'info',message:input.hidden===true?'Session hidden from boards.':input.hidden===false?'Session restored to boards.':'Task saved.'}};}
+          else {const {uploads,...input}=message.payload.task,index=projectTasks.findIndex(task=>task.id===input.id),task={...projectTasks[index],...input,attachments:uploadMetadata(uploads)??projectTasks[index]?.attachments,manualStage:projectTasks[index]?.sourceKey?projectTasks[index].manualStage:input.stage,parentTaskId:input.parentTaskId===null?undefined:input.parentTaskId??projectTasks[index]?.parentTaskId,revision:input.expectedRevision+1,createdAt:Date.now(),updatedAt:Date.now()};if(index<0)projectTasks.push(task);else projectTasks[index]=task;projectRevision++;payload={projectBoard:projectBoard(),notice:{level:'info',message:input.hidden===true?'Session hidden from boards.':input.hidden===false?'Session restored to boards.':'Task saved.'}};}
         }
         else if(message.action==='moveProjectTask') {
           const task=projectTasks.find(task=>task.id===message.payload.taskId);
@@ -163,13 +167,18 @@ const mockHost = `(() => {
           projectTasks.push({id:'session:'+id,title:message.payload.text,prompt:message.payload.text,sessionId:id,sourceKey:'fixture:'+id,parentTaskId:message.payload.taskId,stage:'running',revision:1,createdAt:Date.now(),updatedAt:Date.now()});
           projectRevision++;payload={projectBoard:projectBoard()};
         }
-        else if(message.action==='addProjectComment') {if(!taskComments.some(item=>item.id===message.payload.comment.id))taskComments.push({...message.payload.comment,author:'Owner',createdAt:Date.now()});projectRevision++;payload={projectBoard:projectBoard()};}
+        else if(message.action==='addProjectComment') {const {uploads,...input}=message.payload.comment;if(!taskComments.some(item=>item.id===input.id))taskComments.push({...input,attachments:uploadMetadata(uploads),author:'Owner',createdAt:Date.now()});projectRevision++;payload={projectBoard:projectBoard()};}
         else if(message.action==='shareProjectBoard') payload=window.__partialProjectShare ? {} : {projectShare:{token:'b'.repeat(64),expiresAt:Date.now()+86400000,permissions:message.payload.sharePermissions}};
         else if(message.action==='revokeProjectShares') { if(window.__failProjectRevoke) error='Revocation was not confirmed.'; else payload={notice:{level:'info',message:'All project links revoked.'}}; }
         else if(message.action==='listApiTokens') payload={apiTokens};
         else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token',name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
         else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
         else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined});payload={cliSession:session};}}
+        else if(message.action==='readWorkspaceFile' && message.payload.filePath.startsWith('@manager-attachment/')) {
+          const file=uploadFiles.get(decodeURIComponent(message.payload.filePath.split('/').at(-1)));
+          if(!file) error='This attachment is unavailable.';
+          else payload={workspaceFile:{path:file.name,content:file.kind==='text'?file.data:'',kind:file.kind,language:'plaintext',mimeType:file.mimeType,size:file.size,revision:'upload-fixture',...(file.kind==='image'?{dataUrl:file.data}:{})}};
+        }
         else if(message.action==='readWorkspaceFile') payload={workspaceFile:{path:message.payload.filePath,content:message.payload.filePath.endsWith('older.ts')?'const older = 2;':'const task = 1;',kind:'text',language:'typescript',mimeType:'text/plain',size:15,revision:window.__fileRevision||'fixture'}};
         else         if(message.action === 'downloadLogs' || message.action === 'viewLogs') {
           if(message.action === 'viewLogs') logReads++;
@@ -274,12 +283,18 @@ const mockHost = `(() => {
 })();`;
 const output = path.join(tmpdir(), "codex-manager-ui-check");
 await mkdir(output, { recursive: true });
+async function selectSidebarSystem(page, width, id) {
+  const show = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
+  if (await show.isVisible()) await show.click();
+  await page.locator('.cli-rail-system select').selectOption(id);
+  if (width <= 760) await page.getByRole('button', { name: 'Hide sessions sidebar', exact: true }).click();
+}
 async function checkClosedProject(page, width, errors) {
     await page.goto(`${origin}/workspace/${parentId}?closed-project`);
-    await page.waitForFunction(() => window.__uiActions.some(action => action.action === "getWorkspaceEnvironment" && action.payload?.projectPath === "D:/closed-worktree"));
     if (width <= 1180) {
       await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
     }
+    await page.waitForFunction(() => window.__uiActions.some(action => action.action === "getWorkspaceEnvironment" && action.payload?.projectPath === "D:/closed-worktree"));
     const closedFiles = page.getByRole("tab", { name: "Files", exact: true });
     if (await closedFiles.count()) await closedFiles.click();
     else {
@@ -529,7 +544,7 @@ try {
       assert.equal(await filter.inputValue(),'client');
       await page.evaluate(()=>{
         const state=window.__uiSnapshot;
-        state.connectedPeers=[{id:'local',name:'Local system',local:true,connected:true,sessionCount:2},{id:'fixture-system',name:'Remote system',connected:true,sessionCount:1}];
+        state.connectedPeers=[{id:'fixture-local',name:'Local system',local:true,connected:true,sessionCount:2},{id:'fixture-system',name:'Remote system',connected:true,sessionCount:1}];
         state.accounts[0].tags=['Local only'];state.accounts[0].enabled=false;state.accounts[0].updatedAt=Date.now();
         state.peerAccounts={'fixture-system':[{...state.accounts[0],tags:['Remote only'],enabled:false,isActive:false,isCurrentWindowAccount:false}]};
         window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}}));
@@ -563,6 +578,7 @@ try {
     if (process.argv.includes('--systems')) {
       await page.goto(`${origin}/?device=missing-system`);
       await page.locator('#dashboard-main').waitFor();
+      await page.locator('.cli-rail-toggle').waitFor();
       const missingRail=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
       if(await missingRail.isVisible()) await missingRail.click();
       await page.waitForFunction(()=>window.__uiActions.some(message=>message.type==='dashboard:workspace-presence'&&message.targetDeviceId==='missing-system'));
@@ -584,7 +600,7 @@ try {
         window.__systemFixture=true;
         const state=window.__uiSnapshot, template=state.accounts[0];
         state.settings.privacyMode=false;
-        state.connectedPeers=[{id:'local',name:'Local system',local:true,connected:true,sessionCount:2},{id:'fixture-system',name:'Remote system',connected:true,sessionCount:1}];
+        state.connectedPeers=[{id:'fixture-local',name:'Local system',local:true,connected:true,sessionCount:2},{id:'fixture-system',name:'Remote system',connected:true,sessionCount:1}];
         state.peerAccounts={'fixture-system':[{...template,id:'remote-account',displayName:'Remote identity',email:'remote@example.test',isActive:true,isCurrentWindowAccount:true}]};
         window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}}));
       });
@@ -612,7 +628,7 @@ try {
       assert.equal(await center.getByRole('combobox',{name:'Account system',exact:true}).inputValue(),'fixture-system');
       await center.getByText('Remote identity',{exact:true}).waitFor();
       await page.keyboard.press('Escape');
-      await picker.selectOption('local');
+      await picker.selectOption('fixture-local');
       await page.waitForFunction(()=>!window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId);
       await page.getByRole('button',{name:'Expand demo',exact:true}).waitFor();
       if(width!==320) await page.waitForFunction(()=>new Promise(resolve=>{
@@ -622,7 +638,7 @@ try {
       await page.evaluate(()=>{window.__holdNextSystemList=true;window.__heldSystemList=undefined;});
       await picker.selectOption('fixture-system');
       await page.waitForFunction(()=>!!window.__heldSystemList);
-      await picker.selectOption('local');
+      await picker.selectOption('fixture-local');
       await page.getByRole('button',{name:'Expand demo',exact:true}).waitFor();
       await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldSystemList})));
       await page.getByRole('button',{name:'New chat',exact:true}).click();
@@ -642,6 +658,8 @@ try {
       assert.ok(new URL(page.url()).pathname !== '/workspace','Legacy heartbeat pushes cannot delete the route');
 
       assert.ok(new URL(page.url()).searchParams.get('device')==='fixture-system','Remote conversation retains system in browser URL');
+      const showRemoteTools=page.getByRole('button',{name:'Show workspace tools',exact:true});
+      if(await showRemoteTools.isVisible()) await showRemoteTools.click();
       await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='getWorkspaceEnvironment'&&action.payload?.targetDeviceId==='fixture-system'&&action.payload?.projectPath==='E:/remote-project'));
       await page.evaluate(()=>{window.__uiSnapshot.connectedPeers[1].connected=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
       await page.getByText('Reconnecting · live updates paused',{exact:true}).waitFor();
@@ -754,12 +772,11 @@ try {
         const active = { ...template, id: 'warning-active', email: 'active@example.com', enabled: true, isActive: true, isCurrentWindowAccount: true, runningOnThisDevice: true, runningDeviceName: undefined, switchQueued: false, hasQuota402: false, healthKind: 'healthy', hasQuotaError: false, hasPendingResetCreditAttempt: false, lastQuotaAt: Date.now()-10000, sessionStartedAt: undefined, subscriptionExpiresAt: Date.now()/1000+30*86400, resetCreditsAvailable: 2, metrics: [{key:'hourly',period:'hourly',visible:true,percentage:90},{key:'weekly',period:'weekly',visible:true,percentage:90}] };
         const ready = { ...active, id: 'warning-ready', email: 'ready@example.com', isActive: false, isCurrentWindowAccount: false, runningOnThisDevice: false };
         state.accounts = [active, ready];
-        state.connectedPeers = [{id:'local',name:'This PC',local:true,connected:true,sessionCount:2},{id:'warning-remote',name:'Remote PC',connected:true,sessionCount:0}];
+        state.connectedPeers = [{id:'fixture-local',name:'This PC',local:true,connected:true,sessionCount:2},{id:'warning-remote',name:'Remote PC',connected:true,sessionCount:0}];
         state.peerAccounts = { 'warning-remote': [{...ready,id:'remote-ready',email:'remote@example.com'}] };
         window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:snapshot',state}}));
       });
-      await page.locator('#codexDashboardButton').click();
-      await page.locator('.dashboard-pc-picker-popover').getByRole('option').nth(1).click();
+      await selectSidebarSystem(page, width, 'warning-remote');
       const warn = async (targetDeviceId = 'local') => page.evaluate(targetDeviceId => {
         window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:notice',notificationId:'warning-'+targetDeviceId,level:'warning',message:'Account quota is low.',actions:['Switch account','Select Account','Later'],actionPrompt:{kind:'quotaWarning',targetDeviceId,accountId:'warning-active',message:'Account quota is low.',switchAccountId:targetDeviceId==='local'?'warning-ready':'remote-ready',switchLabel:'Switch account',resetLabel:'Reset usage',selectLabel:'Select Account',laterLabel:'Later'}}}));
       }, targetDeviceId);
@@ -917,6 +934,11 @@ try {
       assert.equal(await page.getByRole('button', { name: 'Share', exact: true }).count(), 0);
       const sessionActions = page.getByRole('button', { name: 'Session actions', exact: true });
       await sessionActions.focus(); await page.keyboard.press('Enter');
+      await page.getByRole('menuitem',{name:'Open in Codex',exact:true}).click();
+      await page.waitForFunction(id=>window.__uiActions.some(action=>action.action==='openCodexCliSession'&&action.payload.sessionId===id),parentId);
+      await page.locator('.dashboard-notice').filter({hasText:'Opened in VS Code.'}).waitFor();
+      await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+      await sessionActions.click();
       const sessionShare = page.getByRole('menuitem', { name: 'Share', exact: true });
       assert.equal(await sessionShare.locator('svg').count(), 1);
       const sessionMenu = await page.getByRole('menu').boundingBox();
@@ -1004,6 +1026,8 @@ try {
     await page.goto(`${origin}/workspace`);
     await page.locator(".cli-workspace").waitFor();
     const empty=page.locator('.cli-workspace-empty');
+    assert.equal(await page.getByRole('button',{name:'Show workspace tools',exact:true}).count(),0,'Welcome never offers the right sidebar');
+    assert.equal(await page.getByRole('complementary',{name:'Workspace tools',exact:true}).count(),0,'Welcome has no right panel');
     const welcome=await empty.boundingBox(), conversation=await page.locator('.cli-conversation').boundingBox();
     assert.ok(welcome && conversation && welcome.height > conversation.height * .7, 'Welcome uses the available workspace instead of an extra grid track');
 
@@ -1058,6 +1082,10 @@ try {
       assert.ok(metaBounds.y - titleBounds.y - titleBounds.height <= 2, "Mobile title and metadata have no excessive gap");
       assert.ok((await page.locator(".cli-session-row-select").first().boundingBox()).height >= 40, "Compact text keeps the row touch target");
     }
+    const runningHoverRow=page.locator('.cli-session-row').filter({hasText:'Running workspace task'});
+    await runningHoverRow.hover();
+    assert.equal(await runningHoverRow.locator('.cli-session-row-actions button').count(),1,'Running rows have a single automation action');
+    assert.equal(await runningHoverRow.locator('.cli-session-queue-wrap').count(),0,'Queue and Auto Resume never compete on a running row');
     const initialOrder = await page.locator(".cli-session-row-main > strong").allTextContents();
     await page.evaluate(() => { window.__uiSessions.reverse(); window.__uiSessions.forEach(session => { session.updatedAt = new Date().toISOString(); }); });
     await page.getByRole("button", { name: "Refresh sessions", exact: true }).click();
@@ -1285,7 +1313,7 @@ try {
     await page.locator(".cli-agent-tabs").getByRole("tab", { name: "Reviewer", exact: true }).waitFor();
     await page.getByText("Agent reviewer message", { exact: true }).waitFor();
     assert.equal(await page.getByText("Get codex sub agent messages completed.", { exact: true }).count(), 0, "Agent loading must not cover the composer with redundant success feedback");
-    await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
+    await page.locator(".cli-context-tabbar").getByRole("button", { name: "Close workspace tools", exact: true }).click();
     await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
     assert.equal(await page.getByRole("button", { name: "New VS Code terminal", exact: true }).count(), 0, "Only one panel creation control");
     for (const tool of ["files", "reviews"]) {
@@ -1334,6 +1362,8 @@ try {
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     const composer = page.getByRole("textbox", { name: "Message Codex", exact: true });
     assert.equal(await composer.inputValue(), "", "New chats must not inherit another chat's draft");
+    assert.equal(await page.getByRole('button',{name:'Show workspace tools',exact:true}).count(),0,'New chat never opens the right sidebar');
+    assert.equal(await page.getByRole('complementary',{name:'Workspace tools',exact:true}).count(),0);
     await page.evaluate(() => window.__releaseAttachmentRead());
     await page.getByRole("button", { name: "Attach files", exact: true }).waitFor();
     await page.getByText("Attachments saved in the previous chat draft. Return there to use them.", { exact: true }).waitFor();
@@ -1450,12 +1480,11 @@ try {
       const active = { ...template, id: "center-active", email: "active@example.com", displayName: "Personal", isActive: true, isCurrentWindowAccount: true, runningOnThisDevice: true, runningDeviceName: undefined, enabled: true, switchQueued: false, hasQuota402: false, healthKind: "healthy", metrics: [{ key: "hourly", period: "hourly", label: "5h", visible: true, percentage: 0 }, { key: "weekly", period: "weekly", label: "Weekly", visible: true, percentage: 75 }] };
       const ready = { ...active, id: "center-ready", email: "ready@example.com", displayName: "Ready account", isActive: false, isCurrentWindowAccount: false, runningOnThisDevice: false, metrics: active.metrics.map(metric => ({ ...metric, percentage: 90 })) };
       state.accounts = [active, ready, { ...ready, id: "center-disabled", email: "disabled@example.com", displayName: "Disabled account", enabled: false }];
-      state.connectedPeers = [{ id: "local", name: "This PC", connected: true, local: true, sessionCount: 2 }, { id: "account-remote", name: "Remote workstation", connected: true, sessionCount: 0 }, { id: "account-offline", name: "Offline workstation", connected: false, sessionCount: 0 }, { id: "account-empty", name: "Empty workstation", connected: true, sessionCount: 0 }];
+      state.connectedPeers = [{ id: "fixture-local", name: "This PC", connected: true, local: true, sessionCount: 2 }, { id: "account-remote", name: "Remote workstation", connected: true, sessionCount: 0 }, { id: "account-offline", name: "Offline workstation", connected: false, sessionCount: 0 }, { id: "account-empty", name: "Empty workstation", connected: true, sessionCount: 0 }];
       state.peerAccounts = { "account-remote": [{ ...active, id: "remote-active", displayName: "Remote account", email: "remote-active@example.com" }, { ...ready, id: "remote-ready", email: "remote-ready@example.com" }] };
       window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state } }));
     });
-    await page.locator("#codexDashboardButton").click();
-    await page.locator(".dashboard-pc-picker-popover").getByRole("option").nth(1).click();
+    await selectSidebarSystem(page, width, 'account-remote');
     if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
     const showAccountRail = async () => { if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "false") await page.locator(".cli-rail-toggle").click(); };
     await showAccountRail();
@@ -1468,7 +1497,7 @@ try {
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label") === "Search accounts on selected system"), false, "Opening the account center by pointer does not summon the mobile keyboard");
     const systemSelect = accountCenter.getByRole("combobox", { name: "Account system", exact: true });
     assert.equal(await systemSelect.inputValue(), "account-remote", "The account center starts on the selected dashboard system");
-    await systemSelect.selectOption("local");
+    await systemSelect.selectOption("fixture-local");
     assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "listCodexCliSessions" && action.payload?.targetDeviceId === "account-remote")), "Selecting a remote system routes session discovery to that system");
     assert.equal(await accountCenter.locator('.cli-account-choice[aria-current="true"]').isDisabled(), true, "Current accounts are clearly marked without switching again");
     assert.equal(await accountCenter.getByRole("meter").first().getAttribute("aria-valuenow"), "0", "Zero quota stays visible");
@@ -1494,7 +1523,7 @@ try {
     await page.locator(".cli-account-center").waitFor({ state: "detached" });
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Open account center");
     await accountTrigger.press("Enter");
-    await systemSelect.selectOption("local");
+    await systemSelect.selectOption("fixture-local");
     await page.evaluate(() => { window.__holdNextSwitch = true; });
     await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).click();
     const switchPicker = page.getByRole("dialog", { name: "Switch account", exact: true });
@@ -1514,14 +1543,14 @@ try {
     assert.equal(await accountCenter.locator(".cli-account-status").count(), 0);
     await accountCenter.getByText("Quota has not been checked yet.", { exact: true }).waitFor();
     await page.evaluate(() => { const request = window.__heldSwitch; window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", action: "switch", requestId: request.requestId, accountId: request.accountId, status: "failed", error: "Simulated switch failure. No account was changed." } })); });
-    await systemSelect.selectOption("local");
+    await systemSelect.selectOption("fixture-local");
     await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).waitFor();
     assert.equal(await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).isEnabled(), true, "A failed switch can be retried");
     await systemSelect.selectOption("account-remote");
     await page.evaluate(() => { window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "account-remote"); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
     await page.waitForFunction(() => document.querySelector('#account-center-system')?.value === "account-remote");
     await accountCenter.getByText("Saved accounts. Reconnect this system to switch.", { exact: true }).waitFor();
-    await systemSelect.selectOption("local");
+    await systemSelect.selectOption("fixture-local");
     await page.evaluate(() => {
       const account = window.__uiSnapshot.accounts.find(account => account.id === "center-active");
       account.metrics = [{ key: "invalid", label: "Invalid", visible: true, percentage: NaN }, { key: "bounded", label: "Remaining", visible: true, percentage: 150 }];
@@ -1665,11 +1694,20 @@ try {
       window.__uiSessions.splice(0, window.__uiSessions.length, ...window.__heldRunningSessions);
       window.__failNextSessionList = true;
     });
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
-    await page.getByRole("button", { name: "Retry", exact: true }).waitFor();
-    assert.equal(await page.locator(".dashboard-notice-stack").count(), 0, "Failed automatic list reads remain inline");
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
-    await page.waitForFunction(() => !document.querySelector(".cli-sessions-list-status"));
+    const retrySessions = page.getByRole("button", { name: "Retry session refresh", exact: true });
+    await retrySessions.waitFor();
+    assert.equal(await retrySessions.getAttribute('title'), 'Technical inspection failed');
+    assert.equal(await page.locator(".dashboard-notice-stack").count(), 0, "Automatic list failures stay on the compact refresh control");
+    await retrySessions.click();
+    await page.locator('.dashboard-notice').filter({hasText:'Session inspection failed.'}).waitFor();
+    assert.equal(await retrySessions.getAttribute('title'), 'Session inspection failed.');
+    await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+    if (!await page.locator('.cli-sessions-popover').count()) await page.locator('#cliSessionsButton').click();
+    await retrySessions.click();
+    await page.locator('.cli-sessions-popover').getByRole('button',{name:'Refresh sessions',exact:true}).waitFor();
+    assert.equal(await page.locator('.cli-sessions-list-status').count(),0,'Refreshing never adds a persistent status row');
+    await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+    if (!await page.locator('.cli-sessions-popover').count()) await page.locator('#cliSessionsButton').click();
     await page.evaluate(() => {
       window.__uiSessions.splice(0, window.__uiSessions.length);
       window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", requestId: "dashboard-auto-fixture", action: "listCodexCliSessions", status: "completed", payload: { cliSessions: [] } } }));
@@ -1685,25 +1723,21 @@ try {
     assert.equal(await page.locator(".brand .dashboard-pc-picker").count(), 0, "The marked header selector is removed");
     await page.evaluate(() => {
       window.__savedPeers = window.__uiSnapshot.connectedPeers;
-      window.__uiSnapshot.connectedPeers = [{ id: "local", name: "This PC", connected: true, local: true, sessionCount: 2 }];
+      window.__uiSnapshot.connectedPeers = [{ id: "fixture-local", name: "This PC", connected: true, local: true, sessionCount: 2 }];
       window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
     });
-    await page.waitForFunction(() => Boolean(document.querySelector("#codexDashboardButton")));
-    assert.equal(await page.locator('#codexDashboardButton').isVisible(), true, 'System selection remains visible for a single system');
+    assert.equal(await page.locator('#codexDashboardButton').count(), 0, 'The dashboard has no duplicate system switcher');
+    assert.equal(await page.locator('.cli-system-count').count(),0,'A single PC needs no count badge');
     assert.equal(await page.locator("#cliSessionsButton").isVisible(), true, "Sessions stay visible on a single system");
     await page.evaluate(() => {
       window.__uiSnapshot.connectedPeers.push({ id: "fixture-remote", name: "Other system", connected: false, sessionCount: 0 });
       window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
     });
-    await page.locator("#codexDashboardButton").click();
-    const systemOptions = page.locator(".dashboard-pc-picker-popover").getByRole("option");
-    assert.ok(await systemOptions.count() >= 2);
-    assert.equal(await page.locator(".dashboard-system-count").textContent(), String(await systemOptions.count()));
-    await systemOptions.filter({has: page.locator(".dashboard-pc-picker-status:not(.is-online)")}).first().click();
-    await page.locator(".dashboard-notice.is-warning").filter({ hasText: "is offline" }).waitFor();
-    await page.locator("#codexDashboardButton").click();
-    await page.keyboard.press("Home");
-    await page.keyboard.press("Enter");
+    const showSystems = page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+    if(await showSystems.isVisible()) await showSystems.click();
+    assert.equal(await page.locator('.cli-system-count').textContent(),'2','Multiple PCs have a compact count badge');
+    await selectSidebarSystem(page, width, 'fixture-remote');
+    await selectSidebarSystem(page, width, 'fixture-local');
     await page.evaluate(() => {
       window.__uiSnapshot.connectedPeers = window.__savedPeers;
       window.__uiSnapshot.encryptedSyncNeedsConfiguration = true;

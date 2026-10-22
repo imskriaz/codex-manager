@@ -32,7 +32,7 @@ import { getCodexManagerStorageRoot } from "../utils/storageRoot";
 import { createSharedInspection, runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { getSqliteStateStore, hasSqliteStateFile, readSqliteStateFile, sqliteStoreForFile, type SqliteStateStore } from "../storage/sqliteState";
 import { normalizeNativePath } from "../utils/nativePaths";
-import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, markCodexSessionManualStop, clearCodexSessionManualStop } from "./codexSessionPreferences";
+import { readQueuedCodexSessionPreferences, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, markCodexSessionManualStop, clearCodexSessionManualStop, retireCodexSessionQueue } from "./codexSessionPreferences";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 
@@ -1466,9 +1466,13 @@ export async function forkCodexCliSession(sessionId: string): Promise<string> {
 
 export async function archiveCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
-  await runCliSessionMutation(sessionId, "Codex session archive", () =>
-    runCodexAppServerRequest("thread/archive", { threadId: sessionId }).then(() => undefined)
-  );
+  const home = resolveCodexHome();
+  await runCliSessionMutation(sessionId, "Codex session archive", async () => {
+    if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before archiving this session.');
+    await runCodexAppServerRequest("thread/archive", { threadId: sessionId });
+    try { retireCodexSessionQueue(home, sessionId); }
+    catch { throw new Error('Codex archived the session, but its queue cleanup could not be saved. Review the queue before restoring it.'); }
+  });
   const recent = recentNewSessions.get(sessionId);
   if (recent) recent.summary = { ...recent.summary, archived: true };
 }
@@ -1484,13 +1488,18 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
 
 export async function deleteCodexCliSession(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
-  if (ownsSessionTurn(resolveCodexHome(), sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+  const home = resolveCodexHome();
+  if (ownsSessionTurn(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
-    if (await isCliSessionRunning(resolveCodexHome(), sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+    if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
+    if (await isCliSessionRunning(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+    if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
     await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
+    recentNewSessions.delete(sessionId);
+    newSessionFailures.delete(sessionId);
+    try { retireCodexSessionQueue(home, sessionId); }
+    catch { throw new Error('Codex deleted the session, but its queue cleanup could not be saved. Review the saved queue; deletion must not be replayed.'); }
   });
-  recentNewSessions.delete(sessionId);
-  newSessionFailures.delete(sessionId);
 }
 
 /** Read a bounded history page without locking the writer or retaining the complete transcript. */
@@ -2248,11 +2257,15 @@ function validateSessionId(sessionId: string): void {
 }
 
 function runCliSessionMutation<T>(sessionId: string, operationLabel: string, task: () => Promise<T>): Promise<T> {
+  const home = resolveCodexHome();
   return runCrossWindowExclusive(`codex:session:${sessionId.toLowerCase()}`, operationLabel, async () => {
-    const result = await task();
-    try { const store = getSqliteStateStore(); if (store) invalidateSessionCatalogue(store, resolveCodexHome()); }
-    catch (error) { recordPersistentEvent("warning", "session-list", "Changed history will refresh when storage recovers", undefined, error); }
-    return result;
+    if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before retrying this action.');
+    try { return await task(); }
+    finally {
+      // A native mutation can succeed before its local bookkeeping fails.
+      try { const store = getSqliteStateStore(); if (store) invalidateSessionCatalogue(store, home); }
+      catch (error) { recordPersistentEvent("warning", "session-list", "Changed history will refresh when storage recovers", undefined, error); }
+    }
   });
 }
 

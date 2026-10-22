@@ -30,7 +30,7 @@
       return name === 'readWorkspaceFile' ? {workspaceFile:result.file} : {projectTaskDetails:{taskId:payload.taskId,messages:[],files:[],history:[],warnings:[],...result,...(result.changes !== undefined ? {environment:{changes:result.changes,additions:result.additions,deletions:result.deletions,branchDiff:result.branchDiff}} : {})}};
     }
     if (name === 'saveProjectTask' && allowed('submissions') && payload.task?.expectedRevision === 0 && !payload.task?.parentTaskId && payload.task?.stage === 'idea') {
-      await request({kind:'task',id:payload.task.id,title:payload.task.title,prompt:payload.task.prompt}); await refresh(); return {projectBoard:board()};
+      await request({kind:'task',id:payload.task.id,title:payload.task.title,prompt:payload.task.prompt,uploads:payload.task.uploads}); await refresh(); return {projectBoard:board()};
     }
     if (name === 'addProjectComment' && allowed('comments') && payload.comment) {
       await request({kind:'comment',...payload.comment}); await refresh(); return {projectBoard:board()};

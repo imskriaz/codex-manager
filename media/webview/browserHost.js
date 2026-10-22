@@ -11,6 +11,9 @@
   let latestSnapshot;
   let dashboardReady = false;
   let snapshotRevision = 0;
+  let sourceSystemId;
+  let sourceGeneration = 0;
+  const retiredSourceRequests = new Set();
   let authenticationRequired = false;
   let hiddenAt;
   const pendingSocketActions = new Map();
@@ -30,7 +33,17 @@
   };
 
   const dispatch = (message) => {
+    if (message?.type === "dashboard:action-result" && retiredSourceRequests.has(message.requestId)) return;
     if (message?.type === "dashboard:snapshot") {
+      const nextSystem = message.state?.connectedPeers?.find(peer => peer.local)?.id;
+      if (nextSystem && sourceSystemId && nextSystem !== sourceSystemId) {
+        sourceGeneration++;
+        const retired = [...pendingSocketActions.keys()];
+        failUnconfirmedSocketActions();
+        for (const id of retired) retiredSourceRequests.add(id);
+        while (retiredSourceRequests.size > 256) retiredSourceRequests.delete(retiredSourceRequests.values().next().value);
+      }
+      if (nextSystem) sourceSystemId = nextSystem;
       if (message !== latestSnapshot) snapshotRevision++;
       // Retain only the startup replay; IndexedDB owns subsequent recovery data.
       if (!dashboardReady) latestSnapshot = message;
@@ -234,6 +247,7 @@
   };
 
   const postMessage = async (message) => {
+    const generation = sourceGeneration;
     if (message?.type === "dashboard:action" && message.action === "openExternalUrl") {
       let popup;
       try {
@@ -324,6 +338,7 @@
       }
       if (!response.ok) throw new Error(`Dashboard action failed (${response.status})`);
       const payload = await parseJsonResponse(response, "Dashboard action");
+      if (generation !== sourceGeneration) throw new Error("The dashboard host changed before confirmation. Verify this action on the original system before retrying; it was not replayed.");
       if (!Array.isArray(payload.messages)) throw new Error("This action returned no result. Its outcome is unknown; refresh and verify before retrying.");
       if (authenticationRequired) return;
       if (message?.type === "dashboard:action" && !payload.messages.some(result => result?.type === "dashboard:action-result" && result.requestId === message.requestId && ["completed", "failed", "cancelled"].includes(result.status)))

@@ -10,6 +10,7 @@ import { createProjectShare, revokeProjectShares, readProjectTasks, saveProjectT
 import * as boardService from '../src/services/projectBoard';
 import { removeTestDirectory } from './testFilesystem';
 import { ConversationShares } from '../src/services/conversationShares';
+import { projectAttachmentPath } from '../src/domain/projectTasks';
 import { ProjectShareEvents } from '../src/services/projectShareEvents';
 import * as sessionEditor from '../src/services/codexSessionResume';
 
@@ -134,4 +135,20 @@ it('serves full native share activity from its original home without rewriting a
   const response=await request('/api/share/'+token);expect(response.statusCode).toBe(200);
   expect(JSON.parse(response.body)).toMatchObject({messages:[{kind:'tool-call',arguments:'{"full":true}',result:'Full result',output:'Full output'}]});
   expect(read).toHaveBeenCalledExactlyOnceWith(id,root);expect(write).toHaveBeenCalledOnce();expect(response.body).not.toContain('sourceHome');
+});
+
+it('persists public uploads and requires both Files and Comments to read comment files', async () => {
+  const share=createProjectShare(root,['files','comments','submissions']);
+  const upload={id:'brief',name:'brief.txt',kind:'text',mimeType:'text/plain',data:'Publicly submitted attachment',size:1};
+  expect((await request(`/api/projects/share/${share.token}`,{kind:'task',id:'upload-task',title:'Uploaded task',prompt:'Review',uploads:[upload]})).statusCode).toBe(200);
+  const task=readProjectTasks(root).tasks[0]!, taskPath=projectAttachmentPath('task',task.id,task.attachments![0]!);
+  const query=(token:string,file:string)=>`/api/projects/share/${token}?task=${task.id}&view=files&file=${encodeURIComponent(file)}`;
+  expect(JSON.parse((await request(query(share.token,taskPath))).body).file.content).toBe(upload.data);
+  expect((await request(`/api/projects/share/${share.token}`,{kind:'comment',id:'uploaded-comment',taskId:task.id,text:'',uploads:[{...upload,id:'comment-file'}]})).statusCode).toBe(200);
+  const comment=readProjectTasks(root).comments[0]!, commentPath=projectAttachmentPath('comment',comment.id,comment.attachments![0]!);
+  const filesOnly=createProjectShare(root,['files']);
+  expect((await request(query(filesOnly.token,commentPath))).statusCode).toBe(400);
+  expect((await request(query(filesOnly.token,taskPath))).statusCode).toBe(200);
+  expect((await request(query(share.token,commentPath))).statusCode).toBe(200);
+  revokeProjectShares(root); expect((await request(query(share.token,taskPath))).statusCode).toBe(404);
 });

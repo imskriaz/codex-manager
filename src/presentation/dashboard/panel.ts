@@ -7,6 +7,7 @@ import type {
   DashboardClientMessage,
   DashboardHostMessage,
   DashboardCliSessionSummary,
+  DashboardPeerView,
   DashboardState,
   DashboardSettingKey
 } from "../../domain/dashboard/types";
@@ -61,6 +62,7 @@ export interface DashboardPeerHost {
   onDidChangeDashboardPeers(listener: () => void): vscode.Disposable;
 }
 let dashboardPeerHost: DashboardPeerHost | undefined;
+let dashboardLocalPeer: (() => DashboardPeerView | undefined) | undefined;
 
 type PublishDashboardSnapshotParams = {
   context: vscode.ExtensionContext;
@@ -73,6 +75,7 @@ type PublishDashboardSnapshotParams = {
   lastPublishedStateSignature?: string;
   force?: boolean;
   peerHost?: DashboardPeerHost;
+  localPeer?: DashboardPeerView;
 };
 
 export async function publishDashboardSnapshot(params: PublishDashboardSnapshotParams): Promise<string | undefined> {
@@ -81,9 +84,10 @@ export async function publishDashboardSnapshot(params: PublishDashboardSnapshotP
     params.settingsStore,
     params.logoUri
   );
+  const localPeer = params.localPeer;
   const state: DashboardState = {
     ...baseState,
-    ...params.peerHost?.getDashboardPeerState(),
+    ...(params.peerHost?.getDashboardPeerState() ?? (localPeer ? { connectedPeers: [localPeer] } : {})),
     onboardingCompleted: await resolveOnboardingCompleted(params.context, baseState)
   };
   void appendDashboardUsageSnapshot(params.context, state).catch(error=>recordPersistentEvent("warning","dashboard-state","Quota history could not be saved",undefined,error));
@@ -343,7 +347,7 @@ export class DashboardPanelController {
           this.forcePublish = false;
           const logoUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "product-icons", "codex-openai.svg")).toString();
           const signature = await publishDashboardSnapshot({
-            peerHost: dashboardPeerHost,
+            peerHost: dashboardPeerHost, localPeer: dashboardLocalPeer?.(),
             context: this.context, repo: this.repo, settingsStore: this.settingsStore, logoUri,
             setPanelTitle: title => { if (this.panel === panel && this.panelRevision === revision && !this.publishAgain) panel.title = title; },
             postMessage: message => this.panel === panel && this.panelRevision === revision && !this.publishAgain ? panel.webview.postMessage(message) : Promise.resolve(false),
@@ -363,7 +367,7 @@ export class DashboardPanelController {
   ): Promise<void> {
     const collected = await withDashboardNotificationSuppression(async () => {
       const target = message.payload?.targetDeviceId;
-      const local = dashboardPeerHost?.getDashboardPeerState().connectedPeers?.find(peer => peer.local)?.id;
+      const local = dashboardPeerHost?.getDashboardPeerState().connectedPeers?.find(peer => peer.local)?.id ?? dashboardLocalPeer?.()?.id;
       const remote = target && target !== "local" && target !== local;
       const result = remote ? dashboardPeerHost ? await dashboardPeerHost.relayWebviewAction(message) :
         { status: "failed" as const, errorMessage: "The selected system is unavailable. Reconnect and try again." } : await executeDashboardActionMessage(
@@ -577,9 +581,10 @@ export function openQuotaSummaryPanel(context: vscode.ExtensionContext, repo: Ac
 }
 
 export function registerDashboardPanelSerializer(
-  context: vscode.ExtensionContext, repo: AccountsRepository, peerHost?: DashboardPeerHost
+  context: vscode.ExtensionContext, repo: AccountsRepository, peerHost?: DashboardPeerHost, localPeer?: () => DashboardPeerView | undefined
 ): vscode.Disposable {
   dashboardPeerHost = peerHost;
+  dashboardLocalPeer = localPeer;
   return vscode.window.registerWebviewPanelSerializer(DASHBOARD_VIEW_TYPE, {
     async deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
       dashboardPanelController ??= new DashboardPanelController(context, repo);

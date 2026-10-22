@@ -1,3 +1,4 @@
+import { readChatAttachmentFiles } from './attachmentUploads';
 import { SessionQueueControl } from './sessionQueueControl';
 import { createPortal } from "preact/compat";
 import type { JSX } from "preact";
@@ -44,7 +45,7 @@ import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitive
 import { ShareAccessReview, ShareLinkField } from "./shareControls";
 import { getSensitiveDisplayValue } from "./helpers";
 import { normalizeNativePath } from "../../src/utils/nativePaths";
-import { readCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
+import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
 import { acknowledgeCliComposerDraft, cliComposerDraftKey, resolveCliComposerSettings, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
 
 export type CliSessionFeedback = DashboardNotice & { key: number };
@@ -241,8 +242,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const attachmentReadRef = useRef(false);
   const [projectPath, setProjectPath] = useState<string>();
   const [newChatProject, setNewChatProject] = useState<string>();
-  const selectedDevice = props.selectedSession?.deviceId ??
-    (props.peers?.some((peer) => peer.id === props.selectedPeerId && peer.local) ? undefined : props.selectedPeerId);
+  const selectedDevice = props.selectedSession?.deviceId ?? props.selectedPeerId ?? props.peers?.find(peer => peer.local)?.id;
   const draftKey = cliComposerDraftKey(selectedDevice, props.selectedSession?.id, newChatProject ?? projectPath);
   const currentDraftKey = useRef(draftKey);
   currentDraftKey.current = draftKey;
@@ -253,6 +253,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const loadedDraftKeys = useRef(new Set<string>());
   const scheduledDrafts = useRef(new Map<string, ComposerDraft>());
   const [draftStorageFailedKeys, setDraftStorageFailedKeys] = useState(new Set<string>());
+  const [legacyDraft, setLegacyDraft] = useState<{ key: string; value: ComposerDraft }>();
   const dirtyDraftFields = useRef(new Map<string, Set<keyof ComposerDraft>>());
   const markDraftFields = (fields: Array<keyof ComposerDraft>): void => {
     const dirty = dirtyDraftFields.current.get(draftKey) ?? new Set<keyof ComposerDraft>();
@@ -294,6 +295,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [railCollapsed, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id]);
 
   const [contextCollapsed, setContextCollapsed] = useState(() => window.innerWidth < 1180);
+  const toolsCollapsed = contextCollapsed || !props.selectedSession || props.dashboardMode === true;
   const [contextTabsByProject, setContextTabsByProject] = useState<Record<string, WorkspaceProjectState>>({});
   const submittedTerminalDrafts = useRef(new Map<string, { key: string; text: string }>());
   const submittedGitDrafts = useRef(new Map<string, { key: string; text?: string; kind: 'commit' | 'push' }>());
@@ -321,6 +323,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         const edited = Object.fromEntries([...(dirtyDraftFields.current.get(draftKey) ?? [])].map((field) => [field, current[draftKey]?.[field]]));
         return { ...current, [draftKey]: { ...saved, ...edited } };
       });
+      if (!saved) void readLegacyCliComposerDraft(draftKey).then(value => { if (currentDraftKey.current === draftKey && value && (value.text || value.attachments.length)) setLegacyDraft({key: draftKey, value}); });
       setDraftReadyKeys((current) => new Set([...current, draftKey]));
     });
   }, [draftKey]);
@@ -378,6 +381,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     }
   }, [props.submissionResults]);
 
+  const legacyDraftWarning = legacyDraft?.key === draftKey ? <p class="cli-composer-unavailable" role="status">A draft from an earlier build has no verified system. <button type="button" onClick={() => { const value = legacyDraft.value; setComposerDrafts(current => { const edited = Object.fromEntries([...(dirtyDraftFields.current.get(draftKey) ?? [])].map(field => [field, current[draftKey]?.[field]])); return { ...current, [draftKey]: { ...value, ...edited } }; }); setLegacyDraft(undefined); }}>Restore here</button><button type="button" onClick={() => setLegacyDraft(undefined)}>Dismiss</button></p> : null;
   const draftStorageWarning = draftStorageFailedKeys.has(draftKey) ? <p class="cli-composer-unavailable" role="status">This draft is kept in this tab. Browser storage could not save it; copy it before closing or reloading. <button type="button" onClick={() => { const value = composerDrafts[draftKey]; if (value) void writeCliComposerDraft(draftKey, value).then((saved) => { if (saved) { setDraftStorageFailedKeys((current) => { const next = new Set(current); next.delete(draftKey); return next; }); } }); }}>Retry saving draft</button></p> : null;
 
   useEffect(() => {
@@ -572,10 +576,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   useLayoutEffect(() => {
     if (props.dashboardMode || props.taskBoardActive) return;
     props.onWorkspaceContextChange?.(contextProjectKey);
+    if (toolsCollapsed || !props.selectedSession) return;
     const kind = workspaceTabKind(contextProjectState.active), path = workspaceTabPath(contextProjectState.active);
     if (kind === 'files') { props.onListFiles(toolProjectPath); if (path) props.onReadFile(path, toolProjectPath); }
     else if (toolProjectPath && (kind === 'env' || kind === 'git')) props.onRefreshEnvironment(toolProjectPath);
-  }, [contextProjectKey, props.dashboardMode, props.taskBoardActive]);
+  }, [contextProjectKey, props.dashboardMode, props.taskBoardActive, props.selectedSession?.id, toolsCollapsed]);
   const currentWorkspaceData = !props.workspaceScopeKey || props.workspaceScopeKey === contextProjectKey;
   const contextTabs = contextProjectState.tabs;
   const activeContextTab = contextProjectState.active;
@@ -583,7 +588,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const setTerminalDraft = (draft: string): void => setContextTabsByProject(current => ({ ...current, [contextProjectKey]: { ...(current[contextProjectKey] ?? emptyWorkspaceProject()), draft } }));
   useEffect(() => { setContextAddOpen(false); }, [contextProjectKey]);
   useLayoutEffect(() => {
-    if (contextCollapsed) return;
+    if (toolsCollapsed) return;
     const root = workspaceRef.current, header = root?.querySelector<HTMLElement>('.cli-conversation-header');
     const place = () => root?.style.setProperty('--cli-tools-top', `${header?.getBoundingClientRect().bottom ?? 44}px`);
     place();
@@ -595,7 +600,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     };
     window.addEventListener('keydown', escape);
     return () => { observer?.disconnect(); window.removeEventListener('keydown', escape); };
-  }, [contextCollapsed, contextAddOpen, props.selectedSession?.id]);
+  }, [toolsCollapsed, contextAddOpen, props.selectedSession?.id]);
   const setContextTabs = (next: WorkspaceTab[] | ((current: WorkspaceTab[]) => WorkspaceTab[])): void => {
     setContextTabsByProject(current => {
       const entry = current[contextProjectKey] ?? emptyWorkspaceProject();
@@ -716,12 +721,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </span> : null}
       <span class="cli-session-row-actions">
         {running ? <>
-          <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={autoResumeLabel} title={autoResumeLabel} disabled={props.mutating} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={hasGoal} /></IconButton>
-          <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} />
-          {session.canStop ? <IconButton label={`Stop ${session.title}`} disabled={props.mutating} onClick={() => props.onStop(session)}><StopIcon /></IconButton> : null}
-        </> : <>
-          <IconButton label={`Open ${session.title} in Codex`} disabled={props.mutating} onClick={() => props.onOpenInCodex(session)}><RestoreIcon /></IconButton>
-        </>}
+          <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={autoResumeLabel} title={autoResumeLabel} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={hasGoal} /></IconButton>
+        </> : session.interrupted || session.queueEnabled ? <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} /> : null}
       </span>
       </div>;
     })()
@@ -758,21 +759,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     attachmentReadRef.current = true;
     setAttachmentReading(true);
     try {
-      if (files.length + attachments.length > 8) throw new Error("Attach up to 8 files per message.");
-      const added: ChatAttachment[] = [];
-      for (const file of files) {
-        const image = ["image/png", "image/jpeg", "image/webp"].includes(file.type);
-        if (file.size > (image ? 1024 * 1024 : 32 * 1024)) throw new Error(`${file.name} is too large. Images: 1 MB; text: 32 KB.`);
-        if (!image && !file.type.startsWith("text/") && !/\.(txt|md|json|csv|ts|tsx|js|jsx|py|html|css|xml|yml|yaml|toml|log|rs|go|java|c|cpp|h|sh|sql)$/i.test(file.name)) throw new Error(`${file.name} is unsupported. Attach PNG, JPEG, WebP, or a text/code file.`);
-        const data = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          const timer = window.setTimeout(() => { reader.abort(); reject(new Error(`Reading ${file.name} timed out. Try attaching it again.`)); }, 10_000);
-          reader.onload = () => { clearTimeout(timer); resolve(typeof reader.result === "string" ? reader.result : ""); };
-          reader.onerror = reader.onabort = () => { clearTimeout(timer); reject(new Error(`${file.name} could not be read. Try attaching it again.`)); };
-          if (image) reader.readAsDataURL(file); else reader.readAsText(file);
-        });
-        added.push({ id: crypto.randomUUID(), name: file.name, kind: image ? "image" : "text", mimeType: image ? file.type : "text/plain", data, size: file.size });
-      }
+      const added = await readChatAttachmentFiles(files, attachments.length);
       const currentAttachments = composerDraftsRef.current[draftKey]?.attachments ?? EMPTY_CHAT_ATTACHMENTS;
       const combined = validateChatAttachments([...currentAttachments, ...added.filter((file) => !currentAttachments.some((item) => item.name === file.name && item.data === file.data))]);
       setAttachments(combined);
@@ -857,31 +844,30 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty("--cli-shell-rail-width", railCollapsed ? "0px" : `${layout.railWidth}px`);
-    root.style.setProperty("--cli-shell-terminal-width", contextCollapsed ? "0px" : `${layout.terminalWidth}px`);
+    root.style.setProperty("--cli-shell-terminal-width", toolsCollapsed ? "0px" : `${layout.terminalWidth}px`);
     root.style.setProperty("--cli-shell-divider-width", "5px");
     return () => {
       root.style.removeProperty("--cli-shell-rail-width");
       root.style.removeProperty("--cli-shell-terminal-width");
       root.style.removeProperty("--cli-shell-divider-width");
     };
-  }, [contextCollapsed, layout.railWidth, layout.terminalWidth, railCollapsed]);
+  }, [toolsCollapsed, layout.railWidth, layout.terminalWidth, railCollapsed]);
 
   const sidebarToggle = <button ref={sidebarToggleRef} type="button" class="cli-rail-toggle" aria-expanded={!railCollapsed} aria-controls="cli-session-sidebar" aria-label={railCollapsed ? "Show sessions sidebar" : "Hide sessions sidebar"} title={railCollapsed ? "Show sessions sidebar" : "Hide sessions sidebar"} onClick={() => setRailCollapsed((collapsed) => !collapsed)}>{railCollapsed ? props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon /> : <SidebarIcon />}</button>;
   return (
     <div
       ref={workspaceRef}
-      class={`cli-workspace ${props.dashboardMode ? "is-dashboard-mode" : ""} ${railCollapsed ? "is-rail-collapsed" : ""} ${contextCollapsed ? "is-terminal-collapsed" : ""}`}
+      class={`cli-workspace ${props.dashboardMode ? "is-dashboard-mode" : ""} ${railCollapsed ? "is-rail-collapsed" : ""} ${toolsCollapsed ? "is-terminal-collapsed" : ""}`}
       style={`--cli-rail-width:${layout.railWidth}px;--cli-terminal-width:${layout.terminalWidth}px;--cli-composer-height:${layout.composerHeight}px`}
     >
       {railCollapsed && sidebarToggleTarget ? createPortal(sidebarToggle, sidebarToggleTarget) : null}
-      {!props.dashboardMode && !props.selectedSession && contextCollapsed ? <button type="button" class="cli-context-toggle" aria-label="Show workspace tools" title="Show Terminal, Files, and Reviews" onClick={() => setContextCollapsed(false)}><PanelIcon /></button> : null}
-      {mobileLayout && !contextCollapsed && railCollapsed ? <button type="button" class="cli-tools-backdrop" aria-label="Close workspace tools" tabIndex={-1} onClick={() => setContextCollapsed(true)} /> : null}
+      {mobileLayout && !toolsCollapsed && railCollapsed ? <button type="button" class="cli-tools-backdrop" aria-label="Close workspace tools" tabIndex={-1} onClick={() => setContextCollapsed(true)} /> : null}
       {mobileLayout && !railCollapsed ? <button type="button" class="cli-sidebar-backdrop" aria-label="Close sessions sidebar" tabIndex={-1} onClick={() => setRailCollapsed(true)} /> : null}
       <div class={`cli-workspace-grid ${props.selectedSession ? "has-context" : ""}`}>
         <aside ref={sidebarRef} id="cli-session-sidebar" class={`cli-session-rail ${props.selectedSession ? "has-selection" : ""}`} role={mobileLayout ? "dialog" : undefined} aria-modal={mobileLayout && !railCollapsed || undefined} aria-hidden={railCollapsed || undefined} inert={railCollapsed || undefined} aria-label="Codex sessions">
           <div class="cli-rail-header">{!railCollapsed ? sidebarToggle : null}
             <button type="button" class="cli-rail-brand" aria-label="Open dashboard" title="Open dashboard" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}>{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <span class="cli-brand-mark"><CodexSessionIcon /></span>}<strong>Codex</strong></button>
-            {props.browser ? <label class="cli-rail-system" title="Switch system"><span aria-hidden="true">▣</span><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select></label> : null}
+            {props.browser ? <label class="cli-rail-system" title="Switch system"><span aria-hidden="true"><Icon><rect x="3" y="4" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 16v4m-4 0h8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></Icon></span><select aria-label="System" value={props.selectedPeerId ?? localPeerId ?? 'local'} onChange={event => props.onPeerChange?.(event.currentTarget.value)}>{props.peers?.length ? props.peers.map(peer => <option key={peer.id} value={peer.id}>{getSensitiveDisplayValue(peer.name, props.privacyMode, 'name')}{peer.connected ? '' : ' · Offline'}</option>) : <option value="local">This PC</option>}</select>{(props.peers?.length ?? 0) > 1 ? <span class="cli-system-count" aria-label={`${props.peers!.length} systems`}>{props.peers!.length}</span> : null}</label> : null}
           </div>
             <nav class="cli-primary-nav" aria-label="Workspace navigation">
               <div class="cli-sidebar-toolbar">
@@ -988,13 +974,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 onRefresh={props.onRefreshMessages}
                 onRename={props.onRename}
                 onFork={props.onFork}
+                onOpenInCodex={() => props.onOpenInCodex(props.selectedSession!)}
                 onCopyLink={props.onCopyLink}
                 onShare={() => setShareOpen(true)}
                 onArchive={() => props.onArchive(props.selectedSession!)}
                 onRestore={() => props.onUnarchive(props.selectedSession!)}
                 onDelete={() => setDeleteTarget(props.selectedSession)}
                 onRenameCancelled={() => reportLocalFeedback({ level: "info", message: "Rename cancelled." })}
-                terminalCollapsed={contextCollapsed}
+                terminalCollapsed={toolsCollapsed}
                 onToggleTerminal={() => { setContextCollapsed(current => !current); setContextAddOpen(false); }}
               />
               {deleteTarget && !deleteTarget.archived ? <DeleteConfirmation title={deleteTarget.title} onCancel={() => { setDeleteTarget(undefined); reportLocalFeedback({ level: "info", message: "Session deletion cancelled." }); }} onDelete={() => { const target = deleteTarget; setDeleteTarget(undefined); props.onDelete(target); }} /> : null}
@@ -1012,7 +999,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {showLatestButton ? <button type="button" class="cli-scroll-latest" aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}><ChevronIcon /></button> : null}</div>
               {turnChanges ? <div class="cli-turn-change-bar" role="group" aria-label="Turn changes"><span>{turnChanges.files} file{turnChanges.files === 1 ? "" : "s"} changed <b class="is-added">+{turnChanges.additions}</b> <b class="is-removed">−{turnChanges.deletions}</b></span><button type="button" onClick={() => openContextTab("reviews")}>View changes</button></div> : null}
 
-              {draftStorageWarning}
+              {legacyDraftWarning}{draftStorageWarning}
               {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status">◎</span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "blocked", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
               {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session">☷</span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
               {selectedArchived ? (
@@ -1061,7 +1048,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>What should we build in {composerProjects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</h2><p>Describe the task and Codex will work directly in this project.</p></div></section>
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
-              {draftStorageWarning}
+              {legacyDraftWarning}{draftStorageWarning}
               {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={setDraft} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={submit} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}
@@ -1075,6 +1062,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onReset={() => setLayout((current) => ({ ...current, terminalWidth: DEFAULT_WORKSPACE_LAYOUT.terminalWidth }))}
         />
         <WorkspaceContextPanel
+          onCollapse={() => { setContextCollapsed(true); setContextAddOpen(false); }}
           connected={props.connected !== false}
           projectPath={toolProjectPath}
           session={props.selectedSession}
@@ -1101,7 +1089,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           terminals={props.workspaceTerminals}
           running={props.terminalRunning || props.terminalLiveOutputs.some((output) => output.terminalId === props.workspaceTerminals.find((terminal) => terminal.isActive)?.id)}
           stopping={props.terminalStopping}
-          collapsed={contextCollapsed}
+          collapsed={toolsCollapsed}
           tabs={contextTabs}
           activeTab={activeContextTab}
           addOpen={contextAddOpen}
@@ -1152,7 +1140,7 @@ export function ConversationHeader(props: {
   session: DashboardCliSessionSummary; readOnly?: boolean; archived?: boolean; busy?: boolean; sending?: boolean;
   onBack?: () => void; onRefresh: () => void;
   onRename?: (name: string) => void; onFork?: () => void; onCopyLink?: () => void; onShare?: () => void;
-  onArchive?: () => void; onRestore?: () => void; onDelete?: () => void; onRenameCancelled?: () => void;
+  onArchive?: () => void; onRestore?: () => void; onDelete?: () => void; onRenameCancelled?: () => void; onOpenInCodex?: () => void;
   terminalCollapsed?: boolean; onToggleTerminal?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1182,6 +1170,7 @@ export function ConversationHeader(props: {
             <span class="cli-mobile-menu-item" />
           </> : <button type="button" role="menuitem" class="cli-mobile-menu-item" disabled={props.busy} onClick={() => { setMenuOpen(false); props.onRestore?.(); }}><RestoreIcon /> Restore</button>}
           {!props.archived ? <>
+            {props.onOpenInCodex ? <button type="button" role="menuitem" disabled={props.busy} onClick={() => { setMenuOpen(false); props.onOpenInCodex?.(); }}><CodexSessionIcon /> Open in Codex</button> : null}
             <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); setRenaming(true); }}><PencilIcon /> Rename</button>
             <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onFork?.(); }}><ForkIcon /> Fork session</button>
             <button type="button" role="menuitem" disabled={props.busy || props.sending} onClick={() => { setMenuOpen(false); props.onArchive?.(); }}><ArchiveIcon /> Archive</button>
@@ -1376,7 +1365,7 @@ export function splitMessageParagraphs(text: string): string[] {
   return text.replace(/\r\n/g, "\n").split(/\n{2,}/).filter((paragraph) => paragraph.length > 0);
 }
 
-function TurnCopyButton({ text, label = "Copy assistant turn", onActionFeedback }: { text: string; label?: string; onActionFeedback?: (notice: DashboardNotice) => void }) {
+export function TurnCopyButton({ text, label = "Copy assistant turn", onActionFeedback }: { text: string; label?: string; onActionFeedback?: (notice: DashboardNotice) => void }) {
   const [copied, setCopied] = useState(false);
   const copy = async (): Promise<void> => {
     try {
@@ -1783,6 +1772,7 @@ function WorkspaceContextPanel(props: {
   running: boolean;
   stopping: boolean;
   collapsed: boolean;
+  onCollapse: () => void;
   tabs: WorkspaceTab[];
   activeTab: WorkspaceTab;
   addOpen: boolean;
@@ -1880,7 +1870,7 @@ function WorkspaceContextPanel(props: {
       const kind = workspaceTabKind(tab), path = workspaceTabPath(tab);
       const label = kind === 'env' ? 'Env' : kind === 'git' ? 'Git' : kind === 'agents' && path ? `Agent: ${props.agentSessions.find(agent => agent.id === path)?.agentName ?? path.slice(0, 8)}` : path ? path.split(/[\\/]/).pop() ?? path : capitalize(kind);
       return <span class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'agents' || kind === 'git' ? <ForkIcon /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button>{tab !== 'env' ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
-    })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !props.tabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'git' || tab === 'agents' ? <ForkIcon /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).every(tab => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div></header>
+    })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !props.tabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'git' || tab === 'agents' ? <ForkIcon /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).every(tab => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
     {props.activeTab === 'env' ? <WorkspaceEnvironmentView autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : props.activeTab === 'git' ? <WorkspaceGitView key={props.scopeKey} environment={props.environment} connected={props.connected !== false} loading={props.environmentLoading} draft={props.commitDraft} pending={props.gitPending} notice={props.gitNotice} onDraft={props.onCommitDraft} onCommit={props.onCommit} onPush={props.onPush} onRefresh={props.onRefreshEnvironment} onCompare={props.onBranchReview} onOpenFile={path => props.onAdd('files', path)} /> : null}
     {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <>

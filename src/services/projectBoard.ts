@@ -1,5 +1,6 @@
+import { projectAttachmentPath } from '../domain/projectTasks';
 import type { ProjectBoard, ProjectTaskDetails } from '../domain/projectTasks';
-import { projectTaskKey, readProjectTasks, readProjectTask, syncProjectSessions } from './projectTasks';
+import { projectTaskKey, readProjectTasks, readProjectTask, syncProjectSessions, readProjectAttachment } from './projectTasks';
 import { readCodexCliSessions, readCodexCliSessionSummary, readCodexCliSessionMessagePage, readCodexCliSessionInitialPrompt, resolveCodexHome } from './codexSessionResume';
 import { resolveWorkspaceProjectPathAsync, readWorkspaceEnvironment } from './workspaceTools';
 import { waitWithin } from '../utils/concurrency';
@@ -42,7 +43,15 @@ export async function readSharedProjectTask(share: ProjectShare, taskId: string,
     ? share.permissions.includes('activities') || share.permissions.includes('messages')
     : share.permissions.includes(normalizedView as 'files' | 'changes');
   if (!['activities','files','changes'].includes(normalizedView) || !hasViewPermission) throw new Error('This feature is not enabled for this shared link.');
+  if (filePath?.startsWith('@manager-attachment/')) {
+    if (normalizedView !== 'files' || !share.permissions.includes('files')) throw new Error('Files are not enabled for this shared link.');
+    const file = await readProjectAttachment(share.projectPath, taskId, filePath, share.permissions.includes('comments'));
+    if (share.expiresAt <= Date.now()) throw new Error('This project link expired.');
+    if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
+    return { file };
+  }
   const details = await readProjectTaskDetails(share.projectPath, taskId, normalizedView as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>, before);
+  if (share.expiresAt <= Date.now()) throw new Error('This project link expired.');
   if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
   if (filePath !== undefined) {
     if (normalizedView !== 'files') throw new Error('File access is not enabled for this view.');
@@ -64,7 +73,7 @@ export async function readSharedProjectTask(share: ProjectShare, taskId: string,
       ...(normalizedView === 'activities' && share.permissions.includes('activities') ? { command: item.command, output: item.output, result: item.result, arguments: item.arguments } : {}),
       ...(normalizedView === 'changes' ? { changes: item.changes } : {})
     })),
-    files: details.files, history: details.history, isGitRepository: details.environment?.isGitRepository,
+    files: details.files.filter(file => share.permissions.includes('comments') || !file.path.startsWith('@manager-attachment/comment/')), history: details.history, isGitRepository: details.environment?.isGitRepository,
     changes: details.environment?.changes, additions: details.environment?.additions, deletions: details.environment?.deletions,
     initialPrompt: details.initialPrompt ? withoutChatTextAttachments(details.initialPrompt) : undefined,
     olderThan: details.olderThan, warnings: details.warnings
@@ -113,6 +122,11 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
       result.environment = await waitWithin(readWorkspaceEnvironment(project, view === 'changes'), 5000, 'Project changes are still loading.');
     }
   } catch (error) { result.warnings.push(error instanceof Error ? error.message : String(error)); }
+  if (view === 'files' || view === 'overview') {
+    result.files.push(...(task.attachments ?? []).map(file => ({ path: projectAttachmentPath('task', taskId, file), name: file.name, type: 'file' as const, depth: 0, attachment: true })));
+    for (const comment of readProjectTasks(project).comments.filter(comment => comment.taskId === taskId))
+      result.files.push(...(comment.attachments ?? []).map(file => ({ path: projectAttachmentPath('comment', comment.id, file), name: file.name, type: 'file' as const, depth: 0, attachment: true })));
+  }
   if (initialPromptRead) result.initialPrompt = await waitWithin(initialPromptRead, 150, 'Initial prompt is still loading.').catch(() => undefined) || 'The initial prompt is currently unavailable. Reopen the task to retry.';
   return result;
 }

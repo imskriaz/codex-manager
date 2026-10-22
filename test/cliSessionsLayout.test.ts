@@ -305,11 +305,11 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("SwitchAccountIcon");
     expect(source).toContain('props.onSwitchAccount(peerId, accountId)');
     expect(source).not.toContain('class="cli-pc-group-heading"');
-    expect(source).toContain('session.canStop ? <IconButton label={`Stop ${session.title}`}');
-    expect(source).toContain('label={`Open ${session.title} in Codex`}');
-    expect(source).toContain("props.onOpenInCodex(session)");
+    expect(source).toContain('onOpenInCodex={() => props.onOpenInCodex(props.selectedSession!)}');
+    expect(source).toContain("Open in Codex</button>");
     const sessionRowStart = source.indexOf("const renderSession =");
     const sessionRowEnd = source.indexOf("const returnToSessionList", sessionRowStart);
+    expect(source.slice(sessionRowStart, sessionRowEnd)).not.toContain('label={`Stop ${session.title}`}');
     expect(source.slice(sessionRowStart, sessionRowEnd)).not.toContain('label={`Archive ${session.title}`}');
     expect(source).toContain("props.onArchive?.()");
     expect(source).toContain('<strong>Thinking</strong><span>for {formatElapsed(elapsed)}</span>');
@@ -345,8 +345,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('if (props.activePath) return <div class="cli-reviews-view is-detail">');
     expect(css).toContain(".cli-files-workbench.is-detail");
     expect(css).toContain(".cli-review-detail");
-    expect(source).toContain('aria-label="Show workspace tools"');
-    expect(source).toContain('!props.selectedSession && contextCollapsed');
+    expect(source).toContain('props.terminalCollapsed ? "Show workspace tools" : "Hide workspace tools"');
+    expect(source).toContain('const toolsCollapsed = contextCollapsed || !props.selectedSession || props.dashboardMode === true;');
     expect(source).toContain('.filter(tab => !props.tabs.includes(tab))');
     expect(main).toContain('onClearFile={() => setWorkspaceFilesByPath({})}');
     expect(main).toContain("setWorkspaceFilesByPath((current) => ({ ...current, [workspaceFile.path]: workspaceFile }))");
@@ -835,7 +835,8 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('const targetDeviceId = selectedPeer?.local ? undefined : selectedPeer?.id;');
     expect(main).toContain('sendAction("listCodexCliSessions", undefined, { automatic: !userInitiated, targetDeviceId });');
     expect(main).toContain('readCliSessionListCache(targetDeviceId)');
-    expect(cache).toContain('`list:${deviceId ?? "local"}`');
+    expect(cache).toContain('const systemId = cacheSystemId(deviceId);');
+    expect(cache).toContain('`list:${systemId}`');
   });
 
 });

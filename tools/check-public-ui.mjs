@@ -49,7 +49,8 @@ try {
     let taskMessages = [...messages,{id:'thinking',kind:'reasoning',text:'Private reasoning noise'},{id:'failed-tool',kind:'tool-call',status:'failed',text:'Failed attempt noise'}], holdRead = false, releaseRead;
     const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
     taskMessages[0] = { ...taskMessages[0], images: [{ src: image, alt: 'Shared attachment' }] };
-    const comments = [];
+    const comments = [], uploaded = new Map();
+    const uploadMetadata=files=>files?.map(({data,...file})=>{uploaded.set(file.id,{...file,data});return {...file,hash:'a'.repeat(64)};});
     const writes = [];
     async function waitForHeldWrite() {
       for (let attempt = 0; !releaseWrite && attempt < 100; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
@@ -61,13 +62,15 @@ try {
       if (route.request().method() === 'POST') {
         writes.push(route.request().postDataJSON());
         if (holdWrite) await new Promise(resolve => { releaseWrite = resolve; });
+        if(!failWrites) {const body=writes.at(-1);if(body.kind==='task'&&!tasks.some(task=>task.id===body.id))tasks.push({id:body.id,title:body.title,prompt:body.prompt,stage:'idea',createdAt:Date.now(),updatedAt:Date.now(),attachments:uploadMetadata(body.uploads)});else if(body.kind==='comment'&&!comments.some(comment=>comment.id===body.id))comments.push({id:body.id,taskId:body.taskId,text:body.text,author:'Visitor',createdAt:Date.now(),attachments:uploadMetadata(body.uploads)});}
         await route.fulfill(failWrites ? { status:503,json:{ error:'Temporarily unavailable' } } : { json:{ ok:true } });
         return;
       }
       const query = new URL(route.request().url()).searchParams, isTask = query.has('task'), wasRevoked = revoked;
       if (query.has('file') && failFile) { await route.fulfill({status:503,json:{error:'Attachment is temporarily unavailable.'}}); return; }
       const files = [{ path:'@attachment/upload/text/0',name:'brief.txt',type:'file',attachment:true },{path:'@attachment/upload/image/0',name:'Screenshot',type:'file',attachment:true}];
-      const file = query.get('file')?.includes('/image/') ? {path:'Screenshot',kind:'image',dataUrl:image,content:''} : {path:'brief.txt',kind:'text',content:'Shared uploaded snapshot'};
+      const savedUpload=uploaded.get(decodeURIComponent(query.get('file')?.split('/').at(-1)||''));
+      const file = savedUpload ? {path:savedUpload.name,kind:savedUpload.kind,content:savedUpload.kind==='text'?savedUpload.data:'',dataUrl:savedUpload.kind==='image'?savedUpload.data:undefined,mimeType:savedUpload.mimeType,size:savedUpload.size,revision:'public-upload'} : query.get('file')?.includes('/image/') ? {path:'Screenshot',kind:'image',dataUrl:image,content:''} : {path:'brief.txt',kind:'text',content:'Shared uploaded snapshot'};
       const warningOnly = historyWarningsOnly && query.get('view') === 'activities';
       const snapshot = JSON.parse(JSON.stringify(isTask ? query.has('file') ? {file} : { messages:query.get('view')==='files'||warningOnly?[]:taskMessages, files:query.get('view')==='files'?files:[],history:[],warnings:warningOnly?['Saved history is temporarily unavailable.']:[] } : {title:'Project work',tasks,comments,permissions,expiresAt:Date.now()+60000}));
       if (!isTask && holdRead) { holdRead = false; await new Promise(resolve => { releaseRead = resolve; }); }
@@ -139,19 +142,23 @@ try {
     await refreshBoard();
     const newTask = async () => { await page.getByRole('button',{name:'＋ Task',exact:true}).click(); };
     await newTask();
-    const panel = page.locator('.task-detail-panel'), ideaTitle = panel.getByLabel('Title',{exact:true}), ideaPrompt = panel.getByLabel('Prompt / idea',{exact:true}), submitIdea = panel.getByRole('button',{name:'Save task',exact:true});
+    const panel = page.getByRole('dialog',{name:'New task',exact:true}), ideaTitle = panel.getByLabel('Title',{exact:true}), ideaPrompt = panel.getByLabel('Prompt / idea',{exact:true}), submitIdea = panel.locator('button[type=submit]');
     await ideaTitle.fill('Preserve my draft'); await ideaPrompt.fill('Uncertain request');
+    await panel.locator('input[type=file]').setInputFiles({name:'guest.txt',mimeType:'text/plain',buffer:Buffer.from('Guest file survives retries')});
+    await panel.getByRole('button',{name:'Remove guest.txt',exact:true}).waitFor();
     failWrites=true; await submitIdea.click();
     await page.getByRole('status').filter({hasText:'Submission not confirmed'}).waitFor();
     const originalId=writes.at(-1).id;
     await page.reload(); await page.getByRole('button',{name:'＋ Task',exact:true}).waitFor(); await newTask();
     assert.equal(await ideaTitle.inputValue(),'Preserve my draft','Failed requests retain their draft through reload');
+    assert.equal(await panel.getByRole('button',{name:'Remove guest.txt',exact:true}).count(),1,'The attachment survives an uncertain request and reload');
     await submitIdea.click(); await page.getByRole('status').filter({hasText:'Submission not confirmed'}).waitFor();
     assert.equal(writes.at(-1).id,originalId,'An unchanged retry reuses its request identity after reload');
     await ideaPrompt.fill('Edited request');await page.reload();await page.getByRole('button',{name:'＋ Task',exact:true}).waitFor();await newTask();
     assert.equal(await ideaPrompt.inputValue(),'Edited request','An edited uncertain draft survives another reload');
     failWrites=false;holdWrite=true;await submitIdea.click();await waitForHeldWrite();
     assert.equal(await ideaTitle.evaluate(input=>input.readOnly),true,'Pending writes freeze their input');
+    assert.equal(await panel.getByRole('button',{name:'Close new task',exact:true}).isDisabled(),true,'Pending submissions cannot be closed');
     await page.evaluate(()=>window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
     assert.equal(await submitIdea.isDisabled(),true,'A background refresh preserves pending submission state');
     assert.equal(await ideaPrompt.inputValue(),'Edited request');
@@ -159,21 +166,27 @@ try {
     releaseWrite();releaseWrite=undefined;holdWrite=false;await panel.waitFor({state:'hidden'});
     assert.notEqual(writes.at(-1).id,originalId,'An edited retry creates a distinct request identity');
     await page.locator('.task-board-card').filter({hasText:'Release work'}).click();
-    const comment=panel.getByRole('textbox',{name:'Add a comment',exact:true}), postComment=panel.getByRole('button',{name:'Add comment',exact:true});
+    const detailPanel=page.locator('.task-detail-panel'), comment=detailPanel.getByRole('textbox',{name:'Add a comment',exact:true}), postComment=detailPanel.getByRole('button',{name:'Add comment',exact:true});
+    await detailPanel.locator('input[type=file]').setInputFiles({name:'guest-comment.txt',mimeType:'text/plain',buffer:Buffer.from('Public comment attachment')});
+    await detailPanel.getByRole('button',{name:'Remove guest-comment.txt',exact:true}).waitFor();
     await comment.fill('Keep my pending comment');holdWrite=true;await postComment.click();await waitForHeldWrite();
     await page.evaluate(()=>window.__projectStreams.at(-1).dispatchEvent(new Event('change')));
     assert.equal(await postComment.isDisabled(),true,'Refresh cannot re-enable a pending comment');
     releaseWrite();releaseWrite=undefined;holdWrite=false;await page.getByRole('status').filter({hasText:'Comment added.'}).waitFor();
+    await detailPanel.getByRole('button',{name:'guest-comment.txt',exact:true}).click();
+    const attachmentPreview=page.locator('.task-attachment-modal');
+    await attachmentPreview.getByText('Public comment attachment',{exact:true}).waitFor();
+    await attachmentPreview.getByRole('button',{name:'Close attachment',exact:true}).click();
     await page.context().setOffline(true);await page.waitForFunction(()=>!navigator.onLine);
     assert.equal(await postComment.isDisabled(),true,'Offline comments disable immediately');
     assert.equal(await page.evaluate(()=>window.__projectStreams.every(stream=>stream.readyState===2)),true,'Offline pages release their live connections');
-    await panel.getByRole('button',{name:'Close task details',exact:true}).click();await newTask();await ideaTitle.fill('Offline idea');
+    await detailPanel.getByRole('button',{name:'Close task details',exact:true}).click();await newTask();await ideaTitle.fill('Offline idea');
     assert.equal(await submitIdea.isDisabled(),true,'Public submissions are never queued offline');
     await page.context().setOffline(false);await page.waitForFunction(()=>navigator.onLine);
     await page.evaluate(()=>{window.__setItem=Storage.prototype.setItem;Storage.prototype.setItem=()=>{throw new DOMException('Full','QuotaExceededError');};});
     await ideaTitle.fill('Storage-full draft');await page.getByRole('status').filter({hasText:'Draft is kept in this tab only'}).waitFor();
     assert.equal(await ideaTitle.inputValue(),'Storage-full draft','Storage failures preserve the editable draft');
-    await page.evaluate(()=>{Storage.prototype.setItem=window.__setItem;});await panel.getByRole('button',{name:'Close task details',exact:true}).click();
+    await page.evaluate(()=>{Storage.prototype.setItem=window.__setItem;});await panel.getByRole('button',{name:'Close new task',exact:true}).click();
     assert.equal(await page.getByText('Archived work',{exact:true}).count(), 1, 'Archived sessions stay in Completed');
     await page.getByRole('button',{name:'Board actions',exact:true}).click(); await page.getByRole('menuitem',{name:/Archive ·/}).click();
     await page.getByText('Archived work',{exact:true}).waitFor();

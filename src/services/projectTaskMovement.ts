@@ -1,3 +1,4 @@
+import { readProjectAttachmentInput } from './projectTaskAttachments';
 import type { TaskStage } from '../domain/projectTasks';
 import { claimProjectTaskStart, finishProjectTaskStart, projectTaskKey, readProjectTask, recordProjectTaskStage } from './projectTasks';
 import { readNewCodexCliSessionSummary, resolveCodexHome, startCodexCliSession } from './codexSessionResume';
@@ -10,13 +11,17 @@ export async function startProjectTaskSession(project: string, id: string, revis
   const home = resolveCodexHome();
   return runCrossWindowExclusive(`task-move:${projectTaskKey(project)}:${id}`, 'Task session start', async signal => {
     const current = readProjectTask(project, id);
-    if (!current || !current.prompt.trim() && prompt === undefined) throw new Error('Add a task prompt before starting Codex.');
+    if (!current || !current.prompt.trim() && !current.attachments?.length && prompt === undefined) throw new Error('Add a task prompt before starting Codex.');
+    const attachments = [];
+    if (prompt === undefined) for (const file of current.attachments ?? []) attachments.push(await readProjectAttachmentInput(projectTaskKey(project), file));
+    if (resolveCodexHome() !== home) throw new Error('The account home changed. No task session was started.');
     const task = claimProjectTaskStart(project, id, revision, prompt !== undefined);
     signal.throwIfAborted();
-    const sessionId = await startCodexCliSession({ projectPath: project, text: prompt ?? task.prompt });
+    const text = prompt ?? (task.prompt || `Review the attached files for ${task.title}.`);
+    const sessionId = await startCodexCliSession({ projectPath: project, text, ...(attachments.length ? { attachments } : {}) });
     if (resolveCodexHome() !== home) throw new Error('The account home changed after startup. Check the new session before retrying; startup was not replayed.');
     const session = readNewCodexCliSessionSummary(sessionId);
-    finishProjectTaskStart(project, id, sessionId, home, prompt ?? task.prompt, session?.title);
+    finishProjectTaskStart(project, id, sessionId, home, text, session?.title);
     return readSavedProjectBoard(project, session);
   }, { waitMs: 500 });
 }

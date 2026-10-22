@@ -35,28 +35,15 @@ describe("overview actions", () => {
     expect(readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8")).toContain('configured ? "Change Password" : "Set Password"');
   });
 
-  it("keeps system switching available from the dashboard icon", () => {
+  it("keeps one system switcher in the sidebar instead of duplicate content controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
-    const overview = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
-    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
-
-    expect(main).toContain("PcPickerControl");
-    expect(main).toContain("accountsByPeerId={Object.fromEntries(");
-    expect(main).toContain("${syncLabel} · ${enabledCount} ${enabledLabel}");
-    expect(main).toContain("${accounts.length - enabledCount} ${disabledLabel}");
-    expect(main).toContain("Number.isFinite(peer.sessionCount)");
-    expect(main).toContain("${disabledLabel}${sessionSummary}");
-    expect(main).toContain('class="brand"');
-    expect(main).not.toContain("selectedPeer && pcOptions.length > 1");
-    expect(main).toContain('id="codexDashboardButton"');
-    expect(main).toContain("dashboard-system-count");
-    expect(main).not.toContain("dashboard-pc-picker-trigger");
-    expect(main).not.toContain('class="dashboard-select-control dashboard-pc-control"');
-    expect(overview).not.toContain(
-      'class="overview-session-meta overview-meta-item overview-meta-item-wide" role="status"'
-    );
-    expect(css).toContain(".dashboard-pc-picker");
-    expect(css).toContain(".dashboard-pc-picker-popover");
+    const workspace = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const board = readFileSync("webview-src/dashboard/taskBoard.tsx", "utf8");
+    expect(main).not.toContain("PcPickerControl");
+    expect(main).not.toContain('id="codexDashboardButton"');
+    expect(board).not.toContain('aria-label="Task system"');
+    expect(workspace).toContain('aria-label="System"');
+    expect(workspace).toContain('(props.peers?.length ?? 0) > 1');
   });
 
   it("lists running sessions with metadata and a session dashboard link", () => {

@@ -37,7 +37,7 @@ export function useModalAccessibility(open: boolean, onClose: () => void) {
 
     previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const modal = modalRef.current;
-    const firstFocusable = modal?.querySelector<HTMLElement>(MODAL_FOCUSABLE);
+    const firstFocusable = modal?.querySelector<HTMLElement>('[autofocus]:not(:disabled)') ?? modal?.querySelector<HTMLElement>(MODAL_FOCUSABLE);
     (firstFocusable ?? modal)?.focus();
 
     return () => {

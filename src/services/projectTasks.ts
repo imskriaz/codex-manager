@@ -2,8 +2,10 @@ import { createHash, randomBytes } from 'crypto';
 import * as path from 'path';
 import { publishDashboardRealtime } from './dashboardRealtime';
 import { getSqliteStateStore, type SqliteStateStore } from '../storage/sqliteState';
-import type { ProjectTask, ProjectComment, ProjectTaskMutation, ProjectBoard, ProjectSharePermission } from '../domain/projectTasks';
-import { sessionTaskStage, projectTaskStages, PROJECT_SHARE_FEATURES } from '../domain/projectTasks';
+import type { ProjectTask, ProjectComment, ProjectTaskMutation, ProjectBoard, ProjectSharePermission, ProjectAttachment, ProjectCommentInput } from '../domain/projectTasks';
+import { saveProjectAttachments, readProjectAttachmentFile, describeProjectAttachments, removeProjectAttachmentFiles } from './projectTaskAttachments';
+import { runCrossWindowExclusive } from '../utils/crossWindowOperations';
+import { sessionTaskStage, projectTaskStages, PROJECT_SHARE_FEATURES, projectAttachmentPath } from '../domain/projectTasks';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 export function projectTaskKey(project: string): string {
@@ -104,8 +106,9 @@ export function syncProjectSessions(project: string, home: string, sessions: Pro
   if (previous.size >= 64) previous.delete(previous.keys().next().value!);
   previous.set(importKey, fingerprint); imported.set(store, previous);
 }
-export function saveProjectTask(project: string, input: ProjectTaskMutation): ProjectTask {
+export function saveProjectTask(project: string, input: ProjectTaskMutation, attachments?: ProjectAttachment[], validateOnly = false): ProjectTask {
   identifier(input?.id);
+  if (input.uploads !== undefined && attachments === undefined) throw new Error('Attachment saving was not prepared. Your draft was kept.');
   if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 240 ||
       typeof input.prompt !== 'string' || input.prompt.length > 32_000 || !['idea','planned','running','completed'].includes(input.stage) ||
       !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) throw new Error('Enter a title and keep the task prompt under 32,000 characters.');
@@ -116,14 +119,14 @@ export function saveProjectTask(project: string, input: ProjectTaskMutation): Pr
   const task = store.transaction(() => {
     const current = getTask(store, key, input.id);
     const parentTaskId = input.parentTaskId === null ? undefined : input.parentTaskId ?? current?.parentTaskId;
-    if (current && current.revision === input.expectedRevision + 1 && current.title === input.title.trim() && current.prompt === input.prompt && current.stage === input.stage && current.parentTaskId === parentTaskId && (input.archived === undefined || current.archived === input.archived) && (input.hidden === undefined || current.hidden === input.hidden)) return current;
+    if (current && current.revision === input.expectedRevision + 1 && current.title === input.title.trim() && current.prompt === input.prompt && current.stage === input.stage && current.parentTaskId === parentTaskId && (input.archived === undefined || current.archived === input.archived) && (input.hidden === undefined || current.hidden === input.hidden) && JSON.stringify(current.attachments ?? []) === JSON.stringify(attachments ?? current.attachments ?? [])) return current;
     if ((current?.revision ?? 0) !== input.expectedRevision) throw new Error('This task changed in another browser. Your draft was kept; refresh and review it before saving.');
     if (!current && input.id.startsWith('session:')) throw new Error('Session tasks are created by discovery. Refresh the project first.');
     if (!current && Number(store.prepare('SELECT COUNT(*) AS n FROM project_tasks WHERE project=? AND source IS NULL').get(key)?.['n']) >= 500) throw new Error('This project already has 500 custom tasks. Project task storage is full.');
     if (current?.launchPending) throw new Error('Task startup is unconfirmed. Check the session list before changing this task.');
     if (input.hidden !== undefined && !current?.sourceKey && !current?.sessionId) throw new Error('Only session tasks can be hidden from boards.');
     if (parentTaskId && !current?.sourceKey && !current?.sessionId) throw new Error('Only session tasks can be subtasks. Custom tasks stay on the top-level board.');
-    if ((current?.sourceKey || current?.sessionId) && (input.archived !== undefined || input.title !== current.title || input.prompt !== current.prompt || input.stage !== current.stage)) throw new Error('Session titles and state are managed in the conversation. Only task grouping and board visibility can be changed here.');
+    if ((current?.sourceKey || current?.sessionId) && (attachments !== undefined || input.archived !== undefined || input.title !== current.title || input.prompt !== current.prompt || input.stage !== current.stage)) throw new Error('Session titles and state are managed in the conversation. Only task grouping and board visibility can be changed here.');
     let ancestor = parentTaskId;
     const seen = new Set([input.id]);
     while (ancestor) {
@@ -134,32 +137,83 @@ export function saveProjectTask(project: string, input: ProjectTaskMutation): Pr
       if (ancestor === parentTaskId && (parent.sourceKey || parent.sessionId)) throw new Error('Choose a custom task as the parent. Sessions cannot contain task subtasks.');
       ancestor = parent.parentTaskId;
     }
-    const task: ProjectTask = { ...current, manualStage: current?.sourceKey || current?.sessionId ? current.manualStage : input.stage, archived: input.archived ?? current?.archived, hidden: input.hidden ?? current?.hidden, id: input.id, title: input.title.trim(), prompt: input.prompt, stage: input.stage, parentTaskId,
+    const task: ProjectTask = { ...current, attachments: attachments ?? current?.attachments, manualStage: current?.sourceKey || current?.sessionId ? current.manualStage : input.stage, archived: input.archived ?? current?.archived, hidden: input.hidden ?? current?.hidden, id: input.id, title: input.title.trim(), prompt: input.prompt, stage: input.stage, parentTaskId,
       revision: (current?.revision ?? 0) + 1, createdAt: current?.createdAt ?? Date.now(), updatedAt: Date.now() };
-    putTask(store, key, task); return task;
+    if (!validateOnly) putTask(store, key, task); return task;
   });
-  publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
+  if (!validateOnly) publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
   return task;
 }
-export function addProjectComment(project: string, input: { id: string; taskId: string; text: string; author?: string }): ProjectComment {
+export function addProjectComment(project: string, input: ProjectCommentInput, attachments?: ProjectAttachment[], validateOnly = false): ProjectComment {
   identifier(input?.id); identifier(input?.taskId);
-  if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 8000 || (input.author !== undefined && typeof input.author !== 'string')) throw new Error('Write a comment under 8,000 characters.');
+  if (input.uploads !== undefined && attachments === undefined) throw new Error('Attachment saving was not prepared. Your draft was kept.');
+  if (typeof input.text !== 'string' || !input.text.trim() && !attachments?.length || input.text.length > 8000 || (input.author !== undefined && typeof input.author !== 'string')) throw new Error('Write a comment under 8,000 characters.');
   const { store, key } = projectStorage(project);
   const comment = store.transaction(() => {
     const row = store.prepare('SELECT data FROM project_comments WHERE project=? AND id=?').get(key, input.id);
     if (row) {
       const existing = JSON.parse(String(row['data'])) as ProjectComment;
-      if (existing.taskId !== input.taskId || existing.text !== input.text.trim()) throw new Error('This request identifier was already used for another comment.');
+      if (existing.taskId !== input.taskId || existing.text !== input.text.trim() || JSON.stringify(existing.attachments ?? []) !== JSON.stringify(attachments ?? [])) throw new Error('This request identifier was already used for another comment.');
       return existing;
     }
     if (!getTask(store, key, input.taskId)) throw new Error('This task is missing or belongs to another project.');
     if (Number(store.prepare('SELECT COUNT(*) AS n FROM project_comments WHERE project=?').get(key)?.['n']) >= 2000) throw new Error('Project comment storage is full. The comment was kept in your browser.');
-    const comment = { id: input.id, taskId: input.taskId, text: input.text.trim(), author: (input.author || 'Owner').slice(0, 80), createdAt: Date.now() };
-    store.prepare('INSERT INTO project_comments VALUES(?,?,?,?,?)').run(key, comment.id, comment.taskId, comment.createdAt, JSON.stringify(comment));
+    const comment = { id: input.id, taskId: input.taskId, text: input.text.trim(), author: (input.author || 'Owner').slice(0, 80), createdAt: Date.now(), ...(attachments?.length ? { attachments } : {}) };
+    if (!validateOnly) store.prepare('INSERT INTO project_comments VALUES(?,?,?,?,?)').run(key, comment.id, comment.taskId, comment.createdAt, JSON.stringify(comment));
     return comment;
   });
-  publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
+  if (!validateOnly) publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
   return comment;
+}
+async function cleanupFailedUploads(project: string, files: ProjectAttachment[], failure: unknown): Promise<never> {
+  try {
+    const rows = readProjectTasks(project);
+    const referenced = new Set([...rows.tasks, ...rows.comments].flatMap(row => row.attachments?.map(file => file.hash) ?? []));
+    await removeProjectAttachmentFiles(projectTaskKey(project), files.filter(file => !referenced.has(file.hash)).map(file => file.hash));
+  } catch { throw new Error(`${failure instanceof Error ? failure.message : 'Attachment saving failed.'} Unused upload cleanup was not confirmed; stored files were kept.`); }
+  throw failure;
+}
+export async function saveProjectTaskWithAttachments(project: string, input: ProjectTaskMutation, authorize?: () => void): Promise<ProjectTask> {
+  if (input?.uploads === undefined) return saveProjectTask(project, input);
+  identifier(input.id);
+  const origin = storage(), files = describeProjectAttachments(input.uploads)!;
+  return runCrossWindowExclusive(`project-attachments:${origin.file}:${projectTaskKey(project)}`, 'Save task attachments', async signal => {
+    signal.throwIfAborted();
+    if (getSqliteStateStore() !== origin) throw new Error('Manager storage changed. No attachments were saved.');
+    authorize?.(); saveProjectTask(project,input,files,true);
+    try {
+      await saveProjectAttachments(projectTaskKey(project), input.uploads, signal);
+      signal.throwIfAborted();
+      if (getSqliteStateStore() !== origin) throw new Error('Manager storage changed. Your files and draft were kept; retry on the original system.');
+      authorize?.(); return saveProjectTask(project, input, files);
+    } catch (error) { if (signal.aborted || getSqliteStateStore() !== origin) throw error; return cleanupFailedUploads(project,files,error); }
+  });
+}
+export async function addProjectCommentWithAttachments(project: string, input: ProjectCommentInput, authorize?: () => void): Promise<ProjectComment> {
+  if (input?.uploads === undefined) return addProjectComment(project, input);
+  identifier(input.id); identifier(input.taskId);
+  const origin = storage(), files = describeProjectAttachments(input.uploads)!;
+  return runCrossWindowExclusive(`project-attachments:${origin.file}:${projectTaskKey(project)}`, 'Save comment attachments', async signal => {
+    signal.throwIfAborted();
+    if (getSqliteStateStore() !== origin) throw new Error('Manager storage changed. No attachments were saved.');
+    authorize?.(); addProjectComment(project,input,files,true);
+    try {
+      await saveProjectAttachments(projectTaskKey(project), input.uploads, signal);
+      signal.throwIfAborted();
+      if (getSqliteStateStore() !== origin) throw new Error('Manager storage changed. Your files and draft were kept; retry on the original system.');
+      authorize?.(); return addProjectComment(project, input, files);
+    } catch (error) { if (signal.aborted || getSqliteStateStore() !== origin) throw error; return cleanupFailedUploads(project,files,error); }
+  });
+}
+export async function readProjectAttachment(project: string, taskId: string, filePath: string, allowComments = true) {
+  const task = readProjectTask(project, taskId);
+  if (!task) throw new Error('This task is missing or belongs to another project.');
+  const candidates = (task.attachments ?? []).map(file => ({ key: projectAttachmentPath('task', taskId, file), file }));
+  if (allowComments) for (const comment of readProjectTasks(project).comments.filter(item => item.taskId === taskId))
+    for (const file of comment.attachments ?? []) candidates.push({ key: projectAttachmentPath('comment', comment.id, file), file });
+  const found = candidates.find(item => item.key === filePath);
+  if (!found) throw new Error('This attachment is unavailable or outside this task.');
+  return readProjectAttachmentFile(projectTaskKey(project), found.file);
 }
 export function claimProjectTaskStart(project: string, id: string, expectedRevision: number | undefined, subtask = false): ProjectTask {
   identifier(id);
@@ -168,7 +222,7 @@ export function claimProjectTaskStart(project: string, id: string, expectedRevis
     const task = getTask(store, key, id);
     if (!Number.isSafeInteger(expectedRevision) || task?.revision !== expectedRevision) throw new Error('This task changed. Review the latest prompt before starting it.');
     if (!task || task.sessionId || task.sourceKey || task.archived || task.launchPending) throw new Error('This task already started or its startup is unconfirmed. Refresh sessions before retrying.');
-    if (!subtask && !task.prompt.trim()) throw new Error('Add a prompt before starting this task.');
+    if (!subtask && !task.prompt.trim() && !task.attachments?.length) throw new Error('Add a prompt before starting this task.');
     const next = { ...task, launchPending: true, revision: task.revision + 1, updatedAt: Date.now() };
     putTask(store, key, next); return next;
   });
@@ -230,8 +284,8 @@ export function publicProjectBoard(board: ProjectBoard, share: ProjectShare): un
   const visibleTasks = board.tasks.filter(task => !task.hidden);
   const visibleIds = new Set(visibleTasks.map(task => task.id));
   const stages = projectTaskStages(visibleTasks);
-  return { title: path.basename(board.projectPath), tasks: visibleTasks.map(({ id, title, prompt, stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage })),
-    comments: share.permissions.includes('comments') ? board.comments.filter(comment => visibleIds.has(comment.taskId)) : [], permissions: share.permissions, expiresAt: share.expiresAt, updatedAt: board.updatedAt };
+  return { title: path.basename(board.projectPath), tasks: visibleTasks.map(({ id, title, prompt, stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage, attachments }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage, ...(share.permissions.includes('files') ? { attachments } : {}) })),
+    comments: share.permissions.includes('comments') ? board.comments.filter(comment => visibleIds.has(comment.taskId)).map(({ attachments, ...comment }) => ({ ...comment, ...(share.permissions.includes('files') ? { attachments } : {}) })) : [], permissions: share.permissions, expiresAt: share.expiresAt, updatedAt: board.updatedAt };
 }
 
 /** Board classification never changes native work, goals or recovery state. */

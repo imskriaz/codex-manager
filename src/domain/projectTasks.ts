@@ -1,15 +1,20 @@
+import type { ChatAttachment } from './chatAttachments';
 import type { DashboardCliSessionSummary, DashboardCliSessionMessage, DashboardWorkspaceEnvironment, DashboardWorkspaceFileEntry } from './dashboard/types';
 
+export type ProjectAttachment = Omit<ChatAttachment, 'data'> & { hash: string };
+export type ProjectCommentInput = { id: string; taskId: string; text: string; author?: string; uploads?: ChatAttachment[] };
+export const projectAttachmentPath = (owner: 'task' | 'comment', ownerId: string, file: Pick<ProjectAttachment, 'id'>) => `@manager-attachment/${owner}/${encodeURIComponent(ownerId)}/${encodeURIComponent(file.id)}`;
 export type TaskStage = 'idea' | 'planned' | 'running' | 'completed';
 export type ProjectTask = {
   id: string; title: string; prompt: string; stage: TaskStage; revision: number;
   createdAt: number; updatedAt: number; sessionId?: string; launchPending?: boolean;
+  attachments?: ProjectAttachment[];
   parentTaskId?: string; sourceKey?: string; sourceHome?: string;
   sessionStatus?: DashboardCliSessionSummary['status']; sessionArchived?: boolean;
   manualStage?: TaskStage; archived?: boolean; hidden?: boolean;
   timing?: { firstStartedAt: number; lastObservedAt: number; durationMs: number; runCount: number };
 };
-export type ProjectComment = { id: string; taskId: string; author: string; text: string; createdAt: number };
+export type ProjectComment = { id: string; taskId: string; author: string; text: string; createdAt: number; attachments?: ProjectAttachment[] };
 export type ProjectBoard = { projectPath: string; tasks: ProjectTask[]; comments: ProjectComment[]; sessions: DashboardCliSessionSummary[]; updatedAt: number; revision?: number; homeKey?: string };
 export type ProjectTaskFile = DashboardWorkspaceFileEntry & { attachment?: boolean };
 export type ProjectTaskDetails = {
@@ -19,7 +24,7 @@ export type ProjectTaskDetails = {
   warnings: string[];
   olderThan?: string;
 };
-export type ProjectTaskMutation = { id: string; title: string; prompt: string; stage: TaskStage; expectedRevision: number; parentTaskId?: string | null; archived?: boolean; hidden?: boolean };
+export type ProjectTaskMutation = { id: string; title: string; prompt: string; stage: TaskStage; expectedRevision: number; uploads?: ChatAttachment[]; parentTaskId?: string | null; archived?: boolean; hidden?: boolean };
 export const PROJECT_SHARE_FEATURES = [
   { key: 'activities', label: 'Activities', description: 'Read the task timeline, messages, and relevant actions.' },
   { key: 'files', label: 'Conversation files', description: 'Read files shared or changed in the conversation history.' },

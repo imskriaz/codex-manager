@@ -90,6 +90,15 @@ it("publishes authenticated peer systems and accounts in the VS Code dashboard s
   expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ state: expect.objectContaining({ connectedPeers, peerAccounts, logoUri: "logo" }) }));
 });
 
+it('provides the stable native system ID without enabling remote discovery or exposing peer accounts', async () => {
+  const state = createState(), postMessage = vi.fn(async (_message: unknown) => true);
+  const localPeer = { id: 'actual-local-id', name: 'This PC', local: true, connected: true, sessionCount: 0 };
+  buildDashboardStateMock.mockResolvedValue(state); backfillMissingResetCreditExpiriesMock.mockResolvedValue(false);
+  await publishDashboardSnapshot({ context: createContext(), repo: {} as never, settingsStore: {} as never, logoUri: 'logo', setPanelTitle: vi.fn(), postMessage, schedulePublishState: vi.fn(), localPeer });
+  expect(postMessage.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ state: expect.objectContaining({ connectedPeers: [localPeer] }) }));
+  expect((postMessage.mock.calls[0]?.[0] as { state: DashboardState }).state.peerAccounts).toBeUndefined();
+});
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | "timeout"> {
   return Promise.race([
     promise,

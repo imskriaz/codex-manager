@@ -90,6 +90,15 @@ export function clearCodexSessionManualStop(home: string, id: string): void {
   }
 }
 
+/** Native removal is confirmed; never turn an uncertain launch back into queued work. */
+export function retireCodexSessionQueue(home: string, id: string): void {
+  const store = getSqliteStateStore();
+  if (!store) throw new Error('Session queue cleanup could not be confirmed because storage is unavailable.');
+  const current = read(store, home, id);
+  if (!current.queue && current.priority === undefined) return;
+  writeCodexSessionPreference(home, id, { queue: false, priority: undefined, queueRevision: randomUUID() });
+}
+
 export function claimCodexSessionQueue(home: string, id: string, revision: string | undefined): string | undefined {
   const store = getSqliteStateStore();
   if (!store) throw new Error('Session queue storage is unavailable. No work was started.');

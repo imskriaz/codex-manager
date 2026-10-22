@@ -1,6 +1,17 @@
 # Changelog
 
-## 1.4.3-pre.5
+## 1.4.3
+
+- Use a focused New task dialog with title, description, stage and attachments. Add attachments to comments, including attachment-only comments. Store payloads under the owning manager's `manager/attachments` folder beside its database; board responses and SQLite hold metadata only. Reuse session upload validation, retain offline drafts, support bounded on-demand preview/download, and enforce shared Files/Comments permissions. Reject invalid drafts before filesystem writes, recheck permissions after uploads, and clean up unreferenced failed uploads without removing confirmed files.
+- Keep small-screen task search inside the toolbar with an explicit close action that preserves the filter; Escape clears it. Size the project tab to its name.
+
+- Keep one system switcher in the sidebar, with a count badge only for multiple systems. Remove duplicate board/dashboard selectors, expose useful task metadata directly beneath titles, and reclaim the info-button space.
+- Tighten conversation title/project spacing, restore the workspace tools close button, and keep the right sidebar closed on welcome and new-chat screens.
+- Stop obsolete session-list refreshes from keeping controls disabled or replacing newer results with timeout errors. Remove the persistent checking-status block, show one appropriate automation control per sidebar session, and report manual flyout refresh results through the same feedback path as sidebar refresh.
+- Use stable system IDs for local browser caches, drafts, task boards and offline changes. Keep unverified legacy drafts for explicit recovery instead of automatically assigning them to the current PC. Reject late confirmations when the browser origin changes host.
+- Retire saved queue entries after confirmed native archive/delete actions, preserve uncertain claims, and report bookkeeping failures without replaying the native mutation. Keep open task metadata current without overwriting edits.
+
+### 1.4.3-pre.5
 
 - Keep browser sessions and Account Center scoped to the selected system. Persist local and remote account read views separately in IndexedDB, release inactive remote catalogues from the visible state, and retain the selected PC across reload, history navigation, and temporary discovery loss. Hide disabled accounts from switching choices.
 - Treat peer heartbeat session lists as partial updates, including older relays. Preserve the complete cached catalogue and composer metadata until an authoritative read confirms changes; fence delayed cache writes and stale restores.
@@ -8,7 +19,7 @@
 - Preserve a session’s folder when starting a chat from a project missing from the catalogue; reset the project context on system changes without deleting saved drafts.
 - Improve System/Project tab alignment, readable compact session titles, centered empty workspaces, and menu access around toasts. Give Tasks its own pulse icon so it differs from the session-list control.
 
-## 1.4.3-pre.4
+### 1.4.3-pre.4
 
 - Keep agent details in the task’s Agents tab, using the same compact agent selector and transcript panel as the workspace sidebar. Preserve messages on failed refresh, isolate task/system requests, and keep shared boards read-only.
 - Fix live task search for grouped sessions and keep the same filter in Board/List. Remove repeated PC names from cards, normalize action icons, tighten all task-details tabs, and keep compact headers on one row when space allows.
@@ -22,7 +33,7 @@
 - Match System and Project selectors to the task view tabs, balance header padding, and place the actions menu last.
 - Retain account names with token history after account removal while deleting credentials; preserve labels through legacy writes and apply privacy masking to historical accounts.
 
-## 1.4.3-pre.3
+### 1.4.3-pre.3
 
 - Clarify and verify that Manager follows the latest valid Codex login, restores a missing saved entry, and retries with the new login after an import race without writing authentication back to Codex.
 
@@ -30,7 +41,7 @@
 - Cancel unconfirmed queued startup when its operation lease is lost, integration is disabled, the home changes, or the host disposes. Keep uncertain claims visible for review and preserve accepted work.
 - Show confirmed session-action/list-refresh warnings as one dismissible toast, without adding a session or transcript block. Keep automatic acknowledgements quiet.
 
-## 1.4.3-pre.2
+### 1.4.3-pre.2
 
 - Automatically bind Codex OAuth sign-ins and reauthorizations, including an empty vault and retry after temporary storage failure. Treat the latest valid Codex login as authoritative, restoring its saved entry if missing; preserve partial-file credentials, recheck the auth snapshot before importing, and never rewrite Codex authentication during import. Match legacy workspace identity consistently.
 
@@ -44,7 +55,7 @@
 - Restore account tags in the account actions menu with a compact editor, validation, durable acknowledgements, conflict protection, and preserved drafts after failure or timeout. Show tags beside subscription days without wrapping, summarize overflow, and add a persistent tag filter and tag-aware search in both account views. Keep edits scoped to the selected system.
 - Restore the privacy icon to the header. More → Tags opens a searchable tag manager with account counts, filtering, rename/merge, removal of labels, and guarded enable/disable actions. Confirm group changes, preserve other labels/accounts, enforce credential and ownership checks, and report partial or unconfirmed outcomes without replay.
 
-## 1.4.3-pre.1
+### 1.4.3-pre.1
 
 - Subscribe to the browser's selected system on demand. Load its sessions once, then share file-change events without recurring session scans. Signed target subscriptions do not wake unrelated PCs or propagate peer demand; switching, closing, hiding, disconnecting, or expiring viewers releases monitoring. Keep lightweight authenticated presence for discovery and account ownership.
 
@@ -56,7 +67,7 @@
 - Add on-demand project Git history with 50-row pages anchored to a stable revision, author/date/hash metadata, and scoped commit diffs. Preserve loaded history after failed refreshes and disable live reads offline.
 - Replace Tools' recurring status and search timers with bounded progress events, explicit search, and catch-up reads on reopening or reconnecting. Recover lost start acknowledgements by preview token without replaying cleanup; fence stale/foreign progress, retain cancellation, and cap peer progress buffering.
 
-## 1.4.3
+### Earlier 1.4.3 build
 - Replace the Environment flyout with a fixed first Env tab and one header toggle for the right inspector. Add a compact Git tab for branch/status, changed files, commit, push review and comparison; keep terminal profiles in Terminal and tool selection in a floating menu.
 - Keep Git closable, place the add button immediately after open tabs, and summarize every inspector tool in Env's aligned list, including agent status and unsaved file drafts. Compact session rows and goal/queue strips, including smaller unboxed pause controls, without shrinking phone session touch targets.
 - Rebuild the project session hierarchy as a flat, dense tree: single-row system/project headings, one collapse control per project, inline counts, minimal indentation and status/time below each title. Remove duplicated project/system metadata, stacked selection cards and tree-divider clutter.

@@ -12,13 +12,17 @@ import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
 import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, startNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
-import { readCodexSessionPreferences } from '../src/services/codexSessionPreferences';
+import { readCodexSessionPreferences, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
+import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 
 const id = "01a04882-d037-7a42-ad24-9afb61901199";
 let root: string;
+let preferenceStore: SqliteStateStore;
 let previousHome: string | undefined;
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "codex-native-start-"));
+  preferenceStore = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
+  configureSqliteStateStore(preferenceStore);
   previousHome = process.env["CODEX_HOME"];
   process.env["CODEX_HOME"] = root;
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback, inspect: () => ({ globalValue: "app-server-stdio", workspaceValue: "cli" }) } as unknown as vscode.WorkspaceConfiguration);
@@ -29,10 +33,37 @@ afterEach(async () => {
   vi.clearAllMocks();
   vi.mocked(startNativeCodexSessionTurn).mockReset().mockResolvedValue(false);
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined);
+  configureSqliteStateStore(undefined); preferenceStore.close();
   await rm(root, { recursive: true, force: true });
 });
 
 describe("native App Server new sessions", () => {
+  it.each(['archive', 'delete'] as const)('retires queue preferences only after confirmed native %s', async operation => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    writeCodexSessionPreference(root, id, { queue: true, priority: 3, autoResume: false });
+    const rpc = { request: vi.fn(async () => { throw new Error('Native operation failed'); }), close: vi.fn() };
+    mocks.open.mockResolvedValue(rpc);
+    const mutate = operation === 'archive' ? archiveCodexCliSession : deleteCodexCliSession;
+    await expect(mutate(id)).rejects.toThrow('Native operation failed');
+    expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject({ queue: true, priority: 3, autoResume: false });
+    rpc.request.mockResolvedValueOnce({} as never);
+    await mutate(id);
+    expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject({ queue: false, autoResume: false });
+    expect(readCodexSessionPreferences(root, [id]).get(id)?.priority).toBeUndefined();
+  });
+
+  it.each(['archive', 'delete'] as const)('reports a confirmed %s with unavailable queue storage without replaying it', async operation => {
+    await mkdir(path.join(root, 'sessions'));
+    await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
+    const rpc = { request: vi.fn(async (_method: string) => ({})), close: vi.fn() };
+    mocks.open.mockResolvedValue(rpc); configureSqliteStateStore(undefined);
+    const mutate = operation === 'archive' ? archiveCodexCliSession : deleteCodexCliSession;
+    await expect(mutate(id)).rejects.toThrow('queue cleanup could not be saved');
+    expect(rpc.request).toHaveBeenCalledTimes(1);
+    expect(rpc.request.mock.calls[0]?.[0]).toBe(`thread/${operation}`);
+  });
+
   it.each(['completed', 'missing', 'during-resume', 'writer-conflict', 'truncated', 'cancelled', 'home-changed', 'resume-failed'])('does not send recovery after completion or unsafe startup (%s)', async scenario => {
     await mkdir(path.join(root, 'sessions'));
     const transcript = path.join(root, 'sessions', `rollout-${id}.jsonl`);

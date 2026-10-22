@@ -6,7 +6,7 @@ import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { readManuallyStoppedCodexSessionIds } from '../src/services/codexSessionResume';
 import { filterAutoResumeGoalSessionIds } from '../src/services/codexSessionAutoResumeSelection';
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
-import { clearCodexSessionManualStop, isCodexSessionAutoResumeDisabled, markCodexSessionManualStop, orderCodexSessionRecoveryIds, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, claimCodexSessionQueue, finishCodexSessionQueueClaim } from "../src/services/codexSessionPreferences";
+import { clearCodexSessionManualStop, isCodexSessionAutoResumeDisabled, markCodexSessionManualStop, orderCodexSessionRecoveryIds, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, claimCodexSessionQueue, finishCodexSessionQueueClaim, retireCodexSessionQueue, readQueuedCodexSessionPreferences } from "../src/services/codexSessionPreferences";
 
 const ids = [
   "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
@@ -129,4 +129,20 @@ it("consumes a confirmed queue claim durably instead of scheduling it again", as
   store.close(); store = await SqliteStateStore.open(database); configureSqliteStateStore(store);
   expect(readCodexSessionPreferences(root, ids).get(ids[0]!)).toMatchObject({ queue: false, autoResume: false });
   expect(claimCodexSessionQueue(root, ids[0]!, 'once')).toBeUndefined();
+});
+
+it('retires confirmed removed sessions without clearing uncertain claims or other homes', async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), 'codex-session-preferences-'));
+  store = await SqliteStateStore.open(path.join(root, 'manager.sqlite'));
+  configureSqliteStateStore(store);
+  const otherHome = path.join(root, 'other');
+  writeCodexSessionPreference(root, ids[0]!, { queue: true, priority: 1, autoResume: false, queueClaimId: 'uncertain', queueClaimedAt: Date.now(), queueError: 'Review first' });
+  writeCodexSessionPreference(otherHome, ids[0]!, { queue: true, priority: 2 });
+  retireCodexSessionQueue(root, ids[0]!);
+  expect(readQueuedCodexSessionPreferences(root).has(ids[0]!)).toBe(false);
+  expect(readCodexSessionPreferences(root, ids).get(ids[0]!)).toMatchObject({ queue: false, autoResume: false, queueClaimId: 'uncertain', queueError: 'Review first' });
+  expect(readQueuedCodexSessionPreferences(otherHome).get(ids[0]!)?.priority).toBe(2);
+  retireCodexSessionQueue(root, ids[0]!);
+  configureSqliteStateStore(undefined);
+  expect(() => retireCodexSessionQueue(root!, ids[0]!)).toThrow('storage is unavailable');
 });

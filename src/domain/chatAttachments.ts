@@ -61,7 +61,7 @@ export function validateChatAttachments(value: unknown): ChatAttachment[] {
     } else throw new Error(`${name}: only images and text files are supported.`);
     total += size;
     if (total > MAX_CHAT_ATTACHMENT_BYTES) throw new Error("Attachments exceed 1 MB in total. Remove a file and try again.");
-    return { id, name: name.trim(), kind, mimeType, data, size };
+    return { id, name: name.trim(), kind, mimeType: kind === "text" ? "text/plain" : mimeType, data, size };
   });
 }
 

@@ -89,7 +89,7 @@ import { updateAutoSwitchLock } from "../workbench/autoSwitchState";
 import { getTokenAutomationSnapshot } from "../workbench/tokenAutomationState";
 import { createDashboardApiToken, listDashboardApiTokens, revokeDashboardApiToken } from '../../services/dashboardApiToken';
 import { readProjectBoard, readSavedProjectBoard, readProjectTaskDetails } from '../../services/projectBoard';
-import { saveProjectTask, addProjectComment, createProjectShare, revokeProjectShares, resetProjectTaskStart } from '../../services/projectTasks';
+import { saveProjectTaskWithAttachments, addProjectCommentWithAttachments, readProjectAttachment, createProjectShare, revokeProjectShares, resetProjectTaskStart } from '../../services/projectTasks';
 import { resolveWorkspaceProjectPathAsync } from '../../services/workspaceTools';
 import {
   clearQueuedAccountSwitch,
@@ -405,13 +405,13 @@ async function runDashboardAction(
     case 'saveProjectTask': {
       if (!payload?.task) throw new Error('The task draft is missing.');
       const project = await resolveWorkspaceProjectPathAsync(payload.projectPath);
-      saveProjectTask(project, payload.task);
+      await saveProjectTaskWithAttachments(project, payload.task);
       return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: payload.task.hidden === true ? 'Session hidden from boards.' : payload.task.hidden === false ? 'Session restored to boards.' : 'Task saved.' } };
     }
     case 'addProjectComment': {
       if (!payload?.comment) throw new Error('The comment is missing.');
       const project = await resolveWorkspaceProjectPathAsync(payload.projectPath);
-      addProjectComment(project, payload.comment);
+      await addProjectCommentWithAttachments(project, payload.comment);
       return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: 'Comment added.' } };
     }
     case 'moveProjectTask': {
@@ -1025,6 +1025,10 @@ async function runDashboardAction(
     case "listWorkspaceFiles":
       return { workspaceFiles: await listWorkspaceFiles(payload?.projectPath) };
     case "readWorkspaceFile":
+      if (payload?.filePath?.startsWith('@manager-attachment/')) {
+        if (!payload.taskId) throw new Error('Choose the task that owns this attachment.');
+        return { workspaceFile: await readProjectAttachment(await resolveWorkspaceProjectPathAsync(payload.projectPath), payload.taskId, payload.filePath) };
+      }
       return { workspaceFile: await readWorkspaceFile(payload?.projectPath, payload?.filePath) };
     case "saveWorkspaceFile":
       return {
