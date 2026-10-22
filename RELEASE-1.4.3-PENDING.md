@@ -1,5 +1,46 @@
 # 1.4.3 completion checklist
 
+## Queue, refresh-notice and auth clarification (`1.4.3-pre.3`)
+
+- The latest valid Codex login remains authoritative, including after removal of
+  its Manager entry. Clarify this in the README and extend repository regression
+  coverage through import races, the next successful import, removal/recreation
+  and partial auth-file writes. Import never writes older credentials to Codex.
+
+- The completion audit found that equal-priority dispatch truncated its selected
+  group to eight entries. The runner now dispatches the priority group using
+  eight concurrent startup checks and available capacity under the existing
+  30-turn limit. Unclaimed overflow stays queued. Capacity is part of the change
+  signature and slot release wakes the runner without a new polling loop.
+- Combine cancellation from registration disposal, queue lease and configuration.
+  Recheck home/configuration/capacity before claims; retain uncertain claims with
+  an explicit warning instead of replaying them. Accepted native work retains its
+  existing separation from startup cancellation.
+- The reported confirmed-action/list-refresh warning was dropped by both notice
+  paths. Manual results now use the shared toast controller; automatic mutation
+  acknowledgements stay quiet. No notice block is added to the session list or
+  transcript. Browser fixtures check a single dismissible warning, its lifetime,
+  no inline duplicate and no automatic toast.
+- Preserve the full release goal. This follow-up does not prove physical two-PC
+  behavior, cold native recovery or publication. Native archive/delete queue
+  preference cleanup needs a separate targeted audit; an absent session with an
+  uncertain durable claim must never be silently treated as safe to replay.
+- Verification: all 2,269 tests across 190 files pass in one isolated full run
+  (250.98 seconds); 301 focused checks across 12 files also pass. Both TypeScript
+  targets compile. Lint has zero errors and 3,180 warnings.
+- Six-size queue UI checks pass, including the toast-only partial-success warning,
+  lifetime, dismissal and quiet automatic acknowledgements. Rich public board,
+  retry/offline/storage/revocation checks pass at desktop and phone widths.
+- Read-only real-host checks load 341 sessions, exclude 230 children from the
+  parent list, render 22 messages and reconnect at 1440/390px without runtime
+  errors (initial loads 1,225/584 ms). No real turns or account mutations were sent.
+- Review VSIX builds with bundled runtime dependencies; manifest/runtime assets
+  match the current build and source/test/output folders are excluded. Artifact
+  `codex-manager-1.4.3-pre.3.vsix`: 4,035,154 bytes; SHA-256
+  `6ee2ec7f1eaa6e1b747920208aa4639ddc7251035c1e3a22b9d3052e3ae6549b`.
+  Not installed or published. Physical cross-PC validation remains open: the
+  missing PC was reported on 1.4.2 and the user is updating it to pre.2.
+
 ## Current usage and workspace follow-up (`1.4.3-pre.2`)
 
 - Bind Codex OAuth logins from auth-file events and existing reconciliation.

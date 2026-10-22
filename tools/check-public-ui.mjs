@@ -74,6 +74,10 @@ try {
       await route.fulfill(wasRevoked ? { status:404,json:{ error:'Revoked' } } : { json:snapshot });
     });
     await page.goto(`${origin}/projects/share/fixture`);
+    await page.getByRole('button',{name:'Board actions',exact:true}).click();
+    const ideaColumn=page.getByRole('menuitemcheckbox',{name:'Idea',exact:true});
+    assert.equal(await ideaColumn.getAttribute('aria-checked'),'false','Public board follows the same hidden-Idea default');
+    await ideaColumn.click();await page.keyboard.press('Escape');
     await page.locator('.task-board-card').filter({hasText:'Release work'}).click();
     await page.getByRole('tab',{name:'Activities',exact:true}).click();
     await page.locator('.task-detail-panel .cli-session-message').nth(1).waitFor();

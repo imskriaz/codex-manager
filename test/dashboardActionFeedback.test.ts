@@ -51,7 +51,14 @@ describe("dashboard action feedback", () => {
   it('evicts only confirmed missing conversations while preserving transient read failures', () => {
     expect(isMissingCliSessionError('This session was not found.')).toBe(true);
     for (const error of ['Permission denied.', 'Session discovery is still pending.', 'Session transcript not found while offline.', 'Session read timed out.']) expect(isMissingCliSessionError(error)).toBe(false);
-    expect(noticeFromActionResult({ type: 'dashboard:action-result', requestId: 'rename', action: 'renameCodexCliSession', status: 'completed', payload: { notice: { level: 'warning', message: 'The session action completed, but the session list could not refresh: Session discovery is still pending.' } } })).toBeUndefined();
+    expect(noticeFromActionResult({ type: 'dashboard:action-result', requestId: 'rename', action: 'renameCodexCliSession', status: 'completed', payload: { notice: { level: 'warning', message: 'The session action completed, but the session list could not refresh: Session discovery is still pending.' } } })).toMatchObject({level:'warning',message:expect.stringContaining('session list could not refresh')});
+  });
+  it.each(['renameCodexCliSession','archiveCodexCliSession','unarchiveCodexCliSession','deleteCodexCliSession','forkCodexCliSession'] as const)('keeps a confirmed %s refresh warning toast-only and quiet for automatic results', action => {
+    const notice={level:'warning' as const,message:'The session action completed, but the session list could not refresh: Session discovery is still pending. Refresh the list before retrying the action.'};
+    const result={type:'dashboard:action-result' as const,requestId:'manual',action,status:'completed' as const,payload:{notice}};
+    expect(noticeFromActionResult(result)).toEqual(notice);
+    expect(noticeFromActionResult(result,true)).toBeUndefined();
+    expect(noticeFromActionResult({...result,status:'failed',error:'Mutation failed.'})).toEqual({level:'error',message:'Mutation failed.'});
   });
   it("does not duplicate embedded turn completion with an internal CLI action-name toast", () => {
     expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "turn", action: "sendCodexCliSessionMessage", status: "completed" })).toBeUndefined();

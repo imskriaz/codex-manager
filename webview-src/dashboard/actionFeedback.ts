@@ -27,7 +27,6 @@ export function noticeFromActionResult(
   }
 
   if (message.payload?.notice) {
-    if (message.payload.notice.message.startsWith('The session action completed, but the session list could not refresh:')) return undefined;
     if (["listCodexCliSessions", "getCodexCliSessionMessages"].includes(message.action) &&
       message.payload.notice.message.startsWith("Session history is available, but running state could not be verified.")) return undefined;
     return message.payload.notice;

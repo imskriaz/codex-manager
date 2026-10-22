@@ -45,6 +45,7 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain('notice.level !== "info"');
     expect(source).toContain("const reportLocalFeedback = props.onActionFeedback;");
     expect(main).toContain("onActionFeedback={showNotice}");
+    expect(main).not.toContain('feedback.message.startsWith("The session action completed, but the session list could not refresh:")');
     expect(css).toContain("touch-action: pan-x");
     expect(source).toContain("Reconnecting · live updates paused");
     expect(source).not.toContain("Reconnecting. Your draft is saved; sending is available after the conversation reconnects.");

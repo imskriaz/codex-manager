@@ -792,7 +792,7 @@ describe("AccountsRepository token persistence", () => {
     await expect(fs.access(legacyIndex)).rejects.toThrow();
     currentVersion.dispose();
   });
-it('imports Codex authentication without rewriting it and rejects a login replaced during import', async () => {
+it('follows the latest Codex login, restores a removed entry, and retries a changed import without rewriting authentication', async () => {
   const secrets = new Map<string, string>();
   const context = { globalStorageUri: { fsPath: tempDir }, secrets: { get: vi.fn(async (key: string) => secrets.get(key)), store: vi.fn(async (key: string, value: string) => { secrets.set(key,value); }), delete: vi.fn(async (key: string) => { secrets.delete(key); }) } } as unknown as vscode.ExtensionContext;
   const tokens = createTokens('acct_external', 'external@example.test');
@@ -811,10 +811,21 @@ it('imports Codex authentication without rewriting it and rejects a login replac
     await expect(repo.importCurrentAuth()).rejects.toThrow(/authentication changed/);
     expect(writeAuthFileMock).not.toHaveBeenCalled();
     expect(JSON.parse(secrets.get(`codex.account.${first.id}`)!)).toMatchObject({ refreshToken: 'reauthorized' });
+    const latest = await repo.importCurrentAuth();
+    expect(latest.id).toBe(first.id);
+    expect(await repo.getTokens(first.id, { bypassCache: true })).toMatchObject({ accessToken: 'newer-login' });
+    await repo.removeAccount(first.id);
+    expect(await repo.getAccount(first.id)).toBeUndefined();
+    expect(secrets.has(`codex.account.${first.id}`)).toBe(false);
+    const restored = await repo.importCurrentAuth();
+    expect(restored).toMatchObject({ id: first.id, isActive: true });
+    expect(await repo.listAccounts()).toHaveLength(1);
+    expect(await repo.getTokens(first.id, { bypassCache: true })).toMatchObject({ accessToken: 'newer-login' });
     readAuthFileMock.mockResolvedValue({ tokens: { id_token: tokens.idToken } });
     await repo.syncActiveAccountFromAuthFile();
     expect((await repo.getAccount(first.id))?.isActive).toBe(true);
-    expect(JSON.parse(secrets.get(`codex.account.${first.id}`)!)).toMatchObject({ refreshToken: 'reauthorized' });
+    expect(JSON.parse(secrets.get(`codex.account.${first.id}`)!)).toMatchObject({ accessToken: 'newer-login', refreshToken: tokens.refreshToken });
+    expect(writeAuthFileMock).not.toHaveBeenCalled();
   } finally { repo.dispose(); }
 });
 

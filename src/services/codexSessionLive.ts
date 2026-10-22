@@ -11,6 +11,7 @@ import { getCodexHome } from "../codex/authFile";
 const MAX_STREAMS = 30;
 const TERMINAL_TTL_MS = 5 * 60_000;
 const activeSlots = new Set<string>();
+const slotReleased = new Set<() => void>();
 const streams = new Map<string, { reducer: CodexSessionLiveReducer; timer?: NodeJS.Timeout; finishedAt?: number }>();
 
 export function getCodexSessionLiveState(sessionId: string): DashboardCodexSessionLiveState | undefined {
@@ -31,6 +32,15 @@ export function listCodexSessionLiveStates(): DashboardCodexSessionLiveState[] {
     if (isNewerCodexSessionLiveState(current,states.get(id))) states.set(id,current);
   }
   return [...states.values()];
+}
+
+export function onDidReleaseCodexSessionLiveSlot(listener: () => void): () => void {
+  slotReleased.add(listener);
+  return () => { slotReleased.delete(listener); };
+}
+
+export function availableCodexSessionLiveSlots(): number {
+  return MAX_STREAMS - activeSlots.size;
 }
 
 /** Reserve capacity before thread/start or turn/start can mutate the provider. */
@@ -94,6 +104,9 @@ export function reserveCodexSessionLive() {
         entry = undefined;
       } else flush();
       activeSlots.delete(streamId);
+      for (const listener of slotReleased) {
+        try { listener(); } catch (error) { console.warn('[codexManager] session capacity listener failed', error); }
+      }
     }
   };
 }

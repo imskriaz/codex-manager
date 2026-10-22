@@ -234,6 +234,7 @@ const mockHost = `(() => {
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0}]:[]};
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
+        if(message.action==='setCodexSessionQueue' && !error && window.__sessionRefreshNotice) {window.__sessionRefreshNotice=false;payload.notice={level:'warning',message:'The session action completed, but the session list could not refresh: Session discovery is still pending. Refresh the list before retrying the action.'};}
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
         if(message.action==='setAccountTags' && window.__loseTagAck) {window.__loseTagAck=false;window.__heldTagResult=result;return;}
         if(message.action==='listCodexCliSessions' && window.__holdNextSystemList) {window.__holdNextSystemList=false;window.__heldSystemList=result;return;}
@@ -613,10 +614,21 @@ try {
       await page.waitForFunction(()=>!document.querySelector('.cli-sessions-running-row .cli-session-queue-wrap button')?.disabled);
       await trigger.click();
       await page.getByRole('button',{name:'Close queue options',exact:true}).click();
+      await page.evaluate(()=>{window.__failQueue=false;window.__sessionRefreshNotice=true;});
+      await trigger.click();await panel.getByRole('button',{name:'Queue session',exact:true}).click();
+      const refreshWarning=page.locator('.dashboard-notice').filter({hasText:'The session action completed, but the session list could not refresh:'});
+      await refreshWarning.waitFor();assert.equal(await page.locator('.dashboard-notice').count(),1,'Manual partial success has one toast');
+      assert.equal(await page.locator('.cli-sessions-list-status').count(),0,'A mutation refresh warning never becomes an inline session-list error');
+      await page.waitForTimeout(3100);assert.ok(await refreshWarning.isVisible(),'The warning outlasts short informational toasts');
+      await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',requestId:'dashboard-auto-refresh-warning',action:'setCodexSessionQueue',status:'completed',payload:{notice:{level:'warning',message:'The session action completed, but the session list could not refresh: automatic inspection pending.'}}}})));
+      await page.waitForTimeout(100);assert.equal(await page.locator('.dashboard-notice').count(),0,'Automatic acknowledgements stay quiet');
+      if(!await page.locator('.cli-sessions-popover').count()) await page.locator('#cliSessionsButton').click();
       const nativeActionsBefore = await page.evaluate(() => window.__uiActions.filter(item => ['resumeCodexSessions','openCodexCliSession'].includes(item.action)).length);
       await row.locator('.cli-sessions-running-title').click();
       await page.waitForURL('**/workspace/recovery');
       assert.equal(await page.evaluate(() => window.__uiActions.filter(item => ['resumeCodexSessions','openCodexCliSession'].includes(item.action)).length), nativeActionsBefore, 'Opening an interrupted conversation in browsers never resumes it or launches VS Code');
+      assert.equal(await page.locator('.cli-session-message').filter({hasText:'The session action completed, but the session list could not refresh:'}).count(),0,'Refresh warnings are never conversation messages');
       assert.deepEqual(errors,[]);
       results.push({width,height,checks:'Top-layer queue, no layout shift, consistent icons, validation, keyboard, custom priority, update/remove, queue full, disconnect/reconnect'});
       await context.close(); continue;

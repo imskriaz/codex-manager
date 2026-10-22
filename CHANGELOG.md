@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.3-pre.3
+
+- Clarify and verify that Manager follows the latest valid Codex login, restores a missing saved entry, and retries with the new login after an import race without writing authentication back to Codex.
+
+- Dispatch equal-priority queue entries beyond the first eight without waiting for the first batch of turns to finish. Bound startup checks and existing live-turn capacity, retain overflow in its original priority, and wake on slot release without a new polling loop.
+- Cancel unconfirmed queued startup when its operation lease is lost, integration is disabled, the home changes, or the host disposes. Keep uncertain claims visible for review and preserve accepted work.
+- Show confirmed session-action/list-refresh warnings as one dismissible toast, without adding a session or transcript block. Keep automatic acknowledgements quiet.
+
 ## 1.4.3-pre.2
 
 - Automatically bind Codex OAuth sign-ins and reauthorizations, including an empty vault and retry after temporary storage failure. Treat the latest valid Codex login as authoritative, restoring its saved entry if missing; preserve partial-file credentials, recheck the auth snapshot before importing, and never rewrite Codex authentication during import. Match legacy workspace identity consistently.

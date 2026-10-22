@@ -398,7 +398,6 @@ function App() {
     [pushBrowserNotification]
   );
   const showCliSessionFeedback = useCallback((feedback: CliSessionFeedback): void => {
-    if (feedback.message.startsWith("The session action completed, but the session list could not refresh:")) return;
     showNotice(feedback);
   }, [showNotice]);
   const lastTerminalNoticeAtRef = useRef<number>();
@@ -1308,7 +1307,7 @@ function App() {
         const target = sessionActionRequests.current.get(message.requestId);
         sessionActionRequests.current.delete(message.requestId);
         const applyToCurrentChat = sameCliSessionTarget(target, currentSessionTarget());
-        showCliSessionFeedback({
+        if (!isAutomaticRequest(message.requestId)) showCliSessionFeedback({
           key: Date.now(),
           level: message.status === "completed" ? message.payload?.notice?.level ?? "info" : message.status === "cancelled" ? "warning" : "error",
           message:

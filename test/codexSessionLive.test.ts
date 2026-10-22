@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexSessionLiveReducer, combineCliLiveMessages, isCodexSessionLiveState, isNewerCodexSessionLiveState, MAX_CODEX_LIVE_STATE_BYTES } from "../src/domain/codexSessionLive";
 import { parseCodexAppServerThreadItems } from "../src/services/codexSessionResume";
-import { getCodexSessionLiveState, listCodexSessionLiveStates, reserveCodexSessionLive } from "../src/services/codexSessionLive";
+import { availableCodexSessionLiveSlots, onDidReleaseCodexSessionLiveSlot, getCodexSessionLiveState, listCodexSessionLiveStates, reserveCodexSessionLive } from "../src/services/codexSessionLive";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import type { CodexAppServerRpc } from "../src/services/codexAppServerRpc";
 
@@ -165,6 +165,18 @@ describe("bounded live registry", () => {
     } finally { live.dispose(); off(); }
   });
 
+  it('reports reusable capacity once per disposal and isolates release listeners', () => {
+    const released=vi.fn(), failed=vi.fn(()=>{throw new Error('Listener unavailable');});
+    const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+    const offFailure=onDidReleaseCodexSessionLiveSlot(failed),off=onDidReleaseCodexSessionLiveSlot(released);
+    try {
+      expect(availableCodexSessionLiveSlots()).toBe(30);
+      const reservation=reserveCodexSessionLive();expect(availableCodexSessionLiveSlots()).toBe(29);
+      reservation.dispose();reservation.dispose();
+      expect(availableCodexSessionLiveSlots()).toBe(30);expect(released).toHaveBeenCalledOnce();expect(failed).toHaveBeenCalledOnce();
+      off();offFailure();reserveCodexSessionLive().dispose();expect(released).toHaveBeenCalledOnce();
+    } finally {off();offFailure();warn.mockRestore();}
+  });
   it("refuses a full registry before provider mutation and releases capacity on failure", () => {
     const reservations = Array.from({ length: 30 }, () => reserveCodexSessionLive());
     try { expect(() => reserveCodexSessionLive()).toThrow(/30 turns/); }
