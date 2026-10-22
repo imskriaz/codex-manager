@@ -82,10 +82,10 @@ export function hasDashboardQuotaRemaining(account: DashboardAccountViewModel): 
   return !isDashboardAccountOutOfQuota(account) && hasDashboardAutoQueueCapability(account);
 }
 
-export function filterAccounts(accounts: DashboardAccountViewModel[], query: string, filter: AccountFilter, threshold: number): DashboardAccountViewModel[] {
+export function filterAccounts(accounts: DashboardAccountViewModel[], query: string, filter: AccountFilter, threshold: number, tag = ""): DashboardAccountViewModel[] {
   const normalized = query.trim().toLocaleLowerCase();
   return accounts.filter((account) => {
-    const matchesQuery = !normalized || [account.email, account.displayName, account.accountName, account.workspaceLabel]
+    const matchesQuery = !normalized || [account.email, account.displayName, account.accountName, account.workspaceLabel, ...(account.tags ?? [])]
       .some((value) => value?.toLocaleLowerCase().includes(normalized));
     const attention = isAccountAttention(account);
     const matchesFilter = filter === "all"
@@ -98,7 +98,7 @@ export function filterAccounts(accounts: DashboardAccountViewModel[], query: str
       || (filter === "claimed" && isAccountClaimedByAnotherDevice(account))
       || (filter === "capable" && hasDashboardQuotaRemaining(account))
       || (filter === "incapable" && isDashboardAccountOutOfQuota(account));
-    return matchesQuery && matchesFilter;
+    return matchesQuery && matchesFilter && (!tag || (account.tags ?? []).some(value => value.toLowerCase() === tag.toLowerCase()));
   });
 }
 

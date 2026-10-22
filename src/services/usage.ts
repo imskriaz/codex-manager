@@ -1,4 +1,7 @@
-import { CodexDailyUsageBreakdown, CodexDailyUsagePoint, CodexTokens } from "../core/types";
+import { CodexDailyUsageBreakdown, CodexDailyUsagePoint, CodexTokens, CodexManagerAccountRecord } from "../core/types";
+import type { AccountsRepository } from "../storage/accounts";
+import { needsTokenRefresh } from "../auth/oauth";
+import { waitWithin } from "../utils/concurrency";
 import { APIError } from "../core/errors";
 import { DAILY_USAGE_BREAKDOWN_URL } from "../infrastructure/config/apiEndpoints";
 import { extractClaims } from "../utils/jwt";
@@ -6,6 +9,52 @@ import { logNetworkEvent } from "../utils/debug";
 import { fetchWithTimeout, summarizeNetworkBody } from "../utils/network";
 
 type UnknownRecord = Record<string, unknown>;
+
+/** Both details views use the selected account and the repository's guarded token rotation. */
+export async function fetchAccountDailyUsage(
+  repo: AccountsRepository, account: CodexManagerAccountRecord, days = 30, signal?: AbortSignal
+): Promise<CodexDailyUsageBreakdown | undefined> {
+  signal?.throwIfAborted();
+  let tokens = await repo.getTokens(account.id, { bypassCache: true });
+  if (!tokens?.accessToken) throw new Error("No access token is available for usage history. Reauthorize this account.");
+  const scopedTokens = () => {
+    if (account.accountId && tokens!.accountId && account.accountId !== tokens!.accountId) {
+      throw new Error("The saved usage credentials belong to a different account. Reauthorize this account before retrying.");
+    }
+    return { ...tokens!, accountId: account.accountId ?? tokens!.accountId };
+  };
+  scopedTokens();
+  let renewed = false;
+  const renew = async (force: boolean) => {
+    signal?.throwIfAborted();
+    tokens = await waitWithin(repo.refreshAccountTokens(account.id, { force }), 5_000,
+      "Usage credentials are still refreshing. Saved history was kept; retry shortly without refreshing the token again.", signal);
+    renewed = true;
+    scopedTokens();
+  };
+  const mayRenew = account.tokenRefreshEnabled === true && Boolean(tokens.refreshToken);
+  if (mayRenew && needsTokenRefresh(tokens)) await renew(false);
+  let usage;
+  try { usage = await fetchDailyUsageBreakdown(scopedTokens(), days, signal); }
+  catch (error) {
+    if (!(error instanceof APIError) || error.statusCode !== 401 || !mayRenew || renewed) throw error;
+    await renew(true);
+    usage = await fetchDailyUsageBreakdown(scopedTokens(), days, signal);
+  }
+  // Usage already read belongs in the log even if its saved account was removed meanwhile.
+  if (!usage) return usage;
+  const projected = toVSCodeDailyUsage(usage);
+  if (usage.points.length && !projected.points.length) throw new Error("The provider returned no verified VS Code token counts. Saved history was kept; retry when client usage is available.");
+  return projected;
+}
+
+export function toVSCodeDailyUsage(usage: CodexDailyUsageBreakdown): CodexDailyUsageBreakdown {
+  const points = usage.points.flatMap(point => {
+    const count = point.extensionTokens ?? point.surfaceValues?.['vscode'];
+    return point.unit !== 'tokens' || !Number.isSafeInteger(count) || count! < 0 ? [] : [{ date: point.date, unit: 'tokens' as const, totalTokens: count!, extensionTokens: count! }];
+  });
+  return { days: usage.days, points };
+}
 
 export async function fetchDailyUsageBreakdown(
   tokens: CodexTokens,
@@ -56,14 +105,20 @@ export async function fetchDailyUsageBreakdown(
   if (!response.ok) {
     const retryAfter = response.headers.get("retry-after");
     const retryAt = retryAfter === null ? NaN : /^\d+$/.test(retryAfter.trim()) ? Date.now() + Number(retryAfter) * 1000 : Date.parse(retryAfter);
-    throw new APIError(`Daily usage breakdown API returned ${response.status}: ${raw.slice(0, 200)}`, {
+    const hint = response.status === 401 ? "The saved credentials were rejected. Refresh the token or reauthorize this account."
+      : response.status === 403 ? "Usage history is not permitted for this account or workspace. Check its access and reauthorize if needed."
+      : response.status === 429 ? "The usage provider is rate limiting requests. Retry after its cooldown."
+      : "The usage provider could not complete the request. Check the connection and retry.";
+    throw new APIError(`Daily usage breakdown API returned ${response.status}. ${hint}`, {
       statusCode: response.status,
       responseBody: raw.slice(0, 200),
       context: Number.isFinite(retryAt) && retryAt > Date.now() ? { retryAt } : undefined
     });
   }
 
-  const payload = parseJson(raw);
+  let payload: unknown;
+  try { payload = JSON.parse(raw) as unknown; }
+  catch { throw new Error("The usage provider returned an unreadable response. Saved history was kept; check the connection and retry."); }
   return parseDailyUsageBreakdown(payload, days);
 }
 
@@ -130,14 +185,17 @@ function parseUsagePoint(value: UnknownRecord): CodexDailyUsagePoint | undefined
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date || !Number.isSafeInteger(totalTokens) || totalTokens! < 0) return undefined;
   const clients = value["clients"];
   const surfaceValues: Record<string, number> = Object.create(null) as Record<string, number>;
+  let completeClients = clients !== undefined;
   if (clients !== undefined) {
     if (!Array.isArray(clients) || clients.length > 64) return undefined;
     for (const client of clients) {
       if (!isRecord(client) || typeof client["client_id"] !== "string" || client["client_id"].length > 128) return undefined;
-      const used = readNumber(client, ["text_total_tokens", "total_tokens"]);
-      if (!Number.isSafeInteger(used) || used! < 0) return undefined;
       const id = client["client_id"].toLowerCase();
       if (["__proto__", "constructor", "prototype"].includes(id)) return undefined;
+      const used = readNumber(client, ["text_total_tokens", "total_tokens"]);
+      // Some credit-only clients omit token counts; the day's verified total remains usable.
+      if (client["text_total_tokens"] == null && client["total_tokens"] == null) { completeClients = false; continue; }
+      if (!Number.isSafeInteger(used) || used! < 0) return undefined;
       const key = ["codex_ide_vscode", "vscode", "vs_code", "visual_studio_code"].includes(id) ? "vscode" : id;
       surfaceValues[key] = (surfaceValues[key] ?? 0) + used!;
     }
@@ -149,7 +207,7 @@ function parseUsagePoint(value: UnknownRecord): CodexDailyUsagePoint | undefined
   const cachedTokens = readNumber(totals, ["cached_text_input_tokens", "cached_tokens", "cache_tokens"]);
   if (![inputTokens, outputTokens, cachedTokens].every(count => count === undefined || (Number.isSafeInteger(count) && count >= 0))) return undefined;
   // Incomplete client attribution cannot safely establish VS Code's share.
-  const extensionTokens = clients === undefined || classified !== totalTokens ? undefined : surfaceValues["vscode"] ?? 0;
+  const extensionTokens = !completeClients || classified !== totalTokens ? undefined : surfaceValues["vscode"] ?? 0;
   return { date, unit: "tokens", totalTokens: totalTokens!, extensionTokens,
     otherTokens: extensionTokens === undefined ? undefined : totalTokens! - extensionTokens,
     surfaceValues: clients === undefined ? undefined : surfaceValues,
@@ -205,9 +263,4 @@ function readNumber(record: UnknownRecord, keys: string[]): number | undefined {
     }
   }
   return undefined;
-}
-
-function parseJson(raw: string): unknown {
-  const parsed: unknown = JSON.parse(raw);
-  return parsed;
 }

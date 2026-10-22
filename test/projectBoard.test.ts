@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
 import { readProjectBoard, readProjectTaskDetails, readSharedProjectTask } from '../src/services/projectBoard';
+import { taskSessionAgents } from '../src/domain/projectTasks';
 import { saveProjectTask, readProjectTasks } from '../src/services/projectTasks';
 import * as sessions from '../src/services/codexSessionResume';
 import * as workspace from '../src/services/workspaceTools';
@@ -36,6 +37,13 @@ it('imports native sessions into the database and reads each detail tab only whe
   expect(workspace.listWorkspaceFiles).not.toHaveBeenCalled(); expect(workspace.readWorkspaceEnvironment).not.toHaveBeenCalled();
   await readProjectTaskDetails(root, task.id, 'files'); expect(workspace.listWorkspaceFiles).not.toHaveBeenCalled();
   await readProjectTaskDetails(root, task.id, 'changes'); expect(workspace.readWorkspaceEnvironment).toHaveBeenCalledOnce();
+});
+
+it('loads bounded environment metadata for Overview without requesting a branch diff or bypassing public permissions', async () => {
+  const board = await readProjectBoard(root), task = board.tasks[0]!;
+  expect(await readProjectTaskDetails(root, task.id, 'overview')).toMatchObject({ taskId: task.id, environment: { changes: 1 }, initialPrompt: expect.any(String) });
+  expect(workspace.readWorkspaceEnvironment).toHaveBeenCalledWith(root, false);
+  await expect(readSharedProjectTask({ projectPath: root, expiresAt: Date.now() + 60000, permissions: ['activities'] } as never, task.id, 'overview')).rejects.toThrow('not enabled');
 });
 
 it('enforces shared features at the service boundary and exposes one combined activity view', async () => {
@@ -132,4 +140,25 @@ it('retains live activity when saved history fails and ignores another home or n
   expect(await readProjectTaskDetails(root, task.id)).toMatchObject({ messages: [{ text: 'Live only' }], warnings: ['Transcript busy'] });
   vi.mocked(sessions.readCodexCliSessionSummary).mockResolvedValueOnce({ id: state.id, projectPath: root, status: 'running', updatedAt: new Date(live.updatedAt + 1000).toISOString() });
   expect((await readProjectTaskDetails(root, task.id)).messages.some(message => message.id === 'live')).toBe(false);
+});
+
+it('lists every task agent once, including nested agents, without mixing systems or cycling', () => {
+  const rows = [
+    { id: 'main', status: 'idle' as const, title: 'Main', parentSessionId: 'nested' },
+    { id: 'child', status: 'running' as const, title: 'Child', parentSessionId: 'main' },
+    { id: 'nested', status: 'idle' as const, title: 'Nested', parentSessionId: 'child' },
+    { id: 'foreign', status: 'running' as const, title: 'Foreign', parentSessionId: 'main', deviceId: 'another-pc' }
+  ];
+  expect(taskSessionAgents([...rows, rows[1]!], 'main').map(row => row.id)).toEqual(['child', 'nested']);
+  expect(taskSessionAgents(rows, undefined)).toEqual([]);
+  expect(taskSessionAgents(rows, 'main', 'another-pc').map(row => row.id)).toEqual(['foreign']);
+});
+
+it('refuses direct public reads for hidden sessions while retaining owner access', async () => {
+  const board = await readProjectBoard(root);
+  const task = board.tasks.find(task => task.sessionId)!;
+  saveProjectTask(root, { ...task, expectedRevision: task.revision, hidden: true });
+  const share = { projectPath: root, expiresAt: Date.now() + 60000, permissions: ['activities','files','changes'] as const };
+  for (const view of ['activities','files','changes']) await expect(readSharedProjectTask(share as never, task.id, view)).rejects.toThrow(/unavailable/);
+  expect((await readProjectTaskDetails(root, task.id)).task?.hidden).toBe(true);
 });

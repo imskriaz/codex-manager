@@ -110,18 +110,20 @@ export function saveProjectTask(project: string, input: ProjectTaskMutation): Pr
       typeof input.prompt !== 'string' || input.prompt.length > 32_000 || !['idea','planned','running','completed'].includes(input.stage) ||
       !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) throw new Error('Enter a title and keep the task prompt under 32,000 characters.');
   if (input.archived !== undefined && typeof input.archived !== 'boolean') throw new Error('Choose whether this custom task is archived.');
+  if (input.hidden !== undefined && typeof input.hidden !== 'boolean') throw new Error('Choose whether this session is hidden from boards.');
   if (input.parentTaskId !== undefined && input.parentTaskId !== null) identifier(input.parentTaskId);
   const { store, key } = projectStorage(project);
   const task = store.transaction(() => {
     const current = getTask(store, key, input.id);
     const parentTaskId = input.parentTaskId === null ? undefined : input.parentTaskId ?? current?.parentTaskId;
-    if (current && current.revision === input.expectedRevision + 1 && current.title === input.title.trim() && current.prompt === input.prompt && current.stage === input.stage && current.parentTaskId === parentTaskId && (input.archived === undefined || current.archived === input.archived)) return current;
+    if (current && current.revision === input.expectedRevision + 1 && current.title === input.title.trim() && current.prompt === input.prompt && current.stage === input.stage && current.parentTaskId === parentTaskId && (input.archived === undefined || current.archived === input.archived) && (input.hidden === undefined || current.hidden === input.hidden)) return current;
     if ((current?.revision ?? 0) !== input.expectedRevision) throw new Error('This task changed in another browser. Your draft was kept; refresh and review it before saving.');
     if (!current && input.id.startsWith('session:')) throw new Error('Session tasks are created by discovery. Refresh the project first.');
     if (!current && Number(store.prepare('SELECT COUNT(*) AS n FROM project_tasks WHERE project=? AND source IS NULL').get(key)?.['n']) >= 500) throw new Error('This project already has 500 custom tasks. Project task storage is full.');
     if (current?.launchPending) throw new Error('Task startup is unconfirmed. Check the session list before changing this task.');
+    if (input.hidden !== undefined && !current?.sourceKey && !current?.sessionId) throw new Error('Only session tasks can be hidden from boards.');
     if (parentTaskId && !current?.sourceKey && !current?.sessionId) throw new Error('Only session tasks can be subtasks. Custom tasks stay on the top-level board.');
-    if ((current?.sourceKey || current?.sessionId) && (input.archived !== undefined || input.title !== current.title || input.prompt !== current.prompt || input.stage !== current.stage)) throw new Error('Session titles and state are managed in the conversation. Only task grouping can be changed here.');
+    if ((current?.sourceKey || current?.sessionId) && (input.archived !== undefined || input.title !== current.title || input.prompt !== current.prompt || input.stage !== current.stage)) throw new Error('Session titles and state are managed in the conversation. Only task grouping and board visibility can be changed here.');
     let ancestor = parentTaskId;
     const seen = new Set([input.id]);
     while (ancestor) {
@@ -132,7 +134,7 @@ export function saveProjectTask(project: string, input: ProjectTaskMutation): Pr
       if (ancestor === parentTaskId && (parent.sourceKey || parent.sessionId)) throw new Error('Choose a custom task as the parent. Sessions cannot contain task subtasks.');
       ancestor = parent.parentTaskId;
     }
-    const task: ProjectTask = { ...current, manualStage: current?.sourceKey || current?.sessionId ? current.manualStage : input.stage, archived: input.archived ?? current?.archived, id: input.id, title: input.title.trim(), prompt: input.prompt, stage: input.stage, parentTaskId,
+    const task: ProjectTask = { ...current, manualStage: current?.sourceKey || current?.sessionId ? current.manualStage : input.stage, archived: input.archived ?? current?.archived, hidden: input.hidden ?? current?.hidden, id: input.id, title: input.title.trim(), prompt: input.prompt, stage: input.stage, parentTaskId,
       revision: (current?.revision ?? 0) + 1, createdAt: current?.createdAt ?? Date.now(), updatedAt: Date.now() };
     putTask(store, key, task); return task;
   });
@@ -225,9 +227,11 @@ export function revokeProjectShares(project: string): void {
   } });
 }
 export function publicProjectBoard(board: ProjectBoard, share: ProjectShare): unknown {
-  const stages = projectTaskStages(board.tasks);
-  return { title: path.basename(board.projectPath), tasks: board.tasks.map(({ id, title, prompt, stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage })),
-    comments: share.permissions.includes('comments') ? board.comments : [], permissions: share.permissions, expiresAt: share.expiresAt, updatedAt: board.updatedAt };
+  const visibleTasks = board.tasks.filter(task => !task.hidden);
+  const visibleIds = new Set(visibleTasks.map(task => task.id));
+  const stages = projectTaskStages(visibleTasks);
+  return { title: path.basename(board.projectPath), tasks: visibleTasks.map(({ id, title, prompt, stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage })),
+    comments: share.permissions.includes('comments') ? board.comments.filter(comment => visibleIds.has(comment.taskId)) : [], permissions: share.permissions, expiresAt: share.expiresAt, updatedAt: board.updatedAt };
 }
 
 /** Board classification never changes native work, goals or recovery state. */

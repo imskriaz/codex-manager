@@ -164,3 +164,35 @@ it('archives and restores custom tasks without changing children or their workfl
   const restored=saveProjectTask(root,{...archived,expectedRevision:archived.revision,archived:false});
   expect(restored).toMatchObject({archived:false,stage:'planned'});expect(readProjectTask(root,child.id)?.stage).toBe('running');
 });
+
+it('persists session visibility through discovery and reload, with safe retry and restore', async () => {
+  const parent = saveProjectTask(root, draft('group'));
+  syncProjectSessions(root, root, [{ id: sessionId, title: 'Running', status: 'running' }]);
+  const native = readProjectTasks(root).tasks.find(task => task.sessionId)!;
+  const grouped = saveProjectTask(root, { ...native, expectedRevision: native.revision, parentTaskId: parent.id });
+  const request = { ...grouped, expectedRevision: grouped.revision, hidden: true };
+  const hidden = saveProjectTask(root, request);
+  expect(saveProjectTask(root, request)).toEqual(hidden);
+  expect(() => saveProjectTask(root, { ...request, hidden: false })).toThrow(/changed/);
+  syncProjectSessions(root, root, [{ id: sessionId, title: 'Renamed', status: 'idle', interrupted: true }]);
+  expect(readProjectTask(root, native.id)).toMatchObject({ hidden: true, title: 'Renamed', parentTaskId: parent.id, stage: 'planned', sessionArchived: false });
+  store.close(); store = await SqliteStateStore.open(join(root, 'manager.sqlite')); configureSqliteStateStore(store);
+  const reloaded = readProjectTask(root, native.id)!;
+  expect(reloaded.hidden).toBe(true);
+  const restored = saveProjectTask(root, { ...reloaded, expectedRevision: reloaded.revision, hidden: false });
+  expect(restored).toMatchObject({ hidden: false, parentTaskId: parent.id, sessionId, stage: 'planned', sessionArchived: false });
+  expect(() => saveProjectTask(root, { ...draft('custom-hidden'), hidden: true })).toThrow(/Only session/);
+  expect(() => saveProjectTask(root, { ...restored, expectedRevision: restored.revision, hidden: 'true' as never })).toThrow(/hidden/);
+});
+
+it('omits hidden sessions and their comments from public boards', () => {
+  syncProjectSessions(root, root, [{ id: sessionId, title: 'Private', status: 'running' }]);
+  const native = readProjectTasks(root).tasks[0]!;
+  saveProjectTask(root, { ...native, expectedRevision: native.revision, hidden: true });
+  addProjectComment(root, { id: 'hidden-comment', taskId: native.id, text: 'Not on public board' });
+  const visible = saveProjectTask(root, draft('visible'));
+  addProjectComment(root, { id: 'visible-comment', taskId: visible.id, text: 'Visible' });
+  const board = { projectPath: root, ...readProjectTasks(root), sessions: [], updatedAt: 1 };
+  const share = createProjectShare(root, ['activities','comments'], 1);
+  expect(publicProjectBoard(board, share)).toMatchObject({ tasks: [expect.objectContaining({ id: visible.id })], comments: [expect.objectContaining({ id: 'visible-comment' })] });
+});

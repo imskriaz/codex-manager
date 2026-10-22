@@ -1,8 +1,9 @@
 import { render } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { createPortal } from 'preact/compat';
 import type { DashboardCliSessionMessage, DashboardCliSessionSummary, DashboardNotice } from '../../src/domain/dashboard/types';
 import { TaskBoard } from './taskBoard';
+import { scheduleDashboardToastDismiss, DASHBOARD_INFO_TOAST_DURATION_MS, DASHBOARD_TOAST_DURATION_MS } from './toast';
 import { ConversationHeader, SessionTranscript } from './cliSessionsModal';
 
 declare global {
@@ -26,5 +27,6 @@ export function initializePublicMessages(): void {
 
 function SharedTranscript({ messages }: { messages: DashboardCliSessionMessage[] }) {
   const [notice, setNotice] = useState<DashboardNotice>();
+  useEffect(() => notice ? scheduleDashboardToastDismiss(() => setNotice(undefined), notice.level === 'info' ? DASHBOARD_INFO_TOAST_DURATION_MS : DASHBOARD_TOAST_DURATION_MS) : undefined, [notice]);
   return <><div class="cli-workspace cli-message-surface"><div class="cli-session-messages"><SessionTranscript messages={messages.slice(-2000).map((message, index) => ({ ...message, id: message.id ?? String(index) }))} running={messages.some(message => message.status === 'inProgress')} onActionFeedback={setNotice}/></div></div>{notice ? createPortal(<div class="dashboard-notice-stack" aria-live="polite"><div class={`dashboard-notice is-${notice.level}`} role={notice.level === 'error' ? 'alert' : 'status'}><span>{notice.message}</span><button type="button" aria-label="Dismiss notification" onClick={() => setNotice(undefined)}>×</button></div></div>, document.body) : null}</>;
 }

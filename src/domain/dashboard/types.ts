@@ -394,6 +394,7 @@ export interface DashboardUsageSummary {
 }
 
 export interface DashboardAccountViewModel {
+  tags?: string[];
   id: string;
   /** Last durable account-record change, used to order authenticated peer events. */
   updatedAt?: number;
@@ -586,6 +587,8 @@ export type DashboardActionName =
   | "remove"
   | "toggleAccountEnabled"
   | "setAccountQueuePriority"
+  | "setAccountTags"
+  | "manageAccountTag"
   | "setAccountTokenRefreshEnabled"
   | "setAccountAutoResetAllowed"
   | "refreshToken"
@@ -633,6 +636,11 @@ export interface DashboardOAuthSessionDescriptor {
 }
 
 export interface DashboardActionPayload {
+  tags?: string[];
+  expectedTags?: string[];
+  tagName?: string;
+  tagOperation?: 'rename' | 'remove' | 'enable' | 'disable';
+  tagReplacement?: string;
   tokenId?: string;
   tokenName?: string;
   tokenPermissions?: string[];
@@ -646,7 +654,7 @@ export interface DashboardActionPayload {
   taskBefore?: string;
   sharePermissions?: import('../projectTasks').ProjectSharePermission[];
   shareDays?: number;
-  taskView?: 'activities' | 'files' | 'changes';
+  taskView?: 'activities' | 'files' | 'changes' | 'overview';
   comment?: { id: string; taskId: string; text: string; author?: string };
   goalStatus?: "active" | "paused";
   autoResumeEnabled?: boolean;
@@ -955,6 +963,8 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  accountTags?: { accountId: string; tags: string[]; updatedAt: number };
+  tagResult?: import('../accountTags').AccountTagResult;
   /** A relayed session list replaces only this system's rows. */
   cliSessionsDeviceId?: string;
   projectBoard?: import('../projectTasks').ProjectBoard;

@@ -16,7 +16,7 @@ import { formatRelativeTimestamp, formatTimestamp, getSensitiveDisplayValue, res
 import { formatAccountUsageDuration } from "../../src/utils/accountUsage";
 import { ActionButton } from "./primitives";
 import { MetricGauge } from "./accountMetricPrimitives";
-import { AccountAccessIcon, CodexSessionsIcon, EyeIcon, EyeOffIcon, renderRefreshIcon, renderSyncIcon, ResetCreditIcon } from "./icons";
+import { AccountAccessIcon, CodexSessionsIcon, EditTagsIcon, renderRefreshIcon, renderSyncIcon, ResetCreditIcon } from "./icons";
 import { loadUsageGraphPreferences, saveUsageGraphPreferences, type UsageGraphPreferences, type UsageGraphRange } from "./preferences";
 
 export type { DashboardUsageSample } from "../../src/domain/dashboard/types";
@@ -65,8 +65,7 @@ export function OverviewSection(props: {
   settings: DashboardSettings;
   now: number;
   privacyMode: boolean;
-  privacyPending: boolean;
-  onPrivacyToggle: () => void;
+  onManageTags: () => void;
   disabled: boolean;
   addPending: boolean;
   refreshAllPending: boolean;
@@ -422,8 +421,8 @@ export function OverviewSection(props: {
                           style={{ top: `${morePopoverPosition.top}px`, right: `${morePopoverPosition.right}px` }}
                         >
                           <div class="claim-popover-title"><strong>{resolveOverviewToolbarLabel("more", props.lang)}</strong><span>{props.lang === "zh" ? "账户与工作区" : props.lang === "zh-hant" ? "帳戶與工作區" : "Account & workspace"}</span></div>
-                          <button type="button" role="menuitem" disabled={props.privacyPending} onClick={() => { setMoreOpen(false); props.onPrivacyToggle(); }}>
-                            {privacyMode ? <EyeOffIcon /> : <EyeIcon />}<span>{privacyMode ? copy.showSensitive : copy.hideSensitive}</span>
+                          <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); moreRef.current?.querySelector<HTMLButtonElement>('button')?.focus(); props.onManageTags(); }}>
+                            <EditTagsIcon /><span>Tags</span>
                           </button>
                           {providedAccount && contextAction !== "switch" ? (
                             <button
@@ -831,11 +830,20 @@ function UsageGraph(props: {
   const graphStageRef = useRef<HTMLDivElement>(null);
   const loadQueryRef = useRef(props.onLoadUsageGraph);
   loadQueryRef.current = props.onLoadUsageGraph;
-  const accountMap = useMemo(() => new Map(props.accounts.map((account, index) => [account.id, {
-    label: getSensitiveDisplayValue(account.email, props.privacyMode, "email"),
+  const data = props.usageGraphData?.mode === graphMode ? props.usageGraphData : undefined;
+  const graphAccounts = useMemo(() => {
+    const accounts = props.accounts.map(account => ({ id: account.id, email: account.email, runningDeviceName: account.runningDeviceName, lastQuotaAt: account.lastQuotaAt, removed: false }));
+    const known = new Set(accounts.map(account => account.id));
+    const savedIds = new Set([...(data?.dailyUsageCache ?? []).map(entry => entry.accountId), ...(data?.history ?? []).map(entry => entry.accountId)]);
+    let removed = 0;
+    for (const id of savedIds) if (!known.has(id)) accounts.push({ id, email: `Removed account ${++removed}`, runningDeviceName: undefined, lastQuotaAt: undefined, removed: true });
+    return accounts;
+  }, [props.accounts, data]);
+  const accountMap = useMemo(() => new Map(graphAccounts.map((account, index) => [account.id, {
+    label: account.removed ? account.email : getSensitiveDisplayValue(account.email, props.privacyMode, "email"),
     color: USAGE_GRAPH_COLORS[index % USAGE_GRAPH_COLORS.length]!,
     device: account.runningDeviceName ? getSensitiveDisplayValue(account.runningDeviceName, props.privacyMode, "name") : undefined,
-  }])), [props.accounts, props.privacyMode]);
+  }])), [graphAccounts, props.privacyMode]);
   const availableRanges = graphMode === "tokens" ? USAGE_GRAPH_RANGES.filter(candidate => candidate.durationMs >= 86_400_000) : USAGE_GRAPH_RANGES;
   const activeRange = availableRanges.some(candidate => candidate.key === range) ? range : graphMode === "tokens" ? "30d" : "1h";
   const rangeDuration = USAGE_GRAPH_RANGES.find(candidate => candidate.key === activeRange)!.durationMs;
@@ -844,13 +852,12 @@ function UsageGraph(props: {
     return { mode: graphMode, from: end - (windowOffset + 1) * rangeDuration, to: end - windowOffset * rangeDuration };
   }, [graphMode, rangeDuration, windowOffset, props.usageGraphRevision, props.usageGraphSource]);
   useEffect(() => { if (!props.usageGraphPaused) loadQueryRef.current?.(queryWindow); }, [queryWindow, props.usageGraphPaused]);
-  const data = props.usageGraphData?.mode === graphMode ? props.usageGraphData : undefined;
   const graphStartAt = data?.from ?? queryWindow.from;
   const graphEndAt = data?.to ?? queryWindow.to;
   const duration = graphEndAt - graphStartAt;
   const displayedRange = USAGE_GRAPH_RANGES.find(candidate => candidate.durationMs === duration)?.key ?? activeRange;
   const bucketCount = graphMode === "tokens" ? Math.max(1, Math.round(duration / 86_400_000)) : resolveUsageGraphBucketCount(displayedRange);
-  const dailyUsageCache = useMemo(() => (data?.dailyUsageCache ?? []).filter(entry => accountMap.has(entry.accountId)), [data, accountMap]);
+  const dailyUsageCache = data?.dailyUsageCache ?? [];
   const events = useMemo(() => graphMode === "tokens"
     ? buildDailyTokenUsageEvents(dailyUsageCache).filter(event => event.at >= graphStartAt && event.at < graphEndAt)
     : aggregateUsageEvents(buildUsageEvents(selectUsageHistoryWindow(data?.history ?? [], graphStartAt, graphEndAt),
@@ -873,11 +880,11 @@ function UsageGraph(props: {
   }, [props.automaticTokenHistory, data, props.accounts, props.usageGraphPending, props.usageGraphError, props.tokenHistoryRefresh?.statuses]);
   useEffect(() => { setAccountSummary(undefined); }, [graphMode, activeRange, windowOffset, props.usageGraphSource]);
   useEffect(() => { if (settingsOpen) setAccountSummary(undefined); }, [settingsOpen]);
-  const plotEvents = useMemo(() => graphMode === "tokens" ? consolidateDailyUsageEvents(events) : events, [events, graphMode]);
+  const plotEvents = events;
   const maximum = resolveUsageAxisMaximum(Math.max(0, ...plotEvents.map(event => event.used)));
   const bars = useMemo(() => layoutUsageGraphBars(plotEvents, graphStartAt, graphEndAt, bucketCount, maximum), [plotEvents, graphStartAt, graphEndAt, bucketCount, maximum]);
   const accountIds = new Set(events.map(event => event.accountId));
-  const legend = props.accounts.filter(account => !accountIds.size || accountIds.has(account.id));
+  const legend = graphAccounts.filter(account => !accountIds.size || accountIds.has(account.id));
   const total = events.reduce((sum, event) => sum + event.used, 0);
   const error = props.usageGraphError;
   const feedback = error ?? (data?.truncated ? "Only the latest 10,000 records are shown. Choose a shorter range for complete detail." : props.usageGraphPending || (graphMode === "tokens" && props.dailyUsagePending) ? "Updating saved usage…" : undefined);
@@ -933,13 +940,12 @@ function UsageGraph(props: {
           <span class="usage-graph-summary">
             {graphMode === "tokens" ? events.length ? `${formatTokenCount(total)} total` : "No data" : `${accountIds.size} ${accountIds.size === 1 ? "account" : "accounts"}`}
           </span>
-          <span class="usage-graph-color-key" aria-label={graphMode === "tokens" ? "Usage sources" : "Account color key"}>
-            {graphMode === "tokens" ? <><i class="usage-graph-color-chip" style={{ background: "#58a6ff" }} title="VS Code" /><small>VS Code</small><i class="usage-graph-color-chip" style={{ background: "#f0883e" }} title="Other" /><small>Other</small></> : legend.slice(0, USAGE_GRAPH_MAX_COLOR_KEYS).map(account => {
+          <span class="usage-graph-color-key" aria-label="Account color key">
+            {legend.slice(0, USAGE_GRAPH_MAX_COLOR_KEYS).map(account => {
               const entry = accountMap.get(account.id)!;
               return <i key={account.id} class="usage-graph-color-chip" style={{ background: entry.color }} role="img" aria-label={entry.label} title={entry.label} />;
             })}
-            {graphMode === "tokens" && events.some(event => event.segments?.some(segment => segment.key === "Unknown source")) ? <><i class="usage-graph-color-chip" style={{ background: "#8b949e" }} /><small>Unknown source</small></> : null}
-            {graphMode !== "tokens" && legend.length > USAGE_GRAPH_MAX_COLOR_KEYS ? <small>+{legend.length - USAGE_GRAPH_MAX_COLOR_KEYS}</small> : null}
+            {legend.length > USAGE_GRAPH_MAX_COLOR_KEYS ? <small>+{legend.length - USAGE_GRAPH_MAX_COLOR_KEYS}</small> : null}
           </span>
           </button>
         </div>
@@ -955,7 +961,7 @@ function UsageGraph(props: {
               <strong>Chart data</strong>
               <button type="button" class={graphMode === "quota" ? "active" : ""} aria-pressed={graphMode === "quota"} onClick={() => { updatePreferences({ mode: "quota", windowOffset: 0 }); setSettingsOpen(false); }}>Quota changes</button>
               <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { updatePreferences({ mode: "tokens", windowOffset: 0 }); setSettingsOpen(false); }}>Token usage</button>
-              <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved daily tokens: VS Code + Other across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at the configured interval. Missing history loads automatically." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
+              <p class="usage-graph-details-note">{graphMode === "tokens" ? `Saved VS Code tokens across accounts · UTC. ${props.automaticTokenHistory ? "Checked on account load, at the configured interval. Missing history loads automatically." : "Automatic collection is off. Enable Automatic token history in Settings to collect usage."}` : "Quota used by each account in the selected period. Timing is estimated between quota checks."}</p>
               <div class="usage-graph-cache-head"><span>{graphMode === "tokens" ? "Saved accounts" : "Account usage"}</span>
                 {graphMode === "tokens" ? <button type="button" disabled={props.tokenHistoryRefresh?.busy || !props.accounts.length} onClick={() => props.tokenHistoryRefresh?.refresh(props.accounts.map(account => account.id))}>{renderRefreshIcon()} Refresh all</button> : <small>Used · last checked</small>}
               </div>
@@ -999,15 +1005,11 @@ function UsageGraph(props: {
               {[10, 31, 52].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} class="usage-graph-gridline" />)}
               {hovered ? <rect class="usage-graph-cursor" x={((hovered.bar.bucketStart - graphStartAt) / duration) * 100} y="4" width={100 / bucketCount} height="48" /> : null}
               {bars.map((bar, index) => {
-                const account = (graphMode === "tokens" ? { label: "All accounts", color: "#58a6ff" } : accountMap.get(bar.event.accountId)) ?? { label: "Unknown account", color: "#8b949e" };
+                const account = accountMap.get(bar.event.accountId) ?? { label: "Unknown account", color: "#8b949e" };
                 const selected = hovered?.bar === bar;
                 const label = `${account.label}: ${USAGE_EXACT_NUMBER.format(bar.event.used)} ${graphMode === "tokens" ? "tokens" : "percent quota used"}, ${formatGraphTime(bar.event.at, props.lang, graphMode === "tokens" || displayedRange.endsWith("d") ? "date" : "time")}`;
                 return <g key={`${bar.event.accountId}:${bar.bucketStart}`}>
-                  {graphMode === "tokens" ? (bar.event.segments ?? []).map((segment, segmentIndex, segments) => {
-                    const height = segment.used / maximum * USAGE_GRAPH_MAX_BAR_HEIGHT;
-                    const below = segments.slice(0, segmentIndex).reduce((sum, row) => sum + row.used, 0) / maximum * USAGE_GRAPH_MAX_BAR_HEIGHT;
-                    return <rect key={segment.key} class={`usage-graph-bar${selected ? " is-active" : ""}`} data-source={segment.key} x={bar.x} y={USAGE_GRAPH_BASELINE - below - height} width={bar.width} height={height} fill={segment.color} />;
-                  }) : <rect class={`usage-graph-bar${selected ? " is-active" : ""}`} x={bar.x} y={USAGE_GRAPH_BASELINE - bar.height} width={bar.width} height={bar.height} rx={Math.min(bar.width * 0.2, 0.3)} fill={account.color} />}
+                  <rect class={`usage-graph-bar${selected ? " is-active" : ""}`} x={bar.x} y={USAGE_GRAPH_BASELINE - bar.height} width={bar.width} height={bar.height} rx={Math.min(bar.width * 0.2, 0.3)} fill={account.color} />
                   <rect class="usage-graph-bar-hitarea" x={Math.max(0, bar.x - bar.width * 0.18)} y="4" width={bar.width * 1.36} height="48" fill="transparent" role="img" tabIndex={index === Math.min(focusedIndex, bars.length - 1) ? 0 : -1} aria-label={label} aria-describedby={selected ? tooltipId : undefined}
                     onMouseEnter={event => showBar(bar, event.currentTarget)}
                     onFocus={event => { setFocusedIndex(index); showBar(bar, event.currentTarget); }}
@@ -1028,9 +1030,9 @@ function UsageGraph(props: {
         </div>
       </div>
       {accountSummary ? <UsageGraphAccountsTooltip id={summaryTooltipId} panelRef={summaryPanelRef} anchor={accountSummary.anchor} mode={graphMode} lang={props.lang} now={props.now} from={graphStartAt} to={graphEndAt} total={total} pending={Boolean(props.usageGraphPending)} error={props.usageGraphError} onMouseEnter={keepSummaryOpen} onMouseLeave={dismissSummaryLater}
-        rows={props.accounts.map(account => ({ ...accountMap.get(account.id)!, used: usageByAccount.get(account.id), checkedAt: graphMode === "tokens" ? cacheByAccount.get(account.id)?.fetchedAt : account.lastQuotaAt, refresh: graphMode === "tokens" ? props.tokenHistoryRefresh?.statuses[account.id] : undefined }))} /> : null}
+        rows={graphAccounts.map(account => ({ ...accountMap.get(account.id)!, used: usageByAccount.get(account.id), checkedAt: graphMode === "tokens" ? cacheByAccount.get(account.id)?.fetchedAt : account.lastQuotaAt, refresh: graphMode === "tokens" ? props.tokenHistoryRefresh?.statuses[account.id] : undefined }))} /> : null}
       {hovered ? <UsageGraphTooltip id={tooltipId} panelRef={barTooltipRef} onMouseEnter={keepBarTooltipOpen} onMouseLeave={dismissBarTooltipLater} bar={hovered.bar} anchor={hovered.anchor} account={accountMap.get(hovered.bar.event.accountId)} mode={graphMode} lang={props.lang} now={props.now} bucketTotal={bucketTotal}
-        dayAccounts={props.accounts.map(account => ({ ...accountMap.get(account.id)!, used: dayUsageByAccount.get(account.id), fetchedAt: cacheByAccount.get(account.id)?.fetchedAt }))} /> : null}
+        dayAccounts={graphAccounts.map(account => ({ ...accountMap.get(account.id)!, used: dayUsageByAccount.get(account.id), fetchedAt: cacheByAccount.get(account.id)?.fetchedAt }))} /> : null}
     </div>
   );
 }
@@ -1056,7 +1058,7 @@ function UsageGraphAccountsTooltip(props: {
   const tokens = props.mode === "tokens";
   const format = (value: number): string => tokens ? `${formatTokenCount(value)} tokens` : formatUsageValue(value);
   return createPortal(<div id={props.id} ref={props.panelRef} class="usage-graph-tooltip usage-graph-accounts-tooltip" role="tooltip" aria-label="Account usage stats" onMouseEnter={props.onMouseEnter} onMouseLeave={props.onMouseLeave} style={{ left: position?.left ?? 8, top: position?.top ?? 8, visibility: position ? "visible" : "hidden" }}>
-    <div class="usage-graph-accounts-heading"><strong>{tokens ? "Tokens · VS Code + Other" : "Quota usage"}</strong><span>{props.rows.some(row => row.used !== undefined) ? format(props.total) : "No data"}</span></div>
+    <div class="usage-graph-accounts-heading"><strong>{tokens ? "VS Code tokens" : "Quota usage"}</strong><span>{props.rows.some(row => row.used !== undefined) ? format(props.total) : "No data"}</span></div>
     <time>{formatGraphTime(props.from, props.lang, "date")} – {formatGraphTime(props.to - 1, props.lang, "date")}{tokens ? " · UTC" : ""}</time>
     <div class="usage-graph-accounts-list" tabIndex={0} aria-label="Usage by account">
       {props.rows.filter(row => !tokens || row.used !== 0).map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.checkedAt ? ` · Last checked ${formatTimestamp(row.checkedAt, "Unknown")}` : ""}`}>
@@ -1064,7 +1066,7 @@ function UsageGraphAccountsTooltip(props: {
       </div>)}
       {!props.rows.length ? <span>No saved accounts.</span> : null}
     </div>
-    <div class="usage-graph-tooltip-meta"><span>{tokens ? "VS Code + Other · daily totals" : "Estimated between quota checks"}</span>{props.pending ? <span role="status">Loading saved usage…</span> : null}</div>
+    <div class="usage-graph-tooltip-meta"><span>{tokens ? "VS Code · daily totals" : "Estimated between quota checks"}</span>{props.pending ? <span role="status">Loading saved usage…</span> : null}</div>
   </div>, document.body);
 }
 
@@ -1103,7 +1105,7 @@ function UsageGraphTooltip(props: {
   return createPortal(<div id={props.id} ref={props.panelRef} onFocus={props.onMouseEnter} onMouseEnter={props.onMouseEnter} onMouseLeave={props.onMouseLeave} onBlur={event => { if (!(event.relatedTarget instanceof Node && props.panelRef.current?.contains(event.relatedTarget))) props.onMouseLeave(); }} class={`usage-graph-tooltip${tokens ? " usage-graph-accounts-tooltip" : ""}`} role="tooltip" style={{ left: position?.left ?? 8, top: position?.top ?? 8, visibility: position ? "visible" : "hidden" }}>
     <time dateTime={new Date(props.bar.event.at).toISOString()}>{date}</time>
     {tokens ? <>
-      <div class="usage-graph-tooltip-value"><strong title={USAGE_EXACT_NUMBER.format(props.bucketTotal)}>{formatTokenCount(props.bucketTotal)}</strong><span>tokens · All accounts this day</span></div>
+      <div class="usage-graph-tooltip-value"><strong title={USAGE_EXACT_NUMBER.format(props.bucketTotal)}>{formatTokenCount(props.bucketTotal)}</strong><span>VS Code tokens · All accounts this day</span></div>
       <div class="usage-graph-tooltip-breakdown" aria-label="Usage by source">{(props.bar.event.segments ?? []).filter(segment => segment.used > 0).map(segment => <div key={segment.key}><span>{segment.key}</span><strong title={USAGE_EXACT_NUMBER.format(segment.used)}>{formatTokenCount(segment.used)} tokens</strong></div>)}</div>
       <div class="usage-graph-accounts-list" tabIndex={0} aria-label="Daily usage by account">
         {props.dayAccounts.filter(row => row.used !== undefined && row.used > 0).map((row, index) => <div class="usage-graph-account-stat" key={index} title={`${row.label}${row.fetchedAt ? ` · Updated ${formatTimestamp(row.fetchedAt, "Unknown")}${props.now - row.fetchedAt >= 3_600_000 ? " · Stale" : ""}` : ""}`}>
@@ -1127,12 +1129,9 @@ export function buildDailyTokenUsageEvents(entries: readonly DashboardDailyUsage
   for (const entry of [...entries].sort((a, b) => a.fetchedAt - b.fetchedAt)) for (const point of entry.usage.points) {
     if (point.unit !== "tokens") continue;
     const at = Date.parse(`${point.date}T00:00:00Z`);
-    const vscode = point.extensionTokens ?? 0;
-    const other = point.totalTokens - vscode;
-    if (Number.isFinite(at) && [point.totalTokens, vscode, other].every(value => Number.isSafeInteger(value) && value >= 0)) {
-      points.set(`${entry.accountId}:${point.date}`, { at, accountId: entry.accountId, used: point.totalTokens,
-        segments: point.extensionTokens === undefined ? [{ key: "Unknown source", used: point.totalTokens, color: "#8b949e" }]
-          : [{ key: "VS Code", used: vscode, color: "#58a6ff" }, { key: "Other", used: other, color: "#f0883e" }] });
+    const vscode = point.extensionTokens ?? point.surfaceValues?.['vscode'];
+    if (Number.isFinite(at) && Number.isSafeInteger(vscode) && vscode! >= 0) {
+      points.set(`${entry.accountId}:${point.date}`, { at, accountId: entry.accountId, used: vscode! });
     }
   }
   return [...points.values()].sort((a, b) => a.at - b.at);

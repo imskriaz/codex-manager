@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDashboardToastController,
   DASHBOARD_TOAST_DURATION_MS,
+  DASHBOARD_INFO_TOAST_DURATION_MS,
   scheduleDashboardToastDismiss,
   type DashboardToast
 } from "../webview-src/dashboard/toast";
@@ -10,6 +11,28 @@ import {
 describe("dashboard toast", () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("shows informational results for three seconds while keeping warnings and failures longer", () => {
+    vi.useFakeTimers(); const changed=vi.fn(); const controller=createDashboardToastController(changed);
+    controller.show({level:'info',message:'Account token refreshed.'});
+    vi.advanceTimersByTime(DASHBOARD_INFO_TOAST_DURATION_MS-1);
+    expect(changed.mock.lastCall?.[0]?.message).toBe('Account token refreshed.');
+    vi.advanceTimersByTime(1); expect(changed).toHaveBeenLastCalledWith(undefined);
+    for(const level of ['warning','error'] as const) {
+      controller.show({level,message:'Check before retrying.'});
+      vi.advanceTimersByTime(DASHBOARD_INFO_TOAST_DURATION_MS);
+      expect(changed.mock.lastCall?.[0]?.message).toBe('Check before retrying.');
+      vi.advanceTimersByTime(DASHBOARD_TOAST_DURATION_MS-DASHBOARD_INFO_TOAST_DURATION_MS);
+      expect(changed).toHaveBeenLastCalledWith(undefined);
+    }
+    controller.dispose();
+  });
+
+  it("shares the short info timeout with public conversation feedback", () => {
+    const source=readFileSync('webview-src/dashboard/publicMessages.tsx','utf8');
+    expect(source).toContain('scheduleDashboardToastDismiss(() => setNotice(undefined)');
+    expect(source).toContain("notice.level === 'info' ? DASHBOARD_INFO_TOAST_DURATION_MS : DASHBOARD_TOAST_DURATION_MS");
   });
 
   it("auto-dismisses after ten seconds", () => {
@@ -42,7 +65,7 @@ describe("dashboard toast", () => {
 
     controller.show({ level: "info", message: "First" });
     const first = onChange.mock.lastCall?.[0];
-    vi.advanceTimersByTime(5_000);
+    vi.advanceTimersByTime(1_000);
     controller.show({ level: "warning", message: "Second" });
     const second = onChange.mock.lastCall?.[0];
 

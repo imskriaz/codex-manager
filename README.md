@@ -4,6 +4,12 @@ Codex Manager is a local-first Visual Studio Code extension and secure browser d
 
 It is an independent, community project. It is not an official OpenAI product.
 
+Session cards offer **Hide from boards** without stopping or archiving the conversation. Use the board menu → **Hidden sessions** to search and restore them. This choice is saved per project on its system and applies to all board views and public project links. Existing downloaded copies cannot be recalled.
+
+Action feedback uses brief success/info toasts (3 seconds); warnings and failures remain for 10 seconds. Background data reads stay quiet.
+
+Codex OAuth sign-ins are added automatically, and reauthorization updates the matching saved account. Temporary import failures retry; importing preserves the current Codex login. A valid login still active in Codex is restored to Manager if its saved entry is missing.
+
 ## What it provides
 
 | Area | What you can do |
@@ -85,6 +91,10 @@ npm run compile
 Press `F5` in VS Code to open an Extension Development Host. Use `npm test` and `npm run verify` before distributing a build. Packaging is intentionally not part of the normal setup flow; run `npm run package` only when you are preparing a VSIX.
 
 ## First run
+
+Use an account's **More actions → Tags** to edit up to 10 labels. Tags appear beside subscription days in a single compact row, with additional tags summarized in a tooltip. **All tags** filters the account list; search also matches tag labels. Edits apply to the selected system and remain outside credential sharing.
+
+The header eye icon controls masking. **More → Tags** manages the selected system's tags: search, filter accounts, rename/merge labels, remove a label, or enable/disable its accounts. Group actions show confirmation and preserve the accounts themselves; enablement retains credential and ownership checks. Partial failures and unconfirmed operations remain visible in the modal.
 
 1. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
 2. Run **Codex Manager: Add Account via OAuth** and finish the browser login. For an already configured Codex installation, use **Import Current auth.json** instead.
@@ -321,3 +331,7 @@ Manual account selection respects your choice: selecting an account with no quot
 pauses automatic switching for that Codex home, including automatic reset-credit
 redemption. Select an account with available quota to resume. If quota is unknown,
 a fresh quota check must verify it before automatic switching can resume.
+
+Daily usage records verified VS Code tokens in SQLite and reads only the selected chart window. Disabled or removed accounts remain in historical totals. New quota snapshots and other-client usage are not recorded; existing legacy history remains available. Account colors identify the token bars. Usage requests retain saved data through provider failures, respect retry delays and share guarded token renewal with account details.
+
+Task workspaces use compact System and Project selectors, responsive Board/List/Gantt/Calendar tabs, environment metadata in Overview and an Agents view with the main model above its subagents. The all-account quota refresh cadence remains independent of optional pre-switch safety refreshes.

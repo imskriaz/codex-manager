@@ -412,6 +412,8 @@ html[data-theme="auto"] body.vscode-light .pill.error {
   font-size: 13px;
   line-height: 1.7;
 }
+.usage-feedback { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; color: var(--muted); overflow-wrap: anywhere; }
+.usage-feedback button { flex: 0 0 auto; }
 .meta-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

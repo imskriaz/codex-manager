@@ -6,7 +6,7 @@ export type ProjectTask = {
   createdAt: number; updatedAt: number; sessionId?: string; launchPending?: boolean;
   parentTaskId?: string; sourceKey?: string; sourceHome?: string;
   sessionStatus?: DashboardCliSessionSummary['status']; sessionArchived?: boolean;
-  manualStage?: TaskStage; archived?: boolean;
+  manualStage?: TaskStage; archived?: boolean; hidden?: boolean;
   timing?: { firstStartedAt: number; lastObservedAt: number; durationMs: number; runCount: number };
 };
 export type ProjectComment = { id: string; taskId: string; author: string; text: string; createdAt: number };
@@ -19,7 +19,7 @@ export type ProjectTaskDetails = {
   warnings: string[];
   olderThan?: string;
 };
-export type ProjectTaskMutation = { id: string; title: string; prompt: string; stage: TaskStage; expectedRevision: number; parentTaskId?: string | null; archived?: boolean };
+export type ProjectTaskMutation = { id: string; title: string; prompt: string; stage: TaskStage; expectedRevision: number; parentTaskId?: string | null; archived?: boolean; hidden?: boolean };
 export const PROJECT_SHARE_FEATURES = [
   { key: 'activities', label: 'Activities', description: 'Read messages, reasoning, tool calls, output, and logs.' },
   { key: 'files', label: 'Conversation files', description: 'Read files shared or changed in the conversation history.' },
@@ -29,6 +29,19 @@ export const PROJECT_SHARE_FEATURES = [
   { key: 'embed', label: 'Allow embedding', description: 'Show this shared board inside other websites.' }
 ] as const;
 export type ProjectSharePermission = typeof PROJECT_SHARE_FEATURES[number]['key'] | 'messages' | 'git';
+export function taskSessionAgents(sessions: DashboardCliSessionSummary[], sessionId: string | undefined, deviceId?: string): DashboardCliSessionSummary[] {
+  if (!sessionId) return [];
+  const children = new Map<string, DashboardCliSessionSummary[]>();
+  for (const session of sessions) if (session.parentSessionId && session.deviceId === deviceId) {
+    const rows = children.get(session.parentSessionId) ?? [];
+    rows.push(session); children.set(session.parentSessionId, rows);
+  }
+  const result: DashboardCliSessionSummary[] = [], seen = new Set([sessionId]), pending = [sessionId];
+  while (pending.length) for (const child of children.get(pending.pop()!) ?? []) if (!seen.has(child.id)) {
+    seen.add(child.id); result.push(child); pending.push(child.id);
+  }
+  return result;
+}
 export function sessionTaskStage(session: DashboardCliSessionSummary): TaskStage {
   if (session.status === 'running') return 'running';
   if (session.archived || session.goal?.status === 'complete') return 'completed';

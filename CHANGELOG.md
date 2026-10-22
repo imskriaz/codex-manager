@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.3-pre.2
+
+- Automatically bind Codex OAuth sign-ins and reauthorizations, including an empty vault and retry after temporary storage failure. Treat the latest valid Codex login as authoritative, restoring its saved entry if missing; preserve partial-file credentials, recheck the auth snapshot before importing, and never rewrite Codex authentication during import. Match legacy workspace identity consistently.
+
+- Restore informational action feedback, including token refresh and saved settings, as three-second toasts. Keep warnings/errors visible for ten seconds, preserve cancellation and partial-failure messages, and keep background reads quiet. Show session/workspace feedback above the UI without inserting conversation blocks.
+- Add session-only Hide from boards and a searchable Hidden sessions dialog with Restore. Persist visibility in SQLite with revision checks and safe retries, preserve session work/grouping/state, and exclude hidden sessions and their comments from shared boards.
+
+- Recover Usage details from valid provider rows with incomplete optional client counts. Share guarded credential renewal and a single rejected-token retry across views; preserve saved data and show actionable failures with explicit retry.
+- Log only verified VS Code token counts from new responses. Retain saved history after account removal or disabling, stop new quota snapshots, query retained daily rows by date, and color the token graph by account.
+- Honor all-account refresh intervals independently of pre-switch safety checks. Compact the task header with System/Project counts and responsive view tabs; add main/subagent details and Overview environment metadata. Unify confirmation and selection dialog spacing and replace native task confirmations. Place the collapsed-sidebar logo inside content headers, preserve sidebar visibility, and put status/column choices in the board menu with Idea hidden by default.
+
+- Restore account tags in the account actions menu with a compact editor, validation, durable acknowledgements, conflict protection, and preserved drafts after failure or timeout. Show tags beside subscription days without wrapping, summarize overflow, and add a persistent tag filter and tag-aware search in both account views. Keep edits scoped to the selected system.
+- Restore the privacy icon to the header. More → Tags opens a searchable tag manager with account counts, filtering, rename/merge, removal of labels, and guarded enable/disable actions. Confirm group changes, preserve other labels/accounts, enforce credential and ownership checks, and report partial or unconfirmed outcomes without replay.
+
 ## 1.4.3-pre.1
 
 - Subscribe to the browser's selected system on demand. Load its sessions once, then share file-change events without recurring session scans. Signed target subscriptions do not wake unrelated PCs or propagate peer demand; switching, closing, hiding, disconnecting, or expiring viewers releases monitoring. Keep lightweight authenticated presence for discovery and account ownership.

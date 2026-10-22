@@ -50,6 +50,13 @@ afterEach(async () => {
 });
 
 describe("canonical cross-PC WebSocket domain", () => {
+  it('rejects malformed peer account tags before passing them to browser filters', async () => {
+    for (const tags of ['Work', [1], ['x'.repeat(25)], Array.from({ length: 11 }, (_, index) => `Tag${index}`)])
+      expect(await internal.acceptPeerSession({ ...peer(), accounts: [{ id: 'tagged', email: 'tags@example.test', tags }] })).toBe(false);
+    expect(sync.verifyRealtimePeerPayload).not.toHaveBeenCalled();
+    expect(await internal.acceptPeerSession({ ...peer(), accounts: [{ id: 'tagged', email: 'tags@example.test', tags: ['Work'] }] })).toBe(true);
+    expect(internal.peerSessions.get('other-pc').accounts[0].tags).toEqual(['Work']);
+  });
   it("authenticates browser interest, expires it, and never advertises another PC's demand as its own", async () => {
     const lifecycle = vi.spyOn(internal, "refreshCliSessionRealtimeLifecycle").mockImplementation(() => undefined);
     internal.readLocalPeerSessions.mockRestore();

@@ -15,6 +15,7 @@ vi.mock("../src/presentation/dashboard/resetCreditsBackfill", () => ({
   backfillMissingResetCreditExpiries: backfillMissingResetCreditExpiriesMock
 }));
 
+import * as dashboardSettings from "../src/presentation/dashboard/settings";
 import * as usageHistory from "../src/services/dashboardUsageHistory";
 import { DashboardPanelController, publishDashboardSnapshot } from "../src/presentation/dashboard/panel";
 
@@ -118,7 +119,7 @@ describe("publishDashboardSnapshot", () => {
     return{instance,panel,postMessage};
   }
 
-  it("publishes the webview when optional usage history is still saving", async () => {
+  it("publishes the webview without recording new quota history", async () => {
     vi.useFakeTimers();
     const write = vi.spyOn(usageHistory, "appendDashboardUsageSnapshot").mockReturnValue(new Promise(() => undefined));
     const postMessage = vi.fn(async () => true);
@@ -129,6 +130,7 @@ describe("publishDashboardSnapshot", () => {
       await vi.advanceTimersByTimeAsync(250);
       await work;
       expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "dashboard:snapshot" }));
+      expect(write).not.toHaveBeenCalled();
     } finally { write.mockRestore(); vi.useRealTimers(); }
   });
 
@@ -244,4 +246,18 @@ describe("publishDashboardSnapshot", () => {
       state: { ...state, onboardingCompleted: true, usageSummary: { revision: 0, count: 0 } }
     });
   });
+});
+
+it('acknowledges saved settings only after the write succeeds in the webview', async () => {
+  const update = vi.spyOn(dashboardSettings, 'handleDashboardSettingUpdate').mockResolvedValue(true);
+  const postNotice = vi.fn(async () => undefined), schedulePublishState = vi.fn();
+  const controller = Object.assign(Object.create(DashboardPanelController.prototype), { postNotice, schedulePublishState });
+  try {
+    await controller.handleSettingUpdate('autoRefreshMinutes', 10);
+    expect(postNotice).toHaveBeenCalledWith('info', 'Setting saved.');
+    expect(schedulePublishState).toHaveBeenCalledOnce();
+    update.mockRejectedValueOnce(new Error('Settings are read-only.'));
+    await expect(controller.handleSettingUpdate('autoRefreshMinutes', 5)).rejects.toThrow(/read-only/);
+    expect(postNotice).toHaveBeenCalledTimes(1);
+  } finally { update.mockRestore(); }
 });

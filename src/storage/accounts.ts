@@ -39,6 +39,7 @@ import {
 } from "./accountProfileMaintenance";
 import { buildAccountRecordDraft, reconcileStatusBarSelections } from "./accountMetadata";
 import { accountQuotaAvailability } from '../utils/quotaWindows';
+import { normalizeAccountTags } from '../domain/accountTags';
 import {
   previewSharedEntry,
   resolveSharedAccountIdentity,
@@ -723,6 +724,7 @@ export class AccountsRepository {
     forceActive = false,
     options: {
       allowRecoveryWrite?: boolean;
+      fromCurrentAuth?: boolean;
       persistImmediately?: boolean;
       restoreSource?: CodexManagerRestoreResult["source"];
       addedVia?: CodexManagerAccountRecord["addedVia"];
@@ -761,13 +763,18 @@ export class AccountsRepository {
     };
 
     // 异步获取远程配置，不阻塞主要流程
-    const remoteProfile = options.identityFallback ? undefined : await this.readOptionalAccountProfile(tokens);
+    const remoteProfile = options.identityFallback || options.fromCurrentAuth ? undefined : await this.readOptionalAccountProfile(tokens);
 
     const id = buildAccountStorageId(claimsWithEmail.email, claimsWithEmail.accountId, claimsWithEmail.organizationId);
     return runCodexHomeOperation("Save account credentials", () =>
       this.withAccountCredentials(
         id,
         async () => {
+          if (options.fromCurrentAuth) {
+            const auth = await readAuthFile();
+            const current = auth?.tokens ? { idToken: auth.tokens.id_token, accessToken: auth.tokens.access_token, refreshToken: auth.tokens.refresh_token, accountId: auth.tokens.account_id } : undefined;
+            if (toComparableTokenSnapshot(current) !== toComparableTokenSnapshot(tokens)) throw new Error('Codex authentication changed during import. The current login was kept; retry.');
+          }
           const index = options.allowRecoveryWrite ? await this.readIndexForRecovery() : await this.readIndex();
           const previousActiveId = index.currentAccountId;
           const existing = index.accounts.find((item) => item.id === id);
@@ -804,7 +811,7 @@ export class AccountsRepository {
           };
           await this.secretStore.setTokens(id, storedTokens);
           this.invalidateTokenCache();
-          if (account.isActive && (!previousTokens || !areTokenCredentialsEqual(previousTokens, storedTokens)))
+          if (!options.fromCurrentAuth && account.isActive && (!previousTokens || !areTokenCredentialsEqual(previousTokens, storedTokens)))
             await writeAuthFile(storedTokens);
 
           if (options.persistImmediately) {
@@ -857,6 +864,7 @@ export class AccountsRepository {
       true,
       {
         addedVia: "local",
+        fromCurrentAuth: true,
         ...(recovering
           ? { allowRecoveryWrite: true, persistImmediately: true, restoreSource: "auth_json" as const }
           : {})
@@ -1413,6 +1421,24 @@ export class AccountsRepository {
     });
   }
 
+  async setAccountTags(accountId: string, tags: string[], expectedTags?: string[]): Promise<CodexManagerAccountRecord> {
+    const next = normalizeAccountTags(tags);
+    const expected = expectedTags === undefined ? undefined : normalizeAccountTags(expectedTags);
+    return this.withAccountCredentials(accountId, async () => {
+      const index = await this.readIndex();
+      const account = index.accounts.find(item => item.id === accountId);
+      if (!account) throw createError.accountNotFound(accountId);
+      const current = normalizeAccountTags(account.tags ?? []);
+      if (JSON.stringify(current) === JSON.stringify(next)) return { ...account, tags: [...current] };
+      if (expected && JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('Tags changed in another window. Close and reopen this editor before saving. Your draft has been kept.');
+      account.tags = next;
+      account.updatedAt = Math.max(Date.now(), account.updatedAt + 1);
+      this.writeIndex(index, { notifyAccountSync: false });
+      await this.flush();
+      return { ...account, tags: [...next] };
+    });
+  }
+
   /** Enable or disable background token refresh for one account. */
   async setAccountTokenRefreshEnabled(accountId: string, enabled: boolean): Promise<CodexManagerAccountRecord> {
     return this.withAccountCredentials(accountId, async () => {
@@ -1555,12 +1581,13 @@ export class AccountsRepository {
 
   private async syncActiveAccountFromAuthFileInternal(): Promise<void> {
     const auth = await readAuthFile();
+    if (auth?.tokens && (!auth.tokens.id_token || !auth.tokens.access_token)) return;
     const index = await this.readIndex();
     const previousActiveId = index.currentAccountId;
 
     const claims = auth?.tokens ? extractClaims(auth.tokens.id_token, auth.tokens.access_token) : undefined;
     const derivedId = claims?.email
-      ? buildAccountStorageId(claims.email, claims.accountId, claims.organizationId)
+      ? buildAccountStorageId(claims.email, claims.accountId ?? auth?.tokens?.account_id, claims.organizationId)
       : undefined;
     let changed = this.homeScopeMigrationPending;
     changed = syncActiveAccountState(index, derivedId, Date.now(), this.codexHomeStateKey) || changed;
@@ -1594,6 +1621,7 @@ export class AccountsRepository {
             account.dismissedHealthIssueKey = undefined;
           }
 
+          syncLoginAtFromTokens(account, nextTokens);
           account.updatedAt = Date.now();
           account.credentialUpdatedAt = account.updatedAt;
           changed = true;

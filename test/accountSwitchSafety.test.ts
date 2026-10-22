@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountsRepository } from "../src/storage";
 import { removeTestDirectory } from "./testFilesystem";
 import { EncryptedSyncManager } from "../src/services/encryptedSync";
+import { upsertDashboardDailyUsageCache, queryDashboardUsage } from '../src/services/dashboardUsageHistory';
 
 const { writeAuth, refresh } = vi.hoisted(() => ({ writeAuth: vi.fn(), refresh: vi.fn() }));
 vi.mock("../src/codex", async importOriginal => ({
@@ -37,6 +38,42 @@ afterEach(async () => {
   vi.restoreAllMocks();
   repo.dispose();
   await removeTestDirectory(folder);
+});
+
+it('keeps the daily usage log after disabling and removing its account', async () => {
+  const saved = await repo.upsertFromTokens(tokens());
+  const values = new Map<string, unknown>();
+  const context = { globalState: { get: (key: string) => values.get(key), update: async (key: string, value: unknown) => { values.set(key, value); } } } as never;
+  const date = new Date().toISOString().slice(0, 10), at = Date.parse(`${date}T00:00:00Z`);
+  await upsertDashboardDailyUsageCache(context, saved.id, { days: 1, points: [{ date, unit: 'tokens', totalTokens: 42, extensionTokens: 42 }] });
+  await repo.setAccountEnabled(saved.id, false);
+  await repo.removeAccount(saved.id);
+  expect(await repo.getAccount(saved.id)).toBeUndefined();
+  const graph = queryDashboardUsage(context, { mode: 'tokens', from: at, to: at + 86400000 });
+  expect(graph.dailyUsageCache).toMatchObject([{ accountId: saved.id, usage: { points: [{ totalTokens: 42 }] } }]);
+});
+
+it('saves tags durably, rejects stale replacements, and accepts idempotent retries', async () => {
+  const saved = await repo.upsertFromTokens(tokens());
+  const updated = await repo.setAccountTags(saved.id, [' Work ', 'Team'], []);
+  expect(updated.tags).toEqual(['Work', 'Team']);
+  const disk = JSON.parse(await readFile(join(folder, 'accounts-index.json'), 'utf8'));
+  expect(disk.accounts.find((account: { id: string }) => account.id === saved.id).tags).toEqual(['Work', 'Team']);
+  updated.tags!.push('Not persisted');
+  expect((await repo.getAccount(saved.id))?.tags).toEqual(['Work', 'Team']);
+  await expect(repo.setAccountTags(saved.id, ['Other'], [])).rejects.toThrow('changed in another window');
+  const retry = await repo.setAccountTags(saved.id, ['Work', 'Team'], []);
+  expect(retry.updatedAt).toBe(updated.updatedAt);
+  expect((await repo.setAccountTags(saved.id, [], ['Work', 'Team'])).tags).toEqual([]);
+  await expect(repo.setAccountTags('missing', ['Work'])).rejects.toThrow();
+});
+
+it('surfaces tag storage failures instead of acknowledging an undurable save', async () => {
+  const saved = await repo.upsertFromTokens(tokens());
+  const flush = vi.spyOn(repo, 'flush').mockRejectedValue(new Error('storage full'));
+  await expect(repo.setAccountTags(saved.id, ['Work'], [])).rejects.toThrow('storage full');
+  flush.mockRestore();
+  await repo.flush();
 });
 
 it("persists selection before switch completion while optional rotation is pending", async () => {

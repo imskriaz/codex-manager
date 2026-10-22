@@ -1,4 +1,3 @@
-import { getCodexManagerConfiguration, normalizeTokenHistoryRetentionDays } from "../infrastructure/config/extensionSettings";
 import type * as vscode from "vscode";
 import type { DashboardDailyUsageCacheEntry, DashboardState, DashboardUsageSample, DashboardUsageGraphQuery, DashboardUsageGraphData, DashboardUsageSummary } from "../domain/dashboard/types";
 import type { CodexDailyUsageBreakdown } from "../core/types";
@@ -26,8 +25,7 @@ export function readDashboardUsageSummary(context: vscode.ExtensionContext): Das
 }
 
 function tokenHistoryCutoff(): number {
-  const days = normalizeTokenHistoryRetentionDays(getCodexManagerConfiguration().get<number>("tokenHistoryRetentionDays", 30));
-  return (Math.floor(Date.now() / 86_400_000) - days + 1) * 86_400_000;
+  return 0;
 }
 
 export function queryDashboardUsage(context: vscode.ExtensionContext, query: DashboardUsageGraphQuery | undefined): DashboardUsageGraphData {
@@ -133,7 +131,7 @@ export async function upsertDashboardDailyUsageCache(
     const entry = { accountId, fetchedAt, usage: { days: Math.max(previous?.usage.days ?? 1, usage.days),
       points: [...points.values()].filter(point => Date.parse(`${point.date}T00:00:00Z`) >= tokenHistoryCutoff()).sort((a, b) => a.date.localeCompare(b.date)).slice(-90) } };
     if (store) {
-      upsertDailyUsageRow(store, entry, new Date(tokenHistoryCutoff()).toISOString().slice(0, 10));
+      upsertDailyUsageRow(store, entry, '');
       return [entry];
     }
     const current = readDashboardDailyUsageCache(context);

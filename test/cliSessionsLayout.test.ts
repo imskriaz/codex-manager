@@ -35,13 +35,16 @@ describe("sessions sidebar layout", () => {
     expect(reconcileCliSessionStatuses(sessions, live)[0]).toMatchObject({ status: "idle", canStop: false });
     expect(reconcileCliSessionStatus({ ...sessions[0], status: "running" }, live).status).toBe("idle");
   });
-  it("keeps routine browser feedback inline while preserving live status and tool copy controls", () => {
+  it("shows short action toasts while preserving live status and tool copy controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
-    expect(main).toContain('if (next.level === "info") return;');
+    expect(main).not.toContain('if (next.level === "info") return;');
     expect(source).toContain("function CopySnippet");
-    expect(source).toContain("selected project is not an open workspace folder");
+    expect(main).not.toContain('if (feedback.level === "info") return;');
+    expect(source).not.toContain('notice.level !== "info"');
+    expect(source).toContain("const reportLocalFeedback = props.onActionFeedback;");
+    expect(main).toContain("onActionFeedback={showNotice}");
     expect(css).toContain("touch-action: pan-x");
     expect(source).toContain("Reconnecting · live updates paused");
     expect(source).not.toContain("Reconnecting. Your draft is saved; sending is available after the conversation reconnects.");
@@ -66,7 +69,9 @@ describe("sessions sidebar layout", () => {
     const missingRouteStart = main.indexOf("// The refreshed index is authoritative.");
     const missingRoute = main.slice(missingRouteStart, missingRouteStart + 500);
 
-    expect(brand).toContain("!props.dashboardMode");
+    expect(brand).toContain("props.logoUri");
+    expect(source).toContain("createPortal(sidebarToggle, sidebarToggleTarget)");
+    expect(source).not.toContain("if (props.taskBoardActive) setRailCollapsed(true)");
     expect(brand).toContain("<strong>Codex</strong>");
     expect(missingRoute).toContain('navigateDashboardPath("/workspace", setBrowserPath)');
     expect(missingRoute).not.toContain("requestCliSessionMessages(routeId");

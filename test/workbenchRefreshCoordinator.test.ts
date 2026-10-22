@@ -294,4 +294,45 @@ describe("workbench external account synchronization", () => {
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalledWith(expect.stringContaining("restart unavailable"));
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
   });
+  it('always binds the valid Codex login, retries failures, and restores a missing saved account', async () => {
+    vi.mocked(readCurrentAuthAccountStorageId).mockResolvedValue('external');
+    let auth = { tokens: { id_token: 'external-id', access_token: 'external-access', refresh_token: 'first' } };
+    vi.mocked(readAuthFile).mockImplementation(async () => auth as never);
+    vi.mocked(refreshImportedAccountQuota).mockResolvedValue({ error: undefined } as never);
+    const account = { id: 'external', email: 'test@example.test', isActive: true };
+    let accounts: typeof account[] = [];
+    const repo = { listAccounts: vi.fn(async () => accounts), syncActiveAccountFromAuthFile: vi.fn(async () => undefined),
+      importCurrentAuth: vi.fn(async () => { accounts = [account]; return account; }) };
+    repo.importCurrentAuth.mockRejectedValueOnce(new Error('Credential storage is temporarily busy.'));
+    const coordinator = new WorkbenchRefreshCoordinator({} as never, repo as never, {} as never) as unknown as ExternalChangeSync;
+    const view = { refresh: vi.fn(), markObservedAuthIdentity: vi.fn() };
+    const reconcile = () => coordinator.syncActiveAccountFromExternalChange(view, vi.fn(), vi.fn(), () => false);
+    await reconcile(); expect(repo.importCurrentAuth).toHaveBeenCalledTimes(1);
+    await reconcile(); expect(repo.importCurrentAuth).toHaveBeenCalledTimes(2);
+    await reconcile(); expect(repo.importCurrentAuth).toHaveBeenCalledTimes(2);
+    accounts = [];
+    await reconcile(); expect(repo.importCurrentAuth).toHaveBeenCalledTimes(3);
+    accounts = [];
+    auth = { tokens: { ...auth.tokens, refresh_token: 'reauthorized' } };
+    await reconcile(); expect(repo.importCurrentAuth).toHaveBeenCalledTimes(4);
+    expect(autoReloadWindowForAccount).not.toHaveBeenCalled();
+  });
+
+  it('retries a failed startup import and ignores incomplete auth files', async () => {
+    vi.mocked(readCurrentAuthAccountStorageId).mockResolvedValue('external');
+    vi.mocked(readAuthFile).mockResolvedValue({ tokens: { id_token: 'id', access_token: 'access' } } as never);
+    vi.mocked(refreshImportedAccountQuota).mockResolvedValue({ error: undefined } as never);
+    const account = { id: 'external', email: 'test@example.test', isActive: true };
+    const repo = { listAccounts: vi.fn(async () => []), syncActiveAccountFromAuthFile: vi.fn(async () => undefined), importCurrentAuth: vi.fn(async () => account) };
+    repo.importCurrentAuth.mockRejectedValueOnce(new Error('Storage unavailable'));
+    const coordinator = new WorkbenchRefreshCoordinator({} as never, repo as never, {} as never) as unknown as WorkbenchRefreshCoordinator & ExternalChangeSync;
+    const view = { refresh: vi.fn(), markObservedAuthIdentity: vi.fn() };
+    await coordinator.autoImportCurrentAccountIfNeeded(view);
+    await coordinator.syncActiveAccountFromExternalChange(view, vi.fn(), vi.fn(), () => false);
+    expect(repo.importCurrentAuth).toHaveBeenCalledTimes(2);
+    vi.mocked(readAuthFile).mockResolvedValue({ tokens: { id_token: 'partial' } } as never);
+    await coordinator.syncActiveAccountFromExternalChange(view, vi.fn(), vi.fn(), () => false);
+    expect(repo.importCurrentAuth).toHaveBeenCalledTimes(2);
+  });
+
 });

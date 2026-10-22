@@ -5,8 +5,7 @@ import { runWithBulkProviderRequests } from "../../utils/network";
 import {
   getCodexManagerConfiguration,
   getAutoRefreshCurrentMinutes,
-  getAutoRefreshMinutes,
-  isAutoSwitchRefreshAllBeforeSwitchEnabled
+  getAutoRefreshMinutes
 } from "../../infrastructure/config/extensionSettings";
 import {
   maybeAutoSwitchForActiveQuota,
@@ -30,44 +29,9 @@ import {
   runCrossWindowExclusive,
   runSharedMaintenance
 } from "../../utils/crossWindowOperations";
-import { toAutoQueueOrderValue } from "../../application/accounts/autoQueueOrder";
-import { createAutoQueuePolicy, isAutoQueueCandidateEligible } from "../../domain/autoQueuePolicy";
 import { isUserFacingAdditionalQuotaLimit } from "../../utils/quotaLabels";
 
 const CURRENT_REFRESH_FAILURE_BACKOFF_MULTIPLIER = 5;
-
-/**
- * Safety mode normally refreshes non-current accounts only when a warning is
- * reached. If every enabled account is below an automatic-switch threshold,
- * that leaves the active account and candidate set dependent on stale data.
- * Resume the configured all-account cadence until at least one account is
- * above the relevant automatic-switch limits.
- */
-async function allAccountsNeedCapabilityRefresh(
-  repo: AccountsRepository,
-  canUseAccount?: (id: string) => boolean
-): Promise<boolean> {
-  const accounts = (await repo.listAccounts()).filter(
-    (account) => (account.enabled !== false || account.isActive) && (canUseAccount?.(account.id) ?? true)
-  );
-  if (!accounts.length) return false;
-  const config = getCodexManagerConfiguration();
-  const policy = createAutoQueuePolicy({
-    autoSwitchHourlyThreshold: config.get<number>("autoSwitchHourlyThreshold", 5),
-    autoSwitchWeeklyThreshold: config.get<number>("autoSwitchWeeklyThreshold", 0),
-    autoRefreshMinutes: getAutoRefreshMinutes()
-  });
-  return accounts.every(
-    (account) =>
-      !isAutoQueueCandidateEligible(
-        {
-          ...toAutoQueueOrderValue(account),
-          disabled: account.isActive ? false : account.enabled === false
-        },
-        policy
-      )
-  );
-}
 
 export function registerAutoRefreshScheduler(params: {
   context: vscode.ExtensionContext;
@@ -291,27 +255,10 @@ export function registerAutoRefreshScheduler(params: {
       if (disposed || scheduleVersion !== currentScheduleVersion || allInFlight) return;
       allInFlight = true;
       const excludeCurrent = getAutoRefreshCurrentMinutes() > 0;
-      const safetyRefresh = isAutoSwitchRefreshAllBeforeSwitchEnabled();
-      const shouldRefresh = safetyRefresh
-        ? allAccountsNeedCapabilityRefresh(params.repo, params.canRefreshAccount)
-        : Promise.resolve(true);
-      void shouldRefresh
-        .then((needed) => {
-          if (!needed || disposed || scheduleVersion !== currentScheduleVersion || getAutoRefreshMinutes() <= 0) return;
-          const refreshOptions = {
-            silent: true,
-            forceRefresh: true,
-            // Once every account is below an automatic-switch limit, refresh the
-            // active account too; otherwise safety mode can leave the whole set
-            // stale while the normal all-account sweep is suppressed.
-            excludeCurrent: safetyRefresh ? false : excludeCurrent
-          } as { silent: true; forceRefresh: true; excludeCurrent: boolean; respectQuotaCheckGap?: boolean };
-          if (safetyRefresh) {
-            refreshOptions.respectQuotaCheckGap = false;
-          }
-          return vscode.commands.executeCommand("codexManager.refreshAllQuotas", refreshOptions);
-        })
-        .catch(() => undefined)
+      void Promise.resolve(vscode.commands.executeCommand("codexManager.refreshAllQuotas", {
+        silent: true, forceRefresh: true, excludeCurrent, respectQuotaCheckGap: false
+      }))
+        .catch(error => console.warn("[codexManager] all-account auto refresh failed:", error))
         .finally(() => {
           allInFlight = false;
           void scheduleNextQuotaReset().catch((error) => {

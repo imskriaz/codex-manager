@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex accounts, quota, native sessions and goals, project Kanban, scoped APIs, and a local-first VS Code and browser dashboard.",
-  "version": "1.4.3-pre.1",
+  "version": "1.4.3-pre.2",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -98,7 +98,7 @@
           "maximum": 90,
           "multipleOf": 1,
           "default": 30,
-          "markdownDescription": "Choose how many days of daily token usage to keep."
+          "markdownDescription": "Legacy setting retained for compatibility. Verified VS Code usage is kept in SQLite across account removal; chart queries load only the selected date window."
         },
         "codexManager.dailyTokenUsageIntervalMinutes": {
           "type": "number",
@@ -119,7 +119,7 @@
           "maximum": 90,
           "multipleOf": 1,
           "default": 7,
-          "markdownDescription": "Choose how many days of quota history to keep."
+          "markdownDescription": "Legacy setting retained for compatibility. New quota history is not recorded."
         },
         "codexManager.cliIntegrationEnabled": {
           "type": "boolean",

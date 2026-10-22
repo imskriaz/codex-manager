@@ -51,7 +51,6 @@ import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSes
 import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import {
-  appendDashboardUsageSnapshot,
   readDashboardUsageSummary,
   saveDashboardUsageHistory
 } from "./dashboardUsageHistory";
@@ -65,9 +64,10 @@ import { isMaintenanceJob, type MaintenanceJob } from '../domain/maintenance';
 import { readStoredSessionLive } from '../storage/sqliteSessions';
 import { isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
 import { authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
+import { normalizeAccountTags } from '../domain/accountTags';
 import { readProjectBoard, readSavedProjectBoard, readSharedProjectTask } from './projectBoard';
 import { ProjectShareEvents } from './projectShareEvents';
-import { getProjectShare, publicProjectBoard, saveProjectTask, addProjectComment, projectTaskKey } from './projectTasks';
+import { readProjectTask, getProjectShare, publicProjectBoard, saveProjectTask, addProjectComment, projectTaskKey } from './projectTasks';
 import { DASHBOARD_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 import { BrowserPushService, BrowserPushRegistrationConflictError } from "./browserPush";
 import { ConversationShares, sharedConversationPage, publicShareMessages } from "./conversationShares";
@@ -889,6 +889,7 @@ export class WebDashboardServer implements vscode.Disposable {
             if (!share.permissions.includes('comments')) throw new Error('Comments are disabled for this link.');
             const taskId = bodyText('taskId');
             if (!getProjectShare(token)) throw new Error('This project link expired or was revoked.');
+            if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
             const author = bodyText('author') || 'Visitor';
             addProjectComment(share.projectPath, { id: bodyText('id'), taskId, text: bodyText('text'), author: `Guest · ${author.slice(0, 60)}` });
           } else throw new Error('Unknown project request.');
@@ -1394,6 +1395,7 @@ export class WebDashboardServer implements vscode.Disposable {
         return { result, actionPrompts: consumeDashboardActionPrompts() };
       });
       const result = collected.result;
+      if ((message.action === 'setAccountTags' || message.action === 'manageAccountTag') && result.status === 'completed') this.publishLocalPeerState();
       const payload = collected.actionPrompts.length
         ? { ...(result.payload ?? {}), actionPrompts: collected.actionPrompts.map(prompt => ({ ...prompt, targetDeviceId: "local" })) }
         : result.payload;
@@ -1419,7 +1421,7 @@ export class WebDashboardServer implements vscode.Disposable {
           message: `${message.value ? "Parallel window accounts enabled" : "Parallel window accounts disabled"}. Reloading this VS Code window to apply the change.`
         });
         reloadAfterResponse = true;
-      }
+      } else messages.push({ type: 'dashboard:notice', level: 'info', message: 'Setting saved.' });
     } else if (message.type === "dashboard:pickCodexAppPath") {
       await pickDashboardCodexAppPath(this.settingsStore);
     } else if (message.type === "dashboard:clearCodexAppPath") {
@@ -1436,7 +1438,7 @@ export class WebDashboardServer implements vscode.Disposable {
       await clearDashboardCodexCliPath();
     } else if (message.type === "dashboard:usage-history") {
       await saveDashboardUsageHistory(this.context, message.samples);
-      if (!message.samples.length) messages.push({ type: "dashboard:notice", level: "warning", message: "Usage history cleared. New quota changes will start a fresh history." });
+      if (!message.samples.length) messages.push({ type: "dashboard:notice", level: "warning", message: "Saved quota history cleared. New quota snapshots remain disabled." });
     }
 
     if (message.type === "dashboard:ready") {
@@ -2217,6 +2219,11 @@ export class WebDashboardServer implements vscode.Disposable {
       (session?.reasoningEffort !== undefined && (typeof session.reasoningEffort !== "string" || session.reasoningEffort.length > 64)))) return undefined;
     if (message.sessions.some(session => session?.runningSince !== undefined && (typeof session.runningSince !== "number" || !Number.isFinite(session.runningSince) || session.runningSince <= 0 || session.runningSince > Date.now() + 5 * 60_000))) return undefined;
     if (message.sessions.some(session => session?.interrupted !== undefined && typeof session.interrupted !== "boolean")) return undefined;
+    if (Array.isArray(message.accounts)) {
+      for (const account of message.accounts) {
+        if (account?.tags !== undefined) { try { normalizeAccountTags(account.tags); } catch { return undefined; } }
+      }
+    }
     if (Math.abs(Date.now() - message.sentAt) > 2 * 60_000) return undefined;
     if (message.sentAt <= minimumSentAt) return undefined;
     const unsigned = {
@@ -2641,6 +2648,7 @@ export class WebDashboardServer implements vscode.Disposable {
         return { result, actionPrompts: consumeDashboardActionPrompts() };
       });
       const result = collected.result;
+      if ((message.action === 'setAccountTags' || message.action === 'manageAccountTag') && result.status === 'completed') this.publishLocalPeerState();
       const payload = collected.actionPrompts.length
         ? { ...(result.payload ?? {}), actionPrompts: collected.actionPrompts.map(prompt => ({ ...prompt, targetDeviceId: this.deviceId })) }
         : result.payload;
@@ -2940,8 +2948,6 @@ export class WebDashboardServer implements vscode.Disposable {
       accounts,
       peerAccounts: Object.fromEntries(peerSessions.map((peer) => [peer.deviceId, peer.accounts ?? []]))
     };
-    await waitWithin(appendDashboardUsageSnapshot(this.context, dashboardState), 250, "Usage history is still saving")
-      .catch(error => recordPersistentEvent("debug", "dashboard-state", "Optional usage history save delayed", undefined, error));
     return { ...dashboardState, usageSummary: readDashboardUsageSummary(this.context) };
   }
 

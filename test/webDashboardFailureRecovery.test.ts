@@ -10,6 +10,7 @@ vi.mock("../src/application/dashboard/buildDashboardState", () => ({ buildDashbo
 vi.mock("../src/presentation/dashboard/actionHandlers", () => ({ executeDashboardActionMessage: executeAction }));
 import { WebDashboardServer } from "../src/services/webDashboardServer";
 import * as sessionEditor from "../src/services/codexSessionResume";
+import * as dashboardSettings from "../src/presentation/dashboard/settings";
 import * as usageHistory from "../src/services/dashboardUsageHistory";
 import { recordDashboardActionPrompt, shouldSuppressDashboardNotifications } from "../src/utils/notificationPolicy";
 
@@ -52,6 +53,18 @@ it("keeps standby peer heartbeats free of session scans and account builds, then
     internal.updateWorkspaceViewer(browser, true, "other-pc");
     expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [], accounts: [], dashboardTargets: ["other-pc"] });
     expect(sessions).toHaveBeenCalledTimes(2);
+  } finally { await server.stop(); server.dispose(); }
+});
+
+it('publishes successful peer tag changes without waiting for a storage watcher', async () => {
+  const { server } = createServer(), internal = server as any;
+  const publish = vi.spyOn(internal, 'publishLocalPeerState').mockImplementation(() => undefined);
+  executeAction.mockResolvedValueOnce({ status: 'completed', payload: { accountTags: { accountId: 'tagged', tags: ['Work'], updatedAt: 1 } } });
+  const send = vi.fn();
+  try {
+    await internal.executePeerAction({ type: 'peer:action', action: 'setAccountTags', requestId: 'tags', accountId: 'tagged' }, send);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(JSON.parse(send.mock.calls[0]![0])).toMatchObject({ status: 'completed', payload: { accountTags: { tags: ['Work'] } } });
   } finally { await server.stop(); server.dispose(); }
 });
 
@@ -196,16 +209,17 @@ describe("browser action completion during state failure", () => {
     } finally { server.dispose(); vi.useRealTimers(); }
   });
 
-  it("renders accounts when the optional usage history write stalls", async () => {
+  it("renders accounts without recording new quota history", async () => {
     vi.useFakeTimers();
     const { server } = createServer();
     buildState.mockResolvedValue({ accounts: [], settings: {} });
-    vi.spyOn(usageHistory, "appendDashboardUsageSnapshot").mockReturnValue(new Promise(() => undefined));
+    const write = vi.spyOn(usageHistory, "appendDashboardUsageSnapshot").mockReturnValue(new Promise(() => undefined));
     vi.spyOn(usageHistory, "readDashboardUsageSummary").mockReturnValue({ revision: 4, count: 2 });
     try {
       const work = Reflect.get(server, "buildState").call(server);
       await vi.advanceTimersByTimeAsync(250);
       await expect(work).resolves.toMatchObject({ accounts: [], usageSummary: { revision: 4, count: 2 } });
+      expect(write).not.toHaveBeenCalled();
     } finally { server.dispose(); vi.useRealTimers(); }
   });
 
@@ -299,4 +313,16 @@ describe("browser action completion during state failure", () => {
       expect(() => socket.emit("error", new Error("oversized message"))).not.toThrow();
     } finally { server.dispose(); }
   });
+});
+
+it('acknowledges saved settings in the browser and never reports a failed write as success', async () => {
+  const { server, internal } = createServer();
+  const update = vi.spyOn(dashboardSettings, 'handleDashboardSettingUpdate').mockResolvedValue(true);
+  vi.spyOn(server as never, 'appendClientSnapshot' as never).mockResolvedValue(undefined as never);
+  try {
+    const result = await internal.processClientMessage({ type: 'dashboard:setting', key: 'autoRefreshMinutes', value: 10 });
+    expect(result.messages).toContainEqual({ type: 'dashboard:notice', level: 'info', message: 'Setting saved.' });
+    update.mockRejectedValueOnce(new Error('Settings are read-only.'));
+    await expect(internal.processClientMessage({ type: 'dashboard:setting', key: 'autoRefreshMinutes', value: 5 })).rejects.toThrow(/read-only/);
+  } finally { server.dispose(); }
 });

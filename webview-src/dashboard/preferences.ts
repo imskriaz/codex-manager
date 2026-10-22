@@ -6,6 +6,7 @@ export type UiPreferences = {
   view: DashboardView;
   metricPriority: string;
   accountSearch: string;
+  accountTag?: string;
 };
 
 export const UI_PREFERENCES_STORAGE_KEY = "codexManager.dashboardUiPreferences.v2";
@@ -30,7 +31,8 @@ export function loadUiPreferences(): UiPreferences {
       filter: typeof parsed.filter === "string" && filters.includes(parsed.filter) ? parsed.filter : "all",
       view: currentRaw && parsed.view === "list" ? "list" : "cards",
       metricPriority: typeof parsed.metricPriority === "string" && parsed.metricPriority.length <= 256 ? parsed.metricPriority : DEFAULT_UI_PREFERENCES.metricPriority,
-      accountSearch: typeof parsed.accountSearch === "string" ? parsed.accountSearch.slice(0, 4096) : ""
+      accountSearch: typeof parsed.accountSearch === "string" ? parsed.accountSearch.slice(0, 4096) : "",
+      accountTag: typeof parsed.accountTag === "string" && parsed.accountTag.length <= 24 ? parsed.accountTag : ""
     };
   } catch {
     return DEFAULT_UI_PREFERENCES;
@@ -79,4 +81,17 @@ export function saveUsageGraphPreferences(value: UsageGraphPreferences): boolean
   } catch {
     return false;
   }
+}
+
+const TASK_BOARD_COLUMNS_KEY = 'codexManager.taskBoardColumns.v1';
+const TASK_STAGES = ['idea', 'planned', 'running', 'completed'] as const;
+export function loadTaskBoardColumns(): Array<typeof TASK_STAGES[number]> {
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(TASK_BOARD_COLUMNS_KEY) ?? 'null');
+    if (Array.isArray(value) && value.length > 0 && value.length <= 4 && value.every((stage: unknown) => typeof stage === 'string' && TASK_STAGES.some(known => known === stage))) return TASK_STAGES.filter(stage => value.includes(stage));
+  } catch { /* Fall back to the compact default when browser storage is unavailable. */ }
+  return ['planned', 'running', 'completed'];
+}
+export function saveTaskBoardColumns(columns: Array<typeof TASK_STAGES[number]>): boolean {
+  try { window.localStorage.setItem(TASK_BOARD_COLUMNS_KEY, JSON.stringify(columns)); return true; } catch { return false; }
 }

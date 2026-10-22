@@ -90,7 +90,7 @@ try {
       await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "getCodexCliSessionMessages" && event.status === "completed"));
       messages = await page.locator(".cli-conversation .cli-session-message").count();
     }
-    assert.equal(await page.locator(".cli-workspace-feedback.is-error").count(), 0, "Opening real chat must not fail automatic workspace inspection");
+    assert.equal(await page.locator(".dashboard-notice.is-error").count(), 0, "Opening real chat must not fail automatic workspace inspection");
     await page.screenshot({ path: path.join(output, `workspace-${width}.png`) });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "Real UI fits viewport");
     let createdSessionId;

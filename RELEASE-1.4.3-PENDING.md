@@ -1,5 +1,103 @@
 # 1.4.3 completion checklist
 
+## Current usage and workspace follow-up (`1.4.3-pre.2`)
+
+- Bind Codex OAuth logins from auth-file events and existing reconciliation.
+  Empty-vault sign-ins and failed startup imports retry; changed credentials
+  update their matching account. The latest valid Codex login is authoritative,
+  including when its saved Manager entry was removed. Preserve incomplete token
+  writes, revalidate import snapshots under the existing credential lock, skip
+  optional profile work during auth import, and never rewrite the observed login.
+  Respect automation ownership before quota reads; no new polling loop/cache.
+
+- Restore short informational feedback across dashboard, session and workspace
+  actions. Token renewal and setting writes acknowledge confirmed completion;
+  warnings/failures/cancellations retain their actual outcome. Info dismisses in
+  three seconds, other levels in ten, without adding conversation blocks.
+- Add session-only Hide from boards and searchable Hidden sessions → Restore.
+  Save visibility in existing SQLite task rows with revision/idempotency guards.
+  Preserve native activity, archive state, parent and classification. Keep hidden
+  rows out of every task view, public board/comments and direct public reads.
+  Offline/conflicted/unconfirmed writes preserve the last confirmed state.
+
+- Reproduced an unreadable-history failure before and after a successful guarded
+  token refresh. HTTP 200 rows had verified daily totals but optional credit-only
+  clients omitted token counts; reject invalid numbers without rejecting safe totals.
+- Both account details and dashboard usage use one scoped loader, guarded token
+  renewal where enabled, one HTTP 401 recovery, cancellation, bounded waits and
+  persisted cooldowns. Preserve saved history, show the actual safe failure and
+  allow explicit retry. Never switch accounts or consume reset credits for usage.
+- Persist only verified VS Code token counts from new responses. Keep daily rows
+  across account disabling/removal and retention-setting changes, querying selected
+  date windows from SQLite. Stop recording new quota snapshots; retain existing
+  legacy records. Count removed-account history and use account colors/legend.
+- Replace the task header with System and Project dropdowns plus counts and view
+  tabs on one track; compact icon search and active-label-only views on narrow
+  screens, stacking the context and tools only when needed. Add task Agents with
+  the main model first and Overview environment metadata under existing access
+  boundaries. Use shared dialogs for task retry/discard confirmations.
+- Put the collapsed-sidebar logo in each content header's layout, retain the
+  user's sidebar visibility when opening tasks, remove the separate status-filter
+  icon, and move status/column choices to the board menu. Hide Idea by default,
+  retain its tasks, and persist valid nonempty column selections with storage-error
+  feedback. Public submissions remain Idea tasks under existing permissions.
+- Honor the configured all-account refresh cadence independently of pre-switch
+  safety refresh. Keep overlap, disabled-setting, ownership and manual-action guards.
+- Apply consistent compact dialog headers, controls, actions, focus, danger styling
+  and selection spacing. Preserve keyboard focus, Escape/backdrop handling and
+  explicit outcomes. Current verification is recorded below.
+
+### Current review verification (`1.4.3-pre.2`, 2026-10-22)
+
+- All 2,256 tests across 190 files pass in one isolated full run (262.48 seconds).
+  Focused checks cover native auth import/update/retry/races, legacy identity,
+  token renewal outcomes, toast lifetimes, hidden-session persistence/retry,
+  shared-board read restrictions, tags, usage recovery and refresh scheduling.
+- Six-size responsive checks pass for board/context controls, hide/restore,
+  native drag-and-drop, session actions, inspector tabs, share controls, account
+  tools, dialogs and settings. Tags and VS Code-only/account-colored charts pass
+  all six sizes. Token refresh success, three-second info dismissal and longer
+  error retention also pass at six sizes.
+- Read-only desktop/mobile host checks load 341 session records, exclude 230
+  child rows from the parent list, render two messages in the selected chat and
+  reconnect. Initial loads take 1,292 ms and 638 ms. These checks send no turns
+  or account mutations. Notification permission/retry/failure checks and cold
+  offline dashboard/task reload, reconnect and worker-upgrade checks pass.
+- With the user's authorization, one real failing Usage details account was
+  retried, its token refreshed once, and the request retried. Renewal succeeded
+  but did not fix the parser failure. The corrected loader accepted 21 provider
+  days; merging retained rows left 29 saved daily points. New rows contain only
+  verified VS Code counts; existing legacy rows were retained. No account switch
+  or reset credit was used.
+- Both TypeScript targets compile. Lint reports zero errors and 3,179 warnings.
+  Review VSIX `1.4.3-pre.2` builds successfully, bundles all runtime dependencies,
+  and contains no source/test/output folders. SHA-256:
+  `de743f90b274ab27bad8bad126667c17537273a03898172f113eba4f428b3d31`.
+  Final desktop/mobile host smoke and six-size token-feedback checks pass.
+- Installation/publication and physical two-PC/live-sign-in verification remain
+  separate gates. This review build does not close the broader release checklist.
+  Work remains on main with the seven existing stashes preserved.
+
+## Tag restoration review (`1.4.3-pre.2`)
+
+- Account menu → Tags opens the compact editor in both account views. Tags sit
+  after subscription days on one line; the first label and an overflow count
+  retain access to all labels through the tooltip/editor.
+- Restore existing saved tags, tag-aware search, and a persistent toolbar filter.
+  Save to the selected system using the existing account index/manager.sqlite;
+  do not add a separate cache, background query timer, or credential export field.
+- Restore the header masking icon and replace its former More entry with Tags.
+  Add a searchable manager with tag/account counts, filter, rename/merge, label
+  removal, and group enable/disable. Freeze system scope, confirm reviewed
+  membership, preserve credentials/ownership checks, retain partial outcomes,
+  and bound native/group timeouts without automatically replaying mutations.
+- Validate 10 unique labels of 24 characters, preserve drafts on failure/timeout,
+  confirm durable writes, reject concurrent replacements, and accept identical
+  retries without duplicate changes. Keep late acknowledgements system-scoped
+  and protect confirmed tags from older snapshots. Offline saves stay disabled.
+- Current regression and responsive results are recorded below. Physical-PC,
+  live sign-in, installation and publication checks remain separate release gates.
+
 Recovery follow-up: accepted queue requests are now consumed once rather than
 retained for replay on subsequent status events. Non-goal recovery checks the
 transcript again after native startup and before sending a continuation, and
@@ -534,7 +632,7 @@ still need verification. These results do not close the unchecked audit items.
   and target disconnection. These are intercepted UI/transport fixtures, not
   physical two-PC evidence.
 
-### Current verification (2026-10-22)
+### Previous review build verification (`1.4.3-pre.1`, 2026-10-22)
 
 - All 2,196 tests across 185 files pass. The first complete run found two
   outdated source assertions for the shared transcript selector and scoped

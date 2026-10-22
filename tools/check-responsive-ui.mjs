@@ -71,6 +71,15 @@ const mockHost = `(() => {
   const toolJobs = new Map();
   const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
   window.__uiActions = []; window.__uiSessions = sessions; window.__uiSnapshot = state; window.__uiSettingResults = [];
+  if(window.__tagFixture) { if(state.accounts[0]) state.accounts[0].enabled=true; try { const saved=JSON.parse(localStorage.getItem('fixture-account-tags')||'{}'); for(const account of state.accounts) if(saved[account.id]) account.tags=saved[account.id]; } catch {} }
+  if(window.__tagTheme) state.settings.dashboardTheme=window.__tagTheme;
+  if(window.__usageFixture) {
+    const template=state.accounts[0];
+    state.accounts=[{...template,id:'usage-a',email:'alpha@example.test',enabled:true},{...template,id:'usage-b',email:'beta@example.test',enabled:false}];
+    state.currentAccountId='usage-a';
+    localStorage.setItem('codexManager.usageGraphPreferences.v1',JSON.stringify({mode:'tokens',quotaRange:'1h',tokenRange:'30d',windowOffset:0}));
+  }
+
   const environmentFor = projectPath => ({projectPath,projectName:projectPath?.split('/').pop()||'demo',isGitRepository:true,branch:'main',changes:window.__inspectorMode?2:0,additions:1,deletions:0,ahead:0,behind:0,hasRemote:!!window.__inspectorMode,...(window.__inspectorMode?{changedFiles:[{path:'src/app.ts',index:' ',worktree:'M'},{path:'untracked/',index:'?',worktree:'?'}]}:{})});
 
   window.__setUiPaths = customPath => {
@@ -90,14 +99,40 @@ const mockHost = `(() => {
       } else if(message.type === 'dashboard:action') {
         if(message.action === 'switch' && window.__holdNextSwitch) { window.__holdNextSwitch = false; window.__heldSwitch = message; return; }
         let payload = {}, error;
-        if(message.action==='getProjectBoard') {
+        if(message.action==='refreshToken') {if(window.__failTokenRefresh) error='Refresh token was revoked. Reauthorize this account.';else payload={notice:{level:'info',message:'Account token refreshed.'}};}
+        else if(message.action==='setAccountTags') {
+          const account=(message.payload.targetDeviceId?state.peerAccounts?.[message.payload.targetDeviceId]:state.accounts)?.find(account=>account.id===message.accountId);
+          if(window.__failTagSave) {window.__failTagSave=false;error='Storage full. Your draft is kept.';}
+          else if(!account) error='That account no longer exists.';
+          else {
+            account.tags=message.payload.tags;account.updatedAt=Date.now();payload={accountTags:{accountId:account.id,tags:account.tags,updatedAt:account.updatedAt},notice:{level:'info',message:'Account tags saved.'}};
+            if(!message.payload.targetDeviceId) {const saved=JSON.parse(localStorage.getItem('fixture-account-tags')||'{}');saved[account.id]=account.tags;localStorage.setItem('fixture-account-tags',JSON.stringify(saved));}
+          }
+        }
+        else if(message.action==='manageAccountTag') {
+          const source=message.payload.targetDeviceId?state.peerAccounts?.[message.payload.targetDeviceId]:state.accounts;
+          const accounts=source.filter(account=>message.payload.accountIds.includes(account.id));
+          if(window.__failTagManage) {window.__failTagManage=false;error='Tag membership changed. Review the action again.';}
+          else {
+            const changes=[];
+            for(const account of accounts) {
+              const operation=message.payload.tagOperation;
+              if(operation==='rename'||operation==='remove') account.tags=[...new Set((account.tags||[]).flatMap(tag=>tag.toLowerCase()===message.payload.tagName.toLowerCase()?operation==='rename'?[message.payload.tagReplacement]:[]:[tag]))];
+              else account.enabled=operation==='enable';
+              account.updatedAt=Date.now();changes.push({accountId:account.id,tags:account.tags,updatedAt:account.updatedAt,...(operation==='enable'||operation==='disable'?{enabled:account.enabled}:{})});
+            }
+            payload={tagResult:{successCount:changes.length,failedCount:0,errors:[],accounts:changes},notice:{level:'info',message:changes.length+' accounts updated.'}};
+          }
+        }
+        else if(message.action==='setPrivacyMode') {state.settings.privacyMode=message.payload.privacyMode;}
+        else if(message.action==='getProjectBoard') {
           const result={type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectBoard:projectBoard()}};
           if(window.__holdNextBoard) {window.__holdNextBoard=false;window.__heldBoardResult=structuredClone(result);return;}
           payload=result.payload;
         }
         else if(message.action==='getProjectTaskDetails') {
           const older=!!message.payload.taskBefore;
-          const details={taskId:message.payload.taskId,initialPrompt:projectTasks.find(task=>task.id===message.payload.taskId)?.prompt||'Original request for this session',messages:older?[]:messages,files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:message.payload.taskView==='changes'?{isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
+          const details={taskId:message.payload.taskId,initialPrompt:projectTasks.find(task=>task.id===message.payload.taskId)?.prompt||'Original request for this session',messages:older?[]:messages,files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:['changes','overview'].includes(message.payload.taskView)?{projectName:'demo',projectPath:'D:/demo',branch:'main',isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
           if(window.__holdNextTaskDetails===message.payload.taskView) {
             window.__holdNextTaskDetails=false; window.__heldTaskDetails=message;
             window.__releaseTaskDetails=()=>dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectTaskDetails:details}});
@@ -108,7 +143,7 @@ const mockHost = `(() => {
         }
         else if(message.action==='saveProjectTask') {
           if(window.__failTaskSaves) error='This task changed in another browser. Your draft was kept.';
-          else {const input=message.payload.task,index=projectTasks.findIndex(task=>task.id===input.id),task={...projectTasks[index],...input,manualStage:projectTasks[index]?.sourceKey?projectTasks[index].manualStage:input.stage,parentTaskId:input.parentTaskId||undefined,revision:input.expectedRevision+1,createdAt:Date.now(),updatedAt:Date.now()};if(index<0)projectTasks.push(task);else projectTasks[index]=task;projectRevision++;payload={projectBoard:projectBoard()};}
+          else {const input=message.payload.task,index=projectTasks.findIndex(task=>task.id===input.id),task={...projectTasks[index],...input,manualStage:projectTasks[index]?.sourceKey?projectTasks[index].manualStage:input.stage,parentTaskId:input.parentTaskId===null?undefined:input.parentTaskId??projectTasks[index]?.parentTaskId,revision:input.expectedRevision+1,createdAt:Date.now(),updatedAt:Date.now()};if(index<0)projectTasks.push(task);else projectTasks[index]=task;projectRevision++;payload={projectBoard:projectBoard(),notice:{level:'info',message:input.hidden===true?'Session hidden from boards.':input.hidden===false?'Session restored to boards.':'Task saved.'}};}
         }
         else if(message.action==='moveProjectTask') {
           const task=projectTasks.find(task=>task.id===message.payload.taskId);
@@ -154,7 +189,10 @@ const mockHost = `(() => {
           else if(job) { if(!window.__keepMaintenanceRunning||message.action==='cancelMaintenance') {job.status=message.action==='cancelMaintenance'?'cancelled':'completed';job.processed=job.total;job.cleared=job.total;}job.revision++;payload={maintenanceJob:{...job}}; } else error='This cleanup is no longer available in this window.';
         }
         else if(message.action === 'inspectMaintenanceStorage') payload={maintenanceReport:{title:'Codex report',items:[{label:'Recorded projects checked',value:'12'},{label:'Missing projects',value:'1'},{label:'state_5.sqlite',value:'Healthy · 2 MB'}]}};
-        else if(message.action === 'getUsageGraph') payload = {usageGraph:{...message.payload.usageGraph,history:[],dailyUsageCache:[],truncated:false}};
+        else if(message.action === 'getUsageGraph') {
+          const query=message.payload.usageGraph, date=new Date(Math.floor(Date.now()/86400000)*86400000-86400000).toISOString().slice(0,10);
+          payload = {usageGraph:{...query,history:window.__usageFixture && query.mode==='quota'?['usage-a','usage-b','usage-removed'].flatMap((accountId,i)=>[{accountId,at:query.from-1,hourly:100},{accountId,at:query.from+60000,hourly:90-i*10}]):[],dailyUsageCache:window.__usageFixture && query.mode==='tokens'?['usage-a','usage-b','usage-removed'].map((accountId,i)=>({accountId,fetchedAt:Date.now(),usage:{days:30,points:[{date,unit:'tokens',totalTokens:1000,extensionTokens:[40,60,25][i]}]}})):[],truncated:false}};
+        }
         else if(message.action === 'listCodexCliSessions') {
           if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }
           else if (window.__systemFixture && message.payload?.targetDeviceId === 'fixture-system') payload = {cliSessions:[{id:'44444444-4444-4444-8444-444444444444',title:'Remote system session',status:'idle',projectPath:'E:/remote-project',deviceId:'fixture-system',deviceName:'Remote system',remote:true,updatedAt:new Date().toISOString()}],cliSessionsDeviceId:'fixture-system',cliComposerConfig:{...config,projects:[{id:'remote-project',path:'E:/remote-project',label:'remote-project'}]}};
@@ -197,6 +235,7 @@ const mockHost = `(() => {
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
+        if(message.action==='setAccountTags' && window.__loseTagAck) {window.__loseTagAck=false;window.__heldTagResult=result;return;}
         if(message.action==='listCodexCliSessions' && window.__holdNextSystemList) {window.__holdNextSystemList=false;window.__heldSystemList=result;return;}
         if(message.action==='previewMaintenance' && window.__holdNextMaintenancePreview) {window.__holdNextMaintenancePreview=false;window.__heldMaintenancePreview=result;return;}
         if(message.action==='getWorkspaceEnvironment' && window.__holdNextEnvironment) {window.__holdNextEnvironment=false;window.__heldEnvironmentResult=result;return;}
@@ -235,6 +274,9 @@ try {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
     });
     const page = await context.newPage();
+    if(process.argv.includes('--usage')) await page.addInitScript(()=>{window.__usageFixture=true;});
+    if(process.argv.includes('--tags')) await page.addInitScript(()=>{window.__tagFixture=true;});
+    if(process.argv.includes('--dark')) await page.addInitScript(()=>{window.__tagTheme='dark';});
     page.setDefaultTimeout(30_000);
     console.log(`Checking ${width}x${height}: session list`);
     const errors = [];
@@ -256,6 +298,183 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    if (process.argv.includes('--tasks')) {
+      await checkTaskUi(page,{origin,width,height,output});
+      assert.deepEqual(errors,[],'Task UI runtime errors');
+      results.push({width,height,checks:'Compact context header, four views, Agents, Overview, details and sharing'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--feedback')) {
+      await page.goto(`${origin}/`);
+      await page.locator('.saved-card-container').first().waitFor();
+      await page.evaluate(()=>{ const state=window.__uiSnapshot;state.accounts[0].canRefreshToken=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}})); });
+      const refresh=async()=>{await page.locator('.saved-card-container').first().getByRole('button',{name:'More account actions',exact:true}).click();await page.getByRole('button',{name:'Refresh token now',exact:true}).click();};
+      await refresh();
+      const toast=page.locator('.dashboard-notice').filter({hasText:'Account token refreshed.'});
+      await toast.waitFor();
+      await page.waitForTimeout(3200);
+      assert.equal(await toast.count(),0,'Info toast dismisses after three seconds');
+      await page.evaluate(()=>{window.__failTokenRefresh=true;});
+      await refresh();
+      const failure=page.getByRole('alert').filter({hasText:'Refresh token was revoked. Reauthorize this account.'});
+      await failure.waitFor();
+      await page.waitForTimeout(3200);
+      assert.equal(await failure.count(),1,'Errors remain visible longer than info');
+      await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+      assert.deepEqual(errors,[],'Feedback UI runtime errors');
+      results.push({width,height,checks:'Token refresh success, 3s info timeout, preserved actionable failure and dismissal'});
+      await context.close();continue;
+    }
+    if (process.argv.includes('--usage')) {
+      await page.goto(`${origin}/`);
+      const chart=page.locator('.usage-graph-card');
+      await chart.locator('.usage-graph-summary').filter({hasText:'125 total'}).waitFor();
+      const readColors=async()=>chart.locator('.usage-graph-bar').evaluateAll(items=>[...new Set(items.map(item=>item.getAttribute('fill')))]);
+      const tokenColors=await readColors();
+      assert.equal(tokenColors.length,3,'Tokens retain disabled and removed accounts with separate colors');
+      assert.equal(await chart.locator('.usage-graph-color-chip').count(),3);
+      await chart.getByRole('button',{name:'View account usage stats',exact:true}).click();
+      const stats=page.getByRole('tooltip',{name:'Account usage stats',exact:true});
+      await stats.getByText('Removed account 1',{exact:true}).waitFor();
+      await stats.getByText('25 tokens',{exact:true}).waitFor();
+      await page.keyboard.press('Escape');
+      await page.screenshot({path:path.join(output,`usage-tokens-${width}.png`)});
+      await chart.getByRole('button',{name:'Graph settings',exact:true}).click();
+      await page.getByRole('button',{name:'Quota changes',exact:true}).click();
+      await page.waitForFunction(()=>document.querySelector('.usage-graph-card')?.dataset.mode==='quota' && document.querySelectorAll('.usage-graph-bar').length>=3);
+      assert.deepEqual(await readColors(),tokenColors,'Both graph modes use the same account palette');
+      await page.screenshot({path:path.join(output,`usage-quota-${width}.png`)});
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+      assert.deepEqual(errors,[],'Usage UI runtime errors');
+      results.push({width,height,checks:'VS Code-only total, disabled/removed account history, three account colors in both modes and tooltip'});
+      await context.close(); continue;
+    }
+    if (process.argv.includes('--tags')) {
+      await page.goto(`${origin}/`);
+      await page.locator('#dashboard-main').waitFor();
+      const cards=page.locator('.saved-card-container');
+      const footerHeight=await cards.first().locator('.saved-card-footer').evaluate(element=>element.getBoundingClientRect().height);
+      await page.evaluate(()=>{
+        const state=window.__uiSnapshot;
+        for(const account of state.accounts) account.tags=[];
+        state.accounts[0].tags=['Work','Team','Long client label'];state.accounts[0].updatedAt=Date.now();state.accounts[0].enabled=true;
+        state.accounts[1].tags=['Personal'];
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}}));
+      });
+      const filter=page.getByRole('combobox',{name:'Filter by tag',exact:true});
+      await filter.selectOption('work');
+      await page.waitForFunction(()=>document.querySelectorAll('.saved-card-container').length===1);
+      const row=cards.first();
+      await row.locator('.saved-account-tags').waitFor();
+      assert.equal((await row.locator('.saved-card-footer').boundingBox()).height,footerHeight,'Tags do not increase card footer height');
+      assert.equal(await row.locator('.saved-account-tag-count').innerText(),'+2');
+      assert.equal(await row.locator('.saved-account-tags').getAttribute('title'),'Work, Team, Long client label');
+      const days=await row.locator('.saved-subscription-remaining').boundingBox(),chips=await row.locator('.saved-account-tags').boundingBox();
+      assert.ok(chips.x>=days.x+days.width-1 && Math.abs(chips.y+chips.height/2-days.y-days.height/2)<=2,'Tags follow days left on the same line');
+      await page.screenshot({path:path.join(output,`tag-cards-${width}.png`),fullPage:true});
+      await row.getByRole('button',{name:'More account actions',exact:true}).click();
+      await page.getByRole('button',{name:'Tags',exact:true}).click();
+      let modal=page.getByRole('dialog',{name:'Account tags',exact:true});
+      const input=modal.getByRole('textbox',{name:'Tags',exact:true});
+      await input.fill('x'.repeat(25));
+      assert.equal(await modal.getByRole('button',{name:'Save tags',exact:true}).isDisabled(),true);
+      await modal.getByRole('alert').waitFor();
+      await input.fill('work, Client, Work');
+      await page.screenshot({path:path.join(output,`tag-editor-${width}.png`)});
+      await page.evaluate(()=>{window.__failTagSave=true;});
+      await modal.getByRole('button',{name:'Save tags',exact:true}).click();
+      await modal.getByRole('alert').filter({hasText:'Storage full'}).waitFor();
+      assert.equal(await input.inputValue(),'work, Client, Work','Failed saves retain the draft');
+      await modal.getByRole('button',{name:'Save tags',exact:true}).click();
+      await modal.waitFor({state:'hidden'});
+      await filter.selectOption('client');
+      assert.equal(await cards.count(),1);
+      await page.reload();await page.locator('#dashboard-main').waitFor();
+      assert.equal(await filter.inputValue(),'client','Tag filter survives reload');
+      await page.waitForFunction(()=>document.querySelector('.saved-account-tags')?.title==='Work, Client');
+      await cards.first().locator('.saved-account-tags').click();
+      modal=page.getByRole('dialog',{name:'Account tags',exact:true});
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})));
+      await modal.getByRole('alert').filter({hasText:'Offline'}).waitFor();
+      assert.equal(await modal.getByRole('button',{name:'Save tags',exact:true}).isDisabled(),true);
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
+      await modal.getByRole('textbox',{name:'Tags',exact:true}).fill('Work, Client, Review');
+      await page.clock.install();
+      await page.evaluate(()=>{window.__loseTagAck=true;});
+      await modal.getByRole('button',{name:'Save tags',exact:true}).click();
+      await page.waitForFunction(()=>window.__heldTagResult);
+      await page.clock.fastForward(35_000);
+      await modal.getByRole('alert').filter({hasText:'timed out'}).waitFor();
+      assert.equal(await modal.getByRole('textbox',{name:'Tags',exact:true}).inputValue(),'Work, Client, Review');
+      const saves=await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='setAccountTags').length);
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldTagResult})));
+      await modal.waitFor({state:'hidden'});
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='setAccountTags').length),saves,'Lost acknowledgements never replay a save automatically');
+      await page.getByRole('button',{name:'Table view',exact:true}).click();
+      await page.locator('.saved-table-row .saved-account-tags').waitFor();
+      await page.locator('#privacyToggleButton').click();
+      await page.waitForFunction(()=>window.__uiActions.some(message=>message.action==='setPrivacyMode'));
+      const openManager=async()=>{await page.getByRole('button',{name:'More',exact:true}).click();await page.getByRole('menuitem',{name:'Tags',exact:true}).click();};
+      await openManager();
+      let manager=page.getByRole('dialog',{name:'Tags',exact:true});
+      await manager.getByRole('searchbox',{name:'Find tags',exact:true}).fill('no-such-tag');
+      await manager.getByText('No matching tags.',{exact:true}).waitFor();
+      await manager.getByRole('searchbox',{name:'Find tags',exact:true}).fill('');
+      await manager.getByRole('button',{name:'Disable accounts tagged Work',exact:true}).click();
+      await page.evaluate(()=>{window.__failTagManage=true;});
+      await manager.getByRole('button',{name:'Confirm',exact:true}).click();
+      await manager.getByRole('status').filter({hasText:'membership changed'}).waitFor();
+      await manager.getByRole('button',{name:'Confirm',exact:true}).click();
+      await manager.locator('.tag-manager-entry').filter({has:page.getByText('Work',{exact:true})}).getByText('1 account · 0 enabled',{exact:true}).waitFor();
+      await manager.getByRole('button',{name:'Enable accounts tagged Work',exact:true}).click();
+      await manager.getByRole('button',{name:'Confirm',exact:true}).click();
+      await manager.locator('.tag-manager-entry').filter({has:page.getByText('Work',{exact:true})}).getByText('1 account · 1 enabled',{exact:true}).waitFor();
+      await manager.getByRole('button',{name:'Rename Work',exact:true}).click();
+      await manager.getByRole('textbox',{name:'New tag name',exact:true}).fill('Client');
+      await manager.getByRole('button',{name:'Rename tag',exact:true}).click();
+      await manager.getByRole('button',{name:'Rename Work',exact:true}).waitFor({state:'hidden'});
+      await manager.getByRole('button',{name:'Remove tag Review',exact:true}).click();
+      await manager.getByRole('button',{name:'Cancel',exact:true}).click();
+      await manager.getByRole('button',{name:'Remove tag Review',exact:true}).click();
+      await manager.getByRole('button',{name:'Remove tag',exact:true}).click();
+      await manager.getByRole('button',{name:'Remove tag Review',exact:true}).waitFor({state:'hidden'});
+      await page.screenshot({path:path.join(output,`tag-manager-${width}.png`)});
+      await manager.getByRole('button',{name:'Filter accounts by Client',exact:true}).click();
+      await manager.waitFor({state:'hidden'});
+      assert.equal(await filter.inputValue(),'client');
+      await page.evaluate(()=>{
+        const state=window.__uiSnapshot;
+        state.connectedPeers=[{id:'local',name:'Local system',local:true,connected:true,sessionCount:2},{id:'fixture-system',name:'Remote system',connected:true,sessionCount:1}];
+        state.accounts[0].tags=['Local only'];state.accounts[0].enabled=false;state.accounts[0].updatedAt=Date.now();
+        state.peerAccounts={'fixture-system':[{...state.accounts[0],tags:['Remote only'],enabled:false,isActive:false,isCurrentWindowAccount:false}]};
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state}}));
+      });
+      const sidebarControl=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+      if(await sidebarControl.isVisible()) await sidebarControl.click();
+      await page.getByRole('button',{name:'Open account center',exact:true}).click();
+      const center=page.getByRole('dialog',{name:'Account center',exact:true});
+      await center.getByRole('combobox',{name:'Account system',exact:true}).selectOption('fixture-system');
+      await page.keyboard.press('Escape');
+      if(width<=760) { const hide=page.getByRole('button',{name:'Hide sessions sidebar',exact:true}); if(await hide.isVisible()) await hide.click(); }
+      await page.locator('#privacyToggleButton').click();
+      await openManager();manager=page.getByRole('dialog',{name:'Tags',exact:true});
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})));
+      await manager.getByRole('status').filter({hasText:'Offline'}).waitFor();
+      assert.equal(await manager.getByRole('button',{name:'Enable accounts tagged Remote only',exact:true}).isDisabled(),true);
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
+      await manager.getByRole('button',{name:'Enable accounts tagged Remote only',exact:true}).click();
+      await manager.getByRole('button',{name:'Confirm',exact:true}).click();
+      await manager.getByText('1 account · 1 enabled',{exact:true}).waitFor();
+      assert.equal(await page.evaluate(()=>window.__uiSnapshot.accounts[0].enabled),false,'Remote tag actions leave local accounts unchanged');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='manageAccountTag').at(-1).payload.targetDeviceId),'fixture-system');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='setPrivacyMode').at(-1).payload.targetDeviceId),undefined,'Mask changes stay on the browser host while viewing another PC');
+      await manager.getByRole('button',{name:'Close tag management',exact:true}).click();
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Tag toolbar and list stay within viewport');
+      await page.screenshot({path:path.join(output,`tags-${width}.png`),fullPage:true});
+      assert.deepEqual(errors,[],'Tag UI runtime errors');
+      results.push({width,height,checks:'Header mask, compact editor/chips/filter, validation/reload/lost ack/offline, manager search/rename/merge/delete/enable/disable, frozen system scope'});
+      await context.close();continue;
+    }
     if (process.argv.includes('--systems')) {
       await page.goto(`${origin}/`);
       await page.locator('#dashboard-main').waitFor();
@@ -285,6 +504,8 @@ try {
       await page.waitForFunction(()=>window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId==='fixture-system');
       await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='listCodexCliSessions'&&action.payload?.targetDeviceId==='fixture-system'));
       await page.getByRole('button',{name:'Expand remote-project',exact:true}).waitFor();
+      const sidebarControl=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+      if(await sidebarControl.isVisible()) await sidebarControl.click();
       await page.getByRole('button',{name:'Open account center',exact:true}).click();
       const center=page.getByRole('dialog',{name:'Account center',exact:true});
       assert.equal(await center.getByRole('combobox',{name:'Account system',exact:true}).inputValue(),'fixture-system');
@@ -739,13 +960,13 @@ try {
     await page.mouse.up();
     await deletion.waitFor({ state: "hidden" });
     assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "deleteCodexCliSession").length), 0, "Dismissing the backdrop cannot delete a session");
-    await page.getByRole("button", { name: "Dismiss session message", exact: true }).click();
+    if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).isVisible()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
     await page.locator(".cli-session-row.is-archived").hover();
     await page.getByRole("button", { name: "Delete Archived task", exact: true }).click();
     await deletion.waitFor();
     await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByText("Session deletion cancelled.", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Dismiss session message", exact: true }).click();
+    await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
     await page.getByRole("button", { name: "Collapse demo", exact: true }).click();
 
     await page.getByRole("button", { name: "Show active sessions (2)", exact: true }).waitFor();
@@ -815,7 +1036,7 @@ try {
     assert.equal(await page.locator(".cli-goal-strip").evaluate(element=>element.open), false, "Goal control does not toggle its details");
     await page.getByRole("button", { name: "Resume goal", exact: true }).click();
     await page.getByRole("button", { name: "Pause goal", exact: true }).waitFor();
-    if(width===390){await page.evaluate(()=>{window.__failNextGoal=true;});await page.getByRole('button',{name:'Pause goal',exact:true}).click();await page.getByText('Goal storage unavailable.',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Pause goal',exact:true}).count(),1,'Failed pause retains the confirmed goal state');await page.getByRole('button',{name:'Dismiss message',exact:true}).click();}
+    if(width===390){await page.evaluate(()=>{window.__failNextGoal=true;});await page.getByRole('button',{name:'Pause goal',exact:true}).click();await page.getByText('Goal storage unavailable.',{exact:true}).waitFor();assert.equal(await page.getByRole('button',{name:'Pause goal',exact:true}).count(),1,'Failed pause retains the confirmed goal state');await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();}
     const goalBounds = await page.locator(".cli-goal-strip").boundingBox();
     assert.ok(goalBounds.height <= (width <= 760 ? 38 : 32), 'Goal strip stays one compact row');
     const pauseBounds = await page.getByRole('button', { name: 'Pause goal', exact: true }).boundingBox();
@@ -1046,11 +1267,13 @@ try {
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await composer.fill("Keep this new draft");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldSendResult })));
-    assert.equal(await page.getByText("Codex completed the turn in the original chat.", { exact: true }).count(), 0, "Routine completion feedback stays out of the toast stack");
+    const completionToast=page.locator('.dashboard-notice').filter({hasText:'Codex completed the turn in the original chat.'});
+    await completionToast.waitFor();
+    await completionToast.waitFor({state:'hidden',timeout:5000});
     assert.equal(new URL(page.url()).pathname, "/workspace", "A completed turn cannot pull the user back to its conversation");
     assert.equal(await composer.inputValue(), "Keep this new draft");
     await page.getByRole("button", { name: "Send message", exact: true }).click();
-    assert.equal(await page.getByText("New Codex chat is ready.", { exact: true }).count(), 0, "Routine chat feedback stays out of the toast stack");
+    assert.equal(await page.locator(".cli-session-message").filter({hasText:"New Codex chat is ready."}).count(), 0, "Action feedback never adds conversation blocks");
     await page.waitForFunction(() => document.querySelector('textarea[name="codex-message"]')?.value === "");
     assert.equal(new URL(page.url()).pathname, "/workspace/01a04882-d037-7a42-ad24-9afb61901198", "A new-session acknowledgement opens the accepted thread without requiring another list/catalog payload");
     assert.equal(await composer.inputValue(), "", "A newly accepted chat clears only its submitted project draft");
@@ -1064,7 +1287,7 @@ try {
     const activeChatUrl = page.url();
     await composer.fill("Keep the currently selected chat");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: window.__heldArchiveResult })));
-    assert.equal(await page.getByText("Original chat archived.", { exact: true }).count(), 0, "Routine archive feedback stays out of the toast stack");
+    await page.locator(".dashboard-notice").filter({hasText:"Original chat archived."}).waitFor();
     assert.equal(page.url(), activeChatUrl, "A delayed archive must not navigate away from another selected chat");
     assert.equal(await composer.inputValue(), "Keep the currently selected chat");
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
@@ -1210,14 +1433,16 @@ try {
       assert.ok(Math.abs(left.y - right.y) <= 1 && Math.abs(left.height - right.height) <= 1, "Overview columns have matching heights");
     }
     assert.equal(await page.locator(".cli-workspace.is-dashboard-mode .cli-context-toggle").count(), 0, "Dashboard has only its relevant left floating button");
-    assert.equal(await page.locator(".cli-workspace.is-dashboard-mode .cli-rail-toggle img").count(), 1, "Sidebar toggle carries the dashboard logo");
+    const railToggle=page.locator('.cli-rail-toggle');
+    if(await railToggle.getAttribute('aria-expanded')==='true') assert.ok(await page.locator('.cli-rail-brand img').isVisible(),'Expanded rail shows its logo in its header');
+    else assert.equal(await page.locator('#dashboard-sidebar-toggle-slot .cli-rail-toggle img').count(),1,'Collapsed rail logo sits inside the content header');
     assert.equal(await page.locator(".hero .brand-logo").isVisible(), false, "No duplicate dashboard logo");
     if (width <= 760) {
       assert.ok(await page.locator(".hero").evaluate(element => parseFloat(getComputedStyle(element).paddingTop) <= 4), "Small dashboards have no empty top spacer");
       assert.ok(dashboardHero.y <= 12, "Header starts near the top edge");
-      const sidebarToggle = await page.locator(".cli-workspace.is-dashboard-mode .cli-rail-toggle").boundingBox();
+      const sidebarToggle = await railToggle.boundingBox();
       const brandBounds = await page.locator(".hero .brand").boundingBox();
-      assert.ok(brandBounds.x >= sidebarToggle.x + sidebarToggle.width, "Compact header leaves room for the sidebar button");
+      assert.ok(sidebarToggle.x >= brandBounds.x && sidebarToggle.x + sidebarToggle.width <= brandBounds.x + brandBounds.width, "Compact sidebar control belongs inside the header");
     }
 
     const previousNotice = page.getByRole("button", { name: "Dismiss notification", exact: true });
@@ -1370,13 +1595,13 @@ try {
     assert.equal(await page.getByText("This conversation is unavailable. Refresh the session list or choose another conversation.", { exact: true }).count(), 0, 'Retired conversations do not leave an error block');
     await page.goto(`${origin}/`);
     await page.locator(".hero").waitFor();
-    assert.equal(await page.locator("#privacyToggleButton").count(), 0);
+    assert.equal(await page.locator("#privacyToggleButton").count(), 1);
     await page.getByRole("button", { name: "More", exact: true }).click();
     await page.waitForFunction(() => { const bounds = document.querySelector(".overview-more-menu")?.getBoundingClientRect(); return bounds && bounds.top >= 0 && bounds.bottom <= innerHeight; });
     assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Password/ }).count(), 0);
-    assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: snapshot.copy.showSensitive, exact: true }).count(), 1);
-    const mask = page.locator(".overview-more-menu").getByRole("menuitem", { name: snapshot.copy.showSensitive, exact: true });
-    assert.ok(await mask.evaluate(button => { const icon = button.querySelector("svg").getBoundingClientRect(), text = button.querySelector("span:last-child").getBoundingClientRect(); return Math.abs((icon.top + icon.height / 2) - (text.top + text.height / 2)) < 2; }), "Mask icon and label share a line");
+    assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: snapshot.copy.showSensitive, exact: true }).count(), 0);
+    assert.equal(await page.locator(".overview-more-menu").getByRole("menuitem", { name: 'Tags', exact: true }).count(), 1);
+    assert.ok(await page.locator('.overview-more-menu').getByRole('menuitem',{name:'Tags',exact:true}).evaluate(button=>{const icon=button.querySelector('svg').getBoundingClientRect(),label=button.querySelector('span').getBoundingClientRect();return Math.abs(icon.y+icon.height/2-label.y-label.height/2)<2;}),'Tags icon and label align');
     await page.keyboard.press("End");
     assert.ok(await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Resume$/ }).evaluate(button => button === document.activeElement), "End focuses the final action");
     await page.locator(".overview-more-menu").getByRole("menuitem", { name: /Codex$/ }).click();
@@ -1544,7 +1769,7 @@ try {
         const logReadsAfterClose = await page.evaluate(() => window.__uiActions.filter(action => action.action === "viewLogs").length);
         await page.waitForTimeout(2_100);
         assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "viewLogs").length), logReadsAfterClose, "Closing the console stops polling");
-        assert.equal(await page.getByText("Token history retention", { exact: true }).count(), 1);
+        assert.equal(await page.getByText("Token history retention", { exact: true }).count(), 0, "Retained verified usage has no automatic deletion control");
       }
       if (await tab.getAttribute("id") === "settings-tab-automation") {
         const tokenBlock = page.getByRole("button", { name: "Automatic token history", exact: true }).locator("../..");

@@ -36,12 +36,14 @@ export function readSavedProjectBoard(project: string, session?: ProjectBoard['s
 
 export async function readSharedProjectTask(share: ProjectShare, taskId: string, view: string, before?: string, filePath?: string): Promise<unknown> {
   if (share.expiresAt <= Date.now()) throw new Error('This project link expired.');
+  if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
   const normalizedView = view === 'messages' ? 'activities' : view;
   const hasViewPermission = normalizedView === 'activities'
     ? share.permissions.includes('activities') || share.permissions.includes('messages')
-    : share.permissions.includes(normalizedView as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>);
+    : share.permissions.includes(normalizedView as 'files' | 'changes');
   if (!['activities','files','changes'].includes(normalizedView) || !hasViewPermission) throw new Error('This feature is not enabled for this shared link.');
   const details = await readProjectTaskDetails(share.projectPath, taskId, normalizedView as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>, before);
+  if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
   if (filePath !== undefined) {
     if (normalizedView !== 'files') throw new Error('File access is not enabled for this view.');
     const entry = details.files.find(file => file.path === filePath);
@@ -80,8 +82,8 @@ export async function readProjectBoard(projectPath: string | undefined): Promise
   savedSessions.set(key, { sessions, checkedAt: Date.now() });
   return boardSnapshot(project, home, sessions);
 }
-export async function readProjectTaskDetails(projectPath: string, taskId: string, view: 'activities' | 'files' | 'changes' = 'activities', before?: string): Promise<ProjectTaskDetails> {
-  if (!['activities','files','changes'].includes(view)) throw new Error('Unknown task detail view.');
+export async function readProjectTaskDetails(projectPath: string, taskId: string, view: 'activities' | 'files' | 'changes' | 'overview' = 'activities', before?: string): Promise<ProjectTaskDetails> {
+  if (!['activities','files','changes','overview'].includes(view)) throw new Error('Unknown task detail view.');
   const project = await resolveWorkspaceProjectPathAsync(projectPath);
   const task = readProjectTask(project, taskId);
   const sessionId = task?.sessionId;
@@ -104,11 +106,11 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
         } catch (error) { result.warnings.push(`Live activity is unavailable: ${error instanceof Error ? error.message : String(error)}`); }
       }
     }
-    if (view === 'files' && sessionId) {
+    if ((view === 'files' || view === 'overview') && sessionId) {
       result.files = listConversationFiles(result.messages);
     }
-    if (view === 'changes') {
-      result.environment = await waitWithin(readWorkspaceEnvironment(project, true), 5000, 'Project changes are still loading.');
+    if (view === 'changes' || view === 'overview') {
+      result.environment = await waitWithin(readWorkspaceEnvironment(project, view === 'changes'), 5000, 'Project changes are still loading.');
     }
   } catch (error) { result.warnings.push(error instanceof Error ? error.message : String(error)); }
   if (initialPromptRead) result.initialPrompt = await waitWithin(initialPromptRead, 150, 'Initial prompt is still loading.').catch(() => undefined) || 'The initial prompt is currently unavailable. Reopen the task to retry.';

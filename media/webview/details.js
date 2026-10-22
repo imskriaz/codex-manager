@@ -114,6 +114,10 @@
 
   updateLiveTimes();
   applyPrivacyMode(document.body.dataset.privacyHidden === "true");
+  document.querySelector("[data-role='retry-usage']")?.addEventListener("click", event => {
+    event.currentTarget.disabled = true;
+    vscode?.postMessage({ type: "details:retry-usage", accountId: event.currentTarget.dataset.accountId });
+  });
 
   if (privacyButton) {
     privacyButton.addEventListener("click", () => {

@@ -17,7 +17,8 @@ import {
   renderRemoveIcon,
   renderResyncProfileIcon,
   renderSwitchIcon,
-  ResetCreditIcon
+  ResetCreditIcon,
+  EditTagsIcon
 } from "./icons";
 import { ActionButton } from "./primitives";
 import { MetricRow, renderHealthPill } from "./accountMetricPrimitives";
@@ -28,6 +29,12 @@ export function resolvePrimaryAccountControl(
   account: Pick<DashboardAccountViewModel, "healthKind" | "dismissedHealth">
 ): "enablement" | "reauthorize" {
   return account.healthKind === "reauthorize" || account.healthKind === "refresh_failed" ? "reauthorize" : "enablement";
+}
+
+function AccountTagChips(props: { tags?: string[]; onEdit?: () => void }) {
+  const tags = props.tags ?? [];
+  if (!tags.length) return null;
+  return <button type="button" class="saved-account-tags" title={tags.join(', ')} aria-label={`Edit tags: ${tags.join(', ')}`} onClick={event => { event.stopPropagation(); props.onEdit?.(); }}><span class="saved-account-tag">{tags[0]}</span>{tags.length > 1 ? <span class="saved-account-tag-count">+{tags.length - 1}</span> : null}</button>;
 }
 
 export function resolveAccountAccessAction(
@@ -128,6 +135,7 @@ export function SavedAccountCard(props: {
   compactRow?: boolean;
   onToggleSelected: () => void;
   onExportAuth: () => void;
+  onEditTags?: () => void;
   onAction: (
     action:
       | "details"
@@ -211,6 +219,11 @@ export function SavedAccountCard(props: {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [claimPopoverOpen, setClaimPopoverOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const editTags = (): void => {
+    setActionsOpen(false);
+    actionsMenuRef.current?.querySelector<HTMLButtonElement>('.saved-overflow-trigger')?.focus();
+    props.onEditTags?.();
+  };
   const actionsMenuContentRef = useRef<HTMLDivElement>(null);
   const claimPopoverRef = useRef<HTMLDivElement>(null);
   const claimPopoverContentRef = useRef<HTMLDivElement>(null);
@@ -548,6 +561,7 @@ export function SavedAccountCard(props: {
                       {subscriptionRemaining.label}
                     </span>
                   ) : null}
+                  <AccountTagChips tags={account.tags} onEdit={props.onEditTags} />
                   {cardPlanBadge ? (
                     <span class="pill plan saved-plan-badge" title={account.planTypeLabel}>
                       {cardPlanBadge}
@@ -655,6 +669,7 @@ export function SavedAccountCard(props: {
                       >
                         <DownloadIcon /> <span>{exportLabel}</span>
                       </button>
+                      <button type="button" disabled={!props.onEditTags} onClick={editTags}><EditTagsIcon /><span>Tags</span></button>
                       {showResyncButton ? (
                         <button
                           type="button"
@@ -863,6 +878,7 @@ export function SavedAccountCard(props: {
                       {subscriptionRemaining.label}
                     </span>
                   ) : null}
+                  <AccountTagChips tags={account.tags} onEdit={props.onEditTags} />
                   {account.creditsText ? <span class="saved-credits-line">{account.creditsText}</span> : null}
                   {hasResetCredit ? (
                     <button
@@ -935,6 +951,7 @@ export function SavedAccountCard(props: {
                           >
                             <DownloadIcon /> <span>{exportLabel}</span>
                           </button>
+                          <button type="button" disabled={!props.onEditTags} onClick={editTags}><EditTagsIcon /><span>Tags</span></button>
                           {showResyncButton ? (
                             <button
                               type="button"

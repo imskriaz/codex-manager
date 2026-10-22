@@ -26,11 +26,12 @@ describe("overview actions", () => {
     expect(overview).toContain("overview-more-menu");
     expect(overview).not.toContain('resolveOverviewMenuLabel("onboard", props.lang)');
     expect(overview).not.toContain("onSetPassword");
-    expect(overview).toContain("props.onPrivacyToggle()");
+    expect(overview).toContain("props.onManageTags()");
+    expect(overview).not.toContain("props.onPrivacyToggle()");
     expect(overview).toContain("props.onOpenCodex()");
     expect(overview).toContain("props.onResumeSessions()");
     expect(overview).not.toContain("Show All Sessions");
-    expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).not.toContain('id="privacyToggleButton"');
+    expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain('id="privacyToggleButton"');
     expect(readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8")).toContain('configured ? "Change Password" : "Set Password"');
   });
 

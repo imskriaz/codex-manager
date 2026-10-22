@@ -148,7 +148,7 @@ export class AccountsCommandService {
         const tokens = await loginWithOAuth(cancellationToken);
         const claims = extractClaims(tokens.idToken, tokens.accessToken);
         const authorizedId = claims.email
-          ? buildAccountStorageId(claims.email, claims.accountId, claims.organizationId)
+          ? buildAccountStorageId(claims.email, claims.accountId ?? tokens.accountId, claims.organizationId)
           : undefined;
 
         if (!authorizedId || authorizedId !== account.id) {

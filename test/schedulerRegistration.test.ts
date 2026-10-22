@@ -566,10 +566,10 @@ describe("auto refresh scheduler", () => {
     expect(refreshSingleQuotaSafelyMock).not.toHaveBeenCalled();
   });
 
-  it("pauses the periodic all-account sweep when safety refresh is enabled", async () => {
+  it("honors the configured ten-minute sweep even when pre-switch safety refresh is enabled", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((key: string, fallback?: unknown) => {
-        if (key === "autoRefreshMinutes") return 5;
+        if (key === "autoRefreshMinutes") return 10;
         if (key === "autoRefreshCurrentMinutes") return 0;
         if (key === "autoSwitchRefreshAllBeforeSwitchEnabled" || key === "autoSwitchEnabled") return true;
         return fallback;
@@ -585,12 +585,14 @@ describe("auto refresh scheduler", () => {
       onRefresh: vi.fn()
     });
 
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(executeCommand).not.toHaveBeenCalledWith("codexManager.refreshAllQuotas", expect.anything());
+    await vi.advanceTimersByTimeAsync(10 * 60_000 - 1);
+    expect(executeCommand).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(executeCommand).toHaveBeenCalledWith("codexManager.refreshAllQuotas", { silent: true, forceRefresh: true, excludeCurrent: false, respectQuotaCheckGap: false });
     disposable.dispose();
   });
 
-  it("resumes an all-account sweep, including the active account, while every account is below auto-switch limits", async () => {
+  it("keeps all-account sweeps running after an account recovers quota", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((key: string, fallback?: unknown) => {
         if (key === "autoRefreshMinutes") return 5;
@@ -641,7 +643,7 @@ describe("auto refresh scheduler", () => {
 
     accounts[1].quotaSummary.weeklyPercentage = 50;
     await vi.advanceTimersByTimeAsync(5 * 60_000);
-    expect(executeCommand).toHaveBeenCalledTimes(1);
+    expect(executeCommand).toHaveBeenCalledTimes(2);
     disposable.dispose();
   });
 

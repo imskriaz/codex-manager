@@ -186,7 +186,6 @@ export class WorkbenchRefreshCoordinator {
     if (!hasOauth) {
       return;
     }
-
     try {
       await runCrossWindowExclusive("background:account-import-current", "Import current account", async () => {
         const account = await this.repo.importCurrentAuth();
@@ -244,10 +243,7 @@ export class WorkbenchRefreshCoordinator {
     }
 
     try {
-      if (!nextActive && afterAccounts.length > 0) {
-        if (previousObservedIdentity === nextObservedIdentity) {
-          return;
-        }
+      if (!nextActive && nextObservedIdentity) {
         markVisible();
         await this.importCurrentAccountInBackground(view);
         return;

@@ -48,28 +48,26 @@ describe("quota usage graph", () => {
       { accountId: "b", fetchedAt: 2, usage: { days: 30, points: [{ unit: "tokens", date: "2026-10-15", totalTokens: 220, extensionTokens: 20, surfaceValues: { vscode: 20, cli: 200 } }] } },
       { accountId: "a", fetchedAt: 3, usage: { days: 30, points: [{ unit: "tokens", date: "2026-10-15", totalTokens: 115, extensionTokens: 15 }] } }
     ]);
-    expect(events.map(event => [event.accountId, event.used])).toEqual([["a", 115], ["b", 220]]);
+    expect(events.map(event => [event.accountId, event.used])).toEqual([["a", 15], ["b", 20]]);
     const consolidated = consolidateDailyUsageEvents(events);
-    expect(consolidated).toMatchObject([{ accountId: "all", used: 335, segments: [{ key: "VS Code", used: 35 }, { key: "Other", used: 300 }] }]);
+    expect(consolidated).toMatchObject([{ accountId: "all", used: 35 }]);
     expect(events.every(event => event.at === Date.parse("2026-10-15T00:00:00Z"))).toBe(true);
   });
-  it("excludes unverified legacy values while preserving verified Other usage", () => {
+  it("excludes unverified values and preserves a verified zero VS Code day", () => {
     const events = buildDailyTokenUsageEvents([{ accountId: "a", fetchedAt: 1, usage: { days: 3, points: [
       { date: "2026-10-13", totalTokens: 900, surfaceValues: { cli: 900 } },
       { date: "2026-10-14", totalTokens: 700 },
       { unit: "tokens", date: "2026-10-15", totalTokens: 500, extensionTokens: 0 }
     ] } }]);
-    expect(events).toMatchObject([{ accountId: "a", used: 500, segments: [{ key: "VS Code", used: 0 }, { key: "Other", used: 500 }] }]);
+    expect(events).toMatchObject([{ accountId: "a", used: 0 }]);
     expect(events).toHaveLength(1);
   });
 
-  it("includes known totals with missing attribution without claiming they are VS Code or Other", () => {
+  it("excludes unknown client attribution from VS Code totals", () => {
     const events = buildDailyTokenUsageEvents([{ accountId: "a", fetchedAt: 1, usage: { days: 1, points: [
       { unit: "tokens", date: "2026-10-15", totalTokens: 500 }
     ] } }]);
-    expect(consolidateDailyUsageEvents(events)).toMatchObject([{ used: 500, segments: [
-      { key: "VS Code", used: 0 }, { key: "Other", used: 0 }, { key: "Unknown source", used: 500 }
-    ] }]);
+    expect(events).toEqual([]);
   });
 
 });

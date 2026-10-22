@@ -1,3 +1,4 @@
+import { buildAccountStorageId } from "../src/utils/accountIdentity";
 import * as vscode from "vscode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -159,4 +160,16 @@ describe("dashboard OAuth encrypted sync", () => {
       expect.stringMatching(/run Sync Cross-PC Claims Now/i)
     );
   });
+  it('reauthorizes a legacy token using its selected workspace identity', async () => {
+    const idToken = 'head.' + Buffer.from(JSON.stringify({email:'legacy@example.test'})).toString('base64url') + '.sig';
+    const id = buildAccountStorageId('legacy@example.test','workspace');
+    const repo = {getAccount:vi.fn(async()=>({id,accountId:'workspace'})),updateTokens:vi.fn(async()=>({id})),upsertFromTokens:vi.fn()};
+    const coordinator = new DashboardOAuthCoordinator(repo as never,vi.fn());
+    const internal = coordinator as unknown as {upsertAuthorizedAccount(tokens:{idToken:string;accessToken:string;accountId:string},expectedId:string):Promise<unknown>};
+    await internal.upsertAuthorizedAccount({idToken,accessToken:idToken,accountId:'workspace'},id);
+    expect(repo.updateTokens).toHaveBeenCalledWith(id,expect.objectContaining({accountId:'workspace'}));
+    expect(repo.upsertFromTokens).not.toHaveBeenCalled();
+    coordinator.dispose();
+  });
+
 });

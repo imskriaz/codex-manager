@@ -82,7 +82,7 @@ export function upsertDailyUsageRow(store: SqliteStateStore, entry: DashboardDai
       WHERE excluded.fetched_at>=daily_usage_points.fetched_at AND daily_usage_points.data!=excluded.data`);
     for (const point of entry.usage.points) write.run(entry.accountId, point.date, entry.fetchedAt, JSON.stringify(point));
     if (cutoff) store.prepare("DELETE FROM daily_usage_points WHERE date<?").run(cutoff);
-    else {
+    else if (cutoff === undefined) {
       // Legacy imports retain their existing thirty-point bound.
       store.prepare(`DELETE FROM daily_usage_points WHERE account_id=? AND date NOT IN
         (SELECT date FROM daily_usage_points WHERE account_id=? ORDER BY date DESC LIMIT 30)`).run(entry.accountId, entry.accountId);

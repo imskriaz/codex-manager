@@ -33,6 +33,27 @@ describe("daily usage response validation", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ date: "2026-10-15", totals: { text_total_tokens: 1000 } }] }))));
     await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({ points: [{ unit: "tokens", totalTokens: 1000, extensionTokens: undefined }] });
   });
+  it.each([undefined, null])("keeps verified daily totals when a credit-only client omits tokens: %j", async missing => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ balance_unit: "credit", data: [
+      { date: "2026-10-15", totals: { text_total_tokens: 1000 }, clients: [
+        { client_id: "CODEX_IDE_VSCODE", text_total_tokens: 240 },
+        { client_id: "CODEX_WORK_WEB", credits: 10, text_total_tokens: missing }
+      ] },
+      { date: "2026-10-16", totals: { text_total_tokens: 0 }, clients: [{ client_id: "CODEX_WORK_WEB", credits: 0 }] }
+    ] }))));
+    await expect(fetchDailyUsageBreakdown(tokens)).resolves.toMatchObject({ points: [
+      { date: "2026-10-15", totalTokens: 1000, extensionTokens: undefined, otherTokens: undefined, surfaceValues: { vscode: 240 } },
+      { date: "2026-10-16", totalTokens: 0, extensionTokens: undefined }
+    ] });
+  });
+  it("keeps actionable HTTP failures without exposing the provider's response body", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"error":{"message":"private provider detail"}}', { status: 401 })));
+    const error = await fetchDailyUsageBreakdown(tokens).catch(error => error as Error);
+    expect(error).toHaveProperty('message', expect.stringContaining('Refresh the token or reauthorize'));
+    expect(error).toHaveProperty('message', expect.not.stringContaining('private provider detail'));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('<html>proxy failure</html>')));
+    await expect(fetchDailyUsageBreakdown(tokens)).rejects.toThrow('unreadable response');
+  });
   it("accepts API date timestamps, keyed daily rows, and component token totals", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       daily_usage: {

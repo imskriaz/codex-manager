@@ -60,6 +60,8 @@ import {
 import {
   AboutModal,
   AccountInfoModal,
+  AccountTagsModal,
+  TagManagerModal,
   AddAccountModal,
   CliSessionsPage,
   ConfirmCancelOauthModal,
@@ -100,6 +102,7 @@ import {
 import { clampWebviewZoom, nextWebviewZoom } from "./webviewZoom";
 import { TaskBoard } from "./taskBoard";
 import { initializePublicMessages } from './publicMessages';
+import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
 const USAGE_HISTORY_STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
@@ -236,6 +239,10 @@ function App() {
   const onboardingPendingRef = useRef<Set<DashboardActionName>>(new Set());
   const onboardingVisibilityResolvedRef = useRef(false);
   const [browserActionRequest, setBrowserActionRequest] = useState<BrowserActionRequest>();
+  const [tagEditor, setTagEditor] = useState<{ account: DashboardAccountViewModel; targetDeviceId?: string }>();
+  const tagRequests = useRef(new Map<string, { accountId: string; deviceId?: string }>());
+  const [tagManager, setTagManager] = useState<{ deviceId?: string }>();
+  const tagManagementRequests = useRef(new Map<string, { deviceId?: string }>());
   const [cliSessions, setCliSessions] = useState<DashboardCliSessionSummary[]>([]);
   const [agentMessages, setAgentMessages] = useState<Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>>({});
   const messageRequests = useRef(new Map<string, CliSessionTarget>());
@@ -287,14 +294,6 @@ function App() {
   const [cliSessionsError, setCliSessionsError] = useState<string>();
   const [cliSessionMessagesError, setCliSessionMessagesError] = useState<string>();
   const [cliComposerConfig, setCliComposerConfig] = useState<DashboardCliComposerConfig>();
-  const [cliSessionFeedback, setCliSessionFeedback] = useState<CliSessionFeedback>();
-  const showCliSessionFeedback = useCallback((feedback: CliSessionFeedback): void => {
-    // These updates are already visible in their panel and were causing a
-    // stream of stacked toasts while the workspace refreshed in the background.
-    if (feedback.message.startsWith("The session action completed, but the session list could not refresh:")) return;
-    if (feedback.level === "info") return;
-    setCliSessionFeedback(feedback);
-  }, []);
   const [codexRequests, setCodexRequests] = useState<DashboardCodexServerRequest[]>([]);
   const [codexRequestError, setCodexRequestError] = useState<string>();
   const [workspaceEnvironment, setWorkspaceEnvironment] = useState<DashboardWorkspaceEnvironment>();
@@ -393,12 +392,15 @@ function App() {
   const [browserLastSyncAt, setBrowserLastSyncAt] = useState<number>();
   const showNotice = useCallback(
     (next: DashboardNotice) => {
-      if (next.level === "info") return;
       noticeControllerRef.current?.show(next);
       pushBrowserNotification(next);
     },
     [pushBrowserNotification]
   );
+  const showCliSessionFeedback = useCallback((feedback: CliSessionFeedback): void => {
+    if (feedback.message.startsWith("The session action completed, but the session list could not refresh:")) return;
+    showNotice(feedback);
+  }, [showNotice]);
   const lastTerminalNoticeAtRef = useRef<number>();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const handleActionTimeout = useCallback(
@@ -446,6 +448,7 @@ function App() {
             : "The request timed out and may still be running. Your draft is saved. Refresh this session before deciding whether to send it again."
         });
       }
+      if (action === 'setAccountTags' || action === 'manageAccountTag') recordSubmissionResult(requestId, 'failed', 'The tag action timed out and may have completed. Your draft is kept; check the accounts before retrying.');
       if (action === "getUsageGraph" && usageGraphRequestRef.current === requestId) {
         usageGraphRequestRef.current = undefined;
         setUsageGraphError("Loading saved graph data timed out. Retry to query the database again.");
@@ -627,6 +630,28 @@ function App() {
       }
       if (message.type === 'dashboard:notice' && message.actionPrompt) pushBrowserNotification(message);
       else modals.handleHostMessage(message);
+      if (message.type === 'dashboard:action-result' && message.action === 'manageAccountTag') {
+        const target = tagManagementRequests.current.get(message.requestId);
+        if (target) {
+          tagManagementRequests.current.delete(message.requestId);
+          const result = message.payload?.tagResult;
+          if (message.status === 'completed' && isAccountTagResult(result)) {
+            dispatch({ type: 'account-tags', updates: result.accounts, deviceId: target.deviceId });
+            recordSubmissionResult(message.requestId, result.failedCount ? 'failed' : 'completed', `${message.payload?.notice?.message ?? `${result.successCount} accounts updated; ${result.failedCount} failed or unconfirmed.`}${result.errors.length ? ` ${result.errors[0]}` : ''}`);
+          } else recordSubmissionResult(message.requestId, 'failed', message.error || 'The tag action was not confirmed. Check the accounts before retrying.');
+        }
+      }
+      if (message.type === 'dashboard:action-result' && message.action === 'setAccountTags') {
+        const target = tagRequests.current.get(message.requestId);
+        if (target) {
+          tagRequests.current.delete(message.requestId);
+          const updated = message.payload?.accountTags;
+          if (message.status === 'completed' && isAccountTagUpdate(updated) && updated.accountId === target.accountId) {
+            dispatch({ type: 'account-tags', updates: [updated], deviceId: target.deviceId });
+            recordSubmissionResult(message.requestId, 'completed');
+          } else recordSubmissionResult(message.requestId, message.status === 'cancelled' ? 'cancelled' : 'failed', message.error || 'The host did not confirm the saved tags. Your draft is kept; refresh before retrying.');
+        }
+      }
       if (onboardingOpen && message.type === "dashboard:action-result") {
         const onboardingAction = message.action;
         if (onboardingAction === "completeOnboarding" && onboardingPendingRef.current.has(onboardingAction)) {
@@ -1641,7 +1666,8 @@ function App() {
           displayedAccounts,
           uiPreferences.accountSearch,
           uiPreferences.filter,
-          snapshot.settings.quotaYellowThreshold
+          snapshot.settings.quotaYellowThreshold,
+          uiPreferences.accountTag
         ),
         accountSort,
         uiPreferences.metricPriority,
@@ -1661,6 +1687,7 @@ function App() {
       snapshot.settings.encryptedSyncRegistryOverrideEnabled,
       uiPreferences.accountSearch,
       uiPreferences.filter,
+      uiPreferences.accountTag,
       accountSort,
       uiPreferences.metricPriority
     ]
@@ -1724,7 +1751,7 @@ function App() {
   const handlePrivacyToggle = (): void => {
     const privacyMode = !state.privacyMode;
     dispatch({ type: "toggle-privacy" });
-    sendAction("setPrivacyMode", undefined, { privacyMode });
+    sendAction("setPrivacyMode", undefined, { privacyMode, targetDeviceId: undefined });
   };
   const prepareOAuthPending = isActionPending("prepareOAuthSession");
   const startOAuthAutoPending = isActionPending("startOAuthAutoFlow");
@@ -1747,7 +1774,8 @@ function App() {
     displayedAccounts.length
   );
   const capabilityThresholds = createAutoQueuePolicy(snapshot.settings, state.now);
-  const searchedAccounts = filterAccounts(displayedAccounts, uiPreferences.accountSearch, "all", snapshot.settings.quotaYellowThreshold);
+  const availableTags = [...new Map(displayedAccounts.flatMap(account => account.tags ?? []).map(tag => [tag.toLowerCase(), tag])).values()].sort((a, b) => a.localeCompare(b));
+  const searchedAccounts = filterAccounts(displayedAccounts, uiPreferences.accountSearch, "all", snapshot.settings.quotaYellowThreshold, uiPreferences.accountTag);
   const invalidAccountCount = searchedAccounts.filter(isAccountAttention).length;
   const validAccountCount = searchedAccounts.length - invalidAccountCount;
   const accountEnablement = countAccountEnablement(searchedAccounts);
@@ -2142,7 +2170,7 @@ function App() {
       {isBrowserDashboard && !isCliSessionsPath(browserPath) && (browserHostStage === "unreachable" || browserHostStage === "offline")
         ? createPortal(<BrowserConnectionBanner stage={browserHostStage} lastSyncAt={browserLastSyncAt} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} />, document.body)
         : null}
-      {notice && !(isBrowserDashboard && isCliSessionsPath(browserPath) && cliSessionFeedback?.message === notice.message)
+      {notice
         ? createPortal(
             <div class="dashboard-notice-stack" aria-label="Notifications" aria-live="polite">
               <div
@@ -2191,8 +2219,10 @@ function App() {
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
-        {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard active={browserPath === '/tasks'}
+        {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
+          systems={isBrowserDashboard ? pcOptions.map(peer => ({ id: peer.id, name: peer.name, connected: peer.connected, sessions: cliSessions.filter(session => (session.deviceId ?? 'local') === (peer.local ? 'local' : peer.id) && !session.parentSessionId).length, running: cliSessions.filter(session => (session.deviceId ?? 'local') === (peer.local ? 'local' : peer.id) && !session.parentSessionId && session.status === 'running').length })) : undefined}
+          selectedSystem={selectedPeer?.id} onSelectSystem={isBrowserDashboard ? peerId => { setSelectedPeerId(peerId); } : undefined}
           connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}
           sendAction={sendAction} onOpenSession={selectCliSession}
@@ -2214,6 +2244,7 @@ function App() {
         <section class="section" hidden={browserPath === '/tasks'}>
           <div class="hero">
             <div class="brand">
+              <span id="dashboard-sidebar-toggle-slot" class="content-sidebar-slot" />
               <img class="brand-logo" src={snapshot.logoUri} alt="" aria-hidden="true" width="28" height="28" />
               <div class="brand-copy">
                 <h1>Codex Manager</h1>
@@ -2295,6 +2326,7 @@ function App() {
                   <span class="button-label">♡</span>
                 </span>
               </button>
+              <button id="privacyToggleButton" class="settings-btn action-btn icon-only" type="button" title={privacyToggleLabel} aria-label={privacyToggleLabel} aria-pressed={state.privacyMode} disabled={isActionPending('setPrivacyMode')} onClick={handlePrivacyToggle}><span class="button-face"><span class="button-icon">{state.privacyMode ? <EyeOffIcon /> : <EyeIcon />}</span></span></button>
               <button
                 id="apiOpenButton"
                 class="settings-btn action-btn"
@@ -2335,14 +2367,10 @@ function App() {
               </button>
               <DashboardMobileActions
                 lang={snapshot.lang}
-                privacyMode={state.privacyMode}
-                privacyToggleLabel={privacyToggleLabel}
-                privacyPending={isActionPending("setPrivacyMode")}
                 syncPending={syncPending}
                 settingsTitle={snapshot.copy.settingsTitle}
                 passwordRequired={snapshot.encryptedSyncNeedsConfiguration === true}
                 aboutTitle={resolveAboutTitle(snapshot.lang)}
-                onPrivacyToggle={handlePrivacyToggle}
                 onSync={handleSyncNow}
                 onSettings={() => dispatch({ type: "open-settings" })}
                 onAbout={() => setAboutOpen(true)}
@@ -2358,8 +2386,7 @@ function App() {
             settings={snapshot.settings}
             now={state.now}
             privacyMode={state.privacyMode}
-            privacyPending={isActionPending("setPrivacyMode")}
-            onPrivacyToggle={handlePrivacyToggle}
+            onManageTags={() => setTagManager({ deviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
             disabled={snapshot.indexHealth.status === "corrupted_unrecoverable"}
             addPending={prepareOAuthPending}
             refreshAllPending={isActionPending("refreshAll")}
@@ -2591,6 +2618,7 @@ function App() {
                   ))}
                 </select>
               </label>
+              {availableTags.length || uiPreferences.accountTag ? <label class="dashboard-select-control account-tag-filter"><select aria-label="Filter by tag" value={uiPreferences.accountTag ?? ''} onChange={event => setUiPreferences(current => ({ ...current, accountTag: event.currentTarget.value }))}><option value="">All tags</option>{uiPreferences.accountTag && !availableTags.some(tag => tag.toLowerCase() === uiPreferences.accountTag!.toLowerCase()) ? <option value={uiPreferences.accountTag}>{uiPreferences.accountTag}</option> : null}{availableTags.map(tag => <option key={tag.toLowerCase()} value={tag.toLowerCase()}>{tag}</option>)}</select></label> : null}
               <label class="dashboard-select-control metric-priority-control">
                 <select
                   value={uiPreferences.metricPriority}
@@ -2668,6 +2696,7 @@ function App() {
                   compactRow={uiPreferences.view === "list"}
                   onToggleSelected={() => dispatch({ type: "toggle-select", accountId: account.id })}
                   onExportAuth={() => handleExportAccount(account.id)}
+                  onEditTags={() => setTagEditor({ account: { ...account, tags: [...(account.tags ?? [])] }, targetDeviceId: selectedPeer?.local ? undefined : selectedPeer?.id })}
                   onAction={handleAccountAction}
                 />
               ))}
@@ -2792,6 +2821,26 @@ function App() {
         onRevoke={tokenId => { sendAction('revokeApiToken', undefined, { tokenId, targetDeviceId: undefined }); }}
       />
 
+      {tagEditor ? <AccountTagsModal key={`${tagEditor.targetDeviceId ?? 'local'}:${tagEditor.account.id}`} account={tagEditor.account} privacyMode={state.privacyMode}
+        connected={(!isBrowserDashboard || realtimeConnected) && (!tagEditor.targetDeviceId || snapshot.connectedPeers?.some(peer => peer.id === tagEditor.targetDeviceId && peer.connected) === true)}
+        results={submissionResults} onClose={() => setTagEditor(undefined)} onSave={(tags, expectedTags) => {
+          const requestId = sendAction('setAccountTags', tagEditor.account.id, { tags, expectedTags, targetDeviceId: tagEditor.targetDeviceId });
+          tagRequests.current.set(requestId, { accountId: tagEditor.account.id, deviceId: tagEditor.targetDeviceId });
+          while (tagRequests.current.size > 32) tagRequests.current.delete(tagRequests.current.keys().next().value!);
+          return requestId;
+        }} /> : null}
+      {tagManager ? <TagManagerModal key={tagManager.deviceId ?? 'local'} accounts={tagManager.deviceId ? snapshot.peerAccounts?.[tagManager.deviceId] ?? [] : snapshot.accounts}
+        connected={(!isBrowserDashboard || realtimeConnected) && (!tagManager.deviceId || snapshot.connectedPeers?.some(peer => peer.id === tagManager.deviceId && peer.connected) === true)}
+        results={submissionResults} onClose={() => setTagManager(undefined)} onFilter={tag => {
+          setSelectedPeerId(tagManager.deviceId ?? 'local');
+          setUiPreferences(current => ({ ...current, accountTag: tag.toLowerCase(), accountSearch: '', filter: 'all' }));
+          setTagManager(undefined);
+        }} onAction={(tagName, tagOperation, accountIds, tagReplacement) => {
+          const requestId = sendAction('manageAccountTag', undefined, { tagName, tagOperation, accountIds, tagReplacement, confirmed: true, targetDeviceId: tagManager.deviceId });
+          tagManagementRequests.current.set(requestId, { deviceId: tagManager.deviceId });
+          while (tagManagementRequests.current.size > 32) tagManagementRequests.current.delete(tagManagementRequests.current.keys().next().value!);
+          return requestId;
+        }} /> : null}
       <AccountInfoModal
         account={isBrowserDashboard ? accountInfoAccount : undefined}
         lang={snapshot.lang}
@@ -2868,7 +2917,7 @@ function App() {
                 }
               }}
               messagesError={cliSessionMessagesError}
-              feedback={cliSessionFeedback}
+              onActionFeedback={showNotice}
               environment={workspaceEnvironment}
               workspaceScopeKey={workspaceScopeRef.current}
               onWorkspaceContextChange={changeWorkspaceContext}
@@ -3094,14 +3143,10 @@ function App() {
 
 function DashboardMobileActions(props: {
   lang: string;
-  privacyMode: boolean;
-  privacyToggleLabel: string;
-  privacyPending: boolean;
   syncPending: boolean;
   settingsTitle: string;
   passwordRequired: boolean;
   aboutTitle: string;
-  onPrivacyToggle: () => void;
   onSync: () => void;
   onSettings: () => void;
   onAbout: () => void;
@@ -3117,9 +3162,6 @@ function DashboardMobileActions(props: {
         {props.passwordRequired ? <span class="settings-alert-badge" aria-hidden="true">!</span> : null}
       </summary>
       <div class="dashboard-mobile-actions-menu" role="menu" aria-label={menuLabel}>
-        <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onPrivacyToggle(); }} disabled={props.privacyPending}>
-          <span aria-hidden="true">{props.privacyMode ? <EyeOffIcon /> : <EyeIcon />}</span>{props.privacyToggleLabel}
-        </button>
         <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSync(); }} disabled={props.syncPending}>
           <span aria-hidden="true">↻</span>Sync now
         </button>

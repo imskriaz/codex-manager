@@ -1,11 +1,12 @@
 import type { DashboardNotice } from "../../src/domain/dashboard/types";
 
 export const DASHBOARD_TOAST_DURATION_MS = 10_000;
+export const DASHBOARD_INFO_TOAST_DURATION_MS = 3_000;
 
 export type DashboardToast = DashboardNotice & { id: number };
 
-export function scheduleDashboardToastDismiss(onDismiss: () => void): () => void {
-  const timeout = globalThis.setTimeout(onDismiss, DASHBOARD_TOAST_DURATION_MS);
+export function scheduleDashboardToastDismiss(onDismiss: () => void, durationMs = DASHBOARD_TOAST_DURATION_MS): () => void {
+  const timeout = globalThis.setTimeout(onDismiss, durationMs);
   return () => globalThis.clearTimeout(timeout);
 }
 
@@ -37,7 +38,7 @@ export function createDashboardToastController(onChange: (toast: DashboardToast 
         cancelDismiss = undefined;
         current = undefined;
         onChange(undefined);
-      });
+      }, notice.level === 'info' ? DASHBOARD_INFO_TOAST_DURATION_MS : DASHBOARD_TOAST_DURATION_MS);
     },
     dismiss(id: number): void {
       if (disposed || current?.id !== id) {

@@ -17,12 +17,6 @@ export function noticeFromActionResult(
   }
   if (message.status === "failed") {
     let errorMessage = message.error?.trim();
-    if (
-      message.action === "syncNow" &&
-      errorMessage?.startsWith("Cross-PC claim sync did not complete.")
-    ) {
-      return undefined;
-    }
     if (!errorMessage) {
       errorMessage = `The ${formatActionName(message.action)} action failed. Please try again.`;
     }
@@ -54,10 +48,11 @@ export function noticeFromActionResult(
     };
   }
 
-  if (["getDailyUsage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "startCodexCliSession", "sendCodexCliSessionMessage", "cancelCodexCliSessionTurn"].includes(message.action)) {
+  if (["getDailyUsage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "getProjectTaskDetails", "listWorkspaceTerminals", "listApiTokens", "getMaintenanceStatus", "getMaintenancePage", "previewMaintenance", "inspectMaintenanceStorage", "viewLogs", "getResetCredits", "startCodexCliSession", "sendCodexCliSessionMessage", "cancelCodexCliSessionTurn"].includes(message.action)) {
     return undefined;
   }
 
+  if (message.action === 'getProjectBoard') return { level: 'info', message: 'Board refreshed.' };
   return { level: "info", message: `${formatActionName(message.action)} done.` };
 }
 

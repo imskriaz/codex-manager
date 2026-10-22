@@ -266,7 +266,7 @@ describe("daily token usage on account load", () => {
     expect(fetchUsage).toHaveBeenCalledOnce();
   });
 
-  it("retains ninety days in SQLite and applies a shorter retention to queries and writes", async () => {
+  it("retains historical daily rows across old retention settings without loading them all", async () => {
     let retention = 90;
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "tokenHistoryRetentionDays" ? retention : fallback } as never);
     const current = now;
@@ -278,9 +278,9 @@ describe("daily token usage on account load", () => {
     const query = { mode: "tokens" as const, from: now - 61 * DAY, to: now - 31 * DAY };
     expect(queryDashboardUsage(context(), query).dailyUsageCache[0]?.usage.points).toHaveLength(1);
     retention = 7;
-    expect(queryDashboardUsage(context(), query).dailyUsageCache[0]?.usage.points).toHaveLength(0);
+    expect(queryDashboardUsage(context(), query).dailyUsageCache[0]?.usage.points).toHaveLength(1);
     await upsertDashboardDailyUsageCache(context(), "a", { days: 1, points: [point(now)] }, now + 1);
-    expect(store.prepare("SELECT COUNT(*) AS count FROM daily_usage_points").get()?.["count"]).toBe(1);
+    expect(store.prepare("SELECT COUNT(*) AS count FROM daily_usage_points").get()?.["count"]).toBe(2);
   });
 
 });

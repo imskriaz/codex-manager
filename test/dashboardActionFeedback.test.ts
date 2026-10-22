@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { formatSessionReadError, isMissingCliSessionError, noticeFromActionResult, noticeFromActionTimeout } from "../webview-src/dashboard/actionFeedback";
 
 describe("dashboard action feedback", () => {
+  it("shows token refresh outcomes and keeps automatic refreshes quiet", () => {
+    const message = { type: 'dashboard:action-result' as const, requestId: 'token', action: 'refreshToken' as const };
+    expect(noticeFromActionResult({ ...message, status: 'completed', payload: { notice: { level: 'info', message: 'Account token refreshed.' } } })).toEqual({ level: 'info', message: 'Account token refreshed.' });
+    expect(noticeFromActionResult({ ...message, status: 'failed', error: 'Refresh token was revoked. Reauthorize this account.' })?.level).toBe('error');
+    expect(noticeFromActionResult({ ...message, status: 'cancelled' })?.level).toBe('warning');
+    expect(noticeFromActionResult({ ...message, status: 'completed' }, true)).toBeUndefined();
+    expect(noticeFromActionResult({ ...message, action: 'getProjectBoard', status: 'completed' }, true)).toBeUndefined();
+    expect(noticeFromActionResult({ ...message, action: 'getProjectBoard', status: 'completed' })?.message).toBe('Board refreshed.');
+    for (const action of ['getProjectTaskDetails', 'listWorkspaceTerminals', 'listApiTokens', 'getMaintenanceStatus', 'getMaintenancePage', 'previewMaintenance', 'inspectMaintenanceStorage', 'viewLogs', 'getResetCredits'] as const) {
+      expect(noticeFromActionResult({ ...message, action, status: 'completed' })).toBeUndefined();
+      expect(noticeFromActionResult({ ...message, action, status: 'failed', error: 'Offline' })?.level).toBe('error');
+    }
+  });
   it("keeps list failures and cancellations in the session view instead of duplicating technical toasts", () => {
     for (const status of ["failed", "cancelled", "completed"] as const) expect(noticeFromActionResult({ type: "dashboard:action-result", requestId: "retry", action: "listCodexCliSessions", status, error: "Technical inspection failed.", payload: { notice: { level: "warning", message: "Technical inspection failed." } } })).toBeUndefined();
   });
@@ -70,7 +83,7 @@ describe("dashboard action feedback", () => {
     });
   });
 
-  it("suppresses the generic no-transport sync fallback", () => {
+  it("shows explicit sync failures even when no transport is available", () => {
     expect(
       noticeFromActionResult({
         type: "dashboard:action-result",
@@ -79,7 +92,7 @@ describe("dashboard action feedback", () => {
         status: "failed",
         error: "Cross-PC claim sync did not complete. Connect an authenticated peer WebSocket or sign in to VS Code Settings Sync, then try again."
       })
-    ).toBeUndefined();
+    ).toMatchObject({level:"error",message:expect.stringContaining("Cross-PC claim sync did not complete.")});
   });
 
   it("keeps recoverable automatic usage checks out of notices", () => {

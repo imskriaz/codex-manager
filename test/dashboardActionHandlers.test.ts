@@ -2061,7 +2061,7 @@ describe("executeDashboardActionMessage", () => {
       })
     } as unknown as DashboardActionContext["repo"];
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ days: 30, daily_usage: [{ date: new Date().toISOString().slice(0, 10), total_tokens: 42 }] }), {
+      new Response(JSON.stringify({ days: 30, daily_usage: [{ date: new Date().toISOString().slice(0, 10), total_tokens: 42, clients: [{ client_id: 'codex_ide_vscode', text_total_tokens: 42 }] }] }), {
         status: 200,
         headers: { "content-type": "application/json" }
       })
@@ -2144,6 +2144,74 @@ function createContext(): DashboardActionContext {
     oauth: {} as DashboardActionContext["oauth"],
   };
 }
+
+it('returns durable tag acknowledgements and forwards optimistic conflict checks', async () => {
+  const ctx = createContext();
+  const setAccountTags = vi.fn(async () => ({ id: 'tagged', tags: ['Work'], updatedAt: 10 }));
+  ctx.repo = { getAccount: vi.fn(async () => ({ id: 'tagged' })), setAccountTags, flush: vi.fn(async () => undefined) } as never;
+  const result = await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'setAccountTags', requestId: 'tag-save', accountId: 'tagged', payload: { tags: ['Work'], expectedTags: [] } });
+  expect(result).toMatchObject({ status: 'completed', payload: { accountTags: { accountId: 'tagged', tags: ['Work'], updatedAt: 10 } } });
+  expect(setAccountTags).toHaveBeenCalledWith('tagged', ['Work'], []);
+  setAccountTags.mockRejectedValueOnce(new Error('Tags changed in another window.'));
+  expect(await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'setAccountTags', requestId: 'tag-conflict', accountId: 'tagged', payload: { tags: ['New'], expectedTags: [] } })).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('changed in another window') });
+});
+
+describe('tag-level account actions', () => {
+  function setup() {
+    const accounts = [{ id: 'one', tags: ['Work', 'Keep'], enabled: true, updatedAt: 1 }, { id: 'two', tags: ['work'], enabled: false, updatedAt: 1 }, { id: 'other', tags: ['Personal'], enabled: true, updatedAt: 1 }];
+    const repo = { listAccounts: vi.fn(async () => structuredClone(accounts)), getAccount: vi.fn(async (id: string) => structuredClone(accounts.find(account => account.id === id))),
+      getTokens: vi.fn(async () => ({ accessToken: 'access', idToken: 'id', refreshToken: 'refresh' })), flush: vi.fn(async () => undefined), removeAccount: vi.fn(),
+      setAccountTags: vi.fn(async (id: string, tags: string[]) => { const account = accounts.find(account => account.id === id)!; account.tags = [...new Set(tags)]; account.updatedAt++; return structuredClone(account); }),
+      setAccountEnabled: vi.fn(async (id: string, enabled: boolean) => { const account = accounts.find(account => account.id === id)!; account.enabled = enabled; return structuredClone(account); }) };
+    const ctx = { ...createContext(), repo: repo as never };
+    const run = (patch = {}) => executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'manageAccountTag', requestId: 'tag-group', payload: { tagName: 'Work', tagOperation: 'remove', confirmed: true, accountIds: ['one', 'two'], ...patch } });
+    return { accounts, repo, run };
+  }
+  it('removes and renames labels while preserving accounts and other tags', async () => {
+    const removed = setup();
+    expect(await removed.run()).toMatchObject({ status: 'completed', payload: { tagResult: { successCount: 2, failedCount: 0 } } });
+    expect(removed.accounts.map(account => account.tags)).toEqual([['Keep'], [], ['Personal']]);
+    expect(removed.repo.removeAccount).not.toHaveBeenCalled();
+    const renamed = setup();
+    expect(await renamed.run({ tagOperation: 'rename', tagReplacement: 'Client' })).toMatchObject({ status: 'completed' });
+    expect(renamed.accounts.map(account => account.tags)).toEqual([['Client', 'Keep'], ['Client'], ['Personal']]);
+  });
+  it('checks confirmation, names, membership, and duplicate IDs before writing', async () => {
+    const { repo, run } = setup();
+    for (const patch of [{ confirmed: false }, { tagName: '' }, { tagOperation: 'delete-account' }, { accountIds: ['one'] }, { accountIds: ['one', 'one'] }, { tagOperation: 'rename', tagReplacement: 'x'.repeat(25) }]) expect(await run(patch)).toMatchObject({ status: 'failed' });
+    expect(repo.setAccountTags).not.toHaveBeenCalled(); expect(repo.setAccountEnabled).not.toHaveBeenCalled();
+  });
+  it('uses existing enablement checks and reports partial credential or ownership failures', async () => {
+    const enabled = setup();
+    expect(await enabled.run({ tagOperation: 'enable' })).toMatchObject({ status: 'completed', payload: { tagResult: { successCount: 2, failedCount: 0 } } });
+    expect(enabled.repo.setAccountEnabled).toHaveBeenCalledWith('two', true);
+    const partial = setup();
+    partial.repo.setAccountEnabled.mockRejectedValueOnce(new Error('Claimed on another system'));
+    expect(await partial.run({ tagOperation: 'disable' })).toMatchObject({ status: 'completed', payload: { tagResult: { successCount: 1, failedCount: 1, errors: ['Claimed on another system'] }, notice: { level: 'warning' } } });
+    const missing = setup(); missing.repo.getTokens.mockResolvedValueOnce(undefined as never);
+    expect(await missing.run({ tagOperation: 'enable' })).toMatchObject({ payload: { tagResult: { successCount: 1, failedCount: 1 } } });
+  });
+  it('bounds an unconfirmed mutation and does not begin other accounts or replay it', async () => {
+    vi.useFakeTimers();
+    const { repo, run } = setup(); repo.setAccountTags.mockReturnValueOnce(new Promise(() => undefined));
+    try {
+      const pending = run(); await vi.advanceTimersByTimeAsync(5_000);
+      expect(await pending).toMatchObject({ status: 'completed', payload: { tagResult: { successCount: 0, failedCount: 2, errors: [expect.stringContaining('not confirmed')] } } });
+      expect(repo.setAccountTags).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+  it('stops a slow bulk request within its overall deadline and leaves remaining accounts alone', async () => {
+    vi.useFakeTimers();
+    const { repo, run } = setup();
+    const accounts = Array.from({ length: 20 }, (_, index) => ({ id: `account-${index}`, tags: ['Work'], updatedAt: 1 }));
+    repo.listAccounts.mockResolvedValue(accounts as never);
+    repo.setAccountTags.mockImplementation(async (id: string) => { vi.setSystemTime(Date.now() + 10_000); return { id, tags: [], enabled: false, updatedAt: Date.now() }; });
+    try {
+      expect(await run({ accountIds: accounts.map(account => account.id) })).toMatchObject({ payload: { tagResult: { successCount: 2, failedCount: 18 } } });
+      expect(repo.setAccountTags).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+});
 
 function usableResetQuota() {
   return { hourlyPercentage: 90, hourlyWindowMinutes: 300, hourlyWindowPresent: true,
@@ -2260,3 +2328,15 @@ describe("routine dashboard logging exclusions", () => {
     expect(errors).not.toHaveBeenCalled();
   });
 });
+
+ it('returns an explicit token-refresh success only after renewal completes and preserves failures', async () => {
+  const account = { id: 'token-feedback', email: 'test@example.test' };
+  const repo = { getAccount: vi.fn(async () => account), getTokens: vi.fn(async () => ({ refreshToken: 'refresh' })), refreshAccountTokens: vi.fn(async () => undefined) };
+  const ctx = { ...createContext(), repo: repo as never };
+  const request = { type: 'dashboard:action' as const, action: 'refreshToken' as const, accountId: account.id, requestId: 'refresh-feedback' };
+  expect(await executeDashboardActionMessage(ctx, request)).toMatchObject({ status: 'completed', payload: { notice: { level: 'info', message: 'Account token refreshed.' } } });
+  expect(repo.getTokens).toHaveBeenCalledWith(account.id, { bypassCache: true });
+  expect(repo.refreshAccountTokens).toHaveBeenCalledWith(account.id, { force: true });
+  repo.refreshAccountTokens.mockRejectedValueOnce(new Error('Token was revoked. Reauthorize this account.'));
+  expect(await executeDashboardActionMessage(ctx, { ...request, requestId: 'refresh-failure' })).toMatchObject({ status: 'failed', errorMessage: expect.stringContaining('revoked') });
+ });

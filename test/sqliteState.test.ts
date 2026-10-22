@@ -31,6 +31,18 @@ async function open() {
   return store;
 }
 
+it('retains compact account tags through SQLite reopen and clearing', async () => {
+  const store = await open();
+  saveAccountIndex(store, { accounts: [{ id: 'tagged', email: 'tags@example.test', createdAt: 1, updatedAt: 2, tags: ['Work', 'Team'] }] });
+  store.close(); stores.delete(store);
+  const reopened = await open();
+  const index = readAccountIndex(reopened);
+  expect(index.accounts[0]?.tags).toEqual(['Work', 'Team']);
+  index.accounts[0]!.tags = [];
+  saveAccountIndex(reopened, index);
+  expect(readAccountIndex(reopened).accounts[0]?.tags).toEqual([]);
+});
+
 it('persists home-scoped manual selection holds in the existing account header across reopen', async () => {
   const store = await open();
   const index = { accounts: [{ id: 'manual', email: 'manual@example.test', createdAt: 1, updatedAt: 1 }],

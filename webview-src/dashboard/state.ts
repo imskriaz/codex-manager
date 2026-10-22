@@ -21,6 +21,7 @@ export type AppState = {
 
 export type AppAction =
   | { type: "snapshot"; snapshot: DashboardState }
+  | { type: 'account-tags'; updates: import('../../src/domain/accountTags').AccountTagUpdate[]; deviceId?: string }
   | { type: "open-settings" }
   | { type: "close-settings" }
   | { type: "toggle-privacy" }
@@ -47,10 +48,18 @@ export function reducer(state: AppState, action: AppAction): AppState {
     case "snapshot": {
       const nextAccountIds = new Set(action.snapshot.accounts.map((account) => account.id));
       const selectedAccountIds = state.selectedAccountIds.filter((accountId) => nextAccountIds.has(accountId));
+      const retainTags = (incoming: DashboardState['accounts'], previous: DashboardState['accounts'] = []) => {
+        const saved = new Map(previous.map(account => [account.id, account]));
+        return incoming.map(account => {
+          const prior = saved.get(account.id);
+          return prior?.tags !== undefined && (prior.updatedAt ?? 0) > (account.updatedAt ?? 0) ? { ...account, tags: prior.tags, updatedAt: prior.updatedAt } : account;
+        });
+      };
 
       return {
         ...state,
-        snapshot: action.snapshot,
+        snapshot: { ...action.snapshot, accounts: retainTags(action.snapshot.accounts, state.snapshot?.accounts),
+          peerAccounts: action.snapshot.peerAccounts ? Object.fromEntries(Object.entries(action.snapshot.peerAccounts).map(([id, accounts]) => [id, retainTags(accounts, state.snapshot?.peerAccounts?.[id])])) : action.snapshot.peerAccounts },
         now: Date.now(),
         privacyMode: action.snapshot.settings.privacyMode === true,
         selectedAccountIds,
@@ -109,6 +118,15 @@ export function reducer(state: AppState, action: AppAction): AppState {
             ? action.patch.autoRefreshCurrentMinutes
             : state.lastEnabledAutoRefreshCurrentMinutes
       };
+    case 'account-tags': {
+      if (!state.snapshot) return state;
+      const updates = new Map(action.updates.map(update => [update.accountId, update]));
+      const patch = (accounts: DashboardState['accounts']) => accounts.map(account => {
+        const update = updates.get(account.id);
+        return update && (account.updatedAt ?? 0) <= update.updatedAt ? { ...account, tags: [...update.tags], updatedAt: update.updatedAt, ...(update.enabled !== undefined ? { enabled: update.enabled } : {}) } : account;
+      });
+      return { ...state, snapshot: action.deviceId ? { ...state.snapshot, peerAccounts: { ...state.snapshot.peerAccounts, [action.deviceId]: patch(state.snapshot.peerAccounts?.[action.deviceId] ?? []) } } : { ...state.snapshot, accounts: patch(state.snapshot.accounts) } };
+    }
     case "tick":
       return {
         ...state,

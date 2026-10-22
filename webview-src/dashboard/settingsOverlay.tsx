@@ -28,7 +28,6 @@ const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
 const CURRENT_AUTO_REFRESH_VALUES = Array.from({ length: 60 }, (_, index) => index + 1);
 const CURRENT_AUTO_REFRESH_SCALE_VALUES = [1, 15, 30, 45, 60];
 const TOKEN_HISTORY_GAP_VALUES = Array.from({ length: 1440 }, (_, index) => index + 1);
-const USAGE_HISTORY_RETENTION_VALUES = [1, 3, 7, 14, 30, 60, 90];
 const AUTO_SWITCH_VALUES = Array.from({ length: 21 }, (_, index) => index);
 const AUTO_RESET_VALUES = Array.from({ length: 101 }, (_, index) => index);
 // Warning thresholds are intentionally available at every percentage point.
@@ -631,30 +630,9 @@ export function SettingsOverlay(props: {
                     {renderRemoveIcon()}
                   </button>
                 </div>
-                <SettingsDiscreteSlider
-                  value={props.settings.usageHistoryRetentionDays}
-                  values={USAGE_HISTORY_RETENTION_VALUES}
-                  accent="sky"
-                  scaleValues={[0, 7, 30, 60, 90]}
-                  valueLabel={(value) => resolveRetentionValueLabel(value, props.lang)}
-                  description={(value) => resolveRetentionDescription(value, props.lang)}
-                  onPreview={(value) => props.onPatchSettings({ usageHistoryRetentionDays: value })}
-                  onCommit={(value) => patchAndSend("usageHistoryRetentionDays", value)}
-                />
+                <p class="settings-note">Quota history is no longer recorded. Previously saved samples remain available until explicitly cleared.</p>
               </div>
-              <div class="settings-block settings-block-wide settings-history-block">
-                <div class="settings-block-head"><div class="settings-block-title">Token history retention</div><div class="settings-block-sub" title="Choose how long to keep daily token usage.">Choose how long to keep daily token usage.</div></div>
-                <SettingsDiscreteSlider
-                  value={props.settings.tokenHistoryRetentionDays ?? 30}
-                  values={USAGE_HISTORY_RETENTION_VALUES}
-                  accent="sky"
-                  scaleValues={[1, 7, 30, 60, 90]}
-                  valueLabel={(value) => resolveRetentionValueLabel(value, props.lang)}
-                  description={(value) => `Keep ${value} days of token history`}
-                  onPreview={(value) => props.onPatchSettings({ tokenHistoryRetentionDays: value })}
-                  onCommit={(value) => patchAndSend("tokenHistoryRetentionDays", value)}
-                />
-              </div>
+              <div class="settings-block settings-block-wide"><div class="settings-block-title">Usage log</div><p class="settings-note">Verified VS Code tokens stay in SQLite, including disabled and removed accounts. New quota snapshots and other-client usage are not recorded.</p></div>
               <SettingsToggleBlock
                 title="Auto Sync"
                 sub={transferCopy.syncSub}
@@ -1060,10 +1038,6 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
   };
 }
 
-function resolveRetentionValueLabel(value: number, lang: DashboardState["lang"]): string {
-  return lang === "zh" ? `${value} 天` : lang === "zh-hant" ? `${value} 天` : `${value} days`;
-}
-
 function resolveFullAccountSyncText(
   kind: "title" | "sub" | "enabled" | "disabled",
   lang: DashboardState["lang"]
@@ -1087,12 +1061,4 @@ function resolveFullAccountSyncText(
     disabled: "已關閉：所有工作階段和權杖只保留在本機，只共享帳號占用聲明。"
   };
   return (lang === "zh" ? simplified : lang === "zh-hant" ? traditional : english)[kind];
-}
-
-function resolveRetentionDescription(value: number, lang: DashboardState["lang"]): string {
-  return lang === "zh"
-    ? `自动删除超过 ${value} 天的记录。`
-    : lang === "zh-hant"
-      ? `自動刪除超過 ${value} 天的記錄。`
-      : `Delete history older than ${value} days.`;
 }

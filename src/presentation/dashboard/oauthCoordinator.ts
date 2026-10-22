@@ -263,7 +263,7 @@ export class DashboardOAuthCoordinator {
     if (expectedAccountId) {
       const claims = extractClaims(tokens.idToken, tokens.accessToken);
       const authorizedAccountId = claims.email
-        ? buildAccountStorageId(claims.email, claims.accountId, claims.organizationId)
+        ? buildAccountStorageId(claims.email, claims.accountId ?? tokens.accountId, claims.organizationId)
         : undefined;
       if (authorizedAccountId !== expectedAccountId) {
         throw new Error("The authorized account does not match the account selected for reauthorization.");

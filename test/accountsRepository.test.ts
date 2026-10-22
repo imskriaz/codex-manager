@@ -792,4 +792,30 @@ describe("AccountsRepository token persistence", () => {
     await expect(fs.access(legacyIndex)).rejects.toThrow();
     currentVersion.dispose();
   });
+it('imports Codex authentication without rewriting it and rejects a login replaced during import', async () => {
+  const secrets = new Map<string, string>();
+  const context = { globalStorageUri: { fsPath: tempDir }, secrets: { get: vi.fn(async (key: string) => secrets.get(key)), store: vi.fn(async (key: string, value: string) => { secrets.set(key,value); }), delete: vi.fn(async (key: string) => { secrets.delete(key); }) } } as unknown as vscode.ExtensionContext;
+  const tokens = createTokens('acct_external', 'external@example.test');
+  const auth = { tokens: { id_token: tokens.idToken, access_token: tokens.accessToken, refresh_token: tokens.refreshToken, account_id: tokens.accountId } };
+  const repo = new AccountsRepository(context, path.join(tempDir,'external-index.json'));
+  try {
+    readAuthFileMock.mockResolvedValue(auth);
+    const first = await repo.importCurrentAuth();
+    readAuthFileMock.mockResolvedValue({ tokens: { ...auth.tokens, refresh_token: 'reauthorized' } });
+    const second = await repo.importCurrentAuth();
+    expect(second.id).toBe(first.id);
+    expect(await repo.getTokens(first.id, { bypassCache: true })).toMatchObject({ refreshToken: 'reauthorized' });
+    expect(await repo.listAccounts()).toHaveLength(1);
+    expect(writeAuthFileMock).not.toHaveBeenCalled();
+    readAuthFileMock.mockReset().mockResolvedValueOnce(auth).mockResolvedValue({ tokens: { ...auth.tokens, access_token: 'newer-login' } });
+    await expect(repo.importCurrentAuth()).rejects.toThrow(/authentication changed/);
+    expect(writeAuthFileMock).not.toHaveBeenCalled();
+    expect(JSON.parse(secrets.get(`codex.account.${first.id}`)!)).toMatchObject({ refreshToken: 'reauthorized' });
+    readAuthFileMock.mockResolvedValue({ tokens: { id_token: tokens.idToken } });
+    await repo.syncActiveAccountFromAuthFile();
+    expect((await repo.getAccount(first.id))?.isActive).toBe(true);
+    expect(JSON.parse(secrets.get(`codex.account.${first.id}`)!)).toMatchObject({ refreshToken: 'reauthorized' });
+  } finally { repo.dispose(); }
+});
+
 });

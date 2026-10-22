@@ -14,7 +14,7 @@ import { refreshImportedAccountQuota, refreshSingleQuota } from "../../applicati
 import type { QuotaRefreshResult } from "../../services/quota";
 import { redeemAccountResetCredit } from "../../application/accounts/resetCreditRedemption";
 import { fetchResetCredits } from "../../services/quota";
-import { fetchDailyUsageBreakdown } from "../../services/usage";
+import { fetchAccountDailyUsage } from "../../services/usage";
 import {
   archiveCodexCliSession,
   cancelCodexCliSessionTurn,
@@ -81,6 +81,7 @@ import type { DashboardLanguage } from "../../localization/languages";
 import { getErrorMessage } from "../../core";
 import type { SwitchAccountCommandResult } from "../../application/accounts/commandService";
 import { AccountsRepository } from "../../storage";
+import { normalizeAccountTags } from '../../domain/accountTags';
 import { waitWithin } from "../../utils/concurrency";
 import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
@@ -215,6 +216,7 @@ const ACCOUNT_REQUIRED_ACTIONS = new Set<DashboardActionName>([
   "remove",
   "toggleAccountEnabled",
   "setAccountQueuePriority",
+  "setAccountTags",
   "setAccountTokenRefreshEnabled",
   "setAccountAutoResetAllowed",
   "refreshToken",
@@ -403,7 +405,7 @@ async function runDashboardAction(
       if (!payload?.task) throw new Error('The task draft is missing.');
       const project = await resolveWorkspaceProjectPathAsync(payload.projectPath);
       saveProjectTask(project, payload.task);
-      return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: 'Task saved.' } };
+      return { projectBoard: readSavedProjectBoard(project), notice: { level: 'info', message: payload.task.hidden === true ? 'Session hidden from boards.' : payload.task.hidden === false ? 'Session restored to boards.' : 'Task saved.' } };
     }
     case 'addProjectComment': {
       if (!payload?.comment) throw new Error('The comment is missing.');
@@ -898,6 +900,54 @@ async function runDashboardAction(
         ctx.schedulePublishState();
       }
       return undefined;
+    case 'manageAccountTag': {
+      const tag = normalizeAccountTags([payload?.tagName])[0];
+      const operation = payload?.tagOperation;
+      if (!tag || !['rename', 'remove', 'enable', 'disable'].includes(operation ?? '') || payload?.confirmed !== true) throw new Error('Review a tag and confirm its action first.');
+      const replacement = operation === 'rename' ? normalizeAccountTags([payload?.tagReplacement])[0] : undefined;
+      if (operation === 'rename' && !replacement) throw new Error('Enter a replacement tag.');
+      const reviewed = payload?.accountIds;
+      if (!Array.isArray(reviewed) || !reviewed.length || reviewed.length > 1000 || reviewed.some(id => typeof id !== 'string' || !id || id.length > 256) || new Set(reviewed).size !== reviewed.length) throw new Error('Review between 1 and 1,000 tagged accounts.');
+      const matches = (account: { tags?: string[] }) => (account.tags ?? []).some(value => value.toLowerCase() === tag.toLowerCase());
+      const accounts = (await ctx.repo.listAccounts()).filter(matches);
+      if (JSON.stringify(accounts.map(account => account.id).sort()) !== JSON.stringify([...reviewed].sort())) throw new Error('Tagged accounts changed. Refresh tags and review the action again.');
+      const changed: NonNullable<import('../../domain/dashboard/types').DashboardActionResultPayload['tagResult']>['accounts'] = [], errors: string[] = [];
+      let failedCount = 0;
+      const deadline = Date.now() + 15_000;
+      for (const account of accounts) {
+        if (Date.now() >= deadline) { failedCount = accounts.length - changed.length; if (errors.length < 20) errors.push('The action reached its time limit. Remaining accounts were kept unchanged.'); break; }
+        try {
+          const updated = await waitWithin((async () => {
+            if (operation === 'enable' || operation === 'disable') {
+              const current = await ctx.repo.getAccount(account.id);
+              if (!current || !matches(current)) throw new Error('Tag membership changed; this account was kept unchanged.');
+              if (operation === 'enable') {
+                const tokens = await ctx.repo.getTokens(account.id);
+                const health = resolveAccountHealth(current, tokens, getTokenAutomationSnapshot());
+                if (!tokens?.accessToken?.trim() || !tokens.idToken?.trim() || health.kind === 'reauthorize' || health.kind === 'disabled') throw new Error('An account needs valid credentials before it can be enabled.');
+              }
+              return ctx.repo.setAccountEnabled(account.id, operation === 'enable');
+            }
+            const tags = (account.tags ?? []).flatMap(value => value.toLowerCase() === tag.toLowerCase() ? replacement ? [replacement] : [] : [value]);
+            return ctx.repo.setAccountTags(account.id, tags, account.tags ?? []);
+          })(), 5_000, 'An account update was not confirmed. Check the accounts before retrying.');
+          changed.push({ accountId: updated.id, tags: updated.tags ?? [], updatedAt: updated.updatedAt, ...(operation === 'enable' || operation === 'disable' ? { enabled: updated.enabled !== false } : {}) });
+        } catch (error) {
+          failedCount++; const reason = toFailureMessage(error);
+          if (errors.length < 20) errors.push(reason.slice(0, 300));
+          if (reason.includes('update was not confirmed')) { failedCount = accounts.length - changed.length; break; }
+        }
+      }
+      ctx.schedulePublishState();
+      const message = `${changed.length} account${changed.length === 1 ? '' : 's'} updated${failedCount ? `; ${failedCount} failed or unconfirmed` : ''}.${operation === 'disable' && accounts.some(account => account.isActive) ? ' The current account stays loaded until you unload it.' : ''}`;
+      return { tagResult: { successCount: changed.length, failedCount, errors, accounts: changed }, notice: { level: failedCount ? 'warning' : 'info', message } };
+    }
+    case 'setAccountTags': {
+      if (!payload?.tags) throw new Error('Enter tags as a list of text labels.');
+      const updated = await ctx.repo.setAccountTags(account!.id, payload.tags, payload.expectedTags);
+      ctx.schedulePublishState();
+      return { accountTags: { accountId: updated.id, tags: updated.tags ?? [], updatedAt: updated.updatedAt }, notice: { level: 'info', message: updated.tags?.length ? 'Account tags saved.' : 'Account tags removed.' } };
+    }
     case "setAccountTokenRefreshEnabled":
       if (account) {
         await ctx.repo.setAccountTokenRefreshEnabled(account.id, payload?.tokenRefreshEnabled !== false);
@@ -1077,10 +1127,10 @@ async function handleRefreshToken(
     schedulePublishState();
 
     const zh = lang === "zh" || lang === "zh-hant";
-    void vscode.window.showInformationMessage(
+    if (!shouldSuppressDashboardNotifications()) void vscode.window.showInformationMessage(
       zh ? `${account.email} 的令牌已刷新。` : `Token refreshed for ${account.email}.`
     );
-    return undefined;
+    return { notice: { level: 'info' as const, message: zh ? '令牌已刷新。' : 'Account token refreshed.' } };
   } catch (error) {
     markTokenAutomationRefreshFailure(account.id, toFailureMessage(error));
     schedulePublishState();
@@ -1772,16 +1822,7 @@ async function handleGetDailyUsage(
     throw new Error("Account not found");
   }
   const days = Math.min(30, Math.max(1, Math.round(typeof requestedDays === "number" && Number.isFinite(requestedDays) ? requestedDays : 30)));
-  const entry = await loadDailyTokenUsage(context, account.id, async signal => {
-    const tokens = await repo.getTokens(account.id, { bypassCache: true });
-    if (!tokens?.accessToken) throw new Error("No access token is available for usage history.");
-    if (account.accountId && tokens.accountId && account.accountId !== tokens.accountId) {
-      throw new Error("The saved usage credentials belong to a different account. Reauthorize this account before retrying.");
-    }
-    const usage = await fetchDailyUsageBreakdown(tokens, days, signal);
-    if (!await repo.getAccount(account.id)) throw new Error("The account was removed while loading usage. The result was not saved.");
-    return usage;
-  }, { manual });
+  const entry = await loadDailyTokenUsage(context, account.id, signal => fetchAccountDailyUsage(repo, account, days, signal), { manual });
   return { dailyUsage: entry.usage, dailyUsageFetchedAt: entry.fetchedAt };
 }
 

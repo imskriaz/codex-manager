@@ -4,11 +4,94 @@ import type {
   DashboardOAuthSessionDescriptor,
   DashboardState
 } from "../../src/domain/dashboard/types";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { normalizeAccountTags, MAX_ACCOUNT_TAGS } from '../../src/domain/accountTags';
+import type { CliSubmissionResult } from './cliSessionComposerState';
 import type { CodexImportResultSummary } from "../../src/core/types";
 import { ImportResultPanel, ModalShell } from "./components";
 import { createShareFileName, formatTemplate, getSensitiveDisplayValue, maskSharedJson } from "./helpers";
-import { CopyIcon, DownloadIcon, EyeIcon, EyeOffIcon, GlobeIcon, ImportIcon, SuccessIcon } from "./icons";
+import { CopyIcon, DownloadIcon, EditTagsIcon, EyeIcon, EyeOffIcon, GlobeIcon, ImportIcon, SuccessIcon, renderRemoveIcon } from "./icons";
+
+export function TagManagerModal(props: {
+  accounts: DashboardAccountViewModel[];
+  connected: boolean;
+  results: CliSubmissionResult[];
+  onClose: () => void;
+  onFilter: (tag: string) => void;
+  onAction: (tag: string, operation: 'rename' | 'remove' | 'enable' | 'disable', accountIds: string[], replacement?: string) => string;
+}) {
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState<{ tag: string; operation: 'rename' | 'remove' | 'enable' | 'disable'; replacement: string }>();
+  const [requestId, setRequestId] = useState<string>();
+  const renameInput = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (editing?.operation === 'rename') { renameInput.current?.focus(); renameInput.current?.select(); } }, [editing?.tag, editing?.operation]);
+  const result = props.results.find(item => item.requestId === requestId);
+  const pending = Boolean(requestId && !result);
+  useEffect(() => { if (result?.status === 'completed') setEditing(undefined); }, [result?.status]);
+  const groups = new Map<string, { tag: string; accounts: DashboardAccountViewModel[] }>();
+  for (const account of props.accounts) for (const tag of new Map((account.tags ?? []).map(tag => [tag.toLowerCase(), tag])).values()) {
+    const key = tag.toLowerCase(), group = groups.get(key) ?? { tag, accounts: [] };
+    group.accounts.push(account); groups.set(key, group);
+  }
+  let validation = '';
+  if (editing?.operation === 'rename') { try { if (!normalizeAccountTags([editing.replacement]).length) validation = 'Enter a tag name.'; } catch (error) { validation = error instanceof Error ? error.message : String(error); } }
+  const visibleGroups = [...groups.values()].filter(group => group.tag.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => a.tag.localeCompare(b.tag));
+  const taggedCount = props.accounts.filter(account => account.tags?.length).length;
+  return <ModalShell open title="Tags" closeLabel="Close tag management" className="dashboard-modal-compact tag-manager-modal" closeDisabled={pending} onClose={props.onClose}>
+    <div class="tag-manager-summary"><span>{groups.size} tag{groups.size === 1 ? '' : 's'} · {taggedCount} account{taggedCount === 1 ? '' : 's'}</span><input type="search" aria-label="Find tags" placeholder="Find a tag…" value={query} onInput={event => setQuery(event.currentTarget.value)} /></div>
+    <div class="tag-manager-list">{visibleGroups.map(group => <div class="tag-manager-entry" key={group.tag.toLowerCase()}>
+      <div class="tag-manager-row"><div class="tag-manager-name"><strong title={group.tag}>{group.tag}</strong><span>{group.accounts.length} account{group.accounts.length === 1 ? '' : 's'} · {group.accounts.filter(account => account.enabled).length} enabled</span></div><div class="tag-manager-tools">
+        <button type="button" title={`Filter accounts by ${group.tag}`} aria-label={`Filter accounts by ${group.tag}`} disabled={pending} onClick={() => props.onFilter(group.tag)}><EyeIcon /></button>
+        <button type="button" title={`Rename ${group.tag}`} aria-label={`Rename ${group.tag}`} disabled={pending || !props.connected} onClick={() => setEditing({ tag: group.tag, operation: 'rename', replacement: group.tag })}><EditTagsIcon /></button>
+        <button type="button" title={`Enable accounts tagged ${group.tag}`} aria-label={`Enable accounts tagged ${group.tag}`} disabled={pending || !props.connected || group.accounts.every(account => account.enabled)} onClick={() => setEditing({ tag: group.tag, operation: 'enable', replacement: '' })}><SuccessIcon /></button>
+        <button type="button" title={`Disable accounts tagged ${group.tag}`} aria-label={`Disable accounts tagged ${group.tag}`} disabled={pending || !props.connected || group.accounts.every(account => !account.enabled)} onClick={() => setEditing({ tag: group.tag, operation: 'disable', replacement: '' })}><EyeOffIcon /></button>
+        <button type="button" class="danger" title={`Remove tag ${group.tag}`} aria-label={`Remove tag ${group.tag}`} disabled={pending || !props.connected} onClick={() => setEditing({ tag: group.tag, operation: 'remove', replacement: '' })}>{renderRemoveIcon()}</button>
+      </div></div>
+      {editing?.tag.toLowerCase() === group.tag.toLowerCase() ? <form class="tag-manager-confirm" onSubmit={event => { event.preventDefault(); if (!pending && props.connected && !validation) setRequestId(props.onAction(group.tag, editing.operation, group.accounts.map(account => account.id), editing.replacement)); }}>
+        {editing.operation === 'rename' ? <label>New tag name<input ref={renameInput} aria-label="New tag name" value={editing.replacement} maxLength={24} readOnly={pending} onInput={event => setEditing({ ...editing, replacement: event.currentTarget.value })} /></label> : <span>{editing.operation === 'remove' ? `Remove this tag from ${group.accounts.length} accounts? Accounts are kept.` : `${editing.operation === 'enable' ? 'Enable' : 'Disable'} ${group.accounts.length} tagged accounts?`}</span>}
+        <div><button type="button" disabled={pending} onClick={() => setEditing(undefined)}>Cancel</button><button type="submit" disabled={pending || !props.connected || !!validation || editing.operation === 'rename' && editing.replacement === group.tag}>{pending ? 'Applying…' : editing.operation === 'rename' ? 'Rename tag' : editing.operation === 'remove' ? 'Remove tag' : 'Confirm'}</button></div>
+        {validation ? <small role="alert">{validation}</small> : null}
+      </form> : null}
+    </div>)}</div>
+    {!groups.size ? <p class="account-tags-help">No tags yet. Add tags from an account's menu.</p> : null}
+    {groups.size > 0 && !visibleGroups.length ? <p class="account-tags-help">No matching tags.</p> : null}
+    {result?.message || !props.connected ? <div class={result?.status === 'failed' || !props.connected ? 'account-tags-error' : 'tag-manager-status'} role="status">{!props.connected ? 'Offline. Reconnect to change tagged accounts.' : result?.message}</div> : null}
+  </ModalShell>;
+}
+
+export function AccountTagsModal(props: {
+  account: DashboardAccountViewModel;
+  privacyMode: boolean;
+  connected: boolean;
+  results: CliSubmissionResult[];
+  onSave: (tags: string[], expectedTags: string[]) => string;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(() => (props.account.tags ?? []).join(', '));
+  const [requestId, setRequestId] = useState<string>();
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => { input.current?.focus(); }, []);
+  const result = props.results.find(item => item.requestId === requestId);
+  const pending = Boolean(requestId && !result);
+  let tags: string[] = [], validation = '';
+  try { tags = normalizeAccountTags(text.split(/[,\n]/)); }
+  catch (error) { validation = error instanceof Error ? error.message : String(error); }
+  useEffect(() => { if (result?.status === 'completed') props.onClose(); }, [result?.status]);
+  const changed = JSON.stringify(tags) !== JSON.stringify(props.account.tags ?? []);
+  return <ModalShell open title="Account tags" closeLabel="Close tags" className="dashboard-modal-compact account-tags-modal" closeDisabled={pending} onClose={props.onClose}>
+    <form onSubmit={event => {
+      event.preventDefault();
+      if (!pending && props.connected && !validation && changed) setRequestId(props.onSave(tags, props.account.tags ?? []));
+    }}>
+      <div class="account-tags-identity" title={getSensitiveDisplayValue(props.account.email, props.privacyMode, 'email')}>{getSensitiveDisplayValue(props.account.email, props.privacyMode, 'email')}</div>
+      <label class="account-tags-field"><span>Tags <small>{tags.length}/{MAX_ACCOUNT_TAGS}</small></span><input ref={input} aria-label="Tags" value={text} maxLength={512} autoComplete="off" readOnly={pending} placeholder="Work, Personal, Team…" onInput={event => setText(event.currentTarget.value)} aria-describedby="account-tags-help" aria-invalid={Boolean(validation)} /></label>
+      <p id="account-tags-help" class="account-tags-help">Separate with commas · Up to 10 tags, 24 characters each</p>
+      {tags.length ? <div class="account-tags-preview">{tags.map(tag => <button type="button" key={tag.toLowerCase()} disabled={pending} title={`Remove ${tag}`} aria-label={`Remove tag ${tag}`} onClick={() => setText(tags.filter(value => value !== tag).join(', '))}><span>{tag}</span><span aria-hidden="true">×</span></button>)}</div> : null}
+      {validation || result?.status === 'failed' || result?.status === 'cancelled' || !props.connected ? <div class="account-tags-error" role="alert">{validation || result?.message || (!props.connected ? 'Offline. Your draft is kept; reconnect to save.' : 'Tags were not saved. Your draft is kept.')}</div> : null}
+      <div class="account-tags-actions"><button type="button" disabled={pending} onClick={props.onClose}>Cancel</button><button type="submit" disabled={pending || !props.connected || !!validation || !changed}>{pending ? 'Saving…' : 'Save tags'}</button></div>
+    </form>
+  </ModalShell>;
+}
 
 export function resolveCreateOAuthLinkLabel(lang: DashboardState["lang"]): string {
   if (lang === "zh") return "创建链接";

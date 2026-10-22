@@ -18,5 +18,5 @@ export async function readCurrentAuthAccountStorageId(): Promise<string | undefi
     return undefined;
   }
 
-  return buildAccountStorageId(claims.email, claims.accountId, claims.organizationId);
+  return buildAccountStorageId(claims.email, claims.accountId ?? auth.tokens.account_id, claims.organizationId);
 }

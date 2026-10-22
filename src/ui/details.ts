@@ -1,7 +1,6 @@
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
-import { needsTokenRefresh } from "../auth/oauth";
-import { CodexManagerAccountRecord, CodexDailyUsageBreakdown, CodexDailyUsagePoint } from "../core/types";
+import { CodexManagerAccountRecord, CodexDailyUsageBreakdown } from "../core/types";
 import { resolveAccountHealth, isHealthDismissed } from "../application/accounts/health";
 import { resolveSubscriptionDisplay } from "../application/dashboard/buildDashboardState";
 import { formatAccountStructure } from "../application/dashboard/copy";
@@ -13,7 +12,9 @@ import { getIntlLocale } from "../localization/languages";
 import { detailCopyResources } from "../localization/resources/details";
 import { getAutoSwitchRuntimeSnapshot } from "../presentation/workbench/autoSwitchState";
 import { getTokenAutomationSnapshot } from "../presentation/workbench/tokenAutomationState";
-import { fetchDailyUsageBreakdown } from "../services";
+import { fetchAccountDailyUsage, toVSCodeDailyUsage } from "../services/usage";
+import { loadDailyTokenUsage } from "../services/dailyTokenUsage";
+import { readDashboardDailyUsage } from "../services/dashboardUsageHistory";
 import { AccountsRepository } from "../storage";
 import {
   colorForPercentage,
@@ -25,7 +26,6 @@ import {
   resolveLongQuotaLabel
 } from "../utils";
 import { formatRelativeReset, formatTimestamp } from "../utils/time";
-import { CrossWindowOperationBusyError } from "../utils/crossWindowOperations";
 
 let detailsPanel: vscode.WebviewPanel | undefined;
 let detailsPanelRequestId = 0;
@@ -35,11 +35,14 @@ type DetailsUsageState = "loading" | "ready" | "empty" | "error";
 
 type DetailsPanelState = {
   repo?: AccountsRepository;
+  account?: CodexManagerAccountRecord;
   accountId?: string;
   styles?: WebviewStyles;
   scripts?: WebviewScripts;
   usageState: DetailsUsageState;
   usage?: CodexDailyUsageBreakdown;
+  usageError?: string;
+  usageFetchedAt?: number;
   privacyMode: boolean;
 };
 
@@ -69,16 +72,19 @@ export function openDetailsPanel(
       detailsPanelConfigWatcher?.dispose();
       detailsPanelConfigWatcher = undefined;
       detailsPanelState.repo = undefined;
+      detailsPanelState.account = undefined;
       detailsPanelState.accountId = undefined;
       detailsPanelState.styles = undefined;
       detailsPanelState.scripts = undefined;
       detailsPanelState.usage = undefined;
+      detailsPanelState.usageError = undefined;
+      detailsPanelState.usageFetchedAt = undefined;
       detailsPanelState.usageState = "loading";
       detailsPanelState.privacyMode = false;
       detailsPanel = undefined;
     });
 
-    detailsPanel.webview.onDidReceiveMessage(async (message: { type?: string; privacyMode?: boolean }) => {
+    detailsPanel.webview.onDidReceiveMessage(async (message: { type?: string; privacyMode?: boolean; accountId?: string }) => {
       if (!detailsPanelState.repo || !detailsPanelState.accountId) {
         return;
       }
@@ -113,7 +119,11 @@ export function openDetailsPanel(
 
       const current = await detailsPanelState.repo.getAccount(detailsPanelState.accountId);
       if (!current) {
+        void vscode.window.showErrorMessage("This account no longer exists. Close its details and choose another account.");
         return;
+      }
+      if (message.type === "details:retry-usage" && message.accountId === current.id && detailsPanelState.usageState !== "loading") {
+        await hydrateUsage(context, detailsPanelState.repo, current.id, ++detailsPanelRequestId);
       }
     });
 
@@ -140,72 +150,53 @@ export function openDetailsPanel(
   const styles = getWebviewStyles(detailsPanel.webview, context.extensionUri, "details.css");
   const scripts = getWebviewScripts(detailsPanel.webview, context.extensionUri, "details.js");
   detailsPanelState.repo = repo;
+  detailsPanelState.account = account;
   detailsPanelState.accountId = account.id;
   detailsPanelState.styles = styles;
   detailsPanelState.scripts = scripts;
   detailsPanelState.usage = undefined;
+  detailsPanelState.usageError = undefined;
+  detailsPanelState.usageFetchedAt = undefined;
   detailsPanelState.usageState = "loading";
   detailsPanelState.privacyMode = getPrivacyModePreference();
   const requestId = ++detailsPanelRequestId;
   void refreshDetailsPanel();
 
-  void hydrateUsage(repo, account.id, requestId);
+  void hydrateUsage(context, repo, account.id, requestId);
 }
 
-async function hydrateUsage(repo: AccountsRepository, accountId: string, requestId: number): Promise<void> {
+async function hydrateUsage(context: vscode.ExtensionContext, repo: AccountsRepository, accountId: string, requestId: number): Promise<void> {
   try {
-    const tokens = await getFreshUsageTokens(repo, accountId);
-    if (!tokens || !detailsPanel || requestId !== detailsPanelRequestId || detailsPanelState.accountId !== accountId) {
-      return;
-    }
-
-    const usage = await fetchDailyUsageBreakdown(tokens, 30);
+    const saved = readDashboardDailyUsage(context, accountId);
+    detailsPanelState.usage = saved ? toVSCodeDailyUsage(saved.usage) : undefined;
+    detailsPanelState.usageFetchedAt = saved?.fetchedAt;
+    detailsPanelState.usageError = undefined;
+    detailsPanelState.usageState = "loading";
+    await refreshDetailsPanel();
+    const account = await repo.getAccount(accountId);
+    if (!account) throw new Error("The account was removed while loading usage.");
     if (!detailsPanel || requestId !== detailsPanelRequestId || detailsPanelState.accountId !== accountId) {
       return;
     }
 
-    detailsPanelState.usageState = usage?.points.length ? "ready" : "empty";
-    detailsPanelState.usage = usage;
+    const entry = await loadDailyTokenUsage(context, accountId, signal => fetchAccountDailyUsage(repo, account, 30, signal), { manual: true });
+    if (!detailsPanel || requestId !== detailsPanelRequestId || detailsPanelState.accountId !== accountId) {
+      return;
+    }
+
+    detailsPanelState.usageState = entry.usage.points.length ? "ready" : "empty";
+    detailsPanelState.usage = toVSCodeDailyUsage(entry.usage);
+    detailsPanelState.usageFetchedAt = entry.fetchedAt;
     await refreshDetailsPanel();
-  } catch {
+  } catch (error) {
     if (!detailsPanel || requestId !== detailsPanelRequestId || detailsPanelState.accountId !== accountId) {
       return;
     }
 
     detailsPanelState.usageState = "error";
-    detailsPanelState.usage = undefined;
+    detailsPanelState.usageError = error instanceof Error ? error.message : String(error);
     await refreshDetailsPanel();
   }
-}
-
-async function getFreshUsageTokens(
-  repo: AccountsRepository,
-  accountId: string
-): Promise<Awaited<ReturnType<AccountsRepository["getTokens"]>>> {
-  const tokens = await repo.getTokens(accountId, { bypassCache: true });
-  if (!tokens?.accessToken || !needsTokenRefresh(tokens)) {
-    return tokens;
-  }
-
-  const account = await repo.getAccount(accountId);
-  if (account?.tokenRefreshEnabled !== true) {
-    return tokens;
-  }
-
-  if (!tokens.refreshToken) {
-    return tokens;
-  }
-
-  const refreshed = await repo.refreshAccountTokens(accountId).catch((error: unknown) => {
-    if (error instanceof CrossWindowOperationBusyError) return undefined;
-    throw error;
-  });
-  if (!refreshed) return tokens;
-  return {
-    ...tokens,
-    ...refreshed,
-    accountId: refreshed.accountId ?? tokens.accountId
-  };
 }
 
 export async function refreshDetailsPanel(): Promise<void> {
@@ -219,13 +210,29 @@ export async function refreshDetailsPanel(): Promise<void> {
     return;
   }
 
-  const account = await detailsPanelState.repo.getAccount(detailsPanelState.accountId);
+  const panel = detailsPanel;
+  const accountId = detailsPanelState.accountId;
+  const requestId = detailsPanelRequestId;
+  const repo = detailsPanelState.repo;
+  let account;
+  try { account = await repo.getAccount(accountId); }
+  catch (error) {
+    if (detailsPanel !== panel || requestId !== detailsPanelRequestId || detailsPanelState.accountId !== accountId) return;
+    detailsPanelState.usageState = 'error';
+    detailsPanelState.usageError = `Account details could not refresh: ${error instanceof Error ? error.message : String(error)}. Saved history was kept.`;
+    if (detailsPanelState.account) renderDetails(detailsPanelState.account);
+    return;
+  }
+  if (detailsPanel !== panel || requestId !== detailsPanelRequestId || detailsPanelState.accountId !== accountId) return;
   if (!account) {
     detailsPanel.dispose();
     return;
   }
+  detailsPanelState.account = account;
 
-  const tokens = await detailsPanelState.repo.getTokens(account.id);
+  // Credentials can be missing or unreadable; hydration reports that failure in Usage details.
+  const tokens = await repo.getTokens(account.id).catch(() => undefined);
+  if (detailsPanel !== panel || requestId !== detailsPanelRequestId || detailsPanelState.accountId !== accountId) return;
   renderDetails(account, tokens);
 }
 
@@ -244,7 +251,9 @@ function renderDetails(
     theme,
     privacyMode: detailsPanelState.privacyMode,
     usageState: detailsPanelState.usageState,
-    usage: detailsPanelState.usage
+    usage: detailsPanelState.usage,
+    usageError: detailsPanelState.usageError,
+    usageFetchedAt: detailsPanelState.usageFetchedAt
   });
 }
 
@@ -270,6 +279,8 @@ function renderHtml(
     privacyMode: boolean;
     usageState: "loading" | "ready" | "empty" | "error";
     usage?: CodexDailyUsageBreakdown;
+    usageError?: string;
+    usageFetchedAt?: number;
   }
 ): string {
   const quota = account.quotaSummary;
@@ -406,11 +417,13 @@ function renderHtml(
       <div class="usage-head">
         <div class="usage-title-block">
           <h2>${escapeHtml(copy.usageTitle)}</h2>
-          <div class="usage-note">${escapeHtml(copy.usageHint)}</div>
+          <div class="usage-note">Verified VS Code tokens · saved daily in UTC</div>
           <div class="meta">${escapeHtml(copy.usageSubtitle)}</div>
         </div>
         <div class="usage-range">${escapeHtml(copy.rangeLabel(options.usage?.days ?? 30))}</div>
       </div>
+      ${options.usageState === "error" ? `<div class="usage-feedback" role="alert">${escapeHtml(options.usageError ?? copy.usageError)} <button type="button" data-role="retry-usage" data-account-id="${escapeHtmlAttr(account.id)}">Retry</button></div>` : ""}
+      ${options.usageFetchedAt ? `<div class="meta">Saved ${escapeHtml(formatTimestamp(options.usageFetchedAt))}${options.usageState === "error" ? " · Refresh failed; saved history kept" : ""}</div>` : ""}
       ${renderUsageSection(options.usageState, options.usage, copy)}
     </section>
 
@@ -493,12 +506,12 @@ function renderUsageSection(
   usage: CodexDailyUsageBreakdown | undefined,
   copy: DetailCopy
 ): string {
-  if (state === "loading") {
+  if (state === "loading" && !usage) {
     return `<div class="usage-empty">${escapeHtml(copy.usageLoading)}</div>`;
   }
 
   if (state === "error") {
-    return `<div class="usage-empty">${escapeHtml(copy.usageError)}</div>`;
+    if (!usage) return "";
   }
 
   if (!usage?.points.length) {
@@ -511,7 +524,6 @@ function renderUsageSection(
     return `<div class="usage-empty">${escapeHtml(copy.usageEmpty)}</div>`;
   }
 
-  const surfaceKeys = collectVisibleSurfaceKeys(usage.points);
   const max = usage.points.reduce((current, point) => Math.max(current, point.totalTokens), 0) || 1;
   const startLabel = formatUsageDate(firstPoint.date, copy.lang);
   const endLabel = formatUsageDate(lastPoint.date, copy.lang);
@@ -519,27 +531,20 @@ function renderUsageSection(
     .map((point, index) => {
       const totalValue = point.totalTokens;
       const height = Math.max(2, Math.round((totalValue / max) * 100));
-      const usageTitle = escapeHtmlAttr(buildUsageTitle(point, surfaceKeys, copy));
+      const usageTitle = escapeHtmlAttr(`${formatUsageDate(point.date, copy.lang)} · VS Code ${point.totalTokens.toLocaleString(getIntlLocale(copy.lang))} tokens`);
       const edgeClass = index === 0 ? " edge-left" : index === usage.points.length - 1 ? " edge-right" : "";
-      const segments = renderUsageSegments(point, surfaceKeys, totalValue, copy);
+      const segments = `<div class="usage-segment" style="height:100%;--segment-color:#58a6ff"></div>`;
       return `<div class="usage-bar${totalValue <= 0 ? " is-zero" : ""}${edgeClass}" title="${usageTitle}" style="--bar-height:${height}%;">
         <div class="usage-bar-fill" style="height:${height}%;">${segments}</div>
       </div>`;
     })
     .join("");
 
-  const legends = surfaceKeys
-    .map(
-      (key) =>
-        `<span class="usage-legend"><span class="usage-legend-dot" style="--legend-color:${surfaceColor(key)};"></span>${escapeHtml(formatSurfaceLabel(key))}</span>`
-    )
-    .join("");
-
   return `<div class="usage-chart">
     <div class="usage-bars">${bars}</div>
     <div class="usage-axis">
       <span>${escapeHtml(startLabel)}</span>
-      <span class="usage-legends">${legends}</span>
+      <span class="usage-legends">VS Code</span>
       <span>${escapeHtml(endLabel)}</span>
     </div>
   </div>`;
@@ -596,91 +601,6 @@ function formatUsageDate(input: string, lang: DashboardLanguage): string {
   return new Intl.DateTimeFormat(getIntlLocale(lang), { month: "short", day: "numeric" }).format(date);
 }
 
-function collectVisibleSurfaceKeys(points: CodexDailyUsagePoint[]): string[] {
-  const totals = new Map<string, number>();
-
-  for (const point of points) {
-    for (const [key, value] of Object.entries(point.surfaceValues ?? {})) {
-      if (value <= 0) {
-        continue;
-      }
-      totals.set(key, (totals.get(key) ?? 0) + value);
-    }
-  }
-
-  return [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key);
-}
-
-function renderUsageSegments(
-  point: CodexDailyUsagePoint,
-  surfaceKeys: string[],
-  totalValue: number,
-  copy: DetailCopy
-): string {
-  if (!surfaceKeys.length || totalValue <= 0) {
-    return `<div class="usage-segment usage-segment-empty" style="height:100%;"></div>`;
-  }
-
-  const segments = surfaceKeys
-    .map((key) => {
-      const value = point.surfaceValues?.[key] ?? 0;
-      if (value <= 0) {
-        return "";
-      }
-
-      const ratio = (value / totalValue) * 100;
-      return `<div class="usage-segment" title="${escapeHtmlAttr(
-        `${formatSurfaceLabel(key)} ${copy.usageValueLabel(value, totalValue)}`
-      )}" style="height:${Math.max(2, ratio)}%;--segment-color:${surfaceColor(key)};"></div>`;
-    })
-    .filter(Boolean)
-    .join("");
-
-  return segments || `<div class="usage-segment usage-segment-empty" style="height:100%;"></div>`;
-}
-
-function buildUsageTitle(point: CodexDailyUsagePoint, surfaceKeys: string[], copy: DetailCopy): string {
-  const lines = [formatUsageDate(point.date, copy.lang)];
-  const totalValue = point.totalTokens;
-
-  for (const key of surfaceKeys) {
-    const value = point.surfaceValues?.[key] ?? 0;
-    if (value <= 0) {
-      continue;
-    }
-    lines.push(`${formatSurfaceLabel(key)} ${copy.usageValueLabel(value, totalValue)}`);
-  }
-
-  if (lines.length === 1) {
-    lines.push(copy.usageEmpty);
-  }
-
-  return lines.join("\n");
-}
-
-function surfaceColor(key: string): string {
-  const palette: Record<string, string> = {
-    vscode: "#f59e0b",
-    web: "#94a3b8",
-    github: "#60a5fa",
-    github_code_review: "#34d399",
-    desktop_app: "#22d3ee",
-    exec: "#fbbf24",
-    cli: "#fb7185",
-    slack: "#f472b6",
-    linear: "#a78bfa",
-    jetbrains: "#10b981",
-    sdk: "#2dd4bf",
-    unknown: "#64748b"
-  };
-
-  return palette[key] ?? "#64748b";
-}
-
-function formatSurfaceLabel(key: string): string {
-  return key;
-}
-
 type DetailCopy = {
   lang: DashboardLanguage;
   titlePrefix: string;
@@ -711,7 +631,6 @@ type DetailCopy = {
   usageEmpty: string;
   usageError: string;
   rangeLabel: (days: number) => string;
-  usageValueLabel: (value: number, total: number) => string;
   metadata: string;
   accountId: string;
   organizationId: string;
@@ -729,11 +648,7 @@ function getCopy(): DetailCopy {
   return {
     lang,
     ...resource,
-    rangeLabel: (days) => resource.rangeLabelTemplate.replace("{days}", String(days)),
-    usageValueLabel: (value, total) =>
-      `${((value / Math.max(total, 1)) * 100).toLocaleString(getIntlLocale(lang), {
-        maximumFractionDigits: 0
-      })}%`
+    rangeLabel: (days) => resource.rangeLabelTemplate.replace("{days}", String(days))
   };
 }
 

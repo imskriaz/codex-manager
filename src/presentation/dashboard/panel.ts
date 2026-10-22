@@ -23,7 +23,7 @@ import {
 import { DashboardOAuthCoordinator } from "./oauthCoordinator";
 import { backfillMissingResetCreditExpiries } from "./resetCreditsBackfill";
 import { consumeDashboardActionPrompts, withDashboardNotificationSuppression } from "../../utils/notificationPolicy";
-import { appendDashboardUsageSnapshot, readDashboardUsageSummary, saveDashboardUsageHistory } from "../../services/dashboardUsageHistory";
+import { readDashboardUsageSummary, saveDashboardUsageHistory } from "../../services/dashboardUsageHistory";
 import { handleDashboardSettingUpdate, pickDashboardCodexAppPath, pickDashboardCodexCliPath } from "./settings";
 import { scheduleExtensionHostReload } from "../../application/accounts/switchEffects";
 import { resolveOnboardingCompleted } from "../../services/onboarding";
@@ -34,7 +34,6 @@ import { publishDashboardRealtime, subscribeDashboardRealtime } from "../../serv
 import { listPendingCodexAppServerPrompts } from "../../services/codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "../../services/codexSessionLive";
 import { recordPersistentEvent } from "../../utils/persistentLog";
-import { waitWithin } from "../../utils/concurrency";
 import { withCodexSessionRecovery } from "../../services/codexSessionAutoResume";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
@@ -87,8 +86,6 @@ export async function publishDashboardSnapshot(params: PublishDashboardSnapshotP
     ...params.peerHost?.getDashboardPeerState(),
     onboardingCompleted: await resolveOnboardingCompleted(params.context, baseState)
   };
-  await waitWithin(appendDashboardUsageSnapshot(params.context, state), 250, "Usage history is still saving")
-    .catch(error => recordPersistentEvent("debug", "dashboard-state", "Optional usage history save delayed", undefined, error));
   state.usageSummary = readDashboardUsageSummary(params.context);
   void backfillMissingResetCreditExpiries(params.repo, state.accounts, params.schedulePublishState).catch(
     () => undefined
@@ -265,7 +262,7 @@ export class DashboardPanelController {
           },
           onUsageHistory: async (samples) => {
             await saveDashboardUsageHistory(this.context, samples);
-            if (!samples.length) await this.postNotice("warning", "Usage history cleared. New quota changes will start a fresh history.");
+            if (!samples.length) await this.postNotice("warning", "Saved quota history cleared. New quota snapshots remain disabled.");
             this.schedulePublishState();
           }
         }).catch((error) => {
@@ -491,7 +488,7 @@ export class DashboardPanelController {
         `${value ? "Parallel window accounts enabled" : "Parallel window accounts disabled"}. Reloading this VS Code window to apply the credential isolation mode.`
       );
       scheduleExtensionHostReload(undefined, 150, "Parallel window account mode changed");
-    }
+    } else await this.postNotice('info', 'Setting saved.');
   }
 
   private async pickCodexAppPath(): Promise<void> {

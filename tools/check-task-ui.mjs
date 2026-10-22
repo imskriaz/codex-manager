@@ -7,10 +7,43 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await page.locator('#dashboard-main').waitFor();
   if (width <= 760) await page.getByRole('button', { name: 'Show sessions sidebar', exact: true }).click();
   await page.getByRole('button', { name: 'Project task board', exact: true }).click();
+  const hideSidebar=page.getByRole('button',{name:'Hide sessions sidebar',exact:true});
+  if(width<=760 && await hideSidebar.isVisible()) await hideSidebar.click();
+  assert.equal(await page.getByRole('button',{name:'Filter tasks',exact:true}).count(),0);
+  await page.getByRole('button',{name:'Board actions',exact:true}).click();
+  const ideaColumn=page.getByRole('menuitemcheckbox',{name:'Idea',exact:true});
+  assert.equal(await ideaColumn.getAttribute('aria-checked'),'false','Idea is hidden by default');
+  await ideaColumn.click();
+  await page.keyboard.press('Escape');
   await page.locator('.task-board-card').filter({ hasText: 'Release work' }).waitFor();
   assert.deepEqual(await page.locator('.task-board-column-heading strong').evaluateAll(items=>items.map(item=>item.firstChild.textContent)), ['Idea','Planned','Running','Completed']);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Task board keeps horizontal scrolling inside its columns');
   assert.equal(await page.locator('.task-board-card').filter({ hasText: 'Evaluate stack beyond expectations' }).count(), 0, 'Grouped session is absent from root cards');
+  const runningCard = page.locator('.task-board-card').filter({hasText:'Running workspace task'});
+  await page.evaluate(() => { window.__failTaskSaves=true; });
+  await page.getByRole('button',{name:'Actions for Running workspace task',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Hide from boards',exact:true}).click();
+  await page.getByText('This task changed in another browser. Your draft was kept.',{exact:true}).first().waitFor();
+  assert.equal(await runningCard.count(),1,'A failed hide keeps the session visible');
+  await page.evaluate(() => { window.__failTaskSaves=false; });
+  await page.getByRole('button',{name:'Actions for Running workspace task',exact:true}).click();
+  await page.getByRole('menuitem',{name:'Hide from boards',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('.task-board-column.is-running .task-board-card'));
+  await page.getByRole('button',{name:'Board actions',exact:true}).click();
+  await page.getByRole('menuitem',{name:/^Hidden sessions/}).click();
+  const hiddenDialog=page.locator('.task-hidden-modal');
+  await hiddenDialog.getByText('Running workspace task',{exact:true}).waitFor();
+  await hiddenDialog.getByRole('searchbox',{name:'Search hidden sessions'}).fill('missing');
+  await hiddenDialog.getByText('No matching sessions.',{exact:true}).waitFor();
+  await hiddenDialog.getByRole('searchbox',{name:'Search hidden sessions'}).fill('');
+  await page.screenshot({path:path.join(output,`task-hidden-${width}x${height}.png`)});
+  await hiddenDialog.getByRole('button',{name:'Restore Running workspace task to boards',exact:true}).click();
+  await hiddenDialog.getByText('No hidden sessions.',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Close hidden sessions',exact:true}).click();
+  await runningCard.waitFor();
+  const visibilityActions=await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='saveProjectTask'&&typeof message.payload?.task?.hidden==='boolean').length);
+  assert.equal(visibilityActions,3,'Failed hide, confirmed hide and restore do not replay');
+  assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>['resumeCodexSessions','cancelCodexCliSessionTurn','archiveCodexCliSession'].includes(message.action)).length),0,'Visibility never changes native work');
   await page.getByRole('button',{name:'Expand 1 subtasks',exact:true}).click();
   await page.evaluate(() => { window.__holdNextBoard = true; window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:project-changed', projectPath: 'D:/demo' } })); });
   await page.waitForFunction(() => !!window.__heldBoardResult);
@@ -29,6 +62,12 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.ok(await task.evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Task details have no horizontal overflow');
   await task.getByRole('tab',{name:'Overview',exact:true}).waitFor();
   assert.ok(await task.locator('.settings-modal-title').evaluate(element=>{const r=element.getBoundingClientRect();return !!document.elementFromPoint(r.x+2,r.y+4)?.closest('.task-detail-panel');}),'Task title stays above floating workspace controls');
+  await task.locator('.task-environment-grid').waitFor();
+  await task.getByRole('tab',{name:/^Agents/}).click();
+  await task.locator('.task-agent-row.is-main').waitFor();
+  await task.getByText('Reviewer',{exact:true}).waitFor();
+  assert.equal(await task.locator('.task-agent-row').count(),2);
+  await task.getByRole('tab',{name:'Overview',exact:true}).click();
   await page.screenshot({path:path.join(output,`task-details-${width}x${height}.png`)});
   await task.getByRole('tab', { name: 'Activities', exact: true }).click();
   await task.getByText('Review the workspace and explain the result.', {exact:true}).waitFor();
@@ -78,17 +117,20 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByRole('button', { name: 'Close task details', exact: true }).click();
   const idea = page.locator('.task-board-card').filter({ hasText: 'Idea collection' });
   if (width > 760) {
-    await child.dragTo(idea);
+    await idea.scrollIntoViewIfNeeded();
+    await page.waitForFunction(()=>document.querySelector('.task-board-columns').scrollLeft<5);
+    await child.dragTo(idea,{sourcePosition:{x:12,y:12},targetPosition:{x:12,y:12}});
     await page.waitForFunction(() => window.__uiActions.some(message => message.action === 'saveProjectTask' && message.payload.task.parentTaskId === 'idea-fixture'));
     await idea.locator('..').getByRole('button',{name:'Expand 1 subtasks',exact:true}).click();
     assert.equal(await child.count(),1,'A session dropped under a custom task is shown once');
     const saves = await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='saveProjectTask').length);
-    await page.locator('.task-board-card').filter({hasText:'Release work'}).dragTo(idea);
+    await page.locator('.task-board-card').filter({hasText:'Release work'}).dragTo(idea,{sourcePosition:{x:12,y:12},targetPosition:{x:12,y:12}});
     await page.getByText('Only session tasks can be subtasks. Custom tasks stay on the top-level board.',{exact:true}).waitFor();
     assert.equal(await page.evaluate(()=>window.__uiActions.filter(message=>message.action==='saveProjectTask').length),saves,'Custom tasks cannot be nested');
     await idea.dragTo(page.locator('.task-board-column.is-planned .task-board-column-heading'));
     await page.locator('.task-board-column.is-planned .task-board-card').filter({hasText:'Idea collection'}).waitFor();
-    await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+    const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+    if(await show.isVisible()) await show.click();
     await page.getByRole('button',{name:'Show compact session list',exact:true}).click();
     await page.locator('.cli-session-row-select').filter({hasText:'Evaluate stack'}).locator('..').dragTo(page.locator('.task-board-card').filter({hasText:'Release work'}));
     await page.waitForFunction(()=>window.__uiActions.some(message=>message.action==='saveProjectTask'&&message.payload.task.parentTaskId==='release-group'&&message.payload.task.expectedRevision>1));
@@ -124,11 +166,24 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await page.screenshot({path:path.join(output,`tasks-${name.toLowerCase()}-${width}x${height}.png`)});
   }
   await page.getByRole('tab',{name:'Board',exact:true}).click();
+  assert.equal(await page.getByRole('combobox',{name:'Task system',exact:true}).count(),1);
+  assert.equal(await page.getByRole('combobox',{name:'Task project',exact:true}).count(),1);
+  if (width <= 760) {
+    const inactive = page.getByRole('tab',{name:'List',exact:true}).locator('span');
+    assert.equal(await inactive.isVisible(),false,'Only the active view keeps its label on phones');
+    await page.getByRole('button',{name:'Search tasks',exact:true}).click();
+    await page.getByRole('searchbox',{name:'Search tasks',exact:true}).fill('Release');
+    await page.getByRole('searchbox',{name:'Search tasks',exact:true}).fill('');
+    await page.getByRole('searchbox',{name:'Search tasks',exact:true}).press('Escape');
+  }
   const header=await page.locator('.task-board-header').boundingBox(), columns=await page.locator('.task-board-columns').boundingBox();
-  assert.ok(header.height<=55,'Header stays on one compact row');
-  const sidebarToggle=page.locator('.cli-workspace.is-dashboard-mode .cli-rail-toggle');
+  await page.screenshot({path:path.join(output,`task-header-${width}x${height}.png`)});
+  console.log('Task header bounds', JSON.stringify({width,header}));
+  assert.ok(header.height<=(width<=760?92:55),'Header uses one row and compact stacked tracks on phones');
+  const sidebarToggle=page.locator('#task-sidebar-toggle-slot .cli-rail-toggle');
   if (width<=760 && await sidebarToggle.isVisible()) {
-    const toggle=await sidebarToggle.boundingBox(), heading=await page.locator('#task-board-title').boundingBox();
+    assert.equal(await sidebarToggle.evaluate(element=>getComputedStyle(element).position),'static','Sidebar toggle belongs to the content header');
+    const toggle=await sidebarToggle.boundingBox(), heading=await page.locator('.task-system-select').boundingBox();
     assert.ok(heading.x>=toggle.x+toggle.width+3,'Workspace title clears the floating sidebar logo');
   }
   assert.ok(columns.height>=height*.58,'Board uses the available height');
@@ -160,17 +215,17 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByLabel('Prompt / idea', { exact: true }).fill('Keep this work through reconnect.');
   await task.getByRole('button', { name: 'Save task', exact: true }).click();
   if (width === 320) {
-    await page.locator('.task-feedback').getByText(/Browser storage is full or unavailable/).waitFor();
+    await page.locator('.dashboard-notice-stack').getByText(/Browser storage is full or unavailable/).waitFor();
     assert.equal(await task.getByLabel('Title', { exact: true }).inputValue(), 'Offline task draft', 'Storage failures preserve the open draft');
     await task.getByRole('button', { name: 'Close task details', exact: true }).click();
   } else {
     await task.waitFor({ state: 'hidden' });
     await page.locator('.task-board-card').filter({ hasText: 'Offline task draft' }).waitFor();
-    await page.locator('.task-feedback').getByText('Saved offline.',{exact:true}).waitFor();
+    await page.locator('.dashboard-notice-stack').getByText('Saved offline.',{exact:true}).waitFor();
   }
   assert.equal(await page.locator('.task-board-status').count(),0,'Action feedback never inserts a board row');
-  await page.getByRole('button',{name:'Dismiss task notification',exact:true}).click();
-  assert.equal(await page.locator('.task-feedback').count(),0,'Task feedback is dismissible');
+  await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+  assert.equal(await page.locator('.dashboard-notice-stack').count(),0,'Task feedback is dismissible');
   assert.equal(await page.evaluate(() => window.__uiActions.filter(message => message.action === 'saveProjectTask').length), sentBefore, 'Offline drafts never send a live request');
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: true } })));
   if (width !== 320) await page.waitForFunction(before => window.__uiActions.filter(message => message.action === 'saveProjectTask').length === before + 1, sentBefore);
