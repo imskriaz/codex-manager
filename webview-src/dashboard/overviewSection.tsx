@@ -835,12 +835,12 @@ function UsageGraph(props: {
     const accounts = props.accounts.map(account => ({ id: account.id, email: account.email, runningDeviceName: account.runningDeviceName, lastQuotaAt: account.lastQuotaAt, removed: false }));
     const known = new Set(accounts.map(account => account.id));
     const savedIds = new Set([...(data?.dailyUsageCache ?? []).map(entry => entry.accountId), ...(data?.history ?? []).map(entry => entry.accountId)]);
-    let removed = 0;
-    for (const id of savedIds) if (!known.has(id)) accounts.push({ id, email: `Removed account ${++removed}`, runningDeviceName: undefined, lastQuotaAt: undefined, removed: true });
+    const savedLabels = new Map((data?.dailyUsageCache ?? []).filter(entry => entry.accountLabel).map(entry => [entry.accountId, entry.accountLabel!]));
+    for (const id of savedIds) if (!known.has(id)) accounts.push({ id, email: savedLabels.get(id) || `Historical account ${id.slice(-6)}`, runningDeviceName: undefined, lastQuotaAt: undefined, removed: true });
     return accounts;
   }, [props.accounts, data]);
   const accountMap = useMemo(() => new Map(graphAccounts.map((account, index) => [account.id, {
-    label: account.removed ? account.email : getSensitiveDisplayValue(account.email, props.privacyMode, "email"),
+    label: getSensitiveDisplayValue(account.email, props.privacyMode, "email"),
     color: USAGE_GRAPH_COLORS[index % USAGE_GRAPH_COLORS.length]!,
     device: account.runningDeviceName ? getSensitiveDisplayValue(account.runningDeviceName, props.privacyMode, "name") : undefined,
   }])), [graphAccounts, props.privacyMode]);

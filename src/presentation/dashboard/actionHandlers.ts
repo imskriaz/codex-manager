@@ -46,7 +46,7 @@ import { isCodexSessionAutoResumeEnabled } from "../../services/codexSessionPref
 import { respondCodexAppServerPrompt } from "../../services/codexAppServerPrompts";
 import { getCodexSessionLiveState } from "../../services/codexSessionLive";
 import { unloadAuthFile, runCodexHomeOperation } from "../../codex";
-import { queryDashboardUsage } from "../../services/dashboardUsageHistory";
+import { queryDashboardUsage, saveDashboardUsageHistory } from "../../services/dashboardUsageHistory";
 import { loadDailyTokenUsage } from "../../services/dailyTokenUsage";
 import {
   cancelWorkspaceTerminalCommand,
@@ -138,6 +138,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "getResetCredits",
   "getDailyUsage",
   "getUsageGraph",
+  "clearUsageHistory",
   "openNewCodexWebview",
   "resumeCodexSessions",
   "setCodexSessionGoalStatus",
@@ -968,6 +969,10 @@ async function runDashboardAction(
         return { notice: { level: "warning", message: "Automatic token history is disabled. Saved history remains available." } };
       }
       return handleGetDailyUsage(ctx.context, ctx.repo, account, payload?.days, payload?.automatic !== true);
+    case "clearUsageHistory":
+      await saveDashboardUsageHistory(ctx.context, []);
+      ctx.schedulePublishState();
+      return { notice: { level: "info", message: "Quota graph history cleared. New snapshots continue recording." } };
     case "getUsageGraph":
       return { usageGraph: queryDashboardUsage(ctx.context, payload?.usageGraph) };
     case "openNewCodexWebview":
@@ -1822,7 +1827,7 @@ async function handleGetDailyUsage(
     throw new Error("Account not found");
   }
   const days = Math.min(30, Math.max(1, Math.round(typeof requestedDays === "number" && Number.isFinite(requestedDays) ? requestedDays : 30)));
-  const entry = await loadDailyTokenUsage(context, account.id, signal => fetchAccountDailyUsage(repo, account, days, signal), { manual });
+  const entry = await loadDailyTokenUsage(context, account.id, signal => fetchAccountDailyUsage(repo, account, days, signal), { manual, accountLabel: account.email });
   return { dailyUsage: entry.usage, dailyUsageFetchedAt: entry.fetchedAt };
 }
 

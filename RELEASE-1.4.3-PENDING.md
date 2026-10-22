@@ -1,5 +1,78 @@
 # 1.4.3 completion checklist
 
+## Domain roles, startup recovery and task polish (`1.4.3-pre.4`)
+
+- Reuse the workspace Agent panel inside task Agents. Keep main model first,
+  compact roster/selection tabs, in-panel transcripts, refresh feedback,
+  retained messages on failure and offline fallback. Fence late requests on
+  panel replacement; shared boards cannot invoke native agent reads.
+
+- Additional task audit: grouped-session matches were filtered out by root-only
+  board rendering. Show matching sessions directly during search, preserve the
+  same query in List, clear on Escape/context changes, and focus the initiating
+  component’s input. Remove repeated PC names, normalize card controls, and
+  reduce padding in every details tab. Wrap only when controls cannot fit.
+
+- Task Activities now use one shared compact timeline for owner/public boards.
+  Filter reasoning, compaction, empty events, and failed/declined/interrupted
+  tool attempts; retain messages, successful/live actions, changes, session
+  errors, and permitted latest-page comments. Preserve original transcript
+  order and never invent displayed timestamps. System/Project controls are
+  single-line tabs with hover counts and the same height as the view tabs.
+
+- Latest user override restores quota recording after the earlier explicit stop
+  request. Record changed quota samples in both hosts asynchronously, restore
+  retention controls, move the token toggle/check gap into Usage log, and use
+  a confirmed standard action to clear only the selected PC’s quota history.
+  Keep verified token history and credentials untouched by quota clearing.
+
+- The first full regression found a rare existing collision between random
+  base64url tokens and legacy-token detection (2,282 tests passed, one failed).
+  Keep strict legacy rotation and resample generated tokens that match that
+  format, so new credentials cannot force another migration/restart. Add a
+  deterministic random-source fixture for the collision.
+
+- Live proof confirms that the configured domain reaches this PC. The other PC
+  was reported updated from 1.4.2 to pre.3; it is still absent from the local peer
+  snapshot. Found a real local blocker: peer signing/relay keys were disabled by
+  account Auto Sync even with the dashboard and WS Cross System enabled.
+- Separate peer authentication from optional encrypted account synchronization,
+  preserving password verification, tamper checks and vault/claim boundaries.
+  Reconcile the latest domain after pending host checks, including old-domain
+  failures. Only the proven domain host prepares the detached relay.
+- Native recovery logs show file-read timeouts before startup verification
+  finished. Retry those read-only checks at most three times within the existing
+  deadline, preserve recovery on failure, and cancel when the home changes.
+  Do not retry editor dispatch or turns in response to unconfirmed results.
+- Blend System/Project controls with view tabs, move the board menu last, and
+  balance task header padding. Keep compact small-screen controls and shared UI.
+- Retain a bounded account label in existing daily-usage SQLite headers, preserve
+  it across legacy writes, capture it before credential removal, and mask it in
+  history. Do not retain tokens or re-enable removed accounts. Previously
+  anonymous history cannot recover an unknown name from its hashed identity.
+- Verification: all 2,284 tests across 191 files pass in one isolated full run
+  (287.95 seconds), after fixing the legacy-token collision found by the first
+  run. Focused task/public checks (88), history/action checks (188), recovery
+  checks (81), and relay checks (26) pass. Both TypeScript targets compile;
+  lint reports zero errors and 3,194 warnings.
+- Browser checks pass at six viewport sizes for all task views/tabs and search,
+  quota-history controls/confirmation/failure, usage/account masking, and sharing.
+  Final task checks include agent switching, failed refresh, offline/reconnect,
+  late agent results and no unnecessary roster history reads. Shared workspace
+  agent selection passes at desktop/mobile without adding another workspace tab.
+  Dark phone task checks and owner/public rich history checks also pass.
+  Read-only live desktop/mobile checks pass (phone load 2,103 ms, reconnect OK).
+- VSIX: `codex-manager-1.4.3-pre.4.vsix`, 4,041,371 bytes.
+  SHA-256: `582f6ee47492f590710f6924fb38c5a9b921df51cc970d7bd9a31ab71580da88`.
+  Archive manifest/runtime/UI/CSS match the workspace; source, tests and output
+  logs are excluded. Dependency layout verification passes. VSCE retains its
+  existing extension-bundling warning (1,397 archive files).
+- Packaging is verified. Physical two-PC/reload
+  verification stays open; the live extension is older than this build. No new
+  build has been installed or published by the agent. Preserve the broader goal,
+  including native archive/delete queue cleanup and follow-up verification of
+  live main-session metadata while task details remain open.
+
 ## Queue, refresh-notice and auth clarification (`1.4.3-pre.3`)
 
 - The latest valid Codex login remains authoritative, including after removal of

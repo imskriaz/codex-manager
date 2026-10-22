@@ -1075,6 +1075,29 @@ describe("encrypted account sync", () => {
     manager.dispose();
   });
 
+  it.each([false, true])("authenticates dashboard peers independently from disabled account sync when WS is %s", async ws => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='encryptedSyncEnabled'?false:key==='webDashboardEnabled'?true:key==='webSocketServerEnabled'?ws:fallback} as never);
+    const secrets={get:vi.fn(async()=>PASSPHRASE)};
+    const manager=new EncryptedSyncManager({secrets} as never,{} as never);
+    try {
+      const signed=await manager.signRealtimePeerPayload('presence');
+      if(ws) {
+        expect(signed).toEqual(expect.any(String));
+        await expect(manager.verifyRealtimePeerPayload('presence',signed!)).resolves.toBe(true);
+        await expect(manager.verifyRealtimePeerPayload('changed',signed!)).resolves.toBe(false);
+        await expect(manager.getRealtimeRelayKey()).resolves.toEqual(expect.any(String));
+        secrets.get.mockResolvedValue('different password');
+        await expect(manager.verifyRealtimePeerPayload('presence',signed!)).resolves.toBe(false);
+        secrets.get.mockResolvedValue(undefined as never);
+        await expect(manager.signRealtimePeerPayload('presence')).resolves.toBeUndefined();
+      } else {
+        expect(signed).toBeUndefined();await expect(manager.getRealtimeRelayKey()).resolves.toBeUndefined();
+      }
+      await expect(manager.getRealtimeEncryptedVault()).resolves.toBeUndefined();
+      await expect(manager.applyRealtimeEncryptedVault('vault')).resolves.toBe(false);
+    } finally {manager.dispose();}
+  });
+
   it("defaults cross-PC claim checks on while local account use avoids credential sync", async () => {
     vi.useFakeTimers();
     vi.spyOn(console, "warn").mockImplementation(() => undefined);

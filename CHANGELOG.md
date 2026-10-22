@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4.3-pre.4
+
+- Keep agent details in the task’s Agents tab, using the same compact agent selector and transcript panel as the workspace sidebar. Preserve messages on failed refresh, isolate task/system requests, and keep shared boards read-only.
+- Fix live task search for grouped sessions and keep the same filter in Board/List. Remove repeated PC names from cards, normalize action icons, tighten all task-details tabs, and keep compact headers on one row when space allows.
+- Present task Activities as a compact timeline shared by owner and public boards, with messages, useful actions, changes, and permitted comments. Hide thinking and failed tool attempts in this view while preserving the full session conversation and session-level errors. Keep System and Project selectors single-line beside the view tabs, with counts on hover.
+
+- Restore quota-change recording and retention controls at the user’s updated request. Put the token-history toggle and interval inside Usage log. Confirm quota-history clearing, send it to the selected system, retain failure feedback, and refresh the graph only after confirmation. Background recording does not block dashboard rendering.
+
+- Prevent a rare relay restart loop when a newly generated admin token resembles the legacy timestamp/hostname format; keep strict legacy-token rotation.
+- Authenticate WS Cross System with the shared dashboard password independently of account Auto Sync. Keep encrypted account vault synchronization disabled when requested; converge host preparation to the latest configured domain after an in-flight check.
+- Retry read-only startup recovery verification within its existing deadline, cancel when the home changes, and preserve unconfirmed work without replaying editor opens or turns.
+- Match System and Project selectors to the task view tabs, balance header padding, and place the actions menu last.
+- Retain account names with token history after account removal while deleting credentials; preserve labels through legacy writes and apply privacy masking to historical accounts.
+
 ## 1.4.3-pre.3
 
 - Clarify and verify that Manager follows the latest valid Codex login, restores a missing saved entry, and retries with the new login after an import race without writing authentication back to Codex.

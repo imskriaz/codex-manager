@@ -45,7 +45,17 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   applyConfiguration(): Promise<RelayConfigurationResult> {
     if (this.disposed) return Promise.resolve("stopped");
     if (this.applying) return this.applying;
-    const task = this.applyConfigurationInternal().finally(() => { if (this.applying === task) this.applying = undefined; });
+    const task = (async () => {
+      for (;;) {
+        const configuration = this.configurationKey();
+        try {
+          const result = await this.applyConfigurationInternal();
+          if (this.disposed || configuration === this.configurationKey()) return result;
+        } catch (error) {
+          if (this.disposed || configuration === this.configurationKey()) throw error;
+        }
+      }
+    })().finally(() => { if (this.applying === task) this.applying = undefined; });
     this.applying = task;
     return task;
   }
@@ -186,7 +196,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private async prepareRelay(preparedHostKey?: string): Promise<PreparedRelay> {
     const hostKey = preparedHostKey ?? (await this.encryptedSync?.getRealtimeRelayKey());
     if (!hostKey) {
-      throw new Error("Enable and configure Encrypted Sync first; it supplies the relay's peer authentication key.");
+      throw new Error("Configure the shared dashboard password and enable WS Cross System before starting the relay.");
     }
     const storage = getCodexManagerStorageRoot();
     await fs.mkdir(storage, { recursive: true });
@@ -284,7 +294,10 @@ async function readPreviousRelayConfig(configPath: string): Promise<Partial<Rela
 }
 
 export function createRelayAdminToken(): string {
-  return crypto.randomBytes(32).toString("base64url");
+  let token: string;
+  // Random hyphens can resemble the old timestamp/random/hostname format.
+  do { token = crypto.randomBytes(32).toString("base64url"); } while (isLegacyRelayAdminToken(token));
+  return token;
 }
 
 export function isLegacyRelayAdminToken(token: string): boolean {

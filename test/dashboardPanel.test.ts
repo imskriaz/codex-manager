@@ -119,7 +119,7 @@ describe("publishDashboardSnapshot", () => {
     return{instance,panel,postMessage};
   }
 
-  it("publishes the webview without recording new quota history", async () => {
+  it("records quota history without blocking webview publishing", async () => {
     vi.useFakeTimers();
     const write = vi.spyOn(usageHistory, "appendDashboardUsageSnapshot").mockReturnValue(new Promise(() => undefined));
     const postMessage = vi.fn(async () => true);
@@ -130,7 +130,7 @@ describe("publishDashboardSnapshot", () => {
       await vi.advanceTimersByTimeAsync(250);
       await work;
       expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "dashboard:snapshot" }));
-      expect(write).not.toHaveBeenCalled();
+      expect(write).toHaveBeenCalledOnce();
     } finally { write.mockRestore(); vi.useRealTimers(); }
   });
 

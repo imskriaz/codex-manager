@@ -209,7 +209,7 @@ describe("browser action completion during state failure", () => {
     } finally { server.dispose(); vi.useRealTimers(); }
   });
 
-  it("renders accounts without recording new quota history", async () => {
+  it("records quota history without blocking account rendering", async () => {
     vi.useFakeTimers();
     const { server } = createServer();
     buildState.mockResolvedValue({ accounts: [], settings: {} });
@@ -219,7 +219,7 @@ describe("browser action completion during state failure", () => {
       const work = Reflect.get(server, "buildState").call(server);
       await vi.advanceTimersByTimeAsync(250);
       await expect(work).resolves.toMatchObject({ accounts: [], usageSummary: { revision: 4, count: 2 } });
-      expect(write).not.toHaveBeenCalled();
+      expect(write).toHaveBeenCalledOnce();
     } finally { server.dispose(); vi.useRealTimers(); }
   });
 

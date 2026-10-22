@@ -13,6 +13,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import { SecretStore } from "./secrets";
+import { retainDailyUsageAccountLabel } from "./sqliteUsage";
 import {
   createEmptyIndex,
   cloneIndex,
@@ -132,7 +133,7 @@ import {
   releaseCrossWindowAccount
 } from "../services/windowAccountMode";
 import { cancelCodexSessionAutoResume } from "../services/codexSessionAutoResume";
-import { isSqliteError, sqliteStoreForFile } from "./sqliteState";
+import { getSqliteStateStore, isSqliteError, sqliteStoreForFile } from "./sqliteState";
 
 /** 缓存失效时间 (毫秒) */
 const CACHE_TTL_MS = 5000;
@@ -1329,6 +1330,9 @@ export class AccountsRepository {
         const index = await this.readIndex();
         if (index.accounts.find((account) => account.id === accountId)?.resetCreditAttempt)
           throw new Error("Verify the pending quota reset before removing this account.");
+        const account = index.accounts.find(item => item.id === accountId);
+        const store = getSqliteStateStore();
+        if (account && store) retainDailyUsageAccountLabel(store, accountId, account.email);
         if (!removeAccountFromIndex(index, accountId)) {
           return;
         }

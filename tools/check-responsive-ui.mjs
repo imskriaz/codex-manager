@@ -53,11 +53,12 @@ const messages = [
 const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "workspace-write" };
 const mockHost = `(() => {
   const state = ${JSON.stringify(snapshot)};
+  if(window.__historyFixture) state.usageSummary={revision:1,count:3};
   const sessions = ${JSON.stringify(sessions)};
   const messages = ${JSON.stringify(messages)};
   const config = ${JSON.stringify(config)};
   if(location.search.includes('closed-project')) { sessions[0].projectPath = 'D:/closed-worktree'; sessions[0].title = 'Closed worktree task'; }
-  const taskSessions = [], taskComments = [], projectTasks = [
+  const taskSessions = [], taskComments = [{id:'timeline-comment',taskId:'session:'+${JSON.stringify(parentId)},author:'Reviewer',text:'Timeline review comment',createdAt:1792497600000}], projectTasks = [
     {id:'release-group',title:'Release work',prompt:'Prepare the release',stage:'planned',manualStage:'planned',revision:1,createdAt:Date.now()-7200000,updatedAt:Date.now()-600000},
     {id:'idea-fixture',title:'Idea collection',prompt:'A visitor suggestion',stage:'idea',manualStage:'idea',revision:1,createdAt:Date.now()-3600000,updatedAt:Date.now()-300000},
     ...[...new Map(sessions.filter(session=>!session.parentSessionId).map(session=>[session.id,session])).values()].map(session=>({id:'session:'+session.id,title:session.title,prompt:'',stage:session.status==='running'?'running':session.archived?'completed':'planned',revision:1,createdAt:1,updatedAt:1,sessionId:session.id,sourceKey:'fixture:'+session.id,timing:{firstStartedAt:Date.now()-3600000,lastObservedAt:Date.now()-600000,durationMs:1200000,runCount:2},parentTaskId:session.id===${JSON.stringify(parentId)}?'release-group':undefined}))
@@ -124,6 +125,10 @@ const mockHost = `(() => {
             payload={tagResult:{successCount:changes.length,failedCount:0,errors:[],accounts:changes},notice:{level:'info',message:changes.length+' accounts updated.'}};
           }
         }
+        else if(message.action==='clearUsageHistory') {
+          if(window.__failHistoryClear) error='Quota storage full. History was kept.';
+          else {state.usageSummary={revision:2,count:0};dispatch({type:'dashboard:snapshot',state});payload={notice:{level:'info',message:'Quota graph history cleared. New snapshots continue recording.'}};}
+        }
         else if(message.action==='setPrivacyMode') {state.settings.privacyMode=message.payload.privacyMode;}
         else if(message.action==='getProjectBoard') {
           const result={type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectBoard:projectBoard()}};
@@ -132,7 +137,7 @@ const mockHost = `(() => {
         }
         else if(message.action==='getProjectTaskDetails') {
           const older=!!message.payload.taskBefore;
-          const details={taskId:message.payload.taskId,initialPrompt:projectTasks.find(task=>task.id===message.payload.taskId)?.prompt||'Original request for this session',messages:older?[]:messages,files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:['changes','overview'].includes(message.payload.taskView)?{projectName:'demo',projectPath:'D:/demo',branch:'main',isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
+          const details={taskId:message.payload.taskId,initialPrompt:projectTasks.find(task=>task.id===message.payload.taskId)?.prompt||'Original request for this session',messages:older?[]:[...messages,{id:'thinking',kind:'reasoning',text:'Hidden private thinking'},{id:'failed-tool',kind:'tool-call',status:'failed',text:'Hidden failed attempt'},{id:'empty',kind:'message',text:''}],files:message.payload.taskView==='files'?[{path:older?'src/older.ts':'src/app.ts',name:older?'older.ts':'app.ts',type:'file',depth:1},...(older?[]:${JSON.stringify(listConversationFiles(messages).filter(file => file.attachment))})]:[],environment:['changes','overview'].includes(message.payload.taskView)?{projectName:'demo',projectPath:'D:/demo',branch:'main',isGitRepository:true,changes:1,additions:1,deletions:0}:undefined,history:[],warnings:[],olderThan:older?undefined:'200'};
           if(window.__holdNextTaskDetails===message.payload.taskView) {
             window.__holdNextTaskDetails=false; window.__heldTaskDetails=message;
             window.__releaseTaskDetails=()=>dispatch({type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:'completed',payload:{projectTaskDetails:details}});
@@ -191,7 +196,7 @@ const mockHost = `(() => {
         else if(message.action === 'inspectMaintenanceStorage') payload={maintenanceReport:{title:'Codex report',items:[{label:'Recorded projects checked',value:'12'},{label:'Missing projects',value:'1'},{label:'state_5.sqlite',value:'Healthy · 2 MB'}]}};
         else if(message.action === 'getUsageGraph') {
           const query=message.payload.usageGraph, date=new Date(Math.floor(Date.now()/86400000)*86400000-86400000).toISOString().slice(0,10);
-          payload = {usageGraph:{...query,history:window.__usageFixture && query.mode==='quota'?['usage-a','usage-b','usage-removed'].flatMap((accountId,i)=>[{accountId,at:query.from-1,hourly:100},{accountId,at:query.from+60000,hourly:90-i*10}]):[],dailyUsageCache:window.__usageFixture && query.mode==='tokens'?['usage-a','usage-b','usage-removed'].map((accountId,i)=>({accountId,fetchedAt:Date.now(),usage:{days:30,points:[{date,unit:'tokens',totalTokens:1000,extensionTokens:[40,60,25][i]}]}})):[],truncated:false}};
+          payload = {usageGraph:{...query,history:window.__usageFixture && query.mode==='quota'?['usage-a','usage-b','usage-removed'].flatMap((accountId,i)=>[{accountId,at:query.from-1,hourly:100},{accountId,at:query.from+60000,hourly:90-i*10}]):[],dailyUsageCache:window.__usageFixture && query.mode==='tokens'?['usage-a','usage-b','usage-removed'].map((accountId,i)=>({accountId,...(i===2?{accountLabel:'former@example.test'}:{}),fetchedAt:Date.now(),usage:{days:30,points:[{date,unit:'tokens',totalTokens:1000,extensionTokens:[40,60,25][i]}]}})):[],truncated:false}};
         }
         else if(message.action === 'listCodexCliSessions') {
           if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }
@@ -214,7 +219,8 @@ const mockHost = `(() => {
           messageReads++;
           if(location.search.includes('missing-transcript')) error = 'The session transcript was not found on this PC.';
           payload = {cliSession:sessions.find(s => s.id === message.payload.sessionId),cliSessionMessages:messageReads > 1 ? [...messages,{id:'live',kind:'message',role:'assistant',text:'Live transcript update'}] : messages};
-        } else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:[{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
+        } else if(message.action === 'getCodexSubAgentMessages' && window.__failAgentRead) error='Agent transcript unavailable. Saved messages were kept.';
+        else if(message.action === 'getCodexSubAgentMessages') payload = {cliSubAgentSession:sessions.find(s => s.id === message.payload.sessionId),cliSubAgentMessages:[{id:'agent-msg',kind:'message',role:'assistant',text:'Agent reviewer message'}]};
         else if(message.action === 'saveWorkspaceFile') {if(window.__failFileSave)error='Simulated revision conflict. Your draft was kept.';else payload={workspaceFile:{path:message.payload.filePath,content:message.payload.fileContent,kind:'text',language:'typescript',mimeType:'text/plain',size:message.payload.fileContent.length,revision:'saved-revision'},notice:{level:'info',message:'File saved.'}};}
         else if(message.action === 'commitWorkspaceChanges' || message.action === 'pushWorkspaceBranch') {if(window.__failCommit)error='Simulated commit failure';else payload={workspaceEnvironment:environmentFor(message.payload.projectPath),notice:{level:'info',message:message.action==='commitWorkspaceChanges'?'Project committed.':'Branch pushed.'}};}
         else if(message.action === 'runWorkspaceTerminalCommand' && window.__inspectorMode) payload={terminalResult:{id:'fixture-command',terminalId:'fixture-terminal',command:message.payload.command,cwd:message.payload.projectPath,output:'',durationMs:0,status:'running',finishedAt:new Date().toISOString()}};
@@ -239,6 +245,7 @@ const mockHost = `(() => {
         if(message.action==='setAccountTags' && window.__loseTagAck) {window.__loseTagAck=false;window.__heldTagResult=result;return;}
         if(message.action==='listCodexCliSessions' && window.__holdNextSystemList) {window.__holdNextSystemList=false;window.__heldSystemList=result;return;}
         if(message.action==='previewMaintenance' && window.__holdNextMaintenancePreview) {window.__holdNextMaintenancePreview=false;window.__heldMaintenancePreview=result;return;}
+        if(message.action==='getCodexSubAgentMessages' && window.__holdNextAgentRead) {window.__holdNextAgentRead=false;window.__heldAgentResult=result;return;}
         if(message.action==='getWorkspaceEnvironment' && window.__holdNextEnvironment) {window.__holdNextEnvironment=false;window.__heldEnvironmentResult=result;return;}
         if(message.action==='commitWorkspaceChanges' && window.__holdNextCommit) {window.__holdNextCommit=false;window.__heldCommitResult=result;return;}
         if(message.action==='saveWorkspaceFile' && window.__holdNextSave) {window.__holdNextSave=false;window.__heldSaveResult=result;return;}
@@ -275,6 +282,7 @@ try {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
     });
     const page = await context.newPage();
+    if(process.argv.includes('--history')) await page.addInitScript(()=>{window.__historyFixture=true;});
     if(process.argv.includes('--usage')) await page.addInitScript(()=>{window.__usageFixture=true;});
     if(process.argv.includes('--tags')) await page.addInitScript(()=>{window.__tagFixture=true;});
     if(process.argv.includes('--dark')) await page.addInitScript(()=>{window.__tagTheme='dark';});
@@ -299,6 +307,47 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    if(process.argv.includes('--history')) {
+      await page.goto(origin+'/');
+      if(width<=760) {await page.locator('.dashboard-mobile-actions > summary').click();await page.getByRole('menuitem',{name:'Settings',exact:true}).click();}
+      else await page.locator('#settingsOpenButton').click();
+      await page.locator('#settings-tab-data').click();
+      const settings=page.getByRole('dialog',{name:'Settings',exact:true});
+      const usage=settings.getByRole('button',{name:'Usage log',exact:true});await usage.waitFor();
+      if(await usage.getAttribute('aria-pressed')==='false') await usage.click();
+      const usageBlock=usage.locator('../..');await usageBlock.locator('input[type=range]').waitFor();
+      assert.equal(await usageBlock.locator('input[type=range]').count(),1,'Usage log has its automatic check interval');
+      await usage.click();await usageBlock.locator('input[type=range]').waitFor({state:'hidden'});
+      await usage.click();await usageBlock.locator('input[type=range]').waitFor();
+      await usageBlock.locator('input[type=range]').focus();await page.keyboard.press('ArrowRight');
+      await page.waitForFunction(()=>window.__uiActions.some(item=>item.type==='dashboard:setting' && item.key==='dailyTokenUsageIntervalMinutes'));
+
+      const quota=settings.locator('.settings-history-block').filter({hasText:'Quota graph history'});
+      assert.equal(await quota.locator('input[type=range]').count(),1,'Quota history has retention controls');
+      await quota.locator('input[type=range]').focus();await page.keyboard.press('Home');
+      await page.waitForFunction(()=>window.__uiActions.some(item=>item.type==='dashboard:setting' && item.key==='usageHistoryRetentionDays' && item.value===1));
+      assert.equal(await settings.getByText('Quota history is no longer recorded.',{exact:false}).count(),0);
+      const before=await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='clearUsageHistory').length);
+      await settings.getByRole('button',{name:'Clear quota graph history',exact:true}).click();
+      let confirm=page.getByRole('dialog',{name:'Clear quota graph history?',exact:true});await confirm.waitFor();
+      await page.screenshot({path:path.join(output,`history-confirmation-${width}.png`)});
+      await page.keyboard.press('Escape');await confirm.waitFor({state:'hidden'});
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(item=>item.action==='clearUsageHistory').length),before,'Cancelling sends no clear');
+      await page.evaluate(()=>{window.__failHistoryClear=true;});
+      await settings.getByRole('button',{name:'Clear quota graph history',exact:true}).click();await confirm.getByRole('button',{name:'Clear quota history',exact:true}).click();
+      await page.getByRole('alert').filter({hasText:'Quota storage full'}).waitFor();
+      assert.equal(await settings.getByRole('button',{name:'Clear quota graph history',exact:true}).isEnabled(),true,'Failed clears retain existing history');
+      await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+      await page.evaluate(()=>{window.__failHistoryClear=false;});
+      await settings.getByRole('button',{name:'Clear quota graph history',exact:true}).click();await confirm.getByRole('button',{name:'Clear quota history',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'Quota graph history cleared'}).waitFor();
+      await page.waitForFunction(()=>document.querySelector('.settings-count-badge')?.textContent==='0 samples');
+      assert.equal(await settings.getByRole('button',{name:'Clear quota graph history',exact:true}).isDisabled(),true);
+      await page.screenshot({path:path.join(output,`history-controls-${width}.png`)});
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));assert.deepEqual(errors,[]);
+      results.push({width,height,checks:'Usage log interval/toggle, quota retention, confirmed clear, cancellation and storage failure feedback'});
+      await context.close();continue;
+    }
     if (process.argv.includes('--tasks')) {
       await checkTaskUi(page,{origin,width,height,output});
       assert.deepEqual(errors,[],'Task UI runtime errors');
@@ -336,7 +385,12 @@ try {
       assert.equal(await chart.locator('.usage-graph-color-chip').count(),3);
       await chart.getByRole('button',{name:'View account usage stats',exact:true}).click();
       const stats=page.getByRole('tooltip',{name:'Account usage stats',exact:true});
-      await stats.getByText('Removed account 1',{exact:true}).waitFor();
+      await stats.getByText('for***est',{exact:true}).waitFor();
+      assert.equal(await stats.getByText('former@example.test',{exact:true}).count(),0,'Masking also protects retained account names');
+      await page.keyboard.press('Escape');await page.locator('#privacyToggleButton').click();
+      await chart.getByRole('button',{name:'View account usage stats',exact:true}).click();
+      await stats.getByText('former@example.test',{exact:true}).waitFor();
+      assert.equal(await stats.getByText('Removed account 1',{exact:true}).count(),0,'Retained history keeps its account name');
       await stats.getByText('25 tokens',{exact:true}).waitFor();
       await page.keyboard.press('Escape');
       await page.screenshot({path:path.join(output,`usage-tokens-${width}.png`)});
@@ -718,6 +772,10 @@ try {
       await page.locator('.task-board-card').first().waitFor();
       assert.equal(await page.getByRole('button', { name: 'Share project', exact: true }).count(), 0);
       const boardActions = page.getByRole('button', { name: 'Board actions', exact: true });
+      assert.ok(await page.locator('.task-board-toolbar').evaluate(el=>Boolean(el.lastElementChild?.querySelector('[aria-label="Board actions"]') || el.lastElementChild?.matches('[aria-label="Board actions"]'))), 'Board actions are last in the header');
+      const contextHeight=await page.locator('.task-context-tabs').evaluate(el=>el.getBoundingClientRect().height);
+      const viewHeight=await page.locator('.task-view-tabs').evaluate(el=>el.getBoundingClientRect().height);
+      assert.ok(Math.abs(contextHeight-viewHeight)<=2,'Context selectors match the view tab track');
       await boardActions.focus(); await page.keyboard.press('Enter');
       const boardShare = page.getByRole('menuitem', { name: 'Share project', exact: true });
       assert.equal(await boardShare.locator('svg').count(), 1);
@@ -1161,7 +1219,7 @@ try {
     await page.getByRole("button", { name: /^Agents/ }).click();
     await page.getByRole("tab", { name: /^Agents/ }).click();
     await page.locator(".cli-agent-row").filter({ hasText: "Reviewer" }).click();
-    await page.getByRole("tab", { name: "Agent: Reviewer" }).waitFor();
+    await page.locator(".cli-agent-tabs").getByRole("tab", { name: "Reviewer", exact: true }).waitFor();
     await page.getByText("Agent reviewer message", { exact: true }).waitFor();
     assert.equal(await page.getByText("Get codex sub agent messages completed.", { exact: true }).count(), 0, "Agent loading must not cover the composer with redundant success feedback");
     await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
@@ -1784,8 +1842,7 @@ try {
         assert.equal(await page.getByText("Token history retention", { exact: true }).count(), 0, "Retained verified usage has no automatic deletion control");
       }
       if (await tab.getAttribute("id") === "settings-tab-automation") {
-        const tokenBlock = page.getByRole("button", { name: "Automatic token history", exact: true }).locator("../..");
-        assert.equal(await tokenBlock.evaluate(block => block === block.parentElement.lastElementChild), true, "Automatic token history is last in Automation");
+        assert.equal(await page.getByRole("button",{name:"Usage log",exact:true}).count(),0,"Usage controls belong to Data & sync");
         const switchToggle = page.getByRole("button", { name: snapshot.copy.autoSwitchTitle, exact: true });
         const switchCard = switchToggle.locator("../..");
         const options = switchCard.locator(":scope > .settings-stack > .settings-integration-grid > .settings-block");

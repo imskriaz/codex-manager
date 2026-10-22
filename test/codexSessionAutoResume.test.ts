@@ -981,6 +981,38 @@ describe("Codex session auto resume", () => {
     expect(state.read()).toBeUndefined();
   });
 
+  it('retries startup verification before opening and never retries an unconfirmed editor open', async () => {
+    const id='01a04882-d037-7a42-ad24-9afb61901181',state=createContext([id]);
+    const select=vi.mocked(autoResumeSelection.readAutoResumeCodexSessionIds).mockClear();
+    select.mockRejectedValueOnce(new Error('The file did not respond within 5 seconds.')).mockResolvedValue([id]);
+    const open=vi.fn().mockRejectedValue(new Error('Open confirmation unavailable'));
+    const result=await resumePersistedCodexSessions(state.context,open);
+    expect(select).toHaveBeenCalledTimes(3);expect(open).toHaveBeenCalledOnce();
+    expect(result.failed).toEqual([{sessionId:id,message:'Open confirmation unavailable'}]);expect(state.read()).toEqual([id]);
+  });
+
+  it('keeps recovery when bounded verification retries fail and opens nothing', async () => {
+    const id='01a04882-d037-7a42-ad24-9afb61901181',state=createContext([id]),open=vi.fn();
+    const select=vi.mocked(autoResumeSelection.readAutoResumeCodexSessionIds).mockClear().mockRejectedValue(new Error('Native metadata is unavailable'));
+    await expect(resumePersistedCodexSessions(state.context,open)).rejects.toThrow('Native metadata is unavailable');
+    expect(select).toHaveBeenCalledTimes(3);expect(open).not.toHaveBeenCalled();expect(state.read()).toEqual([id]);
+  });
+
+  it('rechecks completion on a verification retry without opening finished work', async () => {
+    const id='01a04882-d037-7a42-ad24-9afb61901181',state=createContext([id]),open=vi.fn();
+    vi.mocked(autoResumeSelection.readAutoResumeCodexSessionIds).mockClear().mockRejectedValueOnce(new Error('Metadata busy')).mockResolvedValue([]);
+    await expect(resumePersistedCodexSessions(state.context,open)).resolves.toMatchObject({attempted:0,opened:0});
+    expect(open).not.toHaveBeenCalled();expect(state.read()).toBeUndefined();
+  });
+
+  it('cancels read-only startup retries immediately for manual work', async () => {
+    const id='01a04882-d037-7a42-ad24-9afb61901181',state=createContext([id]),open=vi.fn();
+    const select=vi.mocked(autoResumeSelection.readAutoResumeCodexSessionIds).mockClear().mockRejectedValue(new Error('Metadata busy'));
+    const work=resumePersistedCodexSessions(state.context,open);const rejected=expect(work).rejects.toThrow(/aborted|cancelled|account is changing/i);
+    await vi.waitFor(()=>expect(select).toHaveBeenCalledOnce());cancelCodexSessionAutoResume();await rejected;
+    expect(select).toHaveBeenCalledOnce();expect(open).not.toHaveBeenCalled();expect(state.read()).toEqual([id]);
+  });
+
   it("restores stored sessions with Session Integration disabled", async () => {
     const state = createContext(["01a04882-d037-7a42-ad24-9afb61901181"]);
     const openSession = vi.fn();

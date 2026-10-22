@@ -179,7 +179,7 @@ async function hydrateUsage(context: vscode.ExtensionContext, repo: AccountsRepo
       return;
     }
 
-    const entry = await loadDailyTokenUsage(context, accountId, signal => fetchAccountDailyUsage(repo, account, 30, signal), { manual: true });
+    const entry = await loadDailyTokenUsage(context, accountId, signal => fetchAccountDailyUsage(repo, account, 30, signal), { manual: true, accountLabel: account.email });
     if (!detailsPanel || requestId !== detailsPanelRequestId || detailsPanelState.accountId !== accountId) {
       return;
     }

@@ -4,7 +4,7 @@ import type {
   DashboardSettings,
   DashboardState
 } from "../../src/domain/dashboard/types";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { createPortal } from "preact/compat";
 import {
   SettingsDiscreteSlider,
@@ -16,7 +16,7 @@ import {
 } from "./components";
 import { formatTemplate } from "./helpers";
 import { renderRemoveIcon } from "./icons";
-import { handleTabKeyDown, useModalAccessibility } from "./primitives";
+import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
 
 import { BrowserNotifications } from "./browserNotifications";
@@ -27,6 +27,7 @@ const AUTO_REFRESH_VALUES = Array.from({ length: 56 }, (_, index) => index + 5);
 const AUTO_REFRESH_SCALE_VALUES = [5, 15, 30, 45, 60];
 const CURRENT_AUTO_REFRESH_VALUES = Array.from({ length: 60 }, (_, index) => index + 1);
 const CURRENT_AUTO_REFRESH_SCALE_VALUES = [1, 15, 30, 45, 60];
+const USAGE_HISTORY_RETENTION_VALUES = Array.from({length:90},(_,index)=>index+1);
 const TOKEN_HISTORY_GAP_VALUES = Array.from({ length: 1440 }, (_, index) => index + 1);
 const AUTO_SWITCH_VALUES = Array.from({ length: 21 }, (_, index) => index);
 const AUTO_RESET_VALUES = Array.from({ length: 101 }, (_, index) => index);
@@ -100,9 +101,12 @@ export function SettingsOverlay(props: {
   const passwordCopy = resolvePasswordCopy(props.lang, !props.encryptedSyncNeedsConfiguration);
   const navigationCopy = resolveSettingsNavigationCopy(props.lang);
   const tabs = [...navigationCopy.tabs, { id: "tools" as const, label: "Tools", heading: "System tools", description: "Cleanup, diagnostics, and recovery." }];
+  const [clearQuotaOpen, setClearQuotaOpen] = useState(false);
+  useEffect(()=>setClearQuotaOpen(false),[props.open,props.targetDeviceId]);
   const [logRetentionPreview, setLogRetentionPreview] = useState<number>();
 
   return createPortal(
+    <>
     <div class={`overlay ${props.open ? "open" : ""}`} aria-hidden={!props.open} onPointerDown={accessibility.onBackdropPointerDown} onMouseDown={accessibility.onBackdropMouseDown} onClick={accessibility.onBackdropClick}>
       <div
         ref={accessibility.modalRef}
@@ -170,7 +174,7 @@ export function SettingsOverlay(props: {
         </div>
         <div class="settings-modal-body">
           {document.documentElement.dataset["dashboardHost"] === "browser" && <BrowserNotifications />}
-          <fieldset class="settings-offline-fieldset" disabled={props.connected === false}>
+          <fieldset class="settings-offline-fieldset" disabled={props.connected === false || props.targetConnected === false}>
           <div
             class="settings-tab-panel"
             id="settings-panel-general"
@@ -581,24 +585,7 @@ export function SettingsOverlay(props: {
                 onPreview={props.onThresholdPreview}
                 onCommit={props.onThresholdCommit}
               />
-              <SettingsToggleBlock
-                title="Automatic token history"
-                sub="Save daily usage; existing history stays when off."
-                enabled={props.settings.dailyTokenUsageEnabled === true}
-                className="settings-block-wide"
-                onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}
-              >
-                <SettingsDiscreteSlider
-                  value={props.settings.dailyTokenUsageIntervalMinutes ?? 60}
-                  values={TOKEN_HISTORY_GAP_VALUES}
-                  accent="sky"
-                  scaleValues={[1, 360, 720, 1080, 1440]}
-                  valueLabel={(value) => value === 1440 ? "1D" : value < 60 ? `${value}M` : `${Math.floor(value / 60)}H${value % 60 ? ` ${value % 60}M` : ""}`}
-                  description={() => "Gap between automatic checks; server retry delays still apply."}
-                  onPreview={(value) => props.onPatchSettings({ dailyTokenUsageIntervalMinutes: value })}
-                  onCommit={(value) => patchAndSend("dailyTokenUsageIntervalMinutes", value)}
-                />
-              </SettingsToggleBlock>
+
             </div>
           </div>
           <div
@@ -622,17 +609,43 @@ export function SettingsOverlay(props: {
                   <button
                     class="settings-history-clear"
                     type="button"
-                    disabled={props.usageHistoryCount === 0}
+                    disabled={props.usageHistoryCount === 0 || props.targetConnected === false || props.connected === false}
                     title={usageHistoryCopy.clear}
                     aria-label={usageHistoryCopy.clear}
-                    onClick={props.onClearUsageHistory}
+                    onClick={()=>setClearQuotaOpen(true)}
                   >
                     {renderRemoveIcon()}
                   </button>
                 </div>
-                <p class="settings-note">Quota history is no longer recorded. Previously saved samples remain available until explicitly cleared.</p>
+                <SettingsDiscreteSlider
+                  value={props.settings.usageHistoryRetentionDays}
+                  values={USAGE_HISTORY_RETENTION_VALUES}
+                  accent="sky"
+                  scaleValues={[1,7,30,60,90]}
+                  valueLabel={value=>`${value} days`}
+                  description={value=>`Record quota changes and keep ${value} days of graph history.`}
+                  onPreview={value=>props.onPatchSettings({usageHistoryRetentionDays:value})}
+                  onCommit={value=>patchAndSend('usageHistoryRetentionDays',value)}
+                />
               </div>
-              <div class="settings-block settings-block-wide"><div class="settings-block-title">Usage log</div><p class="settings-note">Verified VS Code tokens stay in SQLite, including disabled and removed accounts. New quota snapshots and other-client usage are not recorded.</p></div>
+              <SettingsToggleBlock
+                title="Usage log"
+                sub="Save verified VS Code token usage. History and account names stay when disabled or removed."
+                enabled={props.settings.dailyTokenUsageEnabled === true}
+                className="settings-block-wide"
+                onToggle={(enabled) => patchAndSend("dailyTokenUsageEnabled", enabled)}
+              >
+                <SettingsDiscreteSlider
+                  value={props.settings.dailyTokenUsageIntervalMinutes ?? 60}
+                  values={TOKEN_HISTORY_GAP_VALUES}
+                  accent="sky"
+                  scaleValues={[1, 360, 720, 1080, 1440]}
+                  valueLabel={(value) => value === 1440 ? "1D" : value < 60 ? `${value}M` : `${Math.floor(value / 60)}H${value % 60 ? ` ${value % 60}M` : ""}`}
+                  description={() => "Gap between automatic checks; server retry delays still apply."}
+                  onPreview={(value) => props.onPatchSettings({ dailyTokenUsageIntervalMinutes: value })}
+                  onCommit={(value) => patchAndSend("dailyTokenUsageIntervalMinutes", value)}
+                />
+              </SettingsToggleBlock>
               <SettingsToggleBlock
                 title="Auto Sync"
                 sub={transferCopy.syncSub}
@@ -765,7 +778,9 @@ export function SettingsOverlay(props: {
           </div>
         </fieldset></div>
       </div>
-    </div>, document.body
+    </div>
+    <ModalShell open={props.open && clearQuotaOpen} title="Clear quota graph history?" closeLabel="Cancel clearing quota history" className="action-confirmation-modal" onClose={()=>setClearQuotaOpen(false)}><p>Remove saved quota graph samples for {props.targetName}. New quota changes continue recording. Token usage and accounts are kept.</p><div class="modal-actions"><button type="button" onClick={()=>setClearQuotaOpen(false)}>Cancel</button><button type="button" class="danger" disabled={props.targetConnected === false || props.connected === false} onClick={()=>{setClearQuotaOpen(false);props.onClearUsageHistory();}}>Clear quota history</button></div></ModalShell>
+    </>, document.body
   );
 }
 

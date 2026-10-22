@@ -175,6 +175,15 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
     await page.evaluate(previous => { document.documentElement.dataset.theme = previous; }, previousTheme);
   }
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Inspector fits viewport');
+  await tool('Agents');
+  const workspaceTabCount=await page.locator('.cli-context-tabs-v3 [role=tab]').count();
+  await page.locator('.cli-agent-row').filter({hasText:'Reviewer'}).click();
+  await page.getByText('Agent reviewer message',{exact:true}).waitFor();
+  assert.equal(await page.locator('.cli-context-tabs-v3 [role=tab]').count(),workspaceTabCount,'Selecting an agent stays in the shared Agents panel');
+  await page.screenshot({path:path.join(output,`workspace-agents-${width}.png`)});
+  await page.getByRole('tab',{name:/All agents/}).click();
+  await page.locator('.cli-agent-row').filter({hasText:'Reviewer'}).waitFor();
+
   if (width === 1440 || width === 390) {
     await hide();
     const openSidebar = page.getByRole('button', exact('Show sessions sidebar'));

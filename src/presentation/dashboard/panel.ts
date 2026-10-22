@@ -23,7 +23,7 @@ import {
 import { DashboardOAuthCoordinator } from "./oauthCoordinator";
 import { backfillMissingResetCreditExpiries } from "./resetCreditsBackfill";
 import { consumeDashboardActionPrompts, withDashboardNotificationSuppression } from "../../utils/notificationPolicy";
-import { readDashboardUsageSummary, saveDashboardUsageHistory } from "../../services/dashboardUsageHistory";
+import { appendDashboardUsageSnapshot, readDashboardUsageSummary, saveDashboardUsageHistory } from "../../services/dashboardUsageHistory";
 import { handleDashboardSettingUpdate, pickDashboardCodexAppPath, pickDashboardCodexCliPath } from "./settings";
 import { scheduleExtensionHostReload } from "../../application/accounts/switchEffects";
 import { resolveOnboardingCompleted } from "../../services/onboarding";
@@ -86,6 +86,7 @@ export async function publishDashboardSnapshot(params: PublishDashboardSnapshotP
     ...params.peerHost?.getDashboardPeerState(),
     onboardingCompleted: await resolveOnboardingCompleted(params.context, baseState)
   };
+  void appendDashboardUsageSnapshot(params.context, state).catch(error=>recordPersistentEvent("warning","dashboard-state","Quota history could not be saved",undefined,error));
   state.usageSummary = readDashboardUsageSummary(params.context);
   void backfillMissingResetCreditExpiries(params.repo, state.accounts, params.schedulePublishState).catch(
     () => undefined
@@ -262,7 +263,7 @@ export class DashboardPanelController {
           },
           onUsageHistory: async (samples) => {
             await saveDashboardUsageHistory(this.context, samples);
-            if (!samples.length) await this.postNotice("warning", "Saved quota history cleared. New quota snapshots remain disabled.");
+            if (!samples.length) await this.postNotice("warning", "Quota graph history cleared. New snapshots continue recording.");
             this.schedulePublishState();
           }
         }).catch((error) => {

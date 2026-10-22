@@ -371,6 +371,7 @@ export interface DashboardUsageSample {
 
 export interface DashboardDailyUsageCacheEntry {
   accountId: string;
+  accountLabel?: string;
   fetchedAt: number;
   usage: CodexDailyUsageBreakdown;
 }
@@ -594,6 +595,7 @@ export type DashboardActionName =
   | "refreshToken"
   | "getDailyUsage"
   | "getUsageGraph"
+  | "clearUsageHistory"
   | "openNewCodexWebview"
   | "resumeCodexSessions"
   | "setCodexSessionGoalStatus"

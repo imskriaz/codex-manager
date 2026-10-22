@@ -117,9 +117,10 @@ export async function upsertDashboardDailyUsageCache(
   context: vscode.ExtensionContext,
   accountId: string,
   usage: CodexDailyUsageBreakdown,
-  fetchedAt = Date.now()
+  fetchedAt = Date.now(),
+  accountLabel?: string
 ): Promise<DashboardDailyUsageCacheEntry[]> {
-  if (!normalizeDashboardDailyUsageCache([{ accountId, fetchedAt, usage }]).length) {
+  if (!normalizeDashboardDailyUsageCache([{ accountId, fetchedAt, usage, accountLabel }]).length) {
     throw new Error("The daily usage cache entry is invalid.");
   }
   return enqueueUsageHistoryWrite(context, async () => {
@@ -128,7 +129,7 @@ export async function upsertDashboardDailyUsageCache(
     if (previous && previous.fetchedAt > fetchedAt) return store ? [previous] : readDashboardDailyUsageCache(context);
     const points = new Map(previous?.usage.points.map(point => [point.date, point]));
     for (const point of usage.points) points.set(point.date, point);
-    const entry = { accountId, fetchedAt, usage: { days: Math.max(previous?.usage.days ?? 1, usage.days),
+    const entry = { accountId, fetchedAt, ...((accountLabel ?? previous?.accountLabel) ? { accountLabel: accountLabel ?? previous?.accountLabel } : {}), usage: { days: Math.max(previous?.usage.days ?? 1, usage.days),
       points: [...points.values()].filter(point => Date.parse(`${point.date}T00:00:00Z`) >= tokenHistoryCutoff()).sort((a, b) => a.date.localeCompare(b.date)).slice(-90) } };
     if (store) {
       upsertDailyUsageRow(store, entry, '');
@@ -155,6 +156,7 @@ export function normalizeDashboardDailyUsageCache(value: unknown): DashboardDail
         typeof entry.accountId === "string" &&
         entry.accountId.length > 0 &&
         entry.accountId.length <= 4096 &&
+        (entry.accountLabel === undefined || (typeof entry.accountLabel === "string" && entry.accountLabel.trim().length > 0 && entry.accountLabel.length <= 320 && !/[\u0000-\u001f\u007f]/.test(entry.accountLabel))) &&
         typeof entry.fetchedAt === "number" &&
         Number.isFinite(entry.fetchedAt) &&
         entry.fetchedAt > 0 &&

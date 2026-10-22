@@ -6,6 +6,7 @@ import { AccountsRepository } from "../src/storage";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
+import * as usageStorage from "../src/storage/sqliteUsage";
 import { applyRemoteProfileToAccount } from "../src/storage/accountMetadata";
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn(), writeAuth: vi.fn(), profile: vi.fn() }));
@@ -222,4 +223,16 @@ it("discards an old optional profile after a newer explicit profile was committe
     applyRemoteProfileToAccount({ account, claims: {}, remoteProfile: { planType: "plus", requestStartedAt: 300 } })
   ).toBe(true);
   expect(account).toMatchObject({ planType: "plus", profileRequestAt: 300 });
+});
+
+
+it('retains the historical account name when removing credentials and preserves deletion on storage failure', async () => {
+  const saved=await repo.upsertFromTokens(tokens());
+  usageStorage.upsertDailyUsageRow(store,{accountId:saved.id,fetchedAt:Date.now(),usage:{days:1,points:[]}},'');
+  const retain=vi.spyOn(usageStorage,'retainDailyUsageAccountLabel').mockImplementationOnce(()=>{throw new Error('Usage storage full');});
+  await expect(repo.removeAccount(saved.id)).rejects.toThrow('Usage storage full');
+  expect(await repo.getAccount(saved.id)).toBeDefined();expect(await repo.getTokens(saved.id)).toBeDefined();
+  retain.mockRestore();await repo.removeAccount(saved.id);
+  expect(await repo.getAccount(saved.id)).toBeUndefined();expect(await repo.getTokens(saved.id,{bypassCache:true})).toBeUndefined();
+  expect(usageStorage.readDailyUsageRow(store,saved.id)).toMatchObject({accountId:saved.id,accountLabel:'a@example.test'});
 });

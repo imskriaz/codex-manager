@@ -51,6 +51,7 @@ import { getCodexSessionReadNotice, readCodexCliSessionMessages, readCodexCliSes
 import { stabilizeSessionProjectPaths } from "./sessionProjectBindings";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import {
+  appendDashboardUsageSnapshot,
   readDashboardUsageSummary,
   saveDashboardUsageHistory
 } from "./dashboardUsageHistory";
@@ -1438,7 +1439,7 @@ export class WebDashboardServer implements vscode.Disposable {
       await clearDashboardCodexCliPath();
     } else if (message.type === "dashboard:usage-history") {
       await saveDashboardUsageHistory(this.context, message.samples);
-      if (!message.samples.length) messages.push({ type: "dashboard:notice", level: "warning", message: "Saved quota history cleared. New quota snapshots remain disabled." });
+      if (!message.samples.length) messages.push({ type: "dashboard:notice", level: "warning", message: "Quota graph history cleared. New snapshots continue recording." });
     }
 
     if (message.type === "dashboard:ready") {
@@ -2948,6 +2949,7 @@ export class WebDashboardServer implements vscode.Disposable {
       accounts,
       peerAccounts: Object.fromEntries(peerSessions.map((peer) => [peer.deviceId, peer.accounts ?? []]))
     };
+    void appendDashboardUsageSnapshot(this.context, dashboardState).catch(error=>recordPersistentEvent("warning","dashboard-state","Quota history could not be saved",undefined,error));
     return { ...dashboardState, usageSummary: readDashboardUsageSummary(this.context) };
   }
 

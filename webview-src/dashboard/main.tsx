@@ -105,7 +105,6 @@ import { initializePublicMessages } from './publicMessages';
 import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
 
 const ACCOUNT_SORT_STORAGE_KEY = "codexManager.dashboardAccountSort.v3";
-const USAGE_HISTORY_STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
 type AccountSort =
   | "auto-queue"
   | "quota"
@@ -828,6 +827,9 @@ function App() {
             setLogConsoleError(undefined);
           } catch { setLogConsoleError("The log response was unreadable. Retry refresh."); }
         } else setLogConsoleError(message.error ?? "No logs were returned. Retry refresh.");
+      }
+      if (message.type === "dashboard:action-result" && message.action === "clearUsageHistory" && message.status === "completed") {
+        usageGraphRequestRef.current = undefined; setUsageGraphData(undefined); setUsageGraphVersion(current=>current+1);
       }
       if (message.type === "dashboard:action-result" && message.action === "clearLogs") {
         if (message.status === "completed") { logConsoleRequestRef.current = undefined; setLogConsoleRecords([]); setLogConsoleError(undefined); refreshLogConsole(); }
@@ -2731,14 +2733,7 @@ function App() {
         onThresholdCommit={handleThresholdCommit}
         onPickCodexAppPath={() => postMessageToHost({ type: "dashboard:pickCodexAppPath" })}
         onClearCodexAppPath={() => postMessageToHost({ type: "dashboard:clearCodexAppPath" })}
-        onClearUsageHistory={() => {
-          postMessageToHost({ type: "dashboard:usage-history", samples: [] });
-          try {
-            window.localStorage.removeItem(USAGE_HISTORY_STORAGE_KEY);
-          } catch {
-            /* optional */
-          }
-        }}
+        onClearUsageHistory={() => { sendAction('clearUsageHistory',undefined,{targetDeviceId:selectedPeerId}); }}
         onExportBackup={handleExportBackup}
         onShowLogs={() => setLogConsoleOpen(true)}
         sendAction={sendAction}

@@ -4,6 +4,7 @@ import * as path from "path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 import type { DashboardActionContext } from "../src/presentation/dashboard/actionHandlers";
+import * as usageHistory from "../src/services/dashboardUsageHistory";
 import * as diagnostics from "../src/utils/persistentLog";
 import * as encryptedSync from "../src/services/encryptedSync";
 import type { CodexManagerAccountRecord } from "../src/core/types";
@@ -2082,6 +2083,16 @@ describe("executeDashboardActionMessage", () => {
     expect(Date.parse(request.searchParams.get("end_date")!) - Date.parse(request.searchParams.get("start_date")!)).toBe(30 * 86_400_000);
     expect(request.searchParams.get("workspace_user")).toBe("true");
     vi.unstubAllGlobals();
+  });
+
+  it('clears quota history through the standard action path and reports a failed save without false success', async () => {
+    const ctx=createContext();const clear=vi.spyOn(usageHistory,'saveDashboardUsageHistory').mockResolvedValue();
+    const request={type:'dashboard:action' as const,action:'clearUsageHistory' as const,requestId:'clear-quota'};
+    await expect(executeDashboardActionMessage(ctx,request)).resolves.toMatchObject({status:'completed',payload:{notice:{level:'info',message:expect.stringContaining('continue recording')}}});
+    expect(clear).toHaveBeenCalledWith(ctx.context,[]);expect(ctx.schedulePublishState).toHaveBeenCalledOnce();
+    vi.mocked(ctx.schedulePublishState).mockClear();clear.mockRejectedValueOnce(new Error('Quota storage full'));
+    await expect(executeDashboardActionMessage(ctx,{...request,requestId:'clear-quota-failed'})).resolves.toMatchObject({status:'failed',errorMessage:expect.stringContaining('Quota storage full')});
+    expect(ctx.schedulePublishState).not.toHaveBeenCalled();
   });
 
   it("returns a visible failure when daily usage has no access token", async () => {

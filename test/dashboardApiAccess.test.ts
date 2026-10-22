@@ -38,6 +38,7 @@ it('denies ungranted actions, other projects and sessions, remote targets, and g
   await expect(authorizeApiMessage(record, message('getCodexCliSessionMessages', { sessionId: 'outside' }))).rejects.toThrow(/outside/);
   await expect(authorizeApiMessage(record, message('getProjectBoard', { targetDeviceId: 'peer' }))).rejects.toThrow(/outside/);
   await expect(authorizeApiMessage(record, message('remove'))).rejects.toThrow(/outside/);
+  await expect(authorizeApiMessage(record, message('clearUsageHistory'))).rejects.toThrow(/outside/);
   await expect(authorizeApiMessage(record, message('resumeCodexSessions'))).rejects.toThrow(/Bulk recovery/);
   await expect(authorizeApiMessage(record, { type: 'dashboard:setting', key: 'apiAccessEnabled', value: false })).rejects.toThrow(/global settings/);
   await expect(authorizeApiMessage({ ...record, permissions: ['getProjectBoard'] }, message('saveProjectTask'))).rejects.toThrow(/permit/);

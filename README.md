@@ -8,7 +8,11 @@ Session cards offer **Hide from boards** without stopping or archiving the conve
 
 Action feedback uses brief success/info toasts (3 seconds); warnings and failures remain for 10 seconds. Background data reads stay quiet.
 
+Token history retains its account name after account removal; the credentials are deleted and historical names follow the masking setting. Older anonymous history keeps a stable identity until its original label is available.
+
 Manager automatically follows the latest valid Codex OAuth login: it adds missing accounts and updates existing credentials. Removing its saved Manager entry does not sign out of Codex, so the active login is added back automatically. If Codex changes the login during an import, the next sync reads the new login; importing never writes older credentials back to Codex. Temporary failures retry, and incomplete auth-file writes preserve the last saved credentials.
+
+WS Cross System uses the shared dashboard password independently of account Auto Sync. The PC reached by the configured HTTPS domain prepares the shared relay after a host-proof check; domain changes are reconciled automatically. Other PCs connect as clients. Account credential synchronization follows its separate settings.
 
 ## What it provides
 
@@ -332,6 +336,6 @@ pauses automatic switching for that Codex home, including automatic reset-credit
 redemption. Select an account with available quota to resume. If quota is unknown,
 a fresh quota check must verify it before automatic switching can resume.
 
-Daily usage records verified VS Code tokens in SQLite and reads only the selected chart window. Disabled or removed accounts remain in historical totals. New quota snapshots and other-client usage are not recorded; existing legacy history remains available. Account colors identify the token bars. Usage requests retain saved data through provider failures, respect retry delays and share guarded token renewal with account details.
+Daily usage records verified VS Code tokens in SQLite and reads only the selected chart window. Disabled or removed accounts remain in historical totals. Quota changes are recorded separately for the quota graph, with retention and confirmed clearing in Settings → Data & sync. Usage log provides the automatic token-history toggle and check interval; verified token records remain available after disabling or removing accounts. Other-client token usage is not counted. Account colors identify the token bars. Usage requests retain saved data through provider failures, respect retry delays and share guarded token renewal with account details.
 
-Task workspaces use compact System and Project selectors, responsive Board/List/Gantt/Calendar tabs, environment metadata in Overview and an Agents view with the main model above its subagents. The all-account quota refresh cadence remains independent of optional pre-switch safety refreshes.
+Task workspaces use single-line System and Project selectors with hover counts and responsive Board/List/Gantt/Calendar tabs. Search filters grouped sessions as well as top-level tasks. Overview contains environment metadata; Activities presents a focused timeline. The Agents tab keeps the main model and subagent transcripts inside the task, using the same panel as the workspace sidebar. The all-account quota refresh cadence remains independent of optional pre-switch safety refreshes.

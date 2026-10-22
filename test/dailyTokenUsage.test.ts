@@ -8,6 +8,7 @@ import { readDashboardDailyUsage, queryDashboardUsage, upsertDashboardDailyUsage
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { configureCrossWindowOperationCoordinator } from "../src/utils/crossWindowOperations";
 import { removeTestDirectory } from "./testFilesystem";
+import { retainDailyUsageAccountLabel, upsertDailyUsageRow } from "../src/storage/sqliteUsage";
 import { APIError } from "../src/core/errors";
 import { fetchWithTimeout } from "../src/utils/network";
 
@@ -41,6 +42,19 @@ describe("daily token usage on account load", () => {
     expect(JSON.parse(String(store.prepare("SELECT data FROM daily_usage WHERE account_id='a'").get()?.["data"])).usage.points).toEqual([]);
     expect(readDashboardDailyUsage(context(), "a")?.usage.points).toEqual(usage.points);
   });
+  it('retains an account label in history across removal, unnamed legacy updates and graph queries', async () => {
+    const fetch=vi.fn().mockResolvedValue(usage);
+    await loadDailyTokenUsage(context(),'a',fetch,{manual:true,accountLabel:'former@example.test'});
+    expect(readDashboardDailyUsage(context(),'a')?.accountLabel).toBe('former@example.test');
+    retainDailyUsageAccountLabel(store,'a','renamed@example.test');
+    upsertDailyUsageRow(store,{accountId:'a',fetchedAt:now+1,usage},'');
+    const result=queryDashboardUsage(context(),{mode:'tokens',from:Date.parse('2026-10-01'),to:Date.parse('2026-10-23')});
+    expect(result.dailyUsageCache[0]).toMatchObject({accountId:'a',accountLabel:'renamed@example.test',usage:{points:usage.points}});
+    const header=String(store.prepare("SELECT data FROM daily_usage WHERE account_id='a'").get()?.['data']);
+    expect(header).not.toMatch(/accessToken|refreshToken|idToken/);
+    expect(()=>retainDailyUsageAccountLabel(store,'a','bad\nlabel')).toThrow('label is invalid');
+  });
+
   it.each([1, 1440])("waits the full %i-minute gap after an account fails, without delaying other accounts", async gap => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "dailyTokenUsageIntervalMinutes" ? gap : fallback } as never);
     const failed = vi.fn().mockRejectedValue(new Error("offline"));

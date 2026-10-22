@@ -46,7 +46,7 @@ try {
     assert.equal(await page.locator('#conversation .cli-session-message').count(),0,'Legacy share revocation removes the rendered conversation');
     let revoked = false, failWrites = false, holdWrite = false, releaseWrite, failFile = false, historyWarningsOnly = false;
     let permissions = ['messages','activities','files'];
-    let taskMessages = [...messages], holdRead = false, releaseRead;
+    let taskMessages = [...messages,{id:'thinking',kind:'reasoning',text:'Private reasoning noise'},{id:'failed-tool',kind:'tool-call',status:'failed',text:'Failed attempt noise'}], holdRead = false, releaseRead;
     const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
     taskMessages[0] = { ...taskMessages[0], images: [{ src: image, alt: 'Shared attachment' }] };
     const comments = [];
@@ -81,6 +81,9 @@ try {
     await page.locator('.task-board-card').filter({hasText:'Release work'}).click();
     await page.getByRole('tab',{name:'Activities',exact:true}).click();
     await page.locator('.task-detail-panel .cli-session-message').nth(1).waitFor();
+    assert.equal(await page.locator('.task-timeline').count(),1,'Public board uses the same task timeline');
+    assert.equal(await page.getByText('Private reasoning noise',{exact:true}).count(),0);
+    assert.equal(await page.getByText('Failed attempt noise',{exact:true}).count(),0);
     assert.equal(await page.getByRole('tab', {name:'Messages',exact:true}).count(), 0, 'Task history has a combined Activities tab');
     assert.equal(await page.locator('.task-detail-panel table').count(), 1);
     await page.getByRole('button',{name:'Preview Shared attachment',exact:true}).click();

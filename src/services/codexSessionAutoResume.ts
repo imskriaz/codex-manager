@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
@@ -598,6 +599,8 @@ export function resumePersistedCodexSessions(
     const changed = onDidChangeConfiguration((event) => {
       if (!isAutoResumeAvailable())
         controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
+      else if (event.affectsConfiguration("codexManager.codexHome"))
+        controller.abort(new Error("The Codex home changed. Saved recovery was retained for its original home."));
       else if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled"))
         controller.abort(new Error("The goal-only preference changed. Remaining sessions will be checked again on the next activation."));
     });
@@ -605,6 +608,21 @@ export function resumePersistedCodexSessions(
       controller.signal.throwIfAborted();
       unrestoredOpenSnapshots.add(context.workspaceState);
       const goalOnly = isAutoResumeGoalOnlyEnabled();
+      const recoveryHome = resolveCodexHome();
+      // Retry read-only verification before dispatch; editor opens and turns are never replayed here.
+      const verify = async (candidates: string[]): Promise<string[]> => {
+        for (let attempt = 0; ; attempt++) {
+          controller.signal.throwIfAborted();
+          if (resolveCodexHome() !== recoveryHome) throw new Error("The Codex home changed. Saved recovery was retained.");
+          try {
+            return await readAutoResumeCodexSessionIds(recoveryHome, undefined, candidates, controller.signal, "recovery", goalOnly);
+          } catch (error) {
+            if (attempt >= 2 || controller.signal.aborted || !isAutoResumeAvailable()) throw error;
+            recordPersistentEvent("warning", "auto-resume", "Startup verification will retry before opening sessions", { attempt: attempt + 1 }, error);
+            await delay(250 * (attempt + 1), undefined, { signal: controller.signal });
+          }
+        }
+      };
       const savedIds = normalizeIds([...readPersistedSessionIds(context), ...readPersistedSessionIds(context, true)]);
       recordPersistentEvent("info", "auto-resume", "Startup recovery loaded", { savedCount: savedIds.length, goalOnly });
       recordPersistentEvent("debug", "auto-resume", "Startup recovery session IDs", { ids: savedIds });
@@ -612,7 +630,7 @@ export function resumePersistedCodexSessions(
       const missingTitles = savedIds.filter(id => !savedTitles[id]);
       if (missingTitles.length) Object.assign(savedTitles, await captureRecoveryMetadata(missingTitles, controller.signal));
       const queuedIds = readQueuedCodexSessionPreferences(resolveCodexHome());
-      const ids = orderCodexSessionRecoveryIds(resolveCodexHome(), filterSessionAutoResumeIds(resolveCodexHome(), await bounded(() => readAutoResumeCodexSessionIds(undefined, undefined, savedIds, controller.signal, "recovery", goalOnly), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
+      const ids = orderCodexSessionRecoveryIds(resolveCodexHome(), filterSessionAutoResumeIds(resolveCodexHome(), await bounded(() => verify(savedIds), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
         "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal))).filter(id => !queuedIds.has(id));
       if (!isAutoResumeAvailable()) {
         await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
@@ -656,7 +674,7 @@ export function resumePersistedCodexSessions(
           );
         try {
           controller.signal.throwIfAborted();
-          if (!(await bounded(() => readAutoResumeCodexSessionIds(undefined, undefined, [id], controller.signal, "recovery", goalOnly), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
+          if (!(await bounded(() => verify([id]), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
             "Auto Resume could not verify this saved session before its deadline.", controller.signal)).length) {
             recordPersistentEvent("info", "auto-resume", "Session skipped because recovery is no longer eligible", { sessionId: id, sessionRef: toSessionLogRef(id) });
             remaining = remaining.filter((candidate) => candidate !== id);

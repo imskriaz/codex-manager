@@ -717,7 +717,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   async signRealtimePeerPayload(payload: string): Promise<string | undefined> {
-    if (!this.isEnabled()) return undefined;
+    if (!this.canAuthenticatePeers()) return undefined;
     const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
     if (!passphrase) return undefined;
     return crypto
@@ -732,7 +732,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
    * this value with user-only file permissions.
    */
   async getRealtimeRelayKey(): Promise<string | undefined> {
-    if (!this.isEnabled()) return undefined;
+    if (!this.canAuthenticatePeers()) return undefined;
     const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
     if (!passphrase) return undefined;
     return crypto.createHash("sha256").update(`peer-presence-v1:${passphrase}`, "utf8").digest("base64url");
@@ -1507,6 +1507,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
       }
       return false;
     }
+  }
+
+  private canAuthenticatePeers(): boolean {
+    const config = getCodexManagerConfiguration();
+    return this.isEnabled() || (config.get<boolean>("webDashboardEnabled", false) && config.get<boolean>("webSocketServerEnabled", true));
   }
 
   private isEnabled(): boolean {

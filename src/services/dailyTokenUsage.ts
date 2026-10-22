@@ -34,7 +34,7 @@ export function loadDailyTokenUsage(
   context: vscode.ExtensionContext,
   accountId: string,
   fetchUsage: (signal: AbortSignal) => Promise<CodexDailyUsageBreakdown | undefined>,
-  options: { manual?: boolean } = {}
+  options: { manual?: boolean; accountLabel?: string } = {}
 ): Promise<DashboardDailyUsageCacheEntry> {
   let requests = inFlight.get(context.globalState);
   if (!requests) { requests = new Map(); inFlight.set(context.globalState, requests); }
@@ -64,7 +64,7 @@ export function loadDailyTokenUsage(
       const usage = await (options.manual ? fetchUsage(signal) : runWithBulkProviderRequests(() => fetchUsage(signal)));
       signal.throwIfAborted();
       if (!isDailyUsageBreakdown(usage)) throw new Error("The usage endpoint returned no readable daily data.");
-      const entries = await upsertDashboardDailyUsageCache(context, accountId, usage, at);
+      const entries = await upsertDashboardDailyUsageCache(context, accountId, usage, at, options.accountLabel);
       const entry = entries.find(entry => entry.accountId === accountId);
       if (!entry) throw new Error("Daily usage could not be saved.");
       await saveCheck(context, accountId, { at, verifiedTokens: true });

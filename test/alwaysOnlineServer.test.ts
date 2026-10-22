@@ -1,4 +1,9 @@
 import { readFileSync } from "fs";
+import { randomBytes } from "crypto";
+vi.mock("crypto", async importOriginal => {
+  const actual = await importOriginal<typeof import("crypto")>();
+  return { ...actual, randomBytes: vi.fn(actual.randomBytes) };
+});
 import * as vscode from "vscode";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -52,6 +57,18 @@ describe("always-online WebSocket relay handoff", () => {
     await expect(pending).resolves.toBe("stopped"); expect(start).not.toHaveBeenCalled(); expect(stop).toHaveBeenCalledOnce();
   });
 
+  it.each([false,true])("converges to the latest domain while an old host check is pending (old failure: %s)", async fail => {
+    let domain='https://old.example',finish!:(value:boolean)=>void,reject!:(error:Error)=>void;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='cloudflaredDomain'?domain:key==='webDashboardEnabled'?true:fallback} as never);
+    const verify=vi.fn().mockImplementationOnce(()=>new Promise<boolean>((resolve,fail)=>{finish=resolve;reject=fail;})).mockResolvedValue(true);
+    const server=new AlwaysOnlineServer({} as never,{getRealtimeRelayKey:async()=> 'key'} as never,verify);
+    const stop=vi.spyOn(server,'stop').mockResolvedValue();const start=vi.spyOn(server,'start').mockResolvedValue('started');
+    const first=server.applyConfiguration();domain='https://new.example';const second=server.applyConfiguration();
+    if(fail) reject(new Error('Old domain unavailable'));else finish(true);
+    await expect(first).resolves.toBe('started');await expect(second).resolves.toBe('started');
+    expect(verify).toHaveBeenCalledTimes(2);expect(start).toHaveBeenCalledOnce();expect(stop).toHaveBeenCalledOnce();
+  });
+
   it("generates an unpredictable admin token without host details", () => {
     const first = createRelayAdminToken();
     const second = createRelayAdminToken();
@@ -59,6 +76,17 @@ describe("always-online WebSocket relay handoff", () => {
     expect(second).not.toBe(first);
     expect(isLegacyRelayAdminToken(first)).toBe(false);
     expect(isLegacyRelayAdminToken("m9abcdef-1234567890-example-host")).toBe(true);
+  });
+
+  it("does not generate tokens that trigger legacy rotation on the next startup", () => {
+    const ambiguous = 'abcdefgh-ijklmnop-' + 'q'.repeat(24) + 'A';
+    const strong = Buffer.alloc(32, 255);
+    expect(Buffer.from(ambiguous, 'base64url').toString('base64url')).toBe(ambiguous);
+    expect(isLegacyRelayAdminToken(ambiguous)).toBe(true);
+    vi.mocked(randomBytes).mockReturnValueOnce(Buffer.from(ambiguous, 'base64url') as never).mockReturnValueOnce(strong as never);
+    const token = createRelayAdminToken();
+    expect(token).toBe(strong.toString('base64url'));
+    expect(isLegacyRelayAdminToken(token)).toBe(false);
   });
 
   it("does not mistake the password dashboard HTML for a healthy relay", () => {

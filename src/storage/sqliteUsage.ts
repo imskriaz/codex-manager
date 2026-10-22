@@ -69,14 +69,23 @@ export function readDailyUsageRow(store: SqliteStateStore, accountId: string): D
   return entry;
 }
 
+/** Retain only a display label in an existing usage header; credentials stay in the account vault. */
+export function retainDailyUsageAccountLabel(store: SqliteStateStore, accountId: string, accountLabel: string): void {
+  if (!accountLabel.trim() || accountLabel.length > 320 || /[\u0000-\u001f\u007f]/.test(accountLabel)) throw new Error("The usage account label is invalid.");
+  initializeUsageStorage(store);
+  store.prepare("UPDATE daily_usage SET data=json_set(data,'$.accountLabel',?) WHERE account_id=? AND json_extract(data,'$.accountLabel') IS NOT ?")
+    .run(accountLabel, accountId, accountLabel);
+}
+
 export function upsertDailyUsageRow(store: SqliteStateStore, entry: DashboardDailyUsageCacheEntry, cutoff?: string): void {
   initializeUsageStorage(store);
   store.transaction(() => {
-    const previous = store.prepare("SELECT fetched_at FROM daily_usage WHERE account_id=?").get(entry.accountId);
+    const previous = store.prepare("SELECT fetched_at,json_extract(data,'$.accountLabel') AS account_label FROM daily_usage WHERE account_id=?").get(entry.accountId);
     if (previous && Number(previous["fetched_at"]) > entry.fetchedAt) return;
+    const retained = !entry.accountLabel && typeof previous?.["account_label"] === "string" ? { ...entry, accountLabel: previous["account_label"] } : entry;
     store.prepare(`INSERT INTO daily_usage(account_id,fetched_at,data) VALUES(?,?,?) ON CONFLICT(account_id)
       DO UPDATE SET fetched_at=excluded.fetched_at,data=excluded.data WHERE daily_usage.data!=excluded.data`)
-      .run(entry.accountId, entry.fetchedAt, JSON.stringify({ ...entry, usage: { ...entry.usage, points: [] } }));
+      .run(entry.accountId, entry.fetchedAt, JSON.stringify({ ...retained, usage: { ...entry.usage, points: [] } }));
     const write = store.prepare(`INSERT INTO daily_usage_points(account_id,date,fetched_at,data) VALUES(?,?,?,?)
       ON CONFLICT(account_id,date) DO UPDATE SET fetched_at=excluded.fetched_at,data=excluded.data
       WHERE excluded.fetched_at>=daily_usage_points.fetched_at AND daily_usage_points.data!=excluded.data`);
@@ -142,9 +151,9 @@ export function queryUsageRows(store: SqliteStateStore, query: DashboardUsageGra
     if (typeof oldest === "number") result.oldestAt = oldest;
   } else {
     const entries = new Map<string, DashboardDailyUsageCacheEntry>();
-    for (const row of store.prepare("SELECT account_id,fetched_at FROM daily_usage ORDER BY account_id").all()) {
+    for (const row of store.prepare("SELECT account_id,fetched_at,json_extract(data,'$.accountLabel') AS account_label FROM daily_usage ORDER BY account_id").all()) {
       const accountId = String(row["account_id"]);
-      entries.set(accountId, { accountId, fetchedAt: Number(row["fetched_at"]), usage: { days: 30, points: [] } });
+      entries.set(accountId, { accountId, ...(typeof row["account_label"] === "string" ? {accountLabel: row["account_label"]} : {}), fetchedAt: Number(row["fetched_at"]), usage: { days: 30, points: [] } });
     }
     const rows = store.prepare("SELECT account_id,data FROM daily_usage_points WHERE date>=? AND date<? ORDER BY date DESC,account_id LIMIT 10001")
       .all(new Date(Math.max(query.from, tokenCutoff)).toISOString().slice(0, 10), new Date(query.to).toISOString().slice(0, 10));

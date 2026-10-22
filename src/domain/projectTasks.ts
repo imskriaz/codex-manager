@@ -21,7 +21,7 @@ export type ProjectTaskDetails = {
 };
 export type ProjectTaskMutation = { id: string; title: string; prompt: string; stage: TaskStage; expectedRevision: number; parentTaskId?: string | null; archived?: boolean; hidden?: boolean };
 export const PROJECT_SHARE_FEATURES = [
-  { key: 'activities', label: 'Activities', description: 'Read messages, reasoning, tool calls, output, and logs.' },
+  { key: 'activities', label: 'Activities', description: 'Read the task timeline, messages, and relevant actions.' },
   { key: 'files', label: 'Conversation files', description: 'Read files shared or changed in the conversation history.' },
   { key: 'changes', label: 'Changes', description: 'View recorded edits and current project changes.' },
   { key: 'comments', label: 'Comments', description: 'Read and add task comments.' },

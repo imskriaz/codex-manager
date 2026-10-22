@@ -289,6 +289,7 @@ export class AccountsWorkbench {
           const detail = error instanceof Error ? error.message : String(error);
           console.warn("[codexManager] auto resume failed", error);
           console.warn("[codexManager] automatic session resume could not restore running sessions", detail);
+          void vscode.window.showWarningMessage(`Auto Resume could not restore saved sessions. Recovery was kept. ${detail}`);
         }
       }).catch((error) => console.warn("[codexManager] auto resume startup task failed", error));
     });
