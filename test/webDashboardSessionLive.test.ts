@@ -13,6 +13,21 @@ function host() {
 }
 
 describe("shared dashboard live session delivery", () => {
+  it('relays terminal streams to authenticated peer viewers without origin loops or slow-client buffers', () => {
+    const server=host(), owner=socket(), target=socket(), stranger=socket(), slow=socket(2*1024*1024);
+    server.peerSockets.set('remote-pc',owner).set('target',target).set('stranger',stranger).set('slow',slow);
+    server.authenticatedPeerSockets.add(owner).add(target).add(slow);
+    server.relayTerminalEvent({type:'dashboard:terminal-output',output:{raw:true,id:'stream',terminalId:'pty:one',deviceId:'remote-pc',command:'',cwd:'project',chunk:'screen',stream:'terminal',sequence:1,cols:80,rows:24}});
+    expect(owner.send).not.toHaveBeenCalled(); expect(stranger.send).not.toHaveBeenCalled(); expect(slow.send).not.toHaveBeenCalled();
+    expect(JSON.parse(target.send.mock.calls[0][0])).toMatchObject({type:'peer:terminal-output',deviceId:'remote-pc',output:{raw:true}});
+  });
+  it('rejects terminal events from authenticated sockets claiming another device', async () => {
+    const server=host(), owner=socket(), impostor=socket();
+    server.authenticatedPeerSockets.add(owner).add(impostor);server.peerSockets.set('remote-pc',owner);
+    const observed=vi.fn(), off=subscribeDashboardRealtime(observed);
+    const wire=JSON.stringify({type:'peer:terminal-output',deviceId:'remote-pc',output:{raw:true,id:'stream',terminalId:'pty:one',command:'',cwd:'project',chunk:'screen',stream:'terminal',sequence:1,cols:80,rows:24}});
+    try { await server.handlePeerMessage(wire,impostor);expect(observed).not.toHaveBeenCalled();await server.handlePeerMessage(wire,owner);expect(observed).toHaveBeenCalledOnce(); } finally {off();}
+  });
   it("broadcasts bounded snapshots, fences stale revisions, and disconnects slow browsers", () => {
     const server = host();
     const browser = socket();

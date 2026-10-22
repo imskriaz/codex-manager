@@ -146,6 +146,8 @@ function closePeerSocket(socket) {
 }
 
 function peerActionTimeoutMs(action) {
+  if (action === 'workspaceTerminal') return 10000;
+  if (action === 'workspaceGit' || action === 'workspaceGitHub') return 135000;
   if (action === "sendCodexCliSessionMessage") return 15 * 60 * 1000 + 15 * 1000;
   if (["runWorkspaceTerminalCommand", "saveWorkspaceFile", "pushWorkspaceBranch"].includes(action)) return 135000;
   if (["switch", "refresh", "refreshAll", "refreshToken", "reauthorize", "resyncProfile", "getDailyUsage", "startCodexCliSession", "importSharedJson", "completeOAuthSession"].includes(action)) return 120000;
@@ -261,6 +263,14 @@ function acceptRealtimeEvent(message, socket, deviceId) {
     revisionKey = JSON.stringify([deviceId, "terminal", output.id]);
     const previous = eventRevisions.get(revisionKey);
     if (previous && (previous.completed || output.sequence <= previous.sequence)) return false;
+    if (output.raw === true) {
+      if (!Number.isSafeInteger(output.cols) || output.cols < 2 || output.cols > 300 || !Number.isSafeInteger(output.rows) || output.rows < 1 || output.rows > 120 ||
+          output.exited !== undefined && typeof output.exited !== 'boolean') return false;
+      if (!eventRevisions.has(revisionKey) && eventRevisions.size >= MAX_EVENT_STREAMS) return false;
+      eventRevisions.set(revisionKey, { sequence: output.sequence, expiresAt: Date.now() + EVENT_TTL_MS });
+      broadcast(message, socket);
+      return true;
+    }
     key = JSON.stringify([revisionKey, output.sequence]);
     revision = { sequence: output.sequence };
   } else if (message.type === "peer:terminal-complete") {

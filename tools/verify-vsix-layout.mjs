@@ -15,6 +15,12 @@ if (!existsSync(vsixPath)) {
 }
 
 const listing = listZipEntries(readFileSync(vsixPath)).join("\n");
+if (dependencies.includes('node-pty')) {
+  const paths = new Set(listing.split('\n'));
+  const binaries = ['win32-x64/conpty.node','win32-x64/conpty_console_list.node','win32-x64/conpty/conpty.dll','win32-x64/conpty/OpenConsole.exe','win32-arm64/conpty.node','win32-arm64/conpty_console_list.node','win32-arm64/conpty/conpty.dll','win32-arm64/conpty/OpenConsole.exe','darwin-x64/pty.node','darwin-x64/spawn-helper','darwin-arm64/pty.node','darwin-arm64/spawn-helper'];
+  for (const binary of binaries) if (!paths.has(`extension/node_modules/node-pty/prebuilds/${binary}`)) throw new Error(`VSIX terminal backend is incomplete: ${binary}`);
+  if ([...paths].some(name => name.startsWith('extension/node_modules/node-pty/') && name.endsWith('.pdb'))) throw new Error('VSIX contains unnecessary terminal debug symbols.');
+}
 const missing = dependencies.filter((dependency) => {
   const escaped = dependency.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return !new RegExp(`^extension/node_modules/${escaped}/`, "m").test(listing);

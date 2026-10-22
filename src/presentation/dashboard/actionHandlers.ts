@@ -6,6 +6,9 @@ import { normalizeNativePath } from "../../utils/nativePaths";
 import { runAccountBatch } from "../../application/accounts/batch";
 import * as vscode from "vscode";
 import { readWorkspaceTerminalActivity } from "../../services/dashboardRealtime";
+import { workspaceTerminal } from '../../services/workspaceTerminalPty';
+import { workspaceGit } from '../../services/workspaceGit';
+import { workspaceGitHub } from '../../services/workspaceGitHub';
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
@@ -159,6 +162,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "unarchiveCodexCliSession",
   "deleteCodexCliSession",
   "getWorkspaceEnvironment",
+  "workspaceTerminal", "workspaceGit", "workspaceGitHub",
   "listWorkspaceFiles",
   "readWorkspaceFile",
   "saveWorkspaceFile",
@@ -249,7 +253,7 @@ export async function executeDashboardActionMessage(
   // Routine reads and the console itself must not generate audit traffic.
   if (["viewLogs", "downloadLogs", "clearLogs", "getMaintenanceStatus", "getMaintenancePage",
     "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages",
-    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"
+    "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal"
   ].includes(message.action)) return executeDashboardActionMessageCore(ctx, message);
   const execute = () => runWithPersistentOperation(
     `dashboard:${message.action}`,
@@ -361,7 +365,7 @@ async function runDashboardAction(
   account?: Awaited<ReturnType<AccountsRepository["getAccount"]>>
 ): Promise<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] | undefined> {
   const translate = t(ctx.resolveLanguage());
-  if (payload?.sessionId && ["getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "createWorkspaceTerminal", "runWorkspaceTerminalCommand", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(action)) {
+  if (payload?.sessionId && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "createWorkspaceTerminal", "runWorkspaceTerminalCommand", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(action)) {
     payload = { ...payload, projectPath: await waitWithin(resolveRecordedSessionProject(payload.sessionId, payload.projectPath),
       5_000, "This session's project folder is unavailable. Retry when it is connected.") };
   }
@@ -1022,6 +1026,12 @@ async function runDashboardAction(
       return handleDeleteCodexCliSession(payload);
     case "getWorkspaceEnvironment":
       return { workspaceEnvironment: await readWorkspaceEnvironment(payload?.projectPath, payload?.includeBranchDiff === true, payload?.gitHistory) };
+    case 'workspaceTerminal':
+      return { ...await workspaceTerminal(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.terminalId, payload?.terminalRequest, payload?.terminalProfile, payload?.terminalName), workspaceTerminals: listWorkspaceTerminals() };
+    case 'workspaceGit':
+      return { workspaceGit: await workspaceGit(payload?.projectPath, payload?.gitRequest, payload?.confirmed === true) };
+    case 'workspaceGitHub':
+      return { workspaceGitHub: await workspaceGitHub(payload?.projectPath, payload?.githubRequest, payload?.confirmed === true) };
     case "listWorkspaceFiles":
       return { workspaceFiles: await listWorkspaceFiles(payload?.projectPath) };
     case "readWorkspaceFile":

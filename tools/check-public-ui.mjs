@@ -179,6 +179,8 @@ try {
     await attachmentPreview.getByRole('button',{name:'Close attachment',exact:true}).click();
     await page.context().setOffline(true);await page.waitForFunction(()=>!navigator.onLine);
     assert.equal(await postComment.isDisabled(),true,'Offline comments disable immediately');
+    // navigator.onLine changes before the browser dispatches the offline event.
+    await page.waitForFunction(()=>window.__projectStreams.every(stream=>stream.readyState===2));
     assert.equal(await page.evaluate(()=>window.__projectStreams.every(stream=>stream.readyState===2)),true,'Offline pages release their live connections');
     await detailPanel.getByRole('button',{name:'Close task details',exact:true}).click();await newTask();await ideaTitle.fill('Offline idea');
     assert.equal(await submitIdea.isDisabled(),true,'Public submissions are never queued offline');

@@ -248,7 +248,7 @@ first and cannot be closed; it summarizes the selected project, system, session,
 repository, goal, Auto Resume and queue. **Git**, Files, Reviews, Agents and
 Terminal are closable tabs. The **+** follows the open tabs and opens a floating
 tool menu. Terminal profiles and terminal-close controls stay inside Terminal.
-Session rows use a compact two-line layout, with the title above project/system
+Session rows use a compact two-line layout, with the title above project
 metadata and time. Goal and queue controls use slim rows above the composer.
 Project-grouped sessions use one-line system/project headings and show status/time
 under each title rather than repeating their parent context.
@@ -257,18 +257,13 @@ Git state, recorded file edits, unsaved drafts, observed terminals, and agent
 counts/status, with direct access to recorded agents. Unavailable information is
 marked explicitly; the overview does not scan every project file in the background.
 
-Each project and system keeps its own tabs, commit draft, terminal command and
-unsaved file edits while navigating the workspace. Late responses from another
-context cannot replace the current inspector. Saving retains edits made while
-the save is pending; conflicting file revisions keep the draft for review.
-Git shows changed files, branch tracking and comparison, with confirmed commit
-and push actions. Its **History** view loads 50 commits at a time, showing the
-message, author, date and hash. Select a commit to inspect its project-scoped
-diff; refresh explicitly to see newer commits. Paging stays anchored to the
-loaded revision, and failed reads keep the current history visible.
-Commits include the selected project folder and preserve
-staged changes elsewhere in the repository. These tools require a connected host;
-they do not replay Git, terminal or file writes after reconnect.
+Each project and system keeps its own tool tabs, commit draft and file edits. Git actions retain their pending outcome when a tab closes or the selected project changes. A late commit confirmation clears only the submitted draft, keeping newer edits.
+
+**Terminal** uses xterm.js with a host-owned pseudoterminal. New shared terminals use the same shell process in VS Code and the workspace: ANSI colours, cursor movement, keyboard input, shell history, Ctrl+C, resize, find, copy, rename and split views. Reconnecting restores a bounded screen and scrollback; input is never cached, queued offline or replayed after an uncertain confirmation. An explicit control handoff protects concurrent browser views. Existing native terminals remain available through **Show in VS Code** because VS Code’s public API cannot attach their existing raw screen. Windows and macOS native binaries are bundled; other hosts use VS Code’s matching terminal backend when available and report unavailable support clearly.
+
+**Git** groups Changes, History, Branches, Stashes and GitHub into compact views. Stage or unstage individual files/all changes, inspect diffs, commit staged work, fetch, pull with fast-forward checks, push, manage local branches, merge/abort and save/apply/pop/drop stashes. Destructive actions require review; stale repository views are rejected. Repository-wide actions require the repository root project. Git conflicts and uncertain outcomes remain visible for resolution.
+
+**GitHub** reads the selected system’s canonical GitHub origin and uses that system’s VS Code sign-in or Git credential manager. Credentials never go to the browser. Browse paged pull requests, issues, workflow runs and releases; inspect comments, file patches, checks and job steps; create/comment/close/reopen items, submit reviews, merge a verified PR head, dispatch/cancel/rerun workflows, and create/publish/delete releases. Writes require confirmation and are not replayed automatically. Large reviews, full logs, artifacts and repository administration remain available through **Open on GitHub**. Scoped project API tokens cannot invoke the repository-wide Git/GitHub or terminal actions.
 
 ### Project Kanban and task details
 

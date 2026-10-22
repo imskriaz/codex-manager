@@ -286,47 +286,34 @@ try {
     await page.locator(".cli-file-editor").getByRole("button", { name: "Preview", exact: true }).click();
     await page.locator(".cli-file-editor").getByRole("heading", { name: "Edited Markdown", exact: true }).waitFor();
   });
-  await record("Terminal creation and streamed successful command", async () => {
-    await addTool("Terminal");
-    const terminal = await action("createWorkspaceTerminal", { projectPath: project, terminalProfile: "powershell", terminalName: `Live check ${path.basename(fixture)}` });
-    terminalId = terminal.payload.workspaceTerminal.id;
-    await page.getByRole("combobox", { name: "Select VS Code terminal", exact: true }).selectOption(terminalId);
-    await page.locator(".cli-terminal-command input").fill("node -e \"console.log('LIVE TERMINAL OK');setTimeout(()=>console.log('STREAM END'),400)\"");
-    const started = await clickAction("runWorkspaceTerminalCommand", () => page.getByRole("button", { name: "Run terminal command", exact: true }).click());
-    assert.equal(started.payload.terminalResult.status, "running", "Real host shell integration must expose live output");
-    assert.equal(started.payload.terminalResult.terminalId, terminalId, "The UI runs in the selected terminal");
-    await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:terminal-complete" && event.result.id === id && event.result.status === "completed" && event.result.output.includes("STREAM END")), started.payload.terminalResult.id);
-    await page.locator(".cli-terminal-output article.is-completed").filter({ hasText: "LIVE TERMINAL OK" }).waitFor();
+  const terminalClient = 'live-' + randomUUID();
+  let terminalEpoch, terminalSequence = 0;
+  const typeTerminal = data => action('workspaceTerminal', { projectPath: project, terminalId, terminalRequest: {operation:'input',clientId:terminalClient,epoch:terminalEpoch,sequence:++terminalSequence,data} });
+  const waitTerminal = text => page.waitForFunction(({terminalId,text}) => window.__liveEvents.filter(event=>event.type==='dashboard:terminal-output'&&event.output.raw&&event.output.terminalId===terminalId).map(event=>event.output.chunk).join('').includes(text), {terminalId,text});
+  await record('Shared terminal creation and raw streaming', async () => {
+    const created = await action('workspaceTerminal', {projectPath:project,terminalProfile:'powershell',terminalRequest:{operation:'create',clientId:terminalClient,operationId:randomUUID()}});
+    terminalId=created.payload.workspaceTerminal.id;terminalEpoch=created.payload.terminalSnapshot.epoch;
+    await addTool('Terminal'); await page.getByRole('button',{name:'Refresh terminals',exact:true}).click();
+    await page.getByRole('combobox',{name:'Select terminal',exact:true}).selectOption(terminalId);
+    await typeTerminal("node -e \"console.log('LIVE TERMINAL OK');setTimeout(()=>console.log('STREAM END'),400)\"\r");
+    await waitTerminal('STREAM END');
+    const restored=await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'read',clientId:terminalClient}});
+    assert.ok(restored.payload.terminalSnapshot.content.includes('LIVE TERMINAL OK'));
   });
-  await record("Terminal failed exit and cancellation", async () => {
-    assert.ok(terminalId);
-    for (const [command, status] of [["node -e \"process.exit(7)\"", "failed"], ["node -e \"setInterval(()=>console.log('waiting'),500)\"", "cancelled"]]) {
-      const started = await action("runWorkspaceTerminalCommand", { projectPath: project, terminalId, command });
-      assert.equal(started.payload.terminalResult.status, "running");
-      if (status === "cancelled") {
-        await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:terminal-output" && event.output.id === id && event.output.chunk.includes("waiting")), started.payload.terminalResult.id);
-        await action("cancelWorkspaceTerminalCommand", { terminalId });
-      }
-      await page.waitForFunction(({ id, status }) => window.__liveEvents.some(event => event.type === "dashboard:terminal-complete" && event.result.id === id && event.result.status === status), { id: started.payload.terminalResult.id, status });
-    }
-    await action("cancelWorkspaceTerminalCommand", { terminalId }, "failed");
+  await record('Shared terminal cancellation and concurrent control', async () => {
+    await typeTerminal("node -e \"setInterval(()=>console.log('waiting'),500)\"\r"); await waitTerminal('waiting');
+    await typeTerminal('\x03');
+    const observer='observer-'+randomUUID();
+    await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'input',clientId:observer,epoch:terminalEpoch,sequence:1,data:'echo rejected\r'}},'failed');
+    await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'claim',clientId:observer,takeControl:true}});
+    await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'input',clientId:terminalClient,epoch:terminalEpoch,sequence:terminalSequence+1,data:'echo rejected\r'}},'failed');
+    await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'claim',clientId:terminalClient,takeControl:true}});
   });
-  await record("Terminal busy guard, reload recovery and visible Stop", async () => {
-    assert.ok(terminalId);
-    const started = await action("runWorkspaceTerminalCommand", { projectPath: project, terminalId, command: "node -e \"console.log('RELOAD STREAM');setInterval(()=>{},1000)\"" });
-    const id = started.payload.terminalResult.id;
-    assert.equal(started.payload.terminalResult.status, "running");
-    await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:terminal-output" && event.output.id === id && event.output.chunk.includes("RELOAD STREAM")), id);
-    await action("runWorkspaceTerminalCommand", { projectPath: project, terminalId, command: "echo duplicate" }, "failed");
-    await page.reload();
-    await action("listWorkspaceTerminals");
-    if (await page.getByRole("button", { name: "Show workspace tools", exact: true }).count()) await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
-    await addTool("Terminal");
-    await page.locator(".cli-terminal-output article.is-running").filter({ hasText: "RELOAD STREAM" }).waitFor();
-    await clickAction("cancelWorkspaceTerminalCommand", () => page.locator(".cli-terminal-command").getByRole("button", { name: "Stop", exact: true }).click());
-    await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:terminal-complete" && event.result.id === id && event.result.status === "cancelled"), id);
-    await page.getByRole("textbox", { name: "Terminal command", exact: true }).waitFor({ state: "visible" });
-    assert.equal(await page.getByRole("textbox", { name: "Terminal command", exact: true }).isEnabled(), true);
+  await record('Shared terminal reload screen recovery', async () => {
+    await page.reload(); await page.getByRole('textbox',{name:'Message Codex',exact:true}).waitFor(); await addTool('Terminal');
+    await page.locator('.workspace-xterm .xterm-screen').waitFor();
+    const restored=await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'read',clientId:terminalClient}});
+    assert.ok(restored.payload.terminalSnapshot.content.includes('STREAM END'));
   });
   await record("Git Environment, commit and local-remote push", async () => {
     if(await page.getByRole("button",{name:"Show workspace tools",exact:true}).count()) await page.getByRole("button",{name:"Show workspace tools",exact:true}).click();
@@ -334,25 +321,16 @@ try {
     const inspected = await clickAction("getWorkspaceEnvironment", () => page.getByRole("button", { name: "Refresh Environment", exact: true }).click());
     assert.equal(path.resolve(inspected.payload.workspaceEnvironment.projectPath).toLowerCase(), path.resolve(project).toLowerCase(), "Only commit the disposable repository");
     await addTool("Git");
-    const compared = await clickAction("getWorkspaceEnvironment", () => page.getByRole("button", { name: "Compare branch", exact: true }).click());
-    assert.ok(compared.payload.workspaceEnvironment.branchDiff.includes("+newer external content"));
-    await page.locator(".cli-branch-comparison").filter({ hasText: "newer external content" }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Copy diff", exact: true }).count(), 1, "One copy control per diff");
-    await page.getByRole("button", { name: "Copy diff", exact: true }).click();
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), compared.payload.workspaceEnvironment.branchDiff);
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), "Mobile branch comparison fits the viewport");
-    await page.screenshot({ path: path.join(output, "mobile-comparison.png") });
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    if(await page.getByRole("button",{name:"Show workspace tools",exact:true}).count()) await page.getByRole("button",{name:"Show workspace tools",exact:true}).click();
-    await addTool("Env");
-    await addTool("Git");
-    await page.getByRole("textbox", { name: "Commit message", exact: true }).fill("Verified disposable browser changes");
-    await clickAction("commitWorkspaceChanges", () => page.getByRole("button", { name: "Commit all", exact: true }).click());
-    assert.equal(git("status", "--porcelain"), "");
-    await page.getByRole("button", { name: "Push branch", exact: true }).click();
-    await clickAction("pushWorkspaceBranch", () => page.getByRole("button", { name: "Push", exact: true }).click());
-    assert.equal(git("rev-parse", "HEAD"), git("rev-parse", "origin/main"));
+    await clickAction('workspaceGit', () => page.getByRole('button',{name:'Stage all',exact:true}).click());
+    const compared=await action('workspaceGit',{projectPath:project,gitRequest:{operation:'diff',staged:true}});
+    assert.ok(compared.payload.workspaceGit.diff.includes('+newer external content'));
+    await page.getByRole('textbox',{name:'Commit message',exact:true}).fill('Verified disposable browser changes');
+    await clickAction('workspaceGit',()=>page.getByRole('button',{name:/^Commit staged/}).click());
+    assert.equal(git('status','--porcelain'),'');
+    await page.getByRole('button',{name:'Repository actions',exact:true}).click();
+    await page.getByRole('button',{name:'Push branch',exact:true}).click();
+    await clickAction('workspaceGit',()=>page.getByRole('dialog').getByRole('button',{name:'Confirm',exact:true}).click());
+    assert.equal(git('rev-parse','HEAD'),git('rev-parse','origin/main'));
     await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
   });
   await record("Reviews and Agents states and tool tabs", async () => {
@@ -428,19 +406,9 @@ try {
       await action("deleteCodexCliSession", { sessionId, confirmed: true });
     });
   }
-  if (terminalId) await record("cleanup disposable terminal", async () => {
-    const listed = await action("listWorkspaceTerminals");
-    if (!listed.payload.workspaceTerminals.some(terminal => terminal.id === terminalId)) return;
-    // Stop any test command left behind by a failed assertion before exiting.
-    const id = randomUUID();
-    await page.evaluate(message => window.acquireVsCodeApi().postMessage(message), { type: "dashboard:action", action: "cancelWorkspaceTerminalCommand", requestId: id, payload: { terminalId } });
-    await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.requestId === id), id);
-    const cancellation = await page.evaluate(id => window.__liveEvents.find(event => event.type === "dashboard:action-result" && event.requestId === id), id);
-    if (cancellation.status === "completed") await page.waitForFunction(terminalId => {
-      const outputs = window.__liveEvents.filter(event => event.type === "dashboard:terminal-output" && event.output.terminalId === terminalId);
-      return !outputs.length || window.__liveEvents.some(event => event.type === "dashboard:terminal-complete" && event.result.id === outputs.at(-1).output.id);
-    }, terminalId);
-    await action("runWorkspaceTerminalCommand", { projectPath: project, terminalId, command: "exit" });
+  if (terminalId) await record('cleanup disposable terminal', async () => {
+    const state=await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'read',clientId:'cleanup-'+randomUUID()}});
+    await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'close',clientId:'cleanup-'+randomUUID(),epoch:state.payload.terminalSnapshot.epoch}});
   });
   await browser.close();
   // The only recursive removal is the exact directory returned by mkdtemp.

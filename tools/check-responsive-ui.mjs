@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { Script } from "node:vm";
 import { checkInspectorUi } from "./check-inspector-ui.mjs";
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
@@ -247,7 +248,47 @@ const mockHost = `(() => {
             error = 'Simulated Git comparison failure.';
           } else payload = {workspaceEnvironment:{...environmentFor(message.payload?.projectPath),...(message.payload?.includeBranchDiff ? {branchDiff:'diff --git a/compare.ts b/compare.ts\\n--- a/compare.ts\\n+++ b/compare.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n',branchDiffBase:'origin/main'} : {})}};
         }
-        else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:window.__terminalCreated?[{id:'fixture-terminal',name:'Project terminal',state:'idle',isActive:true}]:[]};
+        else if(message.action === 'workspaceGit') {
+          const query=message.payload.gitRequest,operation=query.operation;
+          if(operation==='commit'&&window.__failCommit) error='Simulated commit failure';
+          else {
+            if(operation==='stage') window.__gitStaged=true;
+            if(operation==='unstage') window.__gitStaged=false;
+            if(operation==='commit') window.__gitStaged=false;
+            const environment=environmentFor(message.payload.projectPath);
+            if(window.__gitStaged) environment.changedFiles[0].index='M';
+            payload={workspaceGit:{revision:'fixture-git-revision',branch:'main',head:'a'.repeat(40),branches:[{name:'main',current:true,remote:false},{name:'feature/demo',current:false,remote:false}],stashes:[{name:'stash@{0}',hash:'b'.repeat(40),subject:'Saved fixture work'}],environment,output:operation==='read'?undefined:'Git operation completed.',...(operation==='diff'?{diff:'diff --git a/src/app.ts b/src/app.ts\\n--- a/src/app.ts\\n+++ b/src/app.ts\\n@@ -1 +1 @@\\n-old\\n+new\\n'}:{})}};
+          }
+        }
+        else if(message.action === 'workspaceGitHub') {
+          const query=message.payload.githubRequest;
+          if(window.__failGitHub) error='GitHub sign-in expired. Connect GitHub and retry.';
+          else {
+            const item={id:12,number:query.section==='pulls'||query.section==='issues'?12:undefined,title:query.section==='pulls'?'Fixture pull request':query.section==='issues'?'Fixture issue':query.section==='actions'?'Fixture workflow':'Fixture release',state:query.section==='actions'?'success':'open',url:'https://github.com/example/project/pull/12',author:'fixture',updatedAt:'2026-10-22T00:00:00Z',headSha:'a'.repeat(40),head:'feature',base:'main',body:'Fixture description'};
+            payload={workspaceGitHub:{repository:'example/project',url:'https://github.com/example/project',authenticated:true,canWrite:true,defaultBranch:'main',items:[item],page:query.page||1,hasMore:false,...(query.operation==='detail'?{detail:item,comments:[{id:1,author:'reviewer',body:'Reviewed fixture',createdAt:'2026-10-22T00:00:00Z'}],files:[{path:'src/app.ts',status:'modified',additions:1,deletions:1,patch:'-old\\n+new'}],checks:[{id:1,name:'CI',status:'success'}]}:{}),workflows:[{id:7,name:'Fixture workflow',state:'active'}]}};
+            if(window.__failGithubAfterWrite && !['read','detail','connect'].includes(query.operation)) Object.assign(payload.workspaceGitHub,{items:[],refreshFailed:true,warning:'The action completed, but the updated list could not be read. Refresh before another action.'});
+          }
+        }
+        else if(message.action === 'workspaceTerminal') {
+          const query=message.payload.terminalRequest;
+          const terminals=window.__fixtureTerminals||(window.__fixtureTerminals=[]);
+          let terminal=terminals.find(item=>item.id===message.payload.terminalId);
+          if(query.operation==='create') {terminal={id:'pty:'+crypto.randomUUID(),name:'Project terminal',shared:true,cwd:message.payload.projectPath,state:'running',isActive:true,epoch:crypto.randomUUID(),sequence:0,inputSequence:0,cols:80,rows:24,content:'\\x1b[31mFixture error\\x1b[0m\\r\\nPS fixture> '};terminals.push(terminal);}
+          if(!terminal) error='Terminal no longer exists.';
+          else {
+            if(query.operation==='resize') {terminal.cols=query.cols;terminal.rows=query.rows;}
+            if(query.operation==='rename') terminal.name=message.payload.terminalName;
+            if(query.operation==='input') {
+              terminal.inputSequence=query.sequence;terminal.content+=query.data;
+              const output={raw:true,id:terminal.epoch,terminalId:terminal.id,command:'',cwd:terminal.cwd,chunk:query.data,stream:'terminal',sequence:++terminal.sequence,cols:terminal.cols,rows:terminal.rows};
+              dispatch({type:'dashboard:terminal-output',output});
+            }
+            payload={workspaceTerminal:{...terminal},workspaceTerminals:terminals.map(item=>({...item})),terminalSnapshot:{id:terminal.id,epoch:terminal.epoch,sequence:terminal.sequence,inputSequence:terminal.inputSequence,cols:terminal.cols,rows:terminal.rows,writable:true,exited:false,...(['create','read','claim'].includes(query.operation)?{content:terminal.content}:{})}};
+            if(query.operation==='close') {terminals.splice(terminals.indexOf(terminal),1);payload.workspaceTerminals=terminals.map(item=>({...item}));}
+            if(window.__loseTerminalInput&&query.operation==='input') return;
+          }
+        }
+        else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:window.__fixtureTerminals||[]};
         else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0}]:[]};
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
@@ -258,7 +299,7 @@ const mockHost = `(() => {
         if(message.action==='previewMaintenance' && window.__holdNextMaintenancePreview) {window.__holdNextMaintenancePreview=false;window.__heldMaintenancePreview=result;return;}
         if(message.action==='getCodexSubAgentMessages' && window.__holdNextAgentRead) {window.__holdNextAgentRead=false;window.__heldAgentResult=result;return;}
         if(message.action==='getWorkspaceEnvironment' && window.__holdNextEnvironment) {window.__holdNextEnvironment=false;window.__heldEnvironmentResult=result;return;}
-        if(message.action==='commitWorkspaceChanges' && window.__holdNextCommit) {window.__holdNextCommit=false;window.__heldCommitResult=result;return;}
+        if((message.action==='commitWorkspaceChanges'||message.action==='workspaceGit'&&message.payload.gitRequest.operation==='commit') && window.__holdNextCommit) {window.__holdNextCommit=false;window.__heldCommitResult=result;return;}
         if(message.action==='saveWorkspaceFile' && window.__holdNextSave) {window.__holdNextSave=false;window.__heldSaveResult=result;return;}
         if(message.action==='shareProjectBoard' && window.__holdProjectShare) {window.__holdProjectShare=false;window.__heldProjectShareResult=result;return;}
         if(message.action==='readWorkspaceFile' && window.__holdNextWorkspaceFileRead) {window.__holdNextWorkspaceFileRead=false;window.__heldWorkspaceFileResult=result;return;}
@@ -281,6 +322,7 @@ const mockHost = `(() => {
     }, 50);
   },getState(){},setState(){}});
 })();`;
+new Script(mockHost, { filename: "dashboard-fixture-host.js" });
 const output = path.join(tmpdir(), "codex-manager-ui-check");
 await mkdir(output, { recursive: true });
 async function selectSidebarSystem(page, width, id) {
@@ -328,7 +370,7 @@ try {
     page.setDefaultTimeout(30_000);
     console.log(`Checking ${width}x${height}: session list`);
     const errors = [];
-    page.on("pageerror", (error) => errors.push(error.message));
+    page.on("pageerror", (error) => { errors.push(error.message); console.log("Browser error:",error.message); });
     await page.route("**/api/**", (route) => route.abort());
     const shareRequests = [];
     let heldShare, releaseShare, shareResponse;

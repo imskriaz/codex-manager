@@ -18,6 +18,9 @@ if ("setState" in vscodeApi) vscodeApi.setState?.({ dashboardOpen: true });
 
 export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
   switch (action) {
+    case "workspaceTerminal": return 10_000;
+    case "workspaceGit":
+    case "workspaceGitHub": return 135_000;
     case "refreshView":
       return 8_000;
     case "sendCodexCliSessionMessage":

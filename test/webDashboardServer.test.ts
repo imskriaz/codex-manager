@@ -53,7 +53,7 @@ it("avoids rebuilding account snapshots for read-only graph, conversation, and w
     appendClientSnapshot: (messages: unknown[], request: unknown) => Promise<void>;
   };
   server.buildState = vi.fn().mockResolvedValue({ accounts: [] });
-  for (const action of ["viewLogs", "downloadLogs", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals"]) {
+  for (const action of ["viewLogs", "downloadLogs", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "workspaceTerminal", "workspaceGit", "workspaceGitHub"]) {
     const messages: unknown[] = [];
     await server.appendClientSnapshot(messages, { type: "dashboard:action", action });
     expect(messages).toEqual([]);

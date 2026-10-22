@@ -8,12 +8,20 @@ export type WorkspaceTerminalActivity = {
 export const emptyWorkspaceTerminalActivity: WorkspaceTerminalActivity = { outputs: {}, results: [], completed: [] };
 export const terminalActivityKey = (item: { id: string; deviceId?: string }): string => `${item.deviceId ?? "local"}:${item.id}`;
 
+export function isRawWorkspaceTerminalOutput(value: DashboardWorkspaceTerminalOutput): boolean {
+  return value.raw === true && typeof value.chunk === 'string' && value.chunk.length <= 65536 &&
+    typeof value.id === 'string' && value.id.length <= 256 && typeof value.terminalId === 'string' && value.terminalId.length <= 256 &&
+    Number.isSafeInteger(value.sequence) && value.sequence >= 0 && Number.isSafeInteger(value.cols) && value.cols! >= 2 && value.cols! <= 300 &&
+    Number.isSafeInteger(value.rows) && value.rows! >= 1 && value.rows! <= 120 && (value.exited === undefined || typeof value.exited === 'boolean');
+}
+
 export function reduceWorkspaceTerminalActivity(state: WorkspaceTerminalActivity, event:
   | { output: DashboardWorkspaceTerminalOutput; replay?: boolean }
   | { result: DashboardWorkspaceTerminalResult }
   | { clear: true; deviceId?: string }
   | { resetDevice: string }
 ): WorkspaceTerminalActivity {
+  if ('output' in event && event.output.raw) return state;
   if ("clear" in event) return { ...state, results: event.deviceId ? state.results.filter((result) => (result.deviceId ?? "local") !== event.deviceId) : [] };
   if ("resetDevice" in event) {
     let next = state;

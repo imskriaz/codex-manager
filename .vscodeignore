@@ -39,6 +39,16 @@ media/codex-tools-logo-square.svg
 out/**/*.d.ts
 out/**/*.d.ts.map
 out/services/announcements.*
+node_modules/node-pty/**/*.pdb
+node_modules/node-pty/src/**
+node_modules/node-pty/deps/**
+node_modules/node-pty/third_party/**
+node_modules/node-pty/scripts/**
+node_modules/node-pty/typings/**
+node_modules/node-pty/lib/**/*.test.js
+node_modules/node-pty/lib/**/*.d.ts
+node_modules/node-addon-api/**
+!node_modules/node-addon-api/LICENSE.md
 
 tools/benchmark-sqlite.mjs
 tools/check-*.mjs

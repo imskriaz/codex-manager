@@ -78,6 +78,20 @@ function harness(contractAvailable = true, storageReady?: Promise<unknown>) {
 }
 
 describe("detached relay authenticated realtime and recovery", () => {
+  it('forwards VT streams without retaining raw terminal screen or input in replay history', () => {
+    const h = harness(), source = h.connect('source'), target = h.connect('target');
+    source.sent=[]; target.sent=[];
+    const raw = { ...h.output('source'), output: { ...h.output('source').output, raw:true, command:'', cols:80, rows:24, chunk:'\x1b[31mprivate terminal screen\x1b[0m' } };
+    source.receive(raw); source.receive(raw);
+    expect(target.sent).toHaveLength(1);
+    expect(target.sent[0].output.raw).toBe(true);
+    expect(source.sent).toEqual([]);
+    expect(h.relay.replayEvents.size).toBe(0);
+    const malformed={...raw,output:{...raw.output,sequence:2,cols:0}};
+    source.receive(malformed); expect(target.sent).toHaveLength(1);
+    const reconnect=h.connect(); reconnect.receive(h.signed('reconnect'));
+    expect(reconnect.sent.filter(event=>event.type==='peer:terminal-output')).toEqual([]);
+  });
   it("opens shared SQLite storage before accepting relay connections", async () => {
     let complete!: (store: unknown) => void;
     const ready = new Promise(resolve => { complete = resolve; });

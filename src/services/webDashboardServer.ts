@@ -1,6 +1,7 @@
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getSqliteStateStore } from "../storage/sqliteState";
 import { normalizeCodexSessionGoal } from "../domain/codexSessionState";
+import { isRawWorkspaceTerminalOutput } from '../domain/workspaceTerminalActivity';
 import * as crypto from "crypto";
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
@@ -101,6 +102,8 @@ export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount
   if (action === "refresh") return 240_000;
   if (action === "resyncProfile") return 300_000;
   if (action === "syncNow" || action === "configureEncryptedSync") return 135_000;
+  if (action === "workspaceTerminal") return 10_000;
+  if (action === "workspaceGit" || action === "workspaceGitHub") return 135_000;
   if (action === "commitWorkspaceChanges") return 75_000;
   if (["listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages"].includes(action)) return 90_000;
   if (["renameCodexCliSession", "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession", "openCodexCliSession", "resumeCodexSessions", "setCodexSessionGoalStatus"].includes(action)) return 75_000;
@@ -519,9 +522,11 @@ export class WebDashboardServer implements vscode.Disposable {
               : { type: "peer:codex-request-resolved" as const, deviceId: this.deviceId, requestId: message.requestId };
         this.peerSocket.send(JSON.stringify(peerMessage));
       }
+      if (message.type === 'dashboard:terminal-output' || message.type === 'dashboard:terminal-complete') this.relayTerminalEvent(message);
       if (this.webSocketClients.size === 0 || message.type === "dashboard:snapshot") return;
       const serialized = JSON.stringify(message);
       for (const socket of this.webSocketClients) {
+        if (message.type === 'dashboard:terminal-output' && message.output.raw && socket.bufferedAmount > 1024 * 1024) continue;
         if (socket.readyState === WebSocket.OPEN) socket.send(serialized);
       }
     });
@@ -1458,7 +1463,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async appendClientSnapshot(messages: DashboardHostMessage[], request: DashboardClientMessage): Promise<void> {
-    if (request.type === "dashboard:action" && ["resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "closeWorkspaceTerminal"].includes(request.action)) return;
+    if (request.type === "dashboard:action" && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "resetProjectTaskStart", "listApiTokens", "generateApiToken", "revokeApiToken", "getProjectBoard", "getProjectTaskDetails", "saveProjectTask", "addProjectComment", "startProjectTask", "startProjectSubtask", "moveProjectTask", "shareProjectBoard", "revokeProjectShares", "viewLogs", "downloadLogs", "clearLogs", "previewMaintenance", "runMaintenance", "getMaintenanceStatus", "getMaintenancePage", "cancelMaintenance", "inspectMaintenanceStorage", "getUsageGraph", "listCodexCliSessions", "getCodexCliSessionMessages", "getCodexSubAgentMessages", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "listWorkspaceTerminals", "closeWorkspaceTerminal"].includes(request.action)) return;
     const snapshot = this.buildState();
     try {
       messages.push({ type: "dashboard:snapshot", state: await waitWithin(
@@ -1707,6 +1712,18 @@ export class WebDashboardServer implements vscode.Disposable {
       send(socket, browserMessage);
     }
   }
+
+  private relayTerminalEvent(message: Extract<DashboardHostMessage, { type: 'dashboard:terminal-output' | 'dashboard:terminal-complete' }>): void {
+        const deviceId = (message.type === 'dashboard:terminal-output' ? message.output.deviceId : message.result.deviceId) ?? this.deviceId;
+        const event = JSON.stringify(message.type === 'dashboard:terminal-output'
+          ? { type: 'peer:terminal-output', deviceId, output: message.output }
+          : { type: 'peer:terminal-complete', deviceId, result: message.result });
+        for (const [peerId, socket] of this.peerSockets) {
+          if (peerId === deviceId || !this.authenticatedPeerSockets.has(socket) || socket.readyState !== WebSocket.OPEN) continue;
+          if (message.type === 'dashboard:terminal-output' && message.output.raw && socket.bufferedAmount > 1024 * 1024) continue;
+          socket.send(event);
+        }
+      }
 
   private publishSessionLive(state: DashboardCodexSessionLiveState): void {
     if (!isCodexSessionLiveState(state)) return;
@@ -2489,12 +2506,13 @@ export class WebDashboardServer implements vscode.Disposable {
         return;
       }
       if (message.type === "peer:terminal-output" && message.output && message.deviceId !== this.deviceId) {
-        if (!this.authenticatedPeerSockets.has(sourceSocket)) return;
+        if (!this.authenticatedPeerSockets.has(sourceSocket) || !message.deviceId || this.peerSockets.get(message.deviceId) !== sourceSocket) return;
+        if (message.output.raw && !isRawWorkspaceTerminalOutput(message.output)) return;
         publishDashboardRealtime({ type: "dashboard:terminal-output", output: { ...message.output, deviceId: message.deviceId } });
         return;
       }
       if (message.type === "peer:terminal-complete" && message.result && message.deviceId !== this.deviceId) {
-        if (!this.authenticatedPeerSockets.has(sourceSocket)) return;
+        if (!this.authenticatedPeerSockets.has(sourceSocket) || !message.deviceId || this.peerSockets.get(message.deviceId) !== sourceSocket) return;
         publishDashboardRealtime({ type: "dashboard:terminal-complete", result: { ...message.result, deviceId: message.deviceId } });
         return;
       }
@@ -2773,6 +2791,7 @@ export class WebDashboardServer implements vscode.Disposable {
             publishDashboardRealtime({ type: 'dashboard:maintenance-progress', deviceId: message.deviceId, job: message.job });
           }
           if (message.type === "peer:terminal-output" && message.output && message.deviceId !== this.deviceId) {
+            if (message.output.raw && !isRawWorkspaceTerminalOutput(message.output)) return;
             publishDashboardRealtime({ type: "dashboard:terminal-output", output: { ...message.output, deviceId: message.deviceId } });
           }
           if (message.type === "peer:codex-session-live" && typeof message.deviceId === "string" &&

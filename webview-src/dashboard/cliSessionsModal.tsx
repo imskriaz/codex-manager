@@ -1,3 +1,5 @@
+import { WorkspaceTerminal } from './workspaceTerminal';
+import { WorkspaceGit } from './workspaceGit';
 import { readChatAttachmentFiles } from './attachmentUploads';
 import { SessionQueueControl } from './sessionQueueControl';
 import { createPortal } from "preact/compat";
@@ -52,7 +54,7 @@ export type CliSessionFeedback = DashboardNotice & { key: number };
 type WorkspaceTab = WorkspaceToolTab | `agent:${string}` | `file:${string}` | `review:${string}`;
 type WorkspaceToolTab = "env" | "git" | "terminal" | "files" | "reviews" | "agents";
 type WorkspaceFileDraft = { text: string; revision: string };
-type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
+type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
 const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });
 export type CliSessionSection = "active" | "archived";
 import { filterCliSessionsBySection, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder } from "../../src/domain/codexSessionState";
@@ -1065,11 +1067,18 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           onCollapse={() => { setContextCollapsed(true); setContextAddOpen(false); }}
           connected={props.connected !== false}
           projectPath={toolProjectPath}
+          targetDeviceId={workspacePeer?.local === false ? workspacePeer.id : props.selectedSession?.remote ? props.selectedSession.deviceId : undefined}
           session={props.selectedSession}
           systemName={workspaceSystemName}
           autoResumeEnabled={props.autoResumeEnabled ? props.selectedSession?.autoResumeEnabled !== false : props.selectedSession?.autoResumeEnabled === true}
           environment={currentWorkspaceData && props.environment && canonicalWebPath(props.environment.projectPath) === canonicalWebPath(toolProjectPath ?? '') ? props.environment : undefined}
           environmentLoading={props.environmentLoading}
+          workspaceGitPending={contextProjectState.workspaceGitPending}
+          workspaceGitNotice={contextProjectState.workspaceGitNotice}
+          onWorkspaceGitPending={(pending, message, committedDraft) => setContextTabsByProject(current => {
+            const entry = current[contextProjectKey] ?? emptyWorkspaceProject();
+            return { ...current, [contextProjectKey]: { ...entry, workspaceGitPending: pending, workspaceGitNotice: message, commitDraft: committedDraft !== undefined && entry.commitDraft === committedDraft ? '' : entry.commitDraft } };
+          })}
           commitDraft={contextProjectState.commitDraft ?? ''}
           gitPending={contextProjectState.gitPending?.kind}
           gitNotice={contextProjectState.gitNotice}
@@ -1476,50 +1485,6 @@ function WorkspaceEnvironmentView(props: {
   </section>;
 }
 
-function WorkspaceGitView(props: {
-  environment?: DashboardWorkspaceEnvironment; connected: boolean; loading: boolean; draft: string;
-  pending?: 'commit' | 'push'; notice?: DashboardNotice; onDraft: (value: string) => void;
-  onCommit: () => void; onPush: () => void; onRefresh: (history?: DashboardWorkspaceGitRequest) => void; onCompare: () => void; onOpenFile: (path: string) => void;
-}) {
-  const [confirmPush, setConfirmPush] = useState(false);
-  const [view, setView] = useState<'changes' | 'history'>('changes');
-  const [history, setHistory] = useState<DashboardWorkspaceEnvironment['gitHistory']>();
-  const [selected, setSelected] = useState<string>();
-  const [commitDiff, setCommitDiff] = useState<DashboardWorkspaceEnvironment['gitCommit']>();
-  useEffect(() => {
-    const next = props.environment?.gitHistory;
-    if (next) setHistory(next);
-    if (props.environment?.gitCommit) setCommitDiff(props.environment.gitCommit);
-  }, [props.environment]);
-  useEffect(() => { if (!props.connected || props.pending) setConfirmPush(false); }, [props.connected, props.pending]);
-  const environment = props.environment;
-  return <section class="cli-inspector-view" aria-label="Git" aria-busy={Boolean(props.pending || props.loading)}>
-    <header class="cli-inspector-heading"><ForkIcon /><span><strong>{environment?.branch ?? 'Repository'}</strong><small>{environment?.upstream ?? (environment?.isGitRepository ? 'No upstream' : 'Git workspace')}</small></span><IconButton label="Refresh Git" disabled={props.loading || !props.connected} onClick={() => { if (view === 'history') { setSelected(undefined); props.onRefresh({}); } else props.onRefresh(); }}><RefreshIcon /></IconButton></header>
-    <div class="cli-inspector-body">
-      {props.notice ? <div class={`cli-inspector-notice is-${props.notice.level}`} role={props.notice.level === 'error' ? 'alert' : 'status'}>{props.notice.message}</div> : null}
-      {!props.connected ? <div class="cli-inspector-notice" role="status">Offline · repository actions require a connection.</div> : null}
-      {!environment ? <div class="cli-context-empty" role="status"><ForkIcon /><strong>{props.loading ? 'Reading repository…' : 'Repository state unavailable'}</strong>{!props.loading ? <button type="button" disabled={!props.connected} onClick={() => props.onRefresh()}>Retry</button> : null}</div> : !environment.isGitRepository ? <div class="cli-context-empty"><EmptyFolderIcon /><strong>No Git repository</strong><span>This project is not a Git working tree.</span></div> : <>
-        <div class="cli-git-summary"><span>{environment.changes} changed</span><span title="Commits ahead of upstream">↑ {environment.ahead}</span><span title="Commits behind upstream">↓ {environment.behind}</span><span class="is-added">+{environment.additions}</span><span class="is-removed">−{environment.deletions}</span></div>
-        <div class="cli-git-views" role="group" aria-label="Git view"><button type="button" aria-pressed={view === 'changes'} onClick={() => setView('changes')}>Changes</button><button type="button" aria-pressed={view === 'history'} onClick={() => { setView('history'); if (!history && props.connected) props.onRefresh({}); }}>History</button></div>
-        {view === 'history' ? <section class="cli-git-history" aria-label="Commit history">
-          {selected ? <><header><button type="button" onClick={() => setSelected(undefined)}>← History</button><code title={selected}>{selected.slice(0, 8)}</code></header>{commitDiff?.hash === selected ? <>{commitDiff.truncated ? <p role="status">Diff preview limited to 256 KB. Open the repository in VS Code for the full diff.</p> : null}{commitDiff.diff.trim() ? <DiffPreview diff={commitDiff.diff} /> : <p>No file changes in this project.</p>}</> : <p role="status">{props.loading ? 'Reading commit…' : 'Commit unavailable.'}<button type="button" disabled={!props.connected || props.loading} onClick={() => props.onRefresh({ commit: selected })}>Retry</button></p>}</> : <>
-          <header><h3>Commit history</h3><button type="button" disabled={!props.connected || props.loading} onClick={() => props.onRefresh({})}>Refresh history</button></header>
-          {history?.commits.map(commit => <button class="cli-git-history-row" type="button" key={commit.hash} disabled={!props.connected || props.loading} title={`${commit.subject}\n${commit.author} · ${commit.date}\n${commit.hash}`} onClick={() => { setSelected(commit.hash); setCommitDiff(undefined); props.onRefresh({ commit: commit.hash }); }}><span><strong>{commit.subject || 'Untitled commit'}</strong><small>{commit.author} · {Number.isFinite(Date.parse(commit.date)) ? new Date(commit.date).toLocaleDateString() : commit.date}</small></span><code>{commit.hash.slice(0, 7)}</code></button>)}
-          {!history?.commits.length ? <p role="status">{props.loading ? 'Reading history…' : history ? 'No commits in this project.' : 'History unavailable. Use Refresh history to retry.'}</p> : null}
-          {history && history.offset > 0 ? <button type="button" disabled={!props.connected || props.loading} onClick={() => props.onRefresh({ ref: history.ref, offset: Math.max(0, history.offset - 50) })}>Newer commits</button> : null}
-          {history?.hasMore && history.offset + history.commits.length <= 10000 ? <button type="button" disabled={!props.connected || props.loading} onClick={() => props.onRefresh({ ref: history.ref, offset: history.offset + history.commits.length })}>Load older commits</button> : null}
-          {history?.hasMore && history.offset + history.commits.length > 10000 ? <p role="status">History preview limited to 10,000 commits. Open the repository in VS Code for older history.</p> : null}
-          </>}
-        </section> : <>
-        <form class="cli-git-commit" onSubmit={event => { event.preventDefault(); if (props.connected && !props.pending && props.draft.trim() && environment.changes) props.onCommit(); }}><label htmlFor="workspace-commit-message">Commit message</label><textarea id="workspace-commit-message" name="commit-message" aria-label="Commit message" maxLength={200} rows={3} value={props.draft} placeholder="Describe your changes…" onInput={event => props.onDraft(event.currentTarget.value)} /><small>Commit all changes in this project.</small><div><button type="submit" class="cli-inspector-primary" disabled={!props.connected || Boolean(props.pending) || !props.draft.trim() || !environment.changes}>{props.pending === 'commit' ? 'Committing…' : 'Commit all'}</button><button type="button" disabled={!props.connected || Boolean(props.pending) || !environment.hasRemote} onClick={() => setConfirmPush(true)}><SendIcon />{props.pending === 'push' ? 'Pushing…' : 'Push branch'}</button></div></form>
-        {confirmPush ? <div class="cli-git-push-review" role="group" aria-label="Confirm push"><strong>Push {environment.branch ?? 'this branch'}?</strong><span>{environment.upstream ?? 'Uses the configured remote for this branch.'}</span><div><button type="button" onClick={() => setConfirmPush(false)}>Cancel</button><button type="button" class="cli-inspector-primary" disabled={!props.connected || Boolean(props.pending)} onClick={props.onPush}>Push</button></div></div> : null}
-        <section class="cli-git-changes"><header><h3>Changes <span>{environment.changes}</span></h3><button type="button" disabled={!props.connected} onClick={props.onCompare}><ReviewIcon />Compare branch</button></header>{environment.changedFiles?.length ? environment.changedFiles.map(file => <button type="button" class="cli-git-file" key={file.path} title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path} onClick={() => file.index === 'D' || file.worktree === 'D' ? props.onCompare() : props.onOpenFile(file.path.endsWith('/') ? '' : file.path)}><FileIcon /><span>{file.path}</span><code title={`Index: ${file.index === ' ' ? 'unchanged' : file.index}; working tree: ${file.worktree === ' ' ? 'unchanged' : file.worktree}`}>{`${file.index}${file.worktree}`.trim()}</code></button>) : <p>{environment.changes ? 'Refresh Git to load changed files.' : 'Working tree clean.'}</p>}{environment.changedFilesTruncated ? <p role="status">Changed-file preview is limited. Use Files or VS Code for the complete working tree.</p> : null}</section>
-        </>}
-      </>}
-    </div>
-  </section>;
-}
-
 export type ConsolidatedSessionItem = DashboardCliSessionMessage | {
   id: string;
   messages: DashboardCliSessionMessage[];
@@ -1745,6 +1710,10 @@ export function consolidatedActivityLabel(messages: DashboardCliSessionMessage[]
 }
 
 function WorkspaceContextPanel(props: {
+  targetDeviceId?: string;
+  workspaceGitPending?: boolean;
+  workspaceGitNotice?: string;
+  onWorkspaceGitPending: (pending: boolean, message?: string, committedDraft?: string) => void;
   connected?: boolean;
   projectPath?: string;
   session?: DashboardCliSessionSummary;
@@ -1813,8 +1782,6 @@ function WorkspaceContextPanel(props: {
   onResizeKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLDivElement>) => void;
   onResizeReset: () => void;
 }) {
-  const outputRef = useRef<HTMLDivElement>(null);
-  const [followOutput, setFollowOutput] = useState(true);
   const tabsRef = useRef<HTMLDivElement>(null);
   const addMenuRef = useRef<HTMLSpanElement>(null);
   const addPanelRef = useRef<HTMLDivElement>(null);
@@ -1855,9 +1822,6 @@ function WorkspaceContextPanel(props: {
     return () => { if (panel.isConnected) panel.hidePopover?.(); document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); window.removeEventListener('resize', place); window.visualViewport?.removeEventListener('resize', place); window.visualViewport?.removeEventListener('scroll', place); };
   }, [props.addOpen, props.collapsed]);
   useEffect(() => {
-    if (followOutput && outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
-  }, [followOutput, props.results.length, props.liveOutputs, props.running]);
-  useEffect(() => {
     const activeTab = tabsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
     activeTab?.closest("span")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [props.activeTab, props.tabs.length]);
@@ -1872,27 +1836,8 @@ function WorkspaceContextPanel(props: {
       return <span class={props.activeTab === tab ? 'is-active' : ''} key={tab}><button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={`${panelId}-body`} tabIndex={props.activeTab === tab ? 0 : -1} aria-selected={props.activeTab === tab} onClick={() => props.onTab(tab)} title={kind === 'env' ? 'Environment' : path ?? label}>{kind === 'terminal' ? <TerminalIcon /> : kind === 'files' ? <FileIcon /> : kind === 'agents' || kind === 'git' ? <ForkIcon /> : kind === 'env' ? <PanelIcon /> : <ReviewIcon />}<span class="cli-context-tab-label">{label}</span></button>{tab !== 'env' ? <button type="button" aria-label={`Close ${label}`} title={`Close ${label}`} onClick={() => props.onCloseTab(tab)}><CloseIcon /></button> : null}</span>;
     })}</div><span ref={addMenuRef} class="cli-context-add-wrap"><button type="button" class="cli-context-add" aria-label="Add workspace tool" title="Add a workspace tool" aria-haspopup="menu" aria-expanded={props.addOpen} onClick={props.onAddToggle}><PlusIcon /></button>{props.addOpen ? <div ref={addPanelRef} popover="manual" class="cli-context-add-menu" role="menu" aria-label="Workspace tools menu">{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).filter(tab => !props.tabs.includes(tab)).map(tab => <button type="button" role="menuitem" onClick={() => props.onAdd(tab)}>{tab === 'git' || tab === 'agents' ? <ForkIcon /> : tab === 'terminal' ? <TerminalIcon /> : tab === 'files' ? <FileIcon /> : <ReviewIcon />}<span>{capitalize(tab)}</span></button>)}{(['git', 'terminal', 'files', 'reviews', 'agents'] as const).every(tab => props.tabs.includes(tab)) ? <span>All tools are open</span> : null}</div> : null}</span></div><IconButton label="Close workspace tools" onClick={props.onCollapse}><CloseIcon /></IconButton></header>
     <div class="cli-context-body" id={`${panelId}-body`} role="tabpanel" aria-labelledby={`${panelId}-tab-${props.tabs.indexOf(props.activeTab)}`}>
-    {props.activeTab === 'env' ? <WorkspaceEnvironmentView autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : props.activeTab === 'git' ? <WorkspaceGitView key={props.scopeKey} environment={props.environment} connected={props.connected !== false} loading={props.environmentLoading} draft={props.commitDraft} pending={props.gitPending} notice={props.gitNotice} onDraft={props.onCommitDraft} onCommit={props.onCommit} onPush={props.onPush} onRefresh={props.onRefreshEnvironment} onCompare={props.onBranchReview} onOpenFile={path => props.onAdd('files', path)} /> : null}
-    {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <>
-    <div class="cli-terminal-toolbar"><label>VS Code terminal<select aria-label="Select VS Code terminal" disabled={props.connected === false} value={props.terminals.find((terminal) => terminal.isActive)?.id ?? ""} onChange={(event) => { const id = event.currentTarget.value; if (id) props.onFocusTerminal(id); }}><option value="">Select terminal…</option>{props.terminals.map((terminal) => <option value={terminal.id}>{terminal.name} · {terminal.state}</option>)}</select></label>{props.terminals.find((terminal) => terminal.isActive) ? <IconButton label="Close terminal" title="Close terminal" disabled={props.connected === false} onClick={() => props.onCloseTerminal(props.terminals.find((terminal) => terminal.isActive)!.id)}><CloseIcon /></IconButton> : null}<details class="cli-terminal-new-menu"><summary aria-label="New terminal" title="New terminal"><PlusIcon /></summary><div role="menu">{(["default", "powershell", "cmd", "bash"] as const).map((profile) => <button type="button" role="menuitem" disabled={props.connected === false} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onCreateTerminal(profile); }}><TerminalIcon /><span>{profile === "default" ? "Default" : profile === "powershell" ? "PowerShell" : profile.toUpperCase()}</span></button>)}</div></details><button type="button" class="cli-terminal-refresh" disabled={props.connected === false} aria-label="Refresh terminals" onClick={props.onListTerminals} title="Refresh running terminals"><RefreshIcon /></button></div>
-    <div ref={outputRef} class="cli-terminal-output" role="log" aria-live="polite" onScroll={(event) => {
-      const target = event.currentTarget;
-      setFollowOutput(target.scrollHeight - target.scrollTop - target.clientHeight < 48);
-    }}>
-      {props.results.length === 0 && props.liveOutputs.length === 0 ? <div class="cli-terminal-welcome"><strong>{props.terminals.find((terminal) => terminal.isActive)?.name ?? "Project terminal"}</strong><span>Run a command below or type in the VS Code terminal to stream new output here. Existing scrollback and commands started before monitoring remain in VS Code.</span></div> : null}
-      {props.liveOutputs.map((output) => <article class="is-running" key={output.id}><div><span aria-hidden="true">›</span><code>{output.command}</code></div><pre>{output.chunk || "Waiting for terminal output…"}</pre><small>running · live output</small></article>)}
-      {props.results.map((result) => <article class={`is-${result.status}`} key={result.id}><div><span aria-hidden="true">›</span><code>{result.command}</code></div><pre>{result.output}</pre><small>{result.status} · {formatTerminalDuration(result.durationMs)}{result.exitCode !== undefined ? ` · exit ${result.exitCode}` : ""}</small></article>)}
-      {props.running ? <div class="cli-terminal-running" role="status"><span class="cli-live-spinner" aria-hidden="true" /> Running command…</div> : null}
-      {!followOutput ? <button type="button" class="cli-terminal-latest" aria-label="Scroll to latest terminal output" title="Scroll to latest terminal output" onClick={() => {
-        if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
-        setFollowOutput(true);
-      }}><ChevronIcon /></button> : null}
-    </div>
-    <form class="cli-terminal-command" onSubmit={(event) => { event.preventDefault(); const command = props.draft.trim(); if (command && !props.running && props.connected !== false) props.onRun(command, props.terminals.find((terminal) => terminal.isActive)?.id); }}>
-      <span aria-hidden="true">$</span><input name="terminal-command" value={props.draft} autoComplete="off" spellcheck={false} aria-label="Terminal command" placeholder="Run a command…" disabled={props.running || props.connected === false} onInput={(event) => props.onDraft(event.currentTarget.value)} />
-      {props.running ? <button type="button" class="is-stop" disabled={props.stopping || props.connected === false} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping…" : "Stop"}</button> : <button type="submit" disabled={!props.draft.trim() || props.connected === false} aria-label="Run terminal command"><SendIcon /></button>}
-    </form>
-    </> : props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} agents={props.agents} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
+    {props.activeTab === 'env' ? <WorkspaceEnvironmentView autoResumeEnabled={props.autoResumeEnabled} systemName={props.systemName} environment={props.environment} session={props.session} projectPath={props.projectPath} connected={props.connected !== false} loading={props.environmentLoading} terminals={props.terminals} agents={props.agentSessions} editedFiles={props.fileChanges.length} dirtyFiles={Object.entries(props.fileDrafts).filter(([path, draft]) => draft.text !== props.filesByPath[path]?.content).length} onRefresh={() => props.onRefreshEnvironment()} onOpen={props.onAdd} /> : props.activeTab === 'git' ? <WorkspaceGit key={props.scopeKey} draft={props.commitDraft} onDraft={props.onCommitDraft} pending={props.workspaceGitPending} notice={props.workspaceGitNotice} onPending={props.onWorkspaceGitPending} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} onOpenFile={path => props.onAdd('files', path)} renderDiff={diff => <DiffPreview diff={diff} />} /> : null}
+    {props.tabs.includes(props.activeTab) && activeKind === "agents" ? <AgentWorkspace sessions={props.agentSessions} data={props.agentMessages} activeId={activePath} onRefresh={props.onReadAgent} onFeedback={props.onFeedback} /> : props.tabs.includes(props.activeTab) && props.activeTab === "terminal" ? <WorkspaceTerminal key={props.scopeKey} projectPath={props.projectPath} targetDeviceId={props.targetDeviceId} connected={props.connected !== false} terminals={props.terminals} onList={props.onListTerminals} onFocus={props.onFocusTerminal} /> : props.tabs.includes(props.activeTab) && activeKind === "files" ? <WorkspaceFilesView key={props.scopeKey} drafts={props.fileDrafts} notice={props.fileNotice} onDraft={props.onFileDraft} connected={props.connected} files={props.files} file={activePath ? Object.values(props.filesByPath).find((candidate) => canonicalWebPath(candidate.path) === canonicalWebPath(activePath)) : undefined} activePath={activePath} loading={props.filesLoading} fileLoading={props.fileLoading} saving={props.fileSaving} onRefresh={props.onListFiles} onOpenFile={(filePath) => props.onAdd("files", filePath)} onDeleteFile={props.onDeleteFile} onClearFile={props.onClearFile} onFeedback={props.onFeedback} onSave={props.onSaveFile} /> : props.tabs.includes(props.activeTab) && activeKind === "reviews" ? props.branchReview && !activePath ? <BranchComparison environment={props.branchEnvironment} loading={props.comparisonLoading} onRefresh={props.onCompareBranch} onShowTurnReview={props.onShowTurnReview} /> : <WorkspaceReviewsView changes={props.fileChanges} agents={props.agents} activePath={activePath} onOpenFile={(filePath) => props.onAdd("files", filePath)} onOpenReview={(filePath) => props.onAdd("reviews", filePath)} onFeedback={props.onFeedback} /> : null}
     </div>
   </aside>;
 }
@@ -2395,7 +2340,6 @@ function IconButton(props: { label: string; title?: string; disabled?: boolean; 
 
 function formatTime(value: string | undefined): string { if (!value) return ""; const parsed = Date.parse(value); return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : ""; }
 function formatDuration(durationMs: number): string { if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))} ms`; if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`; return `${Math.floor(durationMs / 60_000)}m ${Math.round((durationMs % 60_000) / 1000)}s`; }
-function formatTerminalDuration(durationMs: number): string { return durationMs < 1000 ? `${Math.max(0, Math.round(durationMs))} ms` : `${(durationMs / 1000).toFixed(1)} s`; }
 export function formatElapsed(durationMs: number): string { if (durationMs < 60_000) return `${Math.floor(Math.max(0, durationMs) / 1000)}s`; return `${Math.floor(durationMs / 60_000)}m ${Math.floor((durationMs % 60_000) / 1000)}s`; }
 function relativeTime(value: string | undefined): string { if (!value) return "Unknown"; const parsed = Date.parse(value); if (!Number.isFinite(parsed)) return "Unknown"; const minutes = Math.max(0, Math.round((Date.now() - parsed) / 60_000)); if (minutes < 1) return "Just now"; if (minutes < 60) return `${minutes}m`; const hours = Math.round(minutes / 60); return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`; }
 function capitalize(value: string): string { return value.charAt(0).toUpperCase() + value.slice(1); }

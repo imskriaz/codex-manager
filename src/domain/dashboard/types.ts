@@ -616,6 +616,9 @@ export type DashboardActionName =
   | "unarchiveCodexCliSession"
   | "deleteCodexCliSession"
   | "getWorkspaceEnvironment"
+  | "workspaceTerminal"
+  | "workspaceGit"
+  | "workspaceGitHub"
   | "listWorkspaceFiles"
   | "readWorkspaceFile"
   | "saveWorkspaceFile"
@@ -702,6 +705,9 @@ export interface DashboardActionPayload {
   filePath?: string;
   includeBranchDiff?: boolean;
   gitHistory?: DashboardWorkspaceGitRequest;
+  terminalRequest?: WorkspaceTerminalRequest;
+  gitRequest?: WorkspaceGitRequest;
+  githubRequest?: WorkspaceGitHubRequest;
   fileContent?: string;
   fileRevision?: string;
   command?: string;
@@ -925,8 +931,117 @@ export interface DashboardWorkspaceTerminalResult {
   finishedAt: string;
 }
 
+export interface WorkspaceTerminalRequest {
+  operation: 'create' | 'read' | 'input' | 'resize' | 'claim' | 'rename' | 'close';
+  clientId: string;
+  operationId?: string;
+  epoch?: string;
+  sequence?: number;
+  data?: string;
+  cols?: number;
+  rows?: number;
+  takeControl?: boolean;
+}
+
+export interface WorkspaceTerminalSnapshot {
+  id: string;
+  epoch: string;
+  sequence: number;
+  inputSequence: number;
+  cols: number;
+  rows: number;
+  content?: string;
+  writable: boolean;
+  exited: boolean;
+  exitCode?: number;
+}
+
+export interface WorkspaceGitRequest {
+  operation: 'read' | 'diff' | 'stage' | 'unstage' | 'discard' | 'fetch' | 'pull' | 'push' | 'commit' | 'switch' | 'createBranch' | 'renameBranch' | 'deleteBranch' | 'merge' | 'abortMerge' | 'stash' | 'applyStash' | 'popStash' | 'dropStash';
+  operationId?: string;
+  revision?: string;
+  path?: string;
+  ref?: string;
+  name?: string;
+  message?: string;
+  staged?: boolean;
+}
+
+export interface WorkspaceGitState {
+  revision: string;
+  head?: string;
+  branch?: string;
+  branches: Array<{ name: string; current: boolean; remote: boolean }>;
+  stashes: Array<{ hash: string; name: string; subject: string }>;
+  diff?: string;
+  truncated?: boolean;
+  output?: string;
+  warning?: string;
+  environment?: DashboardWorkspaceEnvironment;
+}
+
+export interface WorkspaceGitHubRequest {
+  operation: 'read' | 'connect' | 'detail' | 'create' | 'comment' | 'close' | 'reopen' | 'merge' | 'review' | 'cancelRun' | 'rerun' | 'dispatch' | 'publishRelease' | 'deleteRelease';
+  section: 'pulls' | 'issues' | 'actions' | 'releases';
+  operationId?: string;
+  page?: number;
+  state?: 'open' | 'closed' | 'all';
+  number?: number;
+  title?: string;
+  body?: string;
+  head?: string;
+  base?: string;
+  expectedHead?: string;
+  expectedUpdatedAt?: string;
+  draft?: boolean;
+  method?: 'merge' | 'squash' | 'rebase';
+  review?: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+  ref?: string;
+  tag?: string;
+  prerelease?: boolean;
+  inputs?: Record<string, string>;
+}
+
+export interface WorkspaceGitHubItem {
+  id: number;
+  number?: number;
+  title: string;
+  state: string;
+  url: string;
+  author?: string;
+  updatedAt?: string;
+  body?: string;
+  head?: string;
+  base?: string;
+  headSha?: string;
+  draft?: boolean;
+  ref?: string;
+}
+
+export interface WorkspaceGitHubState {
+  refreshFailed?: boolean;
+  repository: string;
+  url: string;
+  authenticated: boolean;
+  canWrite: boolean;
+  defaultBranch?: string;
+  items: WorkspaceGitHubItem[];
+  page: number;
+  hasMore: boolean;
+  detail?: WorkspaceGitHubItem;
+  comments?: Array<{ id: number; author: string; body: string; createdAt: string }>;
+  checks?: Array<{ id: number; name: string; status: string; url?: string }>;
+  files?: Array<{ path: string; status: string; additions: number; deletions: number; patch?: string }>;
+  workflows?: Array<{ id: number; name: string; state: string }>;
+  warning?: string;
+}
+
 /** Incremental output emitted while a workspace terminal command is running. */
 export interface DashboardWorkspaceTerminalOutput {
+  raw?: boolean;
+  cols?: number;
+  rows?: number;
+  exited?: boolean;
   id: string;
   deviceId?: string;
   terminalId: string;
@@ -955,6 +1070,7 @@ export interface DashboardCodexServerRequest {
 }
 
 export interface DashboardWorkspaceTerminalInfo {
+  shared?: boolean;
   id: string;
   name: string;
   state: "running" | "idle" | "unknown";
@@ -965,6 +1081,9 @@ export interface DashboardWorkspaceTerminalInfo {
 }
 
 export interface DashboardActionResultPayload {
+  terminalSnapshot?: WorkspaceTerminalSnapshot;
+  workspaceGit?: WorkspaceGitState;
+  workspaceGitHub?: WorkspaceGitHubState;
   accountTags?: { accountId: string; tags: string[]; updatedAt: number };
   tagResult?: import('../accountTags').AccountTagResult;
   /** A relayed session list replaces only this system's rows. */

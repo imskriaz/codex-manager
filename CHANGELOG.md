@@ -2,6 +2,10 @@
 
 ## 1.4.3
 
+- Replace the command-log terminal panel with a shared pseudoterminal and xterm screen: native/browser shell parity for newly created shared terminals, ANSI and cursor handling, interactive input, screen restoration, sequence-fenced input, control handoff, resize, find, copy, rename and split views. Keep unsupported native-screen attachment explicit and do not cache or replay terminal input.
+- Expand Git into staged/working changes, diffs, paged history, branch and stash tools, fetch, fast-forward pull and push. Reject stale snapshots, preserve conflicts and deduplicate confirmed operations.
+- Add host-authenticated GitHub pull requests, issues, Actions and release panels, with detail views and confirmed writes. Keep credentials host-only, validate origin repositories, fence PR merge heads and release revisions, retain partial read warnings and report uncertain confirmations without replay.
+
 - Use a focused New task dialog with title, description, stage and attachments. Add attachments to comments, including attachment-only comments. Store payloads under the owning manager's `manager/attachments` folder beside its database; board responses and SQLite hold metadata only. Reuse session upload validation, retain offline drafts, support bounded on-demand preview/download, and enforce shared Files/Comments permissions. Reject invalid drafts before filesystem writes, recheck permissions after uploads, and clean up unreferenced failed uploads without removing confirmed files.
 - Keep small-screen task search inside the toolbar with an explicit close action that preserves the filter; Escape clears it. Size the project tab to its name.
 

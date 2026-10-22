@@ -6,6 +6,9 @@ const output: DashboardWorkspaceTerminalOutput = { id: "command", terminalId: "S
 const result: DashboardWorkspaceTerminalResult = { id: output.id, terminalId: output.terminalId, command: output.command, cwd: output.cwd, output: "first second", status: "completed", durationMs: 100, finishedAt: new Date().toISOString() };
 
 describe("terminal live activity recovery", () => {
+  it('does not retain raw PTY input/output in the old command activity cache', () => {
+    expect(reduceWorkspaceTerminalActivity(emptyWorkspaceTerminalActivity, { output: { ...output, raw: true, chunk: 'private shell data' } })).toBe(emptyWorkspaceTerminalActivity);
+  });
   it("settles interrupted monitoring for only the restarted device and clears only its history", () => {
     let state = reduceWorkspaceTerminalActivity(emptyWorkspaceTerminalActivity, { output });
     state = reduceWorkspaceTerminalActivity(state, { output: { ...output, deviceId: "peer" } });

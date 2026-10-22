@@ -20,6 +20,7 @@ import { publishDashboardRealtime } from "./dashboardRealtime";
 import { waitWithin } from "../utils/concurrency";
 import { shouldSuppressDashboardNotifications } from "../utils/notificationPolicy";
 import { normalizeNativePath } from "../utils/nativePaths";
+import { sharedTerminalInfo, findSharedTerminal, disposeSharedTerminals } from './workspaceTerminalPty';
 
 const MAX_COMMAND_CHARS = 8_000;
 const MAX_OUTPUT_BYTES = 256 * 1024;
@@ -42,6 +43,7 @@ function nativeTerminalId(terminal: vscode.Terminal): string {
   return id;
 }
 function findNativeTerminal(id: string | undefined): vscode.Terminal | undefined {
+  const shared = findSharedTerminal(id); if (shared) return shared;
   const terminals = vscode.window.terminals ?? [];
   return terminals.find((terminal) => nativeTerminalId(terminal) === id)
     ?? terminals.find((terminal) => terminal.name === id);
@@ -63,6 +65,7 @@ const observedTerminalExecutions = new Map<vscode.TerminalShellExecution, {
 }>();
 const cancelledTerminalCommands = new Set<string>();
 const environmentReads = new Map<string, Promise<DashboardWorkspaceEnvironment>>();
+export function invalidateWorkspaceEnvironment(cwd: string): void { environmentReads.delete(cwd); }
 let resolvedWindowsPowerShell: Promise<string> | undefined;
 
 type ProcessResult = {
@@ -272,6 +275,7 @@ export async function deleteWorkspaceFile(
 }
 
 function terminalInfo(terminal: vscode.Terminal): DashboardWorkspaceTerminalInfo {
+  const shared = sharedTerminalInfo(terminal); if (shared) return shared;
   const terminals = vscode.window.terminals ?? [];
   const sameNames = terminals.filter((item) => item.name === terminal.name);
   return {
@@ -333,10 +337,12 @@ export function closeWorkspaceTerminal(terminalId: string | undefined): boolean 
  * exposes their stream. VS Code does not provide a raw scrollback API for
  * terminals without shell integration. */
 export function registerWorkspaceTerminalMonitoring(context: vscode.ExtensionContext): void {
+  context.subscriptions.push({ dispose: disposeSharedTerminals });
   const onStart = vscode.window.onDidStartTerminalShellExecution;
   const onEnd = vscode.window.onDidEndTerminalShellExecution;
   if (typeof onStart !== "function" || typeof onEnd !== "function") return;
   context.subscriptions.push(onStart(({ terminal, execution }) => {
+    if (sharedTerminalInfo(terminal)) return;
     if (dashboardTerminalExecutions.has(execution) || startingDashboardCommands.has(`${nativeTerminalId(terminal)}\0${execution.commandLine.value.trim()}`)) return;
     const command = execution.commandLine.value.trim();
     if (!command) return;
@@ -928,7 +934,7 @@ function resolveWindowsPowerShell(): Promise<string> {
   return resolvedWindowsPowerShell;
 }
 
-function runProcess(
+export function runProcess(
   command: string,
   args: string[],
   cwd: string,
@@ -938,12 +944,13 @@ function runProcess(
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
-    const child = spawn(command, args, { cwd, env: process.env, windowsHide: true });
+    const child = spawn(command, args, { cwd, env: command === 'git' ? { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' } : process.env, windowsHide: true });
     if (terminalId) activeTerminalCommands.set(terminalId, child);
     let stdout = "";
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let killDeadline: ReturnType<typeof setTimeout> | undefined;
     const append = (current: string, chunk: Buffer): string => {
       if (Buffer.byteLength(current, "utf8") >= MAX_OUTPUT_BYTES) return current;
       return `${current}${chunk.toString("utf8")}`.slice(0, MAX_OUTPUT_BYTES);
@@ -953,11 +960,13 @@ function runProcess(
     const timeout = setTimeout(() => {
       timedOut = true;
       terminateChildProcess(child);
+      killDeadline = setTimeout(() => finish(() => resolve({ stdout, stderr, durationMs: Date.now() - startedAt, cancelled: false, timedOut: true })), 1000);
     }, timeoutMs);
     const finish = (callback: () => void): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      clearTimeout(killDeadline);
       if (terminalId && activeTerminalCommands.get(terminalId) === child) activeTerminalCommands.delete(terminalId);
       if (terminalId && child.exitCode === null && child.killed === false) cancelledTerminalCommands.delete(terminalId);
       callback();
