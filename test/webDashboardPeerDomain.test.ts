@@ -105,7 +105,7 @@ describe("canonical cross-PC WebSocket domain", () => {
     internal.webSocketClients.add(browser);
     const initial = { ...peer(), sessions: [{ id: 'remote-session', title: 'First title', status: 'idle' }] };
     expect(await internal.acceptPeerSession(initial)).toBe(true);
-    expect(JSON.parse(browser.send.mock.calls[0][0])).toMatchObject({ type: 'dashboard:action-result', action: 'listCodexCliSessions', payload: { cliSessionsDeviceId: 'other-pc', cliSessions: [{ deviceId: 'other-pc', remote: true, title: 'First title' }] } });
+    expect(JSON.parse(browser.send.mock.calls[0][0])).toMatchObject({ type: 'dashboard:action-result', action: 'listCodexCliSessions', payload: { cliSessionsDeviceId: 'other-pc', cliSessionsPartial: true, cliSessions: [{ deviceId: 'other-pc', remote: true, title: 'First title' }] } });
     expect(await internal.acceptPeerSession({ ...initial, sentAt: initial.sentAt + 1 })).toBe(true);
     expect(browser.send).toHaveBeenCalledOnce();
     expect(await internal.acceptPeerSession({ ...initial, sentAt: initial.sentAt + 2, sessions: [{ ...initial.sessions[0], title: 'Renamed', status: 'running' }] })).toBe(true);
@@ -150,6 +150,20 @@ describe("canonical cross-PC WebSocket domain", () => {
     finish(true);
     expect(await pending).toBe(false);
     expect(internal.peerSessions.size).toBe(0);
+  });
+  it("keeps a recently signed PC through an empty aggregate without letting replays renew its lease", async () => {
+    vi.spyOn(internal, "broadcastPeerAggregate").mockResolvedValue(undefined);
+    const initial = peer();
+    await internal.acceptPeerSession(initial);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(await internal.replacePeerAggregate([])).toBe(true);
+    expect(internal.peerSessions.has("other-pc")).toBe(true);
+    const seen = internal.peerLastSeenAt.get("other-pc");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await internal.replacePeerAggregate([initial])).toBe(true);
+    expect(internal.peerLastSeenAt.get("other-pc")).toBe(seen);
+    await vi.advanceTimersByTimeAsync(10001);
+    expect(internal.peerSessions.has("other-pc")).toBe(false);
   });
   it('accepts upstream progress only for known peers and fences a replaced relay socket', async () => {
     domain = 'dashboard.example'; internal.connectPeerSocket();

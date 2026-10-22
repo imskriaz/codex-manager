@@ -40,14 +40,19 @@ const SESSION_METADATA = ["model","reasoningEffort","goal","sessionSurface","sub
 export function mergeCachedCliSessions(
   incoming: DashboardCliSessionSummary[],
   previous: DashboardCliSessionSummary[],
-  deviceId?: string
+  deviceId?: string,
+  partial = false
 ): DashboardCliSessionSummary[] {
   const previousByKey = new Map(previous.map((session) => [cliSessionKey(session), session]));
-  const merged = incoming.filter(session => !deviceId || session.deviceId === deviceId).map((session) => {
+  const source = incoming.filter(session => deviceId ? session.deviceId === deviceId : !session.deviceId);
+  const merged = [...new Map(source.map(session => [cliSessionKey(session), session])).values()].map((session) => {
     const prior = previousByKey.get(cliSessionKey(session));
     return mergeCachedCliSession(session,prior);
   });
-  return deviceId ? [...previous.filter(session => session.deviceId !== deviceId), ...merged] : merged;
+  const incomingKeys = new Set(merged.map(cliSessionKey));
+  const retained = previous.filter(session => !incomingKeys.has(cliSessionKey(session)) &&
+    (partial || (deviceId ? session.deviceId !== deviceId : Boolean(session.deviceId))));
+  return deviceId ? [...retained, ...merged] : [...merged, ...retained];
 }
 
 export function mergeCachedCliSession(
@@ -65,6 +70,7 @@ export function mergeCachedCliSession(
 
 let cacheDatabase: Promise<IDBDatabase | undefined> | undefined;
 let pendingDashboardState: DashboardState | undefined;
+const listWriteVersions = new Map<string, number>();
 let dashboardWrite: Promise<void> | undefined;
 const draftWrites = new Map<string, { value: CliComposerDraft; waiters: Array<(saved: boolean) => void> }>();
 let flushingDrafts: Promise<void> | undefined;
@@ -212,7 +218,16 @@ export async function readCliSessionMessagesCache(
 }
 
 export async function writeCliSessionListCache(value: CliSessionListCache, deviceId?: string): Promise<void> {
-  await writeRecord({ key: `list:${deviceId ?? "local"}`, updatedAt: Date.now(), value });
+  const key = `list:${deviceId ?? "local"}`;
+  const version = (listWriteVersions.get(key) ?? 0) + 1;
+  listWriteVersions.set(key, version);
+  const previous = value.composerConfig ? undefined : await readCliSessionListCache(deviceId);
+  if (listWriteVersions.get(key) !== version) return;
+  const sessions = value.sessions.filter(session => deviceId ? session.deviceId === deviceId : !session.deviceId);
+  await writeRecord({ key, updatedAt: Date.now(), value: {
+    sessions: mergeCachedCliSessions(sessions, previous?.sessions ?? [], deviceId),
+    composerConfig: value.composerConfig ?? previous?.composerConfig
+  } });
 }
 
 export async function writeCliSessionMessagesCache(
@@ -232,9 +247,21 @@ export async function readDashboardStateCache(): Promise<DashboardState | undefi
   return state;
 }
 
+export async function readDashboardAccountsCache(deviceId: string): Promise<DashboardState["accounts"] | undefined> {
+  const cached = await readFreshRecord<DashboardState["accounts"]>(`accounts:${deviceId}`, MAX_DASHBOARD_CACHE_AGE_MS);
+  if (cached && Array.isArray(cached.value)) return cached.value;
+  const legacy = await readDashboardStateCache();
+  return legacy?.peerAccounts?.[deviceId] ?? (legacy?.connectedPeers?.some(peer => peer.local && peer.id === deviceId) ? legacy.accounts : undefined);
+}
+
+export function scopeDashboardAccounts(state: DashboardState, deviceId?: string): DashboardState {
+  const accounts = deviceId ? state.peerAccounts?.[deviceId] : undefined;
+  return { ...state, peerAccounts: deviceId && accounts ? { [deviceId]: accounts } : {} };
+}
+
 export function writeDashboardStateCache(state: DashboardState): Promise<void> {
   // Keep recovery metadata, while graph history stays in the host database.
-  pendingDashboardState = { ...state };
+  pendingDashboardState = { ...state, peerAccounts: { ...pendingDashboardState?.peerAccounts, ...state.peerAccounts } };
   delete pendingDashboardState.usageHistory;
   delete pendingDashboardState.dailyUsageCache;
   dashboardWrite ??= flushDashboardStateWrites().finally(() => {
@@ -245,6 +272,8 @@ export function writeDashboardStateCache(state: DashboardState): Promise<void> {
 }
 
 export async function invalidateCliSessionCache(sessionId?: string, deviceId?: string): Promise<void> {
+  for (const key of new Set([`list:${deviceId ?? "local"}`, "list:local"]))
+    listWriteVersions.set(key, (listWriteVersions.get(key) ?? 0) + 1);
   const db = await openCache();
   if (!db) return;
   await new Promise<void>((resolve) => {
@@ -262,7 +291,13 @@ async function flushDashboardStateWrites(): Promise<void> {
   while (pendingDashboardState) {
     const state = pendingDashboardState;
     pendingDashboardState = undefined;
-    await writeRecord({ key: DASHBOARD_CACHE_KEY, updatedAt: Date.now(), value: { state } });
+    const updatedAt = Date.now();
+    const localId = state.connectedPeers?.find(peer => peer.local)?.id ?? "local";
+    await Promise.all([
+      writeRecord({ key: DASHBOARD_CACHE_KEY, updatedAt, value: { state: scopeDashboardAccounts(state) } }),
+      ...Object.entries({ ...state.peerAccounts, [localId]: state.accounts }).filter(([, accounts]) => Array.isArray(accounts)).map(([deviceId, accounts]) =>
+        writeRecord({ key: `accounts:${deviceId}`, updatedAt, value: accounts }))
+    ]);
   }
 }
 

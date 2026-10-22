@@ -439,6 +439,8 @@ export class WebDashboardServer implements vscode.Disposable {
   private localCliSessionsRetryAt = 0;
   private localCliSessionsRead: Promise<import("../domain/dashboard/types").DashboardCliSessionSummary[]> | undefined;
   private localPeerState: LocalPeerState | undefined;
+  private lastLocalPeerState: LocalPeerState | undefined;
+  private peerCataloguePublishPending = false;
   private localPeerStateRevision = 0;
   private localPeerStateRead: Promise<{ revision: number; state: LocalPeerState }> | undefined;
   private deviceId: string;
@@ -672,6 +674,8 @@ export class WebDashboardServer implements vscode.Disposable {
     this.localPeerState = undefined;
     this.localPeerStateRevision += 1;
     this.localPeerStateRead = undefined;
+    this.lastLocalPeerState = undefined;
+    this.peerCataloguePublishPending = false;
     this.encryptedSync?.setOnlineDeviceIds(undefined);
     for (const [requestId, waiter] of this.peerActionWaiters) {
       waiter({
@@ -2276,7 +2280,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (JSON.stringify(previous?.sessions) !== JSON.stringify(normalized.sessions)) {
       const message = JSON.stringify({ type: 'dashboard:action-result', action: 'listCodexCliSessions',
         requestId: `realtime-peer-${normalized.deviceId}-${normalized.sentAt}`, status: 'completed',
-        payload: { cliSessionsDeviceId: normalized.deviceId, realtimeRevision: normalized.sentAt,
+        payload: { cliSessionsDeviceId: normalized.deviceId, realtimeRevision: normalized.sentAt, cliSessionsPartial: true,
           cliSessions: normalized.sessions.map(session => ({ ...session, deviceId: normalized.deviceId, deviceName: normalized.deviceName, remote: true })) }
       } satisfies DashboardHostMessage);
       for (const socket of this.webSocketClients) {
@@ -2288,14 +2292,13 @@ export class WebDashboardServer implements vscode.Disposable {
       }
     }
     if (notify) this.notifyDashboardPeers();
-    const disconnectTimer = this.peerDisconnectTimers.get(normalized.deviceId);
-    if (disconnectTimer) {
-      clearTimeout(disconnectTimer);
-      this.peerDisconnectTimers.delete(normalized.deviceId);
-    }
     recordPeerQuotaChecks(normalized.accounts ?? []);
-    this.peerLastSeenAt.set(normalized.deviceId, Date.now());
-    this.peerLastSignedAt.set(normalized.deviceId, normalized.sentAt);
+    if (normalized.sentAt > (this.peerLastSignedAt.get(normalized.deviceId) ?? 0)) {
+      const disconnectTimer = this.peerDisconnectTimers.get(normalized.deviceId);
+      if (disconnectTimer) { clearTimeout(disconnectTimer); this.peerDisconnectTimers.delete(normalized.deviceId); }
+      this.peerLastSeenAt.set(normalized.deviceId, Date.now());
+      this.peerLastSignedAt.set(normalized.deviceId, normalized.sentAt);
+    }
     if (JSON.stringify(previous?.dashboardTargets) !== JSON.stringify(normalized.dashboardTargets)) {
       this.publishLocalPeerState();
       this.refreshCliSessionRealtimeLifecycle();
@@ -2422,7 +2425,10 @@ export class WebDashboardServer implements vscode.Disposable {
       if (incoming && peer.sentAt > incoming.sentAt || this.peerSessions.get(id) !== previous.get(id)) next.set(id, peer);
     }
     for (const id of this.peerSessions.keys()) {
-      if (!next.has(id)) { this.peerSessions.delete(id); this.peerLastSeenAt.delete(id); this.peerLastSignedAt.delete(id); }
+      if (!next.has(id)) {
+        if (Date.now() - (this.peerLastSeenAt.get(id) ?? 0) >= PEER_OFFLINE_AFTER_MS && !this.peerSockets.has(id)) this.removePeerPresence(id);
+        else if (!this.peerDisconnectTimers.has(id)) this.deferPeerRemoval(id);
+      }
     }
     await Promise.all([...next.values()].map(peer => this.applyPeerSession(peer, false)));
     this.refreshCliSessionRealtimeLifecycle();
@@ -2563,7 +2569,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private async readLocalPeerState(): Promise<LocalPeerState> {
     // Standby peers stay discoverable without scanning sessions or building account views.
-    if (!this.hasWorkspaceViewer()) return { sessions: [], accounts: [], enablementRegistry: [] };
+    if (!this.hasWorkspaceViewer()) return this.lastLocalPeerState ?? { sessions: [], accounts: [], enablementRegistry: [] };
     if (this.localPeerState) return this.localPeerState;
     const revision = this.localPeerStateRevision;
     const pending = (this.localPeerStateRead ??= (async () => {
@@ -2589,17 +2595,33 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     if (result.revision !== this.localPeerStateRevision) return this.peerStopped ? result.state : this.readLocalPeerState();
     this.localPeerState = result.state;
+    this.lastLocalPeerState = result.state;
+    if (!this.peerStopped && this.peerCataloguePublishPending) {
+      this.peerCataloguePublishPending = false;
+      void this.publishPeerSessions();
+      if (this.peerSockets.size) void this.broadcastPeerAggregate().catch(error => console.warn("[codexManager] refreshed peer state delivery failed", error));
+    }
     return result.state;
   }
 
   private async readLocalPeerSessions(): Promise<PeerSessionMessage> {
-    const state = await this.readLocalPeerState();
+    const revision = this.peerConnectionRevision;
+    const state = await waitWithin(this.readLocalPeerState(), DASHBOARD_LOCAL_SESSION_WAIT_MS, "Peer catalogue is still loading")
+      .catch((error: unknown) => {
+        if (!this.peerStopped && revision === this.peerConnectionRevision) {
+          if (!this.peerCataloguePublishPending) console.warn("[codexManager] peer catalogue refresh delayed; heartbeat uses saved state", error);
+          this.peerCataloguePublishPending = true;
+        }
+        return this.lastLocalPeerState ?? { sessions: [], accounts: [], enablementRegistry: [] };
+      });
     this.lastPeerSentAt = Math.max(Date.now(), this.lastPeerSentAt + 1);
+    const parents = new Set(filterCliSessionsBySection(state.sessions, "active").map(session => session.id));
     const unsigned: Omit<PeerSessionMessage, "signature"> = {
       type: "peer:sessions",
       deviceId: this.deviceId,
       deviceName: os.hostname(),
-      sessions: [...state.sessions].sort((a, b) => Number(isCodexSessionRunning(b)) - Number(isCodexSessionRunning(a))),
+      sessions: state.sessions.filter(session => !session.archived && (parents.has(session.id) || isCodexSessionRunning(session)))
+        .sort((a, b) => Number(isCodexSessionRunning(b)) - Number(isCodexSessionRunning(a))),
       accounts: state.accounts,
       enablementRegistry: this.encryptedSync?.getRealtimeEnablementRegistry() ?? [],
       dashboardTargets: this.browserDashboardTargets(),

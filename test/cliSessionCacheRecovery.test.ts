@@ -74,6 +74,15 @@ describe("browser cache recovery", () => {
     const record = records.get("dashboard-state") as { value: { state: Record<string, unknown> } };
     record.value.state["usageHistory"] = [{ at: 1 }];
     expect(await cache.readDashboardStateCache()).not.toHaveProperty("usageHistory");
+    const a = [{ id: "same", email: "a@example.test" }], b = [{ id: "same", email: "b@example.test" }];
+    await cache.writeDashboardStateCache({ accounts: a, connectedPeers: [{ id: "local-pc", local: true }], peerAccounts: { a, b }, settings: {} } as never);
+    expect((await cache.readDashboardStateCache())?.peerAccounts).toEqual({});
+    expect(await cache.readDashboardAccountsCache("local-pc")).toEqual(a);
+    expect(await cache.readDashboardAccountsCache("a")).toEqual(a);
+    expect(await cache.readDashboardAccountsCache("b")).toEqual(b);
+    await cache.writeDashboardStateCache({ accounts: a, peerAccounts: { a: [] }, settings: {} } as never);
+    expect(await cache.readDashboardAccountsCache("a")).toEqual([]);
+    expect(await cache.readDashboardAccountsCache("b")).toEqual(b);
   });
   it("bounds stalled cache writes and invalidations and allows a later write", async () => {
     vi.resetModules();
@@ -152,10 +161,17 @@ describe("browser cache recovery", () => {
     await expect(reopened.readCliComposerDraft("pc-b:chat")).resolves.toBeUndefined();
     const list = { sessions: [{ id: 'remote', title: 'Remote', status: 'idle' as const, deviceId: 'pc-a', remote: true }],
       composerConfig: { models: [], projects: [{ id: 'project', label: 'Remote project', path: 'E:/remote' }] } };
-    await reopened.writeCliSessionListCache(list, 'pc-a');
+    await reopened.writeCliSessionListCache({ ...list, sessions: [...list.sessions,
+      { id: 'local', title: 'Local', status: 'idle' }, { ...list.sessions[0], deviceId: 'pc-b' }] }, 'pc-a');
     await expect(reopened.readCliSessionListCache('pc-a')).resolves.toMatchObject(list);
     await expect(reopened.readCliSessionListCache('pc-b')).resolves.toBeUndefined();
     await expect(reopened.readCliSessionListCache()).resolves.toBeUndefined();
+    const old = reopened.writeCliSessionListCache({ sessions: [{ ...list.sessions[0]!, title: "Stale" }] }, "pc-a");
+    const newest = reopened.writeCliSessionListCache({ ...list, sessions: [{ ...list.sessions[0]!, title: "Newest" }] }, "pc-a");
+    await Promise.all([old, newest]);
+    expect((await reopened.readCliSessionListCache("pc-a"))?.sessions[0]?.title).toBe("Newest");
+    await reopened.writeCliSessionListCache({ sessions: [{ ...list.sessions[0]!, title: "Event update" }] }, "pc-a");
+    expect((await reopened.readCliSessionListCache("pc-a"))?.composerConfig).toEqual(list.composerConfig);
     const stored = records.get("composer:pc-a:chat") as { updatedAt: number };
     stored.updatedAt = Date.now() + 60_000;
     await expect(reopened.readCliComposerDraft("pc-a:chat")).resolves.toBeUndefined();

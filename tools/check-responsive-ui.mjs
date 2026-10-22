@@ -93,6 +93,8 @@ const mockHost = `(() => {
       if(message.type === 'dashboard:ready') {
         dispatch({type:'dashboard:snapshot',state});
         dispatch({type:'dashboard:connection',connected:true});
+      } else if(message.type === 'dashboard:workspace-presence' && message.viewing) {
+        dispatch({type:'dashboard:snapshot',state});
       } else if(message.type === 'dashboard:setting') {
         state.settings[message.key] = message.value;
         dispatch({type:'dashboard:snapshot',state});
@@ -272,6 +274,28 @@ const mockHost = `(() => {
 })();`;
 const output = path.join(tmpdir(), "codex-manager-ui-check");
 await mkdir(output, { recursive: true });
+async function checkClosedProject(page, width, errors) {
+    await page.goto(`${origin}/workspace/${parentId}?closed-project`);
+    await page.waitForFunction(() => window.__uiActions.some(action => action.action === "getWorkspaceEnvironment" && action.payload?.projectPath === "D:/closed-worktree"));
+    if (width <= 1180) {
+      await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
+    }
+    const closedFiles = page.getByRole("tab", { name: "Files", exact: true });
+    if (await closedFiles.count()) await closedFiles.click();
+    else {
+      await page.getByRole("button", { name: "Add workspace tool", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Files", exact: true }).click();
+    }
+    await page.waitForFunction(() => window.__uiActions.some(action => action.action === "listWorkspaceFiles" && action.payload?.projectPath === "D:/closed-worktree"));
+    if (width <= 1180) await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
+    if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "false") await page.locator(".cli-rail-toggle").click();
+    await page.getByRole("button", { name: "New chat", exact: true }).click();
+    await page.getByRole("button", { name: "Message settings", exact: true }).click();
+    assert.equal(await page.getByRole("combobox", { name: "Project", exact: true }).inputValue(), "D:/closed-worktree", "New chat retains the closed session project");
+    await page.keyboard.press("Escape");
+    assert.deepEqual(errors, [], "Closed-project browser runtime errors");
+}
+
 const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWSER || "msedge", headless: true });
 const results = [];
 try {
@@ -307,6 +331,12 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    if (process.argv.includes('--closed-project')) {
+      await checkClosedProject(page, width, errors);
+      results.push({ width, height, checks: 'closed-project composer context' });
+      await context.close();
+      continue;
+    }
     if(process.argv.includes('--history')) {
       await page.goto(origin+'/');
       if(width<=760) {await page.locator('.dashboard-mobile-actions > summary').click();await page.getByRole('menuitem',{name:'Settings',exact:true}).click();}
@@ -531,6 +561,12 @@ try {
       await context.close();continue;
     }
     if (process.argv.includes('--systems')) {
+      await page.goto(`${origin}/?device=missing-system`);
+      await page.locator('#dashboard-main').waitFor();
+      const missingRail=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+      if(await missingRail.isVisible()) await missingRail.click();
+      await page.waitForFunction(()=>window.__uiActions.some(message=>message.type==='dashboard:workspace-presence'&&message.targetDeviceId==='missing-system'));
+      assert.equal(await page.getByRole('combobox',{name:'System',exact:true}).inputValue(),'missing-system','An undiscovered system never falls back to local data');
       await page.goto(`${origin}/`);
       await page.locator('#dashboard-main').waitFor();
       await page.waitForFunction(()=>window.__uiActions.some(message=>message.type==='dashboard:workspace-presence'&&message.viewing===true));
@@ -559,6 +595,16 @@ try {
       await page.waitForFunction(()=>window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId==='fixture-system');
       await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='listCodexCliSessions'&&action.payload?.targetDeviceId==='fixture-system'));
       await page.getByRole('button',{name:'Expand remote-project',exact:true}).waitFor();
+      assert.equal(await page.getByRole('button',{name:'Expand demo',exact:true}).count(),0,'Local projects stay outside remote context');
+      assert.equal(await page.locator('.cli-pc-group-heading').count(),0,'System context is not repeated in the session tree');
+      await page.waitForFunction(()=>new URL(location.href).searchParams.get('device')==='fixture-system');
+      await page.getByRole('button',{name:'Project task board',exact:true}).click();
+      await page.waitForFunction(()=>location.pathname==='/tasks'&&new URL(location.href).searchParams.get('device')==='fixture-system');
+      await page.goBack();
+      await page.waitForFunction(()=>location.pathname==='/'&&new URL(location.href).searchParams.get('device')==='fixture-system');
+      await rail();
+      assert.equal(await picker.inputValue(),'fixture-system','Browser history retains the selected system');
+
       const sidebarControl=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
       if(await sidebarControl.isVisible()) await sidebarControl.click();
       await page.getByRole('button',{name:'Open account center',exact:true}).click();
@@ -569,6 +615,10 @@ try {
       await picker.selectOption('local');
       await page.waitForFunction(()=>!window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId);
       await page.getByRole('button',{name:'Expand demo',exact:true}).waitFor();
+      if(width!==320) await page.waitForFunction(()=>new Promise(resolve=>{
+        const request=indexedDB.open('codex-manager-cache');
+        request.onsuccess=()=>{const db=request.result,read=db.transaction('cli-sessions').objectStore('cli-sessions').get('accounts:fixture-system');read.onsuccess=()=>{const saved=read.result?.value;db.close();resolve(Array.isArray(saved)&&saved.some(account=>account.id==='remote-account'));};};
+      }));
       await page.evaluate(()=>{window.__holdNextSystemList=true;window.__heldSystemList=undefined;});
       await picker.selectOption('fixture-system');
       await page.waitForFunction(()=>!!window.__heldSystemList);
@@ -582,6 +632,15 @@ try {
       await page.getByRole('button',{name:'Expand remote-project',exact:true}).click();
       await page.locator('.cli-session-row-select').filter({hasText:'Remote system session'}).click();
       await page.getByText('Remote system conversation',{exact:true}).waitFor();
+      await page.evaluate(()=>{
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'partial-remote',status:'completed',payload:{cliSessionsDeviceId:'fixture-system',cliSessionsPartial:true,cliSessions:[],realtimeRevision:Date.now()}}}));
+      });
+      await page.getByText('Remote system conversation',{exact:true}).waitFor();
+      assert.ok(new URL(page.url()).pathname !== '/workspace','Partial peer pushes retain the current conversation');
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'realtime-peer-legacy-empty',status:'completed',payload:{cliSessionsDeviceId:'fixture-system',cliSessions:[],realtimeRevision:Date.now()+1}}})));
+      await page.getByText('Remote system conversation',{exact:true}).waitFor();
+      assert.ok(new URL(page.url()).pathname !== '/workspace','Legacy heartbeat pushes cannot delete the route');
+
       assert.ok(new URL(page.url()).searchParams.get('device')==='fixture-system','Remote conversation retains system in browser URL');
       await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='getWorkspaceEnvironment'&&action.payload?.targetDeviceId==='fixture-system'&&action.payload?.projectPath==='E:/remote-project'));
       await page.evaluate(()=>{window.__uiSnapshot.connectedPeers[1].connected=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
@@ -944,6 +1003,10 @@ try {
     await checkTaskUi(page, {origin,width,height,output});
     await page.goto(`${origin}/workspace`);
     await page.locator(".cli-workspace").waitFor();
+    const empty=page.locator('.cli-workspace-empty');
+    const welcome=await empty.boundingBox(), conversation=await page.locator('.cli-conversation').boundingBox();
+    assert.ok(welcome && conversation && welcome.height > conversation.height * .7, 'Welcome uses the available workspace instead of an extra grid track');
+
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.getByRole("button", { name: "Expand demo", exact: true }).waitFor();
     const railBounds = await page.locator(".cli-session-rail").boundingBox();
@@ -1001,8 +1064,8 @@ try {
     await page.waitForFunction(() => window.__uiActions.filter(message => message.action === "listCodexCliSessions").length > 1);
     await page.getByRole("button", { name: "Refresh sessions", exact: true }).waitFor();
     assert.deepEqual(await page.locator(".cli-session-row-main > strong").allTextContents(), initialOrder, "Refresh does not move existing rows");
-    assert.ok((await page.locator(".cli-session-row-meta").first().textContent()).includes("demo - "), "Compact rows show project and PC metadata");
-    assert.equal((await page.locator(".cli-session-row-meta").first().textContent()).includes("VS Code"), false, "Session metadata uses the PC name");
+    assert.equal(await page.locator(".cli-session-row-meta > span").first().textContent(), "demo", "Compact rows show only project metadata");
+    assert.equal((await page.locator(".cli-session-row-meta").first().textContent()).includes("VS Code"), false, "Session metadata omits the system name");
     assert.equal(await page.locator(".cli-project-group").count(), 0, "Compact view has no project nesting");
     await page.waitForFunction(() => JSON.parse(localStorage.getItem("codexManager.workspaceLayout.v2") || "{}").sessionView === "compact");
     await page.reload();
@@ -1415,7 +1478,7 @@ try {
     await accountSearch.fill("account-that-does-not-exist");
     await accountCenter.getByText("No matching accounts", { exact: true }).waitFor();
     await accountSearch.fill("");
-    assert.equal(await accountCenter.getByRole("button", { name: "Switch to dis***com", exact: true }).isDisabled(), true);
+    assert.equal(await accountCenter.getByRole("button", { name: "Switch to dis***com", exact: true }).count(), 0, "Disabled accounts are omitted from switching choices");
     assert.ok(await accountCenter.evaluate(element => { const bounds = element.getBoundingClientRect(); return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 && bounds.bottom <= innerHeight; }), "The account center fits every viewport");
     if (width <= 760) assert.equal(await accountCenter.locator('input[type="search"]').evaluate(element => getComputedStyle(element).fontSize), "16px", "Mobile account search avoids automatic iOS zoom");
     assert.ok(await accountCenter.evaluate(element => element.scrollWidth <= element.clientWidth), "The account center has no horizontal overflow");
@@ -1456,7 +1519,9 @@ try {
     assert.equal(await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).isEnabled(), true, "A failed switch can be retried");
     await systemSelect.selectOption("account-remote");
     await page.evaluate(() => { window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "account-remote"); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
-    await page.waitForFunction(() => document.querySelector('#account-center-system')?.value === "local");
+    await page.waitForFunction(() => document.querySelector('#account-center-system')?.value === "account-remote");
+    await accountCenter.getByText("Saved accounts. Reconnect this system to switch.", { exact: true }).waitFor();
+    await systemSelect.selectOption("local");
     await page.evaluate(() => {
       const account = window.__uiSnapshot.accounts.find(account => account.id === "center-active");
       account.metrics = [{ key: "invalid", label: "Invalid", visible: true, percentage: NaN }, { key: "bounded", label: "Remaining", visible: true, percentage: 150 }];
@@ -1631,9 +1696,10 @@ try {
       window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } }));
     });
     await page.locator("#codexDashboardButton").click();
-    assert.equal(await page.locator(".dashboard-system-count").textContent(), "2");
-    assert.equal(await page.locator(".dashboard-pc-picker-popover").getByRole("option").count(), 2);
-    await page.locator(".dashboard-pc-picker-popover").getByRole("option").nth(1).click();
+    const systemOptions = page.locator(".dashboard-pc-picker-popover").getByRole("option");
+    assert.ok(await systemOptions.count() >= 2);
+    assert.equal(await page.locator(".dashboard-system-count").textContent(), String(await systemOptions.count()));
+    await systemOptions.filter({has: page.locator(".dashboard-pc-picker-status:not(.is-online)")}).first().click();
     await page.locator(".dashboard-notice.is-warning").filter({ hasText: "is offline" }).waitFor();
     await page.locator("#codexDashboardButton").click();
     await page.keyboard.press("Home");
@@ -1810,7 +1876,7 @@ try {
         await page.getByRole("button", { name: "Show log", exact: true }).click();
         await consoleDialog.waitFor();
 
-        const [download] = await Promise.all([page.waitForEvent("download"), consoleDialog.getByRole("button", { name: "Download", exact: true }).click()]);
+        const [download] = await Promise.all([page.waitForEvent("download"), consoleDialog.getByRole("button", { name: "Download", exact: true }).click({ noWaitAfter: true })]);
         assert.equal(download.suggestedFilename(), "codex-manager-logs-fixture.json", "Redacted logs download in the browser");
         await consoleDialog.getByRole("combobox", { name: "Filter log entries" }).selectOption("error");
         assert.equal(await consoleDialog.locator(".system-log-entry").count(), 2, "Console filters errors");
@@ -1927,25 +1993,7 @@ try {
     await page.waitForFunction(() => !document.querySelector(".overlay.open") && [...document.querySelectorAll(".overlay")].every(element => getComputedStyle(element).visibility === "hidden" || getComputedStyle(element).display === "none" || getComputedStyle(element).opacity === "0"));
     assert.deepEqual(errors, [], "Browser runtime errors");
     await page.screenshot({ path: path.join(output, `dashboard-${width}x${height}.png`) });
-    await page.goto(`${origin}/workspace/${parentId}?closed-project`);
-    await page.waitForFunction(() => window.__uiActions.some(action => action.action === "getWorkspaceEnvironment" && action.payload?.projectPath === "D:/closed-worktree"));
-    if (width <= 1180) {
-      await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
-    }
-    const closedFiles = page.getByRole("tab", { name: "Files", exact: true });
-    if (await closedFiles.count()) await closedFiles.click();
-    else {
-      await page.getByRole("button", { name: "Add workspace tool", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Files", exact: true }).click();
-    }
-    await page.waitForFunction(() => window.__uiActions.some(action => action.action === "listWorkspaceFiles" && action.payload?.projectPath === "D:/closed-worktree"));
-    if (width <= 1180) await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
-    if (width <= 760 && await page.locator(".cli-rail-toggle").getAttribute("aria-expanded") === "false") await page.locator(".cli-rail-toggle").click();
-    await page.getByRole("button", { name: "New chat", exact: true }).click();
-    await page.getByRole("button", { name: "Message settings", exact: true }).click();
-    assert.equal(await page.getByRole("combobox", { name: "Project", exact: true }).inputValue(), "D:/closed-worktree", "New chat retains the closed session project");
-    await page.keyboard.press("Escape");
-    assert.deepEqual(errors, [], "Closed-project browser runtime errors");
+    await checkClosedProject(page, width, errors);
     results.push({ width, height, checks: "parent list, running icon, chat, live messages, Agent tabs, share, session menu, Environment, Files, Reviews, quote, attachment, failed send, settings" });
     await context.close();
   }

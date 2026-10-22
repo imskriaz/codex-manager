@@ -508,7 +508,19 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   }, [mobileLayout, railCollapsed, props.dashboardMode]);
 
   const sessionOrder = useRef(new Map<string, number>());
-  const orderedSessions = useMemo(() => stabilizeCliSessionOrder(reconcileCliSessionStatuses(props.sessions, props.liveStates ?? {}), sessionOrder.current), [props.sessions, props.liveStates]);
+  const localPeerId = props.peers?.find((peer) => peer.local)?.id;
+  const selectedSystem = props.selectedPeerId === "local" ? localPeerId : props.selectedPeerId;
+  const orderedSessions = useMemo(() => stabilizeCliSessionOrder(reconcileCliSessionStatuses(props.sessions.filter(session =>
+    selectedSystem && selectedSystem !== localPeerId ? session.deviceId === selectedSystem : !session.remote
+  ), props.liveStates ?? {}), sessionOrder.current), [props.sessions, props.liveStates, selectedSystem, localPeerId]);
+  const composerSystemKey = selectedSystem && selectedSystem !== localPeerId ? selectedSystem : "local";
+  const composerSystem = useRef(composerSystemKey);
+  useEffect(() => {
+    if (composerSystem.current === composerSystemKey) return;
+    composerSystem.current = composerSystemKey;
+    setNewChatProject(undefined);
+    setProjectPath(undefined);
+  }, [composerSystemKey]);
   const activeSessions = filterCliSessionsBySection(orderedSessions, "active");
   const archivedSessions = filterCliSessionsBySection(orderedSessions, "archived");
   const runningCount = activeSessions.filter((session) => isCodexSessionRunning(session)).length;
@@ -531,7 +543,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const projects = props.composerConfig?.projects ?? [];
   const composerProjects = useMemo(() => {
     const known = new Set(projects.map((project) => canonicalWebPath(project.path)));
-    const extraPaths = [...props.sessions.filter(session => !session.remote).map(session => session.projectPath), ...(props.selectedSession ? [props.selectedSession.projectPath] : [])]
+    const extraPaths = [...orderedSessions.map(session => session.projectPath), props.selectedSession?.projectPath, newChatProject, projectPath]
       .filter((projectPath): projectPath is string => typeof projectPath === "string" && projectPath.length > 0 && !known.has(canonicalWebPath(projectPath)));
     const uniqueExtraPaths = extraPaths.filter((projectPath, index, all) => all.findIndex((candidate) => canonicalWebPath(candidate) === canonicalWebPath(projectPath)) === index);
     return [...projects, ...uniqueExtraPaths.map((projectPath) => ({
@@ -539,7 +551,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       label: projectDisplayName(projectPath),
       path: projectPath
     }))];
-  }, [projects, props.sessions, props.selectedSession?.projectPath]);
+  }, [projects, orderedSessions, props.selectedSession?.projectPath, newChatProject, projectPath]);
   const railFiles = useMemo(() => props.messages.flatMap((message) => message.changes ?? []).filter((change, index, all) => all.findIndex((item) => item.path === change.path) === index), [props.messages]);
   const railAgents = useMemo(() => props.messages.filter((message) => message.kind === "collaboration"), [props.messages]);
   const retryMessage = (id: string): void => {
@@ -620,7 +632,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     setNewChatProject(selected);
     setProjectPath(selected);
   };
-  const localPeerId = props.peers?.find((peer) => peer.local)?.id;
   const pcGroups = useMemo(() => {
     const localPeer = props.peers?.find((peer) => peer.local);
     const visibleKeys = new Set(visibleSessions.map((session) => `${session.deviceId ?? "local"}:${session.id}`));
@@ -652,8 +663,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       });
     }
     if (groups.size === 0) groups.set("local", { id: "local", name: "This PC", local: true, connected: true, sessions: [], allSessions: [] });
-    return [...groups.values()];
-  }, [props.peers, orderedSessions, visibleSessions]);
+    return [...groups.values()].filter(group => selectedSystem ? group.id === selectedSystem : group.local);
+  }, [props.peers, orderedSessions, visibleSessions, selectedSystem]);
   const toggleGroup = (id: string, defaultCollapsed = false): void => {
     setCollapsedGroups((current) => ({ ...current, [id]: !(current[id] ?? defaultCollapsed) }));
   };
@@ -684,7 +695,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   };
   const renderSession = (session: DashboardCliSessionSummary, grouped = false): preact.ComponentChildren => session.archived ? (
     <div role="listitem" class={`cli-session-row is-archived ${grouped ? "is-grouped" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
-        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
+        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
       <span class="cli-session-row-actions">
         <IconButton label={`Restore ${session.title}`} disabled={props.mutating} onClick={() => props.onUnarchive(session)}><RestoreIcon /></IconButton>
         <IconButton label={`Delete ${session.title}`} disabled={props.mutating} danger onClick={() => setDeleteTarget(session)}><TrashIcon /></IconButton>
@@ -698,7 +709,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const autoResumeLabel = `${autoResume ? "Disable" : "Enable"} Auto Resume for ${session.title}${hasGoal ? " (goal included)" : ""}`;
       return <div role="listitem" draggable class={`cli-session-row ${grouped ? "is-grouped" : ""} ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
-        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session, props.peers)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
+        <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
       </button>
       {running ? <span class="cli-session-row-status" title={session.status === "unknown" ? session.statusError ?? "Running state unavailable" : "Running"} aria-label={session.status === "unknown" ? "Running state unavailable" : "Running"}>
         {session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />}
@@ -876,7 +887,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <div class="cli-sidebar-toolbar">
                 <button type="button" class="cli-dashboard-nav" aria-current={props.dashboardMode && !props.taskBoardActive ? 'page' : undefined} title="Dashboard" aria-label="Dashboard" onClick={() => { if (mobileLayout) setRailCollapsed(true); props.onDashboard(); }}><DashboardIcon /><span>Dashboard</span></button>
                 <button type="button" class="cli-dashboard-nav cli-workspace-nav" aria-current={props.selectedSession ? "page" : undefined} onClick={() => { if (mobileLayout) setRailCollapsed(true); returnToSessionList(); }} title="Open workspace"><SidebarIcon /><span>Workspace</span></button>
-                {props.taskBoardEnabled ? <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => props.onTasks?.()} title="Project task board"><SessionListIcon /><span>Kanban</span></button> : null}
+                {props.taskBoardEnabled ? <button type="button" class="cli-dashboard-nav cli-task-nav" aria-current={props.taskBoardActive ? 'page' : undefined} onClick={() => props.onTasks?.()} title="Project task board"><TaskActivityIcon /><span>Kanban</span></button> : null}
                 <div class="cli-sidebar-actions" role="group" aria-label="Session list controls"><button type="button" class="cli-icon-button cli-new-chat-icon" aria-label="New chat" title="New chat" onClick={() => startNewChat()}><PlusIcon /></button><IconButton label={props.loading ? "Refreshing sessions" : "Refresh sessions"} disabled={props.loading} onClick={props.onRefresh}><RefreshIcon /></IconButton><button type="button" class={`cli-icon-button cli-session-section-toggle ${section === "archived" ? "is-active" : ""}`} aria-pressed={section === "archived"} aria-label={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} title={section === "active" ? `Show archived sessions (${archivedSessions.length})` : `Show active sessions (${activeSessions.length})`} onClick={() => setSection((current) => current === "active" ? "archived" : "active")}><ArchiveIcon /></button><button type="button" class="cli-icon-button cli-session-view-toggle" aria-pressed={layout.sessionView === "compact"} aria-label={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} title={layout.sessionView === "projects" ? "Show compact session list" : "Show projects and sessions"} onClick={() => setLayout((current) => ({ ...current, sessionView: current.sessionView === "projects" ? "compact" : "projects" }))}>{layout.sessionView === "projects" ? <SessionListIcon /> : <EmptyFolderIcon />}</button></div>
               </div>
             </nav>
@@ -886,9 +897,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           </div>
 
           <div class="cli-session-list-region">
-          {layout.sessionView === "compact" || Boolean(search.trim()) ? <div class="cli-compact-session-list" role="list" aria-label="Sessions">{visibleSessions.map(session => renderSession(session))}</div> : <div class="cli-project-list cli-pc-project-list is-dense-tree" aria-label="PCs, projects, and sessions">
+          {layout.sessionView === "compact" || Boolean(search.trim()) ? <div class="cli-compact-session-list" role="list" aria-label="Sessions">{visibleSessions.map(session => renderSession(session))}</div> : <div class="cli-project-list cli-pc-project-list is-dense-tree" aria-label="Projects and sessions">
             {pcGroups.map((pc) => {
-              const pcCollapsed = Boolean(collapsedGroups[`pc:${pc.id}`]);
               const knownProjectPaths = new Set((pc.local ? projects : []).map((project) => canonicalWebPath(project.path)));
               const sessionProjects = [...new Map(pc.allSessions
                 .filter((session) => session.projectPath && !knownProjectPaths.has(canonicalWebPath(session.projectPath)))
@@ -911,13 +921,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               const unassigned = pc.sessions.filter((session) => !assigned.has(session.id));
                if (unassigned.length > 0) projectGroups.unshift({ project: { id: `${pc.id}:recents`, label: "Recent", path: "" }, sessions: unassigned });
                return <section class="cli-pc-group" key={pc.id}>
-                 <div class="cli-pc-group-heading">
-                     <button type="button" class={`cli-pc-group-toggle ${props.selectedPeerId === pc.id ? "is-selected" : ""}`} aria-expanded={!pcCollapsed} onClick={() => toggleGroup(`pc:${pc.id}`)}>
-                     <ChevronIcon /><span><strong>{getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}</strong><small title={`${pc.sessions.length} sessions`}>{pc.sessions.length}</small>{!pc.connected ? <small>Offline</small> : null}</span>
-                   </button>
-                   <button type="button" class="cli-pc-switch" aria-label={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} title={`Switch account on ${getSensitiveDisplayValue(pc.name, props.privacyMode, "name")}`} onClick={(event) => { event.stopPropagation(); props.onSwitchAccount(pc.local ? "local" : pc.id); }}><SwitchAccountIcon /></button>
-                 </div>
-                {!pcCollapsed ? <div class="cli-pc-group-children">
+                <div class="cli-pc-group-children">
                   {projectGroups.map(({ project, sessions }) => {
                     const groupId = `project:${pc.id}:${project.id}`;
                     const projectCollapsed = collapsedGroups[groupId] ?? true;
@@ -931,7 +935,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                       {!projectCollapsed ? <div class="cli-project-sessions" role="list">{sessions.map(session => renderSession(session, true))}</div> : null}
                     </section>;
                   })}
-                </div> : null}
+                </div>
               </section>;
             })}
           </div>}
@@ -2189,7 +2193,8 @@ function SessionAccountFooter(props: {
   const currentAccount = accounts.find(account => account.isCurrentWindowAccount || account.runningOnThisDevice) ?? accounts.find(account => account.isActive);
   const currentMetrics = metrics(currentAccount);
   const currentName = name(currentAccount);
-  const filtered = accounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const enabledAccounts = accounts.filter(account => account.enabled);
+  const filtered = enabledAccounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
   useEffect(() => {
     setSearch("");
   }, [peer.id]);
@@ -2261,7 +2266,7 @@ function SessionAccountFooter(props: {
       <div class="cli-account-quota-grid" aria-label="Current account quota">
         {currentMetrics.length ? currentMetrics.slice(0, 2).map(metric => <div key={metric.key}><span>{metric.label}<strong>{metric.value}%</strong></span><span class="cli-account-quota-track" data-level={metric.value < 20 ? "low" : "normal"} role="meter" aria-label={`${metric.label} quota remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}><i style={{ width: `${metric.value}%` }} /></span></div>) : <small>Quota has not been checked yet.</small>}
       </div>
-      <div class="cli-account-list-heading"><strong>Accounts <span>{accounts.length}</span></strong><small>{accounts.filter(account => account.enabled).length} enabled</small></div>
+      <div class="cli-account-list-heading"><strong>Accounts <span>{enabledAccounts.length}</span></strong></div>
       <label class="cli-account-search"><SearchIcon /><input ref={searchRef} type="search" aria-label="Search accounts on selected system" placeholder="Find an account..." value={search} onInput={event => setSearch(event.currentTarget.value)} /></label>
       <div class="cli-account-list" role="group" aria-label="Saved accounts">
         {filtered.map(account => {
@@ -2272,9 +2277,9 @@ function SessionAccountFooter(props: {
             <span class="cli-account-choice-avatar" aria-hidden="true">{accountName.slice(0, 1).toUpperCase()}</span><span class="cli-account-choice-copy"><strong title={accountName}>{accountName}</strong><small>{account.planTypeLabel || "Account"} · {quota.length ? quota.slice(0, 2).map(metric => `${metric.label} ${metric.value}%`).join(" · ") : "Quota unavailable"}</small></span><span class={`cli-account-choice-status ${active ? "is-current" : ""}`}>{active ? <><CheckIcon />Active</> : !account.enabled ? "Disabled" : <SwitchAccountIcon />}</span>
           </button>;
         })}
-        {!filtered.length ? <div class="cli-account-empty" role="status"><strong>{search.trim() ? "No matching accounts" : "No saved accounts"}</strong><small>{search.trim() ? "Try another name or email." : "Add an account from the dashboard to get started."}</small></div> : null}
+        {!filtered.length ? <div class="cli-account-empty" role="status"><strong>{search.trim() ? "No matching accounts" : accounts.length ? "No enabled accounts" : "No saved accounts"}</strong><small>{search.trim() ? "Try another name or email." : accounts.length ? "Enable an account from the dashboard." : "Add an account from the dashboard to get started."}</small></div> : null}
       </div>
-      <button type="button" class="cli-account-switch-action" disabled={!peer.connected || props.switching || !accounts.length} onClick={() => choose()}><SwitchAccountIcon />{props.switching ? "Switching account..." : "Switch account"}</button>
+      <button type="button" class="cli-account-switch-action" disabled={!peer.connected || props.switching || !enabledAccounts.length} onClick={() => choose()}><SwitchAccountIcon />{props.switching ? "Switching account..." : "Switch account"}</button>
       <nav class="cli-account-navigation" aria-label="Account shortcuts"><button type="button" onClick={() => { closeMenu(); props.onApi?.(); }}>API</button><button type="button" onClick={() => { closeMenu(); props.onDashboard(); }}><DashboardIcon />Dashboard</button><button type="button" onClick={() => { closeMenu(); props.onSettings(); }}><Icon><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>Settings</button>{props.showLogout ? <form method="post" action="/logout" class="cli-account-logout-form"><button type="submit" class="cli-account-logout">Sign out</button></form> : null}</nav>
     </div>, document.body) : null}
   </footer>;
@@ -2388,7 +2393,7 @@ function activityLabel(message: DashboardCliSessionMessage): string {
 }
 function EmptySessions(props: { search: boolean; section: CliSessionSection }) { return <div class="cli-inline-state"><EmptyFolderIcon /><strong>{props.search ? "No matching sessions" : `No ${props.section} sessions`}</strong><span>{props.search ? "Try another title or session ID." : props.section === "active" ? "Start a Codex chat to see it here." : "Archived sessions will appear here."}</span></div>; }
 function ConversationEmpty({ archived, logoUri }: { archived: boolean; logoUri?: string }) { return <div class="cli-conversation-empty">{logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}<h2>No messages yet</h2><p>{archived ? "This archived transcript has no readable messages." : "Send a message below to continue this session."}</p></div>; }
-function WorkspaceEmpty(props: { running: number; active: number; archived: number; logoUri?: string; onNewChat: () => void }) { return <div class="cli-workspace-empty"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h1>What should we build?</h1><p>Select a project below or choose a session from the sidebar.</p><button type="button" class="cli-empty-new-chat" onClick={props.onNewChat}>Start a new chat</button></div>; }
+function WorkspaceEmpty(props: { running: number; active: number; archived: number; logoUri?: string; onNewChat: () => void }) { return <div class="cli-workspace-empty"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h1>What should we build?</h1><p>Choose a session from the sidebar, or start a new chat.</p><button type="button" class="cli-empty-new-chat" onClick={props.onNewChat}>Start a new chat</button></div>; }
 function UsageBanner(props: { account?: DashboardAccountViewModel; onAction: (message: string) => void }) {
   const metric = props.account?.metrics.find((item) => item.visible && typeof item.percentage === "number");
   if (!metric || (metric.percentage ?? 100) > 5) return null;
@@ -2408,11 +2413,9 @@ export function projectDisplayName(value: string): string {
   const normalized = value.replace(/[\\/]+$/, "");
   return normalized.split(/[\\/]/).at(-1) || value;
 }
-function sessionMeta(session: DashboardCliSessionSummary, peers?: Array<{ id: string; name: string; local?: boolean }>): string {
+function sessionMeta(session: DashboardCliSessionSummary): string {
   const project = session.projectPath ? projectDisplayName(session.projectPath) : "Workspace";
-  const peer = peers?.find((candidate) => candidate.id === session.deviceId) ?? peers?.find((candidate) => candidate.local && !session.remote);
-  const device = session.deviceName?.trim() || peer?.name?.trim() || (session.remote ? "Remote PC" : "This PC");
-  return `${project} - ${getSensitiveDisplayValue(device, false, "name")}`;
+  return project;
 }
 function workspaceRelativePath(filePath: string, projectPath: string | undefined): string {
   const file = canonicalWebPath(filePath);
@@ -2464,6 +2467,7 @@ function ActivityGlyph({ kind }: { kind: DashboardCliSessionMessage["kind"] }) {
 }
 
 function Icon({ children }: { children: preact.ComponentChildren }) { return <svg viewBox="0 0 24 24" aria-hidden="true">{children}</svg>; }
+function TaskActivityIcon() { return <Icon><path d="M3 12h4l3-7 4 14 3-7h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></Icon>; }
 function SessionListIcon() { return <Icon><path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></Icon>; }
 function SidebarIcon() { return <Icon><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 4v16" fill="none" stroke="currentColor" stroke-width="1.7"/></Icon>; }
 function DashboardIcon() { return <Icon><rect x="4" y="4" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="4" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="14" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="14" y="14" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.6"/></Icon>; }

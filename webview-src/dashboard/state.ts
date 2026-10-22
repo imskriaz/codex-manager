@@ -21,6 +21,7 @@ export type AppState = {
 
 export type AppAction =
   | { type: "snapshot"; snapshot: DashboardState }
+  | { type: "scope-peer-accounts"; deviceId?: string; accounts?: DashboardState["accounts"] }
   | { type: 'account-tags'; updates: import('../../src/domain/accountTags').AccountTagUpdate[]; deviceId?: string }
   | { type: "open-settings" }
   | { type: "close-settings" }
@@ -43,18 +44,25 @@ export function createInitialState(): AppState {
   };
 }
 
+const retainTags = (incoming: DashboardState['accounts'], previous: DashboardState['accounts'] = []) => {
+  const saved = new Map(previous.map(account => [account.id, account]));
+  return incoming.map(account => {
+    const prior = saved.get(account.id);
+    return prior?.tags !== undefined && (prior.updatedAt ?? 0) > (account.updatedAt ?? 0) ? { ...account, tags: prior.tags, updatedAt: prior.updatedAt } : account;
+  });
+};
+
 export function reducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
+    case "scope-peer-accounts": {
+      if (!state.snapshot) return state;
+      const accounts = action.accounts ?? (action.deviceId ? state.snapshot.peerAccounts?.[action.deviceId] : undefined);
+      return { ...state, selectedAccountIds: action.accounts === undefined ? [] : state.selectedAccountIds, snapshot: { ...state.snapshot,
+        peerAccounts: action.deviceId && accounts ? { [action.deviceId]: retainTags(accounts, state.snapshot.peerAccounts?.[action.deviceId]) } : {} } };
+    }
     case "snapshot": {
-      const nextAccountIds = new Set(action.snapshot.accounts.map((account) => account.id));
+      const nextAccountIds = new Set([...action.snapshot.accounts, ...Object.values(action.snapshot.peerAccounts ?? {}).flat()].map((account) => account.id));
       const selectedAccountIds = state.selectedAccountIds.filter((accountId) => nextAccountIds.has(accountId));
-      const retainTags = (incoming: DashboardState['accounts'], previous: DashboardState['accounts'] = []) => {
-        const saved = new Map(previous.map(account => [account.id, account]));
-        return incoming.map(account => {
-          const prior = saved.get(account.id);
-          return prior?.tags !== undefined && (prior.updatedAt ?? 0) > (account.updatedAt ?? 0) ? { ...account, tags: prior.tags, updatedAt: prior.updatedAt } : account;
-        });
-      };
 
       return {
         ...state,

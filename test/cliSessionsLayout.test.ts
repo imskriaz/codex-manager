@@ -99,7 +99,7 @@ describe("sessions sidebar layout", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     const renderSession = source.slice(source.indexOf("const renderSession ="), source.indexOf("const returnToSessionList"));
     expect(renderSession).toContain('class="cli-session-row-main has-project"');
-    expect(renderSession).toContain("sessionMeta(session, props.peers)");
+    expect(renderSession).toContain("sessionMeta(session)");
     expect(renderSession).toContain('grouped ? <time class="cli-session-row-time"');
     expect(source).toContain('sessions.map(session => renderSession(session, true))');
     expect(renderSession).toContain("{relativeTime(session.updatedAt)}");
@@ -303,7 +303,8 @@ describe("sessions sidebar layout", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
 
     expect(source).toContain("SwitchAccountIcon");
-    expect(source).toContain('props.onSwitchAccount(pc.local ? "local" : pc.id)');
+    expect(source).toContain('props.onSwitchAccount(peerId, accountId)');
+    expect(source).not.toContain('class="cli-pc-group-heading"');
     expect(source).toContain('session.canStop ? <IconButton label={`Stop ${session.title}`}');
     expect(source).toContain('label={`Open ${session.title} in Codex`}');
     expect(source).toContain("props.onOpenInCodex(session)");
@@ -622,7 +623,8 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('if (!isBrowserDashboard || !realtimeConnected) return;');
     expect(source).toContain('return pathname === "/" || pathname === "/tasks" || isCliSessionsPath(pathname);');
     expect(source).toContain("if (isBrowserDashboard && !hasBrowserWorkspaceShell(browserPath)) return;");
-    expect(source).toContain("if (sessionId || hasBrowserWorkspaceShell(path)) requestCliSessions(true);");
+    expect(source).toContain("(sessionId || hasBrowserWorkspaceShell(path))) requestCliSessions(true);");
+    expect(source).toContain('setSelectedPeerId(deviceId);');
     expect(source).toContain("window.setInterval(announceCurrentVisibility, 15_000)");
   });
 

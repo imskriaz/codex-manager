@@ -9,6 +9,7 @@
   let lastProbeAt = 0;
   let snapshotInFlight;
   let latestSnapshot;
+  let dashboardReady = false;
   let snapshotRevision = 0;
   let authenticationRequired = false;
   let hiddenAt;
@@ -31,7 +32,8 @@
   const dispatch = (message) => {
     if (message?.type === "dashboard:snapshot") {
       if (message !== latestSnapshot) snapshotRevision++;
-      latestSnapshot = message;
+      // Retain only the startup replay; IndexedDB owns subsequent recovery data.
+      if (!dashboardReady) latestSnapshot = message;
       lastAccountCount = message.state?.accounts?.length || 1;
     }
     window.dispatchEvent(new MessageEvent("message", { data: message }));
@@ -255,9 +257,10 @@
       return;
     }
     if (message?.type === "dashboard:ready" || message?.type === "dashboard:retry-connection") {
+      dashboardReady = true;
       const manual = message.type === "dashboard:retry-connection";
       // Startup snapshots can arrive before the dashboard installs its listener.
-      if (latestSnapshot) dispatch(latestSnapshot);
+      if (latestSnapshot) { const startup = latestSnapshot; latestSnapshot = undefined; dispatch(startup); }
       publishConnection();
       if (manual) restartRealtime();
       try {

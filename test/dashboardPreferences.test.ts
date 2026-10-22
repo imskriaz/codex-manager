@@ -16,6 +16,21 @@ function createStorage(initial: Record<string, string> = {}): Storage {
 }
 
 describe("dashboard preferences", () => {
+  it("evicts inactive account catalogues, retains current selections on refresh and fences cached tags", () => {
+    const account = { id: "remote", tags: ["new"], updatedAt: 20 };
+    let state = reducer(createInitialState(), { type: "snapshot", snapshot: {
+      accounts: [], peerAccounts: { a: [account], b: [{ id: "other" }] }, settings: {}
+    } as never });
+    state = reducer(state, { type: "scope-peer-accounts", deviceId: "a" });
+    state = reducer(state, { type: "toggle-select", accountId: "remote" });
+    state = reducer(state, { type: "snapshot", snapshot: state.snapshot! });
+    expect(state.selectedAccountIds).toEqual(["remote"]);
+    state = reducer(state, { type: "scope-peer-accounts", deviceId: "a", accounts: [{ ...account, tags: ["old"], updatedAt: 10 }] as never });
+    expect(state.snapshot?.peerAccounts).toEqual({ a: [account] });
+    state = reducer(state, { type: "scope-peer-accounts", deviceId: "b" });
+    expect(state.selectedAccountIds).toEqual([]);
+    expect(state.snapshot?.peerAccounts).toEqual({});
+  });
   it("takes privacy mode from every authoritative dashboard snapshot", () => {
     const enabled = reducer(createInitialState(), {
       type: "snapshot",

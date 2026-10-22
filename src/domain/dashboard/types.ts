@@ -969,6 +969,7 @@ export interface DashboardActionResultPayload {
   tagResult?: import('../accountTags').AccountTagResult;
   /** A relayed session list replaces only this system's rows. */
   cliSessionsDeviceId?: string;
+  cliSessionsPartial?: boolean;
   projectBoard?: import('../projectTasks').ProjectBoard;
   projectTaskDetails?: import('../projectTasks').ProjectTaskDetails;
   projectShare?: { token: string; expiresAt: number; permissions: import('../projectTasks').ProjectSharePermission[] };

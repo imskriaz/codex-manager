@@ -44,16 +44,53 @@ it("keeps standby peer heartbeats free of session scans and account builds, then
     expect(buildState).toHaveBeenCalledOnce();
     internal.updateWorkspaceViewer(browser, false);
     internal.invalidateLocalPeerState();
-    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [], accounts: [], dashboardTargets: [] });
+    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [{ id: "local" }], accounts: [{ id: "account" }], dashboardTargets: [] });
     expect(sessions).toHaveBeenCalledOnce();
     expect(buildState).toHaveBeenCalledOnce();
+    sessions.mockResolvedValue([]);
+    buildState.mockResolvedValue({ accounts: [] });
     internal.updateWorkspaceViewer(browser, true);
-    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [{ id: "local" }] });
+    expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [], accounts: [] });
     expect(sessions).toHaveBeenCalledTimes(2);
     internal.updateWorkspaceViewer(browser, true, "other-pc");
     expect(await internal.readLocalPeerSessions()).toMatchObject({ sessions: [], accounts: [], dashboardTargets: ["other-pc"] });
     expect(sessions).toHaveBeenCalledTimes(2);
   } finally { await server.stop(); server.dispose(); }
+});
+
+it.each([false, true])("keeps heartbeats responsive during a slow catalogue and publishes its eventual result (cached=%s)", async cached => {
+  vi.useFakeTimers();
+  const { server } = createServer(), internal = server as any;
+  internal.peerStopped = false;
+  vi.spyOn(internal, "hasWorkspaceViewer").mockReturnValue(true);
+  const publish = vi.spyOn(internal, "publishPeerSessions").mockResolvedValue(undefined);
+  let finish!: (value: unknown[]) => void;
+  vi.spyOn(internal, "readLocalCliSessions").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  buildState.mockResolvedValue({ accounts: [] });
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
+  if (cached) internal.lastLocalPeerState = { sessions: [{ id: "saved" }], accounts: [] };
+  try {
+    const heartbeat = internal.readLocalPeerSessions();
+    await vi.advanceTimersByTimeAsync(751);
+    expect((await heartbeat).sessions).toEqual(cached ? [{ id: "saved" }] : []);
+    expect(publish).not.toHaveBeenCalled();
+    finish([{ id: "fresh", status: "idle" }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(internal.lastLocalPeerState.sessions).toEqual([{ id: "fresh", status: "idle" }]);
+    expect(publish).toHaveBeenCalledOnce();
+  } finally { await server.stop(); server.dispose(); vi.useRealTimers(); }
+});
+
+it("keeps archived and idle child history out of periodic peer summaries", async () => {
+  const { server } = createServer(), internal = server as any;
+  vi.spyOn(internal, "readLocalPeerState").mockResolvedValue({ sessions: [
+    { id: "parent", title: "Parent", status: "idle" },
+    { id: "archive", title: "Archive", status: "idle", archived: true },
+    { id: "idle-child", title: "Child", status: "idle", parentSessionId: "parent" },
+    { id: "running-child", title: "Child", status: "running", parentSessionId: "parent" }
+  ], accounts: [] });
+  try { expect((await internal.readLocalPeerSessions()).sessions.map((session: { id: string }) => session.id)).toEqual(["running-child", "parent"]); }
+  finally { await server.stop(); server.dispose(); }
 });
 
 it('publishes successful peer tag changes without waiting for a storage watcher', async () => {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.3-pre.5
+
+- Keep browser sessions and Account Center scoped to the selected system. Persist local and remote account read views separately in IndexedDB, release inactive remote catalogues from the visible state, and retain the selected PC across reload, history navigation, and temporary discovery loss. Hide disabled accounts from switching choices.
+- Treat peer heartbeat session lists as partial updates, including older relays. Preserve the complete cached catalogue and composer metadata until an authoritative read confirms changes; fence delayed cache writes and stale restores.
+- Keep discovery heartbeats responsive while session indexing is slow, reuse the last completed standby view, and send active parent sessions and running agents rather than archived history. Allow a short reconnect grace without letting repeated old signed heartbeats keep a disconnected PC online.
+- Preserve a session’s folder when starting a chat from a project missing from the catalogue; reset the project context on system changes without deleting saved drafts.
+- Improve System/Project tab alignment, readable compact session titles, centered empty workspaces, and menu access around toasts. Give Tasks its own pulse icon so it differs from the session-list control.
+
 ## 1.4.3-pre.4
 
 - Keep agent details in the task’s Agents tab, using the same compact agent selector and transcript panel as the workspace sidebar. Preserve messages on failed refresh, isolate task/system requests, and keep shared boards read-only.

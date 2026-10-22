@@ -1,5 +1,46 @@
 # 1.4.3 completion checklist
 
+## System isolation, browser storage and discovery (`1.4.3-pre.5`)
+
+- Scope lists, running-session menus, account choices, cached catalogues, and
+  browser navigation to the selected PC. Persist per-system account records in
+  IndexedDB, including the local PC. Release inactive remote read views from
+  React and the browser bridge; keep current visible data available in memory.
+- Distinguish partial signed heartbeat summaries from authoritative catalogues,
+  including legacy relays. Preserve history, composer metadata and route state
+  across truncated/empty pushes; fence delayed cache writes and restoration.
+- Bound heartbeat preparation while catalogue reads finish in the background.
+  Reuse the completed standby view, publish fresh data when ready, and omit
+  archived conversations and idle agents from heartbeat payloads. Give missing
+  relay entries a reconnect grace; replayed timestamps do not renew presence.
+- Hide disabled Account Center choices; improve selector alignment, readable
+  compact titles, empty-workspace centering and the distinct Tasks pulse icon.
+- Live checks use the current frontend against the installed previous backend.
+  New backend heartbeat behavior is covered by regression fixtures; deployment
+  and verification of that behavior on both physical PCs remain unverified.
+- Verification so far: 218 focused tests pass. Six responsive system/cache
+  scenarios, complete desktop/phone workspace flows, public-share flows and
+  live local reads pass. Real remote desktop/phone checks confirm 14 accounts,
+  a 1,999-row catalogue, history reads, system switching, reload and reconnect.
+  These reads started no session turn, account switch, file write or Git action.
+- Offline checks use the installed previous backend/bundle: cold dashboard and
+  board reload, reconnect, data-free shell caching, failed worker updates and
+  preserved prior caches pass. Source cache/storage failures have focused tests.
+- Both TypeScript targets compile. Lint has zero errors and 3,214 style warnings.
+- The first full regression passed 2,292 tests and failed only the old pre.4
+  version assertion. Update that release fixture to pre.5; its 14 focused checks
+  pass. The complete isolated rerun passes all 2,293 tests across 191 files
+  in 291.58 seconds.
+- VSIX: `codex-manager-1.4.3-pre.5.vsix`, 4,043,709 bytes. Dependency layout, archive integrity,
+  version, runtime, browser bridge, CSS, UI bundle and changelog match the
+  verified source/build. README matches after standard VSCE link and newline
+  normalization. Pulse icon and partial-summary handling are in the archive.
+  Packaging warns about the existing unbundled backend file count; no
+  packaging errors occurred.
+- SHA-256: `5e1e03426ebbfbbfec337bc940e365b5da00cb10a8fc7fea1ec8211c3f44d808`.
+- Installation, deployment, tags and publication were not requested and were
+  not performed. New backend behavior still needs both PCs updated.
+
 ## Domain roles, startup recovery and task polish (`1.4.3-pre.4`)
 
 - Reuse the workspace Agent panel inside task Agents. Keep main model first,

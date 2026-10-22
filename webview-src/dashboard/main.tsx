@@ -95,6 +95,8 @@ import {
   readCliSessionListCache,
   readCliSessionMessagesCache,
   readDashboardStateCache,
+  readDashboardAccountsCache,
+  scopeDashboardAccounts,
   writeDashboardStateCache,
   writeCliSessionListCache,
   writeCliSessionMessagesCache
@@ -242,11 +244,16 @@ function App() {
   const tagRequests = useRef(new Map<string, { accountId: string; deviceId?: string }>());
   const [tagManager, setTagManager] = useState<{ deviceId?: string }>();
   const tagManagementRequests = useRef(new Map<string, { deviceId?: string }>());
-  const [cliSessions, setCliSessions] = useState<DashboardCliSessionSummary[]>([]);
+  const [cliSessions, setCliSessionsState] = useState<DashboardCliSessionSummary[]>([]);
   const [agentMessages, setAgentMessages] = useState<Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>>({});
   const messageRequests = useRef(new Map<string, CliSessionTarget>());
   const cliListRequestTargets = useRef(new Map<string, string | undefined>());
   const cliListViewTarget = useRef<string>();
+  const peerAccountsRevision = useRef(new Map<string, number>());
+  const setCliSessions = useCallback((update: DashboardCliSessionSummary[] | ((current: DashboardCliSessionSummary[]) => DashboardCliSessionSummary[])) => {
+    setCliSessionsState(current => (typeof update === "function" ? update(current) : update)
+      .filter(session => session.deviceId === cliListViewTarget.current));
+  }, []);
   const messageRequestStreams = useRef(new Map<string, string | undefined>());
   const historicalStreams = useRef(new Set<string>());
   const turnRequests = useRef(new Map<string, CliSessionTarget>());
@@ -266,6 +273,7 @@ function App() {
   const workspaceRequests = useRef(new Map<string, { scope: string; generation: number; family: string; fileContent?: string }>());
   const latestWorkspaceRequests = useRef(new Map<string, string>());
   const acceptLiveSnapshot = (live: DashboardCodexSessionLiveState, replay = false): void => {
+    if (live.deviceId !== cliListViewTarget.current) return;
     const key = cliSessionTargetKey({ id: live.sessionId, deviceId: live.deviceId });
     const previous = cliLiveStatesRef.current[key];
     const duplicateReplay = replay && previous?.streamId === live.streamId && previous.sequence === live.sequence && previous.status === live.status;
@@ -504,7 +512,7 @@ function App() {
     if (!isBrowserDashboard) return;
     let active = true;
     void readDashboardStateCache().then((cached) => {
-      if (active && cached && !dashboardCacheHydratedRef.current) dispatch({ type: "snapshot", snapshot: cached });
+      if (active && cached && !dashboardCacheHydratedRef.current) dispatch({ type: "snapshot", snapshot: scopeDashboardAccounts(cached, selectedPeerId === "local" ? undefined : selectedPeerId) });
       dashboardCacheHydratedRef.current = true;
     });
     return () => {
@@ -538,6 +546,8 @@ function App() {
   cliSessionsRef.current = cliSessions;
   const connectedPeers = mergeDashboardPeers(snapshot?.connectedPeers ?? [], cliSessions);
   const pcOptions = connectedPeers.length > 0 ? connectedPeers : [{ id: "local", name: "This PC", sessionCount: 0, connected: true, local: true }];
+  if (selectedPeerId !== "local" && !pcOptions.some(peer => peer.id === selectedPeerId))
+    pcOptions.push({ id: selectedPeerId, name: "Remote PC", sessionCount: 0, connected: false, local: false });
   const selectedPeer = pcOptions.find((peer) => peer.id === selectedPeerId) ?? pcOptions.find((peer) => peer.local) ?? pcOptions[0];
   const browserPresenceTargetDeviceId = selectedPeerId === "local" || snapshot?.connectedPeers?.some(peer => peer.id === selectedPeerId && peer.local) ? undefined : selectedPeerId;
   cliListViewTarget.current = selectedPeer?.local ? undefined : selectedPeer?.id;
@@ -551,6 +561,7 @@ function App() {
       const now = Date.now();
       const targetDeviceId = selectedPeer?.local ? undefined : selectedPeer?.id;
       const key = targetDeviceId ?? "local";
+      if (!force && [...cliListRequestTargets.current.values()].some(target => target === targetDeviceId)) return;
       if (!force && lastCliListRequestAtRef.current.target === key && now - lastCliListRequestAtRef.current.at < 2_000) return;
       lastCliListRequestAtRef.current = { target: key, at: now };
       const requestId = sendAction("listCodexCliSessions", undefined, { automatic: !userInitiated, targetDeviceId });
@@ -624,7 +635,16 @@ function App() {
     handleHostMessage: (message) => {
       if (message.type === "dashboard:snapshot") {
         dashboardCacheHydratedRef.current = true;
-        if (isBrowserDashboard) setBrowserLastSyncAt(Date.now());
+        if (isBrowserDashboard) {
+          setBrowserLastSyncAt(Date.now());
+          void writeDashboardStateCache(message.state);
+          for (const id of Object.keys(message.state.peerAccounts ?? {}))
+            peerAccountsRevision.current.set(id, (peerAccountsRevision.current.get(id) ?? 0) + 1);
+          const scoped = scopeDashboardAccounts(message.state, cliListViewTarget.current);
+          if (cliListViewTarget.current && !Object.hasOwn(message.state.peerAccounts ?? {}, cliListViewTarget.current) && snapshot?.peerAccounts?.[cliListViewTarget.current])
+            scoped.peerAccounts = { [cliListViewTarget.current]: snapshot.peerAccounts[cliListViewTarget.current]! };
+          message = { ...message, state: scoped };
+        }
       }
       if (message.type === 'dashboard:notice' && message.actionPrompt) pushBrowserNotification(message);
       else modals.handleHostMessage(message);
@@ -866,9 +886,11 @@ function App() {
         cliListRequestTargets.current.delete(message.requestId);
         if (requested && latestCliListRequests.current.get(listTarget ?? "local") !== message.requestId) return;
         const currentListTarget = selectedPeer?.local ? undefined : selectedPeer?.id;
-        const appliesToSelectedSystem = (message.payload?.cliSessionsDeviceId ?? listTarget) === currentListTarget;
+        const ownerDeviceId = message.payload?.cliSessionsDeviceId ?? listTarget;
+        const appliesToSelectedSystem = ownerDeviceId === currentListTarget;
+        const partialList = message.payload?.cliSessionsPartial === true || message.requestId.startsWith("realtime-peer-");
         const realtimeRevision = message.payload?.realtimeRevision;
-        const revisionScope = message.payload?.cliSessionsDeviceId ?? 'local';
+        const revisionScope = ownerDeviceId ?? 'local';
         const result = classifyCliSessionListResult(
           message.requestId,
           realtimeRevision,
@@ -881,9 +903,17 @@ function App() {
         if (explicitRefresh) explicitCliRefreshRef.current = undefined;
         if (message.status === "completed") {
           if (result.apply) {
-            if (appliesToSelectedSystem) liveSessionListReceived.current = true;
-            const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessionsRef.current, message.payload?.cliSessionsDeviceId);
+            if (!appliesToSelectedSystem) {
+              if (!partialList) void writeCliSessionListCache({ sessions: message.payload?.cliSessions ?? [], composerConfig: message.payload?.cliComposerConfig }, ownerDeviceId);
+              return;
+            }
+            if (appliesToSelectedSystem && !partialList) liveSessionListReceived.current = true;
+            const sessions = mergeCachedCliSessions(message.payload?.cliSessions ?? [], cliSessionsRef.current, ownerDeviceId, partialList);
             setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
+            // Heartbeats can be truncated by older relays. Refresh only the visible
+            // owner's catalogue; partial pushes must never confirm deletions.
+            if (appliesToSelectedSystem && partialList && realtimeConnected && selectedPeer?.connected)
+              requestCliSessions();
             // Realtime list pushes intentionally omit the heavier composer
             // catalog. Preserve the last known catalog so the response box does
             // not disappear while sessions update in the background.
@@ -892,7 +922,8 @@ function App() {
               setCliComposerConfig(message.payload.cliComposerConfig);
             }
             if (requested) void writeCliSessionListCache({ sessions, composerConfig: message.payload?.cliComposerConfig }, listTarget);
-            if (!requested && currentListTarget === undefined) void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig });
+            if (!requested && appliesToSelectedSystem && liveSessionListReceived.current)
+              void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig }, currentListTarget);
             if (appliesToSelectedSystem && (explicitRefresh || !message.payload?.cliSessions?.some(session => session.status === "unknown")))
               setCliSessionsError(message.payload?.cliSessions?.some(session => session.status === "unknown") ? message.payload?.notice?.message ?? "Session running state could not be verified. Refresh before sending." : undefined);
             const routeId = getCliSessionIdFromPath(window.location.pathname);
@@ -927,7 +958,7 @@ function App() {
                 if (typeof realtimeRevision !== "number" || sessionChanged || routeSession.status === "running") {
                   requestCliSessionMessages(routeId, routeSession.deviceId, typeof realtimeRevision !== "number");
                 }
-              } else if (!message.payload?.cliSessionsDeviceId || message.payload.cliSessionsDeviceId === (routeDevice ?? undefined)) {
+              } else if (!partialList && ownerDeviceId === (routeDevice ?? undefined)) {
                 // The refreshed index is authoritative. Do not request a route
                 // that is already gone; that only turns a stale link into a
                 // noisy “session not found” error.
@@ -1452,6 +1483,8 @@ function App() {
     if (!isBrowserDashboard) return;
     const onPopState = () => {
       const path = window.location.pathname;
+      const deviceId = new URLSearchParams(window.location.search).get("device") || "local";
+      setSelectedPeerId(deviceId);
       setBrowserPath(path);
       const sessionId = getCliSessionIdFromPath(path);
       messageViewRevision.current++;
@@ -1459,11 +1492,19 @@ function App() {
       setSelectedCliSession(undefined);
       setCliSessionMessages([]);
       setCliSessionMessagesError(undefined);
-      if (sessionId || hasBrowserWorkspaceShell(path)) requestCliSessions(true);
+      if ((deviceId === "local" ? selectedPeer?.local : deviceId === selectedPeer?.id) && (sessionId || hasBrowserWorkspaceShell(path))) requestCliSessions(true);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [isBrowserDashboard, requestCliSessions]);
+  }, [isBrowserDashboard, requestCliSessions, selectedPeer?.id, selectedPeer?.local]);
+
+  useEffect(() => {
+    if (!isBrowserDashboard || getCliSessionIdFromPath(browserPath)) return;
+    const url = new URL(window.location.href);
+    if (selectedPeerId === "local" || selectedPeer?.local) url.searchParams.delete("device");
+    else url.searchParams.set("device", selectedPeerId);
+    replaceDashboardPath(`${url.pathname}${url.search}`, setBrowserPath);
+  }, [isBrowserDashboard, browserPath, selectedPeerId, selectedPeer?.local]);
 
   useEffect(() => {
     if (!snapshot?.settings.cliIntegrationEnabled) return;
@@ -1478,18 +1519,50 @@ function App() {
       setCliComposerConfig(undefined);
       setCliSessionsError(undefined);
       liveSessionListReceived.current = false;
+      setCliSessions(current => current);
+      cliLiveStatesRef.current = Object.fromEntries(Object.entries(cliLiveStatesRef.current).filter(([, live]) => live.deviceId === targetDeviceId));
+      setCliLiveStates(cliLiveStatesRef.current);
+      setAgentMessages({});
+      agentRequests.current.clear();
+      const selected = selectedCliSessionRef.current;
+      if (selected && (selected.remote ? selected.deviceId : undefined) !== targetDeviceId) {
+        messageViewRevision.current++;
+        selectedCliSessionRef.current = undefined;
+        setSelectedCliSession(undefined);
+        setCliSessionMessages([]);
+        setCliSessionMessagesError(undefined);
+      }
     }
     let disposed = false;
+    const cachedRevision = lastCliRealtimeRevisionRef.current.get(key) ?? 0;
     // Start discovery immediately; the optional cache must not delay a manual switch.
     if (!isBrowserDashboard || realtimeConnected) requestCliSessions(changedSystem || reconnected);
     if (isBrowserDashboard) void readCliSessionListCache(targetDeviceId).then((cached) => {
       if (!disposed && cached && !liveSessionListReceived.current) {
-        setCliSessions(current => mergeCachedCliSessions(cached.sessions, current, targetDeviceId));
+        setCliSessions(current => {
+          const restored = mergeCachedCliSessions(cached.sessions, current, targetDeviceId);
+          return (lastCliRealtimeRevisionRef.current.get(key) ?? 0) !== cachedRevision
+            ? mergeCachedCliSessions(current, restored, targetDeviceId, true) : restored;
+        });
         setCliComposerConfig(cached.composerConfig);
       }
     });
     return () => { disposed = true; };
   }, [browserPath, isBrowserDashboard, requestCliSessions, selectedPeer?.id, selectedPeer?.local, snapshot?.settings.cliIntegrationEnabled, realtimeConnected]);
+
+  useEffect(() => {
+    if (!isBrowserDashboard || !snapshot) return;
+    const deviceId = selectedPeer?.local ? undefined : selectedPeer?.id;
+    dispatch({ type: "scope-peer-accounts", deviceId });
+    if (!deviceId) return;
+    const revision = peerAccountsRevision.current.get(deviceId) ?? 0;
+    let disposed = false;
+    void readDashboardAccountsCache(deviceId).then(accounts => {
+      if (!disposed && accounts && revision === (peerAccountsRevision.current.get(deviceId) ?? 0))
+        dispatch({ type: "scope-peer-accounts", deviceId, accounts });
+    });
+    return () => { disposed = true; };
+  }, [isBrowserDashboard, !!snapshot, selectedPeer?.id, selectedPeer?.local]);
 
   useEffect(() => {
     const terminalNotice = snapshot?.terminalNotice;
@@ -1619,7 +1692,7 @@ function App() {
   }
 
   const runningCliSessions = filterCliSessionsBySection(cliSessions, "active").filter((session) =>
-    (session.status === "running" && (!session.remote || pcOptions.some(peer => peer.id === session.deviceId && peer.connected))) || session.interrupted === true
+    (selectedPeer?.local ? !session.remote : session.deviceId === selectedPeer?.id) && ((session.status === "running" && (!session.remote || pcOptions.some(peer => peer.id === session.deviceId && peer.connected))) || session.interrupted === true)
   );
   const displayedAccounts =
     selectedPeer && !selectedPeer.local ? (snapshot.peerAccounts?.[selectedPeer.id] ?? []) : snapshot.accounts;
@@ -1694,7 +1767,7 @@ function App() {
     ]
   );
   useEffect(() => {
-    if (!pcOptions.some((peer) => peer.id === selectedPeerId)) {
+    if (selectedPeerId === "local" && !pcOptions.some((peer) => peer.id === selectedPeerId)) {
       setSelectedPeerId(pcOptions.find((peer) => peer.local)?.id ?? pcOptions[0]!.id);
     }
   }, [pcOptions, selectedPeerId]);
@@ -2222,7 +2295,11 @@ function App() {
       >
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
-          systems={isBrowserDashboard ? pcOptions.map(peer => ({ id: peer.id, name: peer.name, connected: peer.connected, sessions: cliSessions.filter(session => (session.deviceId ?? 'local') === (peer.local ? 'local' : peer.id) && !session.parentSessionId).length, running: cliSessions.filter(session => (session.deviceId ?? 'local') === (peer.local ? 'local' : peer.id) && !session.parentSessionId && session.status === 'running').length })) : undefined}
+          systems={isBrowserDashboard ? pcOptions.map(peer => {
+            const active = (peer.local ? undefined : peer.id) === cliListViewTarget.current;
+            const tasks = active ? cliSessions.filter(session => !session.parentSessionId) : [];
+            return { id: peer.id, name: peer.name, connected: peer.connected, sessions: active ? tasks.length : peer.sessionCount, running: active ? tasks.filter(session => session.status === 'running').length : undefined };
+          }) : undefined}
           selectedSystem={selectedPeer?.id} onSelectSystem={isBrowserDashboard ? peerId => { setSelectedPeerId(peerId); } : undefined}
           connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
           targetDeviceId={selectedPeer?.local ? undefined : selectedPeer?.id}

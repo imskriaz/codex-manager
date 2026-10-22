@@ -92,7 +92,7 @@ try {
     const database = await new Promise(resolve => { const request = indexedDB.open('codex-manager-cache', 1); request.onsuccess = () => resolve(request.result); });
     try {
       const keys = await new Promise(resolve => { const request = database.transaction('cli-sessions').objectStore('cli-sessions').getAllKeys(); request.onsuccess = () => resolve(request.result); });
-      return keys.includes('dashboard-state') && keys.includes('list') && keys.some(key => String(key).startsWith('browser:board:'));
+      return keys.includes('dashboard-state') && keys.includes('list:local') && keys.some(key => String(key).startsWith('browser:board:'));
     } finally { database.close(); }
   });
   const cachedHash = await page.evaluate(async () => {

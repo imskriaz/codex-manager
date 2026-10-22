@@ -15543,7 +15543,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-workspace .cli-session-row:not(.is-selected) { border-color:transparent; }
 .cli-workspace .cli-session-row-select { min-height:28px; }
 .cli-workspace .cli-session-row-main { min-height:0; grid-template-rows:auto auto; row-gap:1px; }
-.cli-workspace .cli-session-row-main strong { font-size:12px; line-height:15px; }
+.cli-workspace .cli-session-row-main strong { font-size:13px; line-height:18px; }
 .cli-workspace .cli-session-row-main small { font-size:10px; line-height:12px; }
 .cli-workspace .cli-session-row-meta > span:last-child { flex:0 0 auto; margin-left:auto; }
 .cli-workspace .cli-session-row-actions { top:auto; bottom:2px; transform:none; padding-left:3px; }
@@ -15588,7 +15588,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
   .cli-workspace .cli-queue-strip { min-height:36px; }
   .cli-workspace :is(.cli-project-sessions,.cli-compact-session-list) .cli-session-row { min-height:44px; }
   .cli-workspace .cli-session-row-select { min-height:40px; }
-  .cli-workspace .cli-session-row-main strong { font-size:12px; line-height:16px; }
+  .cli-workspace .cli-session-row-main strong { font-size:13px; line-height:18px; }
   .cli-workspace .cli-session-row-main small { font-size:11px; line-height:13px; }
 }
 .settings-modal { max-width:100%; }
@@ -15824,13 +15824,13 @@ html[data-theme] body .settings-modal .modal-primary-btn { background:var(--acce
 .task-board-header .task-board-heading { display:flex; gap:4px; min-width:0; flex:0 1 auto; }
 .task-context-tabs { display:flex; align-items:center; gap:2px; min-width:0; padding:2px; border-radius:5px; background:color-mix(in srgb,var(--text-muted) 8%,transparent); }
 .task-context-select { position:relative; display:flex; align-items:center; gap:6px; min-width:0; max-width:180px; height:28px; padding:4px 7px; border:1px solid transparent; border-radius:4px; cursor:pointer; }
-.task-context-select+.task-context-select { border-left-color:var(--border-muted); }
+.task-context-select+.task-context-select { border-left-color:transparent; }
 .task-context-select:has(>select:disabled) { cursor:default; }
 .task-context-select:has(>select:disabled):hover { background:transparent; border-color:transparent; }
 .task-context-select:hover,.task-context-select:focus-within { background:var(--bg-elevated); border-color:var(--border-muted); }
 .task-context-select:focus-within { outline:2px solid var(--accent-blue); outline-offset:1px; }
 .task-context-select>span:nth-child(2) { display:flex; flex-direction:column; min-width:0; }
-.task-context-select strong { font-size:12px; font-weight:500; line-height:18px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.task-context-select strong { font-size:12px; font-weight:400; line-height:18px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .task-context-select small { font-size:9px; line-height:11px; color:var(--text-muted); white-space:nowrap; }
 .task-context-icon { display:flex; align-items:center; flex:none; color:var(--text-secondary); }
 .task-context-chevron { display:flex; align-items:center; margin-left:auto; flex:none; color:var(--text-muted); }
@@ -15935,7 +15935,7 @@ body:has(.cli-workspace.is-dashboard-mode.is-rail-collapsed) .task-board-section
 @media(min-width:761px) {
   .task-board-header .task-context-tabs { border-radius:5px 0 0 5px; }
   .task-board-header .task-view-tabs { border-radius:0 5px 5px 0; }
-  .task-board-header .task-project-select { border-right-color:var(--border-muted); }
+  .task-board-header .task-project-select { border-right-color:transparent; }
 }
 .task-board-header .task-context-icon svg { width:15px; height:15px; }
 
@@ -16019,3 +16019,17 @@ body:has(.cli-workspace.is-dashboard-mode.is-rail-collapsed) .task-board-section
   .task-board-header .task-system-select { flex:0 0 36px; }
   .task-board-header .task-system-select>span:nth-child(2) { display:none; }
 }
+
+/* Empty workspaces share the same fixed toolbar and flexible content as a conversation. */
+.cli-workspace .cli-conversation:not(.has-session):not(.has-new-chat) { display:flex; flex-direction:column; min-height:0; }
+.cli-workspace .cli-content-toolbar { flex:none; box-sizing:border-box; }
+.cli-workspace .cli-content-toolbar:has(.content-sidebar-slot:empty) { border-bottom-color:transparent; }
+.cli-workspace .cli-workspace-empty { flex:1 1 auto; min-height:0; padding:24px; box-sizing:border-box; }
+.task-board-header .task-context-select { box-sizing:border-box; background:transparent; }
+.task-board-header .task-context-select strong { color:var(--text-secondary); }
+.task-board-header .task-context-select:hover strong,.task-board-header .task-context-select:focus-within strong { color:var(--text-primary); }
+.task-board-header .task-context-chevron svg { width:10px; height:10px; }
+.cli-workspace .cli-compact-session-list .cli-session-row { padding-block:0; }
+.dashboard-notice-stack .dashboard-notice { pointer-events:none; }
+.dashboard-notice-stack .dashboard-notice :is(button,a) { pointer-events:auto; }
+body:has(.task-floating-menu,.cli-account-center,details[open],:popover-open) .browser-notification-offer { display:none; }

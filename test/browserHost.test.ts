@@ -24,7 +24,7 @@ describe("browser dashboard bridge", () => {
     if (outcome === "opened") { expect(popup.opener).toBeNull(); expect(popup.location.replace).toHaveBeenCalledWith("https://example.com/help"); }
     if (outcome === "unsafe") expect(windowMock.open).not.toHaveBeenCalled();
   });
-  it("replays an earlier snapshot immediately when a dashboard listener becomes ready", async () => {
+  it("releases snapshots after startup instead of keeping inactive system catalogues in the bridge", async () => {
     const events: Array<Record<string, unknown>> = [];
     const snapshot = { accounts: [{ id: "one" }] };
     let finishSecond!: (response: unknown) => void;
@@ -44,8 +44,32 @@ describe("browser dashboard bridge", () => {
     await post({ type: "dashboard:ready" });
     events.length = 0;
     const pending = post({ type: "dashboard:ready" });
-    expect(events).toContainEqual({ type: "dashboard:snapshot", state: snapshot });
+    expect(events.some(event => event.type === "dashboard:snapshot")).toBe(false);
     finishSecond(response);
+    await pending;
+  });
+  it("still replays a snapshot received before the first dashboard listener is ready", async () => {
+    const events: any[] = [];
+    let socket: Socket, finish!: (value: unknown) => void;
+    class Socket {
+      static readonly OPEN = 1; readyState = 1;
+      listeners = new Map<string, (event?: any) => void>();
+      constructor() { socket = this; }
+      addEventListener(name: string, callback: (event?: any) => void) { this.listeners.set(name, callback); }
+      close = vi.fn();
+    }
+    const windowMock = { dispatchEvent: (event: any) => events.push(event.data), WebSocket: Socket,
+      setTimeout: vi.fn(), clearTimeout: vi.fn(), location: { protocol: "http:", host: "localhost" },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: any) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync("media/webview/browserHost.js", "utf8"), { window: windowMock, MessageEvent: Event,
+      fetch: vi.fn(() => new Promise(resolve => { finish = resolve; })), console, JSON, Date, Map, Error, Array });
+    socket!.listeners.get("open")!();
+    socket!.listeners.get("message")!({ data: JSON.stringify({ type: "dashboard:snapshot", state: { accounts: [], revision: 1 } }) });
+    events.length = 0;
+    const pending = windowMock.acquireVsCodeApi!().postMessage({ type: "dashboard:ready" });
+    expect(events).toContainEqual(expect.objectContaining({ type: "dashboard:snapshot", state: { accounts: [], revision: 1 } }));
+    finish({ ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => ({ accounts: [], revision: 2 }) });
     await pending;
   });
   it("rejects an offline browser action immediately without sending it or starting a timeout", async () => {

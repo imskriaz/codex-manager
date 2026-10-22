@@ -66,9 +66,9 @@ try {
     await page.goto(`${origin}/workspace`);
     await page.locator(".cli-workspace").waitFor();
     if (width === 390) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
-    await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "listCodexCliSessions" && event.status === "completed"));
-    const sessionResult = await page.evaluate(() => window.__liveEvents.filter(event => event.type === "dashboard:action-result" && event.action === "listCodexCliSessions").at(-1));
-    const sessions = sessionResult.payload?.cliSessions || [];
+    await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "listCodexCliSessions" && event.status === "completed" && !event.payload?.cliSessionsDeviceId && event.payload?.cliComposerConfig));
+    const sessionResult = await page.evaluate(() => window.__liveEvents.filter(event => event.type === "dashboard:action-result" && event.action === "listCodexCliSessions" && event.status === "completed" && !event.payload?.cliSessionsDeviceId && event.payload?.cliComposerConfig).at(-1));
+    const sessions = (sessionResult.payload?.cliSessions || []).filter(session => !session.remote);
     for (const session of sessions.filter(session => !session.remote && childIdsFromDisk.has(session.id))) {
       assert.ok(session.subAgent || session.parentSessionId, "Real child metadata must be present before list rendering");
     }

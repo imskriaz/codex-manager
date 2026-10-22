@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { mergeCachedCliSession, mergeCachedCliSessions } from "../webview-src/dashboard/cliSessionCache";
+import { mergeCachedCliSession, mergeCachedCliSessions, scopeDashboardAccounts } from "../webview-src/dashboard/cliSessionCache";
 
 describe("CLI session cache merging", () => {
+  it("keeps only the selected remote account catalogue in live state", () => {
+    const a = [{ id: "same-id", email: "a@example.test" }], b = [{ id: "same-id", email: "b@example.test" }];
+    const state = { accounts: [], peerAccounts: { a, b } } as never;
+    expect(scopeDashboardAccounts(state, "a").peerAccounts).toEqual({ a });
+    expect(scopeDashboardAccounts(state, "b").peerAccounts).toEqual({ b });
+    expect(scopeDashboardAccounts(state).peerAccounts).toEqual({});
+    expect(scopeDashboardAccounts(state, "missing").peerAccounts).toEqual({});
+    expect((state as { peerAccounts: unknown }).peerAccounts).toEqual({ a, b });
+  });
   it('replaces only the source PC rows and retains equal session IDs on other PCs', () => {
     const local = { id: 'shared-id', title: 'Local', status: 'idle' as const };
     const remote = { ...local, deviceId: 'remote', remote: true, title: 'Remote' };
@@ -9,6 +18,25 @@ describe("CLI session cache merging", () => {
     expect(mergeCachedCliSessions([{ ...remote, title: 'Updated' }], [local, remote, other], 'remote')).toEqual([local, other, { ...remote, title: 'Updated' }]);
     expect(mergeCachedCliSessions([], [local, remote, other], 'remote')).toEqual([local, other]);
     expect(mergeCachedCliSessions([local], [local, remote, other], 'remote')).toEqual([local, other]);
+  });
+  it("isolates local refreshes, truncated pushes, duplicates and authoritative deletions", () => {
+    const local = { id: "local", title: "Local", status: "idle" as const };
+    const a = { ...local, id: "a", deviceId: "remote", remote: true };
+    const b = { ...a, id: "b", status: "running" as const };
+    expect(mergeCachedCliSessions([], [local, a, b])).toEqual([a, b]);
+    expect(mergeCachedCliSessions([local, { ...a, title: "Stale aggregate" }], [a, b])).toEqual([local, a, b]);
+    expect(mergeCachedCliSessions([{ ...a, title: "Updated" }, { ...a, title: "Newest" }], [local, a, b], "remote", true)).toEqual([local, b, { ...a, title: "Newest" }]);
+    expect(mergeCachedCliSessions([], [local, a, b], "remote", true)).toEqual([local, a, b]);
+    expect(mergeCachedCliSessions([], [local, a, b], "remote")).toEqual([local]);
+    expect(mergeCachedCliSessions([{ ...a, title: "Stale aggregate" }], [local])).toEqual([]);
+  });
+  it("restores missing cached rows without rolling back a live partial status", () => {
+    const old = { id: "live", title: "Work", status: "idle" as const, deviceId: "remote" };
+    const live = { ...old, status: "running" as const };
+    const older = { ...old, id: "older" };
+    const local = { id: "local", title: "Local", status: "idle" as const };
+    const restored = mergeCachedCliSessions([old, older], [local, live], "remote");
+    expect(mergeCachedCliSessions([local, live], restored, "remote", true)).toEqual([local, older, live]);
   });
   it("keeps unavailable goal and model metadata without retaining stale runtime status", () => {
     const prior={id:"session",title:"Task",status:"running" as const,model:"gpt-5",reasoningEffort:"high",goal:{objective:"Finish",status:"active"},subAgent:true,parentSessionId:"parent",agentName:"Reviewer"};
@@ -60,8 +88,8 @@ describe("CLI session cache merging", () => {
 
     expect(mergeCachedCliSessions(
       [{ id: "session-1", title: "Other PC", status: "idle", deviceId: "pc-b" }],
-      previous
-    )[0]?.projectPath).toBeUndefined();
+      previous, "pc-b"
+    ).find(session => session.deviceId === "pc-b")?.projectPath).toBeUndefined();
   });
 
   it("keeps selected-session folder metadata during a short refresh gap", () => {
