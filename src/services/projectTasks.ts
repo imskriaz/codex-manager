@@ -253,16 +253,20 @@ export function finishProjectTaskStart(project: string, id: string, sessionId: s
   publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath: project });
 }
 
+/** expiresAt: 0 means no expiry; revocation and permissions still apply. */
 export type ProjectShare = { projectPath: string; expiresAt: number; permissions: ProjectSharePermission[] };
-export function createProjectShare(projectPath: string, permissions: ProjectSharePermission[] = ['activities','comments','submissions'], days = 7): { token: string; expiresAt: number; permissions: ProjectSharePermission[] } {
-  if (!Array.isArray(permissions) || permissions.length > PROJECT_SHARE_FEATURES.length || permissions.some(permission => !PROJECT_SHARE_FEATURES.some(feature => feature.key === permission)) || ![1,7,30].includes(days)) throw new Error('Choose valid share permissions and an expiry of 1, 7, or 30 days.');
+export function createProjectShare(projectPath: string, permissions: ProjectSharePermission[] = ['activities','comments','submissions'], days = 0): { token: string; expiresAt: number; permissions: ProjectSharePermission[] } {
+  if (!Array.isArray(permissions) || permissions.length > PROJECT_SHARE_FEATURES.length || permissions.some(permission => !PROJECT_SHARE_FEATURES.some(feature => feature.key === permission)) || ![0,1,7,30].includes(days)) throw new Error('Choose valid share permissions and Never Expire or an expiry of 1, 7, or 30 days.');
   permissions = [...new Set(permissions)];
   // The combined Activities tab grants both parts; existing links retain their original grants.
   if (permissions.includes('activities')) permissions.push('messages');
-  const store = storage(), token = randomBytes(32).toString('hex'), expiresAt = Date.now() + days * 24 * 60 * 60_000;
+  const store = storage(), token = randomBytes(32).toString('hex'), expiresAt = days === 0 ? 0 : Date.now() + days * 24 * 60 * 60_000;
   store.transaction(() => {
     const records = store.keys('project-shares');
-    for (const key of records) if ((store.get<ProjectShare>('project-shares', key)?.expiresAt ?? 0) <= Date.now()) store.set('project-shares', key, undefined);
+    for (const key of records) {
+      const expiry = store.get<ProjectShare>('project-shares', key)?.expiresAt;
+      if (!Number.isSafeInteger(expiry) || expiry! < 0 || expiry !== 0 && expiry! <= Date.now()) store.set('project-shares', key, undefined);
+    }
     if (store.keys('project-shares').length >= 32) throw new Error('Shared link storage is full. Revoke an old project link first.');
     store.set('project-shares', digest(token), { projectPath, expiresAt, permissions });
   });
@@ -271,7 +275,7 @@ export function createProjectShare(projectPath: string, permissions: ProjectShar
 export function getProjectShare(token: string): ProjectShare | undefined {
   if (!/^[a-f0-9]{64}$/.test(token)) return undefined;
   const share = storage().get<ProjectShare>('project-shares', digest(token));
-  return share && share.expiresAt > Date.now() ? { ...share, permissions: share.permissions ?? ['messages','activities','comments','submissions'] } : undefined;
+  return share && Number.isSafeInteger(share.expiresAt) && (share.expiresAt === 0 || share.expiresAt > Date.now()) ? { ...share, permissions: share.permissions ?? ['messages','activities','comments','submissions'] } : undefined;
 }
 export function revokeProjectShares(project: string): void {
   const store = storage();

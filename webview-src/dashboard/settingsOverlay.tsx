@@ -647,7 +647,7 @@ export function SettingsOverlay(props: {
                 />
               </SettingsToggleBlock>
               <SettingsToggleBlock
-                title="Auto Sync"
+                title="Sync and Claim"
                 sub={transferCopy.syncSub}
                 enabled={props.settings.encryptedSyncEnabled}
                 disabled={props.crossPcSyncPending}
@@ -1043,7 +1043,7 @@ function resolveTransferCopy(lang: DashboardState["lang"]): {
     exportLabel: "Export all sessions",
     importLabel: "Import all sessions",
     note: "Contains login tokens; share securely, then delete.",
-    syncTitle: "Auto Sync",
+    syncTitle: "Sync and Claim",
     syncSub: "Share account reservations between PCs.",
     syncNote:
       "Use the same dashboard address and password on each PC.",

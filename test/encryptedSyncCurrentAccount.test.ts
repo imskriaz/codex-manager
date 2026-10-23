@@ -1,3 +1,4 @@
+import { createHash,createHmac } from 'node:crypto';
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -300,4 +301,19 @@ describe("current account only sync", () => {
     await manager.cancelAccountSwitch("next");
   });
 
+});
+
+it('releases a verified current claim when disabled without requiring account discovery or claiming again', async () => {
+  await reconcile();
+  const original=manager.getRealtimeEnablementRegistry().find(entry=>entry.accountId===active)!;
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='encryptedSyncEnabled'?false:key==='cloudflaredDomain'?'https://dashboard.example':fallback} as never);
+  fetchMock.mockClear().mockImplementation(async (_url:unknown,options:{body:string})=>{
+    const body=JSON.parse(options.body);expect(body.request.action).toBe('release');
+    const result={requestId:body.request.requestId,ok:true,claim:{...original,enabled:false,revision:original.revision+1,lastSyncedAt:Date.now()}};
+    const signature=createHmac('sha256',createHash('sha256').update('peer-presence-v1:shared-password','utf8').digest()).update(JSON.stringify(result),'utf8').digest('base64url');
+    return new Response(JSON.stringify({result,signature}),{headers:{'content-type':'application/json'}});
+  });
+  await reconcile();await reconcile();expect(fetchMock).toHaveBeenCalledOnce();
+  expect(manager.getRealtimeEnablementRegistry().some(entry=>entry.enabled)).toBe(false);
+  expect((state.get(registryKey) as Array<{accountId:string;enabled:boolean}>).find(entry=>entry.accountId===active)?.enabled).toBe(false);
 });

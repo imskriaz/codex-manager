@@ -100,3 +100,28 @@ it('enforces multiple project scopes on actions, settings and refreshed results'
   expect((result[0] as Extract<DashboardHostMessage, { type: 'dashboard:action-result' }>).payload?.cliSessions).toHaveLength(2);
   await expect(createDashboardApiToken(context, { name: 'Invalid', projectPaths: [], permissions: ['state'] })).rejects.toThrow(/project folders/);
 });
+
+it('returns a confirmed public list with creation and rejects the same request without retaining token text', async () => {
+  const created=await createDashboardApiToken(context,{name:'Build',requestId:'one-request',permissions:['state']});
+  expect(created.tokens).toEqual([created.record]);
+  expect(JSON.stringify(created.tokens)).not.toContain('requestIdHash');
+  expect(JSON.stringify(created.tokens)).not.toContain(created.token);
+  expect(secrets.get(DASHBOARD_API_TOKEN_SECRET_KEY)).not.toContain('one-request');
+  await expect(createDashboardApiToken(context,{name:'Build',requestId:'one-request',permissions:['state']})).rejects.toThrow(/already created/);
+  expect(await listDashboardApiTokens(context)).toEqual([created.record]);
+  expect(await revokeDashboardApiToken(context,created.record.id)).toEqual([]);
+});
+it('preserves saved credentials and allows explicit recovery after a failed token write', async () => {
+  const previous=await createDashboardApiToken(context,{name:'Previous'});
+  const write=vi.spyOn(context.secrets,'store').mockRejectedValueOnce(new Error('disk full'));
+  await expect(createDashboardApiToken(context,{name:'New',requestId:'retry'})).rejects.toThrow(/disk full/);
+  expect(await readDashboardApiToken(context,previous.token)).toEqual(previous.record);
+  expect((await listDashboardApiTokens(context)).length).toBe(1);
+  const confirmed=await createDashboardApiToken(context,{name:'New',requestId:'retry'});
+  expect(confirmed.tokens.length).toBe(2);write.mockRestore();
+});
+
+it('does not expose request hashes in authentication results', async () => {
+  const created=await createDashboardApiToken(context,{name:'Proof',requestId:'hidden-proof'});
+  expect(await readDashboardApiToken(context,created.token)).toEqual(created.record);
+});

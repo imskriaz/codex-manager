@@ -12,7 +12,7 @@ Token history retains its account name after account removal; the credentials ar
 
 Manager automatically follows the latest valid Codex OAuth login: it adds missing accounts and updates existing credentials. Removing its saved Manager entry does not sign out of Codex, so the active login is added back automatically. If Codex changes the login during an import, the next sync reads the new login; importing never writes older credentials back to Codex. Temporary failures retry, and incomplete auth-file writes preserve the last saved credentials.
 
-WS Cross System uses the shared dashboard password independently of account Auto Sync. The PC reached by the configured HTTPS domain prepares the shared relay after a host-proof check; domain changes are reconciled automatically. Other PCs connect as clients. Account credential synchronization follows its separate settings.
+WS Cross System uses the shared dashboard password independently of account Sync and Claim. While the dashboard host starts or hands over its port, browsers show a compact starting screen, then an offline retry state after a bounded wait. Session counts refresh in the background and do not delay dashboard state. The PC reached by the configured HTTPS domain prepares the shared relay after a host-proof check; domain changes are reconciled automatically. Other PCs connect as clients. Account credential synchronization follows its separate settings.
 
 ## What it provides
 
@@ -171,7 +171,7 @@ Important combinations:
 
 - Account tokens remain in local VS Code SecretStorage and the Codex credential file. Password-encrypted recovery records are stored in `~/.codex/manager.sqlite`. They are not sent to a Codex Manager server.
 - Account metadata, settings, session recovery, usage history, and other extension state share that SQLite database, using WAL and full synchronous commits. Existing state is migrated without deleting its source files. VS Code Settings remains the editing interface and stays synchronized with SQLite. Process locks, diagnostic logs, Codex-owned files, and browser offline caches keep their platform formats.
-- Auto Sync synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Sync account logins** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
+- Sync and Claim synchronizes encrypted account IDs and PC ownership claims through VS Code Settings Sync and authenticated peer connections. **Sync account logins** is a separate setting and defaults off, so account sessions and tokens stay local unless the user explicitly enables it. Usage, quota data, and schedules are never synchronized. Turning Sync and Claim off stops new reservations and releases this PC’s previous claims; an offline release is retained for retry. Claims owned by other PCs remain unchanged. Sync Cross-PC Claims Now forces a download/merge/upload pass for the enabled sync mode.
 - Remote browsers authenticate with the password at login, then a session cookie authorizes the WebSocket upgrade. Incoming actions reject expired sessions or a changed password. PCs authenticate through signed shared-password proofs before actions are accepted; the raw password is not attached to every message. Direct loopback requests remain trusted local access.
 - The browser dashboard is local-only until enabled. Never expose port `39875` without the shared password and HTTPS access control.
 - Persistent logs redact tokens and account identifiers. Open **System Log** in **Data & sync** for live console history, filters, details, Download, and Clear. The console and download include up to 1,000 recent records within 512 KiB. Saved diagnostics additionally obey the configured retention and a 10,000-record or 32 MiB cap.
@@ -205,7 +205,7 @@ Automatic token history is on by default and preserves an explicit Off preferenc
 
 **Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, automatic switching waits with a warning and retries. Manual account switching remains available immediately.
 
-**Reserve all accounts** under Data & sync is off by default, so Auto Sync reserves only the account currently selected on this PC and frees every other saved account. Turn it on to claim every enabled saved account. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC.
+**Reserve all accounts** under Data & sync is off by default, so Sync and Claim reserves only the account currently selected on this PC and frees every other saved account. Turn it on to claim every enabled saved account. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC.
 
 Browser conversations show the saved native Codex goal above the composer, including its objective, state, and elapsed time. This remains available when the goal creation event has scrolled out of the message history.
 
@@ -277,7 +277,7 @@ In the **Running Sessions** flyout, use the Auto Resume icon beside running sess
 
 ### Public projects and embedding
 
-Choose **Share project** to open the permission modal. Task titles, prompts, stages, and subtask structure are shared by the link. Choose whether visitors may read activities, conversation files, or changes, add comments, or submit ideas. Public views use the workspace message renderer and open task details in a right panel. Links expire after 1, 7, or 30 days. **Revoke all project links** disables every link for that project. Server checks apply to direct API requests as well as the visible controls.
+Choose **Share project** to open the permission modal. Task titles, prompts, stages, and subtask structure are shared by the link. Choose whether visitors may read activities, conversation files, or changes, add comments, or submit ideas. Public views use the workspace message renderer and open task details in a right panel. New project links default to **Never Expire**; optional limits of 1, 7, or 30 days remain available. Existing timed links keep their original expiry. **Revoke all project links** disables every link for that project. Server checks apply to direct API requests as well as the visible controls.
 
 Public boards and activity update from scoped change events while visible. Hidden and offline pages release their live connections and refresh on return. Expiry and revocation close open views; pending older responses cannot restore them. Streams carry change notices, and every content read still checks the link's permissions.
 

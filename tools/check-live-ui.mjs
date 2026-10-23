@@ -74,6 +74,9 @@ try {
     }
     const childIds = sessions.filter(session => session.subAgent || session.parentSessionId).map(session => session.id);
 
+    await page.getByRole('button',{name:'Show projects and sessions',exact:true}).waitFor();
+    assert.ok(await page.locator('.cli-compact-session-list').count(), 'New sidebars default to compact list view');
+    await page.getByRole('button',{name:'Show projects and sessions',exact:true}).click();
     assert.equal(await page.locator(".cli-session-row-select").count(), 0, "Real projects start collapsed");
     if (sessions.some(session => !session.archived && !session.subAgent && !session.parentSessionId)) await page.locator(".cli-project-select").first().waitFor();
     for (let attempt = 0; attempt < 3; attempt += 1) {

@@ -36,7 +36,7 @@ export function readSavedProjectBoard(project: string, session?: ProjectBoard['s
 }
 
 export async function readSharedProjectTask(share: ProjectShare, taskId: string, view: string, before?: string, filePath?: string): Promise<unknown> {
-  if (share.expiresAt <= Date.now()) throw new Error('This project link expired.');
+  if (share.expiresAt !== 0 && share.expiresAt <= Date.now()) throw new Error('This project link expired.');
   if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
   const normalizedView = view === 'messages' ? 'activities' : view;
   const hasViewPermission = normalizedView === 'activities'
@@ -46,12 +46,12 @@ export async function readSharedProjectTask(share: ProjectShare, taskId: string,
   if (filePath?.startsWith('@manager-attachment/')) {
     if (normalizedView !== 'files' || !share.permissions.includes('files')) throw new Error('Files are not enabled for this shared link.');
     const file = await readProjectAttachment(share.projectPath, taskId, filePath, share.permissions.includes('comments'));
-    if (share.expiresAt <= Date.now()) throw new Error('This project link expired.');
+    if (share.expiresAt !== 0 && share.expiresAt <= Date.now()) throw new Error('This project link expired.');
     if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
     return { file };
   }
   const details = await readProjectTaskDetails(share.projectPath, taskId, normalizedView as NonNullable<import('../domain/dashboard/types').DashboardActionPayload['taskView']>, before);
-  if (share.expiresAt <= Date.now()) throw new Error('This project link expired.');
+  if (share.expiresAt !== 0 && share.expiresAt <= Date.now()) throw new Error('This project link expired.');
   if (readProjectTask(share.projectPath, taskId)?.hidden) throw new Error('This task is unavailable on the shared board.');
   if (filePath !== undefined) {
     if (normalizedView !== 'files') throw new Error('File access is not enabled for this view.');
@@ -120,6 +120,7 @@ export async function readProjectTaskDetails(projectPath: string, taskId: string
     }
     if (view === 'changes' || view === 'overview') {
       result.environment = await waitWithin(readWorkspaceEnvironment(project, view === 'changes'), 5000, 'Project changes are still loading.');
+      if (result.environment.warning) result.warnings.push(result.environment.warning);
     }
   } catch (error) { result.warnings.push(error instanceof Error ? error.message : String(error)); }
   if (view === 'files' || view === 'overview') {

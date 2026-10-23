@@ -21,7 +21,7 @@
     } finally { clearTimeout(timer); }
   }
   async function action(name, payload) {
-    if (stopped || !live || !navigator.onLine || !data || data.expiresAt <= Date.now()) throw new Error('Reconnect before submitting. This operation was not sent or queued.');
+    if (stopped || !live || !navigator.onLine || !data || !Number.isSafeInteger(data.expiresAt) || data.expiresAt < 0 || data.expiresAt !== 0 && data.expiresAt <= Date.now()) throw new Error('Reconnect before submitting. This operation was not sent or queued.');
     if (name === 'getProjectBoard') { await refresh(); return {projectBoard:board()}; }
     if (name === 'getProjectTaskDetails' || name === 'readWorkspaceFile') {
       const view = name === 'readWorkspaceFile' ? 'files' : payload.taskView || 'activities';

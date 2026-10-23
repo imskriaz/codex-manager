@@ -103,7 +103,7 @@ export class ProjectShareEvents {
       pending.unref?.();
     };
     const expire = () => {
-      if (!valid()) return;
+      if (!valid() || share.expiresAt === 0) return;
       // Node timers cannot represent the full lifetime of a 30-day link.
       expiry = setTimeout(expire, Math.min(share.expiresAt - Date.now(), 2_147_483_647));
       expiry.unref?.();

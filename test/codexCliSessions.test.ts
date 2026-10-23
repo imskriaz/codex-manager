@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as safeReads from '../src/utils/safeFileReads';
 import {
   parseCodexAppServerThreadItems,
+  resolveRecordedSessionProject,
   getCodexCliPathCandidates,
   isCodexCliAvailable,
   readCodexCliComposerConfig,
@@ -961,4 +962,17 @@ describe("Codex session integration", () => {
 
     await expect(readRunningCodexSessionIds(root)).resolves.toEqual([sessionId]);
   });
+});
+
+it('reads a missing recorded project for Environment without weakening command ownership or availability checks', async () => {
+  const root=await mkdtemp(path.join(os.tmpdir(),'codex-missing-recorded-')); roots.push(root);
+  const previous=process.env['CODEX_HOME'];process.env['CODEX_HOME']=root;
+  try {
+    await mkdir(path.join(root,'sessions'));
+    const missing=path.join(root,'removed');
+    await writeFile(path.join(root,'sessions',`rollout-${sessionId}.jsonl`), JSON.stringify({type:'session_meta',payload:{cwd:missing}})+'\n');
+    expect(await resolveRecordedSessionProject(sessionId,undefined,false)).toBe(missing);
+    await expect(resolveRecordedSessionProject(sessionId)).rejects.toThrow(/folder is unavailable/);
+    await expect(resolveRecordedSessionProject(sessionId,path.join(root,'different'),false)).rejects.toThrow(/different project/);
+  } finally { if(previous===undefined)delete process.env['CODEX_HOME'];else process.env['CODEX_HOME']=previous; }
 });

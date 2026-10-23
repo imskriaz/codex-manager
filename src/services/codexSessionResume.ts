@@ -2269,7 +2269,7 @@ function runCliSessionMutation<T>(sessionId: string, operationLabel: string, tas
   });
 }
 
-export async function resolveRecordedSessionProject(sessionId: string, requestedProject?: string): Promise<string> {
+export async function resolveRecordedSessionProject(sessionId: string, requestedProject?: string, requireAvailable = true): Promise<string> {
   validateSessionId(sessionId);
   const home = resolveCodexHome();
   const recorded = (await readCliSessionMetadata(home, sessionId)).projectPath
@@ -2290,7 +2290,7 @@ export async function resolveRecordedSessionProject(sessionId: string, requested
     await readKnownProjectRoots(home);
     cwd = resolveCliProjectPath(requestedProject);
   }
-  await assertUsableCliProjectPath(cwd);
+  if (requireAvailable) await assertUsableCliProjectPath(cwd);
   return cwd;
 }
 

@@ -210,6 +210,11 @@ function App() {
   const [donationOpen, setDonationOpen] = useState(false);
   const [apiTokenOpen, setApiTokenOpen] = useState(false);
   const [apiToken, setApiToken] = useState<string>();
+  const [apiError,setApiError]=useState<string>(), [apiUncertain,setApiUncertain]=useState(false);
+  const [apiProjects,setApiProjects]=useState<import('../../src/domain/dashboard/types').DashboardCliProject[]>([]);
+  const apiRequests=useRef<{list?:string;mutation?:string}>({});
+  const apiUncertainRef=useRef(false);
+
   const [apiTokens, setApiTokens] = useState<import('../../src/domain/dashboard/apiActions').DashboardApiToken[]>([]);
   const [accountSort, setAccountSort] = useState<AccountSort>(() => {
     try {
@@ -413,6 +418,11 @@ function App() {
   const handleActionTimeout = useCallback(
     (action: DashboardActionName, requestId: string) => {
       sessionActionRequests.current.delete(requestId);
+      if (['generateApiToken','listApiTokens','revokeApiToken'].includes(action) && [apiRequests.current.list,apiRequests.current.mutation].includes(requestId)) {
+        setApiError('The host did not confirm this request. Refresh the token list before retrying.');
+        if (action !== 'listApiTokens') { apiUncertainRef.current=true; setApiUncertain(true); }
+      }
+
       if (action === "viewLogs" && logConsoleRequestRef.current === requestId) {
         logConsoleRequestRef.current = undefined;
         setLogConsoleError("Logs timed out. Saved records are still shown; retrying automatically.");
@@ -480,7 +490,15 @@ function App() {
     handleActionTimeout,
     !isBrowserDashboard || realtimeConnected
   );
-  useEffect(() => { if (apiTokenOpen) sendAction('listApiTokens', undefined, { targetDeviceId: undefined }); }, [apiTokenOpen]);
+  const sendApiRequest = (action: 'generateApiToken'|'listApiTokens'|'revokeApiToken', payload: DashboardActionPayload = {}) => {
+    const mutation=action!=='listApiTokens';
+    if (mutation && (apiRequests.current.mutation || apiUncertainRef.current)) return;
+    setApiError(undefined);
+    if (mutation) apiRequests.current.list=undefined;
+    const id=sendAction(action,undefined,{...payload,targetDeviceId:undefined,automatic:true});
+    if(mutation) apiRequests.current.mutation=id; else apiRequests.current.list=id;
+  };
+  useEffect(() => { if (apiTokenOpen && (!isBrowserDashboard || realtimeConnected)) sendApiRequest('listApiTokens'); }, [apiTokenOpen,realtimeConnected]);
   const openExternalLink = useCallback((url: string): void => {
     if (!isBrowserDashboard) {
       sendAction("openExternalUrl", undefined, { url });
@@ -762,16 +780,23 @@ function App() {
         setCodexRequestError(message.status === "completed" ? undefined : (message.error ?? "Codex could not receive this response. Try again or refresh the session."));
         if (message.status !== "completed") showCliSessionFeedback({ key: Date.now(), level: "error", message: message.error ?? "Codex could not receive this response. Try again or refresh the session." });
       }
-      if (message.type === "dashboard:action-result" && ["generateApiToken", "listApiTokens", "revokeApiToken"].includes(message.action)) {
-        if (message.payload?.apiTokens) setApiTokens(message.payload.apiTokens);
-        if (message.status === 'completed' && message.action === 'revokeApiToken') setApiToken(undefined);
-        if (message.action === 'revokeApiToken' && message.status === 'completed') setApiToken(undefined);
-      }
-      if (message.type === "dashboard:action-result" && message.action === "generateApiToken") {
-        if (message.status === "completed" && message.payload?.apiToken) {
-          setApiToken(message.payload.apiToken);
-          setApiTokenOpen(true);
-        } else if (message.status !== "completed") showNotice({ level: "error", message: message.error ?? "API token could not be generated." });
+      if (message.type === 'dashboard:action-result' && ['generateApiToken','listApiTokens','revokeApiToken'].includes(message.action)) {
+        const list=message.action==='listApiTokens', key=list?'list':'mutation';
+        if (apiRequests.current[key] === message.requestId) {
+          apiRequests.current[key]=undefined;
+          const valid=message.status==='completed' && Array.isArray(message.payload?.apiTokens) && (message.action!=='generateApiToken' || /^cm_[a-f0-9]{64}$/.test(message.payload?.apiToken ?? ''));
+          if (valid) {
+            setApiTokens(message.payload!.apiTokens!);
+            if(message.payload?.apiProjects) setApiProjects(message.payload.apiProjects);
+            if(list && apiUncertainRef.current) apiRequests.current.mutation=undefined;
+            apiUncertainRef.current=false;setApiUncertain(false);setApiError(undefined);
+            if(message.action==='generateApiToken') {setApiToken(message.payload!.apiToken);showNotice({level:'info',message:'API token created. Copy its value now.'});}
+            if(message.action==='revokeApiToken') {setApiToken(undefined);showNotice({level:'info',message:'API token revoked.'});}
+          } else {
+            setApiError(message.error ?? 'The token request was not confirmed. Refresh the list before retrying.');
+            if(!list){apiUncertainRef.current=true;setApiUncertain(true);}
+          }
+        }
       }
       if (message.type === "dashboard:notification-dismissed") {
         setBrowserActionRequest((current) =>
@@ -1191,6 +1216,9 @@ function App() {
       ) {
         if (message.status === "completed") {
           if (message.payload?.workspaceEnvironment) setWorkspaceEnvironment(message.payload.workspaceEnvironment);
+          if (message.action === 'getWorkspaceEnvironment' && message.payload?.workspaceEnvironment?.warning && !isAutomaticRequest(message.requestId)) {
+            showCliSessionFeedback({ key: Date.now(), level: 'warning', message: message.payload.workspaceEnvironment.warning });
+          }
           if (message.action !== "getWorkspaceEnvironment") {
             showCliSessionFeedback({
               key: Date.now(),
@@ -1677,7 +1705,7 @@ function App() {
     const connectionFailed = isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline");
     return (
       <main
-        class={`panel ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
+        class="panel"
         id="dashboard-main"
       >
         <section class="section loading-section">
@@ -1694,7 +1722,7 @@ function App() {
             <div class="loading-shine" aria-hidden="true">
               <span />
             </div>
-            <span class="loading-label">Loading</span>
+            <span class="loading-label">{isBrowserDashboard ? "Starting…" : "Loading"}</span>
           </div>}
         </section>
       </main>
@@ -2711,17 +2739,6 @@ function App() {
                 </button>
               </div>
             </div>
-            {selectedPeer && !selectedPeer.local ? (
-              <div class="dashboard-notice is-info" role="status">
-                <span>
-                  {snapshot.lang === "zh"
-                    ? `当前查看：${getSensitiveDisplayValue(selectedPeer.name, state.privacyMode, "name")} · ${selectedPeer.sessionCount} 个会话 · 操作通过安全连接转发。`
-                    : snapshot.lang === "zh-hant"
-                      ? `目前檢視：${getSensitiveDisplayValue(selectedPeer.name, state.privacyMode, "name")} · ${selectedPeer.sessionCount} 個工作階段 · 操作會透過安全連線轉送。`
-                      : `Viewing ${getSensitiveDisplayValue(selectedPeer.name, state.privacyMode, "name")} · ${selectedPeer.sessionCount} sessions · actions are relayed over the secure connection.`}
-                </span>
-              </div>
-            ) : null}
             <div class="accounts-grid">
               {sortedAccounts.map((account) => (
                 <SavedAccountCard
@@ -2861,13 +2878,17 @@ function App() {
         open={apiTokenOpen}
         token={apiToken}
         tokens={apiTokens}
-        projects={cliComposerConfig?.projects}
+        projects={apiProjects}
+        error={apiError}
+        uncertain={apiUncertain}
+        loading={Boolean(apiRequests.current.list) && isActionPending("listApiTokens")}
+        onRefresh={() => sendApiRequest("listApiTokens")}
         connected={!isBrowserDashboard || realtimeConnected}
         enabled={snapshot.settings.apiAccessEnabled === true}
-        pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken") || isActionPending("listApiTokens")}
-        onClose={() => setApiTokenOpen(false)}
-        onGenerate={(name, projectPaths, permissions) => sendAction('generateApiToken', undefined, { tokenName: name, tokenProjectPaths: projectPaths, tokenPermissions: permissions, targetDeviceId: undefined })}
-        onRevoke={tokenId => { sendAction('revokeApiToken', undefined, { tokenId, targetDeviceId: undefined }); }}
+        pending={isActionPending("generateApiToken") || isActionPending("revokeApiToken")}
+        onClose={() => { setApiTokenOpen(false); setApiToken(undefined); }}
+        onGenerate={(name, projectPaths, permissions) => sendApiRequest('generateApiToken', { tokenName:name, tokenProjectPaths:projectPaths, tokenPermissions:permissions })}
+        onRevoke={tokenId => sendApiRequest('revokeApiToken',{tokenId})}
       />
 
       {tagEditor ? <AccountTagsModal key={`${tagEditor.targetDeviceId ?? 'local'}:${tagEditor.account.id}`} account={tagEditor.account} privacyMode={state.privacyMode}

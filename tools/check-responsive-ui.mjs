@@ -1,3 +1,4 @@
+import { checkListsApiUi } from './check-lists-api-ui.mjs';
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,6 +69,13 @@ const mockHost = `(() => {
   ];
   const uploadFiles = new Map();
   const uploadMetadata = files => files?.map(({data,...file})=>{uploadFiles.set(file.id,{...file,data});return {...file,hash:'f'.repeat(64)};});
+  window.__fillListFixture=()=>{
+    const rows=Array.from({length:155},(_,index)=>({id:'bulk-'+index,title:'Bulk work '+String(index).padStart(3,'0'),status:'idle',projectPath:'D:/demo',updatedAt:new Date().toISOString()}));
+    sessions.splice(0,sessions.length,...rows);
+    projectTasks.splice(0,projectTasks.length,...rows.map(row=>({id:row.id,title:row.title,prompt:'',stage:'completed',manualStage:'completed',revision:1,createdAt:1,updatedAt:1})));
+    projectRevision++;
+    window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-fixture',status:'completed',payload:{cliSessions:sessions}}}));
+  };
   let projectRevision=1; window.__advanceBoard=()=>{projectTasks.find(task=>task.id==='idea-fixture').title='Idea collection updated';projectRevision++;};
   const projectBoard = () => ({projectPath:'D:/demo',homeKey:'fixture',revision:projectRevision,tasks:projectTasks,comments:taskComments,sessions:[...sessions.filter(session=>!session.parentSessionId),...taskSessions],updatedAt:Date.now()});
   const apiTokens=[{id:'token-project',name:'Project reader',projectPath:'D:/demo',permissions:['state','getProjectBoard'],createdAt:1},{id:'token-all',name:'Owner operations',permissions:['*'],createdAt:1}];
@@ -169,10 +177,10 @@ const mockHost = `(() => {
           projectRevision++;payload={projectBoard:projectBoard()};
         }
         else if(message.action==='addProjectComment') {const {uploads,...input}=message.payload.comment;if(!taskComments.some(item=>item.id===input.id))taskComments.push({...input,attachments:uploadMetadata(uploads),author:'Owner',createdAt:Date.now()});projectRevision++;payload={projectBoard:projectBoard()};}
-        else if(message.action==='shareProjectBoard') payload=window.__partialProjectShare ? {} : {projectShare:{token:'b'.repeat(64),expiresAt:Date.now()+86400000,permissions:message.payload.sharePermissions}};
+        else if(message.action==='shareProjectBoard') payload=window.__partialProjectShare ? {} : {projectShare:{token:'b'.repeat(64),expiresAt:message.payload.shareDays===0?0:Date.now()+86400000,permissions:message.payload.sharePermissions}};
         else if(message.action==='revokeProjectShares') { if(window.__failProjectRevoke) error='Revocation was not confirmed.'; else payload={notice:{level:'info',message:'All project links revoked.'}}; }
-        else if(message.action==='listApiTokens') payload={apiTokens};
-        else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token',name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
+        else if(message.action==='listApiTokens') payload={apiTokens,apiProjects:[{id:'host',path:'C:/host-project',label:'Host project'}]};
+        else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token-'+apiTokens.length,name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
         else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
         else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined});payload={cliSession:session};}}
         else if(message.action==='readWorkspaceFile' && message.payload.filePath.startsWith('@manager-attachment/')) {
@@ -250,7 +258,8 @@ const mockHost = `(() => {
         }
         else if(message.action === 'workspaceGit') {
           const query=message.payload.gitRequest,operation=query.operation;
-          if(operation==='commit'&&window.__failCommit) error='Simulated commit failure';
+          if(operation==='read'&&window.__failNextGitRead) { window.__failNextGitRead=false; error='Simulated Git read failure.'; }
+          else if(operation==='commit'&&window.__failCommit) error='Simulated commit failure';
           else {
             if(operation==='stage') window.__gitStaged=true;
             if(operation==='unstage') window.__gitStaged=false;
@@ -317,6 +326,8 @@ const mockHost = `(() => {
           window.__heldSendResult = {...result,status:'completed',error:undefined,payload:{cliSession:sessions.find(s=>s.id===message.payload.sessionId),cliSessions:sessions,cliSessionMessages:[{id:'late-turn',kind:'message',role:'assistant',text:'Completed original conversation'}]}};
           return;
         }
+        if(message.action==='listApiTokens'&&window.__holdNextApiList){window.__holdNextApiList=false;window.__heldApiList=structuredClone(result);return;}
+        if(message.action==='generateApiToken'&&window.__holdNextApiCreate){window.__holdNextApiCreate=false;window.__heldApiCreate=structuredClone(result);return;}
         dispatch(result);
       }
     }, 50);
@@ -363,6 +374,7 @@ try {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
     });
     const page = await context.newPage();
+    if(process.argv.includes('--systems')) await page.addInitScript(()=>localStorage.setItem('codexManager.workspaceLayout.v2',JSON.stringify({sessionView:'projects'})));
     if(process.argv.includes('--history')) await page.addInitScript(()=>{window.__historyFixture=true;});
     if(process.argv.includes('--usage')) await page.addInitScript(()=>{window.__usageFixture=true;});
     if(process.argv.includes('--tags')) await page.addInitScript(()=>{window.__tagFixture=true;});
@@ -615,6 +627,37 @@ try {
       await page.screenshot({path:path.join(output,`tags-${width}.png`),fullPage:true});
       assert.deepEqual(errors,[],'Tag UI runtime errors');
       results.push({width,height,checks:'Header mask, compact editor/chips/filter, validation/reload/lost ack/offline, manager search/rename/merge/delete/enable/disable, frozen system scope'});
+      await context.close();continue;
+    }
+    if (process.argv.includes('--branding')) {
+      const positions=[];
+      for(const [name,route,header] of [['dashboard','/','.hero'],['board','/tasks','.task-board-header'],['welcome','/workspace','.cli-content-toolbar'],['session',`/workspace/${parentId}`,'.cli-conversation-header']]) {
+        await page.goto(origin+route);
+        await page.locator(header).waitFor({state:'visible'});
+        const hide=page.getByRole('button',{name:'Hide sessions sidebar',exact:true});
+        if(await hide.isVisible()) await hide.click();
+        const toggle=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+        await toggle.waitFor({state:'visible'});
+        const bounds=await toggle.boundingBox(), bar=await page.locator(header).boundingBox(), image=await toggle.locator('img').boundingBox();
+        assert.equal(await toggle.evaluate(element=>getComputedStyle(element).position),'static',`${name} logo stays in its header`);
+        assert.equal(Math.round(bounds.width),28,`${name} toggle has a consistent width`);
+        assert.equal(Math.round(bounds.height),28,`${name} toggle has a consistent height`);
+        assert.ok(Math.abs(image.x+image.width/2-bounds.x-bounds.width/2)<=1 && Math.abs(image.y+image.height/2-bounds.y-bounds.height/2)<=1,`${name} logo is centered in its control`);
+        assert.ok(bounds.x>=bar.x && bounds.x+bounds.width<=bar.x+bar.width && bounds.y>=bar.y && bounds.y+bounds.height<=bar.y+bar.height,`${name} logo fits inside its header`);
+        if(width<=760) positions.push(bounds.x);
+        if(name==='dashboard'&&width<=600){const content=await page.locator('.overview-shell').boundingBox();assert.ok(Math.abs(bounds.x-content.x)<=4,'Mobile logo aligns with dashboard content');}
+        await page.screenshot({path:path.join(output,`${name}-brand-${width}.png`)});
+        await toggle.click();
+        await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).waitFor({state:'visible'});
+        await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
+        await toggle.waitFor({state:'visible'});
+      }
+      assert.ok(!positions.length||Math.max(...positions)-Math.min(...positions)<=2,'Mobile content logos use the same left inset');
+      assert.deepEqual(errors,[]);results.push({width,height,checks:'Collapsed logo alignment, centering and open/close across dashboard, board, welcome and session'});await context.close();continue;
+    }
+    if (process.argv.includes('--api') || process.argv.includes('--lists')) {
+      await checkListsApiUi(page,{origin,width,height,output,api:process.argv.includes('--api')});
+      assert.deepEqual(errors,[]);results.push({width,height,checks:process.argv.includes('--api')?'API creation, stale list, unknown confirmation, refresh recovery, late result isolation':'Sidebar, board and table loading on scroll; search reaches unloaded rows'});
       await context.close();continue;
     }
     if (process.argv.includes('--systems')) {
@@ -1074,6 +1117,9 @@ try {
     assert.ok(welcome && conversation && welcome.height > conversation.height * .7, 'Welcome uses the available workspace instead of an extra grid track');
 
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
+    const folderView=page.locator('.cli-session-view-toggle');
+    await folderView.waitFor({state:'visible'});
+    if(await folderView.getAttribute('aria-pressed')==='true') await folderView.click();
     await page.getByRole("button", { name: "Expand demo", exact: true }).waitFor();
     const railBounds = await page.locator(".cli-session-rail").boundingBox();
     const footerBounds = await page.locator(".cli-account-footer").boundingBox();
@@ -1337,16 +1383,15 @@ try {
     await page.getByRole('tab',{name:'Env',exact:true}).click();
     assert.equal(await page.locator('.cli-environment-popover').count(),0,'Environment is a fixed tab, not a flyout');
     await page.getByRole('button',{name:'Open Git',exact:true}).click();
-    await page.getByRole("button", { name: "Compare branch", exact: true }).click();
-    await page.locator(".cli-branch-comparison .cli-diff-surface").waitFor();
-    await page.evaluate(() => { window.__failNextComparison = true; });
-    await page.getByRole("button", { name: "Refresh comparison", exact: true }).click();
-    await page.getByText("Simulated Git comparison failure.", { exact: true }).waitFor();
-    await page.getByText("Comparison unavailable. Use Refresh comparison to retry.", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Refresh comparison", exact: true }).click();
-    await page.locator(".cli-branch-comparison .cli-diff-surface").waitFor();
-    await page.getByRole("button", { name: "Show turn changes", exact: true }).click();
-    assert.equal(await page.locator(".cli-branch-comparison").count(), 0);
+    const git = page.getByRole('region', {name:'Git and GitHub',exact:true});
+    await git.getByRole('button',{name:'Refresh Git',exact:true}).waitFor();
+    await page.evaluate(() => { window.__failNextGitRead = true; });
+    await git.getByRole('button',{name:'Refresh Git',exact:true}).click();
+    await git.getByText('Simulated Git read failure.',{exact:true}).waitFor();
+    await git.getByRole('button',{name:'Refresh Git',exact:true}).click();
+    await git.getByText('Simulated Git read failure.',{exact:true}).waitFor({state:'detached'});
+    await git.getByRole('tab',{name:'Branches',exact:true}).click();
+    await git.getByText('feature/demo',{exact:true}).waitFor();
     await page.getByRole('tab',{name:'Env',exact:true}).click();
     console.log(`Checking ${width}x${height}: Agent tabs`);
     await page.getByRole("button", { name: /^Agents/ }).click();
@@ -1841,8 +1886,8 @@ try {
     assert.equal(await page.locator(".account-search-control button").count(), 1, "There is exactly one clear button");
     if (width <= 760) {
       const controlBounds = await page.locator(".dashboard-account-toolbar > :visible").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
-      assert.ok(controlBounds.every(bounds => Math.abs(bounds.y - controlBounds[0].y) <= 2), "Search, sort/filter, and view toggle stay on one row");
-      assert.ok((await page.locator(".dashboard-account-toolbar").boundingBox()).height <= 50, "Account toolbar has no extra row");
+      assert.ok(controlBounds.every(bounds => bounds.x >= 0 && bounds.x + bounds.width <= width + 1), "Account controls fit the phone viewport");
+      assert.ok((await page.locator(".dashboard-account-toolbar").boundingBox()).height <= 84, "Search and filters use at most two compact rows on phones");
       assert.equal(await searchInput.evaluate(element => getComputedStyle(element).fontSize), "16px", "Mobile search avoids iOS zoom");
     }
 

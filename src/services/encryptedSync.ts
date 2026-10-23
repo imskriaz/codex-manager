@@ -178,6 +178,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private localEnablementDefaults = new Map<string, boolean>();
   private readonly pendingDeletionAccountIds = new Set<string>();
   private deviceIdPromise: Promise<string> | undefined;
+  private localDeviceId: string | undefined;
   private settingsSyncSuspended = false;
   private readonly preparedCurrentClaims = new Set<string>();
   private currentClaimTimer: NodeJS.Timeout | undefined;
@@ -192,14 +193,21 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private async requestCurrentClaim(action: "acquire" | "release", accountId: string, token: string = crypto.randomUUID(), signal?: AbortSignal): Promise<AccountClaimResult> {
     signal?.throwIfAborted();
+    if (action === "acquire" && !this.isEnabled()) throw new Error("Sync and Claim is off. No account was claimed.");
     const domain = getCodexManagerConfiguration().get<string>("cloudflaredDomain", "").trim();
     if (!domain) throw new Error("Current-account-only claims need a shared HTTPS dashboard domain. Configure the same domain on every PC before switching.");
     const origin = new URL(domain);
     if (origin.protocol !== "https:" || origin.username || origin.password) throw new Error("Use a shared HTTPS dashboard domain for current-account-only claims.");
     const deviceId = await waitWithin(this.getDeviceId(), 10_000, "Device identity storage is still busy.", signal);
     const request: AccountClaimRequest = { action, accountId, token, deviceId, deviceName: resolveDeviceName(), requestId: crypto.randomUUID(), sentAt: Date.now() };
-    const signature = await waitWithin(this.signRealtimePeerPayload(JSON.stringify(request)), 10_000, "Shared password storage is still busy.", signal);
+    const sign = async (text: string) => {
+      if (this.canAuthenticatePeers()) return this.signRealtimePeerPayload(text);
+      const password = await this.context.secrets.get(PASSPHRASE_KEY);
+      return password ? crypto.createHmac('sha256',crypto.createHash('sha256').update(`peer-presence-v1:${password}`,'utf8').digest()).update(text,'utf8').digest('base64url') : undefined;
+    };
+    const signature = await waitWithin(sign(JSON.stringify(request)), 10_000, "Shared password storage is still busy.", signal);
     if (!signature) throw new Error("Configure the shared dashboard password before claiming an account.");
+    if (action === "acquire" && !this.isEnabled()) throw new Error("Sync and Claim is off. No account was claimed.");
     signal?.throwIfAborted();
     const controller = new AbortController();
     const abort = () => controller.abort(signal?.reason);
@@ -222,12 +230,25 @@ export class EncryptedSyncManager implements vscode.Disposable {
       const payload = await response.json() as { result?: AccountClaimResult; signature?: string; error?: string };
       signal?.throwIfAborted();
       if (!response.ok || !payload.result || typeof payload.signature !== "string" || payload.result.requestId !== request.requestId ||
-          !await waitWithin(this.verifyRealtimePeerPayload(JSON.stringify(payload.result), payload.signature), 10_000, "Shared claim verification is still pending.", signal)) throw new Error(payload.error ?? "The shared dashboard could not confirm the account claim. Retry after reconnecting.");
+          !await waitWithin((async () => {
+            if (this.canAuthenticatePeers()) return this.verifyRealtimePeerPayload(JSON.stringify(payload.result),payload.signature!);
+            const expected=await sign(JSON.stringify(payload.result));
+            if(!expected) return false;
+            const actual=Buffer.from(payload.signature!,'utf8'), bytes=Buffer.from(expected,'utf8');
+            return actual.length===bytes.length && crypto.timingSafeEqual(actual,bytes);
+          })(), 10_000, "Shared claim verification is still pending.", signal)) throw new Error(payload.error ?? "The shared dashboard could not confirm the account claim. Retry after reconnecting.");
       signal?.throwIfAborted();
       if (!payload.result.ok || !payload.result.claim || !isValidSyncAccountEnablement(payload.result.claim) || payload.result.claim.accountId !== accountId || payload.result.claim.deviceId !== request.deviceId) throw new Error(payload.result.error ?? "The shared account claim was rejected.");
       if (payload.result.claim.enabled !== (action === "acquire")) throw new Error("The shared host returned an inconsistent account claim. Refresh claims and retry.");
       const before = syncEnablementFingerprint(this.readLocalEnablement());
-      try { await this.applyRealtimeEnablementRegistry([payload.result.claim]); }
+      if (action === 'acquire' && !this.isEnabled()) {
+        await this.requestCurrentClaim('release',accountId,payload.result.claim.claimToken ?? token);
+        return payload.result;
+      }
+      try {
+        if (action === 'release' && !this.isEnabled()) await this.storeLocalEnablement(mergeSyncAccountEnablement(this.readLocalEnablement(),[payload.result.claim]),deviceId);
+        else await this.applyRealtimeEnablementRegistry([payload.result.claim]);
+      }
       catch { throw new Error("The shared host updated ownership, but local claim storage failed. Restore storage and retry before using this account."); }
       if (before !== syncEnablementFingerprint(this.readLocalEnablement())) this.markVaultDirty("enablement-changed", this.getVaultSyncDebounceDelayMs());
       return payload.result;
@@ -250,7 +271,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   private reconcileCurrentAccountClaim(): Promise<void> {
-    if (this.disposed || !this.isEnabled()) return Promise.resolve();
+    if (this.disposed) return Promise.resolve();
+    if (!this.isEnabled() && !this.readLocalEnablement().some(entry => entry.enabled)) return Promise.resolve();
     if (this.currentClaimTask) return this.currentClaimTask;
     const task = runCrossWindowExclusive(`account:switch:${getCodexHomeStateKey()}`, "Current account ownership", async (signal) => {
       const controller = new AbortController();
@@ -273,10 +295,26 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   private async reconcileCurrentAccountClaimLocked(signal?: AbortSignal): Promise<void> {
-    if (this.disposed || !this.isEnabled() || this.currentClaimRefreshInFlight) return;
+    if (this.disposed || this.currentClaimRefreshInFlight) return;
     this.currentClaimRefreshInFlight = true;
     try {
       await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account claim storage is still busy; maintenance will retry.", signal);
+      if (!this.isEnabled()) {
+        const deviceId = await waitWithin(this.getDeviceId(),500,'Device identity storage is still busy.',signal);
+        let released=false;
+        for (const claim of this.readLocalEnablement()) {
+          if (this.isEnabled() || this.disposed) return;
+          if (claim.deviceId !== deviceId || !claim.enabled) continue;
+          released=true;
+          if (claim.currentOnly) await this.requestCurrentClaim('release',claim.accountId,claim.claimToken,signal);
+          else {
+            const released={...claim,enabled:false,revision:claim.revision+1,updatedAt:Date.now(),lastSyncedAt:Date.now()};
+            await this.storeLocalEnablement(mergeSyncAccountEnablement(this.readLocalEnablement(),[released]),deviceId);
+          }
+        }
+        if(released) this.onStateChanged?.();
+        return;
+      }
       const records = await waitWithin(this.repo.listAccounts(), 500, "Current account discovery is still pending.", signal);
       const active = records.find((account) => account.isActive);
       const activeAccountIds = new Set(await waitWithin(readCrossWindowActiveAccountIds(), 500, "Other window account discovery is still pending.", signal));
@@ -348,6 +386,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       if (event.affectsConfiguration("codexManager.encryptedSyncClaimAllAccountsEnabled")) {
         this.onVaultMutation("sync-configured");
         const rebuild = async () => {
+          if (!this.isEnabled()) return;
           if (this.isCurrentAccountOnly()) { this.queueCurrentAccountReconciliation(); return; }
           for (const account of await this.repo.listAccounts()) {
             if (!this.findForeignEnablement(account.id, true)) await this.completeAccountEnablement(account.id, account.enabled !== false);
@@ -371,6 +410,13 @@ export class EncryptedSyncManager implements vscode.Disposable {
       if (!claimSyncChanged) return;
       this.context.globalState.setKeysForSync(this.isEnabled() ? [SYNC_KEY] : []);
       if (!this.isEnabled()) {
+        this.clearVisibleEnablement();
+        this.preparedCurrentClaims.clear();
+        this.backgroundSyncAbort?.abort(new Error('Sync and Claim turned off.'));
+        void this.reconcileCurrentAccountClaim().catch(error => {
+          const message=`Sync and Claim is off. A previous shared claim could not be released yet; cleanup will retry. ${error instanceof Error ? error.message : String(error)}`;
+          publishDashboardRealtime({type:'dashboard:notice',level:'warning',message});
+        });
         this.stopDownloadedVaultPolling();
         if (this.startupVaultMergeTimer) {
           clearTimeout(this.startupVaultMergeTimer);
@@ -382,6 +428,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         }
         return;
       }
+      void this.getDeviceId().then(deviceId => { if(this.isEnabled()) this.updateVisibleEnablement(this.readLocalEnablement(),deviceId); }).catch(error => console.warn("[codexManager] claim view refresh delayed",error));
       this.startDownloadedVaultPolling();
       if (this.isCurrentAccountOnly()) this.queueCurrentAccountReconciliation();
       if (this.pendingVaultMutationReasons.size > 0) {
@@ -453,7 +500,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         this.queueStartupVaultMerge();
       }
     }
-    if (this.isCurrentAccountOnly()) {
+    if (this.isCurrentAccountOnly() || !this.isEnabled()) {
       void this.reconcileCurrentAccountClaim().catch((error) =>
         console.warn("[codexManager] current account claim could not be reconciled at startup", error instanceof Error ? error.message : error)
       );
@@ -556,7 +603,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         const enablement = new Map(this.readLocalEnablement().map((entry) => [entry.accountId, entry]));
         const updatedAt = Date.now();
         for (const accountId of change.addedAccountIds) {
-          if (this.isCurrentAccountOnly()) continue;
+          if (!this.isEnabled() || this.isCurrentAccountOnly()) continue;
           const currentEntry = enablement.get(accountId);
           if (currentEntry?.enabled && currentEntry.deviceId !== deviceId) continue;
           enablement.set(
@@ -573,7 +620,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         }
         for (const accountId of change.removedAccountIds) {
           const currentEntry = enablement.get(accountId);
-          if (this.isCurrentAccountOnly() || currentEntry?.currentOnly) continue;
+          if (!this.isEnabled() || this.isCurrentAccountOnly() || currentEntry?.currentOnly) continue;
           if (currentEntry?.enabled && currentEntry.deviceId !== deviceId) continue;
           enablement.set(
             accountId,
@@ -589,7 +636,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         }
         await this.storeLocalEnablement([...enablement.values()], deviceId);
         this.queueCurrentAccountReconciliation();
-        if (!this.isCurrentAccountOnly()) await this.markEnablementPending([...change.addedAccountIds, ...change.removedAccountIds]);
+        if (this.isEnabled() && !this.isCurrentAccountOnly()) await this.markEnablementPending([...change.addedAccountIds, ...change.removedAccountIds]);
         if (this.isFullAccountSyncEnabled() || !this.isCurrentAccountOnly()) {
           if (change.addedAccountIds.length > 0) this.markVaultDirty("account-added", this.getVaultSyncDebounceDelayMs());
           if (change.removedAccountIds.length > 0) this.markVaultDirty("account-removed", this.getVaultSyncDebounceDelayMs());
@@ -692,7 +739,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   getRealtimeEnablementRegistry(): SyncAccountEnablement[] {
-    return this.readLocalEnablement();
+    const entries=this.readLocalEnablement();
+    return this.isEnabled() ? entries : entries.filter(entry=>!entry.enabled && entry.deviceId===this.localDeviceId);
   }
 
   getPresenceDeviceId(): Promise<string> {
@@ -793,6 +841,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       downloaded ??= current === raw ? peer : undefined;
       const changed = !downloaded || syncPayloadFingerprint(downloaded) !== syncPayloadFingerprint(candidate);
       const candidateRaw = changed ? await encryptSyncPayload(candidate, passphrase) : current;
+      if (!this.isEnabled()) return false;
       if (this.context.globalState.get<string>(SYNC_KEY) !== current) {
         return conflictAttempt < MAX_VAULT_CONFLICT_RETRIES
           ? this.applyRealtimeEncryptedVaultCore(raw, conflictAttempt + 1)
@@ -832,11 +881,15 @@ export class EncryptedSyncManager implements vscode.Disposable {
   async applyRealtimeEnablementRegistry(entries: readonly SyncAccountEnablement[]): Promise<void> {
     if (!this.isEnabled()) return;
     const task = this.mutationChain.catch(() => undefined).then(async () => {
+      if (!this.isEnabled()) return;
       const merged = mergeSyncAccountEnablement(this.readLocalEnablement(), entries);
       if (syncEnablementFingerprint(merged) === syncEnablementFingerprint(this.readLocalEnablement())) return;
       this.mutationVersion++;
       this.realtimeVaultCache = undefined;
-      await this.storeLocalEnablement(merged, await this.getDeviceId());
+      const deviceId=await this.getDeviceId();
+      if (!this.isEnabled()) return;
+      await this.storeLocalEnablement(merged,deviceId);
+      if (!this.isEnabled()) return;
       this.applyingRemote = true;
       try { await this.applyMergedEnablement(merged); }
       finally { this.applyingRemote = false; }
@@ -878,6 +931,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   async prepareAccountSwitch(accountId: string): Promise<void> {
+    if (!this.isEnabled()) return;
     if (encryptedSyncRegistryOverrideEnabled) return;
     if (this.isCurrentAccountOnly()) {
       this.updateVisibleEnablement(this.readLocalEnablement(), await waitWithin(this.getDeviceId(), 500, "Device identity storage is still busy."));
@@ -910,6 +964,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   async prepareAccountEnablement(accountId: string, enabled: boolean): Promise<void> {
+    if (!this.isEnabled()) return;
     if (this.isCurrentAccountOnly()) return;
     if (encryptedSyncRegistryOverrideEnabled) return;
     await waitWithin(this.mutationChain.catch(() => undefined), 500, "Account storage is still committing. Retry after the pending write finishes.");
@@ -923,6 +978,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   async completeAccountEnablement(accountId: string, enabled: boolean): Promise<void> {
+    if (!this.isEnabled()) return;
     if (this.isCurrentAccountOnly()) { this.queueCurrentAccountReconciliation(); return; }
     if (encryptedSyncRegistryOverrideEnabled) {
       void vscode.window.showWarningMessage(
@@ -931,6 +987,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       return;
     }
     await this.mutationChain.catch(() => undefined);
+    if (!this.isEnabled()) return;
     const owned = this.readLocalEnablement().find(entry => entry.accountId === accountId && entry.deviceId === visibleEnablementDeviceId);
     if (owned?.currentOnly) {
       this.queueCurrentAccountReconciliation();
@@ -941,6 +998,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       .catch(() => undefined)
       .then(async () => {
         const deviceId = await this.getDeviceId();
+        if (!this.isEnabled()) return;
         const enablement = new Map(this.readLocalEnablement().map((entry) => [entry.accountId, entry]));
         const current = enablement.get(accountId);
         if (current?.enabled && current.deviceId !== deviceId && (current.currentOnly || current.lastSyncedAt === undefined || isSyncAccountEnablementActive(current))) {
@@ -1199,7 +1257,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
   ): Promise<boolean> {
     if (!this.isEnabled()) {
       if (interactive) {
-        void vscode.window.showWarningMessage("Enable Auto Sync before syncing claims.");
+        void vscode.window.showWarningMessage("Enable Sync and Claim before syncing claims.");
       }
       return false;
     }
@@ -1874,7 +1932,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private updateVisibleEnablement(entries: SyncAccountEnablement[], deviceId: string): void {
     const before = visibleEnablementFingerprint(visibleAccountEnablement, visibleEnablementDeviceId);
-    visibleAccountEnablement = canonicalizeSyncAccountEnablement(entries);
+    visibleAccountEnablement = this.isEnabled() ? canonicalizeSyncAccountEnablement(entries) : [];
     visibleEnablementDeviceId = deviceId;
     if (before !== visibleEnablementFingerprint(visibleAccountEnablement, visibleEnablementDeviceId)) {
       this.onStateChanged?.();
@@ -1904,13 +1962,13 @@ export class EncryptedSyncManager implements vscode.Disposable {
       await this.context.secrets.store(DEVICE_KEY, created);
       return created;
     });
-    this.deviceIdPromise = pending;
+    this.deviceIdPromise = pending.then(deviceId => { this.localDeviceId=deviceId; return deviceId; });
     void pending.catch(() => {
-      if (this.deviceIdPromise === pending) {
+      if (!this.localDeviceId) {
         this.deviceIdPromise = undefined;
       }
     });
-    return pending;
+    return this.deviceIdPromise;
   }
 
   private async readRemotePayload(raw: string, passphrase: string): Promise<SyncPayload> {
@@ -1972,7 +2030,7 @@ export function isEncryptedSyncRegistryOverrideEnabled(): boolean {
 }
 
 export function getPendingEnablementAccountIds(): string[] {
-  return [...pendingEnablementAccountIds];
+  return getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled",true) ? [...pendingEnablementAccountIds] : [];
 }
 
 export function getEncryptedSyncStatus(): {

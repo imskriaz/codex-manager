@@ -1,3 +1,4 @@
+import { ScrollMore } from './scrollMore';
 import { WorkspaceTerminal } from './workspaceTerminal';
 import { WorkspaceGit } from './workspaceGit';
 import { readChatAttachmentFiles } from './attachmentUploads';
@@ -120,7 +121,7 @@ markdownRenderer.renderer.rules["image"] = (tokens, index, options, env, rendere
   return renderMarkdownImage(tokens, index, options, env, renderer);
 };
 const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayout = {
-  sessionView: "projects",
+  sessionView: "compact",
   railWidth: 260,
   terminalWidth: 320,
   composerHeight: 136
@@ -530,6 +531,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const activeSessions = filterCliSessionsBySection(orderedSessions, "active");
   const archivedSessions = filterCliSessionsBySection(orderedSessions, "archived");
   const runningCount = activeSessions.filter((session) => isCodexSessionRunning(session)).length;
+  const [sessionLimits, setSessionLimits] = useState<Record<string,number>>({});
+  useEffect(() => setSessionLimits({}), [selectedSystem, search, section, layout.sessionView]);
+  const growSessions = (key: string) => setSessionLimits(current => ({...current,[key]:(current[key] ?? 50)+50}));
   const visibleSessions = useMemo(() => {
     const source = section === "active" ? activeSessions : archivedSessions;
     const query = search.trim().toLocaleLowerCase();
@@ -885,7 +889,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
           </div>
 
           <div class="cli-session-list-region">
-          {layout.sessionView === "compact" || Boolean(search.trim()) ? <div class="cli-compact-session-list" role="list" aria-label="Sessions">{visibleSessions.map(session => renderSession(session))}</div> : <div class="cli-project-list cli-pc-project-list is-dense-tree" aria-label="Projects and sessions">
+          {layout.sessionView === "compact" || Boolean(search.trim()) ? <div class="cli-compact-session-list" role="list" aria-label="Sessions">{visibleSessions.slice(0,sessionLimits['compact'] ?? 50).map(session => renderSession(session))}<ScrollMore remaining={visibleSessions.length-(sessionLimits['compact'] ?? 50)} onMore={() => growSessions('compact')} /></div> : <div class="cli-project-list cli-pc-project-list is-dense-tree" aria-label="Projects and sessions">
             {pcGroups.map((pc) => {
               const knownProjectPaths = new Set((pc.local ? projects : []).map((project) => canonicalWebPath(project.path)));
               const sessionProjects = [...new Map(pc.allSessions
@@ -920,7 +924,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                            <EmptyFolderIcon /><span><strong>{project.label}</strong></span><small class={`cli-project-count ${runningSessions ? "cli-project-running" : ""}`} aria-label={`${runningSessions} running / ${sessions.length} total sessions`} title={`${runningSessions} running / ${sessions.length} total sessions`}>{runningSessions ? <><span class="cli-session-spinner" aria-hidden="true" />{runningSessions} / {sessions.length}</> : sessions.length}</small><span class="cli-project-fold" aria-hidden="true"><ChevronIcon /></span>
                          </button>
                       </div>
-                      {!projectCollapsed ? <div class="cli-project-sessions" role="list">{sessions.map(session => renderSession(session, true))}</div> : null}
+                      {!projectCollapsed ? <div class="cli-project-sessions" role="list">{sessions.slice(0,sessionLimits[groupId] ?? 50).map(session => renderSession(session, true))}<ScrollMore remaining={sessions.length-(sessionLimits[groupId] ?? 50)} onMore={() => growSessions(groupId)} /></div> : null}
                     </section>;
                   })}
                 </div>
@@ -1476,10 +1480,11 @@ function WorkspaceEnvironmentView(props: {
   return <section class="cli-inspector-view" aria-label="Environment" aria-busy={props.loading}>
     <header class="cli-inspector-heading"><EmptyFolderIcon /><span><strong>{environment?.projectName || projectDisplayName(props.projectPath ?? '') || 'Workspace'}</strong><small>{props.systemName}</small></span><IconButton label="Refresh Environment" disabled={props.loading || !props.connected || !props.projectPath} onClick={props.onRefresh}><RefreshIcon /></IconButton></header>
     <div class="cli-inspector-body">
-      <section><h3>Project</h3><dl>{detail('Folder', props.projectPath || 'No project selected')}{detail('System', props.systemName)}{detail('Connection', props.connected ? 'Connected' : 'Offline · saved view')}{detail('Repository', environment ? environment.isGitRepository ? 'Git' : 'No Git repository' : props.loading ? 'Loading…' : 'Not verified')}</dl></section>
+      {environment?.warning ? <p role="status">{environment.warning}</p> : null}
+      <section><h3>Project</h3><dl>{detail('Folder', props.projectPath || 'No project selected')}{detail('System', props.systemName)}{detail('Connection', props.connected ? 'Connected' : 'Offline · saved view')}{environment?.availability ? detail('Folder status', environment.availability === 'missing' ? 'Missing on this system' : 'Unavailable on this system') : null}{detail('Repository', environment?.availability ? 'Not verified' : environment ? environment.isGitRepository ? 'Git' : 'No Git repository' : props.loading ? 'Loading…' : 'Not verified')}</dl></section>
       <section><h3>Session</h3><dl>{detail('Status', !props.session ? 'No session selected' : props.session.archived ? 'Archived' : props.session.status === 'unknown' ? 'Not verified' : props.session.status === 'running' ? 'Running' : props.session.interrupted ? 'Interrupted' : 'Ready')}{detail('Model', props.session?.model)}{detail('Reasoning', props.session?.reasoningEffort)}{detail('Surface', props.session?.sessionSurface)}{detail('Updated', props.session?.updatedAt ? formatTime(props.session.updatedAt) : undefined)}{detail('Goal', props.session?.goal?.status ?? 'None')}{detail('Auto Resume', props.autoResumeEnabled ? 'Enabled' : 'Disabled')}{detail('Queue', props.session?.queueEnabled ? `Priority ${props.session.queuePriority ?? 3}` : 'Not queued')}</dl></section>
       {environment?.isGitRepository ? <section><h3>Repository</h3><dl>{detail('Branch', environment.branch)}{detail('Tracking', environment.upstream ?? 'No upstream')}{detail('Changes', environment.changes)}{detail('Ahead / behind', `${environment.ahead} / ${environment.behind}`)}</dl></section> : null}
-      <section><h3>Tools overview</h3><div class="cli-inspector-shortcuts"><button type="button" aria-label="Open Git" onClick={() => props.onOpen('git')}><ForkIcon /><span>Git</span><small>{environment ? environment.isGitRepository ? `${environment.changes} changed` : 'No repository' : 'Not verified'}</small></button><button type="button" onClick={() => props.onOpen('files')}><FileIcon /><span>Files</span><small>{props.editedFiles} recorded edits{props.dirtyFiles ? ` · ${props.dirtyFiles} unsaved` : ''}</small></button><button type="button" onClick={() => props.onOpen('terminal')}><TerminalIcon /><span>Terminals</span><small>{projectTerminals.length} project · {props.terminals.length} observed</small></button><button type="button" onClick={() => props.onOpen('agents')}><ForkIcon /><span>Agents</span><small>{props.agents.length} recorded · {runningAgents} running{unknownAgents ? ` · ${unknownAgents} unknown` : ''}</small></button><button type="button" onClick={() => props.onOpen('reviews')}><ReviewIcon /><span>Reviews</span><small>{props.editedFiles} recorded files</small></button></div></section>
+      <section><h3>Tools overview</h3><div class="cli-inspector-shortcuts"><button type="button" aria-label="Open Git" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('git')}><ForkIcon /><span>Git</span><small>{environment?.availability ? 'Folder unavailable' : environment ? environment.isGitRepository ? `${environment.changes} changed` : 'No repository' : 'Not verified'}</small></button><button type="button" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('files')}><FileIcon /><span>Files</span><small>{props.editedFiles} recorded edits{props.dirtyFiles ? ` · ${props.dirtyFiles} unsaved` : ''}</small></button><button type="button" disabled={Boolean(environment?.availability)} onClick={() => props.onOpen('terminal')}><TerminalIcon /><span>Terminals</span><small>{projectTerminals.length} project · {props.terminals.length} observed</small></button><button type="button" onClick={() => props.onOpen('agents')}><ForkIcon /><span>Agents</span><small>{props.agents.length} recorded · {runningAgents} running{unknownAgents ? ` · ${unknownAgents} unknown` : ''}</small></button><button type="button" onClick={() => props.onOpen('reviews')}><ReviewIcon /><span>Reviews</span><small>{props.editedFiles} recorded files</small></button></div></section>
       {props.agents.length ? <section><h3>Agents</h3><div class="cli-inspector-shortcuts">{props.agents.slice(0, 3).map(agent => <button type="button" key={cliSessionTargetKey(agent)} title={agent.title} onClick={() => props.onOpen('agents', agent.id)}><ForkIcon /><span>{agent.agentName ?? agent.title}</span><small>{agent.status === 'running' ? 'Running' : agent.status === 'unknown' ? 'Not verified' : 'Ready'}</small></button>)}{props.agents.length > 3 ? <button type="button" onClick={() => props.onOpen('agents')}>View all {props.agents.length} agents</button> : null}</div></section> : null}
     </div>
   </section>;
@@ -2366,7 +2371,7 @@ function loadWorkspaceLayout(): WorkspaceLayout {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY) ?? "{}") as Partial<WorkspaceLayout>;
     return {
-      sessionView: parsed.sessionView === "compact" ? "compact" : "projects",
+      sessionView: parsed.sessionView === "projects" ? "projects" : "compact",
       railWidth: clamp(Number(parsed.railWidth) || DEFAULT_WORKSPACE_LAYOUT.railWidth, 200),
       terminalWidth: clamp(Number(parsed.terminalWidth) || DEFAULT_WORKSPACE_LAYOUT.terminalWidth, 280),
       composerHeight: clamp(Number(parsed.composerHeight) || DEFAULT_WORKSPACE_LAYOUT.composerHeight, 120)

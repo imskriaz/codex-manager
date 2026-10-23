@@ -205,7 +205,8 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await page.locator('.task-board-column.is-planned .task-board-card').filter({hasText:'Idea collection'}).waitFor();
     const show=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
     if(await show.isVisible()) await show.click();
-    await page.getByRole('button',{name:'Show compact session list',exact:true}).click();
+    const compact=page.getByRole('button',{name:'Show compact session list',exact:true});
+    if(await compact.isVisible()) await compact.click();
     await page.locator('.cli-session-row-select').filter({hasText:'Evaluate stack'}).locator('..').dragTo(page.locator('.task-board-card').filter({hasText:'Release work'}));
     await page.waitForFunction(()=>window.__uiActions.some(message=>message.action==='saveProjectTask'&&message.payload.task.parentTaskId==='release-group'&&message.payload.task.expectedRevision>1));
     await page.getByRole('button',{name:'Show projects and sessions',exact:true}).click();
@@ -278,6 +279,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.ok(checkbox.width<=16 && featureText.x-checkbox.x-checkbox.width<=12,'Sharing checkboxes stay beside their labels');
   assert.equal(await share.getByRole('checkbox', { name: /Allow embedding/ }).isChecked(), false);
   await share.getByRole('checkbox', { name: /Allow embedding/ }).check();
+  assert.equal(await share.getByRole('combobox',{name:/^Link expires/}).inputValue(),'0','New project links default to Never Expire');
   await share.getByRole('button', { name: 'Create link', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.project-share-modal textarea')?.value.includes('<iframe'));
   assert.ok(await page.locator('.project-share-modal textarea').inputValue().then(value => value.includes('referrerpolicy="no-referrer"')), 'Embed code contains only the granted shared URL');
@@ -378,13 +380,13 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await operation.uncheck();
     assert.equal(await tokenForm.getByRole('checkbox', { name: 'Check all permissions', exact: true }).isChecked(), false, 'Check all keeps individual permissions editable');
     await tokenForm.getByRole('checkbox', { name: 'All projects', exact: true }).uncheck();
-    await tokenForm.getByRole('checkbox', { name: 'demo', exact: true }).check();
+    await tokenForm.getByRole('checkbox', { name: 'Host project', exact: true }).check();
     await tokenForm.getByRole('checkbox', { name: 'getProjectBoard', exact: true }).check();
     await tokenForm.getByRole('textbox', { name: 'Token name', exact: true }).fill('Scoped automation');
     await page.screenshot({ path: path.join(output, `api-create-${width}x${height}.png`) });
     await tokenForm.getByRole('button', { name: 'Create token', exact: true }).click();
     await tokenForm.getByRole('textbox', { name: 'New API token', exact: true }).waitFor();
-    assert.ok(await page.evaluate(() => window.__uiActions.some(message => message.action === 'generateApiToken' && message.payload?.tokenProjectPaths?.includes('D:/demo'))), 'Token creation sends the selected project checkbox scope');
+    assert.ok(await page.evaluate(() => window.__uiActions.some(message => message.action === 'generateApiToken' && message.payload?.tokenProjectPaths?.includes('C:/host-project'))), 'Token creation sends the selected project checkbox scope');
     await page.evaluate(() => { window.__savedClipboard = navigator.clipboard; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); });
     await tokenForm.getByRole('button', { name: 'Copy token', exact: true }).click();
     await tokenForm.getByText('Copy blocked. Select the token and copy it manually.', { exact: true }).waitFor();

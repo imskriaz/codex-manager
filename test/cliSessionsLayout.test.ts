@@ -101,7 +101,7 @@ describe("sessions sidebar layout", () => {
     expect(renderSession).toContain('class="cli-session-row-main has-project"');
     expect(renderSession).toContain("sessionMeta(session)");
     expect(renderSession).toContain('grouped ? <time class="cli-session-row-time"');
-    expect(source).toContain('sessions.map(session => renderSession(session, true))');
+    expect(source).toContain('sessions.slice(0,sessionLimits[groupId] ?? 50).map(session => renderSession(session, true))');
     expect(renderSession).toContain("{relativeTime(session.updatedAt)}");
     expect(css).toContain(".cli-session-row-meta > span");
     expect(css).toContain('.cli-workspace :is(.cli-project-sessions,.cli-compact-session-list) .cli-session-row { min-height:32px;');
@@ -824,7 +824,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain("const projectCollapsed = collapsedGroups[groupId] ?? true;");
     expect(source).toContain('runningSessions ? "cli-project-running"');
     expect(source).toContain('class="cli-compact-session-list"');
-    expect(source).toContain('sessionView: parsed.sessionView === "compact" ? "compact" : "projects"');
+    expect(source).toContain('sessionView: parsed.sessionView === "projects" ? "projects" : "compact"');
     expect(source).not.toContain("PCs · Projects");
     expect(source).not.toContain("No sessions yet");
   });
@@ -839,4 +839,12 @@ describe("sessions sidebar layout", () => {
     expect(cache).toContain('`list:${systemId}`');
   });
 
+});
+
+it('keeps startup visible in workspace routes and removes the remote transport banner', () => {
+  const source=readFileSync('webview-src/dashboard/main.tsx','utf8');
+  const startup=source.slice(source.indexOf('  if (!snapshot) {'),source.indexOf('  const cliListLoading'));
+  expect(startup).not.toContain('workspace-route-dashboard-hidden');
+  expect(startup).toContain('Starting…');
+  expect(source).not.toContain('actions are relayed over the secure connection');
 });

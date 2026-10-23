@@ -620,3 +620,17 @@ function exposeWorkspaceRoot(projectPath: string): () => void {
   });
   return () => Object.defineProperty(vscode.workspace, "workspaceFolders", { configurable: true, value: previous });
 }
+
+it('keeps missing-folder metadata readable, never starts Git there and recovers after restoration', async () => {
+  const root = await mkdtemp(join(tmpdir(),'manager-missing-env-')), project=join(root,'removed');
+  const run=vi.spyOn(childProcess,'spawn').mockClear();
+  try {
+    const value=await readWorkspaceEnvironment(project);
+    expect(value).toMatchObject({projectPath:project,availability:'missing',isGitRepository:false});
+    expect(value.warning).toContain('Conversation history is still available');
+    expect(run).not.toHaveBeenCalled();
+    await expect(listWorkspaceFiles(project)).rejects.toThrow();
+    await mkdir(project);
+    expect((await readWorkspaceEnvironment(project)).availability).toBeUndefined();
+  } finally { run.mockRestore(); await removeTestDirectory(root); }
+});

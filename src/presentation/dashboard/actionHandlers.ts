@@ -320,7 +320,7 @@ async function executeDashboardActionMessageCore(
     if (message.accountId && !account) {
       throw new Error("That account no longer exists. Refresh the dashboard and try again.");
     }
-    const execute = () => runDashboardAction(ctx, message.action, message.payload, account);
+    const execute = () => runDashboardAction(ctx, message.action, message.payload, account, message.requestId);
     const executeAndFlush = async () => {
       try {
         return await execute();
@@ -362,11 +362,12 @@ async function runDashboardAction(
   ctx: DashboardActionContext,
   action: DashboardActionName,
   payload: DashboardActionPayload | undefined,
-  account?: Awaited<ReturnType<AccountsRepository["getAccount"]>>
+  account?: Awaited<ReturnType<AccountsRepository["getAccount"]>>,
+  requestId?: string
 ): Promise<Extract<DashboardHostMessage, { type: "dashboard:action-result" }>["payload"] | undefined> {
   const translate = t(ctx.resolveLanguage());
   if (payload?.sessionId && ["workspaceTerminal", "workspaceGit", "workspaceGitHub", "getWorkspaceEnvironment", "listWorkspaceFiles", "readWorkspaceFile", "saveWorkspaceFile", "deleteWorkspaceFile", "createWorkspaceTerminal", "runWorkspaceTerminalCommand", "commitWorkspaceChanges", "pushWorkspaceBranch"].includes(action)) {
-    payload = { ...payload, projectPath: await waitWithin(resolveRecordedSessionProject(payload.sessionId, payload.projectPath),
+    payload = { ...payload, projectPath: await waitWithin(resolveRecordedSessionProject(payload.sessionId, payload.projectPath, action !== 'getWorkspaceEnvironment'),
       5_000, "This session's project folder is unavailable. Retry when it is connected.") };
   }
 
@@ -381,26 +382,29 @@ async function runDashboardAction(
         notice: {
           level: "info",
           message: payload.enabled
-            ? "Auto Sync enabled. Full account and token sync remains controlled by its separate setting."
-            : "Auto Sync disabled. Cross-PC account and token sync is inactive on this PC."
+            ? "Sync and Claim enabled. Full account and token sync remains controlled by its separate setting."
+            : "Sync and Claim disabled. Cross-PC account and token sync is inactive on this PC."
         }
       };
     }
     case "addAccount":
       await vscode.commands.executeCommand("codexManager.addAccount");
       return undefined;
-    case "generateApiToken":
+    case "generateApiToken": {
+      if (typeof payload?.tokenName !== 'string' || !payload.tokenName.trim() || payload.tokenName.trim().length > 80) throw new Error('Name the token using at most 80 characters.');
       if (!getCodexManagerConfiguration().get<boolean>("apiAccessEnabled", false)) {
         throw new Error("Enable API access in Settings before generating a token.");
       }
       if (payload?.tokenProjectPaths !== undefined && (!Array.isArray(payload.tokenProjectPaths) || !payload.tokenProjectPaths.length || payload.tokenProjectPaths.length > 32 || payload.tokenProjectPaths.some(item => typeof item !== 'string' || !item.trim()))) throw new Error('Choose between 1 and 32 project folders.');
-      return { apiToken: (await createDashboardApiToken(ctx.context, { name: payload?.tokenName, permissions: payload?.tokenPermissions, projectPaths: payload?.tokenProjectPaths ? await Promise.all(payload.tokenProjectPaths.map(project => resolveWorkspaceProjectPathAsync(project))) : undefined, projectPath: payload?.projectPath ? await resolveWorkspaceProjectPathAsync(payload.projectPath) : undefined })).token,
-        apiTokens: await listDashboardApiTokens(ctx.context), apiEndpoint: '/api/message (POST)' };
+      const created = await createDashboardApiToken(ctx.context, { name: payload?.tokenName, permissions: payload?.tokenPermissions, requestId,
+        projectPaths: payload?.tokenProjectPaths ? await Promise.all(payload.tokenProjectPaths.map(project => resolveWorkspaceProjectPathAsync(project))) : undefined,
+        projectPath: payload?.projectPath ? await resolveWorkspaceProjectPathAsync(payload.projectPath) : undefined });
+      return { apiToken: created.token, apiTokens: created.tokens, apiEndpoint:'/api/message (POST)' };
+    }
     case 'listApiTokens':
-      return { apiTokens: await listDashboardApiTokens(ctx.context) };
+      return { apiTokens: await listDashboardApiTokens(ctx.context), apiProjects: (vscode.workspace.workspaceFolders ?? []).map(folder => ({id:folder.uri.fsPath,path:folder.uri.fsPath,label:folder.name})) };
     case 'revokeApiToken':
-      await revokeDashboardApiToken(ctx.context, payload?.tokenId);
-      return { apiTokens: await listDashboardApiTokens(ctx.context), notice: { level: 'info', message: 'API token revoked.' } };
+      return { apiTokens: await revokeDashboardApiToken(ctx.context, payload?.tokenId), notice: { level:'info', message:'API token revoked.' } };
     case 'getProjectBoard':
       return { projectBoard: payload?.taskSavedOnly === true ? readSavedProjectBoard(await resolveWorkspaceProjectPathAsync(payload.projectPath)) : await readProjectBoard(payload?.projectPath) };
     case 'getProjectTaskDetails':

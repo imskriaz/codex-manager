@@ -14116,7 +14116,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .overview-main, .overview-bottom-row, .overview-metrics, .overview-actions { min-width: 0; max-width: 100%; }
   .overview-actions .toolbar { flex-wrap: wrap; }
   .hero { padding-top: 0; }
-  body.is-dashboard-workspace-route .dashboard-density-compact .hero { padding-left: 38px; min-height: 36px; }
+  body.is-dashboard-workspace-route .dashboard-density-compact .hero { padding-left: 0; min-height: 36px; }
   .dashboard-density-compact > .section { padding-top: max(4px, env(safe-area-inset-top)); }
   .hero, .hero-actions, .dashboard-account-toolbar, .filters { min-width: 0; flex-wrap: wrap; }
   .dashboard-account-toolbar > *, .filters > *, .hero-actions > * { min-width: 0; max-width: 100%; }
@@ -15900,17 +15900,17 @@ html[data-theme] body .settings-modal .modal-primary-btn { background:var(--acce
 }
 
 /* The sidebar control belongs to each content header, never over its content. */
-.content-sidebar-slot { display:inline-flex; align-items:center; flex:0 0 auto; }
+.content-sidebar-slot { display:inline-flex; align-items:center; align-self:center; flex:0 0 28px; width:28px; height:28px; line-height:0; }
 .content-sidebar-slot:empty { display:none; }
-.content-sidebar-slot>.cli-rail-toggle,.cli-workspace .cli-rail-header>.cli-rail-toggle { position:static; inset:auto; z-index:auto; display:grid; place-items:center; flex:0 0 28px; width:28px; height:28px; padding:2px; border:1px solid transparent; border-radius:5px; background:transparent; box-shadow:none; pointer-events:auto; }
+.content-sidebar-slot>.cli-rail-toggle,.cli-workspace .cli-rail-header>.cli-rail-toggle { position:static; inset:auto; z-index:auto; display:grid; place-items:center; box-sizing:border-box; flex:0 0 28px; width:28px; min-width:28px; height:28px; min-height:28px; margin:0; padding:0; border:1px solid transparent; border-radius:5px; background:transparent; box-shadow:none; pointer-events:auto; }
 .content-sidebar-slot>.cli-rail-toggle:hover,.cli-workspace .cli-rail-header>.cli-rail-toggle:hover { background:var(--bg-elevated); border-color:var(--border-muted); }
-.content-sidebar-slot>.cli-rail-toggle img { width:24px; height:24px; object-fit:contain; }
+.content-sidebar-slot>.cli-rail-toggle img { display:block; width:24px; height:24px; object-fit:contain; }
 .content-sidebar-slot>.cli-rail-toggle:focus-visible { outline:2px solid var(--accent-blue); outline-offset:1px; }
 .cli-workspace .cli-rail-header,.cli-workspace.is-dashboard-mode .cli-rail-header { padding-left:0; padding-right:0; gap:5px; }
 .cli-workspace .cli-conversation-header,.cli-workspace.is-rail-collapsed .cli-conversation-header { padding-left:6px; }
 .cli-content-toolbar { display:flex; align-items:center; min-height:38px; padding:4px 6px; border-bottom:1px solid var(--border-muted); }
 .cli-workspace.is-dashboard-mode .cli-content-toolbar { display:none; }
-body:has(.cli-workspace.is-dashboard-mode.is-rail-collapsed) .task-board-section .task-board-header { padding-left:8px; }
+body:has(.cli-workspace.is-dashboard-mode.is-rail-collapsed) .task-board-section .task-board-header { padding-left:6px; }
 @media(max-width:760px) {
   .task-board-header .task-board-heading { margin-left:0; flex-basis:100%; }
   .task-board-header .task-context-select { flex:1 1 0; }
@@ -16114,3 +16114,7 @@ body:has(.task-floating-menu,.cli-account-center,details[open],:popover-open) .b
 .task-board-header .task-search-toggle.has-query { color:var(--accent-blue); background:var(--cyan-soft); }
 .task-board-header .task-board-search input:focus-visible { outline:none; box-shadow:none; }
 .task-board-header .task-board-search:focus-within { border-color:var(--accent-blue); }
+
+.scroll-more { padding:6px; text-align:center; min-height:28px; }
+.scroll-more button { border:0; background:transparent; color:var(--text-secondary); font:inherit; cursor:pointer; }
+.scroll-more button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }

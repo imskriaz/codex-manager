@@ -2105,18 +2105,12 @@ export class WebDashboardServer implements vscode.Disposable {
     return pending;
   }
 
-  private async getConnectedPeers(): Promise<DashboardPeerView[]> {
+  private getConnectedPeers(): DashboardPeerView[] {
     const cliEnabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
-    const localSessionCount = cliEnabled && this.hasWorkspaceViewer()
-      ? filterCliSessionsBySection(
-          await waitWithin(
-            this.readLocalCliSessions(),
-            DASHBOARD_LOCAL_SESSION_WAIT_MS,
-            "Local session discovery is still loading"
-          ).catch(() => this.localCliSessions ?? []),
-          "active"
-        ).length
-      : 0;
+    // Counts use the last completed catalogue; discovery must not hold up the dashboard.
+    if (cliEnabled && this.hasWorkspaceViewer()) void this.readLocalCliSessions();
+    const localSessionCount = cliEnabled
+      ? filterCliSessionsBySection(this.localCliSessions ?? [], "active").length : 0;
     return [
       {
         id: this.deviceId,
@@ -2981,7 +2975,7 @@ export class WebDashboardServer implements vscode.Disposable {
       this.repo,
       this.settingsStore,
       "/assets/codex.svg",
-      await this.getConnectedPeers()
+      this.getConnectedPeers()
     );
     const peerSessions = [...this.peerSessions.values()];
     const accounts = mergeFreshPeerAccountStates(state.accounts, peerSessions);

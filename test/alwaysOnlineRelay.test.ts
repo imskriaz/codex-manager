@@ -73,11 +73,66 @@ function harness(contractAvailable = true, storageReady?: Promise<unknown>) {
     requestHandler!(request, response); request.emit("data", JSON.stringify(message)); request.emit("end");
     return response.statusCode;
   };
-  return { relay, connect, signed, live, output, heartbeat, listening: () => listening, configuredStore: () => configuredStore, advance(ms: number) { now += ms; },
+  const get = (url = '/', headers = {}) => {
+    const response = { statusCode: 200, headers: {} as Record<string,string>, body: '', setHeader(key:string,value:string) { this.headers[key]=value; }, end(body='') { this.body=body; } };
+    requestHandler!(Object.assign(new EventEmitter(), { method: 'GET', url, headers }), response);
+    return response;
+  };
+  return { relay, get, connect, signed, live, output, heartbeat, listening: () => listening, configuredStore: () => configuredStore, advance(ms: number) { now += ms; },
     expire() { relay.pruneEvents(); }, runTimers() { for (const callback of [...timers.values()]) callback(); }, now: () => now };
 }
 
 describe("detached relay authenticated realtime and recovery", () => {
+  it('serves private-data-free startup UI and preserves the machine health endpoint', () => {
+    const h = harness(), response = h.get('/workspace?device=remote');
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['Cache-Control']).toBe('no-store');
+    expect(response.headers['Retry-After']).toBe('3');
+    expect(response.body).toContain('Starting Codex Manager…');
+    expect(response.body).not.toContain('relay is online');
+    expect(response.body).not.toContain('WebSocket peers');
+    expect(response.body).not.toContain('remote');
+    const script = response.body.match(/<script>([\s\S]*?)<\/script>/)![1]!;
+    expect(script).not.toContain('\r');
+    const hash = crypto.createHash('sha256').update(script).digest('base64');
+    expect(response.headers['Content-Security-Policy']).toContain(`'sha256-${hash}'`);
+    const probe = h.get('/workspace?device=remote', { 'x-codex-startup-probe':'1' });
+    expect(probe.statusCode).toBe(204); expect(probe.body).toBe('');
+    expect(JSON.parse(h.get('/health').body)).toMatchObject({ service:'codex-manager-relay', ok:true, peerCount:0 });
+  });
+
+  it.each(['ready', 'offline', 'stalled'] as const)('bounds startup recovery, retains the route and allows an explicit retry: %s', async outcome => {
+    vi.useFakeTimers();
+    try {
+      const h = harness(), response = h.get(), reload = vi.fn();
+      const elements: Record<string,any> = { 'startup-title':{textContent:'Starting Codex Manager…'}, 'startup-status':{textContent:'Waiting'}, 'startup-retry':{hidden:true} };
+      const ready = {ok:true,status:200,headers:{get:()=>null},body:{cancel:vi.fn()}};
+      const fetchMock = vi.fn((_url:string, options:any) => {
+        if(outcome==='stalled') return new Promise((_resolve,reject)=>options.signal.addEventListener('abort',()=>reject(new Error('timeout'))));
+        if(outcome==='offline') return Promise.reject(new Error('offline'));
+        return Promise.resolve({ok:true,status:204,headers:{get:()=> '1'},body:{cancel:vi.fn()}});
+      });
+      vm.runInNewContext(response.body.match(/<script>([\s\S]*?)<\/script>/)![1]!, {
+        document:{getElementById:(id:string)=>elements[id],body:{setAttribute:vi.fn(),removeAttribute:vi.fn()}},
+        location:{href:'https://dashboard.example/workspace?device=remote#history',reload},fetch:fetchMock,Date,AbortController,setTimeout,clearTimeout
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock.mock.calls[0]![0]).toContain('/workspace?device=remote#history');
+      expect(reload).not.toHaveBeenCalled();
+      if(outcome==='ready') { fetchMock.mockResolvedValueOnce(ready as never); await vi.advanceTimersByTimeAsync(3000); expect(reload).toHaveBeenCalledOnce(); }
+      else {
+        await vi.advanceTimersByTimeAsync(60001);
+        expect(elements['startup-title'].textContent).toBe('Dashboard offline');
+        expect(elements['startup-retry'].hidden).toBe(false);
+        expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(21);
+        const count=fetchMock.mock.calls.length;await vi.advanceTimersByTimeAsync(30000);expect(fetchMock).toHaveBeenCalledTimes(count);
+        fetchMock.mockResolvedValueOnce({...ready,ok:false,status:401} as never);
+        elements['startup-retry'].onclick(); await vi.advanceTimersByTimeAsync(0);
+        expect(reload).toHaveBeenCalledOnce(); expect(elements['startup-retry'].hidden).toBe(true);
+      }
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+  });
+
   it('forwards VT streams without retaining raw terminal screen or input in replay history', () => {
     const h = harness(), source = h.connect('source'), target = h.connect('target');
     source.sent=[]; target.sent=[];

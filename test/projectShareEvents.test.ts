@@ -173,3 +173,12 @@ it('releases legacy subscriptions on expiry, failure, slow clients and late vali
   streams.openConversation(slow as unknown as ServerResponse, 'f'.repeat(64), Date.now() + 1000, undefined, 'local', async () => ({}));
   expect(slow.destroyed).toBe(true);
 });
+
+it('does not spin expiry timers for permanent links and still closes on revocation', async () => {
+  const {response} = open(new Response(), 0);
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(response.end).not.toHaveBeenCalled(); expect(response.write).toHaveBeenCalledTimes(1);
+  revokeProjectShares(root); streams.heartbeat();
+  expect(response.end).toHaveBeenCalledOnce();
+  expect(response.write).toHaveBeenLastCalledWith('event: revoked\ndata: {}\n\n');
+});

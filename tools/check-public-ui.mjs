@@ -72,7 +72,7 @@ try {
       const savedUpload=uploaded.get(decodeURIComponent(query.get('file')?.split('/').at(-1)||''));
       const file = savedUpload ? {path:savedUpload.name,kind:savedUpload.kind,content:savedUpload.kind==='text'?savedUpload.data:'',dataUrl:savedUpload.kind==='image'?savedUpload.data:undefined,mimeType:savedUpload.mimeType,size:savedUpload.size,revision:'public-upload'} : query.get('file')?.includes('/image/') ? {path:'Screenshot',kind:'image',dataUrl:image,content:''} : {path:'brief.txt',kind:'text',content:'Shared uploaded snapshot'};
       const warningOnly = historyWarningsOnly && query.get('view') === 'activities';
-      const snapshot = JSON.parse(JSON.stringify(isTask ? query.has('file') ? {file} : { messages:query.get('view')==='files'||warningOnly?[]:taskMessages, files:query.get('view')==='files'?files:[],history:[],warnings:warningOnly?['Saved history is temporarily unavailable.']:[] } : {title:'Project work',tasks,comments,permissions,expiresAt:Date.now()+60000}));
+      const snapshot = JSON.parse(JSON.stringify(isTask ? query.has('file') ? {file} : { messages:query.get('view')==='files'||warningOnly?[]:taskMessages, files:query.get('view')==='files'?files:[],history:[],warnings:warningOnly?['Saved history is temporarily unavailable.']:[] } : {title:'Project work',tasks,comments,permissions,expiresAt:0}));
       if (!isTask && holdRead) { holdRead = false; await new Promise(resolve => { releaseRead = resolve; }); }
       await route.fulfill(wasRevoked ? { status:404,json:{ error:'Revoked' } } : { json:snapshot });
     });

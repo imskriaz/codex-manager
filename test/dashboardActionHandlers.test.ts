@@ -260,7 +260,7 @@ describe("executeDashboardActionMessage", () => {
     const environment = vi.spyOn(workspaceTools, "readWorkspaceEnvironment").mockResolvedValue({ projectPath: project, projectName: "closed-project", isGitRepository: false, changes: 0, additions: 0, deletions: 0, ahead: 0, behind: 0, hasRemote: false });
     const id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     const result = await executeDashboardActionMessage(createContext(), { type: "dashboard:action", action: "getWorkspaceEnvironment", requestId: "dashboard-auto-project", payload: { sessionId: id, automatic: true } });
-    expect(result.status).toBe("completed"); expect(resolve).toHaveBeenCalledWith(id, undefined); expect(environment).toHaveBeenCalledWith(project, false, undefined);
+    expect(result.status).toBe("completed"); expect(resolve).toHaveBeenCalledWith(id, undefined, false); expect(environment).toHaveBeenCalledWith(project, false, undefined);
   });
   it.each(["browser", "webview"] as const)("keeps %s history readable and reports why an unverified session cannot send", async (hostKind) => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
@@ -380,7 +380,7 @@ describe("executeDashboardActionMessage", () => {
     expect(update).toHaveBeenCalledWith("encryptedSyncEnabled", enabled, vscode.ConfigurationTarget.Global);
     expect(context.schedulePublishState).toHaveBeenCalledOnce();
     expect(result.status).toBe("completed");
-    expect(result.payload?.notice?.message).toContain(`Auto Sync ${enabled ? "enabled" : "disabled"}`);
+    expect(result.payload?.notice?.message).toContain(`Sync and Claim ${enabled ? "enabled" : "disabled"}`);
   });
 
   it("returns cross-PC sync save failures to the initiating dashboard", async () => {

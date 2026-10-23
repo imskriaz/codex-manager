@@ -320,6 +320,48 @@ function acceptRealtimeEvent(message, socket, deviceId) {
   return true;
 }
 
+function waitForDashboard() {
+  const title = document.getElementById('startup-title'), status = document.getElementById('startup-status');
+  const retry = document.getElementById('startup-retry');
+  let deadline = Date.now() + 60_000, pending = false, timer;
+  async function probe() {
+    clearTimeout(timer);
+    if (pending) return;
+    if (Date.now() >= deadline) {
+      title.textContent = 'Dashboard offline';
+      status.textContent = 'Open VS Code with Codex Manager, then try again.';
+      document.body.removeAttribute('aria-busy');
+      retry.hidden = false;
+      return;
+    }
+    pending = true;
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), Math.min(5000, deadline - Date.now()));
+    try {
+      const response = await fetch(location.href, { cache: 'no-store', headers: { 'X-Codex-Startup-Probe': '1' }, signal: controller.signal });
+      const starting = response.headers.get('X-Codex-Starting') === '1';
+      await response.body?.cancel();
+      if (!starting && (response.ok || response.status === 401)) { location.reload(); return; }
+    } catch { /* Handover can briefly close the listener. */ }
+    finally { clearTimeout(timeout); pending = false; }
+    timer = setTimeout(probe, Math.min(3000, Math.max(0, deadline - Date.now())));
+  }
+  retry.onclick = () => {
+    deadline = Date.now() + 60_000;
+    title.textContent = 'Starting Codex Manager…';
+    status.textContent = 'Waiting for your dashboard.';
+    document.body.setAttribute('aria-busy', 'true');
+    retry.hidden = true;
+    void probe();
+  };
+  void probe();
+}
+
+const startupScript = `(${waitForDashboard.toString()})();`.replace(/\r\n?/g, '\n');
+const startupScriptHash = crypto.createHash('sha256').update(startupScript).digest('base64');
+const startupPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Codex Manager</title><style>
+:root{color-scheme:light dark;font:14px/1.5 system-ui,sans-serif;background:#0d1117;color:#e6edf3}body{margin:0;min-height:100vh;display:grid;place-items:center}main{max-width:360px;padding:28px;text-align:center}svg{width:40px;height:40px;color:#3b82f6}h1{font-size:19px;font-weight:600;margin:18px 0 6px}p{color:#8b949e;margin:0 0 18px}button{font:inherit;color:inherit;background:#1c2635;border:1px solid #344157;border-radius:6px;padding:7px 16px;cursor:pointer}button:focus-visible{outline:2px solid #3b82f6;outline-offset:3px}body[aria-busy] svg{animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{50%{opacity:.4}}@media(prefers-reduced-motion:reduce){body[aria-busy] svg{animation:none}}@media(prefers-color-scheme:light){:root{background:#f4f6f9;color:#1f2937}p{color:#596579}button{background:#fff;border-color:#cbd5e1}}
+</style></head><body aria-busy="true"><main role="status" aria-live="polite"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="3" width="20" height="18" rx="5" fill="currentColor"/><path d="m7 9 3 3-3 3m6 0h4" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg><h1 id="startup-title">Starting Codex Manager…</h1><p id="startup-status">Waiting for your dashboard.</p><button id="startup-retry" type="button" hidden>Try again</button><noscript><p>Open VS Code with Codex Manager, then reload this page.</p></noscript></main><script>${startupScript}</script></body></html>`;
+
 const httpServer = http.createServer((request, response) => {
   if (request.method === "POST" && request.url === "/api/peer-account-claim") {
     response.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -384,8 +426,15 @@ const httpServer = http.createServer((request, response) => {
     return;
   }
   if (request.method === "GET") {
+    response.statusCode = 503;
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Retry-After', '3');
+    response.setHeader('X-Codex-Starting', '1');
+    response.setHeader('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${startupScriptHash}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'`);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    if (request.headers['x-codex-startup-probe'] === '1') { response.statusCode = 204; response.end(); return; }
     response.setHeader("Content-Type", "text/html; charset=utf-8");
-    response.end("<!doctype html><title>Codex Manager relay</title><h1>Codex Manager relay is online</h1><p>WebSocket peers: " + peers.size + "</p><p>This host keeps the multi-PC transport alive while VS Code is closed.</p>");
+    response.end(startupPage);
     return;
   }
   response.statusCode = 404; response.end("Not found");

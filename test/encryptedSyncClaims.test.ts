@@ -154,3 +154,39 @@ describe("claim recovery and manual sync priority", () => {
   });
 
 });
+
+it.each([false,true])('does not create or advertise claims while Sync and Claim is off (claim-all: %s)', async claimAll => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='encryptedSyncEnabled'?false:key==='encryptedSyncClaimAllAccountsEnabled'?claimAll:fallback} as never);
+  const {manager,state,internal}=fixture();state.set('codexManager.encryptedSync.localEnablement.v1',[claim]);
+  const acquire=vi.spyOn(internal,'requestCurrentClaim');
+  await manager.prepareAccountSwitch('one');await manager.prepareAccountEnablement('one',true);await manager.completeAccountEnablement('new',true);
+  manager.onAccountsMutated({addedAccountIds:['new'],removedAccountIds:[]});await internal.mutationChain;
+  expect(manager.getRealtimeEnablementRegistry()).toEqual([]);
+  expect(state.get('codexManager.encryptedSync.localEnablement.v1')).toEqual([claim]);
+  expect(acquire).not.toHaveBeenCalled();
+});
+it('rechecks disabled claims after waiting for an earlier write', async () => {
+  let enabled=true;vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='encryptedSyncEnabled'?enabled:key==='encryptedSyncClaimAllAccountsEnabled'?true:fallback} as never);
+  const {manager,state,internal}=fixture();let finish!:()=>void;
+  internal.mutationChain=new Promise<void>(resolve=>{finish=resolve;});
+  const pending=manager.completeAccountEnablement('one',true);enabled=false;finish();await pending;
+  expect(state.get('codexManager.encryptedSync.localEnablement.v1')).toBeUndefined();
+});
+it('does not acquire after Sync and Claim turns off while password storage is pending', async () => {
+  let enabled=true;vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='encryptedSyncEnabled'?enabled:key==='cloudflaredDomain'?'https://dashboard.example':fallback} as never);
+  const {manager,internal}=fixture();let finish!:(value:string)=>void;
+  const sign=vi.spyOn(manager,'signRealtimePeerPayload').mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+  vi.mocked(claimFetch).mockClear();const pending=internal.requestCurrentClaim('acquire','one');
+  await vi.waitFor(()=>expect(sign).toHaveBeenCalled());enabled=false;finish('signed');
+  await expect(pending).rejects.toThrow('Sync and Claim is off');expect(claimFetch).not.toHaveBeenCalled();
+});
+
+it('releases only this PC’s legacy claims while disabled and forwards release records for stale peers', async () => {
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string,fallback:unknown)=>key==='encryptedSyncEnabled'?false:fallback} as never);
+  const {manager,state,internal}=fixture();
+  const own={...claim,accountId:'local-account',deviceId:'local',deviceName:'Local PC'};
+  state.set('codexManager.encryptedSync.localEnablement.v1',[claim,own]);
+  await internal.reconcileCurrentAccountClaim();
+  expect(manager.getRealtimeEnablementRegistry()).toEqual([expect.objectContaining({accountId:'local-account',deviceId:'local',enabled:false})]);
+  expect((state.get('codexManager.encryptedSync.localEnablement.v1') as typeof claim[]).find(entry=>entry.accountId==='one')).toEqual(claim);
+});

@@ -24,7 +24,7 @@
       ? 10 * 60_000 + 30_000
       : ["refreshAll", "batchRefresh", "batchResyncProfile"].includes(message?.action)
         ? (message.action === "batchResyncProfile" ? 300_000 : 240_000) * Math.max(1, message.payload?.accountIds?.length || lastAccountCount) + 15_000
-        : message?.action === "workspaceTerminal" ? 10_000 : message?.action === "refreshView" ? 8_000 : message?.action === "resyncProfile" ? 315_000 : message?.action === "refresh" ? 255_000 : 135_000;
+        : ["generateApiToken","listApiTokens","revokeApiToken"].includes(message?.action) ? 20_000 : message?.action === "workspaceTerminal" ? 10_000 : message?.action === "refreshView" ? 8_000 : message?.action === "resyncProfile" ? 315_000 : message?.action === "refresh" ? 255_000 : 135_000;
   let lastAccountCount = 1;
   const forgetSocketAction = (requestId) => {
     const pending = pendingSocketActions.get(requestId);

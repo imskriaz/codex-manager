@@ -882,6 +882,8 @@ export interface DashboardWorkspaceGitHistory {
 export interface DashboardWorkspaceEnvironment {
   projectPath: string;
   projectName: string;
+  availability?: 'missing' | 'unavailable';
+  warning?: string;
   isGitRepository: boolean;
   branch?: string;
   upstream?: string;
@@ -1104,6 +1106,7 @@ export interface DashboardActionResultPayload {
   sharedJson?: string;
   apiToken?: string;
   apiEndpoint?: string;
+  apiProjects?: DashboardCliProject[];
   apiTokens?: import('./apiActions').DashboardApiToken[];
   authJson?: string;
   oauthSession?: DashboardOAuthSessionDescriptor;

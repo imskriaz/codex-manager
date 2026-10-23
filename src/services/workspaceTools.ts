@@ -157,6 +157,22 @@ export async function readWorkspaceGitHistory(projectPath: string, request: Dash
 }
 
 export async function readWorkspaceEnvironment(projectPath: string | undefined, includeBranchDiff = false, gitHistory?: DashboardWorkspaceGitRequest): Promise<DashboardWorkspaceEnvironment> {
+  const selected = normalizeNativePath(projectPath?.trim() ?? '');
+  if (selected && path.isAbsolute(selected)) {
+    const recorded = path.resolve(selected);
+    try {
+      const folder = await waitWithin(fs.stat(recorded), WORKSPACE_READ_TIMEOUT_MS, 'The recorded project folder did not respond.');
+      if (!folder.isDirectory()) throw Object.assign(new Error('The project path is not a folder.'), { code: 'ENOTDIR' });
+    } catch (error) {
+      if (includeBranchDiff || gitHistory !== undefined) throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      const missing = code === 'ENOENT' || code === 'ENOTDIR';
+      return { projectPath: recorded, projectName: path.basename(recorded), availability: missing ? 'missing' : 'unavailable',
+        warning: missing ? 'This session’s recorded folder no longer exists on this system. Conversation history is still available. Restore the folder to use files, Git or terminals.'
+          : 'This session’s recorded folder cannot be read on this system. Conversation history is still available. Check access or reconnect the drive, then refresh.',
+        isGitRepository: false, changes: 0, additions: 0, deletions: 0, ahead: 0, behind: 0, hasRemote: false };
+    }
+  }
   const cwd = await resolveWorkspaceProjectPathAsync(projectPath);
   let read = environmentReads.get(cwd);
   if (!read) {

@@ -162,3 +162,10 @@ it('refuses direct public reads for hidden sessions while retaining owner access
   for (const view of ['activities','files','changes']) await expect(readSharedProjectTask(share as never, task.id, view)).rejects.toThrow(/unavailable/);
   expect((await readProjectTaskDetails(root, task.id)).task?.hidden).toBe(true);
 });
+
+it('enforces public permissions on links without an expiry', async () => {
+  const board = await readProjectBoard(root), task = board.tasks[0]!;
+  const share = { projectPath:root, expiresAt:0, permissions:['messages' as const] };
+  expect(await readSharedProjectTask(share,task.id,'activities')).toMatchObject({messages:[{text:'Answer'}]});
+  await expect(readSharedProjectTask(share,task.id,'files')).rejects.toThrow(/not enabled/);
+});

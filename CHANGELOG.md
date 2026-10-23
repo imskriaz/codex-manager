@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.4-pre.1
+
+- Rename Auto Sync to Sync and Claim. Stop claim creation, pending markers and claim advertisements while disabled, recheck the setting after asynchronous work, and release this PC’s prior legacy and verified current-account claims without acquiring new ones. Preserve uncertain cleanup for retry.
+- Align the collapsed sidebar logo across mobile dashboard, board, welcome and conversation headers, with consistent control sizing and centered artwork.
+- Load session sidebars and task board/list batches on scroll, retaining filtering, keyboard access and bounded initial rendering.
+- Return token lists with confirmed API mutations, reject repeated creation request IDs without persisting token text, keep project scopes on the owning host, and show bounded pending/error/recovery states in the API dialog.
+- Replace the detached relay diagnostics page with a quiet startup screen, bounded automatic handover recovery and an offline retry state. Keep the workspace loading screen visible and stop session discovery from delaying dashboard state.
+- Default new session sidebars to compact list view, preserve saved view choices and remove the remote-system information banner.
+- Default new project links to Never Expire while retaining timed expiry choices, permissions, revocation and storage limits. Existing timed links keep their expiry.
+- Keep history readable when a recorded project folder is missing. Report folder availability in Environment without pretending Git is verified or redirecting commands to another folder.
+
 ## 1.4.3
 
 - Replace the command-log terminal panel with a shared pseudoterminal and xterm screen: native/browser shell parity for newly created shared terminals, ANSI and cursor handling, interactive input, screen restoration, sequence-fenced input, control handoff, resize, find, copy, rename and split views. Keep unsupported native-screen attachment explicit and do not cache or replay terminal input.

@@ -196,3 +196,21 @@ it('omits hidden sessions and their comments from public boards', () => {
   const share = createProjectShare(root, ['activities','comments'], 1);
   expect(publicProjectBoard(board, share)).toMatchObject({ tasks: [expect.objectContaining({ id: visible.id })], comments: [expect.objectContaining({ id: 'visible-comment' })] });
 });
+
+it('keeps Never Expire links through cleanup and restart until explicitly revoked', async () => {
+  const link = createProjectShare(root, ['comments']);
+  expect(link.expiresAt).toBe(0);
+  const file = store.file; configureSqliteStateStore(undefined); store.close();
+  store = await SqliteStateStore.open(file); configureSqliteStateStore(store);
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 100 * 365 * 86400000);
+  createProjectShare(join(root,'other'), [], 1);
+  expect(getProjectShare(link.token)).toMatchObject({ expiresAt:0, permissions:['comments'] });
+  expect(() => createProjectShare(root, [], -1)).toThrow(/expiry/);
+  revokeProjectShares(root); expect(getProjectShare(link.token)).toBeUndefined();
+});
+it('keeps permanent links bounded and preserves them after a full-store failure', () => {
+  const links = Array.from({length:32}, () => createProjectShare(root, [], 0));
+  expect(() => createProjectShare(root, [], 0)).toThrow(/full/);
+  expect(getProjectShare(links[0]!.token)).toMatchObject({expiresAt:0});
+  revokeProjectShares(root); expect(createProjectShare(root).expiresAt).toBe(0);
+});

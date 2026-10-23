@@ -193,8 +193,8 @@ describe("browser action completion during state failure", () => {
     vi.spyOn(sessionEditor, "readCodexCliSessions").mockReturnValue(new Promise(() => undefined));
     try {
       const work = Reflect.get(server, "getConnectedPeers").call(server) as Promise<unknown[]>;
-      await vi.advanceTimersByTimeAsync(750);
-      await expect(work).resolves.toEqual([expect.objectContaining({ local: true, sessionCount: 0 })]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(work).toEqual([expect.objectContaining({ local: true, sessionCount: 0 })]);
     } finally {
       server.dispose();
       vi.useRealTimers();
@@ -212,7 +212,7 @@ describe("browser action completion during state failure", () => {
     try {
       const first = Reflect.get(server, "getConnectedPeers").call(server);
       const duplicate = Reflect.get(server, "getConnectedPeers").call(server);
-      await vi.advanceTimersByTimeAsync(750);
+      await vi.advanceTimersByTimeAsync(0);
       expect((await first)[0].sessionCount).toBe(1);
       expect((await duplicate)[0].sessionCount).toBe(1);
       expect(read).toHaveBeenCalledOnce();
