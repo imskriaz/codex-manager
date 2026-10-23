@@ -14,6 +14,8 @@ Manager automatically follows the latest valid Codex OAuth login: it adds missin
 
 WS Cross System uses the shared dashboard password independently of account Sync and Claim. While the dashboard host starts or hands over its port, browsers show a compact starting screen, then an offline retry state after a bounded wait. Session counts refresh in the background and do not delay dashboard state. The PC reached by the configured HTTPS domain prepares the shared relay after a host-proof check; domain changes are reconciled automatically. Other PCs connect as clients. Account credential synchronization follows its separate settings.
 
+Reopening or restoring the VS Code dashboard closes previous Manager tabs and creates one fresh panel. Other editors remain open; unsaved Manager tabs or a failed cleanup stop replacement with an error.
+
 ## What it provides
 
 | Area | What you can do |

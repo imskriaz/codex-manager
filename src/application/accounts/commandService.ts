@@ -526,8 +526,8 @@ export class AccountsCommandService {
     void vscode.window.showInformationMessage("Opened Codex auth file location.");
   }
 
-  showQuotaSummary(): void {
-    openQuotaSummaryPanel(this.context, this.repo);
+  async showQuotaSummary(): Promise<void> {
+    await openQuotaSummaryPanel(this.context, this.repo);
   }
 
   async restoreAccountsFromBackup(): Promise<void> {

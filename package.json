@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex accounts, quota, native sessions and goals, project Kanban, scoped APIs, and a local-first VS Code and browser dashboard.",
-  "version": "1.4.4-pre.1",
+  "version": "1.5.1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",

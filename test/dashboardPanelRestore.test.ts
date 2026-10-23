@@ -41,7 +41,7 @@ describe("dashboard tab persistence", () => {
     Object.assign(vscode.Uri, { joinPath: vi.fn(() => ({ fsPath: "/fixture/media" })) });
     Object.assign(vscode.window, {
       tabGroups: { all: [], close: vi.fn(async () => true) },
-      createWebviewPanel: vi.fn(() => created),
+      createWebviewPanel: vi.fn(() => panel()).mockReturnValueOnce(created),
       registerWebviewPanelSerializer: vi.fn((_type: string, serializer: { deserializeWebviewPanel: typeof deserialize }) => {
         deserialize = serializer.deserializeWebviewPanel;
         return { dispose: vi.fn() };
@@ -52,20 +52,18 @@ describe("dashboard tab persistence", () => {
   });
   afterEach(() => { for(const item of subscriptions.splice(0))item.dispose();vi.unstubAllGlobals(); });
 
-  it("adopts and rebuilds the native restored panel without creating another dashboard", async () => {
+  it("closes a native restored panel and creates a fresh dashboard without trusting its state", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context();
     module.registerDashboardPanelSerializer(state as never, {} as never);
-    expect(vscode.window.registerWebviewPanelSerializer).toHaveBeenCalledWith("codexQuotaSummary", expect.any(Object));
     const restored = panel();
     await deserialize(restored, { forgedAccountId: "ignored" });
-    expect(restored.webview.html).toBe("<html>dashboard</html>");
-    expect(restored.webview.options).toMatchObject({ enableScripts: true });
-    expect(restored.webview.onDidReceiveMessage).toHaveBeenCalledOnce();
-    module.openQuotaSummaryPanel(state as never, {} as never);
-    expect(restored.reveal).toHaveBeenCalledOnce();
-    expect(vscode.window.createWebviewPanel).not.toHaveBeenCalled();
-    expect(state.workspaceState.update).not.toHaveBeenCalled();
+    expect(restored.dispose).toHaveBeenCalledOnce();
+    expect(restored.webview.html).toBe("old");
+    expect(created.webview.html).toBe("<html>dashboard</html>");
+    expect(created.webview.onDidReceiveMessage).toHaveBeenCalledOnce();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
+    expect(state.workspaceState.get(key)).toBe(false);
   });
 
   it("restores the dashboard without stealing focus from recovering conversations", async () => {
@@ -73,8 +71,9 @@ describe("dashboard tab persistence", () => {
     const state = context(true);
     await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
     expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith("codexQuotaSummary", expect.any(String), expect.objectContaining({ preserveFocus: true }), expect.any(Object));
-    module.openQuotaSummaryPanel(state as never, {} as never);
-    expect(created.reveal).toHaveBeenCalledWith(expect.anything(), false);
+    await module.openQuotaSummaryPanel(state as never, {} as never);
+    expect(created.dispose).toHaveBeenCalledOnce();
+    expect(vscode.window.createWebviewPanel).toHaveBeenLastCalledWith("codexQuotaSummary", expect.any(String), expect.objectContaining({preserveFocus:false}), expect.any(Object));
   });
 
   it("discards a late restored duplicate and keeps the already-open dashboard", async () => {
@@ -85,7 +84,7 @@ describe("dashboard tab persistence", () => {
     const duplicate = panel();
     await deserialize(duplicate);
     expect(duplicate.dispose).toHaveBeenCalledOnce();
-    expect(created.reveal).toHaveBeenCalledOnce();
+    expect(created.dispose).not.toHaveBeenCalled();
     expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
   });
 
@@ -111,14 +110,15 @@ describe("dashboard tab persistence", () => {
     await expect(deserialize(restored)).rejects.toThrow("partial initialization");
     expect(state.workspaceState.update).not.toHaveBeenCalled();
     await deserialize(restored);
-    expect(restored.webview.html).toBe("<html>dashboard</html>");
+    expect(restored.dispose).toHaveBeenCalledTimes(2);
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
     expect(state.workspaceState.update).toHaveBeenCalledWith(key, false);
   });
 
   it("closes immediately and saves managed recovery for reopening", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context();
-    module.openQuotaSummaryPanel(state as never, {} as never);
+    await module.openQuotaSummaryPanel(state as never, {} as never);
     expect(await module.prepareQuotaSummaryPanelForExtensionHostRestart()).toBe(true);
     expect(state.workspaceState.update).toHaveBeenCalledWith(key, true);
   });
@@ -167,7 +167,7 @@ describe("dashboard tab persistence", () => {
   it("keeps a dashboard closed after the user closes it before reload", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context(true);
-    module.openQuotaSummaryPanel(state as never, {} as never);
+    await module.openQuotaSummaryPanel(state as never, {} as never);
     created.dispose();
     expect(state.workspaceState.get(key)).toBe(false);
     expect(await module.prepareQuotaSummaryPanelForExtensionHostRestart()).toBe(false);
@@ -178,7 +178,7 @@ describe("dashboard tab persistence", () => {
   it("closes before a slow save and never closes the replacement after late cancellation", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context();
-    module.openQuotaSummaryPanel(state as never, {} as never);
+    await module.openQuotaSummaryPanel(state as never, {} as never);
     let finish!: () => void;
     state.workspaceState.update.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     const controller = new AbortController();
@@ -197,7 +197,7 @@ describe("dashboard tab persistence", () => {
   it("closes despite storage failure and can restore within the current host", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context();
-    module.openQuotaSummaryPanel(state as never, {} as never);
+    await module.openQuotaSummaryPanel(state as never, {} as never);
     state.workspaceState.update.mockRejectedValueOnce(new Error("storage full"));
     await expect(module.prepareQuotaSummaryPanelForExtensionHostRestart()).rejects.toThrow("reopen state could not be saved");
     expect(created.dispose).toHaveBeenCalledOnce();
@@ -207,7 +207,7 @@ describe("dashboard tab persistence", () => {
 
   it("leaves an open panel alone when preparation was already cancelled", async () => {
     const module = await import("../src/presentation/dashboard/panel");
-    module.openQuotaSummaryPanel(context() as never, {} as never);
+    await module.openQuotaSummaryPanel(context() as never, {} as never);
     const controller = new AbortController(); controller.abort(new Error("cancelled"));
     await expect(module.prepareQuotaSummaryPanelForExtensionHostRestart(controller.signal)).rejects.toThrow("cancelled");
     expect(created.dispose).not.toHaveBeenCalled();
@@ -216,13 +216,58 @@ describe("dashboard tab persistence", () => {
   it("restores only one panel after a managed close, including repeated recovery calls", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context();
-    module.openQuotaSummaryPanel(state as never, {} as never);
+    await module.openQuotaSummaryPanel(state as never, {} as never);
     await module.prepareQuotaSummaryPanelForExtensionHostRestart();
     expect(created.dispose).toHaveBeenCalledOnce();
     await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
     await module.restoreQuotaSummaryPanelAfterExtensionHostRestart(state as never, {} as never);
     expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
     expect(state.workspaceState.get(key)).toBe(false);
+  });
+
+  it("coalesces concurrent opens while all stale tabs close before creating a panel", async () => {
+    const module = await import("../src/presentation/dashboard/panel"), state = context();
+    const old={input:{viewType:'codexQuotaSummary'}}, other={input:{viewType:'other.extension'}};
+    const group={tabs:[old,other]}; Object.assign(vscode.window.tabGroups,{all:[group]});
+    let finish!:(value:boolean)=>void;
+    vi.mocked(vscode.window.tabGroups.close).mockImplementation(()=>new Promise(resolve=>{finish=()=>{group.tabs=[other];resolve(true);};}));
+    const one=module.openQuotaSummaryPanel(state as never,{} as never), two=module.openQuotaSummaryPanel(state as never,{} as never);
+    await vi.waitFor(()=>expect(vscode.window.tabGroups.close).toHaveBeenCalledOnce());
+    expect(vscode.window.createWebviewPanel).not.toHaveBeenCalled();finish(true);await Promise.all([one,two]);
+    expect(group.tabs).toEqual([other]);expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
+  });
+
+  it.each(['dirty','refused','storage'])('does not open over stale tabs when cleanup is %s', async failure=>{
+    const module=await import("../src/presentation/dashboard/panel"), state=context();
+    const old={input:{viewType:'codexQuotaSummary'},isDirty:failure==='dirty'};
+    Object.assign(vscode.window.tabGroups,{all:[{tabs:[old]}]});
+    vi.mocked(vscode.window.tabGroups.close).mockResolvedValue(false);
+    if(failure==='storage')state.workspaceState.update.mockRejectedValueOnce(new Error('storage full'));
+    await expect(module.openQuotaSummaryPanel(state as never,{} as never)).rejects.toThrow();
+    expect(vscode.window.createWebviewPanel).not.toHaveBeenCalled();
+  });
+
+  it('keeps a timed-out close exclusive until it settles, then permits a fresh reopen',async()=>{
+    vi.useFakeTimers();
+    try {
+      const module=await import("../src/presentation/dashboard/panel"),state=context();
+      const group={tabs:[{input:{viewType:'codexQuotaSummary'}}]};Object.assign(vscode.window.tabGroups,{all:[group]});
+      let finish!:(value:boolean)=>void;
+      vi.mocked(vscode.window.tabGroups.close).mockImplementation(()=>new Promise(resolve=>{finish=()=>{group.tabs=[];resolve(true);};}));
+      const first=module.openQuotaSummaryPanel(state as never,{} as never);
+      const checked=expect(first).rejects.toThrow('still closing');await vi.advanceTimersByTimeAsync(5001);await checked;
+      const retry=module.openQuotaSummaryPanel(state as never,{} as never);
+      expect(vscode.window.tabGroups.close).toHaveBeenCalledOnce();finish(true);await retry;
+      expect(vscode.window.createWebviewPanel).toHaveBeenCalledOnce();
+    }finally{vi.useRealTimers();}
+  });
+
+  it('retains dirty restored tabs and reports the failure in VS Code',async()=>{
+    const module=await import("../src/presentation/dashboard/panel"),state=context(),restored=panel();
+    Object.assign(vscode.window.tabGroups,{all:[{tabs:[{input:{viewType:'codexQuotaSummary'},isDirty:true}]}]});
+    module.registerDashboardPanelSerializer(state as never,{} as never);
+    await expect(deserialize(restored)).rejects.toThrow('unsaved');
+    expect(restored.dispose).not.toHaveBeenCalled();expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('fresh dashboard'));
   });
 
   it("records only a minimal native dashboard marker without account data", async () => {

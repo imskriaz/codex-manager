@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.4.4-pre.1
+## 1.5.1
+
+- Close previous Codex Manager tabs before reopening or restoring a dashboard, then create one fresh panel. Preserve other editors, reject dirty tabs and failed cleanup, coalesce concurrent opens, and keep recovery pending after failures.
+
+### Included from 1.4.4-pre.1
 
 - Rename Auto Sync to Sync and Claim. Stop claim creation, pending markers and claim advertisements while disabled, recheck the setting after asynchronous work, and release this PC’s prior legacy and verified current-account claims without acquiring new ones. Preserve uncertain cleanup for retry.
 - Align the collapsed sidebar logo across mobile dashboard, board, welcome and conversation headers, with consistent control sizing and centered artwork.

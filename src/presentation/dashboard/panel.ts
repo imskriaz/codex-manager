@@ -35,6 +35,7 @@ import { publishDashboardRealtime, subscribeDashboardRealtime } from "../../serv
 import { listPendingCodexAppServerPrompts } from "../../services/codexAppServerPrompts";
 import { listCodexSessionLiveStates } from "../../services/codexSessionLive";
 import { recordPersistentEvent } from "../../utils/persistentLog";
+import { waitWithin } from "../../utils/concurrency";
 import { withCodexSessionRecovery } from "../../services/codexSessionAutoResume";
 
 const DASHBOARD_VIEW_TYPE = "codexQuotaSummary";
@@ -52,8 +53,14 @@ function isLocalCliSessionWatchPath(filename: string | Buffer | null): boolean {
   );
 }
 
+function readQuotaSummaryTabs() { return (vscode.window.tabGroups?.all ?? []).flatMap(group => group.tabs).filter(tab => {
+    const type = (tab.input as { viewType?: string })?.viewType;
+    return type === DASHBOARD_VIEW_TYPE || type === `mainThreadWebview-${DASHBOARD_VIEW_TYPE}`;
+  }); }
+
 let dashboardPanelController: DashboardPanelController | undefined;
 let reopenAfterRestart = false;
+let dashboardOpening: Promise<void> | undefined;
 
 export interface DashboardPeerHost {
   getDashboardPeerState(): Pick<DashboardState, "connectedPeers" | "peerAccounts">;
@@ -180,16 +187,15 @@ export class DashboardPanelController {
     } });
   }
 
-  open(restoredPanel?: vscode.WebviewPanel, preserveFocus = false): void {
+  get isOpen(): boolean { return this.panel !== undefined; }
+
+  open(preserveFocus = false): void {
     const panelTitle = this.getPanelTitle();
     const iconUri = this.getPanelIconUri();
     const targetColumn = this.getTargetViewColumn();
 
-    if (restoredPanel && this.panel && restoredPanel !== this.panel) {
-      restoredPanel.dispose();
-    }
     if (!this.panel) {
-      this.panel = restoredPanel ?? vscode.window.createWebviewPanel(DASHBOARD_VIEW_TYPE, panelTitle, { viewColumn: targetColumn, preserveFocus }, {
+      this.panel = vscode.window.createWebviewPanel(DASHBOARD_VIEW_TYPE, panelTitle, { viewColumn: targetColumn, preserveFocus }, {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, "media")]
@@ -205,7 +211,7 @@ export class DashboardPanelController {
       } catch (error) {
         const failedPanel = this.panel;
         this.panel = undefined;
-        if (!restoredPanel) failedPanel.dispose();
+        failedPanel.dispose();
         throw error;
       }
 
@@ -575,9 +581,24 @@ export class DashboardPanelController {
 
 }
 
-export function openQuotaSummaryPanel(context: vscode.ExtensionContext, repo: AccountsRepository): void {
-  dashboardPanelController ??= new DashboardPanelController(context, repo);
-  dashboardPanelController.open();
+export async function openQuotaSummaryPanel(context: vscode.ExtensionContext, repo: AccountsRepository, preserveFocus = false): Promise<void> {
+  if (!dashboardOpening) {
+    const task = (async () => {
+      await closeQuotaSummaryTabsForExtensionHostRestart(context);
+      if (reopenAfterRestart && !context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false))
+        await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, true);
+      dashboardPanelController ??= new DashboardPanelController(context, repo);
+      dashboardPanelController.open(preserveFocus);
+      if (reopenAfterRestart || context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false)) {
+        await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
+        reopenAfterRestart = false;
+      }
+    })();
+    dashboardOpening = task;
+    void task.finally(() => { if (dashboardOpening === task) dashboardOpening = undefined; }).catch(() => undefined);
+  }
+  // Retain the operation until cleanup settles so a timed-out retry cannot race it.
+  await waitWithin(dashboardOpening, 5_000, "Previous Codex Manager tabs are still closing. Retry when cleanup finishes.");
 }
 
 export function registerDashboardPanelSerializer(
@@ -587,10 +608,17 @@ export function registerDashboardPanelSerializer(
   dashboardLocalPeer = localPeer;
   return vscode.window.registerWebviewPanelSerializer(DASHBOARD_VIEW_TYPE, {
     async deserializeWebviewPanel(panel: vscode.WebviewPanel): Promise<void> {
-      dashboardPanelController ??= new DashboardPanelController(context, repo);
-      dashboardPanelController.open(panel, true);
-      if (context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false))
-        await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
+      try {
+        if (readQuotaSummaryTabs().some(tab => tab.isDirty)) throw new Error("A Codex Manager tab has unsaved changes. Save or close it before retrying.");
+        panel.dispose();
+        if (dashboardPanelController?.isOpen && !dashboardOpening) return;
+        reopenAfterRestart = true;
+        await openQuotaSummaryPanel(context, repo, true);
+      }
+      catch (error) {
+        void vscode.window.showErrorMessage(`Codex Manager could not reopen a fresh dashboard. ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      }
     }
   });
 }
@@ -601,22 +629,19 @@ export async function prepareQuotaSummaryPanelForExtensionHostRestart(signal?: A
 
 /** Include restored duplicates that have not reached the panel serializer yet. */
 export async function closeQuotaSummaryTabsForExtensionHostRestart(context: vscode.ExtensionContext, signal?: AbortSignal): Promise<void> {
-  await prepareQuotaSummaryPanelForExtensionHostRestart(signal);
   signal?.throwIfAborted();
-  const readTabs = () => (vscode.window.tabGroups?.all ?? []).flatMap(group => group.tabs).filter(tab => {
-    const type = (tab.input as { viewType?: string })?.viewType;
-    return type === DASHBOARD_VIEW_TYPE || type === `mainThreadWebview-${DASHBOARD_VIEW_TYPE}`;
-  });
-  const tabs = readTabs();
+  if (readQuotaSummaryTabs().some(tab => tab.isDirty)) throw new Error("A Codex Manager tab has unsaved changes. Save or close it before retrying.");
+  await prepareQuotaSummaryPanelForExtensionHostRestart(signal);
+  const tabs = readQuotaSummaryTabs();
   if (!tabs.length) return;
   if (tabs.some(tab => tab.isDirty)) throw new Error("A Codex Manager tab has unsaved changes. Save or close it before retrying.");
   reopenAfterRestart = true;
   await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, true);
   signal?.throwIfAborted();
-  if (readTabs().some(tab => !tabs.includes(tab) || tab.isDirty)) throw new Error("Codex Manager tabs changed during reload cleanup. Close them and retry.");
+  if (readQuotaSummaryTabs().some(tab => !tabs.includes(tab) || tab.isDirty)) throw new Error("Codex Manager tabs changed during reload cleanup. Close them and retry.");
   const closed = await vscode.window.tabGroups.close(tabs, true);
   signal?.throwIfAborted();
-  if (!closed || readTabs().length) throw new Error("VS Code could not close all previous Codex Manager tabs. Close them and retry.");
+  if (!closed || readQuotaSummaryTabs().length) throw new Error("VS Code could not close all previous Codex Manager tabs. Close them and retry.");
 }
 
 export async function restoreQuotaSummaryPanelAfterExtensionHostRestart(
@@ -626,10 +651,8 @@ export async function restoreQuotaSummaryPanelAfterExtensionHostRestart(
   if (!reopenAfterRestart && !context.workspaceState.get<boolean>(REOPEN_AFTER_HOST_RESTART_KEY, false)) {
     return;
   }
-  dashboardPanelController ??= new DashboardPanelController(context, repo);
-  dashboardPanelController.open(undefined, true);
-  reopenAfterRestart = false;
-  await context.workspaceState.update(REOPEN_AFTER_HOST_RESTART_KEY, false);
+  if (dashboardPanelController?.isOpen) return;
+  await openQuotaSummaryPanel(context, repo, true);
 }
 
 export async function refreshQuotaSummaryPanel(): Promise<void> {
