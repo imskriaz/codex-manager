@@ -2,6 +2,21 @@
 
 ## 1.5.1
 
+- API testing checks the bearer token and shows only allowed operations and host projects, with formatted, bounded JSON responses. Host-wide `refreshAll` permission is covered directly; unavailable scope checks report retryable errors instead of misleading permission failures.
+- Flyouts follow the clicked control across scroll, resize, dynamic content, and the mobile keyboard; menus flip above when needed and stay within the visible viewport, with nested menus above their parent surfaces.
+- Make Locked account badges open the shared Unlock action in both list and card layouts, keeping failed unlocks visible and disabling offline actions.
+- Forward signed remote switch/reload/Auto Resume notices and warnings to browser/PWA push with their existing system names, bounded reconnect replay, duplicate rejection, and passive remote notices. Reject stale or duplicate session completion updates before notifying.
+
+- Replace the separate indefinite manual-selection pause with the existing visible 15-minute Auto Switch lock. More → Unlock resumes selection, lock expiry triggers a retry even when periodic refresh is off, and other windows read the current lock before switching. Retired pause metadata no longer blocks accounts.
+
+- Restore recently viewed system lists before paint while IndexedDB refreshes; bound the memory cache, preserve device isolation, invalidate removed data, and reject older responses after newer realtime updates.
+- Retain saved board content while its tab is hidden and restore recently viewed project boards before paint, without reusing another system's board.
+- Share composer and project discovery, limit folder checks and storage waits, and avoid unrelated project discovery before starting work in an already authorized project.
+- Run independent workspace Git reads together without optional index locks. Report failed remote or change-total inspections instead of showing false empty results.
+- Use the same action-route status in native and browser dashboards. Keep cached remote data on disconnect and avoid native view refreshes for unchanged heartbeats.
+- Open chat file links in the workspace Files panel, including native paths, file URLs and line references. Keep normal web links external and preserve project containment checks.
+- Add a dashboard version badge, compact draft recovery and running-session controls, and refreshed documentation screenshots for browser management across connected PCs. Present Workspace and Auto Resume without experimental labels.
+
 - Authenticate dashboard interest in detached relay signatures consistently with current clients; reject malformed or tampered targets while retaining legacy peers. Show cached peers as disconnected when no action route exists.
 - Read large transcript snapshots in bounded 1 MB chunks and coalesce simultaneous reads, preserving byte limits, partial reads, fixed snapshot boundaries, and the five-second storage deadline.
 

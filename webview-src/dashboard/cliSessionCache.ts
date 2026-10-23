@@ -30,6 +30,23 @@ export type CliSessionListCache = {
   ageMs?: number;
 };
 
+const recentSessionLists = new Map<string, { value: CliSessionListCache; updatedAt: number }>();
+function rememberSessionList(systemId: string, value: CliSessionListCache, updatedAt: number): void {
+  recentSessionLists.delete(systemId);
+  if (JSON.stringify(value).length * 2 > 4 * 1024 * 1024) return;
+  recentSessionLists.set(systemId, { value, updatedAt });
+  if (recentSessionLists.size > 8) recentSessionLists.delete(recentSessionLists.keys().next().value!);
+}
+
+export function peekCliSessionListCache(deviceId?: string): CliSessionListCache | undefined {
+  const systemId = cacheSystemId(deviceId), record = systemId ? recentSessionLists.get(systemId) : undefined;
+  if (!systemId || !record) return undefined;
+  const ageMs = Date.now() - record.updatedAt;
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > MAX_CACHE_AGE_MS) { recentSessionLists.delete(systemId); return undefined; }
+  const sessions = record.value.sessions.filter(session => session && typeof session.id === 'string' && typeof session.title === 'string' && (deviceId ? session.deviceId === deviceId : !session.deviceId));
+  return { ...record.value, sessions: ageMs > 5000 ? sessions.map(session => ({ ...session, status: 'unknown', canStop: false, locked: true })) : sessions, ageMs };
+}
+
 function cliSessionKey(session: DashboardCliSessionSummary): string {
   return `${session.deviceId ?? "local"}:${session.id}`;
 }
@@ -72,6 +89,7 @@ let browserLocalSystemId: string | undefined;
 let requireSystemIdentity = false;
 
 export function bindBrowserCacheSystem(systemId?: string): void {
+  if (browserLocalSystemId !== systemId) recentSessionLists.clear();
   requireSystemIdentity = true;
   browserLocalSystemId = systemId && systemId !== 'local' ? systemId : undefined;
 }
@@ -135,9 +153,15 @@ function openCache(): Promise<IDBDatabase | undefined> {
 export async function readCliSessionListCache(deviceId?: string): Promise<CliSessionListCache | undefined> {
   const systemId = cacheSystemId(deviceId);
   if (!systemId) return undefined;
+  const version = listWriteVersions.get(`list:${systemId}`) ?? 0;
   const cached = await readFreshRecord<Partial<CliSessionListCache>>(`list:${systemId}`, MAX_CACHE_AGE_MS);
-  if (!cached || !Array.isArray(cached.value.sessions)) return undefined;
-  return { sessions: cached.ageMs > 5000 ? cached.value.sessions.map(session => ({ ...session, status: 'unknown', canStop: false })) : cached.value.sessions, composerConfig: cached.value.composerConfig, ageMs: cached.ageMs };
+  if (version !== (listWriteVersions.get(`list:${systemId}`) ?? 0)) return peekCliSessionListCache(deviceId);
+  if (cached && Array.isArray(cached.value.sessions)) {
+    const updatedAt = Date.now() - cached.ageMs;
+    if (updatedAt >= (recentSessionLists.get(systemId)?.updatedAt ?? 0))
+      rememberSessionList(systemId, cached.value as CliSessionListCache, updatedAt);
+  }
+  return peekCliSessionListCache(deviceId);
 }
 
 export async function readCliComposerDraft(key: string): Promise<CliComposerDraft | undefined> {
@@ -245,13 +269,15 @@ export async function writeCliSessionListCache(value: CliSessionListCache, devic
   const key = `list:${systemId}`;
   const version = (listWriteVersions.get(key) ?? 0) + 1;
   listWriteVersions.set(key, version);
-  const previous = value.composerConfig ? undefined : await readCliSessionListCache(deviceId);
+  const previous = value.composerConfig ? undefined : peekCliSessionListCache(deviceId) ?? await readCliSessionListCache(deviceId);
   if (listWriteVersions.get(key) !== version) return;
   const sessions = value.sessions.filter(session => deviceId ? session.deviceId === deviceId : !session.deviceId);
-  await writeRecord({ key, updatedAt: Date.now(), value: {
+  const updatedAt = Date.now(), next = {
     sessions: mergeCachedCliSessions(sessions, previous?.sessions ?? [], deviceId),
     composerConfig: value.composerConfig ?? previous?.composerConfig
-  } });
+  };
+  rememberSessionList(systemId, next, updatedAt);
+  await writeRecord({ key, updatedAt, value: next });
 }
 
 export async function writeCliSessionMessagesCache(
@@ -302,6 +328,7 @@ export async function invalidateCliSessionCache(sessionId?: string, deviceId?: s
   if (!systemId) return;
   const listKey = `list:${systemId}`, messagesKey = `messages:${JSON.stringify([systemId, sessionId])}`;
   listWriteVersions.set(listKey, (listWriteVersions.get(listKey) ?? 0) + 1);
+  recentSessionLists.delete(systemId);
   const db = await openCache();
   if (!db) return;
   await new Promise<void>((resolve) => {
@@ -375,7 +402,8 @@ async function writeRecord(record: CacheRecord): Promise<void> {
         const evicted = prior.shift(); if (!evicted) break;
         store.delete(evicted.key); bytes -= evicted.bytes;
       }
-      store.put(record);
+      try { store.put(record); }
+      catch { clearTimeout(timer); try { tx.abort(); } catch { /* already closed */ } resolve(); }
     };
     tx.oncomplete = tx.onerror = tx.onabort = () => { clearTimeout(timer); resolve(); };
   }).catch(() => undefined);

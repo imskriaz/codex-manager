@@ -1,20 +1,12 @@
 # Codex Manager
 
-Codex Manager is a local-first Visual Studio Code extension and secure browser dashboard for Codex account management, quota monitoring, native sessions and goals, project Kanban, scoped API access, automation, and remote VS Code windows from desktop or mobile.
+**Manage Codex on all your connected PCs from one browser.**
+
+Follow live sessions, control remote work, edit project files, review Git changes, and use terminals from desktop or mobile. Codex Manager brings accounts, quota, project boards, and **Auto Resume** into one local-first VS Code extension and secure browser dashboard.
+
+Auto Resume restores eligible unfinished parent sessions after a VS Code restart when Auto Switch is enabled. Completed conversations stay completed, and paused goals stay paused.
 
 It is an independent, community project. It is not an official OpenAI product.
-
-Session cards offer **Hide from boards** without stopping or archiving the conversation. Use the board menu → **Hidden sessions** to search and restore them. This choice is saved per project on its system and applies to all board views and public project links. Existing downloaded copies cannot be recalled.
-
-Action feedback uses brief success/info toasts (3 seconds); warnings and failures remain for 10 seconds. Background data reads stay quiet.
-
-Token history retains its account name after account removal; the credentials are deleted and historical names follow the masking setting. Older anonymous history keeps a stable identity until its original label is available.
-
-Manager automatically follows the latest valid Codex OAuth login: it adds missing accounts and updates existing credentials. Removing its saved Manager entry does not sign out of Codex, so the active login is added back automatically. If Codex changes the login during an import, the next sync reads the new login; importing never writes older credentials back to Codex. Temporary failures retry, and incomplete auth-file writes preserve the last saved credentials.
-
-WS Cross System uses the shared dashboard password independently of account Sync and Claim. While the dashboard host starts or hands over its port, browsers show a compact starting screen, then an offline retry state after a bounded wait. Session counts refresh in the background and do not delay dashboard state. The PC reached by the configured HTTPS domain prepares the shared relay after a host-proof check; domain changes are reconciled automatically. Other PCs connect as clients. Account credential synchronization follows its separate settings.
-
-Reopening or restoring the VS Code dashboard closes previous Manager tabs and creates one fresh panel. Other editors remain open; unsaved Manager tabs or a failed cleanup stop replacement with an error.
 
 ## What it provides
 
@@ -34,33 +26,43 @@ Reopening or restoring the VS Code dashboard closes previous Manager tabs and cr
 
 Use the dashboard settings for feature descriptions and configuration defaults.
 
+The API Test tab checks the supplied token before enabling requests, lists only its permitted operations, and fills its allowed host project. Responses are formatted JSON. Host account actions such as `refreshAll` require an all-project token granting that exact operation. A `403` means permission or project scope was denied; `503` means scope ownership or a folder is temporarily unavailable and no action started. Requests are sent once; verify current state before retrying a timed-out write.
+
 ## Support development
 
 To donate, open [Xoom for Bangladesh (BDT)](https://www.xoom.com/en-us/usd/send-money/transfer?countryCode=BD&destinationCurrencyCode=BDT), sign in with your PayPal account, enter your donation amount (USD 11 suggested), choose **Mobile Wallet → bKash**, and send to **Codex Manager** at `01628301525`. Review Xoom’s fee and exchange rate before confirming.
 
 ## See it in action
 
-The screenshots below use representative, privacy-safe data so you can preview the main surfaces before installing.
+Eight views in two rows. Click an image for the full-size screenshot. All identities and account data shown here are fictional.
 
-![Codex Manager desktop dashboard showing PC selector, quota overview, session rail, and account cards](media/docs-dashboard.png)
+<table>
+<tr>
+<td align="center" width="25%"><a href="media/docs-dashboard.png"><img src="media/docs-dashboard.png" width="200" height="125" alt="Desktop dashboard with account quota and connected systems"></a><br><strong>Accounts and quota</strong></td>
+<td align="center" width="25%"><a href="media/docs-remote.png"><img src="media/docs-remote.png" width="200" height="125" alt="Browser workspace viewing a session on another connected PC"></a><br><strong>Remote PC workspace</strong></td>
+<td align="center" width="25%"><a href="media/docs-board.png"><img src="media/docs-board.png" width="200" height="125" alt="Project board with planned, running, and completed work"></a><br><strong>Project boards</strong></td>
+<td align="center" width="25%"><a href="media/docs-workspace.png"><img src="media/docs-workspace.png" width="200" height="125" alt="Chat file link opened in the workspace Files sidebar"></a><br><strong>Files, Git and tools</strong></td>
+</tr>
+<tr>
+<td align="center"><a href="media/docs-settings.png"><img src="media/docs-settings.png" width="200" height="125" alt="Automation settings including Auto Resume and account switching"></a><br><strong>Auto Resume</strong></td>
+<td align="center"><a href="media/docs-api.png"><img src="media/docs-api.png" width="200" height="125" alt="Named API tokens and scoped project access controls"></a><br><strong>Scoped API access</strong></td>
+<td align="center"><a href="media/docs-mobile.png"><img src="media/docs-mobile.png" width="58" height="125" alt="Mobile account and quota dashboard"></a><br><strong>Mobile dashboard</strong></td>
+<td align="center"><a href="media/docs-session-mobile.png"><img src="media/docs-session-mobile.png" width="58" height="125" alt="Mobile session conversation and workspace controls"></a><br><strong>Mobile workspace</strong></td>
+</tr>
+</table>
 
-*Desktop dashboard — compare PC status, quota health, account cards, and session access at a glance.*
+### Connect your PCs
 
-![Codex Manager mobile dashboard with compact quota and account controls](media/docs-mobile.png)
+1. Install Codex Manager on each PC and keep VS Code running for live sessions and workspace controls.
+2. Enable **Web Dashboard** and **WS Cross System**, configure the same shared dashboard password, and use the same HTTPS dashboard domain on your PCs.
+3. Open the dashboard in your browser and choose a PC in the sidebar. Its sessions, projects, and enabled accounts load in that system's context.
+4. Use the workspace tabs for **Env, Files, Git, Reviews, Agents, and Terminal**. Chat file links open in the Files panel, keeping the conversation visible.
 
-*Mobile dashboard — use the same account, session, notification, and remote controls in a compact touch layout.*
+Selecting an exhausted or unverified account manually applies a **15-minute Auto Switch lock**. Use **More → Unlock** to resume sooner; expiry and unlocking recheck selection within five seconds, even with periodic quota refresh disabled. Selecting an account with available quota removes the lock. Auto Switch must remain enabled, and all quota, enablement, session-wait, and ownership checks still apply.
 
-![Codex Manager mobile session workspace with goal strip and activity timeline](media/docs-session-mobile.png)
+Click an account's **Locked** badge to open its **Unlock Auto Switch** action. Browser/PWA push also receives important events from connected PCs through the authenticated relay, retaining each event's system name. Recent notices replay once after reconnect within a five-minute window; the dashboard host must be running to deliver push to its registered browsers.
 
-*Mobile session workspace — read the conversation, follow activity, review changes, and keep the native goal visible above the composer.*
-
-![Codex Manager settings control center](media/docs-settings.png)
-
-*Settings — configure appearance, dashboard access, automation, sync, and workspace features in one place.*
-
-![Codex Manager workspace Files tool](media/docs-workspace.png)
-
-*Workspace — keep sessions and project files together, with full-height tabs for Files, Reviews, and Terminal.*
+Enable **Auto Switch → Auto resume sessions** to recover eligible work after a restart. Live actions require the selected PC to be connected; offline views keep saved data visible, and write actions retain authorization and ownership checks.
 
 ## Requirements
 
@@ -109,6 +111,20 @@ The header eye icon controls masking. **More → Tags** manages the selected sys
 5. Use **Refresh Quota** after login or account changes. Enable scheduled refresh only if you want background requests.
 
 Every user-started action ends with a visible success, warning, cancellation, or failure message. If an action fails, open **Codex Manager: Open Persistent Logs** and include the operation ID when reporting it.
+
+## Behavior and recovery
+
+Session cards offer **Hide from boards** without stopping or archiving the conversation. Use the board menu → **Hidden sessions** to search and restore them. This choice is saved per project on its system and applies to all board views and public project links. Existing downloaded copies cannot be recalled.
+
+Action feedback uses brief success/info toasts (3 seconds); warnings and failures remain for 10 seconds. Background data reads stay quiet.
+
+Token history retains its account name after account removal; the credentials are deleted and historical names follow the masking setting. Older anonymous history keeps a stable identity until its original label is available.
+
+Manager automatically follows the latest valid Codex OAuth login: it adds missing accounts and updates existing credentials. Removing its saved Manager entry does not sign out of Codex, so the active login is added back automatically. If Codex changes the login during an import, the next sync reads the new login; importing never writes older credentials back to Codex. Temporary failures retry, and incomplete auth-file writes preserve the last saved credentials.
+
+WS Cross System uses the shared dashboard password independently of account Sync and Claim. While the dashboard host starts or hands over its port, browsers show a compact starting screen, then an offline retry state after a bounded wait. Session counts refresh in the background and do not delay dashboard state. The PC reached by the configured HTTPS domain prepares the shared relay after a host-proof check; domain changes are reconciled automatically. Other PCs connect as clients. Account credential synchronization follows its separate settings.
+
+Reopening or restoring the VS Code dashboard closes previous Manager tabs and creates one fresh panel. Other editors remain open; unsaved Manager tabs or a failed cleanup stop replacement with an error.
 
 ## Commands
 
@@ -315,6 +331,8 @@ API tokens use HTTP endpoints; they cannot open an unrestricted dashboard WebSoc
 ### Offline cache and reconnect
 
 After visiting the browser dashboard online, supported browsers cache its data-free shell and bounded read views. Offline reload shows saved data with a stale/offline indicator. New host state replaces cached views after reconnect. A worker update activates only after its required shell assets are saved; an incomplete update preserves the working worker. Older workers never substitute their cached bundle for an explicitly newer asset version. Browser storage access and available space depend on the browser; a storage failure is visible and leaves an open draft intact.
+
+Switching systems restores recently viewed lists before paint while IndexedDB and the live connection refresh them. This temporary cache holds at most eight lists, each limited to 4 MB, and keeps device identities separate. Saved activity older than five seconds is unverified until live data arrives. Late responses cannot replace newer realtime list updates. Unchanged peer heartbeats do not rebuild native session views; disconnects retain saved content while marking the action route offline.
 
 Browser account read views use separate IndexedDB records for each system, including the active PC. Local cache and draft keys use the stable system ID, so changing the domain host cannot mix PCs. Drafts from earlier builds without a verified owner stay saved and require explicit restoration or system assignment before syncing. Sessions and composer catalogues are cached by owner; only the selected system’s session list and remote accounts stay in the visible application state. Switching systems restores its saved view and immediately requests current data. A missing PC remains selected as offline rather than silently switching to local data. Heartbeats carry a compact session summary; partial summaries cannot delete saved catalogue rows.
 

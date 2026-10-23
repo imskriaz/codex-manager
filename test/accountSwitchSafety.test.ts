@@ -1,3 +1,4 @@
+import { clearAutoSwitchLock, getAutoSwitchRuntimeSnapshot, isAutoSwitchLocked, updateAutoSwitchLock } from "../src/presentation/workbench/autoSwitchState";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ function tokens(expired = false) {
   return { idToken: jwt, accessToken: jwt, refreshToken: "saved-refresh", accountId: "switch-account" };
 }
 beforeEach(async () => {
+  clearAutoSwitchLock();
   writeAuth.mockReset().mockResolvedValue(undefined);
   refresh.mockReset();
   folder = await mkdtemp(join(tmpdir(), "account-switch-safety-"));
@@ -203,35 +205,27 @@ it("rejects an automatic switch if the active account changed before the lease w
   expect(writeAuth).not.toHaveBeenCalled();
 });
 
-it("keeps a manual empty-quota selection across reload and quota recovery until reselected", async () => {
+it("uses the visible 15-minute lock for a manual empty-quota selection, with early unlock", async () => {
   const saved = await repo.upsertFromTokens(tokens());
-  const quota = { hourlyWindowPresent: true, hourlyWindowMinutes: 300, hourlyPercentage: 0, weeklyWindowPresent: true, weeklyWindowMinutes: 10080, weeklyPercentage: 80 };
-  await repo.updateQuota(saved.id, quota);
+  await repo.updateQuota(saved.id, { hourlyWindowPresent: true, hourlyWindowMinutes: 300, hourlyPercentage: 0, weeklyWindowPresent: true, weeklyWindowMinutes: 10080, weeklyPercentage: 80 });
+  const before = Date.now();
   await repo.switchAccount(saved.id);
-  expect(await repo.isAutoSwitchManuallyHeld(saved.id, true)).toBe(true);
-  repo.invalidateCachedIndex();
-  expect(Object.keys(JSON.parse(await readFile(repo.accountsIndexPath, "utf8")).manualSelectionByCodexHome)).toHaveLength(1);
-  await repo.updateQuota(saved.id, { ...quota, hourlyPercentage: 90 });
-  expect(await repo.isAutoSwitchManuallyHeld(saved.id, true)).toBe(true);
+  expect(isAutoSwitchLocked(saved.id)).toBe(true);
+  expect(getAutoSwitchRuntimeSnapshot().lockedUntil).toBeGreaterThanOrEqual(before + 15 * 60000);
+  expect(getAutoSwitchRuntimeSnapshot().lockedUntil).toBeLessThan(Date.now() + 15 * 60000 + 1);
+  expect(JSON.parse(await readFile(repo.accountsIndexPath, "utf8"))).not.toHaveProperty('manualSelectionByCodexHome');
   writeAuth.mockClear();
-  await expect(repo.switchAccount(saved.id, { expectedActiveAccountId: saved.id })).rejects.toThrow("Auto Switch is paused");
+  await expect(repo.switchAccount(saved.id, { expectedActiveAccountId: saved.id })).rejects.toThrow('Auto Switch is locked');
   expect(writeAuth).not.toHaveBeenCalled();
-  await repo.recordManualAccountSelection(saved.id);
-  expect(await repo.isAutoSwitchManuallyHeld(saved.id)).toBe(false);
+  await updateAutoSwitchLock(saved.id, 0);
   await expect(repo.switchAccount(saved.id, { expectedActiveAccountId: saved.id })).resolves.toMatchObject({ id: saved.id });
 });
 
-it("holds an unknown manual selection until a fresh quota snapshot can verify it", async () => {
+it("locks an unverified selection for 15 minutes and clears it when a usable account is selected", async () => {
   const saved = await repo.upsertFromTokens(tokens());
   await repo.switchAccount(saved.id);
-  expect(await repo.isAutoSwitchManuallyHeld(saved.id, true)).toBe(true);
+  expect(isAutoSwitchLocked(saved.id)).toBe(true);
   await repo.updateQuota(saved.id, { hourlyWindowPresent: true, hourlyWindowMinutes: 300, hourlyPercentage: 80, weeklyWindowPresent: false, weeklyPercentage: 0 });
-  expect(await repo.isAutoSwitchManuallyHeld(saved.id, true)).toBe(false);
-  await repo.updateQuota(saved.id, { hourlyWindowPresent: true, hourlyWindowMinutes: 300, hourlyPercentage: 0, weeklyWindowPresent: false, weeklyPercentage: 0 });
-  await repo.recordManualAccountSelection(saved.id);
-  const flush = vi.spyOn(repo, "flush").mockRejectedValueOnce(new Error("storage full"));
-  await expect(repo.recordManualAccountSelection(saved.id)).rejects.toThrow("storage full");
-  flush.mockRestore();
-  expect(await repo.isAutoSwitchManuallyHeld(saved.id)).toBe(true);
-  await repo.flush();
+  await repo.lockAutoSwitchForManualSelection(saved.id);
+  expect(isAutoSwitchLocked(saved.id)).toBe(false);
 });

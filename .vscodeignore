@@ -52,4 +52,5 @@ node_modules/node-addon-api/**
 
 tools/benchmark-sqlite.mjs
 tools/check-*.mjs
+tools/capture-docs-ui.mjs
 RELEASE-1.4.3-PENDING.md

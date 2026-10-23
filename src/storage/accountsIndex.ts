@@ -1,13 +1,6 @@
 import { createError } from "../core/errors";
 import type { CodexManagerAccountRecord, CodexManagerIndex } from "../core/types";
-import { normalizeQuotaSummary, accountQuotaAvailability } from "../utils/quotaWindows";
-
-export function setManualAccountSelection(index: CodexManagerIndex, home: string, account: CodexManagerAccountRecord): void {
-  index.manualSelectionByCodexHome ??= {};
-  const quota = accountQuotaAvailability(account);
-  if (quota === 'available') delete index.manualSelectionByCodexHome[home];
-  else index.manualSelectionByCodexHome[home] = { accountId: account.id, ...(quota === 'unknown' ? { awaitingQuota: true } : {}) };
-}
+import { normalizeQuotaSummary } from "../utils/quotaWindows";
 
 export function markActive(index: CodexManagerIndex, accountId: string, now = Date.now(), codexHomeKey?: string): void {
   const startsNewSession = index.currentAccountId !== accountId;
@@ -156,13 +149,6 @@ export function mergeAccountsIndexChanges(base: CodexManagerIndex, local: CodexM
     const previous = base.activeAccountIdsByCodexHome?.[homeKey];
     const next = local.activeAccountIdsByCodexHome?.[homeKey];
     if (previous !== next) setScopedActiveAccount(merged, homeKey, next);
-    const previousManual = base.manualSelectionByCodexHome?.[homeKey];
-    const nextManual = local.manualSelectionByCodexHome?.[homeKey];
-    if (JSON.stringify(previousManual) !== JSON.stringify(nextManual)) {
-      merged.manualSelectionByCodexHome ??= {};
-      if (nextManual) merged.manualSelectionByCodexHome[homeKey] = structuredClone(nextManual);
-      else delete merged.manualSelectionByCodexHome[homeKey];
-    }
     scopeActiveAccountState(merged, homeKey);
   } else if (base.currentAccountId !== local.currentAccountId) merged.currentAccountId = local.currentAccountId;
   return merged;
@@ -172,7 +158,6 @@ export function cloneIndex(index: CodexManagerIndex): CodexManagerIndex {
   const normalized: CodexManagerIndex = {
     currentAccountId: index?.currentAccountId,
     activeAccountStateVersion: index?.activeAccountStateVersion,
-    manualSelectionByCodexHome: index?.manualSelectionByCodexHome ? structuredClone(index.manualSelectionByCodexHome) : undefined,
     activeAccountIdsByCodexHome: index?.activeAccountIdsByCodexHome
       ? { ...index.activeAccountIdsByCodexHome }
       : undefined,
@@ -219,8 +204,6 @@ function isValidAccountsIndex(value: unknown): value is CodexManagerIndex {
   }
 
   const candidate = value as Partial<CodexManagerIndex>;
-  if (candidate.manualSelectionByCodexHome !== undefined && (!candidate.manualSelectionByCodexHome || typeof candidate.manualSelectionByCodexHome !== 'object' || Array.isArray(candidate.manualSelectionByCodexHome) ||
-    Object.entries(candidate.manualSelectionByCodexHome).some(([key, value]) => !key || !value || typeof value !== 'object' || typeof value.accountId !== 'string' || !value.accountId || value.awaitingQuota !== undefined && typeof value.awaitingQuota !== 'boolean'))) return false;
   if (!Array.isArray(candidate.accounts)) {
     return false;
   }

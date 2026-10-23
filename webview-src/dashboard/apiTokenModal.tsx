@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { DashboardCliProject } from '../../src/domain/dashboard/types';
 import type { DashboardApiToken } from '../../src/domain/dashboard/apiActions';
 import { DASHBOARD_API_ACTIONS, PROJECT_API_ACTIONS, apiTokenProjects } from '../../src/domain/dashboard/apiActions';
+import { formatApiResponse, readApiResponse } from './apiResponse';
 import { handleTabKeyDown, ModalShell } from './primitives';
 export function ApiTokenModal(props: {
   open: boolean; token?: string; tokens: DashboardApiToken[]; projects?: DashboardCliProject[];
@@ -12,29 +13,61 @@ export function ApiTokenModal(props: {
   const [projectInput,setProjectInput]=useState('');
   const [tab, setTab] = useState('tokens'), [createOpen, setCreateOpen] = useState(false), [name, setName] = useState('');
   const [allProjects, setAllProjects] = useState(true), [selectedProjects, setSelectedProjects] = useState<string[]>([]);
-  const project = allProjects ? '' : selectedProjects[0] ?? '';
   const [permissions, setPermissions] = useState<string[]>(['state','getProjectBoard','getProjectTaskDetails']);
   const [operation, setOperation] = useState('getProjectBoard'), [payload, setPayload] = useState('{}');
   const [credential, setCredential] = useState(''), [result, setResult] = useState(''), [testing, setTesting] = useState(false);
+  const bearer = credential.trim() || props.token?.trim() || '';
+  const [access, setAccess] = useState<{ credential: string; actions: string[]; projects: string[]; name: string }>();
+  const [inspection, setInspection] = useState(''), [inspectRetry, setInspectRetry] = useState(0);
+  const [testProject, setTestProject] = useState('');
+  const requestRef = useRef<AbortController>();
+  const checked = access?.credential === bearer ? access : undefined;
   const [createdToken, setCreatedToken] = useState<string>(), [copyStatus, setCopyStatus] = useState('');
   useEffect(() => { if (props.token) setCreatedToken(props.token); }, [props.token]);
-  useEffect(() => { if (!props.open) {setCreatedToken(undefined);setCredential('');setCreateOpen(false);setCopyStatus('');} }, [props.open]);
+  useEffect(() => { if (!props.open) {setCreatedToken(undefined);setCredential('');setCreateOpen(false);setCopyStatus('');setAccess(undefined);setInspection('');setResult('');requestRef.current?.abort();} }, [props.open]);
   const allowedPermissions = ['state', ...(allProjects ? ['settings'] : []), ...DASHBOARD_API_ACTIONS.filter(action => allProjects || PROJECT_API_ACTIONS.has(action))];
   const browser = location.protocol === 'http:' || location.protocol === 'https:';
   const canUse = props.enabled && props.connected && !props.pending && !props.uncertain;
+  useEffect(() => {
+    setAccess(undefined);
+    if (!props.open || tab !== 'test' || !browser || !props.connected || !props.enabled || !bearer) { setInspection(''); return; }
+    const controller = new AbortController();
+    let active = true;
+    setInspection('Checking token permissions…');
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const debounce = setTimeout(() => { void (async () => {
+      try {
+        const response = await fetch('/api/schema', { headers: { Authorization: `Bearer ${bearer}` }, signal: controller.signal, cache: 'no-store' });
+        const body = await readApiResponse(response);
+        if (!active) return;
+        if (!response.ok) { setInspection(formatApiResponse(response.status, body)); return; }
+        const schema = JSON.parse(body.text) as { actions?: unknown; token?: { name?: unknown; projectPaths?: unknown } };
+        if (body.truncated || !Array.isArray(schema.actions) || !schema.actions.every(action => typeof action === 'string' && DASHBOARD_API_ACTIONS.includes(action as never)) || !schema.token || typeof schema.token.name !== 'string' || !Array.isArray(schema.token.projectPaths) || !schema.token.projectPaths.every(path => typeof path === 'string')) throw new Error('Invalid permission response. Recheck the token.');
+        const actions = schema.actions as string[], projects = schema.token.projectPaths as string[];
+        setAccess({ credential: bearer, actions, projects, name: schema.token.name });
+        setOperation(current => actions.includes(current) ? current : actions[0] ?? '');
+        setTestProject(current => projects.includes(current) ? current : projects[0] ?? '');
+        setInspection(actions.length ? '' : 'This token grants no action operations. It may only allow reading state or settings.');
+      } catch (error) { if (active) setInspection(`Token check failed: ${(error as Error).message}. No action was sent.`); }
+      finally { clearTimeout(timeout); }
+    })(); }, 300);
+    return () => { active = false; clearTimeout(debounce); clearTimeout(timeout); controller.abort(); };
+  }, [props.open, tab, bearer, props.connected, props.enabled, inspectRetry]);
+  useEffect(() => () => requestRef.current?.abort(), []);
   const test = async () => {
-    if (!props.connected || !browser) return;
+    if (!canUse || !browser || !checked?.actions.includes(operation) || testing) return;
     setTesting(true); setResult('Sending once…');
-    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 30000);
+    const controller = new AbortController(); requestRef.current = controller;
+    const timer = setTimeout(() => controller.abort(), 30000);
     try {
       const parsed: unknown = JSON.parse(payload);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Payload must be a JSON object.');
       const response = await fetch('/api/message', { method: 'POST', signal: controller.signal,
-        headers: { Authorization: `Bearer ${credential || props.token || ''}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'dashboard:action', requestId: `api-${crypto.randomUUID()}`, action: operation, payload: parsed }) });
-      setResult(`HTTP ${response.status}\n${(await response.text()).slice(0, 64000)}`);
+        headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'dashboard:action', requestId: `api-${crypto.randomUUID()}`, action: operation, payload: { ...(checked.projects.length && testProject ? { projectPath: testProject } : {}), ...parsed } }) });
+      setResult(formatApiResponse(response.status, await readApiResponse(response)));
     } catch (error) { setResult(`Request not confirmed: ${(error as Error).message}. Check current state before retrying a write.`); }
-    finally { clearTimeout(timer); setTesting(false); }
+    finally { clearTimeout(timer); requestRef.current = undefined; setTesting(false); }
   };
   return <>
   <ModalShell open={props.open && !createOpen} title="API access" closeLabel="Close" closeDisabled={props.pending || testing} onClose={() => { setCreateOpen(false); props.onClose(); }} className="dashboard-api-modal">
@@ -51,14 +84,17 @@ export function ApiTokenModal(props: {
     </div> : tab === 'explorer' ? <div class="api-panel api-explorer-panel">
       <div class="api-explorer-row"><strong>GET /api/state</strong><p>Reads dashboard state, or only the scoped project. Requires state permission.</p></div>
       <div class="api-explorer-row"><strong>GET /api/schema</strong><p>Lists operations allowed by the supplied token.</p></div>
-      <div class="api-explorer-row"><strong>POST /api/message</strong><pre>{JSON.stringify({ type: 'dashboard:action', requestId: 'unique-request-id', action: operation, payload: { projectPath: project || '/your/project' } }, null, 2)}</pre></div>
-      <label>Operation<select value={operation} onChange={event => setOperation(event.currentTarget.value)}>{DASHBOARD_API_ACTIONS.map(action => <option value={action}>{action}</option>)}</select></label>
-      <p class="settings-note">Send Authorization: Bearer &lt;token&gt;. Project tokens cannot access other projects, accounts, terminal control, or global settings. Write actions retain their normal confirmation fields.</p>
+      <div class="api-explorer-row"><strong>POST /api/message</strong><pre>{JSON.stringify({ type: 'dashboard:action', requestId: 'unique-request-id', action: operation, payload: { ...(PROJECT_API_ACTIONS.has(operation as never) ? { projectPath: '/absolute/host/project' } : {}) } }, null, 2)}</pre></div>
+      <label>Operation<select aria-label="Operation" value={operation} onChange={event => setOperation(event.currentTarget.value)}>{DASHBOARD_API_ACTIONS.map(action => <option value={action}>{action}</option>)}</select></label>
+      <p class="settings-note">Send Authorization: Bearer &lt;token&gt;. Account operations such as refreshAll require an all-project token with that operation granted. Project tokens cannot access other projects, accounts, terminal control, or global settings. Write actions retain their normal confirmation fields.</p>
     </div> : <div class="api-panel api-test-form">{!browser ? <p class="settings-note">Open the browser dashboard to test HTTP API requests.</p> : null}
-      <label>Bearer token<input type="password" autoComplete="off" value={credential} placeholder={props.token ? 'Uses the newly created token' : 'Paste a token'} onInput={event => setCredential(event.currentTarget.value)} /></label>
-      <label>Operation<select value={operation} onChange={event => setOperation(event.currentTarget.value)}>{DASHBOARD_API_ACTIONS.map(action => <option value={action}>{action}</option>)}</select></label>
-      <label>Payload (JSON)<textarea rows={6} value={payload} onInput={event => setPayload(event.currentTarget.value)} /></label>
-      <button type="button" disabled={!canUse || !browser || testing || !(credential || props.token)} onClick={() => { void test(); }}>{testing ? 'Waiting…' : 'Send request once'}</button>
+      <label>Bearer token<input type="password" autoComplete="off" value={credential} placeholder={props.token ? 'Uses the newly created token' : 'Paste a token'} disabled={testing} onInput={event => { setCredential(event.currentTarget.value); setAccess(undefined); setResult(''); }} /></label>
+      <div class="api-access-check"><button type="button" disabled={!browser || !props.connected || !props.enabled || !bearer || testing} onClick={() => setInspectRetry(current => current + 1)}>Recheck token</button>{checked ? <small>{checked.name} · {checked.actions.length} allowed operations · {checked.projects.length ? `${checked.projects.length} project folders` : 'All projects · host-wide accounts'}</small> : null}</div>
+      {inspection ? <p class="settings-note" role="status">{inspection}</p> : null}
+      <label>Operation<select aria-label="Operation" value={checked ? operation : ''} disabled={!checked?.actions.length || testing} onChange={event => setOperation(event.currentTarget.value)}>{!checked?.actions.length ? <option value="">Check a token to see permitted operations</option> : checked.actions.map(action => <option value={action}>{action}</option>)}</select></label>
+      {checked?.projects.length ? <label>Host project<select aria-label="Host project" value={testProject} disabled={testing} onChange={event => setTestProject(event.currentTarget.value)}>{checked.projects.map(path => <option value={path}>{path}</option>)}</select></label> : null}
+      <label>Payload (JSON)<textarea rows={6} value={payload} disabled={testing} onInput={event => setPayload(event.currentTarget.value)} /></label>
+      <button type="button" disabled={!canUse || !browser || testing || !checked?.actions.includes(operation)} onClick={() => { void test(); }}>{testing ? 'Waiting…' : 'Send request once'}</button>
     </div>}
     {result ? <pre class="api-test-result" role="status">{result}</pre> : null}
   </ModalShell>

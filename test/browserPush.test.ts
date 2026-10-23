@@ -8,6 +8,7 @@ vi.mock("web-push", async (original) => {
   return { default: { generateVAPIDKeys: api.generateVAPIDKeys.bind(api), sendNotification: send } };
 });
 import { BrowserPushService, BrowserPushRegistrationConflictError, validateBrowserPushSubscription } from "../src/services/browserPush";
+import { WebDashboardServer } from '../src/services/webDashboardServer';
 
 const subscription = (name = "one") => {
   const key = createECDH("prime256v1");
@@ -40,6 +41,19 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("persistent browser push", () => {
+  it('delivers a remote event through the dashboard host to its registered browser exactly once', async () => {
+    await service.subscribe(subscription(), 'phone', 'https://dashboard.example', password);
+    const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never,
+      { verifyRealtimePeerPayload: async () => true, setOnlineDeviceIds: vi.fn() } as never);
+    const host = server as any, socket = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+    host.browserPush = service; host.peerSocket = socket;
+    const event = { type: 'peer:notice', deviceId: 'remote-pc', eventId: 'remote-switch', sentAt: Date.now(), signature: 'signed', notice: { level: 'info', message: 'Switched account.', systemName: 'Remote PC' } };
+    try {
+      await host.acceptPeerNotification(event, socket); await host.acceptPeerNotification(event, socket); await settle();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(send.mock.calls[0]![1])).toMatchObject({ title: 'Remote PC · Codex Manager', body: 'Switched account.' });
+    } finally { await server.stop(); server.dispose(); }
+  });
   it("rebinds a proven browser after login and prunes expired conflicts without taking another device", async () => {
     const first = subscription(); await service.subscribe(first, "old-login", "https://dashboard.example", password);
     await service.subscribe(first, "new-login", "https://dashboard.example", password);

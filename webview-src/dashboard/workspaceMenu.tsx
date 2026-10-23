@@ -1,3 +1,4 @@
+import { useAnchoredPopover } from './anchoredPopover';
 import type { ComponentChildren } from "preact";
 import { useId, useLayoutEffect, useRef, useState } from "preact/hooks";
 
@@ -6,38 +7,12 @@ export function WorkspaceMenu(props: { label: string; icon: ComponentChildren; c
     panel = useRef<HTMLDivElement>(null);
   const id = useId(),
     [open, setOpen] = useState(false);
+  useAnchoredPopover(open, anchor, panel);
   useLayoutEffect(() => {
     if (!open || !panel.current) {
       return;
     }
-    const place = () => {
-      const bounds = anchor.current?.getBoundingClientRect(),
-        menu = panel.current;
-      if (!bounds || !menu) {
-        return;
-      }
-      const viewport = visualViewport,
-        left = viewport?.offsetLeft ?? 0,
-        top = viewport?.offsetTop ?? 0;
-      const width = viewport?.width ?? innerWidth,
-        height = viewport?.height ?? innerHeight;
-      menu.style.maxWidth = `${Math.max(0, width - 16)}px`;
-      menu.style.maxHeight = `${Math.max(0, height - 16)}px`;
-      menu.style.left = `${Math.max(left + 8, Math.min(bounds.right - menu.offsetWidth, left + width - menu.offsetWidth - 8))}px`;
-      menu.style.top = `${Math.max(top + 8, Math.min(bounds.bottom + 4, top + height - menu.offsetHeight - 8))}px`;
-    };
-    place();
     panel.current.querySelector<HTMLElement>("button:not(:disabled),select")?.focus();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    visualViewport?.addEventListener("resize", place);
-    visualViewport?.addEventListener("scroll", place);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-      visualViewport?.removeEventListener("resize", place);
-      visualViewport?.removeEventListener("scroll", place);
-    };
   }, [open]);
   return (
     <span class="workspace-tool-menu">

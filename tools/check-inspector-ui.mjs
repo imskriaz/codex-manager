@@ -1,3 +1,4 @@
+import { assertFlyoutNear } from './check-lists-api-ui.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
@@ -61,6 +62,10 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   });
   assert.equal(await page.getByRole('button', exact('Show workspace tools')).evaluate(element => element === document.activeElement), true, 'Closing the inspector restores focus to its header toggle');
   await tool('Git');
+  const repositoryActions = page.getByRole('button', exact('Repository actions'));
+  await repositoryActions.click();
+  await assertFlyoutNear(page, repositoryActions, page.getByRole('menu', exact('Repository actions')));
+  await page.keyboard.press('Escape');
   await page.getByRole('tab', exact('History')).click();
   await page.waitForFunction(() => document.querySelectorAll('.workspace-history-row').length === 50);
   await page.getByRole('button', exact('Older')).click();
@@ -82,6 +87,13 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.locator('.workspace-git-file').filter({ hasText: 'untracked' }).locator('.workspace-file-name').click();
   assert.equal(await page.getByRole('tab', exact('Files')).getAttribute('aria-selected'), 'true', 'Untracked directories open the file explorer rather than a file read');
   assert.equal(await page.evaluate(() => window.__uiActions.some(action => action.action === 'readWorkspaceFile' && action.payload?.filePath === 'untracked/')), false);
+  await tool('Git');
+  await tool('Files');
+  const contextFile = page.locator('.cli-file-tree button').filter({ hasText: 'app.ts' });
+  await contextFile.click({ button: 'right' });
+  await assertFlyoutNear(page, contextFile, page.locator('.cli-file-context-menu'));
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.cli-file-context-menu').count(), 0, 'File context menu closes without disturbing the inspector');
   await tool('Git');
   const commit = page.getByRole('textbox', exact('Commit message'));
   await commit.fill('Keep this commit draft');
@@ -212,6 +224,17 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   if (width === 1440 || width === 390) await page.screenshot({ path: path.join(output, `inspector-git-${width}.png`), animations: 'disabled' });
   await page.getByRole('tab', exact('Env')).click();
   await page.screenshot({ path: path.join(output, `inspector-${width}.png`), animations: 'disabled' });
+  await page.goto(`${origin}/workspace/${parentId}`);
+  await page.getByRole('link', exact('Source file')).click();
+  await page.locator('.cli-file-editor .cm-content').waitFor();
+  assert.equal(await page.getByRole('link',exact('Source file')).getAttribute('target'),null);
+  await hide();
+  await page.getByRole('link',exact('Native source')).click();
+  await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='readWorkspaceFile'&&action.payload.filePath==='src/app.ts'));
+  assert.equal(await page.getByRole('tab',exact('app.ts')).count(),1,'File and native URL references share the Files tab');
+  assert.equal(new URL(page.url()).pathname,`/workspace/${parentId}`,'File links keep the conversation open');
+  assert.equal(await page.getByRole('link',exact('Documentation')).getAttribute('target'),'_blank','Web links retain external navigation');
+
   if (width === 1440 || width === 390) {
     const previousTheme = await page.evaluate(() => { const previous = document.documentElement.dataset.theme; document.documentElement.dataset.theme = 'dark'; return previous; });
     await page.screenshot({ path: path.join(output, `inspector-dark-${width}.png`), animations: 'disabled' });

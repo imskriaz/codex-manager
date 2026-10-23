@@ -3,6 +3,7 @@ import { getSqliteStateStore } from "../storage/sqliteState";
 import { normalizeCodexSessionGoal } from "../domain/codexSessionState";
 import { isRawWorkspaceTerminalOutput } from '../domain/workspaceTerminalActivity';
 import * as crypto from "crypto";
+import { isPeerNotification, peerNotificationPayload, type PeerNotification } from '../domain/peerNotification';
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
 import * as http from "http";
@@ -65,7 +66,7 @@ import { isCodexSessionLiveState, isNewerCodexSessionLiveState, combineCliLiveMe
 import { isMaintenanceJob, type MaintenanceJob } from '../domain/maintenance';
 import { readStoredSessionLive } from '../storage/sqliteSessions';
 import { isDashboardApiToken, readDashboardApiToken, hasApiPermission, type DashboardApiToken } from './dashboardApiToken';
-import { authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
+import { ApiPermissionError, authorizeApiMessage, PROJECT_API_ACTIONS, scopeApiResults } from './dashboardApiScope';
 import { normalizeAccountTags } from '../domain/accountTags';
 import { readProjectBoard, readSavedProjectBoard, readSharedProjectTask } from './projectBoard';
 import { ProjectShareEvents } from './projectShareEvents';
@@ -372,8 +373,15 @@ export function getWebDashboardAssetVersion(extensionPath: string, version: stri
 
 export class WebDashboardServer implements vscode.Disposable {
   private readonly dashboardPeerListeners = new Set<() => void>();
+  private dashboardPeerSignature = "";
+  private readonly peerNotifications = new Map<string, PeerNotification>();
+  private readonly notificationReplaySockets = new WeakSet<object>();
+  private readonly peerNotificationSends = new Set<Promise<void>>();
 
   private notifyDashboardPeers(): void {
+    const signature = JSON.stringify([this.getDashboardPeerState(), this.getRemoteCliSessions()]);
+    if (signature === this.dashboardPeerSignature) return;
+    this.dashboardPeerSignature = signature;
     for (const listener of this.dashboardPeerListeners ?? []) {
       try { listener(); }
       catch (error) { recordPersistentEvent("warning", "dashboard-peer", "Dashboard peer update failed", undefined, error); }
@@ -387,8 +395,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   getDashboardPeerState(): Pick<DashboardState, "connectedPeers" | "peerAccounts"> {
     return {
-      connectedPeers: [{ id: this.deviceId, name: os.hostname(), local: true, connected: true, sessionCount: filterCliSessionsBySection(this.localCliSessions ?? [], "active").length },
-        ...[...this.peerSessions.values()].map(peer => ({ id: peer.deviceId, name: peer.deviceName, connected: true, sessionCount: filterCliSessionsBySection(peer.sessions, "active").length }))],
+      connectedPeers: this.getConnectedPeers(),
       peerAccounts: Object.fromEntries([...this.peerSessions.values()].map(peer => [peer.deviceId, peer.accounts ?? []]))
     };
   }
@@ -540,6 +547,8 @@ export class WebDashboardServer implements vscode.Disposable {
         socket.once("close", () => {
           if (peerId && this.peerSockets.get(peerId) === socket) {
             this.peerSockets.delete(peerId);
+            this.notifyDashboardPeers();
+            this.publishRealtimeState();
             this.deferPeerRemoval(peerId);
           }
         });
@@ -618,7 +627,10 @@ export class WebDashboardServer implements vscode.Disposable {
     this.notificationMirrorSubscription ??= subscribeToVscodeNotifications((notification) => {
       this.broadcastRealtimeNotice(notification);
     });
-    this.notificationDeliverySubscription ??= subscribeToNotificationDelivery(() => this.browserPush.flush());
+    this.notificationDeliverySubscription ??= subscribeToNotificationDelivery(async () => {
+      await Promise.allSettled([...this.peerNotificationSends]);
+      await this.browserPush.flush();
+    });
     this.notificationResolutionSubscription ??= subscribeToVscodeNotificationResolutions((notificationId) => {
       this.browserPush.dismiss(notificationId);
       this.broadcastRealtimeNotificationDismissed(notificationId);
@@ -1048,7 +1060,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === 'GET' && path === '/api/schema') {
-      this.sendJson(response, { actions: DASHBOARD_API_ACTIONS.filter(action => !apiToken || hasApiPermission(apiToken, action) && (!apiTokenProjects(apiToken).length || PROJECT_API_ACTIONS.has(action))), endpoints: ['GET /api/state', 'POST /api/message'], actionFormat: { type: 'dashboard:action', requestId: 'unique-request-id', action: 'listCodexCliSessions', payload: {} } }); return;
+      this.sendJson(response, { ...(apiToken ? { token: { name: apiToken.name, permissions: apiToken.permissions, projectPaths: apiTokenProjects(apiToken) } } : {}), actions: DASHBOARD_API_ACTIONS.filter(action => !apiToken || hasApiPermission(apiToken, action) && (!apiTokenProjects(apiToken).length || PROJECT_API_ACTIONS.has(action))), endpoints: ['GET /api/state', 'POST /api/message'], actionFormat: { type: 'dashboard:action', requestId: 'unique-request-id', action: 'listCodexCliSessions', payload: {} } }); return;
     }
     if (method === "POST" && (path === "/api/share/create" || path === "/api/share/revoke")) {
       try {
@@ -1249,17 +1261,21 @@ export class WebDashboardServer implements vscode.Disposable {
     } catch (error) {
       if (error instanceof RequestBodyTooLargeError) {
         response.statusCode = 413;
-        response.end("Dashboard message too large");
+        if (apiToken) this.sendJson(response, { error: "Dashboard message too large" }); else response.end("Dashboard message too large");
         return;
       }
       response.statusCode = 400;
-      response.end("Invalid dashboard message");
+      if (apiToken) this.sendJson(response, { error: "Invalid dashboard message. Use an operation from GET /api/schema." }); else response.end("Invalid dashboard message");
       return;
     }
 
     if (apiToken) {
-      try { message = await authorizeApiMessage(apiToken, message); }
-      catch (error) { response.statusCode = 403; this.sendJson(response, { error: error instanceof Error ? error.message : 'API permission denied.' }); return; }
+      try { message = await authorizeApiMessage(apiToken, message, this.deviceId); }
+      catch (error) {
+        response.statusCode = error instanceof ApiPermissionError ? 403 : 503;
+        if (response.statusCode === 503) response.setHeader('Retry-After', '2');
+        this.sendJson(response, { error: error instanceof Error ? error.message : 'API scope verification is unavailable. No operation was started.' }); return;
+      }
     }
 
     const { messages, reloadAfterResponse } = await this.processClientMessage(message);
@@ -1727,7 +1743,6 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private publishSessionLive(state: DashboardCodexSessionLiveState): void {
     if (!isCodexSessionLiveState(state)) return;
-    if (["completed", "failed", "cancelled"].includes(state.status)) void this.notifySessionCompletion(state);
     if (state.deviceId) {
       if (state.updatedAt > Date.now() + 30_000 || Date.now() - state.updatedAt >= 5 * 60_000) return;
       this.currentRemoteSessionLive();
@@ -1738,6 +1753,7 @@ export class WebDashboardServer implements vscode.Disposable {
       while (this.remoteSessionLive.size > 30 || Buffer.byteLength(JSON.stringify([...this.remoteSessionLive.values()])) > 4 * 1024 * 1024)
         this.remoteSessionLive.delete(this.remoteSessionLive.keys().next().value!);
     }
+    if (["completed", "failed", "cancelled"].includes(state.status)) void this.notifySessionCompletion(state);
     const message = JSON.stringify({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
       if (socket.readyState !== WebSocket.OPEN) continue;
@@ -2038,9 +2054,81 @@ export class WebDashboardServer implements vscode.Disposable {
       typeof notification === "string" ? { level: notification, message: message ?? "", systemName: os.hostname() }
         : { ...notification, systemName: notification.systemName ?? os.hostname(), ...(notification.actionPrompt ? { actionPrompt: { ...notification.actionPrompt, targetDeviceId: "local" } } : {}) };
     this.browserPush.notify(payload);
+    if (this.peerNotificationSends.size < 32) {
+      const delivery = this.publishPeerNotification(payload).catch(error => console.warn('[codexManager] remote notification delivery failed', error));
+      this.peerNotificationSends.add(delivery);
+      void delivery.finally(() => this.peerNotificationSends.delete(delivery));
+    } else console.warn('[codexManager] remote notification queue full');
     const notice = JSON.stringify({ type: "dashboard:notice", ...payload } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
       if (socket.readyState === WebSocket.OPEN) socket.send(notice);
+    }
+  }
+
+  private recentPeerNotifications(): PeerNotification[] {
+    for (const [key, event] of this.peerNotifications) if (!isPeerNotification(event)) this.peerNotifications.delete(key);
+    return [...this.peerNotifications.values()];
+  }
+
+  private forwardPeerNotification(event: PeerNotification, source?: WebSocket | UndiciWebSocket): void {
+    const raw = JSON.stringify(event);
+    for (const socket of [...this.peerSockets.values(), ...(this.peerSocket ? [this.peerSocket] : [])]) {
+      if (socket === source || socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        if (socket.bufferedAmount > 4 * 1024 * 1024) socket.close(1013, 'Notifications need to reconnect');
+        else socket.send(raw);
+      } catch (error) { console.warn('[codexManager] remote notification connection unavailable', error); }
+    }
+  }
+
+  private async publishPeerNotification(notice: MirroredNotification): Promise<void> {
+    if (this.peerStopped || !getCodexManagerConfiguration().get<boolean>('webSocketServerEnabled', true)) return;
+    const unsigned = { type: 'peer:notice' as const, deviceId: this.deviceId, eventId: notice.notificationId ?? crypto.randomUUID(), sentAt: Date.now(),
+      notice: { level: notice.level, message: notice.message, title: notice.title, systemName: notice.systemName } };
+    const revision = this.peerConnectionRevision;
+    const signature = await waitWithin(Promise.resolve(this.encryptedSync?.signRealtimePeerPayload(peerNotificationPayload(unsigned))), 2000, 'Remote notification signing timed out.');
+    const event = { ...unsigned, signature };
+    if (revision !== this.peerConnectionRevision || this.peerStopped || !isPeerNotification(event)) return;
+    this.recentPeerNotifications();
+    this.peerNotifications.set(JSON.stringify([event.deviceId, event.eventId]), event);
+    while (this.peerNotifications.size > 128) this.peerNotifications.delete(this.peerNotifications.keys().next().value!);
+    this.forwardPeerNotification(event);
+  }
+
+  private async acceptPeerNotification(value: unknown, source: WebSocket | UndiciWebSocket): Promise<void> {
+    if (!isPeerNotification(value) || value.deviceId === this.deviceId ||
+      source !== this.peerSocket && (!this.authenticatedPeerSockets.has(source as WebSocket) || this.peerSockets.get(value.deviceId) !== source)) return;
+    const revision = this.peerConnectionRevision;
+    if (!await waitWithin(Promise.resolve(this.encryptedSync?.verifyRealtimePeerPayload(peerNotificationPayload(value), value.signature)), 2000, 'Remote notification verification timed out.') || revision !== this.peerConnectionRevision || source.readyState !== WebSocket.OPEN || !isPeerNotification(value)) return;
+    this.recentPeerNotifications();
+    const key = JSON.stringify([value.deviceId, value.eventId]);
+    if (this.peerNotifications.has(key)) return;
+    this.peerNotifications.set(key, value);
+    while (this.peerNotifications.size > 128) this.peerNotifications.delete(this.peerNotifications.keys().next().value!);
+    // Remote notices are passive: choices must stay with their owning PC.
+    const notice = { level: value.notice.level, message: value.notice.message, title: value.notice.title, systemName: value.notice.systemName, notificationId: key };
+    this.browserPush.notify(notice);
+    const raw = JSON.stringify({ type: 'dashboard:notice', ...notice });
+    for (const socket of this.webSocketClients) {
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      try {
+        if (socket.bufferedAmount > 4 * 1024 * 1024) socket.close(1013, 'Notifications need to reconnect');
+        else socket.send(raw);
+      } catch (error) { console.warn('[codexManager] browser notification connection unavailable', error); }
+    }
+    this.forwardPeerNotification(value, source);
+  }
+
+  private replayPeerNotifications(socket: WebSocket | UndiciWebSocket, localOnly = false): void {
+    if (this.notificationReplaySockets.has(socket)) return;
+    this.notificationReplaySockets.add(socket);
+    for (const event of this.recentPeerNotifications()) {
+      if (localOnly && event.deviceId !== this.deviceId || this.peerSockets.get(event.deviceId) === socket) continue;
+      if (socket.readyState !== WebSocket.OPEN) break;
+      try {
+        if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, 'Notifications need to reconnect'); break; }
+        socket.send(JSON.stringify(event));
+      } catch (error) { socket.close(); console.warn('[codexManager] remote notification replay interrupted', error); break; }
     }
   }
 
@@ -2457,7 +2545,8 @@ export class WebDashboardServer implements vscode.Disposable {
         Partial<PeerTerminalOutputMessage> &
         Partial<PeerTerminalCompleteMessage> &
         Partial<PeerCodexRequestMessage> &
-        Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage>;
+        Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerNotification>;
+      if (message.type === 'peer:notice') { await this.acceptPeerNotification(message, sourceSocket); return; }
       if (await this.acceptPeerVaultAcknowledgment(message)) return;
       if (revision !== this.peerConnectionRevision || sourceSocket.readyState !== WebSocket.OPEN) return;
       if (message.type === "peer:vault") {
@@ -2523,10 +2612,11 @@ export class WebDashboardServer implements vscode.Disposable {
         publishDashboardRealtime({ type: "dashboard:codex-request-resolved", requestId: message.requestId, deviceId: message.deviceId });
         return;
       }
-      if (!(await this.acceptPeerSession(message))) return;
+      if (!(await this.acceptPeerSession(message, false))) return;
       if (revision !== this.peerConnectionRevision || sourceSocket.readyState !== WebSocket.OPEN) return;
       this.authenticatedPeerSockets.add(sourceSocket);
       this.peerSockets.set(message.deviceId!, sourceSocket);
+      this.notifyDashboardPeers();
       await this.sendPeerAggregate(sourceSocket);
       void this.publishPeerVault(true);
       void this.broadcastPeerAggregate();
@@ -2552,6 +2642,7 @@ export class WebDashboardServer implements vscode.Disposable {
       socket.send(JSON.stringify({ type: "peer:codex-session-live", deviceId: state.deviceId ?? this.deviceId,
         state: { ...state, deviceId: undefined } } satisfies PeerCodexSessionLiveMessage));
     }
+    this.replayPeerNotifications(socket);
   }
 
   private async broadcastPeerAggregate(): Promise<void> {
@@ -2739,6 +2830,8 @@ export class WebDashboardServer implements vscode.Disposable {
     this.startPeerHttpHeartbeat();
     socket.addEventListener("open", () => {
       if (this.peerSocket !== socket) return;
+      this.notifyDashboardPeers();
+      this.publishRealtimeState();
       this.lastPublishedPeerVault = "";
       void (async () => {
         await this.publishPeerSessions();
@@ -2771,7 +2864,8 @@ export class WebDashboardServer implements vscode.Disposable {
             Partial<PeerTerminalOutputMessage> &
             Partial<PeerTerminalCompleteMessage> &
             Partial<PeerCodexRequestMessage> &
-            Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage>;
+            Partial<PeerCodexRequestResolvedMessage> & Partial<PeerCodexSessionLiveMessage> & Partial<PeerMaintenanceProgressMessage> & Partial<PeerNotification>;
+          if (message.type === 'peer:notice') { await this.acceptPeerNotification(message, socket); return; }
           if (message.type === "peer:action") void this.executePeerAction(message, (value) => socket.send(value));
           if (message.type === "peer:action-result" && typeof message.requestId === "string") {
             const waiter = this.peerActionWaiters.get(message.requestId);
@@ -2810,6 +2904,7 @@ export class WebDashboardServer implements vscode.Disposable {
             this.notifyDashboardPeers();
             this.markPeerPresenceHealthy();
             this.publishRealtimeState();
+            this.replayPeerNotifications(socket, true);
           }
         } catch {
           // Ignore malformed peer messages.
@@ -2819,6 +2914,8 @@ export class WebDashboardServer implements vscode.Disposable {
     socket.addEventListener("close", () => {
       if (this.peerSocket !== socket) return;
       this.peerSocket = undefined;
+      this.notifyDashboardPeers();
+      this.publishRealtimeState();
       if (this.peerPublishTimer) clearInterval(this.peerPublishTimer);
       this.peerPublishTimer = undefined;
       this.markPeerPresenceUnknown("WebSocket heartbeat disconnected");

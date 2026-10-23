@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { CodexAutoSwitchReason } from "../../core/types";
 import { waitWithin } from "../../utils/concurrency";
 import { recordPersistentEvent } from "../../utils/persistentLog";
+import { accountQuotaAvailability } from "../../utils/quotaWindows";
+import type { CodexManagerAccountRecord } from "../../core/types";
 
 type AutoSwitchRuntimeState = {
   lockedAccountId?: string;
@@ -26,9 +28,11 @@ const DASHBOARD_NOTICE_TTL_MS = 2 * 60_000;
 const state: AutoSwitchRuntimeState = {};
 let extensionContext: vscode.ExtensionContext | undefined;
 let lockUpdatePending = false;
+let lockReleased = false;
 
 export function initAutoSwitchRuntimeState(context: vscode.ExtensionContext): void {
   extensionContext = context;
+  lockReleased = false;
   const saved = context.globalState.get<AutoSwitchRuntimeState>(GLOBAL_STATE_KEY);
   if (!saved) {
     pruneExpiredLock();
@@ -59,22 +63,23 @@ export function setAutoSwitchLock(accountId: string | undefined, minutes: number
   if (!accountId || !Number.isFinite(minutes) || minutes <= 0) {
     state.lockedAccountId = undefined;
     state.lockedUntil = undefined;
-    persist();
+    persist(false);
     return;
   }
 
   state.lockedAccountId = accountId;
   state.lockedUntil = Date.now() + minutes * 60_000;
-  persist();
+  persist(false);
 }
 
 export function clearAutoSwitchLock(accountId?: string): void {
+  pruneExpiredLock();
   if (accountId && state.lockedAccountId && state.lockedAccountId !== accountId) {
     return;
   }
   state.lockedAccountId = undefined;
   state.lockedUntil = undefined;
-  persist();
+  persist(false);
 }
 
 /** Explicit dashboard changes acknowledge persistence before reporting success. */
@@ -91,6 +96,7 @@ export async function updateAutoSwitchLock(accountId: string, minutes: number): 
   const saved = { ...state };
   lockUpdatePending = true;
   const write = Promise.resolve().then(() => extensionContext?.globalState.update(GLOBAL_STATE_KEY, saved)).then(() => {
+    if (!minutes && previous.lockedAccountId) lockReleased = true;
     recordPersistentEvent("info", "auto-switch-lock", "Lock change saved", { accountId, minutes });
   }).catch(error => {
     if (state.lockedUntil === until && state.lockedAccountId === owner) Object.assign(state, previous);
@@ -102,6 +108,19 @@ export async function updateAutoSwitchLock(accountId: string, minutes: number): 
     recordPersistentEvent("warning", "auto-switch-lock", "Lock change could not be confirmed", { accountId, minutes }, error);
     throw error;
   }
+}
+
+export async function lockAutoSwitchForManualSelection(account: CodexManagerAccountRecord): Promise<void> {
+  const previous = getAutoSwitchRuntimeSnapshot().lockedAccountId;
+  if (previous && previous !== account.id) await updateAutoSwitchLock(previous, 0);
+  await updateAutoSwitchLock(account.id, accountQuotaAvailability(account) === 'available' ? 0 : 15);
+}
+
+export function consumeAutoSwitchLockRelease(): boolean {
+  pruneExpiredLock();
+  const released = lockReleased;
+  lockReleased = false;
+  return released;
 }
 
 export function isAutoSwitchLocked(accountId: string | undefined): boolean {
@@ -157,13 +176,23 @@ export function consumeAutoSwitchNotice(): string | undefined {
 }
 
 function pruneExpiredLock(): void {
+  refreshLock();
   if (!state.lockedUntil || state.lockedUntil > Date.now()) {
     return;
   }
 
   state.lockedAccountId = undefined;
   state.lockedUntil = undefined;
-  persist();
+  lockReleased = true;
+  persist(false);
+}
+
+function refreshLock(): void {
+  if (!extensionContext || lockUpdatePending) return;
+  const saved = extensionContext.globalState.get<AutoSwitchRuntimeState>(GLOBAL_STATE_KEY);
+  if (state.lockedAccountId && !saved?.lockedAccountId) lockReleased = true;
+  state.lockedAccountId = saved?.lockedAccountId;
+  state.lockedUntil = saved?.lockedUntil;
 }
 
 function pruneExpiredDashboardNotice(): void {
@@ -174,7 +203,8 @@ function pruneExpiredDashboardNotice(): void {
   persist();
 }
 
-function persist(): void {
+function persist(readLock = true): void {
+  if (readLock) refreshLock();
   void Promise.resolve(extensionContext?.globalState.update(GLOBAL_STATE_KEY, {
     lockedAccountId: state.lockedAccountId,
     lockedUntil: state.lockedUntil,

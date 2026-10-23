@@ -1,7 +1,7 @@
 {
   "name": "codex-manager",
   "displayName": "Codex Manager",
-  "description": "Manage Codex accounts, quota, native sessions and goals, project Kanban, scoped APIs, and a local-first VS Code and browser dashboard.",
+  "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
   "version": "1.5.1",
   "publisher": "imskriaz",
   "preview": false,
@@ -125,7 +125,7 @@
           "type": "boolean",
           "default": false,
           "scope": "machine",
-          "markdownDescription": "Experimental Workspace: add chats and terminals to the dashboard."
+          "markdownDescription": "Workspace: add chats and terminals to the dashboard."
         },
         "codexManager.taskBoardEnabled": {
           "type": "boolean",
@@ -158,7 +158,7 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "Experimental: with Auto Switch on, reopen previously running, unfinished parent chats after a VS Code restart. Paused goals stay paused."
+          "markdownDescription": "With Auto Switch on, reopen previously running, unfinished parent chats after a VS Code restart. Paused goals stay paused."
         },
         "codexManager.autoResumeGoalOnlyEnabled": {
           "type": "boolean",

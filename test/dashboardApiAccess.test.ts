@@ -8,6 +8,7 @@ import { createDashboardApiToken, listDashboardApiTokens, readDashboardApiToken,
 import { authorizeApiMessage, scopeApiResults } from '../src/services/dashboardApiScope';
 import { DASHBOARD_API_ACTIONS } from '../src/domain/dashboard/apiActions';
 import type { DashboardClientMessage, DashboardHostMessage } from '../src/domain/dashboard/types';
+import { readCodexCliSessionSummary } from '../src/services/codexSessionResume';
 import { removeTestDirectory } from './testFilesystem';
 
 vi.mock('../src/services/codexSessionResume', () => ({ readCodexCliSessionSummary: vi.fn(async (id: string) => ({ id, projectPath: id === 'outside' ? '/other' : process.cwd(), status: 'idle' })) }));
@@ -124,4 +125,24 @@ it('preserves saved credentials and allows explicit recovery after a failed toke
 it('does not expose request hashes in authentication results', async () => {
   const created=await createDashboardApiToken(context,{name:'Proof',requestId:'hidden-proof'});
   expect(await readDashboardApiToken(context,created.token)).toEqual(created.record);
+});
+
+it('keeps timed out session verification unavailable without removing its ownership fence', async () => {
+  const { record } = await createDashboardApiToken(context, { name: 'Project', projectPath: process.cwd(), permissions: ['getCodexCliSessionMessages'] });
+  vi.useFakeTimers();
+  try {
+    vi.mocked(readCodexCliSessionSummary).mockImplementationOnce(() => new Promise(() => {}));
+    const result = authorizeApiMessage(record, message('getCodexCliSessionMessages', { sessionId: 'slow' })).catch(error => error);
+    await vi.advanceTimersByTimeAsync(5001);
+    const error = await result;
+    expect(error).toBeInstanceOf(Error); expect(error.constructor.name).not.toBe('ApiPermissionError'); expect(error.message).toContain('ownership could not be verified');
+  } finally { vi.useRealTimers(); }
+});
+
+it('authorizes every explicitly granted host operation without an implicit state or project permission', async () => {
+  const base = { id: 'matrix', name: 'Host', createdAt: 1 };
+  for (const action of DASHBOARD_API_ACTIONS) {
+    await expect(authorizeApiMessage({ ...base, permissions: [action] }, message(action))).resolves.toEqual(message(action));
+    await expect(authorizeApiMessage({ ...base, permissions: [] }, message(action))).rejects.toThrow(/does not permit/);
+  }
 });

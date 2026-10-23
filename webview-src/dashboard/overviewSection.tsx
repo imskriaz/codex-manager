@@ -1,3 +1,4 @@
+import { useAnchoredPopover } from './anchoredPopover';
 import type { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { createPortal } from "preact/compat";
 import type { ComponentChildren, RefObject } from "preact";
@@ -126,8 +127,9 @@ export function OverviewSection(props: {
   const lockPopoverContentRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const morePopoverContentRef = useRef<HTMLDivElement>(null);
-  const [lockPopoverPosition, setLockPopoverPosition] = useState({ top: 0, right: 0 });
-  const [morePopoverPosition, setMorePopoverPosition] = useState({ top: 0, right: 0 });
+  const lockTrigger = useRef<Pick<HTMLElement, 'isConnected' | 'getBoundingClientRect'>>(null);
+  useAnchoredPopover(lockDialogOpen, lockTrigger, lockPopoverContentRef);
+  useAnchoredPopover(moreOpen, moreRef, morePopoverContentRef);
   const contextAction = account
     ? resolveOverviewContextAction(account, settings.encryptedSyncRegistryOverrideEnabled)
     : "switch";
@@ -136,32 +138,17 @@ export function OverviewSection(props: {
   };
   const openLockDialog = (trigger: HTMLElement): void => {
     const rect = trigger.getBoundingClientRect();
-    setLockPopoverPosition({ top: rect.bottom + 5, right: Math.max(8, window.innerWidth - rect.right) });
+    lockTrigger.current = { isConnected: true, getBoundingClientRect: () => rect };
     setMoreOpen(false);
     setLockMinutes(resolveLockMinutes(settings.autoSwitchLockMinutes));
     setLockDialogOpen(true);
   };
   const toggleMoreMenu = (): void => {
-    if (!moreOpen) {
-      const rect = moreRef.current?.getBoundingClientRect();
-      if (rect) setMorePopoverPosition(resolveOverviewPopoverPosition(rect, window.innerWidth, window.innerHeight, 0));
-    }
     setMoreOpen((open) => !open);
   };
   useEffect(() => {
     if (!moreOpen) return;
     morePopoverContentRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
-    const updatePosition = (): void => {
-      const rect = moreRef.current?.getBoundingClientRect();
-      if (rect) setMorePopoverPosition(resolveOverviewPopoverPosition(rect, window.innerWidth, window.innerHeight, morePopoverContentRef.current?.getBoundingClientRect().height ?? 0));
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
   }, [moreOpen]);
   useEffect(() => {
     if (!moreOpen) return;
@@ -418,7 +405,6 @@ export function OverviewSection(props: {
                           class="claim-popover claim-popover-portal overview-more-menu"
                           role="menu"
                           aria-label={resolveOverviewToolbarLabel("more", props.lang)}
-                          style={{ top: `${morePopoverPosition.top}px`, right: `${morePopoverPosition.right}px` }}
                         >
                           <div class="claim-popover-title"><strong>{resolveOverviewToolbarLabel("more", props.lang)}</strong><span>{props.lang === "zh" ? "账户与工作区" : props.lang === "zh-hant" ? "帳戶與工作區" : "Account & workspace"}</span></div>
                           <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); moreRef.current?.querySelector<HTMLButtonElement>('button')?.focus(); props.onManageTags(); }}>
@@ -538,7 +524,6 @@ export function OverviewSection(props: {
         <LockDialog
           account={providedAccount}
           open={lockDialogOpen}
-          position={lockPopoverPosition}
           lang={props.lang}
           lockMinutes={lockMinutes}
           setLockMinutes={setLockMinutes}
@@ -582,7 +567,6 @@ export function resolveOverviewContextAction(
 function LockDialog(props: {
   account: DashboardAccountViewModel;
   open: boolean;
-  position: { top: number; right: number };
   lang: DashboardState["lang"];
   lockMinutes: number;
   setLockMinutes: (minutes: number) => void;
@@ -598,7 +582,6 @@ function LockDialog(props: {
           class="claim-popover claim-popover-portal auto-switch-lock-popover"
           role="dialog"
           aria-label={resolveLockDialogText("title", props.lang)}
-          style={{ top: `${props.position.top}px`, right: `${props.position.right}px` }}
         >
           <div class="claim-popover-head">
             <div class="claim-popover-title">{resolveLockDialogText("title", props.lang)}</div>
@@ -645,18 +628,6 @@ function LockDialog(props: {
         document.body
       )
     : null;
-}
-
-export function resolveOverviewPopoverPosition(
-  triggerRect: Pick<DOMRect, "bottom" | "right">,
-  viewportWidth: number,
-  viewportHeight: number,
-  menuHeight: number
-): { top: number; right: number } {
-  return {
-    top: Math.max(8, Math.min(triggerRect.bottom + 5, viewportHeight - menuHeight - 8)),
-    right: Math.max(8, viewportWidth - triggerRect.right)
-  };
 }
 
 function resolveLockDialogText(key: "title" | "minutes" | "apply" | "cancel", lang: DashboardState["lang"]): string {
@@ -814,18 +785,7 @@ function UsageGraph(props: {
   const cardRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number }>();
-  useLayoutEffect(() => {
-    if (!settingsOpen) { setMenuPosition(undefined); return; }
-    const menu = menuRef.current?.getBoundingClientRect();
-    const anchor = menuButtonRef.current?.getBoundingClientRect();
-    if (menu && anchor) {
-      const viewport = readTooltipViewport();
-      const position = positionUsageGraphTooltip(anchor, menu.width, menu.height, viewport.width, viewport.height);
-      const left = Math.max(8, Math.min(Math.max(8, viewport.width - menu.width - 8), anchor.right - menu.width));
-      setMenuPosition(previous => previous?.left === left && previous.top === position.top ? previous : { left, top: position.top });
-    }
-  }, [settingsOpen, graphMode, props.accounts.length, props.tokenHistoryRefresh?.statuses]);
+  useAnchoredPopover(settingsOpen, menuButtonRef, menuRef);
   useLayoutEffect(() => { if (settingsOpen) menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }); }, [settingsOpen]);
   const graphStageRef = useRef<HTMLDivElement>(null);
   const loadQueryRef = useRef(props.onLoadUsageGraph);
@@ -957,7 +917,7 @@ function UsageGraph(props: {
           </div>
           <div class="usage-graph-settings-wrap">
             <button ref={menuButtonRef} type="button" class={settingsOpen ? "active" : ""} aria-label="Graph settings" aria-expanded={settingsOpen} title="Graph settings" onClick={() => { setHovered(undefined); setSettingsOpen(open => !open); }}>⚙</button>
-            {settingsOpen ? createPortal(<div ref={menuRef} class="usage-graph-settings-popover" role="dialog" aria-label="Graph settings" style={{ left: menuPosition?.left ?? 8, top: menuPosition?.top ?? 8, visibility: menuPosition ? "visible" : "hidden" }}>
+            {settingsOpen ? createPortal(<div ref={menuRef} class="usage-graph-settings-popover" role="dialog" aria-label="Graph settings">
               <strong>Chart data</strong>
               <button type="button" class={graphMode === "quota" ? "active" : ""} aria-pressed={graphMode === "quota"} onClick={() => { updatePreferences({ mode: "quota", windowOffset: 0 }); setSettingsOpen(false); }}>Quota changes</button>
               <button type="button" class={graphMode === "tokens" ? "active" : ""} aria-pressed={graphMode === "tokens"} onClick={() => { updatePreferences({ mode: "tokens", windowOffset: 0 }); setSettingsOpen(false); }}>Token usage</button>

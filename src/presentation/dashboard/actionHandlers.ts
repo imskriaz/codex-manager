@@ -88,7 +88,7 @@ import { normalizeAccountTags } from '../../domain/accountTags';
 import { waitWithin } from "../../utils/concurrency";
 import { t } from "../../utils";
 import { appendImportedDebugLogs, getDebugLogSnapshot, showNetworkDebugLogs } from "../../utils/debug";
-import { updateAutoSwitchLock } from "../workbench/autoSwitchState";
+import { isAutoSwitchLocked, updateAutoSwitchLock } from "../workbench/autoSwitchState";
 import { getTokenAutomationSnapshot } from "../workbench/tokenAutomationState";
 import { createDashboardApiToken, listDashboardApiTokens, revokeDashboardApiToken } from '../../services/dashboardApiToken';
 import { readProjectBoard, readSavedProjectBoard, readProjectTaskDetails } from '../../services/projectBoard';
@@ -804,15 +804,15 @@ async function runDashboardAction(
           throw new Error("That account no longer exists. Refresh the dashboard and try again.");
         }
         if (currentAccount.isActive) {
-          await ctx.repo.recordManualAccountSelection?.(currentAccount.id);
-          const held = await ctx.repo.isAutoSwitchManuallyHeld?.(currentAccount.id);
+          await ctx.repo.lockAutoSwitchForManualSelection?.(currentAccount.id);
+          const held = isAutoSwitchLocked(currentAccount.id);
           const reloadNeeded = deferWindowReloadForAccount(currentAccount.id);
           const reloadScheduled = reloadNeeded && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
           ctx.schedulePublishState();
           return {
             notice: {
               level: "info" as const,
-              message: `${currentAccount.email} is already active.${held ? " Auto Switch is paused. Select an account with available quota to resume." : ""}${reloadNeeded ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
+              message: `${currentAccount.email} is already active.${held ? " Auto Switch is locked for 15 minutes. Unlock it from More to resume earlier." : ""}${reloadNeeded ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
             },
             reloadScheduled
           };
@@ -821,7 +821,7 @@ async function runDashboardAction(
           forceTokenRefresh:
             currentAccount.tokenRefreshEnabled === true
         });
-        const held = await ctx.repo.isAutoSwitchManuallyHeld?.(currentAccount.id);
+        const held = isAutoSwitchLocked(currentAccount.id);
         clearTokenAutomationError(currentAccount.id);
         void handleCodexAppRestartPreference({ allowManualPrompt: false });
         const reloadRequired = deferWindowReloadForAccount(currentAccount.id);
@@ -830,7 +830,7 @@ async function runDashboardAction(
         return {
           notice: {
             level: "info" as const,
-            message: `Switched to ${currentAccount.email}.${held ? " Auto Switch is paused. Select an account with available quota to resume." : ""}${rescueEnabledForSwitch && !held ? " Rescue override is enabled on this PC; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
+            message: `Switched to ${currentAccount.email}.${held ? " Auto Switch is locked for 15 minutes. Unlock it from More to resume earlier." : ""}${rescueEnabledForSwitch && !held ? " Rescue override is enabled on this PC; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
           },
           reloadScheduled
         };
@@ -851,11 +851,11 @@ async function runDashboardAction(
           const reloadRequired =
             result.reloadNeeded && !result.reloaded ? deferWindowReloadForAccount(result.account.id) : false;
           const reloadScheduled = reloadRequired && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
-          const held = await ctx.repo.isAutoSwitchManuallyHeld?.(result.account.id);
+          const held = isAutoSwitchLocked(result.account.id);
           return {
             notice: {
               level: "info" as const,
-              message: `${result.status === "already-active" ? `${result.account.email} is already active.` : `Switched to ${result.account.email}.`}${held ? " Auto Switch is paused. Select an account with available quota to resume." : ""}${rescueEnabledForSwitch && !held ? " Rescue override is enabled; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
+              message: `${result.status === "already-active" ? `${result.account.email} is already active.` : `Switched to ${result.account.email}.`}${held ? " Auto Switch is locked for 15 minutes. Unlock it from More to resume earlier." : ""}${rescueEnabledForSwitch && !held ? " Rescue override is enabled; automation resumed for enabled accounts." : ""}${reloadRequired ? reloadScheduled ? " Reloading Codex…" : " Reload VS Code to apply this account." : ""}`
             },
             reloadScheduled
           };

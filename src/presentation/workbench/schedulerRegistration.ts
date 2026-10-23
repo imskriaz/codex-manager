@@ -1,3 +1,4 @@
+import { consumeAutoSwitchLockRelease } from "./autoSwitchState";
 import { onDidChangeConfiguration } from "../../storage/configurationEvents";
 import * as vscode from "vscode";
 import { needsTokenRefresh } from "../../auth/oauth";
@@ -394,7 +395,9 @@ export function registerAutoRefreshScheduler(params: {
       // Manual refreshes and newly imported accounts can introduce earlier reset deadlines.
       void scheduleNextQuotaReset();
     }
-    if (disposed || sessionWaitInFlight || !isAutoSwitchWaitingForSessions()) return;
+    if (disposed || sessionWaitInFlight) return;
+    const lockReleased = consumeAutoSwitchLockRelease();
+    if (!lockReleased && !isAutoSwitchWaitingForSessions()) return;
     sessionWaitInFlight = true;
     void maybeAutoSwitchForActiveQuota(params.repo, { refresh: params.onRefresh }, { canUseAccount: params.canRefreshAccount })
       .catch((error) => { console.warn("[codexManager] deferred auto switch failed", error); })

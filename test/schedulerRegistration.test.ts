@@ -1,3 +1,4 @@
+import { clearAutoSwitchLock, consumeAutoSwitchLockRelease, setAutoSwitchLock, updateAutoSwitchLock } from "../src/presentation/workbench/autoSwitchState";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as vscode from "vscode";
 
@@ -37,6 +38,7 @@ import type { AccountsRepository } from "../src/storage";
 
 describe("auto refresh scheduler", () => {
   beforeEach(() => {
+    clearAutoSwitchLock(); consumeAutoSwitchLockRelease();
     vi.useFakeTimers();
     vi.mocked(vscode.commands.executeCommand).mockReset().mockResolvedValue(undefined);
     refreshSingleQuotaSafelyMock.mockReset().mockResolvedValue(true);
@@ -73,6 +75,19 @@ describe("auto refresh scheduler", () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledTimes(1);
     vi.mocked(isAutoSwitchWaitingForSessions).mockReturnValue(false);
+  });
+
+  it.each(['expiry', 'unlock'])("rechecks after lock %s even when quota timers are disabled", async reason => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => typeof fallback === "number" ? 0 : fallback } as never);
+    setAutoSwitchLock('active', 15);
+    const scheduler = registerAutoRefreshScheduler({ context: { subscriptions: [] } as never, repo: { listAccounts: async () => [] } as never, onRefresh: vi.fn() });
+    if (reason === 'unlock') await updateAutoSwitchLock('active', 0);
+    else await vi.advanceTimersByTimeAsync(15 * 60000 - 1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(maybeAutoSwitchForActiveQuotaMock).toHaveBeenCalledTimes(1);
+    scheduler.dispose();
   });
 
   it("evaluates auto switch immediately after each timed current-account refresh", async () => {

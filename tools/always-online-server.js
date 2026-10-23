@@ -41,6 +41,7 @@ const MAX_REPLAY_EVENTS = 256;
 const MAX_EVENT_STREAMS = 64;
 let replayBytes = 0;
 let liveContract;
+let notificationContract;
 let claimContract;
 for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
   try {
@@ -50,6 +51,10 @@ for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
   } catch { /* Other relay events remain available if this dependency is unavailable. */ }
 }
 const startedAt = Date.now();
+for (const root of config.modulePaths || [path.resolve(__dirname, "..")]) {
+  try { notificationContract = require(path.join(root, 'out', 'domain', 'peerNotification.js')); if (typeof notificationContract.isPeerNotification === 'function') break; }
+  catch { /* Notification forwarding stays unavailable without its validation contract. */ }
+}
 let relayStorage;
 const stateStorageReady = (async () => {
   if (!fs.existsSync(databasePath)) return;
@@ -241,7 +246,7 @@ function replayTo(socket, ownDeviceId) {
   for (const entry of replayEvents.values()) {
     if (entry.deviceId === ownDeviceId) continue;
     // Running output and unanswered prompts are useful only while their owner is reachable.
-    if (entry.type !== "peer:terminal-complete" && peers.get(entry.deviceId)?.socket.readyState !== 1) continue;
+    if (entry.type !== "peer:terminal-complete" && entry.type !== 'peer:notice' && peers.get(entry.deviceId)?.socket.readyState !== 1) continue;
     if (!send(socket, entry.raw)) break;
   }
 }
@@ -249,7 +254,14 @@ function acceptRealtimeEvent(message, socket, deviceId) {
   if (message.deviceId !== deviceId || peers.get(deviceId)?.socket !== socket || peers.get(deviceId).lastSeen < Date.now() - 30000) return false;
   pruneEvents();
   let key, revisionKey, revision;
-  if (message.type === "peer:codex-session-live") {
+  if (message.type === 'peer:notice') {
+    if (!notificationContract?.isPeerNotification(message, Date.now()) || !hostKey) return false;
+    const expected = crypto.createHmac('sha256', Buffer.from(hostKey, 'base64url')).update(notificationContract.peerNotificationPayload(message)).digest('base64url');
+    const a = Buffer.from(expected), b = Buffer.from(message.signature);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+    key = JSON.stringify([deviceId, 'notice', message.eventId]);
+    if (replayEvents.has(key)) return false;
+  } else if (message.type === "peer:codex-session-live") {
     const state = message.state;
     if (!liveContract?.isCodexSessionLiveState(state) || !ownedPayload(state, deviceId) ||
         state.updatedAt <= Date.now() - EVENT_TTL_MS || state.updatedAt > Date.now() + 10000) return false;
@@ -319,6 +331,7 @@ function acceptRealtimeEvent(message, socket, deviceId) {
   } else return false;
   if (!rememberEvent(key, message, revisionKey, revision)) return false;
   if (message.type === "peer:codex-session-live") replayEvents.get(key).expiresAt = Math.min(Date.now() + EVENT_TTL_MS, message.state.updatedAt + EVENT_TTL_MS);
+  if (message.type === 'peer:notice') replayEvents.get(key).expiresAt = Math.min(Date.now() + EVENT_TTL_MS, message.sentAt + EVENT_TTL_MS);
   broadcast(message, socket);
   return true;
 }

@@ -1,3 +1,4 @@
+import { useAnchoredPopover } from './anchoredPopover';
 import { ScrollMore } from './scrollMore';
 import { AttachmentPicker, AttachmentIcon } from './attachmentUploads';
 import { validateChatAttachments, type ChatAttachment } from '../../src/domain/chatAttachments';
@@ -90,6 +91,16 @@ export function TaskBoard(props: {
   const failedChanges = useRef(new Map<string, string>());
   const refreshing = useRef<{ scope: string; work: Promise<void>; queued?: boolean; queuedSavedOnly?: boolean; queuedManual?: boolean }>();
   const currentBoard = useRef(board); currentBoard.current = board;
+  const recentBoards = useRef(new Map<string, ProjectBoard>());
+  const rememberBoard = (origin: string, next: ProjectBoard) => {
+    const previous = recentBoards.current.get(origin);
+    if (previous && (next.revision !== undefined && previous.revision !== undefined ? next.revision < previous.revision : next.updatedAt < previous.updatedAt)) return previous;
+    recentBoards.current.delete(origin);
+    if (JSON.stringify(next).length * 2 > 2 * 1024 * 1024) return next;
+    recentBoards.current.set(origin, next);
+    if (recentBoards.current.size > 4) recentBoards.current.delete(recentBoards.current.keys().next().value!);
+    return next;
+  };
   const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const detailRefreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const projectRef = useRef(project); projectRef.current = project;
@@ -132,34 +143,35 @@ export function TaskBoard(props: {
     window.addEventListener('message', receive);
     return () => { window.removeEventListener('message', receive); for (const pending of requests.current.values()) { clearTimeout(pending.timer); pending.reject(new Error('Task view closed. Saved drafts remain available.')); } requests.current.clear(); };
   }, []);
-  useEffect(() => { if (!project && projects[0]) setProject(projects[0]); }, [projects, project]);
-  useEffect(() => {
+  useLayoutEffect(() => { if (!project && projects[0]) setProject(projects[0]); }, [projects, project]);
+  useLayoutEffect(() => {
     if (props.shared) return;
     let disposed = false; setExtraProjects([]); setProject('');
     void readBrowserCache<string[]>(`projects:${props.targetDeviceId ?? props.selectedSystem ?? 'local'}`).then(saved => { if (!disposed && Array.isArray(saved)) setExtraProjects(saved.filter(path => typeof path === 'string').slice(0, 50)); });
     return () => { disposed = true; };
   }, [props.targetDeviceId, props.selectedSystem]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     let disposed = false; receivedBoard.current = false;
-    setBoard(undefined); setSelected(undefined); setTaskUploads([]); setCommentUploads([]); setAttachmentPreview(undefined); attachmentRequest.current++; setShare(undefined); setShareOpen(false); setConfirmation(undefined); setHiddenOpen(false); setHiddenSearch(''); setSearchOpen(false); setStatus('');
+    setBoard(recentBoards.current.get(scope)); setSelected(undefined); setTaskUploads([]); setCommentUploads([]); setAttachmentPreview(undefined); attachmentRequest.current++; setShare(undefined); setShareOpen(false); setConfirmation(undefined); setHiddenOpen(false); setHiddenSearch(''); setSearchOpen(false); setStatus('');
     if (props.shared) { setBoard(props.shared.board); return; }
-    void readBrowserCache<ProjectBoard>(`board:${scope}`).then(saved => { if (!disposed && !receivedBoard.current && saved) setBoard(saved); });
+    void readBrowserCache<ProjectBoard>(`board:${scope}`).then(saved => { if (!disposed && !receivedBoard.current && saved) setBoard(rememberBoard(scope, saved)); });
     void listBrowserOutbox<Outbox>().then(rows => { if (!disposed) setOutbox(rows); });
     return () => { disposed = true; };
   }, [scope]);
   useEffect(() => {
-    if (props.active === false) { receivedBoard.current = false; setBoard(undefined); setOutbox([]); return; }
+    if (props.active === false) { receivedBoard.current = false; setOutbox([]); return; }
     if (props.shared || receivedBoard.current) return;
     let disposed = false;
     if (!props.shared) void listBrowserOutbox<Outbox>().then(rows => { if (!disposed) setOutbox(rows); });
-    void readBrowserCache<ProjectBoard>(`board:${scope}`).then(saved => { if (!disposed && !receivedBoard.current && saved) setBoard(saved); });
+    void readBrowserCache<ProjectBoard>(`board:${scope}`).then(saved => { if (!disposed && !receivedBoard.current && saved) setBoard(rememberBoard(scope, saved)); });
     return () => { disposed = true; };
   }, [props.active, scope]);
   const apply = (next: ProjectBoard | undefined, origin = scope) => {
     if (!next) return;
-    const previous = origin === active.current ? currentBoard.current : undefined;
+    const previous = recentBoards.current.get(origin) ?? (origin === active.current ? currentBoard.current : undefined);
     if (previous && (next.revision !== undefined && previous.revision !== undefined ? next.revision < previous.revision : next.updatedAt < previous.updatedAt)) return;
     if (previous && next.revision !== undefined && next.revision === previous.revision && next.homeKey === previous.homeKey && JSON.stringify(next.sessions) === JSON.stringify(previous.sessions)) return;
+    rememberBoard(origin, next);
     if (!props.shared) void writeBrowserCache(`board:${origin}`, next);
     if (origin === active.current) { receivedBoard.current = true; setBoard(next); }
   };
@@ -636,12 +648,12 @@ function SearchIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="curr
 function ShareIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="5" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8 11 7-4M8 13l7 4"/></svg>; }
 function ViewIcon({ view }: { view: string }) { return view === 'board' ? <BoardIcon /> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">{view === 'calendar' ? <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 2v6m8-6v6M7 14h3m4 0h3M7 18h3"/></> : view === 'gantt' ? <path d="M3 4h8M8 10h10M13 16h8M3 22h18"/> : <path d="M8 5h13M8 12h13M8 19h13M3 5h1m-1 7h1m-1 7h1"/>}</svg>; }
 function TaskMenu(props: { label: string; children: ComponentChildren }) {
-  const [open, setOpen] = useState(false), [position, setPosition] = useState({ top: 0, left: 0 });
+  const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open, trigger, panel);
   useLayoutEffect(() => {
     if (!open) return;
-    const place = () => { const rect = trigger.current?.getBoundingClientRect(), menu = panel.current?.getBoundingClientRect(); if (!rect || !menu) return; setPosition({ left: Math.max(8, Math.min(rect.right - menu.width, innerWidth - menu.width - 8)), top: Math.max(8, Math.min(rect.bottom + 4, innerHeight - menu.height - 8)) }); };
-    place(); (panel.current?.querySelector<HTMLElement>('button:not(:disabled), summary') ?? panel.current)?.focus({ preventScroll: true });
+    (panel.current?.querySelector<HTMLElement>('button:not(:disabled), summary') ?? panel.current)?.focus({ preventScroll: true });
     const outside = (event: Event) => { if (!panel.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) setOpen(false); };
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape' || event.key === 'Tab') { if (event.key === 'Escape') event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus({ preventScroll: true }); }
@@ -650,10 +662,10 @@ function TaskMenu(props: { label: string; children: ComponentChildren }) {
         if (!items.length) return; event.preventDefault(); const index = items.indexOf(document.activeElement as HTMLElement); items[event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length]?.focus();
       }
     };
-    document.addEventListener('pointerdown', outside); window.addEventListener('keydown', key, true); window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
-    return () => { document.removeEventListener('pointerdown', outside); window.removeEventListener('keydown', key, true); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+    document.addEventListener('pointerdown', outside); window.addEventListener('keydown', key, true);
+    return () => { document.removeEventListener('pointerdown', outside); window.removeEventListener('keydown', key, true); };
   }, [open]);
-  return <><button ref={trigger} type="button" class="task-more-button" aria-label={props.label} title={props.label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>{open ? createPortal(<div ref={panel} tabIndex={-1} role="menu" aria-label={props.label} class="task-floating-menu" style={{ top: position.top, left: position.left }} onClick={event => { if ((event.target as Element).closest('[role="menuitem"],[role="menuitemradio"]')) { setOpen(false); trigger.current?.focus({ preventScroll: true }); } }}>{props.children}</div>, document.body) : null}</>;
+  return <><button ref={trigger} type="button" class="task-more-button" aria-label={props.label} title={props.label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>{open ? createPortal(<div ref={panel} tabIndex={-1} role="menu" aria-label={props.label} class="task-floating-menu" onClick={event => { if ((event.target as Element).closest('[role="menuitem"],[role="menuitemradio"]')) { setOpen(false); trigger.current?.focus({ preventScroll: true }); } }}>{props.children}</div>, document.body) : null}</>;
 }
 
 function recordedTime(task: TaskCard): string {

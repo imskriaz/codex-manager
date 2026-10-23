@@ -1,3 +1,4 @@
+import { isAutoSwitchLocked } from "../../presentation/workbench/autoSwitchState";
 import { runAccountBatch } from "./batch";
 import * as path from "path";
 import * as vscode from "vscode";
@@ -232,9 +233,9 @@ export class AccountsCommandService {
       return { status: "cancelled" };
     }
 
-    if (account.isActive) await this.repo.recordManualAccountSelection?.(account.id);
-    if (account.isActive && await this.repo.isAutoSwitchManuallyHeld?.(account.id)) {
-      void vscode.window.showWarningMessage("Auto Switch is paused after your manual selection. Select an account with available quota to resume.");
+    if (account.isActive) await this.repo.lockAutoSwitchForManualSelection?.(account.id);
+    if (account.isActive && isAutoSwitchLocked(account.id)) {
+      void vscode.window.showWarningMessage("Auto Switch is locked for 15 minutes. Unlock it from More to resume earlier.");
     }
     if (account.isActive && !needsWindowReloadForAccount(account.id)) {
       void vscode.window.showInformationMessage(copy.alreadyActive(formatAccountToastLabel(account)));
@@ -264,8 +265,8 @@ export class AccountsCommandService {
         });
       });
     }
-    if (!account.isActive && await this.repo.isAutoSwitchManuallyHeld?.(account.id)) {
-      void vscode.window.showWarningMessage("Auto Switch is paused after your manual selection. Select an account with available quota to resume.");
+    if (!account.isActive && isAutoSwitchLocked(account.id)) {
+      void vscode.window.showWarningMessage("Auto Switch is locked for 15 minutes. Unlock it from More to resume earlier.");
     }
     this.view.markObservedAuthIdentity?.(account.id);
 

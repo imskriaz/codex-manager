@@ -50,6 +50,82 @@ afterEach(async () => {
 });
 
 describe("canonical cross-PC WebSocket domain", () => {
+  it('delivers authenticated remote notices once to push and browsers, retaining the system name', async () => {
+    const source = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() }, browser = { readyState: 1, send: vi.fn(), close: vi.fn() };
+    const upstream = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+    internal.peerSocket = upstream; internal.webSocketClients.add(browser);
+    const notify = vi.spyOn(internal.browserPush, 'notify').mockImplementation(() => undefined);
+    const event = { type: 'peer:notice', deviceId: 'other-pc', eventId: 'switch', sentAt: Date.now(), signature: 'signed', notice: { level: 'warning', message: 'Switch failed.', systemName: 'Other PC' } };
+    await internal.handlePeerMessage(JSON.stringify(event), source);
+    expect(notify).not.toHaveBeenCalled();
+    internal.authenticatedPeerSockets.add(source); internal.peerSockets.set('other-pc', source);
+    await internal.handlePeerMessage(JSON.stringify(event), source);
+    await internal.handlePeerMessage(JSON.stringify(event), source);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ systemName: 'Other PC', message: 'Switch failed.' }));
+    expect(browser.send).toHaveBeenCalledTimes(1); expect(upstream.send).toHaveBeenCalledTimes(1);
+    expect(source.send).not.toHaveBeenCalled();
+    sync.verifyRealtimePeerPayload.mockResolvedValueOnce(false);
+    await internal.acceptPeerNotification({ ...event, eventId: 'tampered' }, upstream);
+    await internal.acceptPeerNotification({ ...event, eventId: 'stale', sentAt: Date.now() - 300000 }, upstream);
+    await internal.acceptPeerNotification({ ...event, deviceId: 'spoofed', eventId: 'spoof' }, source);
+    expect(notify).toHaveBeenCalledTimes(1);
+    internal.webSocketClients.clear(); internal.peerSockets.clear();
+  });
+
+  it('signs passive notices, bounds replay and sends it once per reconnect', async () => {
+    const notice = { level: 'warning', message: 'Reloading.', systemName: 'Original PC', actions: ['Reload'], actionPrompt: { kind: 'quotaWarning' } };
+    await internal.publishPeerNotification(notice);
+    const socket = { readyState: 1, bufferedAmount: 0, send: vi.fn() };
+    internal.replayPeerNotifications(socket); internal.replayPeerNotifications(socket);
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    const event = JSON.parse(socket.send.mock.calls[0][0]);
+    expect(event.notice).toEqual({ level: 'warning', message: 'Reloading.', systemName: 'Original PC' });
+    expect(event.signature).toBe('signed');
+    for (let i = 0; i < 140; i++) await internal.publishPeerNotification({ level: 'warning', message: `Warning ${i}` });
+    expect(internal.peerNotifications.size).toBe(128);
+    await vi.advanceTimersByTimeAsync(300001);
+    expect(internal.recentPeerNotifications()).toEqual([]);
+  });
+
+  it('ignores stale and duplicate remote session completions before sending push', () => {
+    const completion = vi.spyOn(internal, 'notifySessionCompletion').mockResolvedValue(undefined);
+    const state = { sessionId: '12345678-1234-1234-1234-123456789abc', streamId: '22345678-1234-1234-1234-123456789abc', deviceId: 'other-pc', sequence: 1, status: 'completed', updatedAt: Date.now(), messages: [] };
+    internal.publishSessionLive({ ...state, updatedAt: Date.now() - 300000 });
+    expect(completion).not.toHaveBeenCalled();
+    internal.publishSessionLive(state); internal.publishSessionLive(state);
+    expect(completion).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds pending remote signing and leaves local delivery available when its queue is full', async () => {
+    sync.signRealtimePeerPayload.mockImplementation(() => new Promise(() => undefined));
+    const notify = vi.spyOn(internal.browserPush, 'notify').mockImplementation(() => undefined);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    for (let i = 0; i < 33; i++) internal.broadcastRealtimeNotice({ level: 'warning', message: `Warning ${i}` });
+    expect(notify).toHaveBeenCalledTimes(33);
+    expect(internal.peerNotificationSends.size).toBe(32);
+    expect(warning).toHaveBeenCalledWith('[codexManager] remote notification queue full');
+    await vi.advanceTimersByTimeAsync(2001);
+    await Promise.all([...internal.peerNotificationSends]);
+    expect(internal.peerNotificationSends.size).toBe(0);
+  });
+  it('notifies native views only when data or action routes change, retaining cached rows', async () => {
+    const changed=vi.fn();server.onDidChangeDashboardPeers(changed);
+    const initial=peer();await internal.acceptPeerSession(initial);
+    expect(changed).toHaveBeenCalledOnce();
+    await internal.acceptPeerSession({...initial,sentAt:initial.sentAt+1});
+    expect(changed).toHaveBeenCalledOnce();
+    internal.peerSockets.set(initial.deviceId,{readyState:1});internal.notifyDashboardPeers();
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(server.getDashboardPeerState().connectedPeers.find(peer=>!peer.local)?.connected).toBe(true);
+    await internal.acceptPeerSession({...initial,sentAt:initial.sentAt+2,sessions:[{id:'s',title:'Work',status:'idle'}]});
+    await internal.acceptPeerSession({...initial,sentAt:initial.sentAt+3,sessions:[{id:'s',title:'Work',status:'running'}]});
+    expect(changed).toHaveBeenCalledTimes(4);
+    internal.peerSockets.clear();internal.notifyDashboardPeers();
+    expect(changed).toHaveBeenCalledTimes(5);
+    expect(server.getDashboardPeerState().connectedPeers.find(peer=>!peer.local)?.connected).toBe(false);
+    expect(server.getRemoteCliSessions()).toHaveLength(1);
+  });
   it('keeps cached peer data but reports a missing action route as disconnected',async()=>{
     await internal.acceptPeerSession(peer());
     expect(internal.getConnectedPeers().find((item:any)=>item.id==='other-pc').connected).toBe(false);
@@ -231,7 +307,7 @@ describe("canonical cross-PC WebSocket domain", () => {
     const listener = server.onDidChangeDashboardPeers(changed);
     await internal.acceptPeerSession({ ...peer(), sessions: [{ id: "running", title: "Remote task", status: "running", interrupted: false }] });
     expect(changed).toHaveBeenCalled();
-    expect(server.getDashboardPeerState().connectedPeers).toEqual(expect.arrayContaining([expect.objectContaining({ id: "other-pc", connected: true })]));
+    expect(server.getDashboardPeerState().connectedPeers).toEqual(expect.arrayContaining([expect.objectContaining({ id: "other-pc", connected: false })]));
     expect(server.getRemoteCliSessions()[0]).toMatchObject({ deviceId: "other-pc", remote: true });
     await expect(server.relayWebviewAction({ type: "dashboard:action", action: "resumeCodexSessions", requestId: "desktop-remote", payload: { targetDeviceId: "other-pc" } })).resolves.toMatchObject({ status: "failed", errorMessage: "The selected PC is offline." });
     await expect(server.relayWebviewAction({ type: "dashboard:action", action: "resumeCodexSessions", requestId: "desktop-local", payload: {} })).resolves.toMatchObject({ status: "failed" });

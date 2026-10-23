@@ -1,10 +1,11 @@
+import { useAnchoredPopover } from './anchoredPopover';
 import { SessionQueueControl } from './sessionQueueControl';
 import { SystemLogConsole } from "./systemLogConsole";
 import { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { render } from "preact";
 import { BrowserNotifications } from "./browserNotifications";
 import { createPortal } from "preact/compat";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
 import packageJson from "../../package.json";
 import { emptyWorkspaceTerminalActivity, reduceWorkspaceTerminalActivity } from "../../src/domain/workspaceTerminalActivity";
 import type {
@@ -95,6 +96,7 @@ import {
   mergeCachedCliSession,
   mergeCachedCliSessions,
   readCliSessionListCache,
+  peekCliSessionListCache,
   readCliSessionMessagesCache,
   readDashboardStateCache,
   readDashboardAccountsCache,
@@ -246,6 +248,7 @@ function App() {
   const [onboardingImportCompleted, setOnboardingImportCompleted] = useState(false);
   const onboardingPendingRef = useRef<Set<DashboardActionName>>(new Set());
   const onboardingVisibilityResolvedRef = useRef(false);
+  const switchPopoverAnchor = useRef<DOMRect>();
   const [browserActionRequest, setBrowserActionRequest] = useState<BrowserActionRequest>();
   const [tagEditor, setTagEditor] = useState<{ account: DashboardAccountViewModel; targetDeviceId?: string }>();
   const tagRequests = useRef(new Map<string, { accountId: string; deviceId?: string }>());
@@ -255,6 +258,7 @@ function App() {
   const [agentMessages, setAgentMessages] = useState<Record<string, { messages?: DashboardCliSessionMessage[]; error?: string; loading?: boolean }>>({});
   const messageRequests = useRef(new Map<string, CliSessionTarget>());
   const cliListRequestTargets = useRef(new Map<string, string | undefined>());
+  const cliListRequestRevisions = useRef(new Map<string, number>());
   const cliListViewTarget = useRef<string>();
   const peerAccountsRevision = useRef(new Map<string, number>());
   const setCliSessions = useCallback((update: DashboardCliSessionSummary[] | ((current: DashboardCliSessionSummary[]) => DashboardCliSessionSummary[])) => {
@@ -443,6 +447,7 @@ function App() {
         if (cliListRequestTargets.current.has(requestId) && target === cliListViewTarget.current && latestCliListRequests.current.get(target ?? 'local') === requestId)
           setCliSessionsError("Sessions did not refresh in time. Try again.");
         cliListRequestTargets.current.delete(requestId);
+        cliListRequestRevisions.current.delete(requestId);
       }
       const workspaceRequest = workspaceRequests.current.get(requestId);
       if (workspaceRequest && latestWorkspaceRequests.current.get(workspaceRequest.family) === requestId) latestWorkspaceRequests.current.delete(workspaceRequest.family);
@@ -590,10 +595,15 @@ function App() {
       if (!force && lastCliListRequestAtRef.current.target === key && now - lastCliListRequestAtRef.current.at < 2_000) return;
       lastCliListRequestAtRef.current = { target: key, at: now };
       const requestId = sendAction("listCodexCliSessions", undefined, { automatic: !userInitiated, targetDeviceId });
-      if (requestId) { cliListRequestTargets.current.set(requestId, targetDeviceId); latestCliListRequests.current.set(key, requestId); if (userInitiated) explicitCliRefreshRef.current = requestId; }
+      if (requestId) {
+        cliListRequestTargets.current.set(requestId, targetDeviceId);
+        cliListRequestRevisions.current.set(requestId, lastCliRealtimeRevisionRef.current.get(targetDeviceId ?? localCacheSystemId ?? 'local') ?? 0);
+        latestCliListRequests.current.set(key, requestId);
+        if (userInitiated) explicitCliRefreshRef.current = requestId;
+      }
       return requestId;
     },
-    [sendAction, selectedPeer?.id, selectedPeer?.local]
+    [sendAction, selectedPeer?.id, selectedPeer?.local, localCacheSystemId]
   );
   const requestCliSessionMessages = useCallback(
     (sessionId: string, targetDeviceId?: string, force = false, automatic = true): void => {
@@ -916,7 +926,9 @@ function App() {
       if (message.type === "dashboard:action-result" && message.action === "listCodexCliSessions") {
         const requested = cliListRequestTargets.current.has(message.requestId);
         const listTarget = cliListRequestTargets.current.get(message.requestId);
+        const requestRevision = cliListRequestRevisions.current.get(message.requestId);
         cliListRequestTargets.current.delete(message.requestId);
+        cliListRequestRevisions.current.delete(message.requestId);
         if (requested && latestCliListRequests.current.get(listTarget ?? "local") !== message.requestId) return;
         const currentListTarget = selectedPeer?.local ? undefined : selectedPeer?.id;
         const ownerDeviceId = message.payload?.cliSessionsDeviceId ?? listTarget;
@@ -928,7 +940,8 @@ function App() {
           message.requestId,
           realtimeRevision,
           lastCliRealtimeRevisionRef.current.get(revisionScope) ?? 0,
-          explicitCliRefreshRef.current
+          explicitCliRefreshRef.current,
+          requestRevision
         );
         if (!result.apply && !result.explicitRefresh) return;
         lastCliRealtimeRevisionRef.current.set(revisionScope, result.nextRealtimeRevision);
@@ -1542,7 +1555,7 @@ function App() {
     replaceDashboardPath(`${url.pathname}${url.search}`, setBrowserPath);
   }, [isBrowserDashboard, browserPath, selectedPeerId, selectedPeer?.local]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!snapshot?.settings.cliIntegrationEnabled) return;
     if (isBrowserDashboard && !hasBrowserWorkspaceShell(browserPath)) return;
     const targetDeviceId = selectedPeer?.local ? undefined : selectedPeer?.id;
@@ -1554,10 +1567,11 @@ function App() {
     cliListConnection.current = realtimeConnected;
     if (changedSystem) {
       cliCatalogTarget.current = key;
-      setCliComposerConfig(undefined);
+      const cached = peekCliSessionListCache(targetDeviceId);
+      setCliComposerConfig(cached?.composerConfig);
       setCliSessionsError(undefined);
       liveSessionListReceived.current = false;
-      setCliSessions([]);
+      setCliSessions(cached?.sessions ?? []);
       cliLiveStatesRef.current = changedHost ? {} : Object.fromEntries(Object.entries(cliLiveStatesRef.current).filter(([, live]) => live.deviceId === targetDeviceId));
       setCliLiveStates(cliLiveStatesRef.current);
       setAgentMessages({});
@@ -2011,6 +2025,7 @@ function App() {
   };
 
   const openBrowserSwitchPicker = (targetDeviceId?: string, preferredAccountId?: string): void => {
+    switchPopoverAnchor.current = document.activeElement instanceof HTMLElement ? document.activeElement.getBoundingClientRect() : undefined;
     const targetPeer = targetDeviceId === "local" ? pcOptions.find(peer => peer.local) : targetDeviceId ? pcOptions.find(peer => peer.id === targetDeviceId) : selectedPeer;
     if ((targetDeviceId && !targetPeer) || targetPeer?.connected === false) {
       showNotice({ level: "warning", message: "This system is offline. Reconnect it before switching accounts." });
@@ -2359,7 +2374,7 @@ function App() {
               <span id="dashboard-sidebar-toggle-slot" class="content-sidebar-slot" />
               <img class="brand-logo" src={snapshot.logoUri} alt="" aria-hidden="true" width="28" height="28" />
               <div class="brand-copy">
-                <h1>Codex Manager</h1>
+                <h1>Codex Manager <span class="brand-version" aria-label={`Version ${packageJson.version}`}>v{packageJson.version}</span></h1>
                 <p>{brandSubtitle}</p>
               </div>
             </div>
@@ -2750,6 +2765,8 @@ function App() {
                   now={state.now}
                   privacyMode={state.privacyMode}
                   busy={(isBrowserDashboard && !realtimeConnected) || state.pendingActions.some(request => request.accountId === account.id)}
+                  lockPending={isActionPending('setAutoSwitchLock', account.id)}
+                  connected={(!isBrowserDashboard || realtimeConnected) && selectedPeer?.connected !== false}
                   unloadAuthPending={isActionPending("unloadAuth")}
                   reloadPromptPending={isActionPending("reloadPrompt", account.id)}
                   switchPending={isActionPending("switch", account.id)}
@@ -2922,6 +2939,7 @@ function App() {
       {
         <BrowserActionModal
           request={browserActionRequest}
+          anchor={switchPopoverAnchor.current}
           accounts={
             browserActionRequest?.kind === "switch"
               ? browserActionRequest.targetDeviceId ? (snapshot.peerAccounts?.[browserActionRequest.targetDeviceId] ?? []) : snapshot.accounts
@@ -3221,17 +3239,20 @@ function DashboardMobileActions(props: {
   onSettings: () => void;
   onAbout: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const anchor = useRef<HTMLElement>(null), panel = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open, anchor, panel);
   const closeMenu = (event: MouseEvent): void => {
     (event.currentTarget as HTMLElement).closest("details")?.removeAttribute("open");
   };
   const menuLabel = props.lang === "zh" ? "更多操作" : props.lang === "zh-hant" ? "更多操作" : "More actions";
   return (
-    <details class="dashboard-mobile-actions">
-      <summary class="settings-btn action-btn icon-only settings-alert-trigger" aria-label={menuLabel} title={menuLabel} aria-description={props.passwordRequired ? "Password required" : undefined}>
+    <details class="dashboard-mobile-actions" onToggle={event => setOpen(event.currentTarget.open)}>
+      <summary ref={anchor} class="settings-btn action-btn icon-only settings-alert-trigger" aria-label={menuLabel} title={menuLabel} aria-description={props.passwordRequired ? "Password required" : undefined}>
         <span class="button-face"><span class="button-icon" aria-hidden="true">•••</span></span>
         {props.passwordRequired ? <span class="settings-alert-badge" aria-hidden="true">!</span> : null}
       </summary>
-      <div class="dashboard-mobile-actions-menu" role="menu" aria-label={menuLabel}>
+      <div ref={panel} class="dashboard-mobile-actions-menu" role="menu" aria-label={menuLabel}>
         <button type="button" role="menuitem" onClick={(event) => { closeMenu(event); props.onSync(); }} disabled={props.syncPending}>
           <span aria-hidden="true">↻</span>Sync now
         </button>
@@ -3422,7 +3443,6 @@ function CliSessionsMenu(props: {
   const rootRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0 });
   const [now, setNow] = useState(Date.now());
   const isZh = props.lang === "zh";
   const isHant = props.lang === "zh-hant";
@@ -3435,29 +3455,7 @@ function CliSessionsMenu(props: {
     setNow(Date.now());
   }, [props.open, props.sessions]);
 
-  useEffect(() => {
-    if (!props.open) {
-      return;
-    }
-    const updatePosition = (): void => {
-      const rect = rootRef.current?.getBoundingClientRect();
-      if (!rect) {
-        return;
-      }
-      const width = Math.min(380, window.innerWidth - 16);
-      setPopoverPosition({
-        top: rect.bottom + 7,
-        left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
-      });
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [props.open]);
+  useAnchoredPopover(props.open, triggerRef, popoverRef);
 
   useEffect(() => {
     if (!props.open) {
@@ -3513,7 +3511,7 @@ function CliSessionsMenu(props: {
               class="cli-sessions-popover"
               role="dialog"
               aria-label={menuLabel}
-              style={{ top: `${popoverPosition.top}px`, left: `${popoverPosition.left}px` }}
+
             >
               <div class="cli-sessions-popover-heading"><span>{menuLabel} · {runningCount}{props.sessions.length > runningCount ? ` · ${props.sessions.length - runningCount} interrupted` : ""}</span><button type="button" class={`cli-icon-button cli-running-refresh ${props.error ? 'has-error' : ''}`} aria-label={props.loading ? 'Refreshing sessions' : props.error ? 'Retry session refresh' : 'Refresh sessions'} title={props.error || (!props.connected ? 'System offline · showing saved sessions' : props.loading ? 'Refreshing sessions' : 'Refresh sessions')} disabled={props.loading || !props.connected} onClick={props.onRetry}>{renderRefreshIcon()}</button></div>
               <div class="cli-sessions-running-list" role="list" aria-busy={props.loading}>

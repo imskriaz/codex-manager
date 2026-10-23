@@ -597,7 +597,7 @@ describe("workspace tools", () => {
     const restoreWorkspace = exposeWorkspaceRoot(projectPath);
     const { spawn: originalSpawn } = await vi.importActual<typeof childProcess>("child_process");
     const spawn = vi.mocked(childProcess.spawn).mockImplementation(((command: string, args: string[], options: never) => {
-      if (args[0] === "status") throw new Error("status inspection unavailable");
+      if (args.includes("status")) throw new Error("status inspection unavailable");
       return originalSpawn(command, args, options);
     }) as typeof childProcess.spawn);
     try {

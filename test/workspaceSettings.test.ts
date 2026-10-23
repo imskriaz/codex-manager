@@ -2,8 +2,8 @@ import { isOpenWorkspaceProject } from "../webview-src/dashboard/helpers";
 import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 
-describe("experimental workspace setting", () => {
-  it("is disabled by default and is presented as an experimental workspace toggle", () => {
+describe("workspace setting", () => {
+  it("is disabled by default and is presented as a supported workspace toggle", () => {
     const manifest = JSON.parse(readFileSync("package.json", "utf8")) as {
       contributes?: { configuration?: { properties?: Record<string, { default?: unknown; scope?: unknown; markdownDescription?: string }> } };
     };
@@ -11,8 +11,9 @@ describe("experimental workspace setting", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
 
     expect(property).toMatchObject({ default: false, scope: "machine" });
-    expect(property?.markdownDescription).toContain("Experimental Workspace");
-    expect(settings).toContain('"Enable workspace (Experimental)"');
+    expect(property?.markdownDescription).toContain("Workspace:");
+    expect(property?.markdownDescription).not.toContain("Experimental");
+    expect(settings).toContain('"Enable workspace"');
     expect(settings).toContain("Add chats and terminals to this dashboard.");
     expect(settings).not.toContain("codexSessionDefault");
   });

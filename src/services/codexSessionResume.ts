@@ -720,19 +720,42 @@ function resolveCliSessionSurface(originator: unknown, source: unknown): Dashboa
   return originatorLabel || sourceLabel ? "other" : undefined;
 }
 
-const knownProjectRoots = new Map<string, string[]>();
-async function readKnownProjectRoots(home: string): Promise<string[]> {
-  const roots: string[] = [];
-  for (const record of await readStateSessionRecords(home, undefined, roots)) if (record.cwd) roots.push(record.cwd);
-  const unique = [...new Set(roots.filter(root => root.length <= 4096 && path.isAbsolute(root)).map(root => path.resolve(root)))];
-  const available = (await Promise.all(unique.map(async root => await fs.stat(root).then(stat => stat.isDirectory() ? root : undefined).catch(() => undefined))))
-    .filter((root): root is string => root !== undefined);
-  knownProjectRoots.set(path.resolve(home), available);
-  if (knownProjectRoots.size > 8) knownProjectRoots.delete(knownProjectRoots.keys().next().value!);
-  return available;
+const knownProjectRoots = new Map<string, { roots: string[]; checkedAt: number }>();
+const projectFolderReads = new Map<string, Promise<{ isDirectory(): boolean } | undefined>>();
+async function readKnownProjectRoots(home: string, force = false): Promise<string[]> {
+  const key = path.resolve(home), cached = knownProjectRoots.get(key);
+  if (!force && cached && Date.now() - cached.checkedAt < 5000) return cached.roots;
+  return createSharedInspection(`project-roots:${key}`, async () => {
+    const deadline = Date.now() + 1500, roots: string[] = [];
+    const records = await waitWithin(readStateSessionRecords(home, undefined, roots), 1500, 'Project discovery timed out. Reconnect storage and retry.');
+    for (const record of records) if (record.cwd) roots.push(record.cwd);
+    const unique = [...new Set(roots.filter(root => root.length <= 4096 && path.isAbsolute(root)).map(root => path.resolve(root)))];
+    const available = new Set<string>();
+    await runWithConcurrencyLimit(unique, 8, async root => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      let read = projectFolderReads.get(root);
+      if (!read) {
+        if (projectFolderReads.size >= 64) return;
+        read = fs.stat(root).catch(() => undefined).finally(() => { if (projectFolderReads.get(root) === read) projectFolderReads.delete(root); });
+        projectFolderReads.set(root, read);
+      }
+      const folder = await waitWithin(read, Math.min(400, remaining), 'Project folder is unavailable.').catch(() => undefined);
+      if (folder?.isDirectory()) available.add(root);
+    });
+    const result = unique.filter(root => available.has(root));
+    knownProjectRoots.set(key, { roots: result, checkedAt: Date.now() });
+    if (knownProjectRoots.size > 8) knownProjectRoots.delete(knownProjectRoots.keys().next().value!);
+    return result;
+  });
 }
 
-export async function readCodexCliComposerConfig(codexHome = resolveCodexHome()): Promise<DashboardCliComposerConfig> {
+export function readCodexCliComposerConfig(codexHome = resolveCodexHome()): Promise<DashboardCliComposerConfig> {
+  const workspaces = (vscode.workspace.workspaceFolders ?? []).map(folder => [folder.uri.fsPath, folder.name]);
+  return createSharedInspection(`composer-config:${JSON.stringify([path.resolve(codexHome), workspaces])}`, () => readCliComposerConfig(codexHome));
+}
+
+async function readCliComposerConfig(codexHome: string): Promise<DashboardCliComposerConfig> {
   const [modelsRaw, configRaw] = await Promise.all([
     readSmallOptionalFile(path.join(codexHome, "models_cache.json"), MAX_MODELS_CACHE_BYTES),
     readSmallOptionalFile(path.join(codexHome, "config.toml"), MAX_CONFIG_BYTES)
@@ -884,7 +907,8 @@ async function runNewCodexCliSession(options: {
   if (options.sandboxMode && !isCliSandboxMode(options.sandboxMode)) {
     throw new Error("The selected access mode is invalid.");
   }
-  await readKnownProjectRoots(resolveCodexHome());
+  try { resolveCliProjectPath(options.projectPath); }
+  catch { await readKnownProjectRoots(resolveCodexHome(), true); }
   return startAppServerSession(options, onStarted);
 }
 
@@ -2287,8 +2311,8 @@ export async function resolveRecordedSessionProject(sessionId: string, requested
     cwd = path.resolve(recorded);
   } else {
     if (!requestedProject || !path.isAbsolute(requestedProject)) throw new Error("This session has no project folder. Open it in Codex and select its project before retrying.");
-    await readKnownProjectRoots(home);
-    cwd = resolveCliProjectPath(requestedProject);
+    try { cwd = resolveCliProjectPath(requestedProject); }
+    catch { await readKnownProjectRoots(home, true); cwd = resolveCliProjectPath(requestedProject); }
   }
   if (requireAvailable) await assertUsableCliProjectPath(cwd);
   return cwd;
@@ -2299,7 +2323,7 @@ function resolveCliProjectPath(projectPath: string | undefined): string {
   if (!projectPath) return fallback;
   const requested = path.resolve(normalizeNativePath(projectPath));
   const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((folder) => path.resolve(normalizeNativePath(folder.uri.fsPath)));
-  const allowed = [...workspaceRoots, ...(knownProjectRoots.get(path.resolve(resolveCodexHome())) ?? [])];
+  const allowed = [...workspaceRoots, ...(knownProjectRoots.get(path.resolve(resolveCodexHome()))?.roots ?? [])];
   if (
     workspaceRoots.length === 0 ||
     allowed.some((root) => {

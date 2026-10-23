@@ -2,6 +2,41 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.resetModules(); });
 describe("browser cache recovery", () => {
+  it('keeps a bounded, system-scoped visible list when browser storage is unavailable', async()=>{
+    vi.useFakeTimers();vi.setSystemTime(10000);
+    vi.stubGlobal('indexedDB',{open:()=>{throw Error('Storage unavailable');}});
+    const cache=await import('../webview-src/dashboard/cliSessionCache');cache.bindBrowserCacheSystem('host-a');
+    const composerConfig={models:[],defaultSandboxMode:'read-only' as const};
+    const pending=cache.writeCliSessionListCache({sessions:[{id:'same',title:'Local',status:'running'}],composerConfig});
+    expect(cache.peekCliSessionListCache()?.sessions[0]?.title).toBe('Local');await pending;
+    await cache.writeCliSessionListCache({sessions:[{id:'same',title:'Remote',status:'idle',deviceId:'remote'}],composerConfig},'remote');
+    expect(cache.peekCliSessionListCache()?.sessions[0]?.title).toBe('Local');
+    expect(cache.peekCliSessionListCache('remote')?.sessions[0]?.title).toBe('Remote');
+    vi.advanceTimersByTime(5001);
+    expect(cache.peekCliSessionListCache()?.sessions[0]).toMatchObject({status:'unknown',canStop:false,locked:true});
+    await cache.invalidateCliSessionCache('same','remote');expect(cache.peekCliSessionListCache('remote')).toBeUndefined();
+    cache.bindBrowserCacheSystem('host-b');expect(cache.peekCliSessionListCache()).toBeUndefined();
+    for(let index=0;index<9;index++)await cache.writeCliSessionListCache({sessions:[],composerConfig},`pc-${index}`);
+    expect(cache.peekCliSessionListCache('pc-0')).toBeUndefined();expect(cache.peekCliSessionListCache('pc-8')).toBeDefined();
+    vi.advanceTimersByTime(31*24*60*60*1000);expect(cache.peekCliSessionListCache('pc-8')).toBeUndefined();
+  });
+  it('ignores a late database read after invalidation and handles a full store without an uncaught error', async()=>{
+    let completeRead:()=>void=()=>undefined,readStarted=false;
+    const db={transaction:()=>{
+      const tx={oncomplete:undefined as undefined|(()=>void),onabort:undefined as undefined|(()=>void),abort:()=>queueMicrotask(()=>tx.onabort?.()),objectStore:()=>({
+        get:()=>{readStarted=true;const request={result:{updatedAt:Date.now(),value:{sessions:[{id:'old',title:'Old',status:'idle'}]}},onsuccess:undefined as undefined|(()=>void)};completeRead=()=>request.onsuccess?.();return request;},
+        delete:()=>queueMicrotask(()=>tx.oncomplete?.()),
+        openCursor:()=>{const request={result:undefined,onsuccess:undefined as undefined|(()=>void)};queueMicrotask(()=>request.onsuccess?.());return request;},
+        put:()=>{throw new DOMException('Full','QuotaExceededError');}
+      })};return tx;
+    }};
+    vi.stubGlobal('indexedDB',{open:()=>{const request={result:db,onsuccess:undefined as undefined|(()=>void)};queueMicrotask(()=>request.onsuccess?.());return request;}});
+    const cache=await import('../webview-src/dashboard/cliSessionCache');cache.bindBrowserCacheSystem('host');
+    const read=cache.readCliSessionListCache();await vi.waitFor(()=>expect(readStarted).toBe(true));
+    await cache.invalidateCliSessionCache();completeRead();expect(await read).toBeUndefined();expect(cache.peekCliSessionListCache()).toBeUndefined();
+    await cache.writeCliSessionListCache({sessions:[{id:'new',title:'New',status:'idle'}],composerConfig:{models:[],defaultSandboxMode:'read-only'}});
+    expect(cache.peekCliSessionListCache()?.sessions[0]?.title).toBe('New');
+  });
   it('reads only the outbox key range and keeps old unsynced entries available', async () => {
     const range = {}, bound = vi.fn(() => range);
     vi.stubGlobal('IDBKeyRange', { bound });

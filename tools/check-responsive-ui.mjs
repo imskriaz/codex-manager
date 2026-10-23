@@ -1,4 +1,4 @@
-import { checkListsApiUi } from './check-lists-api-ui.mjs';
+import { checkListsApiUi, checkFlyoutUi } from './check-lists-api-ui.mjs';
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { Script } from "node:vm";
 import { checkInspectorUi } from "./check-inspector-ui.mjs";
 import { checkMaintenanceUi } from './check-maintenance-ui.mjs';
 import { checkTaskUi } from "./check-task-ui.mjs";
+import { prepareDocsSnapshot, captureDocsScreenshots } from './capture-docs-ui.mjs';
 import { listConversationFiles } from '../out/domain/conversationFiles.js';
 import { dashboardCopyResources } from "../out/localization/resources/dashboard.js";
 
@@ -54,6 +55,8 @@ const messages = [
   { id: "agent-start", kind: "collaboration", title: "Reviewer started working", text: "Review the UI", status: "completed" },
   { id: "assistant", kind: "message", role: "assistant", text: `The workspace is ready.\n\n\`\`\`ts\nconst answer = 42;\n\`\`\`\n\n[Documentation](https://example.com/docs)\n\n| Item | State |\n| --- | --- |\n| Chat | Ready |\n\n![Markdown preview](${previewImage})` }
 ];
+messages.at(-1).text+='\n\nInspect [Source file](src/app.ts:12), [Native source](file:///D:/demo/src/app.ts#L12), or [absolute source](/outside/example.ts).';
+if(process.argv.includes('--docs'))prepareDocsSnapshot(snapshot,sessions,messages);
 const config = { models: [{ id: "gpt-5", label: "GPT-5", reasoningEfforts: ["medium", "high"] }], projects: [{ id: "demo", path: "D:/demo", label: "demo" }, { id: "empty", path: "D:/empty-project-with-a-long-name", label: "empty-project-with-a-long-name" }], defaultModel: "gpt-5", defaultReasoningEffort: "medium", defaultSandboxMode: "workspace-write" };
 const mockHost = `(() => {
   const state = ${JSON.stringify(snapshot)};
@@ -67,6 +70,10 @@ const mockHost = `(() => {
     {id:'idea-fixture',title:'Idea collection',prompt:'A visitor suggestion',stage:'idea',manualStage:'idea',revision:1,createdAt:Date.now()-3600000,updatedAt:Date.now()-300000},
     ...[...new Map(sessions.filter(session=>!session.parentSessionId).map(session=>[session.id,session])).values()].map(session=>({id:'session:'+session.id,title:session.title,prompt:'',stage:session.status==='running'?'running':session.archived?'completed':'planned',revision:1,createdAt:1,updatedAt:1,sessionId:session.id,sourceKey:'fixture:'+session.id,timing:{firstStartedAt:Date.now()-3600000,lastObservedAt:Date.now()-600000,durationMs:1200000,runCount:2},parentTaskId:session.id===${JSON.stringify(parentId)}?'release-group':undefined}))
   ];
+  if(window.__docsFixture){
+    for(const task of projectTasks){task.createdAt=Date.now()-86400000;task.updatedAt=Date.now()-600000;}
+    projectTasks.push(...[{title:'Review release notes',stage:'planned'},{title:'Validate API scopes',stage:'planned'},{title:'Polish the mobile workspace',stage:'completed'},{title:'Confirm reconnect recovery',stage:'completed'}].map((task,index)=>({id:'docs-task-'+index,...task,prompt:'Review the project changes',manualStage:task.stage,revision:1,createdAt:Date.now()-86400000,updatedAt:Date.now()-3600000})));
+  }
   const uploadFiles = new Map();
   const uploadMetadata = files => files?.map(({data,...file})=>{uploadFiles.set(file.id,{...file,data});return {...file,hash:'f'.repeat(64)};});
   window.__fillListFixture=()=>{
@@ -79,6 +86,7 @@ const mockHost = `(() => {
   let projectRevision=1; window.__advanceBoard=()=>{projectTasks.find(task=>task.id==='idea-fixture').title='Idea collection updated';projectRevision++;};
   const projectBoard = () => ({projectPath:'D:/demo',homeKey:'fixture',revision:projectRevision,tasks:projectTasks,comments:taskComments,sessions:[...sessions.filter(session=>!session.parentSessionId),...taskSessions],updatedAt:Date.now()});
   const apiTokens=[{id:'token-project',name:'Project reader',projectPath:'D:/demo',permissions:['state','getProjectBoard'],createdAt:1},{id:'token-all',name:'Owner operations',permissions:['*'],createdAt:1}];
+  if(window.__docsFixture)for(const token of apiTokens)token.createdAt=Date.now()-86400000;
   let messageReads = 0;
   let logReads = 0;
   let logCleared = false;
@@ -182,6 +190,7 @@ const mockHost = `(() => {
         else if(message.action==='listApiTokens') payload={apiTokens,apiProjects:[{id:'host',path:'C:/host-project',label:'Host project'}]};
         else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token-'+apiTokens.length,name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
         else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
+        else if(message.action==='setAutoSwitchLock') {if(window.__failUnlock)error='Lock storage unavailable';else{const account=state.accounts.find(account=>account.id===message.accountId);account.autoSwitchLockedUntil=message.payload.lockMinutes?Date.now()+message.payload.lockMinutes*60000:undefined;dispatch({type:'dashboard:snapshot',state:structuredClone(state)});payload={notice:{level:'info',message:'Auto-switch lock removed.'}};}}
         else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined});payload={cliSession:session};}}
         else if(message.action==='readWorkspaceFile' && message.payload.filePath.startsWith('@manager-attachment/')) {
           const file=uploadFiles.get(decodeURIComponent(message.payload.filePath.split('/').at(-1)));
@@ -217,6 +226,7 @@ const mockHost = `(() => {
         else if(message.action === 'getUsageGraph') {
           const query=message.payload.usageGraph, date=new Date(Math.floor(Date.now()/86400000)*86400000-86400000).toISOString().slice(0,10);
           payload = {usageGraph:{...query,history:window.__usageFixture && query.mode==='quota'?['usage-a','usage-b','usage-removed'].flatMap((accountId,i)=>[{accountId,at:query.from-1,hourly:100},{accountId,at:query.from+60000,hourly:90-i*10}]):[],dailyUsageCache:window.__usageFixture && query.mode==='tokens'?['usage-a','usage-b','usage-removed'].map((accountId,i)=>({accountId,...(i===2?{accountLabel:'former@example.test'}:{}),fetchedAt:Date.now(),usage:{days:30,points:[{date,unit:'tokens',totalTokens:1000,extensionTokens:[40,60,25][i]}]}})):[],truncated:false}};
+          if(window.__docsFixture)payload.usageGraph.history=state.accounts.flatMap((account,index)=>Array.from({length:20},(_,point)=>({accountId:account.id,at:query.from+(query.to-query.from)*point/19,hourly:Math.max(0,98-index*8-Math.floor(point/3)*(index%3+1)*1.2-(point%3===2?0.4:0)),weekly:Math.max(0,92-index*8-point*.2)})));
         }
         else if(message.action === 'listCodexCliSessions') {
           if(window.__failNextSessionList) { window.__failNextSessionList = false; error = 'Session inspection failed.'; }
@@ -302,6 +312,11 @@ const mockHost = `(() => {
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         if(message.action==='setCodexSessionQueue' && !error && window.__sessionRefreshNotice) {window.__sessionRefreshNotice=false;payload.notice={level:'warning',message:'The session action completed, but the session list could not refresh: Session discovery is still pending. Refresh the list before retrying the action.'};}
+        if(window.__docsFixture && payload){
+          const metadata={model:'gpt-5',reasoningEffort:'high',sessionSurface:'vscode',updatedAt:new Date().toISOString()};
+          if(payload.cliSessionsDeviceId==='fixture-system')for(const session of payload.cliSessions)Object.assign(session,metadata);
+          if(payload.cliSession?.deviceId==='fixture-system'){Object.assign(payload.cliSession,metadata);payload.cliSessionMessages=messages;}
+        }
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
         if(message.action==='setAccountTags' && window.__loseTagAck) {window.__loseTagAck=false;window.__heldTagResult=result;return;}
         if(message.action==='listCodexCliSessions' && window.__holdNextSystemList) {window.__holdNextSystemList=false;window.__heldSystemList=result;return;}
@@ -368,7 +383,7 @@ const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWS
 const results = [];
 try {
   const selectedWidth = Number(process.argv.find((argument) => argument.startsWith("--width="))?.slice(8));
-  for (const [width, height] of (selectedWidth ? [[selectedWidth, Number(process.argv.find(argument => argument.startsWith("--height="))?.slice(9)) || (selectedWidth <= 760 ? 844 : 1000)]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
+  for (const [width, height] of (selectedWidth ? [[selectedWidth, Number(process.argv.find(argument => argument.startsWith("--height="))?.slice(9)) || (selectedWidth <= 760 ? 844 : 1000)]] : process.argv.includes('--docs') ? [[1440,900],[390,844]] : process.argv.includes("--landscape") ? [[844, 390]] : [[1440, 1000], [1024, 768], [768, 1024], [390, 844], [320, 667], [844, 390]])) {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: width <= 760, serviceWorkers: "block", permissions: ["clipboard-read", "clipboard-write"] });
     if (width === 320) await context.addInitScript(() => {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
@@ -400,6 +415,33 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    if(process.argv.includes('--docs')){
+      await captureDocsScreenshots(page,{origin,width,parentId});assert.deepEqual(errors,[]);
+      results.push({width,height,checks:'documentation screenshots with fictional data'});await context.close();continue;
+    }
+    if(process.argv.includes('--flyouts')){
+      await checkFlyoutUi(page,{origin,parentId,width,height,output});assert.deepEqual(errors,[]);
+      results.push({width,height,checks:'Click-anchored account, More, graph, mobile, running/queue, workspace tools and account-center menus; resize bounds'});await context.close();continue;
+    }
+    if(process.argv.includes('--locks')){
+      await page.goto(origin+'/');await page.locator('.saved-card-container').first().waitFor();
+      for(const mode of ['cards','list']){
+        if(mode==='list')await page.locator('.dashboard-view-toggle').click();
+        await page.evaluate(()=>{const state=window.__uiSnapshot;for(const account of state.accounts)account.autoSwitchLockedUntil=undefined;(state.accounts.find(account=>account.isActive)??state.accounts[0]).autoSwitchLockedUntil=Date.now()+900000;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:structuredClone(state)}}));});
+        const badge=page.getByRole('button',{name:'Auto Switch locked. Show unlock option',exact:true});await badge.waitFor();
+        assert.ok((await badge.boundingBox()).height<=20,'Lock badge stays compact');
+        await badge.click();await page.getByRole('button',{name:'Unlock Auto Switch',exact:true}).waitFor();
+        await page.keyboard.press('Escape');assert.equal(await page.getByRole('button',{name:'Unlock Auto Switch',exact:true}).count(),0);
+        await page.evaluate(()=>{window.__failUnlock=true;});await badge.click();await page.getByRole('button',{name:'Unlock Auto Switch',exact:true}).click();
+        await page.getByRole('alert').filter({hasText:'Lock storage unavailable'}).waitFor();assert.equal(await badge.count(),1,'Failed unlock keeps its lock');
+        await page.getByRole('button',{name:'Dismiss notification',exact:true}).click();await page.evaluate(()=>{window.__failUnlock=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}}));});
+        await page.waitForFunction(()=>document.querySelector('button.saved-lock-badge')?.disabled===true);
+        await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
+        await badge.click();await page.getByRole('button',{name:'Unlock Auto Switch',exact:true}).click();await badge.waitFor({state:'hidden'});
+        assert.equal(await page.evaluate(()=>window.__uiActions.filter(action=>action.action==='setAutoSwitchLock').at(-1).payload.lockMinutes),0);
+      }
+      assert.deepEqual(errors,[]);results.push({width,height,checks:'Clickable lock badges in cards/list, Unlock, Escape, failure retention, offline guard and success'});await context.close();continue;
+    }
     if (process.argv.includes('--closed-project')) {
       await checkClosedProject(page, width, errors);
       results.push({ width, height, checks: 'closed-project composer context' });
@@ -720,9 +762,16 @@ try {
         const request=indexedDB.open('codex-manager-cache');
         request.onsuccess=()=>{const db=request.result,read=db.transaction('cli-sessions').objectStore('cli-sessions').get('accounts:fixture-system');read.onsuccess=()=>{const saved=read.result?.value;db.close();resolve(Array.isArray(saved)&&saved.some(account=>account.id==='remote-account'));};};
       }));
-      await page.evaluate(()=>{window.__holdNextSystemList=true;window.__heldSystemList=undefined;});
+      await page.evaluate(()=>{
+        window.__holdNextSystemList=true;window.__heldSystemList=undefined;window.__scopeFrames=[];window.__recordScopeFrames=true;
+        const frame=()=>{if(!window.__recordScopeFrames)return;const selected=document.querySelector('.cli-rail-system select')?.value;
+          if(selected==='fixture-system')window.__scopeFrames.push({remote:!!document.querySelector('[aria-label="Expand remote-project"],[aria-label="Collapse remote-project"]'),local:!!document.querySelector('[aria-label="Expand demo"],[aria-label="Collapse demo"]')});requestAnimationFrame(frame);};requestAnimationFrame(frame);
+      });
       await picker.selectOption('fixture-system');
       await page.waitForFunction(()=>!!window.__heldSystemList);
+      await page.waitForTimeout(80);
+      const frames=await page.evaluate(()=>{window.__recordScopeFrames=false;return window.__scopeFrames;});
+      assert.ok(frames.length>0);assert.equal(frames.filter(frame=>!frame.remote||frame.local).length,0,'A warm system switch never paints an empty or wrong-system list while its response is held');
       await picker.selectOption('fixture-local');
       await page.getByRole('button',{name:'Expand demo',exact:true}).waitFor();
       await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldSystemList})));
@@ -747,7 +796,7 @@ try {
       if(await showRemoteTools.isVisible()) await showRemoteTools.click();
       await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='getWorkspaceEnvironment'&&action.payload?.targetDeviceId==='fixture-system'&&action.payload?.projectPath==='E:/remote-project'));
       await page.evaluate(()=>{window.__uiSnapshot.connectedPeers[1].connected=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
-      await page.getByText('Reconnecting · live updates paused',{exact:true}).waitFor();
+      await page.getByText('Reconnecting',{exact:true}).waitFor();
       assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).count(),0,'Remote disconnect removes execution controls while browser stays online');
       assert.deepEqual(errors,[]);
       results.push({width,height,checks:'Remote accounts, session lists, catalogs, stale replies, browser URL, workspace routing, peer offline'});
@@ -1242,6 +1291,11 @@ try {
     await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
     await page.getByText("Running elsewhere", { exact: true }).waitFor();
     const lockedStatus = page.locator(".cli-conversation > .cli-composer-unavailable.is-running");
+    await lockedStatus.getByRole('button',{name:'Pause Auto Resume',exact:true}).click();
+    await lockedStatus.getByRole('button',{name:'Enable Auto Resume',exact:true}).waitFor();
+    await lockedStatus.getByRole('button',{name:'Enable Auto Resume',exact:true}).click();
+    await lockedStatus.getByRole('button',{name:'Pause Auto Resume',exact:true}).waitFor();
+    assert.equal(await lockedStatus.getByRole('button',{name:'Stop turn',exact:true}).isEnabled(),true,'An owned remote turn exposes Stop');
     assert.ok((await lockedStatus.boundingBox()).height <= 34, "Session status stays one compact line");
     assert.equal(await lockedStatus.locator(".cli-live-spinner").count(), 1, "External turns show a spinner beside their status");
     await page.evaluate(({ sessionId }) => {
@@ -1544,7 +1598,7 @@ try {
     assert.ok(overflow <= 2, `Chat overflows by ${overflow}px at ${width}px`);
     await page.screenshot({ path: path.join(output, `chat-${width}x${height}.png`) });
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "unreachable" } })));
-    await page.getByText("Reconnecting · live updates paused", { exact: true }).waitFor();
+    await page.getByText("Reconnecting", { exact: true }).waitFor();
     assert.equal(await page.locator(".dashboard-connection-banner").count(), 0, "Chat uses its inline reconnect status without a floating notice");
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:host-status", stage: "live" } })));
     console.log(`Checking ${width}x${height}: dashboard and settings`);
@@ -1930,7 +1984,7 @@ try {
         assert.equal(await page.getByText("Codex CLI path", { exact: true }).count(), 0, "CLI path setting is removed");
         assert.ok(Math.abs((await restart.boundingBox()).width - (await parallel.boundingBox()).width) <= 2, "Restart and parallel settings use equal-width cards");
         const dashboardToggle = page.getByRole("button", { name: "Web Dashboard", exact: true });
-        const workspaceToggle = page.getByRole("button", { name: "Enable workspace (Experimental)", exact: true });
+        const workspaceToggle = page.getByRole("button", { name: "Enable workspace", exact: true });
         const dashboardCard = dashboardToggle.locator("../..");
         assert.equal(await dashboardCard.locator(".settings-session-transport").count(), 0, "Retired transport choices are removed");
         const serverCard = dashboardCard.locator(".settings-dashboard-server");

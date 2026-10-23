@@ -6,6 +6,7 @@ import * as path from "node:path";
 import * as vm from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../src/domain/codexSessionLive";
+import { isPeerNotification, peerNotificationPayload } from '../src/domain/peerNotification';
 
 type Json = Record<string, any>;
 const source = readFileSync("tools/always-online-server.js", "utf8");
@@ -43,6 +44,7 @@ function harness(contractAvailable = true, storageReady?: Promise<unknown>) {
     if (id === "node:path") return path;
     if (id === "mock-ws") return { WebSocketServer: Server };
     if (id.endsWith("codexSessionLive.js") && contractAvailable) return { isCodexSessionLiveState, isNewerCodexSessionLiveState };
+    if (id.endsWith('peerNotification.js') && contractAvailable) return { isPeerNotification, peerNotificationPayload };
     throw new Error("dependency unavailable");
   }, { resolve: () => "mock-ws" });
   class Clock extends Date { static override now() { return now; } }
@@ -83,6 +85,21 @@ function harness(contractAvailable = true, storageReady?: Promise<unknown>) {
 }
 
 describe("detached relay authenticated realtime and recovery", () => {
+  it('authenticates remote notifications, rejects duplicates/spoofs/tampering and replays briefly after disconnect', () => {
+    const h = harness(), sender = h.connect('source'), target = h.connect('target');
+    const unsigned = { type: 'peer:notice' as const, deviceId: 'source', eventId: 'switch-event', sentAt: h.now(), notice: { level: 'warning' as const, message: 'Account switch failed.', systemName: 'Source PC' } };
+    const event = { ...unsigned, signature: createHmac('sha256', Buffer.from('isolated-relay-test-key')).update(peerNotificationPayload(unsigned)).digest('base64url') };
+    sender.receive(event); sender.receive(event);
+    expect(target.sent.filter(message => message.type === 'peer:notice')).toHaveLength(1);
+    sender.receive({ ...event, eventId: 'tampered' }); sender.receive({ ...event, deviceId: 'target' });
+    expect(target.sent.filter(message => message.type === 'peer:notice')).toHaveLength(1);
+    sender.close();
+    const reconnect = h.connect(); reconnect.receive(h.signed('reconnect'));
+    expect(reconnect.sent.filter(message => message.type === 'peer:notice')).toHaveLength(1);
+    h.advance(300001); const late = h.connect(); late.receive(h.signed('late'));
+    expect(late.sent.filter(message => message.type === 'peer:notice')).toHaveLength(0);
+    expect(isPeerNotification({ ...event, notice: { ...event.notice, message: 'x'.repeat(4097) } }, h.now())).toBe(false);
+  });
   it.each([{dashboardTargets:[]},{dashboardTargets:['target']}])('authenticates current dashboard interest signatures and relays actions ($dashboardTargets)', ({dashboardTargets}) => {
     const h=harness(),source=h.connect(),target=h.connect('target');
     source.receive(h.signed('source',h.now(),dashboardTargets));

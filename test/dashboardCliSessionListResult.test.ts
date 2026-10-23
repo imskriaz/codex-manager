@@ -26,11 +26,23 @@ describe("dashboard session-list result routing", () => {
     });
   });
 
-  it("applies a direct list response after a newer realtime revision", () => {
+  it("rejects an older direct list response after a newer realtime revision", () => {
     expect(classifyCliSessionListResult("request-1", 5, 8)).toEqual({
-      apply: true,
+      apply: false,
       explicitRefresh: false,
       nextRealtimeRevision: 8
     });
+  });
+
+  it('keeps a newer push when a direct response has no revision', () => {
+    expect(classifyCliSessionListResult('request-1', undefined, 8, undefined, 5).apply).toBe(false);
+    expect(classifyCliSessionListResult('request-1', undefined, 8, 'request-1', 5)).toMatchObject({apply:false,explicitRefresh:true});
+    expect(classifyCliSessionListResult('request-2', undefined, 8, undefined, 8).apply).toBe(true);
+    expect(classifyCliSessionListResult('legacy', undefined, 8).apply).toBe(true);
+  });
+
+  it('accepts an authoritative full list at the same revision as a partial push', () => {
+    expect(classifyCliSessionListResult('request-1', 8, 8).apply).toBe(true);
+    expect(classifyCliSessionListResult('realtime-peer-pc-1', 8, 8).apply).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
+import { useAnchoredPopover } from './anchoredPopover';
 import { createPortal } from "preact/compat";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type {
   DashboardAccountViewModel,
   DashboardActionPayload,
@@ -65,35 +66,6 @@ export function shouldOpenClaimPopover(runningOnOtherDevice: boolean, registryOv
   return runningOnOtherDevice && !registryOverrideEnabled;
 }
 
-export interface ViewportPopoverPosition {
-  top: number;
-  left: number;
-  arrowLeft: number;
-  placement: "above" | "below";
-}
-
-export function resolveViewportPopoverPosition(
-  anchor: Pick<DOMRect, "top" | "right" | "bottom" | "left" | "width">,
-  popover: Pick<DOMRect, "width" | "height">,
-  viewport: { width: number; height: number },
-  gap = 8,
-  margin = 8
-): ViewportPopoverPosition {
-  const availableBelow = viewport.height - anchor.bottom - gap - margin;
-  const availableAbove = anchor.top - gap - margin;
-  const placement = popover.height > availableBelow && availableAbove > availableBelow ? "above" : "below";
-  const maxLeft = Math.max(margin, viewport.width - popover.width - margin);
-  const desiredLeft = anchor.left + anchor.width / 2 - popover.width / 2;
-  const left = Math.min(Math.max(desiredLeft, margin), maxLeft);
-  const desiredTop = placement === "above" ? anchor.top - gap - popover.height : anchor.bottom + gap;
-  const maxTop = Math.max(margin, viewport.height - popover.height - margin);
-  const top = Math.min(Math.max(desiredTop, margin), maxTop);
-  const anchorCenter = anchor.left + anchor.width / 2;
-  const arrowLeft = Math.min(Math.max(anchorCenter - left, 14), Math.max(14, popover.width - 14));
-
-  return { top, left, arrowLeft, placement };
-}
-
 /** Keep transport/provider details out of the compact card while retaining
  * the actionable health state (for example, "Needs Reauth"). */
 export function resolveCardHealthReason(
@@ -116,6 +88,8 @@ export function SavedAccountCard(props: {
   now: number;
   privacyMode: boolean;
   busy: boolean;
+  lockPending?: boolean;
+  connected?: boolean;
   unloadAuthPending: boolean;
   reloadPromptPending: boolean;
   switchPending: boolean;
@@ -150,6 +124,7 @@ export function SavedAccountCard(props: {
       | "setAccountQueuePriority"
       | "setAccountTokenRefreshEnabled"
       | "setAccountAutoResetAllowed"
+      | "setAutoSwitchLock"
       | "refreshToken"
       | "consumeResetCredit"
       | "syncNow"
@@ -219,6 +194,7 @@ export function SavedAccountCard(props: {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [claimPopoverOpen, setClaimPopoverOpen] = useState(false);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const actionsAnchor = useRef<HTMLElement>();
   const editTags = (): void => {
     setActionsOpen(false);
     actionsMenuRef.current?.querySelector<HTMLButtonElement>('.saved-overflow-trigger')?.focus();
@@ -227,67 +203,8 @@ export function SavedAccountCard(props: {
   const actionsMenuContentRef = useRef<HTMLDivElement>(null);
   const claimPopoverRef = useRef<HTMLDivElement>(null);
   const claimPopoverContentRef = useRef<HTMLDivElement>(null);
-  const [claimPopoverPosition, setClaimPopoverPosition] = useState<ViewportPopoverPosition>();
-  const [actionsMenuPosition, setActionsMenuPosition] = useState<ViewportPopoverPosition>();
-  useLayoutEffect(() => {
-    if (!claimPopoverOpen) {
-      setClaimPopoverPosition(undefined);
-      return;
-    }
-    setClaimPopoverPosition(undefined);
-    const updatePosition = () => {
-      const anchorRect = claimPopoverRef.current?.getBoundingClientRect();
-      const popoverRect = claimPopoverContentRef.current?.getBoundingClientRect();
-      if (!anchorRect || !popoverRect) {
-        return;
-      }
-      setClaimPopoverPosition(
-        resolveViewportPopoverPosition(anchorRect, popoverRect, {
-          width: window.innerWidth,
-          height: window.innerHeight
-        })
-      );
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [claimPopoverOpen]);
-  useLayoutEffect(() => {
-    if (!actionsOpen) {
-      setActionsMenuPosition(undefined);
-      return;
-    }
-    setActionsMenuPosition(undefined);
-    const updatePosition = () => {
-      const anchorRect = actionsMenuRef.current?.getBoundingClientRect();
-      const popoverRect = actionsMenuContentRef.current?.getBoundingClientRect();
-      if (!anchorRect || !popoverRect) {
-        return;
-      }
-      setActionsMenuPosition(
-        resolveViewportPopoverPosition(
-          anchorRect,
-          popoverRect,
-          {
-            width: window.innerWidth,
-            height: window.innerHeight
-          },
-          6
-        )
-      );
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [actionsOpen]);
+  useAnchoredPopover(claimPopoverOpen, claimPopoverRef, claimPopoverContentRef);
+  useAnchoredPopover(actionsOpen, actionsAnchor, actionsMenuContentRef);
   useEffect(() => {
     // A rescue-enabled foreign claim is warning-only and should never leave
     // the locked-claim dialog open after the override state changes.
@@ -299,12 +216,12 @@ export function SavedAccountCard(props: {
     if (!actionsOpen) return;
     const closeOutside = (event: PointerEvent): void => {
       const target = event.target as Node;
-      if (!actionsMenuRef.current?.contains(target) && !actionsMenuContentRef.current?.contains(target)) {
+      if (!actionsAnchor.current?.contains(target) && !actionsMenuRef.current?.contains(target) && !actionsMenuContentRef.current?.contains(target)) {
         setActionsOpen(false);
       }
     };
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") setActionsOpen(false);
+      if (event.key === "Escape") { setActionsOpen(false); (actionsAnchor.current ?? actionsMenuRef.current?.querySelector<HTMLButtonElement>('.saved-overflow-trigger'))?.focus(); }
     };
     window.addEventListener("pointerdown", closeOutside);
     window.addEventListener("keydown", closeOnEscape);
@@ -331,6 +248,9 @@ export function SavedAccountCard(props: {
     };
   }, [claimPopoverOpen]);
   const showResyncButton = account.healthKind !== "reauthorize";
+  const isLocked = Boolean(account.autoSwitchLockedUntil && account.autoSwitchLockedUntil > now);
+  const lockBadge = isLocked ? <button type="button" class="pill warning saved-lock-badge" aria-label="Auto Switch locked. Show unlock option" aria-expanded={actionsOpen} disabled={props.lockPending || props.connected === false} title={`Auto Switch locked until ${new Date(account.autoSwitchLockedUntil!).toLocaleTimeString()}. Show unlock option.`} onClick={event => { event.stopPropagation(); actionsAnchor.current = event.currentTarget; setActionsOpen(open => !open); }}>🔒 Locked</button> : null;
+  const unlockAction = isLocked ? <button type="button" disabled={props.lockPending || props.connected === false} onClick={() => { setActionsOpen(false); onAction('setAutoSwitchLock', account.id, { lockMinutes: 0 }); }}><span aria-hidden="true">◇</span><span>Unlock Auto Switch</span></button> : null;
   const hasResetCredit = account.resetCreditsAvailable != null && account.resetCreditsAvailable > 0;
   const subscriptionRemaining = formatSubscriptionRemaining(account.subscriptionExpiresAt, now, props.lang);
   const resyncButtonLabel =
@@ -418,16 +338,11 @@ export function SavedAccountCard(props: {
       ? createPortal(
           <div
             ref={claimPopoverContentRef}
-            class={`claim-popover claim-popover-portal opens-${claimPopoverPosition?.placement ?? "below"}`}
+            class="claim-popover claim-popover-portal"
             role="dialog"
             aria-label={resolveClaimPopoverText("title", account.runningDeviceName ?? "", props.lang)}
             onClick={stopFlip}
-            style={{
-              top: `${claimPopoverPosition?.top ?? 0}px`,
-              left: `${claimPopoverPosition?.left ?? 0}px`,
-              visibility: claimPopoverPosition ? "visible" : "hidden",
-              "--popover-arrow-left": `${claimPopoverPosition?.arrowLeft ?? 14}px`
-            }}
+
           >
             <div class="claim-popover-head">
               <div class="claim-popover-title">
@@ -567,11 +482,7 @@ export function SavedAccountCard(props: {
                       {cardPlanBadge}
                     </span>
                   ) : null}
-                  {account.autoSwitchLockedUntil ? (
-                    <span class="pill warning saved-lock-badge" title="Automatic switching is locked for this account">
-                      🔒 Locked
-                    </span>
-                  ) : null}
+                  {lockBadge}
                   {account.creditsText ? <span class="saved-table-credit">{account.creditsText}</span> : null}
                   {hasResetCredit ? (
                     <button
@@ -643,7 +554,7 @@ export function SavedAccountCard(props: {
                 type="button"
                 aria-label={moreLabel}
                 aria-expanded={actionsOpen}
-                onClick={() => setActionsOpen((open) => !open)}
+                onClick={event => { actionsAnchor.current = event.currentTarget; setActionsOpen((open) => !open); }}
               >
                 •••
               </button>
@@ -653,11 +564,7 @@ export function SavedAccountCard(props: {
                       ref={actionsMenuContentRef}
                       class="saved-overflow-menu saved-table-overflow-menu saved-overflow-menu-portal"
                       onClick={stopFlip}
-                      style={{
-                        top: `${actionsMenuPosition?.top ?? 0}px`,
-                        left: `${actionsMenuPosition?.left ?? 0}px`,
-                        visibility: actionsMenuPosition ? "visible" : "hidden"
-                      }}
+
                     >
                       <button
                         type="button"
@@ -669,6 +576,7 @@ export function SavedAccountCard(props: {
                       >
                         <DownloadIcon /> <span>{exportLabel}</span>
                       </button>
+                      {unlockAction}
                       <button type="button" disabled={!props.onEditTags} onClick={editTags}><EditTagsIcon /><span>Tags</span></button>
                       {showResyncButton ? (
                         <button
@@ -862,14 +770,7 @@ export function SavedAccountCard(props: {
                       {runningDeviceLabel}
                     </span>
                   ) : null}
-                  {account.autoSwitchLockedUntil ? (
-                    <span
-                      class="saved-credits-line saved-lock-badge"
-                      title="Automatic switching is locked for this account"
-                    >
-                      🔒 Locked
-                    </span>
-                  ) : null}
+                  {lockBadge}
                   {subscriptionRemaining ? (
                     <span
                       class={`saved-credits-line saved-subscription-remaining ${subscriptionRemaining.expiring ? "is-expiring" : ""}`}
@@ -925,7 +826,7 @@ export function SavedAccountCard(props: {
                     type="button"
                     aria-label={moreLabel}
                     aria-expanded={actionsOpen}
-                    onClick={() => setActionsOpen((open) => !open)}
+                    onClick={event => { actionsAnchor.current = event.currentTarget; setActionsOpen((open) => !open); }}
                   >
                     •••
                   </button>
@@ -935,11 +836,7 @@ export function SavedAccountCard(props: {
                           ref={actionsMenuContentRef}
                           class="saved-overflow-menu saved-overflow-menu-portal"
                           onClick={stopFlip}
-                          style={{
-                            top: `${actionsMenuPosition?.top ?? 0}px`,
-                            left: `${actionsMenuPosition?.left ?? 0}px`,
-                            visibility: actionsMenuPosition ? "visible" : "hidden"
-                          }}
+
                         >
                           <button
                             type="button"
@@ -951,7 +848,8 @@ export function SavedAccountCard(props: {
                           >
                             <DownloadIcon /> <span>{exportLabel}</span>
                           </button>
-                          <button type="button" disabled={!props.onEditTags} onClick={editTags}><EditTagsIcon /><span>Tags</span></button>
+                          {unlockAction}
+                      <button type="button" disabled={!props.onEditTags} onClick={editTags}><EditTagsIcon /><span>Tags</span></button>
                           {showResyncButton ? (
                             <button
                               type="button"

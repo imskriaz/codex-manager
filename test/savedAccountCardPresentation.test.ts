@@ -6,7 +6,6 @@ import {
   resolveClaimPopoverText,
   resolveCompactIdentityBadge,
   resolvePrimaryAccountControl,
-  resolveViewportPopoverPosition,
   shouldOpenClaimPopover
 } from "../webview-src/dashboard/savedAccountCard";
 import { isDashboardMainQuotaExhausted } from "../webview-src/dashboard/accountSorting";
@@ -200,24 +199,6 @@ describe("saved account card presentation", () => {
     expect(resolveClaimPopoverText("body", "DESKTOP-4ISJOQ6", "en")).toBe(
       "Sync after disabling this account on DESKTOP-4ISJOQ6, or use rescue to unlock it only on this device."
     );
-  });
-
-  it("keeps popovers inside the viewport and opens them above near the bottom", () => {
-    expect(
-      resolveViewportPopoverPosition(
-        { top: 540, right: 790, bottom: 560, left: 770, width: 20 },
-        { width: 264, height: 140 },
-        { width: 800, height: 600 }
-      )
-    ).toEqual({ top: 392, left: 528, arrowLeft: 250, placement: "above" });
-
-    expect(
-      resolveViewportPopoverPosition(
-        { top: 20, right: 20, bottom: 40, left: 0, width: 20 },
-        { width: 264, height: 140 },
-        { width: 800, height: 600 }
-      )
-    ).toEqual({ top: 48, left: 8, arrowLeft: 14, placement: "below" });
   });
 
   it("opens account details in the details pane instead of flipping the card", () => {

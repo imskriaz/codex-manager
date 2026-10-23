@@ -1006,8 +1006,7 @@ describe("executeDashboardActionMessage", () => {
     const current = { ...stale, isActive: true };
     const repo = {
       getAccount: vi.fn().mockResolvedValueOnce(stale).mockResolvedValueOnce(current),
-      recordManualAccountSelection: vi.fn(async () => undefined),
-      isAutoSwitchManuallyHeld: vi.fn(async () => true),
+      lockAutoSwitchForManualSelection: vi.fn(async () => undefined),
       switchAccount: vi.fn(),
       flush: vi.fn().mockResolvedValue(undefined)
     } as unknown as DashboardActionContext["repo"];
@@ -1023,8 +1022,8 @@ describe("executeDashboardActionMessage", () => {
     expect(result.status).toBe("completed");
     expect(repo.switchAccount).not.toHaveBeenCalled();
     expect(result.payload?.notice?.message).toContain("race@example.com is already active.");
-    expect(repo.recordManualAccountSelection).toHaveBeenCalledWith(stale.id);
-    expect(result.payload?.notice?.message).toContain("Auto Switch is paused");
+    expect(repo.lockAutoSwitchForManualSelection).toHaveBeenCalledWith(stale.id);
+    expect(result.payload?.notice?.message).not.toContain("Auto Switch is paused");
   });
 
   it("keeps the VS Code webview switch on the registered VS Code command", async () => {

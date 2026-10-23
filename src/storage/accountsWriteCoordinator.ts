@@ -140,12 +140,6 @@ export async function persistIndexWithBackups(params: {
         ? mergeAccountsIndexChanges(params.state.persistedIndex, params.index, current, params.activeCodexHomeKey)
         : cloneIndex(params.index);
       if (params.activeCodexHomeKey) {
-        if (current?.manualSelectionByCodexHome && !(sqlite && params.state.persistedIndex)) {
-          const local = index.manualSelectionByCodexHome?.[params.activeCodexHomeKey];
-          index.manualSelectionByCodexHome = { ...current.manualSelectionByCodexHome };
-          if (local) index.manualSelectionByCodexHome[params.activeCodexHomeKey] = local;
-          else delete index.manualSelectionByCodexHome[params.activeCodexHomeKey];
-        }
         if (current?.activeAccountIdsByCodexHome && !(sqlite && params.state.persistedIndex)) {
           const localAccountId = index.activeAccountIdsByCodexHome?.[params.activeCodexHomeKey];
           index.activeAccountStateVersion = 1;

@@ -148,7 +148,7 @@ describe("extension manifest configuration", () => {
 
     const property = manifest.contributes?.configuration?.properties?.["codexManager.autoResumeEnabled"];
     expect(property).toMatchObject({ type: "boolean", scope: "machine", default: false });
-    expect(property?.markdownDescription).toContain("Experimental");
+    expect(property?.markdownDescription).not.toContain("Experimental");
     expect(property?.markdownDescription).toContain("Auto Switch on");
     expect(property?.markdownDescription).toContain("unfinished parent chats");
     expect(property?.markdownDescription).toContain("VS Code restart");

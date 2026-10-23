@@ -2221,7 +2221,7 @@ html[data-theme="auto"] body.vscode-light .tag-pill.muted {
   background: var(--bg-elevated);
   transform: translateX(-50%) rotate(45deg);
 }
-.claim-popover.opens-above::before {
+.claim-popover[data-placement="above"]::before {
   top: auto;
   bottom: -5px;
   border-top: 0;
@@ -13246,7 +13246,15 @@ body.is-dashboard-workspace-route #dashboard-main {
  * type make long account lists faster to scan. */
 .panel { max-width: none; }
 .hero { padding-bottom: 10px; }
-.brand h1 { font-size: 16px; letter-spacing: 0; }
+.brand h1 { display: flex; align-items: center; gap: 6px; font-size: 16px; letter-spacing: 0; }
+.brand-version { flex: none; padding: 2px 5px; border: 1px solid var(--border-default); border-radius: 4px; color: var(--text-secondary); font-size: 10px; font-weight: 500; line-height: 1.2; white-space: nowrap; }
+.cli-draft-recovery { display: flex; align-items: center; justify-content: flex-end; gap: 5px; padding: 2px 8px; color: var(--text-secondary); font-size: 10px; line-height: 1.3; }
+.cli-draft-recovery small { font-size: inherit; }
+.cli-draft-recovery button { flex: none; padding: 2px 4px; border: 0; background: none; color: var(--accent-blue); font: inherit; cursor: pointer; }
+.cli-running-actions { display: inline-flex; flex: none; align-items: center; gap: 2px; margin-left: auto; }
+.cli-running-actions .cli-icon-button { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 3px; }
+.cli-composer-unavailable .cli-draft-recovery { margin-left: auto; padding: 0; }
+@media (max-width: 560px) { .cli-composer-unavailable .cli-draft-recovery small { display: none; } .cli-draft-recovery { gap: 3px; } }
 .brand p { font-size: 11px; }
 .overview-shell {
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
@@ -16118,3 +16126,14 @@ body:has(.task-floating-menu,.cli-account-center,details[open],:popover-open) .b
 .scroll-more { padding:6px; text-align:center; min-height:28px; }
 .scroll-more button { border:0; background:transparent; color:var(--text-secondary); font:inherit; cursor:pointer; }
 .scroll-more button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.cli-workspace .cli-composer-unavailable.is-running { justify-content: flex-start; min-height: 28px; padding-block: 3px; }
+.cli-workspace .cli-composer-unavailable .cli-running-actions { overflow: visible; margin-left: auto; }
+.cli-workspace .cli-composer-unavailable.is-running > span:not(.cli-live-spinner):not(.cli-running-actions):not(.cli-draft-recovery) { flex: 1; min-width: 0; }
+.cli-workspace .cli-composer-unavailable.is-running > .cli-draft-recovery { flex: none; overflow: visible; }
+button.saved-lock-badge { min-height: 0; padding: 1px 4px; font-size: 9px; line-height: 1.15; cursor: pointer; }
+
+/* Anchored flyouts must not retain centering transforms or guessed offsets. */
+.dashboard-action-popover { transform:none; }
+.api-access-check { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.api-access-check small { color:var(--text-muted); overflow-wrap:anywhere; }
+.api-test-result { white-space:pre-wrap; overflow-wrap:anywhere; }

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "preact/hooks";
+import { useAnchoredPopover } from './anchoredPopover';
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { DashboardAccountViewModel, DashboardActionName, DashboardState } from "../../src/domain/dashboard/types";
 import { ModalShell } from "./components";
@@ -65,6 +66,7 @@ export type BrowserActionRequest =
 
 export function BrowserActionModal(props: {
   request?: BrowserActionRequest;
+  anchor?: DOMRect;
   accounts: DashboardAccountViewModel[];
   lang: DashboardState["lang"];
   privacyMode: boolean;
@@ -113,6 +115,7 @@ export function BrowserActionModal(props: {
           : "No account is available to switch to.";
     return (
       <Shell
+        {...(Shell === ActionPopoverShell ? { anchor: props.anchor } : {})}
         open
         title={title}
         closeLabel={props.closeLabel}
@@ -350,6 +353,7 @@ export function BrowserActionModal(props: {
 }
 
 function ActionPopoverShell(props: {
+  anchor?: DOMRect;
   open: boolean;
   title: string;
   closeLabel: string;
@@ -357,7 +361,9 @@ function ActionPopoverShell(props: {
   onClose: () => void;
   children: ComponentChildren;
 }) {
+  const anchor = useRef(props.anchor ? { isConnected: true, getBoundingClientRect: () => props.anchor! } : document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const accessibility = useModalAccessibility(props.open, props.onClose);
+  useAnchoredPopover(props.open, anchor, accessibility.modalRef);
   return (
     <div class="action-popover-layer" aria-hidden={!props.open}>
       <div

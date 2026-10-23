@@ -28,7 +28,7 @@ beforeEach(async () => {
   const secrets = new Map<string, string>();
   context = { secrets: { get: async (key: string) => secrets.get(key), store: async (key: string, value: string) => { secrets.set(key, value); } } } as unknown as vscode.ExtensionContext;
   const server = Object.assign(Object.create(WebDashboardServer.prototype), {
-    context, getUrl: () => origin, settingsStore: { getDashboardSettings: () => ({ cloudflaredDomain: '', apiAccessEnabled: enabled }) },
+    context, deviceId: 'host-pc', getUrl: () => origin, settingsStore: { getDashboardSettings: () => ({ cloudflaredDomain: '', apiAccessEnabled: enabled }) },
     processClientMessage: dispatch, publishProcessedSnapshot: vi.fn()
   });
   vi.spyOn(board, 'readProjectBoard').mockImplementation(async projectPath => ({ projectPath: projectPath!, tasks: [], comments: [], sessions: [], updatedAt: Date.now() }));
@@ -88,4 +88,45 @@ it('preserves explicit state permission and rejects cross-origin, unlisted and g
   expect((await request(token, '/api/message', action('unknownOperation'))).status).toBe(400);
   expect((await request(token, '/api/message', { type: 'dashboard:setting', key: 'apiAccessEnabled', value: false })).status).toBe(403);
   expect((await request(token, '/workspace')).status).toBe(403); expect(dispatch).toHaveBeenCalledOnce();
+});
+
+// The HTTP dispatcher is mocked: these permission checks never refresh a real account.
+it('allows refreshAll only when explicitly granted across all projects', async () => {
+  for (const permissions of [['refreshAll'], ['*']]) {
+    const { token } = await createDashboardApiToken(context, { name: 'Quota refresh', permissions });
+    const schema = await request(token, '/api/schema').then(r => r.json());
+    expect(schema.actions).toContain('refreshAll');
+    expect(schema.token).toEqual({ name: 'Quota refresh', permissions, projectPaths: [] });
+    expect((await request(token, '/api/message', action('refreshAll'))).status).toBe(200);
+  }
+  const project = await createDashboardApiToken(context, { name: 'Project only', projectPath: first, permissions: ['*'] });
+  expect((await request(project.token, '/api/schema').then(r => r.json())).actions).not.toContain('refreshAll');
+  const denied = await request(project.token, '/api/message', action('refreshAll'));
+  expect(denied.status).toBe(403); expect((await denied.json()).error).toContain('all-project token');
+  const read = await createDashboardApiToken(context, { name: 'State only', permissions: ['state'] });
+  expect((await request(read.token, '/api/message', action('refreshAll'))).status).toBe(403);
+  expect(dispatch).toHaveBeenCalledTimes(2);
+});
+
+it('accepts local target aliases without permitting a remote project target', async () => {
+  const { token } = await createDashboardApiToken(context, { name: 'Project', projectPath: first, permissions: ['getProjectBoard'] });
+  for (const targetDeviceId of ['local', 'host-pc']) {
+    expect((await request(token, '/api/message', action('getProjectBoard', { targetDeviceId }))).status).toBe(200);
+    expect(dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ payload: { projectPath: first, targetDeviceId: undefined } });
+  }
+  expect((await request(token, '/api/message', action('getProjectBoard', { targetDeviceId: 'remote' }))).status).toBe(403);
+  expect(dispatch).toHaveBeenCalledTimes(2);
+});
+
+it('keeps scope failures closed but reports unavailable ownership and folders as retryable', async () => {
+  const { token } = await createDashboardApiToken(context, { name: 'Project', projectPath: first, permissions: ['getCodexCliSessionMessages'] });
+  const missing = await request(token, '/api/message', action('getCodexCliSessionMessages', { sessionId: 'missing' }));
+  expect(missing.status).toBe(503); expect(missing.headers.get('retry-after')).toBe('2');
+  expect((await missing.json()).error).toContain('ownership is unavailable');
+  const absent = await createDashboardApiToken(context, { name: 'Offline folder', projectPath: join(root, 'absent'), permissions: ['getProjectBoard'] });
+  const response = await request(absent.token, '/api/message', action('getProjectBoard'));
+  expect(response.status).toBe(503); expect(dispatch).not.toHaveBeenCalled();
+  const invalid = await request(token, '/api/message', action('invalid'));
+  expect(invalid.status).toBe(400); expect(invalid.headers.get('content-type')).toContain('application/json');
+  expect((await invalid.json()).error).toContain('/api/schema');
 });

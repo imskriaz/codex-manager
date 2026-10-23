@@ -43,19 +43,15 @@ it('retains compact account tags through SQLite reopen and clearing', async () =
   expect(readAccountIndex(reopened).accounts[0]?.tags).toEqual([]);
 });
 
-it('persists home-scoped manual selection holds in the existing account header across reopen', async () => {
+it('removes retired manual pause metadata when the account header is saved', async () => {
   const store = await open();
   const index = { accounts: [{ id: 'manual', email: 'manual@example.test', createdAt: 1, updatedAt: 1 }],
-    manualSelectionByCodexHome: { first: { accountId: 'manual' }, second: { accountId: 'pending', awaitingQuota: true } } };
+    manualSelectionByCodexHome: { first: { accountId: 'manual' } } };
   saveAccountIndex(store, index);
-  expect(readAccountIndex(store).manualSelectionByCodexHome).toEqual(index.manualSelectionByCodexHome);
   store.close(); stores.delete(store);
   const reopened = await open();
-  expect(readAccountIndex(reopened).manualSelectionByCodexHome).toEqual(index.manualSelectionByCodexHome);
-  const next = readAccountIndex(reopened);
-  delete next.manualSelectionByCodexHome!.first;
-  saveAccountIndex(reopened, next);
-  expect(readAccountIndex(reopened).manualSelectionByCodexHome).toEqual({ second: index.manualSelectionByCodexHome.second });
+  expect(readAccountIndex(reopened)).not.toHaveProperty('manualSelectionByCodexHome');
+  expect(readAccountIndex(reopened).accounts[0]!.id).toBe('manual');
 });
 function legacy(initial: Record<string, unknown> = {}) {
   const values = new Map(Object.entries(initial));

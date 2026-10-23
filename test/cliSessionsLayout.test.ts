@@ -47,7 +47,7 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain("onActionFeedback={showNotice}");
     expect(main).not.toContain('feedback.message.startsWith("The session action completed, but the session list could not refresh:")');
     expect(css).toContain("touch-action: pan-x");
-    expect(source).toContain("Reconnecting · live updates paused");
+    expect(source).toContain("Reconnecting");
     expect(source).not.toContain("Reconnecting. Your draft is saved; sending is available after the conversation reconnects.");
     expect(source).toContain("function ImagePreview");
     expect(source).toContain("function ImageLightbox");
@@ -191,14 +191,14 @@ describe("sessions sidebar layout", () => {
     expect(source).not.toContain("Session ID</span>");
   });
 
-  it("uses Sessions in navigation while Settings exposes the experimental workspace toggle", () => {
+  it("uses Sessions in navigation while Settings exposes the workspace toggle", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
 
     expect(main).toContain('"Running sessions"');
     expect(main).not.toContain('"PCs and CLI sessions"');
     expect(main).toContain("mergeCachedCliSessions");
-    expect(settings).toContain('"Enable workspace (Experimental)"');
+    expect(settings).toContain('"Enable workspace"');
     expect(settings).toContain("Add chats and terminals to this dashboard.");
     const dashboardStart = settings.indexOf(': "Web Dashboard"');
     const dashboardEnd = settings.indexOf("</SettingsToggleBlock>", settings.indexOf("WS Cross System"));
@@ -216,7 +216,7 @@ describe("sessions sidebar layout", () => {
     expect(settings).toContain("crossWindowAccountModeTitle");
   });
 
-  it("labels Auto Resume experimental and leaves its switch available without Session Integration", () => {
+  it("presents Auto Resume as supported and leaves its switch available without Session Integration", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const workbench = readFileSync("src/presentation/workbench/accountsWorkbench.ts", "utf8");
     const autoSwitchStart = settings.indexOf("title={props.copy.autoSwitchTitle}");
@@ -224,7 +224,7 @@ describe("sessions sidebar layout", () => {
     const toggle = settings.slice(toggleStart, settings.indexOf("</SettingsToggleBlock>", toggleStart));
     const autoSwitchEnd = settings.lastIndexOf("</SettingsToggleBlock>", toggleStart);
 
-    expect(getDashboardCopy("en").autoResumeTitle).toContain("Experimental");
+    expect(getDashboardCopy("en").autoResumeTitle).toBe("Auto resume sessions");
     expect(autoSwitchStart).toBeGreaterThan(-1);
     expect(toggleStart).toBeGreaterThan(-1);
     expect(autoSwitchEnd).toBeGreaterThan(autoSwitchStart);

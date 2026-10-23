@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   resolveOverviewContextAction,
   resolveOverviewRefreshMode,
-  resolveOverviewPopoverPosition,
   resolveOverviewToolbarActionCount,
   resolveOverviewToolbarLabel,
   resolveResetCreditBadgeLabel
@@ -153,17 +152,6 @@ describe("overview actions", () => {
     expect(overview).toContain("overview-inline-add-panel");
     expect(main).toContain("emptyAccountContent={!overviewAccount ? renderAddAccount(true, true) : undefined}");
     expect(overview).toContain('resolveOverviewToolbarLabel("sync", props.lang)');
-  });
-
-  it("positions the More menu in the viewport-level layer below its trigger", () => {
-    expect(resolveOverviewPopoverPosition({ bottom: 80, right: 334 }, 357, 667, 240)).toEqual({ top: 85, right: 23 });
-    expect(resolveOverviewPopoverPosition({ bottom: 80, right: 355 }, 357, 667, 240)).toEqual({ top: 85, right: 8 });
-    expect(resolveOverviewPopoverPosition({ bottom: 360, right: 355 }, 844, 390, 240).top).toBe(142);
-
-    const source = readFileSync("webview-src/dashboard/overviewSection.tsx", "utf8");
-    expect(source).toContain('class="claim-popover claim-popover-portal overview-more-menu"');
-    expect(source).toContain("morePopoverContentRef.current?.contains(target)");
-    expect(source).toMatch(/overview-more-menu[\s\S]*document\.body/);
   });
 
   it("keeps Lock and Unlock available alongside the Codex workspace actions", () => {

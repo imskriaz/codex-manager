@@ -9,28 +9,32 @@ import { waitWithin } from '../utils/concurrency';
 import { PROJECT_API_ACTIONS, apiTokenProjects } from '../domain/dashboard/apiActions';
 export { PROJECT_API_ACTIONS } from '../domain/dashboard/apiActions';
 
-export async function authorizeApiMessage(token: DashboardApiToken, message: DashboardClientMessage): Promise<DashboardClientMessage> {
+export class ApiPermissionError extends Error {}
+
+export async function authorizeApiMessage(token: DashboardApiToken, message: DashboardClientMessage, localDeviceId?: string): Promise<DashboardClientMessage> {
   const projects = apiTokenProjects(token);
   if (message.type === 'dashboard:setting') {
-    if (projects.length || !hasApiPermission(token, 'settings')) throw new Error('This token cannot change global settings.');
+    if (projects.length || !hasApiPermission(token, 'settings')) throw new ApiPermissionError('This token cannot change global settings.');
     return message;
   }
-  if (message.type !== 'dashboard:action' || !hasApiPermission(token, message.action)) throw new Error('This token does not permit that operation.');
+  if (message.type !== 'dashboard:action' || !hasApiPermission(token, message.action)) throw new ApiPermissionError('This token does not permit that operation.');
   if (!projects.length) return message;
-  if (!PROJECT_API_ACTIONS.has(message.action) || message.payload?.targetDeviceId || message.accountId) throw new Error('This operation is outside the token project scope.');
+  const target = message.payload?.targetDeviceId;
+  if (!PROJECT_API_ACTIONS.has(message.action) || target && target !== 'local' && target !== localDeviceId || message.accountId) throw new ApiPermissionError(`Operation ${message.action} is outside this token project scope. Account operations such as refreshAll require an all-project token.`);
   const requestedProject = message.payload?.projectPath ?? (projects.length === 1 ? projects[0] : undefined);
   let sessionProject: string | undefined;
-  if (message.action === 'resumeCodexSessions' && !message.payload?.sessionId) throw new Error('Choose one session inside this token project. Bulk recovery requires an all-project token.');
+  if (message.action === 'resumeCodexSessions' && !message.payload?.sessionId) throw new ApiPermissionError('Choose one session inside this token project. Bulk recovery requires an all-project token.');
   if (message.payload?.sessionId) {
     const session = await waitWithin(readCodexCliSessionSummary(message.payload.sessionId), 5000, 'Session ownership could not be verified. Retry when connected.');
     sessionProject = session?.projectPath;
-    if (!sessionProject || !projects.some(project => projectTaskKey(project) === projectTaskKey(sessionProject!))) throw new Error('This session is outside the token project scope.');
+    if (!sessionProject) throw new Error('Session ownership is unavailable. Reconnect the host and retry. No operation was started.');
+    if (!projects.some(project => projectTaskKey(project) === projectTaskKey(sessionProject!))) throw new ApiPermissionError('This session is outside the token project scope.');
   }
-  if (!requestedProject && !sessionProject) throw new Error('Choose a projectPath from this token scope.');
-  if (requestedProject && !projects.some(allowed => projectTaskKey(allowed) === projectTaskKey(requestedProject))) throw new Error('This token cannot access another project.');
+  if (!requestedProject && !sessionProject) throw new ApiPermissionError('Choose a projectPath from this token scope.');
+  if (requestedProject && !projects.some(allowed => projectTaskKey(allowed) === projectTaskKey(requestedProject))) throw new ApiPermissionError('This token cannot access another project.');
   const project = await resolveWorkspaceProjectPathAsync(requestedProject ?? sessionProject);
-  if (!projects.some(allowed => projectTaskKey(allowed) === projectTaskKey(project)) || sessionProject && projectTaskKey(sessionProject) !== projectTaskKey(project)) throw new Error('This token cannot access another project.');
-  return { ...message, payload: { ...message.payload, projectPath: project } };
+  if (!projects.some(allowed => projectTaskKey(allowed) === projectTaskKey(project)) || sessionProject && projectTaskKey(sessionProject) !== projectTaskKey(project)) throw new ApiPermissionError('This token cannot access another project.');
+  return { ...message, payload: { ...message.payload, targetDeviceId: undefined, projectPath: project } };
 }
 
 /** Mutations can return a global refreshed session list; never leak it through a project token. */

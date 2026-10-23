@@ -175,7 +175,7 @@ const en: DashboardCopy = {
   autoSwitchReloadTitle: "Reload after auto switch",
   autoSwitchReloadSub:
     "Reload VS Code after switching accounts.",
-  autoResumeTitle: "Auto resume sessions (Experimental)",
+  autoResumeTitle: "Auto resume sessions",
   autoResumeGoalOnlyTitle: "Resume running goals only",
   autoResumeGoalOnlySub: "Filter saved running chats to active or quota-paused goals. Paused goals stay paused.",
   autoResumeSub:

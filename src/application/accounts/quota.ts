@@ -676,12 +676,6 @@ async function evaluateAutoSwitchForActiveQuota(
     }
     return false;
   }
-  if (await repo.isAutoSwitchManuallyHeld?.(active.id, true)) {
-    deferredForSessions = false;
-    sessionWaitNotice = undefined;
-    if (options.userInitiated) void vscode.window.showWarningMessage("Auto Switch is paused after your manual selection. Select an account with available quota to resume.");
-    return false;
-  }
   if (isAutoSwitchLocked(active.id)) {
     if (options.userInitiated) {
       void vscode.window.showInformationMessage("Auto Select skipped — active account is locked.");
@@ -915,7 +909,7 @@ async function evaluateAutoSwitchForActiveQuota(
   if (
     !latestActive ||
     latestActive.id !== active.id ||
-    await repo.isAutoSwitchManuallyHeld?.(active.id) ||
+    isAutoSwitchLocked(active.id) ||
     !isAutoSelectionStillNeeded(latestActive, options.ignoreEnabled === true) ||
     !latestNext ||
     latestNext.isActive ||
@@ -1078,7 +1072,7 @@ async function executeActiveResetPlan(
   const redeemed = await redeemAccountResetCredit(
     repo,
     active.id,
-    async (account) => account.isActive && !(await repo.isAutoSwitchManuallyHeld?.(active.id)) && (canUseAccount?.(account.id) ?? true) &&
+    async (account) => account.isActive && !isAutoSwitchLocked(active.id) && (canUseAccount?.(account.id) ?? true) &&
       isAutoSelectionStillNeeded(account) && isAutomaticResetAllowed(account, accountOverride) &&
       (!accountOverride || allAccountsWeeklyExhausted((await repo.listAccounts()).filter(candidate => canUseAccount?.(candidate.id) ?? true))),
     () => refreshResetQuota(repo, view, active.id)
@@ -1134,7 +1128,7 @@ async function executeResetPlan(
     next.id,
     async (account) =>
       !account.isActive &&
-      !(await repo.isAutoSwitchManuallyHeld?.(active.id)) &&
+      !isAutoSwitchLocked(active.id) &&
       (canUseAccount?.(account.id) ?? true) &&
       isAutomaticResetAllowed(account, accountOverride) &&
       (!accountOverride || allAccountsWeeklyExhausted((await repo.listAccounts()).filter(candidate => canUseAccount?.(candidate.id) ?? true))) &&
@@ -1292,7 +1286,7 @@ async function finishAutoSwitchReload(
 
 async function isExpectedActiveAccount(repo: AccountsRepository, accountId: string): Promise<boolean> {
   const account = await repo.getAccount(accountId);
-  return account?.isActive === true && !(await repo.isAutoSwitchManuallyHeld?.(accountId));
+  return account?.isActive === true && !isAutoSwitchLocked(accountId);
 }
 
 export async function maybeWarnForAccount(

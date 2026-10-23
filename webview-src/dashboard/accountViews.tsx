@@ -1,3 +1,4 @@
+import { useAnchoredPopover } from './anchoredPopover';
 import { createPortal } from "preact/compat";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { DashboardCopy, DashboardState } from "../../src/domain/dashboard/types";
@@ -81,24 +82,9 @@ export function BatchSelectionBar(props: {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [popoverPosition, setPopoverPosition] = useState({ top: 0, right: 0 });
   const anyPending = props.refreshPending || props.resyncPending || props.removePending || props.sharePending;
 
-  useEffect(() => {
-    if (!open) return;
-    const updatePosition = (): void => {
-      const rect = rootRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      setPopoverPosition({ top: rect.bottom + 5, right: Math.max(8, window.innerWidth - rect.right) });
-    };
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [open]);
+  useAnchoredPopover(open, rootRef, popoverRef);
 
   useEffect(() => {
     if (!open) return;
@@ -143,7 +129,7 @@ export function BatchSelectionBar(props: {
                 ref={popoverRef}
                 class="batch-menu-popover"
                 role="menu"
-                style={{ top: `${popoverPosition.top}px`, right: `${popoverPosition.right}px` }}
+
               >
                 <button
                   type="button"

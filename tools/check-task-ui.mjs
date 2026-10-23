@@ -1,3 +1,4 @@
+import { assertFlyoutNear } from './check-lists-api-ui.mjs';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
@@ -44,6 +45,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   const runningCard = page.locator('.task-board-card').filter({hasText:'Running workspace task'});
   await page.evaluate(() => { window.__failTaskSaves=true; });
   await page.getByRole('button',{name:'Actions for Running workspace task',exact:true}).click();
+  await assertFlyoutNear(page, page.getByRole('button',{name:'Actions for Running workspace task',exact:true}), page.getByRole('menu',{name:'Actions for Running workspace task',exact:true}));
   await page.getByRole('menuitem',{name:'Hide from boards',exact:true}).click();
   await page.getByText('This task changed in another browser. Your draft was kept.',{exact:true}).first().waitFor();
   assert.equal(await runningCard.count(),1,'A failed hide keeps the session visible');
@@ -394,7 +396,9 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await tokenForm.getByRole('button', { name: 'Close token form', exact: true }).click();
     await api.getByRole('tab', { name: 'Explorer', exact: true }).click();
     await api.getByText('POST /api/message', { exact: true }).waitFor();
+    await page.route('**/api/schema', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ actions: ['getProjectBoard'], token: { name: 'Scoped automation', projectPaths: ['C:/host-project'] } }) }));
     await api.getByRole('tab', { name: 'Test', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.api-test-form select')?.value === 'getProjectBoard' && ![...document.querySelectorAll('.api-test-form button')].find(button => button.textContent === 'Send request once')?.disabled);
     assert.equal(await api.getByRole('button', { name: 'Send request once', exact: true }).isDisabled(), false, 'API tester can use the newly created token');
     await page.screenshot({ path: path.join(output, `api-access-${width}x${height}.png`) });
     await api.getByRole('button', { name: 'Close', exact: true }).click();

@@ -5,6 +5,8 @@ import * as vscode from "vscode";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as safeReads from '../src/utils/safeFileReads';
+import * as fileSystem from 'fs/promises';
+vi.mock('fs/promises', {spy:true});
 import {
   parseCodexAppServerThreadItems,
   resolveRecordedSessionProject,
@@ -40,6 +42,29 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it('bounds project discovery, shares concurrent reads, and reuses the short cache', async()=>{
+    const home=await mkdtemp(path.join(os.tmpdir(),'codex-bounded-projects-'));roots.push(home);
+    const folders=Array.from({length:20},(_,index)=>path.join(home,`project-${index}`));
+    const db=new DatabaseSync(path.join(home,'state_5.sqlite'));
+    db.exec('CREATE TABLE threads (id TEXT, cwd TEXT); CREATE TABLE project_roots (project_id TEXT, position INTEGER, path TEXT)');
+    folders.forEach((folder,index)=>db.prepare('INSERT INTO project_roots VALUES (?, ?, ?)').run('p',index,folder));db.close();
+    const {stat:original}=await vi.importActual<typeof fileSystem>('fs/promises');let active=0,maxActive=0,probes=0,release!:()=>void;
+    const stat=vi.spyOn(fileSystem,'stat').mockImplementation(((file: string,...args:unknown[])=>{
+      if(!folders.includes(String(file)))return original(file,...args as []);
+      probes++;active++;maxActive=Math.max(maxActive,active);
+      return new Promise(resolve=>{
+        const done=()=>{active--;resolve({isDirectory:()=>true});};
+        if(file===folders[0])release=done;else setTimeout(done,15);
+      });
+    }) as typeof fileSystem.stat);
+    try{
+      const [one,two]=await Promise.all([readCodexCliComposerConfig(home),readCodexCliComposerConfig(home)]);
+      expect(one).toEqual(two);expect(probes).toBe(20);expect(maxActive).toBeLessThanOrEqual(8);
+      expect(one.projects?.map(project=>project.path)).not.toContain(folders[0]);
+      expect(one.projects?.filter(project=>folders.includes(project.path))).toHaveLength(19);
+      await readCodexCliComposerConfig(home);expect(probes).toBe(20);
+    }finally{release?.();stat.mockRestore();}
+  });
   it('shares concurrent transcript snapshots without duplicating reads or messages', async()=>{
     const root=await mkdtemp(path.join(os.tmpdir(),'codex-shared-transcript-'));roots.push(root);await mkdir(path.join(root,'sessions'));
     const file=path.join(root,'sessions',`rollout-${sessionId}.jsonl`);

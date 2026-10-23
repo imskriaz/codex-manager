@@ -506,7 +506,13 @@ function languageForFile(filePath: string): string {
 
 async function readWorkspaceEnvironmentInternal(cwd: string): Promise<DashboardWorkspaceEnvironment> {
   const projectName = path.basename(cwd) || cwd;
-  const status = await runProcess("git", ["status", "--porcelain=v1", "--branch", "-z", "--", "."], cwd, GIT_TIMEOUT_MS);
+  const results = await Promise.allSettled([
+    runProcess("git", ["--no-optional-locks", "status", "--porcelain=v1", "--branch", "-z", "--", "."], cwd, GIT_TIMEOUT_MS),
+    runProcess("git", ["diff", "--numstat", "--relative", "HEAD", "--", "."], cwd, GIT_TIMEOUT_MS),
+    runProcess("git", ["remote"], cwd, GIT_TIMEOUT_MS),
+    runProcess("git", ["rev-parse", "--show-prefix"], cwd, GIT_TIMEOUT_MS)
+  ]);
+  const [status, diff, remotes, prefixResult] = results.map(result => { if (result.status === 'rejected') throw result.reason; return result.value; }) as [ProcessResult, ProcessResult, ProcessResult, ProcessResult];
   if (status.timedOut) throw new Error("Git status timed out. Refresh the workspace to try again.");
   if (status.exitCode !== 0) {
     if (!/not a git repository/i.test(status.stderr)) throw new Error(status.stderr.trim() || 'Git status could not be verified. Refresh Git before retrying.');
@@ -524,12 +530,11 @@ async function readWorkspaceEnvironmentInternal(cwd: string): Promise<DashboardW
   }
 
   const gitStatus = parseWorkspaceGitStatus(status.stdout);
-  const [diff, remotes, prefixResult] = await Promise.all([
-    runProcess("git", ["diff", "--numstat", "--relative", "HEAD", "--", "."], cwd, GIT_TIMEOUT_MS),
-    runProcess("git", ["remote"], cwd, GIT_TIMEOUT_MS),
-    runProcess("git", ["rev-parse", "--show-prefix"], cwd, GIT_TIMEOUT_MS)
-  ]);
   if (prefixResult.timedOut || prefixResult.exitCode !== 0) throw new Error('Git project paths could not be verified. Refresh Git before retrying.');
+  if (remotes.timedOut || remotes.exitCode !== 0) throw new Error('Git remotes could not be verified. Refresh Git before retrying.');
+  if (diff.timedOut) throw new Error('Git change totals timed out. Refresh Git before retrying.');
+  const unborn = /^## (?:No commits yet on|Initial commit on) /.test(status.stdout);
+  if (diff.exitCode !== 0 && !unborn) throw new Error(diff.stderr.trim() || 'Git change totals could not be verified. Refresh Git before retrying.');
   const prefix = prefixResult.stdout.replace(/\r?\n$/, '');
   const changedFiles = gitStatus.changedFiles.filter(file => file.path.startsWith(prefix)).map(file => ({ ...file, path: file.path.slice(prefix.length), originalPath: file.originalPath?.startsWith(prefix) ? file.originalPath.slice(prefix.length) : undefined }));
   let additions = 0;
@@ -550,7 +555,8 @@ async function readWorkspaceEnvironmentInternal(cwd: string): Promise<DashboardW
     changedFilesTruncated: gitStatus.changedFilesTruncated || Buffer.byteLength(status.stdout, 'utf8') >= MAX_OUTPUT_BYTES,
     additions,
     deletions,
-    hasRemote: remotes.exitCode === 0 && Boolean(remotes.stdout.trim())
+    hasRemote: Boolean(remotes.stdout.trim()),
+    ...(unborn && diff.exitCode !== 0 ? { warning: 'Git change totals are unavailable until the first commit.' } : {})
   };
 }
 

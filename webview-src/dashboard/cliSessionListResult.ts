@@ -2,10 +2,14 @@ export function classifyCliSessionListResult(
   requestId: string,
   realtimeRevision: number | undefined,
   lastRealtimeRevision: number,
-  explicitRefreshRequestId?: string
+  explicitRefreshRequestId?: string,
+  requestRealtimeRevision?: number
 ): { apply: boolean; explicitRefresh: boolean; nextRealtimeRevision: number } {
   const explicitRefresh = requestId === explicitRefreshRequestId;
-  const staleRealtime = (requestId.startsWith("realtime-") || explicitRefresh) && typeof realtimeRevision === "number" && realtimeRevision <= lastRealtimeRevision;
+  const realtime = requestId.startsWith("realtime-");
+  const staleRealtime = typeof realtimeRevision === "number"
+    ? realtimeRevision < lastRealtimeRevision || (realtime || explicitRefresh) && realtimeRevision === lastRealtimeRevision
+    : !realtime && requestRealtimeRevision !== undefined && requestRealtimeRevision < lastRealtimeRevision;
   return {
     apply: !staleRealtime,
     explicitRefresh,

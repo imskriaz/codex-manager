@@ -259,10 +259,10 @@ export function SettingsOverlay(props: {
                     <SettingsToggleBlock
                       title={
                         props.lang === "zh"
-                          ? "启用工作区（实验性）"
+                          ? "启用工作区"
                           : props.lang === "zh-hant"
-                            ? "啟用工作區（實驗性）"
-                            : "Enable workspace (Experimental)"
+                            ? "啟用工作區"
+                            : "Enable workspace"
                       }
                       sub={
                         props.lang === "zh"
