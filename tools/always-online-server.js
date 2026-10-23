@@ -89,6 +89,7 @@ function signaturePayload(message) {
     sessions: message.sessions,
     accounts: message.accounts || [],
     enablementRegistry: message.enablementRegistry || [],
+    ...(message.dashboardTargets !== undefined ? { dashboardTargets: message.dashboardTargets } : {}),
     sentAt: message.sentAt
   });
 }
@@ -97,6 +98,8 @@ function isValidPeer(message) {
   if (!message || message.type !== "peer:sessions" || !boundedId(message.deviceId) ||
       !boundedText(message.deviceName, 256) || !Array.isArray(message.sessions) || message.sessions.length > 1000 ||
       typeof message.sentAt !== "number" || !Number.isFinite(message.sentAt) || typeof message.signature !== "string") return false;
+  if (message.dashboardTargets !== undefined && (!Array.isArray(message.dashboardTargets) || message.dashboardTargets.length > 128 ||
+      message.dashboardTargets.some(id => typeof id !== "string" || !id || id.length > 256) || new Set(message.dashboardTargets).size !== message.dashboardTargets.length)) return false;
   if (Math.abs(Date.now() - message.sentAt) > 120000 || !hostKey) return false;
   const expected = crypto.createHmac("sha256", Buffer.from(hostKey, "base64url"))
     .update(signaturePayload(message), "utf8").digest("base64url");

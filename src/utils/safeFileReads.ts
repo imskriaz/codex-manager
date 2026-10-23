@@ -77,7 +77,7 @@ export async function readSafeFileSnapshot(
     const buffer = Buffer.allocUnsafe(requestedBytes);
     let bytesRead = 0;
     while (bytesRead < requestedBytes) {
-      const length = Math.min(64 * 1024, requestedBytes - bytesRead);
+      const length = Math.min(1024 * 1024, requestedBytes - bytesRead);
       const read = handle.read(buffer, bytesRead, length, startOffset + bytesRead);
       const result = await beforeDeadline(read, deadline, filePath, timeoutMs);
       if (result.bytesRead === 0) break;

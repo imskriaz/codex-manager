@@ -2123,7 +2123,7 @@ export class WebDashboardServer implements vscode.Disposable {
         id: peer.deviceId,
         name: peer.deviceName,
         sessionCount: filterCliSessionsBySection(peer.sessions, "active").length,
-        connected: true,
+        connected: this.peerSockets.get(peer.deviceId)?.readyState === WebSocket.OPEN || this.peerSocket?.readyState === UndiciWebSocket.OPEN,
         local: false
       }))
     ];

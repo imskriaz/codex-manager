@@ -3221,7 +3221,11 @@ async function readArchivedSessionIds(codexHome: string, signal?: AbortSignal): 
   return ids;
 }
 
-async function readCachedCliTranscriptMessages(transcriptPath: string): Promise<CliTranscriptReadResult> {
+function readCachedCliTranscriptMessages(transcriptPath: string): Promise<CliTranscriptReadResult> {
+  return createSharedInspection(`cli-transcript:${path.resolve(transcriptPath)}`, () => readCliTranscriptSnapshot(transcriptPath));
+}
+
+async function readCliTranscriptSnapshot(transcriptPath: string): Promise<CliTranscriptReadResult> {
   const cacheKey = path.resolve(transcriptPath);
   const cached = cliTranscriptMessageCache.get(cacheKey);
   let readMode: "cached" | "appended" | "window" = "window";

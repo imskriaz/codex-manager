@@ -40,6 +40,20 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it('shares concurrent transcript snapshots without duplicating reads or messages', async()=>{
+    const root=await mkdtemp(path.join(os.tmpdir(),'codex-shared-transcript-'));roots.push(root);await mkdir(path.join(root,'sessions'));
+    const file=path.join(root,'sessions',`rollout-${sessionId}.jsonl`);
+    await writeFile(file,JSON.stringify({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:'Read once'}]}})+'\n');
+    const snapshot=safeReads.readSafeFileSnapshot;let reads=0;
+    const spy=vi.spyOn(safeReads,'readSafeFileSnapshot').mockImplementation(async(file,options)=>{
+      if(options.maxBytes===25*1024*1024){reads++;await new Promise(resolve=>setTimeout(resolve,30));}
+      return snapshot(file,options);
+    });
+    try{
+      const [one,two]=await Promise.all([readCodexCliSessionMessages(sessionId,root),readCodexCliSessionMessages(sessionId,root)]);
+      expect(reads).toBe(1);expect(one).toEqual(two);expect(one).toHaveLength(1);expect(one[0]?.text).toBe('Read once');
+    }finally{spy.mockRestore();}
+  });
   it('reads only the initial prompt, excluding injected context and uploaded file bodies', async () => {
     const root=await mkdtemp(path.join(os.tmpdir(),'codex-initial-prompt-'));roots.push(root);await mkdir(path.join(root,'sessions'));
     const record=(text:string)=>JSON.stringify({type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text}]}});

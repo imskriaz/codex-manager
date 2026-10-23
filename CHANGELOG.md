@@ -2,6 +2,9 @@
 
 ## 1.5.1
 
+- Authenticate dashboard interest in detached relay signatures consistently with current clients; reject malformed or tampered targets while retaining legacy peers. Show cached peers as disconnected when no action route exists.
+- Read large transcript snapshots in bounded 1 MB chunks and coalesce simultaneous reads, preserving byte limits, partial reads, fixed snapshot boundaries, and the five-second storage deadline.
+
 - Close previous Codex Manager tabs before reopening or restoring a dashboard, then create one fresh panel. Preserve other editors, reject dirty tabs and failed cleanup, coalesce concurrent opens, and keep recovery pending after failures.
 
 ### Included from 1.4.4-pre.1

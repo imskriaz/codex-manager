@@ -51,8 +51,8 @@ function harness(contractAvailable = true, storageReady?: Promise<unknown>) {
     setTimeout(callback: () => void) { const timer = { unref() {} }; timers.set(timer, callback); return timer; },
     clearTimeout(timer: object) { timers.delete(timer); }, setInterval() { return { unref() {} }; }, setImmediate() {} });
   const relay = vm.runInContext(`(function(){${source}\nreturn { wsServer, peers, replayEvents, eventRevisions, pendingActions, pruneEvents };})()`, context);
-  const signed = (deviceId: string, sentAt = now) => {
-    const message: Json = { type: "peer:sessions", deviceId, deviceName: deviceId, sessions: [], accounts: [], enablementRegistry: [], sentAt };
+  const signed = (deviceId: string, sentAt = now, dashboardTargets?: unknown) => {
+    const message: Json = { type: "peer:sessions", deviceId, deviceName: deviceId, sessions: [], accounts: [], enablementRegistry: [], ...(dashboardTargets !== undefined ? { dashboardTargets } : {}), sentAt };
     message.signature = createHmac("sha256", Buffer.from(hostKey, "base64url")).update(JSON.stringify(message)).digest("base64url");
     return message;
   };
@@ -83,6 +83,29 @@ function harness(contractAvailable = true, storageReady?: Promise<unknown>) {
 }
 
 describe("detached relay authenticated realtime and recovery", () => {
+  it.each([{dashboardTargets:[]},{dashboardTargets:['target']}])('authenticates current dashboard interest signatures and relays actions ($dashboardTargets)', ({dashboardTargets}) => {
+    const h=harness(),source=h.connect(),target=h.connect('target');
+    source.receive(h.signed('source',h.now(),dashboardTargets));
+    expect(source.readyState).toBe(1);
+    expect(h.relay.peers.get('source').message.dashboardTargets).toEqual(dashboardTargets);
+    h.advance(1);expect(h.heartbeat(h.signed('source',h.now(),dashboardTargets))).toBe(200);
+    source.sent=[];target.sent=[];
+    source.receive({type:'peer:action',requestId:'scoped-read',action:'listCodexCliSessions',payload:{targetDeviceId:'target'}});
+    expect(target.sent.some(message=>message.type==='peer:action'&&message.requestId==='scoped-read')).toBe(true);
+    target.receive({type:'peer:action-result',requestId:'scoped-read',status:'completed',payload:{cliSessions:[]}});
+    expect(source.sent.some(message=>message.type==='peer:action-result'&&message.status==='completed')).toBe(true);
+  });
+  it.each([null,'target',[null],[''],['a','a'],Array.from({length:129},(_,index)=>String(index)),['a'.repeat(257)]].map(dashboardTargets=>({dashboardTargets})))('rejects malformed signed dashboard targets ($dashboardTargets)', ({dashboardTargets})=>{
+    const h=harness(),socket=h.connect(),message=h.signed('source',h.now(),dashboardTargets);
+    expect(h.heartbeat(message)).toBe(400);socket.receive(message);
+    expect(socket.readyState).toBe(0);expect(h.relay.peers.size).toBe(0);
+  });
+  it('rejects dashboard interest tampering after signing',()=>{
+    const h=harness(),socket=h.connect(),message=h.signed('source',h.now(),['target']);
+    message.dashboardTargets=[];expect(h.heartbeat(message)).toBe(400);socket.receive(message);
+    expect(h.relay.peers.size).toBe(0);
+  });
+
   it('serves private-data-free startup UI and preserves the machine health endpoint', () => {
     const h = harness(), response = h.get('/workspace?device=remote');
     expect(response.statusCode).toBe(503);

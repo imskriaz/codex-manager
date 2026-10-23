@@ -50,6 +50,15 @@ afterEach(async () => {
 });
 
 describe("canonical cross-PC WebSocket domain", () => {
+  it('keeps cached peer data but reports a missing action route as disconnected',async()=>{
+    await internal.acceptPeerSession(peer());
+    expect(internal.getConnectedPeers().find((item:any)=>item.id==='other-pc').connected).toBe(false);
+    internal.peerSockets.set('other-pc',{readyState:1});
+    expect(internal.getConnectedPeers().find((item:any)=>item.id==='other-pc').connected).toBe(true);
+    internal.peerSockets.clear();internal.peerSocket={readyState:1,close:vi.fn()};
+    expect(internal.getConnectedPeers().find((item:any)=>item.id==='other-pc').connected).toBe(true);
+    expect(internal.peerSessions.has('other-pc')).toBe(true);
+  });
   it('rejects malformed peer account tags before passing them to browser filters', async () => {
     for (const tags of ['Work', [1], ['x'.repeat(25)], Array.from({ length: 11 }, (_, index) => `Tag${index}`)])
       expect(await internal.acceptPeerSession({ ...peer(), accounts: [{ id: 'tagged', email: 'tags@example.test', tags }] })).toBe(false);
