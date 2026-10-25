@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as autoResumeSelection from "../src/services/codexSessionAutoResumeSelection";
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
+import * as sidebarStartup from "../src/services/codexSidebarStartup";
 import {
   AUTO_RESUME_SESSION_IDS_KEY,
   AUTO_RESUME_OPEN_SESSION_IDS_KEY,
@@ -59,6 +60,33 @@ it("does not let a delayed startup resume override a manual account switch or di
   } finally { cancelCodexSessionAutoResume(); vi.useRealTimers(); }
 });
 
+it.each(["ready", "fallback", "failed", "cancelled"])("gates automatic conversation opens on sidebar startup: %s", async outcome => {
+  const id = "01a04882-d037-7a42-ad24-9afb61901181";
+  const state = createContext([id]);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  let release!: (value: "ready" | "fallback") => void;
+  let reject!: (error: Error) => void;
+  const waiting = vi.spyOn(sidebarStartup, "waitForCodexSidebarStartup").mockImplementation(() => new Promise((resolve, fail) => { release = resolve; reject = fail; }));
+  const open = vi.fn(async () => undefined);
+  try {
+    const work = resumePersistedCodexSessions(state.context, open);
+    await vi.waitFor(() => expect(waiting).toHaveBeenCalled());
+    expect(open).not.toHaveBeenCalled();
+    if (outcome === "cancelled") { cancelCodexSessionAutoResume(); release("ready"); }
+    else if (outcome === "failed") reject(new Error("Sidebar renderer failed"));
+    else release(outcome as "ready" | "fallback");
+    const result = await work;
+    if (["failed", "cancelled"].includes(outcome)) {
+      expect(result).toMatchObject({ opened: 0 });
+      expect(open).not.toHaveBeenCalled();
+      expect(state.read()).toEqual([id]);
+    } else {
+      expect(result).toMatchObject({ opened: 1 });
+      if (outcome === "fallback") expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("3 minutes"));
+    }
+  } finally { waiting.mockRestore(); }
+});
+
 describe("dashboard recovery list", () => {
   const id = "01a04882-d037-7a42-ad24-9afb61901181";
   it("retains interrupted reload recovery without changing running or completed state or consuming storage", () => {
@@ -101,7 +129,7 @@ beforeEach(() => {
   vi.spyOn(autoResumeSelection, "readAutoResumeGoalCandidateIds").mockResolvedValue([]);
   vi.spyOn(autoResumeSelection, "filterAutoResumeGoalSessionIds").mockImplementation(async (ids) => ids);
   vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds").mockImplementation((...args) =>
-    args[4] === "recovery" ? autoResumeSelection.filterAutoResumeGoalSessionIds(args[2] ?? [], args[0], args[3], args[5]) : selectNativeSessions(...args));
+    args[4] === "recovery" ? autoResumeSelection.filterAutoResumeGoalSessionIds(args[2] ?? [], args[0], args[3], args[5]) : selectNativeSessions(...args)).mockClear();
 
 });
 

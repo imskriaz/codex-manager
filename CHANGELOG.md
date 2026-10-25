@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.5.2-pre.1
+## 1.5.3
+
+- Wait for the main Codex sidebar startup trace before Auto Resume opens conversation tabs. Use a visible three-minute fallback when readiness cannot be confirmed, and retain recovery on an explicit sidebar startup failure or cancellation.
 
 - Close all existing Codex conversation and panel tabs before a VS Code reload so restored tabs cannot race Auto Resume into duplicates.
 
