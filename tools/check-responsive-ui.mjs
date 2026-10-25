@@ -416,6 +416,33 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response });
     });
+    if(process.argv.includes('--session-badge')){
+      await page.goto(origin+'/');
+      const badge=page.locator('#cliSessionsButton .cli-server-status-badge');
+      await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='1');
+      assert.equal(await badge.locator('i').count(),0,'Ready badge contains only the count');
+      assert.equal(await badge.getAttribute('aria-label'),'1 running sessions');
+      assert.equal(await page.locator('#cliSessionsButton .cli-server-status-badge').count(),1);
+      await page.locator('#cliSessionsButton').click();
+      await page.locator('.cli-sessions-popover').waitFor();
+      assert.equal(await page.locator('.cli-sessions-server-card').count(),0,'Popover has no redundant service card');
+      await page.evaluate(()=>{window.__holdNextSystemList=true;});
+      await page.locator('.cli-sessions-popover').getByRole('button',{name:'Refresh sessions',exact:true}).click();
+      await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-starting')?.textContent==='Starting');
+      assert.equal(await badge.locator('i').count(),1,'Starting badge has a spinner');
+      await page.screenshot({path:path.join(output,`session-badge-starting-${width}.png`)});
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldSystemList})));
+      await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='1');
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})));
+      await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-offline')?.textContent==='Offline');
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
+      await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='1');
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Badge does not cause page overflow');
+      await page.screenshot({path:path.join(output,`session-badge-ready-${width}.png`)});
+      assert.deepEqual(errors,[]);
+      results.push({width,height,checks:'Single badge: count-only ready, startup spinner, offline, reconnect, no duplicate card'});
+      await context.close();continue;
+    }
     if(process.argv.includes('--docs')){
       await captureDocsScreenshots(page,{origin,width,parentId});assert.deepEqual(errors,[]);
       results.push({width,height,checks:'documentation screenshots with fictional data'});await context.close();continue;

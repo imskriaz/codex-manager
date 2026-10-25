@@ -3508,10 +3508,7 @@ function CliSessionsMenu(props: {
             <CodexSessionsIcon />
           </span>
         </span>
-        <span class={`cli-server-status-indicator is-${serverStatus}`}><i aria-hidden="true" />{serverLabel}</span>
-        <span class="cli-running-count" aria-label={`${runningCount} running sessions`}>
-            {runningCount}
-        </span>
+        <span class={`cli-running-count cli-server-status-badge is-${serverStatus}`} role="status" aria-atomic="true" aria-label={serverStatus === "ready" ? `${runningCount} running sessions` : serverLabel}>{serverStatus !== "ready" ? <i aria-hidden="true" /> : null}{serverStatus === "ready" ? runningCount : serverLabel}</span>
       </button>
       {props.open
         ? createPortal(
@@ -3522,7 +3519,6 @@ function CliSessionsMenu(props: {
               aria-label={menuLabel}
 
             >
-              <div class="cli-sessions-server-card" role="status"><span class={`cli-server-status-indicator is-${serverStatus}`}><i aria-hidden="true" />{serverLabel}</span><span>{props.connected ? "Codex session service" : "Reconnect to inspect the local server"}</span>{props.error ? <small title={props.error}>{props.error}</small> : <small>{runningCount} running · {Math.max(0, props.sessions.length - runningCount)} waiting or interrupted</small>}</div>
               <div class="cli-sessions-popover-heading"><span>{menuLabel} · {runningCount}{props.sessions.length > runningCount ? ` · ${props.sessions.length - runningCount} interrupted` : ""}</span><button type="button" class={`cli-icon-button cli-running-refresh ${props.error ? 'has-error' : ''}`} aria-label={props.loading ? 'Refreshing sessions' : props.error ? 'Retry session refresh' : 'Refresh sessions'} title={props.error || (!props.connected ? 'System offline · showing saved sessions' : props.loading ? 'Refreshing sessions' : 'Refresh sessions')} disabled={props.loading || !props.connected} onClick={props.onRetry}>{renderRefreshIcon()}</button></div>
               <div class="cli-sessions-running-list" role="list" aria-busy={props.loading}>
                 {props.sessions.length === 0 ? <p class="cli-sessions-empty" role="status">{props.error ? "Running sessions are unavailable." : !props.connected ? "Reconnect to check running sessions." : props.loading ? "Checking sessions…" : !props.ready ? "Running status unavailable." : "No running sessions."}</p> : null}

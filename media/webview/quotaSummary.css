@@ -5627,35 +5627,14 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-sessions-entry {
   position: relative;
 }
-.cli-server-status-indicator { display:inline-flex; align-items:center; gap:4px; min-width:0; color:var(--text-muted); font-size:9px; font-weight:700; letter-spacing:.02em; white-space:nowrap; }
-.cli-server-status-indicator i { display:block; width:6px; height:6px; flex:none; border-radius:50%; background:var(--text-muted); }
-.cli-server-status-indicator.is-ready { color:var(--accent-green,#2da44e); }
-.cli-server-status-indicator.is-ready i { background:var(--accent-green,#2da44e); }
-.cli-server-status-indicator.is-starting i,.cli-server-status-indicator.is-checking i { background:var(--accent-blue); animation:button-spin .8s linear infinite; }
-.cli-server-status-indicator.is-error { color:var(--danger,var(--accent-red)); }
-.cli-server-status-indicator.is-error i { background:var(--danger,var(--accent-red)); }
-.cli-server-status-indicator.is-offline { color:var(--text-muted); }
-.cli-sessions-entry .cli-server-status-indicator { position:absolute; right:4px; bottom:-12px; padding:2px 4px; border:1px solid var(--border-muted); border-radius:5px; background:var(--bg-surface); box-shadow:var(--shadow-sm); }
-.cli-sessions-server-card { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 8px; align-items:center; margin:8px 10px 2px; padding:8px; border:1px solid var(--border-muted); border-radius:7px; background:var(--bg-base); font-size:10px; }
-.cli-sessions-server-card > span:nth-child(2) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-secondary); }
-.cli-sessions-server-card small { grid-column:1/-1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-muted); font-size:10px; }
-.cli-running-count {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  display: grid;
-  place-items: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border: 2px solid var(--bg-page);
-  border-radius: 9px;
-  background: #21c55d;
-  color: #07140b;
-  font-size: 9px;
-  font-weight: 800;
-  line-height: 1;
-}
+.cli-server-status-badge { position:absolute; top:-9px; right:-9px; display:inline-flex; align-items:center; gap:4px; max-width:86px; min-height:16px; padding:2px 5px; overflow:hidden; border:1px solid var(--border-muted); border-radius:6px; background:var(--bg-surface); box-shadow:var(--shadow-sm); color:var(--text-muted); font-size:8px; font-weight:800; letter-spacing:.01em; line-height:1; white-space:nowrap; text-overflow:ellipsis; }
+.cli-server-status-badge i { display:block; width:5px; height:5px; flex:none; border-radius:50%; background:var(--text-muted); }
+.cli-server-status-badge.is-ready { top:-5px; right:-5px; justify-content:center; box-sizing:border-box; min-width:16px; height:16px; padding:0 4px; border:2px solid var(--bg-page); border-radius:9px; background:#21c55d; color:#07140b; font-size:9px; }
+.cli-server-status-badge.is-starting i,.cli-server-status-badge.is-checking i { width:8px; height:8px; box-sizing:border-box; border:1px solid var(--border-muted); border-top-color:var(--accent-blue); background:transparent; animation:button-spin .8s linear infinite; }
+.cli-server-status-badge.is-starting,.cli-server-status-badge.is-checking { color:var(--accent-blue); }
+@media(prefers-reduced-motion:reduce) { .cli-server-status-badge i { animation:none !important; } }
+.cli-server-status-badge.is-error { color:var(--danger,var(--accent-red)); }
+.cli-server-status-badge.is-error i { background:var(--danger,var(--accent-red)); }
 
 .cli-sessions-popover {
   position: fixed;

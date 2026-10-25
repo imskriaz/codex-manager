@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.4-pre.3
+
+- Use the existing session-count position for startup status, then show only the running count once ready. Remove the separate status badge and redundant server-status card from the session popover.
+
 ## 1.5.4-pre.2
 
 - Consolidate Tools into Storage Management with storage summaries, project heatmap data, and one compact operation surface. Add a compact Codex server readiness badge and explicit Auto/Manual session resume policies while retaining queue priorities.
