@@ -517,14 +517,6 @@ export function SettingsOverlay(props: {
                       enabled={props.settings.autoResumeEnabled === true}
                       onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
                     >
-                      {props.settings.autoResumeEnabled && (
-                        <SettingsToggleBlock
-                          title={props.copy.autoResumeGoalOnlyTitle}
-                          sub={props.copy.autoResumeGoalOnlySub}
-                          enabled={props.settings.autoResumeGoalOnlyEnabled !== false}
-                          onToggle={(enabled) => patchAndSend("autoResumeGoalOnlyEnabled", enabled)}
-                        />
-                      )}
                     </SettingsToggleBlock>
                     <SettingsToggleBlock
                       title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh quotas before switching"}

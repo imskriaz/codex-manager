@@ -13,7 +13,6 @@ import {
 } from "./codexSessionResume";
 import { readSubAgentMetadata } from "../domain/sessionSource";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
-import { getCodexManagerConfiguration } from "../infrastructure/config/extensionSettings";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 import { readCodexSessionPreferences } from "./codexSessionPreferences";
@@ -25,7 +24,7 @@ type SqliteDatabase = {
 type SqliteModule = { DatabaseSync: new (file: string, options: { readOnly: boolean }) => SqliteDatabase };
 
 export function isAutoResumeGoalOnlyEnabled(): boolean {
-  return getCodexManagerConfiguration().get<boolean>("autoResumeGoalOnlyEnabled", true) === true;
+  return false;
 }
 
 /** Explicitly paused or terminal goals never auto-resume; interrupted pauses are checked separately. */

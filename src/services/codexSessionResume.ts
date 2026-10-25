@@ -1382,7 +1382,7 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
 }
 
 /** Resolve restored custom documents before closing them to avoid provider restore races. */
-export async function closeOpenCodexSessionTabs(signal?: AbortSignal, includePanels = false): Promise<void> {
+export async function closeOpenCodexSessionTabs(signal?: AbortSignal, includePanels = false, resolveDocuments = true): Promise<void> {
   signal?.throwIfAborted();
   const readTabs = () => (vscode.window.tabGroups?.all ?? []).flatMap(group => group.tabs)
     .filter(tab => {
@@ -1394,10 +1394,10 @@ export async function closeOpenCodexSessionTabs(signal?: AbortSignal, includePan
     if (readTabs().some(tab => tab.isDirty)) throw new Error("A Codex conversation has unsaved changes. Save or close it, then retry Auto Resume.");
   };
   requireSavedTabs();
-  if (readTabs().some(tab => (tab.input as { viewType?: string })?.viewType === CODEX_CONVERSATION_VIEW_TYPE)) await activateOfficialCodexExtension();
+  if (resolveDocuments && readTabs().some(tab => (tab.input as { viewType?: string })?.viewType === CODEX_CONVERSATION_VIEW_TYPE)) await activateOfficialCodexExtension();
   signal?.throwIfAborted();
   const tabs = readTabs();
-  for (const tab of tabs) {
+  for (const tab of resolveDocuments ? tabs : []) {
     signal?.throwIfAborted();
     const input = tab.input as { uri?: vscode.Uri; viewType?: string };
     if (input.viewType !== CODEX_CONVERSATION_VIEW_TYPE) continue;

@@ -53,7 +53,7 @@ afterEach(async()=>{
   await removeTestDirectory(root);
 });
 
-it("captures quota-stopped parents, survives a fresh connection, verifies native editor opens, and consumes recovery",async()=>{
+it("captures quota-stopped parents, survives a fresh connection, resumes in the background, and consumes recovery",async()=>{
   store.set(namespace,snapshot,ids.slice(0,2));
   await persistOpenCodexSessions(context());
   expect(store.get(namespace,snapshot)).toEqual(ids.slice(0,2));
@@ -62,9 +62,9 @@ it("captures quota-stopped parents, survives a fresh connection, verifies native
   expect(result).toEqual({attempted:2,opened:2,failed:[]});
   expect(resumeCodexSessionWork).toHaveBeenCalledWith(ids[0], expect.any(AbortSignal));
   expect(resumeCodexSessionWork).toHaveBeenCalledWith(ids[1], expect.any(AbortSignal));
-  expect(tabs.map(tab=>tab.input.uri.path)).toEqual(ids.slice(0,2).map(id=>`/local/${id}`));
+  expect(tabs).toEqual([]);
   expect(vscode.window.tabGroups.close).toHaveBeenCalledOnce();
-  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith").map(([, uri]) => (uri as {path:string}).path)).toEqual([...ids,...ids.slice(0,2)].map(id=>`/local/${id}`));
+  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith")).toEqual([]);
   expect(store.get(namespace,queue)).toBeUndefined();expect(store.get(namespace,snapshot)).toBeUndefined();
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
 });
@@ -101,7 +101,7 @@ it("seals goal recovery before reload cleanup and restores after the open-tab sn
   store.set(namespace, snapshot, undefined);
   store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
   expect(await resumePersistedCodexSessions(context())).toEqual({ attempted: 2, opened: 2, failed: [] });
-  expect(tabs.map(tab => tab.input.uri.path)).toEqual(ids.slice(0, 2).map(id => `/local/${id}`));
+  expect(tabs).toEqual([]);
   expect(store.get(namespace, queue)).toBeUndefined();
 });
 

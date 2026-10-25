@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.4-pre.1
+
+- Resume saved Codex work in the background through the existing native/app-server path without opening conversation editor windows or waiting for the Codex sidebar. The app-server initialize handshake remains the readiness check; existing tab cleanup and per-session state checks remain active. Open a conversation manually when you want its editor.
+
 ## 1.5.4
 
 - Open reset details and require confirmation only for irreversible reset or cleanup actions; ordinary reloads start immediately.

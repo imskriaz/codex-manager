@@ -1,7 +1,5 @@
 import { vi } from "vitest";
 
-vi.mock("../src/services/codexSidebarStartup", () => ({ hasOpenCodexEditors: vi.fn(() => false), waitForCodexSidebarStartup: vi.fn(async () => "ready") }));
-
 vi.mock("../src/services/codexNativeSessionStatus", () => ({
   readNativeCodexSessionRunning: vi.fn(async () => undefined),
   waitForNativeCodexSessionReady: vi.fn(async () => undefined),

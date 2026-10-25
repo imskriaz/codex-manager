@@ -3,7 +3,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessionRecoveryMetadata, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { closeOpenCodexSessionTabs, readCodexCliSessionRecoveryMetadata, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
@@ -14,7 +14,6 @@ import { getCodexHomeStateKey } from "../codex/authFile";
 import type { DashboardCliSessionSummary } from "../domain/dashboard/types";
 import type { CodexSessionRecoveryMetadata } from "./codexSessionResume";
 import { resumeCodexSessionWork } from "./codexSessionRecovery";
-import { hasOpenCodexEditors, waitForCodexSidebarStartup } from "./codexSidebarStartup";
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
 export const AUTO_RESUME_OPEN_SESSION_IDS_KEY = "codexManager.autoResumeOpenSessionIds";
@@ -24,7 +23,7 @@ export const MAX_AUTO_RESUME_SESSIONS = 200;
 const OPERATION_TIMEOUT_MS = 30_000;
 const PER_SESSION_OPEN_TIMEOUT_MS = 135_000;
 const STORAGE_TIMEOUT_MS = 5_000;
-type AutoResumeContext = Pick<vscode.ExtensionContext, "workspaceState"> & Partial<Pick<vscode.ExtensionContext, "logUri">>;
+type AutoResumeContext = Pick<vscode.ExtensionContext, "workspaceState">;
 type OperationKind = "capture" | "restore" | "track" | "close";
 type Operations = { tail: Promise<unknown>; capture?: Promise<unknown>; restore?: Promise<unknown>; track?: Promise<unknown>; close?: Promise<unknown> };
 const operations = new WeakMap<object, Operations>();
@@ -567,7 +566,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
     }
   };
   const configuration = onDidChangeConfiguration((event) => {
-    if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled") || event.affectsConfiguration("codexManager.autoResumeEnabled") ||
+    if (event.affectsConfiguration("codexManager.autoResumeEnabled") ||
         event.affectsConfiguration("codexManager.autoSwitchEnabled")) refreshSubscription();
   });
   const inspections = onDidInspectRunningCodexSessions(home => {
@@ -586,17 +585,17 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   } };
 }
 
-/** Acknowledge each successful tab; leave failed/uncertain opens durable for retry. */
+/** Resume each saved session in the background; leave failed/uncertain work durable for retry. */
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
   openSession: (sessionId: string, signal?: AbortSignal) => Promise<void> = (sessionId, signal) =>
-    openCodexSessionInVsCode(sessionId, signal, true, 120_000).then(() => resumeCodexSessionWork(sessionId, signal)).then(() => undefined),
-  closeSessions: (signal?: AbortSignal) => Promise<void> = signal => closeOpenCodexSessionTabs(signal, true)
+    resumeCodexSessionWork(sessionId, signal).then(() => undefined),
+  closeSessions: (signal?: AbortSignal) => Promise<void> = signal => closeOpenCodexSessionTabs(signal, true, false)
 ): Promise<AutoResumeResult> {
   const controller = new AbortController();
   restoreControllers.add(controller);
   const restore = async (): Promise<AutoResumeResult> => {
-    let deadline = Date.now() + 180_000;
+    const deadline = Date.now() + 180_000;
     if (!isAutoResumeAvailable()) {
       recordPersistentEvent("info", "auto-resume", "Startup recovery disabled; saved recovery cleared");
       await clearIds(context, deadline);
@@ -607,8 +606,6 @@ export function resumePersistedCodexSessions(
         controller.abort(new Error("Auto Resume was turned off. Remaining sessions were not reopened."));
       else if (event.affectsConfiguration("codexManager.codexHome"))
         controller.abort(new Error("The Codex home changed. Saved recovery was retained for its original home."));
-      else if (event.affectsConfiguration("codexManager.autoResumeGoalOnlyEnabled"))
-        controller.abort(new Error("The goal-only preference changed. Remaining sessions will be checked again on the next activation."));
     });
     try {
       controller.signal.throwIfAborted();
@@ -657,18 +654,10 @@ export function resumePersistedCodexSessions(
       autoResumeTitles.set(result, titleRecords);
       try {
         controller.signal.throwIfAborted();
-        const competingEditors = hasOpenCodexEditors();
         await bounded(() => closeSessions(controller.signal), Math.min(8_000, deadline - Date.now()),
-          "Previous Codex tabs did not finish closing within 8 seconds. Saved recovery was retained.", controller.signal);
+          "Previous Codex tabs did not finish closing within 8 seconds. Background recovery was retained.", controller.signal);
         controller.signal.throwIfAborted();
-        recordPersistentEvent("info", "auto-resume", "Previous conversation tabs closed before recovery", { count: ids.length });
-        recordPersistentEvent("info", "auto-resume", "Waiting for the main Codex sidebar before recovery");
-        const readiness = await waitForCodexSidebarStartup(context.logUri, competingEditors ? Date.now() : undefined, controller.signal);
-        controller.signal.throwIfAborted();
-        if (readiness === "fallback") void vscode.window.showWarningMessage("Codex sidebar readiness could not be confirmed after 3 minutes. Auto Resume is continuing with the timed fallback; each conversation still has its own readiness check.");
-        recordPersistentEvent("info", "auto-resume", "Codex sidebar startup wait finished", { readiness });
-        // The sidebar wait has its own budget; keep the full conversation recovery budget.
-        deadline = Date.now() + 180_000;
+        recordPersistentEvent("info", "auto-resume", "Previous Codex tabs closed before background recovery", { count: ids.length });
       } catch (error) {
         controller.abort(error);
         result.failed = ids.map(sessionId => ({ sessionId, message: error instanceof Error ? error.message : String(error) }));
@@ -757,9 +746,9 @@ export function formatAutoResumeResult(result: AutoResumeResult): string | undef
   const titles = autoResumeTitles.get(result) ?? [];
   const titleText = titles.filter((entry) => entry.status === "opened").slice(0, 3).map((entry) => `“${entry.title}”`).join(", ");
   if (!result.failed.length)
-    return `Auto resume reopened ${result.opened} Codex conversation${result.opened === 1 ? "" : "s"}${titleText ? `: ${titleText}` : ""}.`;
+    return `Auto resume resumed ${result.opened} Codex conversation${result.opened === 1 ? "" : "s"} in the background${titleText ? `: ${titleText}` : ""}.`;
   const failures = result.failed.slice(0, 3).map(failure => titles.find(entry => entry.sessionId === failure.sessionId)?.title)
     .filter((title): title is string => Boolean(title)).map(title => `“${title}”`).join(", ");
   const extra = result.failed.length > 3 ? `; and ${result.failed.length - 3} more` : "";
-  return `Auto resume reopened ${result.opened} of ${result.attempted} conversations.${failures ? ` Pending: ${failures}${extra}.` : ` ${result.failed.length} still need recovery.`} Saved work was kept; open Codex to review.`;
+  return `Auto resume resumed ${result.opened} of ${result.attempted} conversations in the background.${failures ? ` Pending: ${failures}${extra}.` : ` ${result.failed.length} still need recovery.`} Saved work was kept; open Codex to review.`;
 }

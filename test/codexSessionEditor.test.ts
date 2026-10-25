@@ -276,7 +276,7 @@ describe("Codex VS Code session editor", () => {
     const context = { workspaceState: { get: (key: string) => saved.get(key), update: async (key: string, value: unknown) => { saved.set(key, value); } } } as never;
     try {
       await prepareCodexSessionsForExtensionHostRestart(context, true, async () => ids, async () => ids);
-      expect(await resumePersistedCodexSessions(context)).toEqual({ attempted: 2, opened: 2, failed: [] });
+      expect(await resumePersistedCodexSessions(context, (id, signal) => openCodexSessionInVsCode(id, signal, true))).toEqual({ attempted: 2, opened: 2, failed: [] });
       expect(readOpenCodexSessionIds(false)).toEqual(ids);
       expect(vscode.window.tabGroups.all[0]?.tabs).toHaveLength(2);
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.focusActiveEditorGroup");

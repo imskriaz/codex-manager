@@ -98,7 +98,6 @@ describe("SQLite extension context and settings migration", () => {
     const config = getCodexManagerConfiguration();
     vi.mocked(nativeConfig.get).mockClear();
     expect(config.get("autoResumeEnabled")).toBe(true);
-    expect(config.get("autoResumeGoalOnlyEnabled")).toBe(false);
     expect(nativeConfig.get).not.toHaveBeenCalled();
     await config.update("autoResumeEnabled", false, vscode.ConfigurationTarget.Global);
     expect(nativeConfig.update).not.toHaveBeenCalled();

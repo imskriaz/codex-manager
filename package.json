@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.5.4",
+  "version": "1.5.4-pre.1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -158,13 +158,7 @@
           "type": "boolean",
           "scope": "machine",
           "default": false,
-          "markdownDescription": "With Auto Switch on, reopen previously running, unfinished parent chats after a VS Code restart. Paused goals stay paused."
-        },
-        "codexManager.autoResumeGoalOnlyEnabled": {
-          "type": "boolean",
-          "scope": "machine",
-          "default": true,
-          "markdownDescription": "Filter saved running chats to active or quota-paused goals; off also includes saved running chats without goals. Paused goals stay paused."
+          "markdownDescription": "With Auto Switch on, resume previously running, unfinished parent chats in the background after a VS Code restart. Open a Codex conversation manually when you want its editor. Paused goals stay paused."
         },
         "codexManager.crossWindowAccountModeEnabled": {
           "type": "boolean",

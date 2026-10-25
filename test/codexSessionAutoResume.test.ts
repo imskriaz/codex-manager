@@ -6,7 +6,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as autoResumeSelection from "../src/services/codexSessionAutoResumeSelection";
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
-import * as sidebarStartup from "../src/services/codexSidebarStartup";
 import {
   AUTO_RESUME_SESSION_IDS_KEY,
   AUTO_RESUME_OPEN_SESSION_IDS_KEY,
@@ -60,31 +59,19 @@ it("does not let a delayed startup resume override a manual account switch or di
   } finally { cancelCodexSessionAutoResume(); vi.useRealTimers(); }
 });
 
-it.each(["ready", "fallback", "failed", "cancelled"])("gates automatic conversation opens on sidebar startup: %s", async outcome => {
+it("resumes saved work in the background without opening a Codex editor", async () => {
   const id = "01a04882-d037-7a42-ad24-9afb61901181";
   const state = createContext([id]);
+  const open = vi.fn();
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
-  let release!: (value: "ready" | "fallback") => void;
-  let reject!: (error: Error) => void;
-  const waiting = vi.spyOn(sidebarStartup, "waitForCodexSidebarStartup").mockImplementation(() => new Promise((resolve, fail) => { release = resolve; reject = fail; }));
-  const open = vi.fn(async () => undefined);
+  const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValue("idle");
   try {
-    const work = resumePersistedCodexSessions(state.context, open);
-    await vi.waitFor(() => expect(waiting).toHaveBeenCalled());
+    const result = await resumePersistedCodexSessions(state.context);
+    expect(result).toMatchObject({ attempted: 1, opened: 1, failed: [] });
+    expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal));
     expect(open).not.toHaveBeenCalled();
-    if (outcome === "cancelled") { cancelCodexSessionAutoResume(); release("ready"); }
-    else if (outcome === "failed") reject(new Error("Sidebar renderer failed"));
-    else release(outcome as "ready" | "fallback");
-    const result = await work;
-    if (["failed", "cancelled"].includes(outcome)) {
-      expect(result).toMatchObject({ opened: 0 });
-      expect(open).not.toHaveBeenCalled();
-      expect(state.read()).toEqual([id]);
-    } else {
-      expect(result).toMatchObject({ opened: 1 });
-      if (outcome === "fallback") expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("3 minutes"));
-    }
-  } finally { waiting.mockRestore(); }
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("vscode.openWith", expect.anything(), expect.anything(), expect.anything());
+  } finally { resume.mockRestore(); }
 });
 
 describe("dashboard recovery list", () => {
@@ -295,7 +282,7 @@ describe("durable open conversation recovery", () => {
     try {
       await expect(persistOpenCodexSessions(state.context)).resolves.toEqual([first]);
       expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
-      expect(selection).toHaveBeenCalledWith(undefined, undefined, [first], expect.any(AbortSignal), "running", true, [first], [first], []);
+      expect(selection).toHaveBeenCalledWith(undefined, undefined, [first], expect.any(AbortSignal), "running", false, [first], [first], []);
       expect(sessionEditor.readRunningCodexSessionIds).not.toHaveBeenCalled();
     } finally { selection.mockRestore(); recent.mockRestore(); }
   });
@@ -1194,7 +1181,7 @@ describe("Codex session auto resume", () => {
     expect((await resumePersistedCodexSessions(state.context, open)).opened).toBe(1);
     expect(open).toHaveBeenCalledOnce();
     expect(formatAutoResumeResult({ attempted: 1, opened: 1, failed: [] })).toBe(
-      "Auto resume reopened 1 Codex conversation."
+      "Auto resume resumed 1 Codex conversation in the background."
     );
     expect(
       formatAutoResumeResult({

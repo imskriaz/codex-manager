@@ -96,7 +96,7 @@ it.each(["active", "usage_limited"])("opens and starts an unfinished %s goal aft
   });
   try {
     expect(await resumePersistedCodexSessions(state.context)).toEqual({ attempted: 1, opened: 1, failed: [] });
-    expect(tabs).toHaveLength(1);
+    expect(tabs).toHaveLength(0);
     expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(home, id, { threadId: id, input: [], cwd: home }, expect.any(AbortSignal), expect.any(Function));
     expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(["thread/goal/get", ...(status === "active" ? [] : ["thread/goal/set"])]);
     await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce());
@@ -214,7 +214,7 @@ it("captures a running sidebar goal without any conversation tab, then restores 
   const events = vi.spyOn(diagnostics, "recordPersistentEvent");
   expect(await resumePersistedCodexSessions(state.context, open)).toMatchObject({ opened: 1, failed: [] });
   expect(open.mock.calls.map(call => call[0])).toEqual([ids[0]]);
-  expect(events).toHaveBeenCalledWith("info", "auto-resume", "Startup recovery loaded", { savedCount: 1, goalOnly: true });
+  expect(events).toHaveBeenCalledWith("info", "auto-resume", "Startup recovery loaded", { savedCount: 1, goalOnly: false });
 });
 
 it("captures reload recovery from tabs and sidebar goals without scanning running history", async () => {
