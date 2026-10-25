@@ -15680,6 +15680,14 @@ html[data-theme] body .settings-modal .modal-primary-btn { background:var(--acce
 .has-workspace button.maintenance-tool { min-height:44px; padding:8px; gap:7px; }
 .has-workspace .maintenance-tool-icon { width:24px; height:24px; border:0; }
 .maintenance-workspace { min-width:0; padding:12px; border:1px solid var(--border-muted); border-radius:7px; background:var(--bg-surface); }
+.maintenance-tool-modal { width:min(1080px,calc(100vw - 32px)); max-width:none; max-height:calc(100vh - 32px); }
+.maintenance-tool-modal .dashboard-modal-body { max-height:calc(100vh - 104px); overflow:auto; }
+.maintenance-tool-modal .maintenance-workspace { padding:0; border:0; background:transparent; }
+.reset-credit-list { display:grid; gap:8px; padding:10px; border:1px solid var(--border-muted); border-radius:6px; background:var(--bg-base); }
+.reset-credit-list-heading { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
+.reset-credit-list ul { display:grid; gap:6px; max-height:180px; overflow:auto; margin:0; padding:0; list-style:none; }
+.reset-credit-list li { display:flex; justify-content:space-between; gap:12px; padding:7px 8px; border:1px solid var(--border-muted); border-radius:5px; font-size:12px; }
+.reset-credit-list li small { color:var(--text-muted); text-align:right; }
 .maintenance-workspace-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:0 0 10px; border-bottom:1px solid var(--border-muted); margin-bottom:10px; }
 .maintenance-workspace-head strong { display:block; font-size:14px; font-weight:600; }
 .maintenance-workspace-head small { display:block; color:var(--text-muted); font-size:11px; margin-top:3px; }

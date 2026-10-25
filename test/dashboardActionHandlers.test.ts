@@ -837,7 +837,7 @@ describe("executeDashboardActionMessage", () => {
     expect(result.payload?.notice?.message).toMatch(/not started|postponed/i);
   });
 
-  it("requires in-page confirmation before a browser reload", async () => {
+  it("starts a browser reload without an extra confirmation", async () => {
     setCurrentWindowRuntimeAccountId("account-before-reload");
     vi.mocked(vscode.commands.executeCommand).mockClear();
     const account = { id: "account-next", email: "next@example.com" };
@@ -850,12 +850,13 @@ describe("executeDashboardActionMessage", () => {
     const result = await executeDashboardActionMessage(context, {
       type: "dashboard:action",
       action: "reloadPrompt",
-      requestId: "req-browser-reload-unconfirmed",
+      requestId: "req-browser-reload",
       accountId: account.id
     });
 
-    expect(result.status).toBe("failed");
-    expect(result.errorMessage).toMatch(/confirm the reload/i);
+    expect(result.status).toBe("completed");
+    expect(result.payload?.reloadScheduled).toBe(true);
+    expect(result.payload?.notice?.message).toMatch(/reloading/i);
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("workbench.action.restartExtensionHost");
   });
 

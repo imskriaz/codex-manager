@@ -250,6 +250,7 @@ function App() {
   const onboardingVisibilityResolvedRef = useRef(false);
   const switchPopoverAnchor = useRef<DOMRect>();
   const [browserActionRequest, setBrowserActionRequest] = useState<BrowserActionRequest>();
+  const resetCreditRequests = useRef(new Map<string, { accountId: string; targetDeviceId?: string }>());
   const [tagEditor, setTagEditor] = useState<{ account: DashboardAccountViewModel; targetDeviceId?: string }>();
   const tagRequests = useRef(new Map<string, { accountId: string; deviceId?: string }>());
   const [tagManager, setTagManager] = useState<{ deviceId?: string }>();
@@ -471,6 +472,12 @@ function App() {
             ? "Starting the Codex session timed out. Refresh sessions before trying again."
             : "The request timed out and may still be running. Your draft is saved. Refresh this session before deciding whether to send it again."
         });
+      }
+      if (action === "getResetCredits") {
+        resetCreditRequests.current.delete(requestId);
+        setBrowserActionRequest((current) => current?.kind === "confirm" && current.action === "consumeResetCredit"
+          ? { ...current, resetCreditsLoading: false, resetCreditsError: "Reset availability could not be confirmed. Refresh quota before retrying." }
+          : current);
       }
       if (action === 'setAccountTags' || action === 'manageAccountTag') recordSubmissionResult(requestId, 'failed', 'The tag action timed out and may have completed. Your draft is kept; check the accounts before retrying.');
       if (action === "getUsageGraph" && usageGraphRequestRef.current === requestId) {
@@ -706,6 +713,18 @@ function App() {
           } else recordSubmissionResult(message.requestId, message.status === 'cancelled' ? 'cancelled' : 'failed', message.error || 'The host did not confirm the saved tags. Your draft is kept; refresh before retrying.');
         }
       }
+      if (message.type === "dashboard:action-result" && message.action === "getResetCredits") {
+        const request = resetCreditRequests.current.get(message.requestId);
+        if (request) {
+          resetCreditRequests.current.delete(message.requestId);
+          const snapshot = message.payload?.resetCredits;
+          setBrowserActionRequest((current) => current?.kind === "confirm" && current.action === "consumeResetCredit" && current.accountId === request.accountId
+            ? message.status === "completed" && snapshot
+              ? { ...current, resetCredits: snapshot, resetCreditsLoading: false, resetCreditsError: undefined }
+              : { ...current, resetCreditsLoading: false, resetCreditsError: message.error ?? "Reset availability could not be confirmed. Refresh quota before retrying." }
+            : current);
+        }
+      }
       if (onboardingOpen && message.type === "dashboard:action-result") {
         const onboardingAction = message.action;
         if (onboardingAction === "completeOnboarding" && onboardingPendingRef.current.has(onboardingAction)) {
@@ -859,17 +878,7 @@ function App() {
         message.payload.reloadAccountId &&
         !state.snapshot?.settings.autoSwitchReloadWindowEnabled
       ) {
-        const switchedAccount = state.snapshot?.accounts.find(
-          (account) => account.id === message.payload?.reloadAccountId
-        );
-        setBrowserActionRequest({
-          kind: "confirm",
-          action: "reloadPrompt",
-          accountId: message.payload.reloadAccountId,
-          title: "Reload VS Code",
-          message: `${message.action === "switch" ? "The account was switched" : "The current account was imported"}${switchedAccount ? ` (${getSensitiveDisplayValue(switchedAccount.email, state.privacyMode, "email")})` : ""}. Reload the VS Code extension host now to apply it to this window?`,
-          confirmLabel: "Reload"
-        });
+        sendAction("reloadPrompt", message.payload.reloadAccountId, { forceReload: true, automatic: true });
       }
       if (message.type === "dashboard:action-result" && message.action === "getUsageGraph" && message.requestId === usageGraphRequestRef.current) {
         usageGraphRequestRef.current = undefined;
@@ -1993,27 +2002,20 @@ function App() {
     if (action === "consumeResetCredit" && accountId) {
       const account = accountsForAction.find((candidate) => candidate.id === accountId);
       const available = account?.resetCreditsAvailable ?? 0;
-      setBrowserActionRequest({
+      const request: BrowserActionRequest = {
         kind: "confirm",
         action,
         accountId,
         targetDeviceId,
         title: "Reset your usage?",
         message: `Reset the rate limit for ${getSensitiveDisplayValue(account?.email, state.privacyMode, "email", "this account")}? ${available} reset${available === 1 ? "" : "s"} available.`,
-        confirmLabel: "Reset Rate Limit"
-      });
-      return;
-    }
-    if (action === "reloadPrompt" && accountId) {
-      setBrowserActionRequest({
-        kind: "confirm",
-        action,
-        accountId,
-        targetDeviceId,
-        title: "Reload VS Code",
-        message: "Reload the VS Code extension host so this window uses the active account?",
-        confirmLabel: "Reload"
-      });
+        confirmLabel: "Reset Rate Limit",
+        resetCreditsLoading: true
+      };
+      setBrowserActionRequest(request);
+      const requestId = sendAction("getResetCredits", accountId, { targetDeviceId, automatic: true });
+      if (requestId) resetCreditRequests.current.set(requestId, { accountId, targetDeviceId });
+      else setBrowserActionRequest(current => current?.kind === "confirm" && current.action === "consumeResetCredit" ? { ...current, resetCreditsLoading: false, resetCreditsError: "Reconnect before checking reset availability." } : current);
       return;
     }
     sendAction(action, accountId, payload);
@@ -2137,9 +2139,6 @@ function App() {
       ...('targetDeviceId' in request ? { targetDeviceId: request.targetDeviceId } : {}),
       confirmed: true
     });
-    if (request.action === "reloadPrompt") {
-      showNotice({ level: "info", message: "Reload requested. Waiting for VS Code to restart the extension host…" });
-    }
   };
 
   const cancelBrowserAction = (request: BrowserActionRequest): void => {
@@ -2151,13 +2150,19 @@ function App() {
         : request.kind === "password"
           ? `${request.title} cancelled.`
           : request.kind === "notification"
-            ? "Notification dismissed."
-            : request.kind === "disabledActiveAccount"
-              ? "The disabled account stays loaded until you manually choose Unload, including after restart."
-              : request.action === "reloadPrompt"
-                ? "Reload postponed. Use Reload when you are ready."
+              ? "Notification dismissed."
+              : request.kind === "disabledActiveAccount"
+                ? "The disabled account stays loaded until you manually choose Unload, including after restart."
                 : `${request.title} cancelled.`;
     showNotice({ level: "info", message });
+  };
+
+  const retryResetCredits = (request: BrowserActionRequest): void => {
+    if (request.kind !== "confirm" || request.action !== "consumeResetCredit" || !request.accountId) return;
+    const targetDeviceId = request.targetDeviceId === "local" ? undefined : request.targetDeviceId;
+    setBrowserActionRequest({ ...request, resetCreditsLoading: true, resetCreditsError: undefined, resetCredits: undefined });
+    const requestId = sendAction("getResetCredits", request.accountId, { targetDeviceId, automatic: true });
+    if (requestId) resetCreditRequests.current.set(requestId, { accountId: request.accountId, targetDeviceId });
   };
 
   const handleConfigureEncryptedSync = (): void => {
@@ -2950,6 +2955,7 @@ function App() {
           closeLabel={snapshot.copy.closeModal}
           onCancel={cancelBrowserAction}
           onConfirm={confirmBrowserAction}
+          onRetry={retryResetCredits}
           presentation={isBrowserDashboard ? "modal" : "popover"}
         />
       }

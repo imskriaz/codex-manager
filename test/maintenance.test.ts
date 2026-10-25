@@ -168,11 +168,13 @@ describe("additional Codex utilities", () => {
     expect(report.items).toContainEqual({ label: "Missing projects", value: "1" });
     expect(report.items).toContainEqual({ label: "Chats without a recorded project", value: "1" }); expect(mocks.remove).not.toHaveBeenCalled();
   });
-  it("checks native database health read-only and ranks contained conversation files", async () => {
+  it("checks every native database health read-only and ranks contained conversation files", async () => {
     const db = new DatabaseSync(path.join(mocks.home, "state_5.sqlite")); db.exec("CREATE TABLE example(id TEXT)"); db.close();
+    const history = new DatabaseSync(path.join(mocks.home, "thread_history_5.sqlite")); history.exec("CREATE TABLE example(id TEXT)"); history.close();
     await writeFile(path.join(mocks.home, "chat.jsonl"), "x".repeat(2048));
     mocks.sessions.mockResolvedValue([{ id: ids[0], title: "Large chat", transcriptPath: path.join(mocks.home, "chat.jsonl") }, { id: ids[1], title: "Missing chat" }]);
     expect((await api.inspectMaintenanceStorage()).items).toContainEqual({ label: "state_5.sqlite", value: expect.stringContaining("Healthy") });
+    expect((await api.inspectMaintenanceStorage()).items).toContainEqual({ label: "thread_history_5.sqlite", value: expect.stringContaining("Healthy") });
     expect((await api.inspectMaintenanceStorage("large-sessions")).items).toContainEqual({ label: "Large chat", value: "2 KB" });
     expect(mocks.remove).not.toHaveBeenCalled(); expect(mocks.clear).not.toHaveBeenCalled();
   });

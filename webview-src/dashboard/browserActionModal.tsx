@@ -2,6 +2,7 @@ import { useAnchoredPopover } from './anchoredPopover';
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { DashboardAccountViewModel, DashboardActionName, DashboardState } from "../../src/domain/dashboard/types";
+import type { CodexResetCreditsSnapshot } from "../../src/core/types";
 import { ModalShell } from "./components";
 import { getSensitiveDisplayValue } from "./helpers";
 import { useModalAccessibility } from "./primitives";
@@ -44,13 +45,16 @@ export type BrowserActionRequest =
   | {
       kind: "confirm";
       targetDeviceId?: string;
-      action: Extract<DashboardActionName, "reloadPrompt" | "remove" | "batchRemove" | "consumeResetCredit">;
+      action: Extract<DashboardActionName, "remove" | "batchRemove" | "consumeResetCredit">;
       accountId?: string;
       accountIds?: string[];
       title: string;
       message: string;
       confirmLabel: string;
       danger?: boolean;
+      resetCredits?: CodexResetCreditsSnapshot;
+      resetCreditsLoading?: boolean;
+      resetCreditsError?: string;
     }
   | {
       kind: "password";
@@ -73,6 +77,7 @@ export function BrowserActionModal(props: {
   closeLabel: string;
   onCancel: (request: BrowserActionRequest) => void;
   onConfirm: (request: BrowserActionRequest, submittedValues?: string[]) => void;
+  onRetry?: (request: BrowserActionRequest) => void;
   presentation?: "modal" | "popover";
 }) {
   const request = props.request;
@@ -335,6 +340,17 @@ export function BrowserActionModal(props: {
     >
       <div class="modal-stack">
         <div class="modal-note">{request.message}</div>
+        {request.action === "consumeResetCredit" ? (
+          <div class="reset-credit-list" aria-live="polite">
+            <div class="reset-credit-list-heading"><strong>Available resets</strong><span>{request.resetCredits?.availableCount ?? "—"}</span></div>
+            {request.resetCreditsLoading ? <div class="modal-note">Checking reset availability…</div> : request.resetCreditsError ? <div class="modal-error" role="alert">{request.resetCreditsError}</div> : request.resetCredits?.credits.length ? (
+              <ul>
+                {request.resetCredits.credits.map((credit, index) => <li key={credit.id ?? `${credit.status ?? "reset"}-${index}`}><span>{credit.reset_type || "Usage reset"}</span><small>{credit.status || "available"} · {formatResetExpiry(credit.expires_at)}</small></li>)}
+              </ul>
+            ) : <div class="modal-note">No reset credits are available.</div>}
+            {request.resetCreditsError && props.onRetry ? <button class="modal-secondary-btn" type="button" onClick={() => props.onRetry?.(request)}>Retry availability check</button> : null}
+          </div>
+        ) : null}
         <div class="modal-actions">
           <button class="modal-secondary-btn" type="button" onClick={() => props.onCancel(request)}>
             {cancelLabel}
@@ -342,6 +358,7 @@ export function BrowserActionModal(props: {
           <button
             class={`modal-primary-btn ${request.danger ? "danger" : ""}`}
             type="button"
+            disabled={request.action === "consumeResetCredit" && (request.resetCreditsLoading === true || (request.resetCredits?.availableCount ?? 0) < 1)}
             onClick={() => props.onConfirm(request)}
           >
             {request.confirmLabel}
@@ -350,6 +367,11 @@ export function BrowserActionModal(props: {
       </div>
     </Shell>
   );
+}
+
+function formatResetExpiry(value: number | undefined): string {
+  if (!value) return "Expiry unavailable";
+  return `expires ${new Date(value * 1000).toLocaleString()}`;
 }
 
 function ActionPopoverShell(props: {

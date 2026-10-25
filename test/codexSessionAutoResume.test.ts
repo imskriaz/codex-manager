@@ -490,6 +490,25 @@ describe("durable open conversation recovery", () => {
     }
   });
 
+  it("holds duplicate tab events during a failed capture retry window", async () => {
+    vi.useFakeTimers();
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+    const previousTabs = vscode.window.tabGroups;
+    let changed: (() => void) | undefined;
+    const selection = vi.spyOn(autoResumeSelection, "readAutoResumeCodexSessionIds")
+      .mockRejectedValue(new Error("metadata unavailable"));
+    Object.assign(vscode.window, { tabGroups: { all: [{ tabs: [{ input: { viewType: "chatgpt.conversationEditor", uri: { scheme: "openai-codex", authority: "route", path: `/local/${first}` } } }] }], onDidChangeTabs: (listener: () => void) => { changed = listener; return { dispose: vi.fn() }; } } });
+    const state = createContext();
+    state.set([first], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
+    const tracker = registerCodexSessionAutoResumeTracking(state.context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      changed?.(); changed?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(selection).toHaveBeenCalledOnce();
+    } finally { tracker.dispose(); selection.mockRestore(); Object.assign(vscode.window, { tabGroups: previousTabs }); vi.useRealTimers(); }
+  });
+
   it.each(["managed capture", "open-tab capture", "restore"])(
     "disables %s when Auto Switch is off even with Auto Resume saved on",
     async (operation) => {

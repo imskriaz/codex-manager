@@ -51,7 +51,7 @@ import { ShareAccessReview, ShareLinkField } from "./shareControls";
 import { getSensitiveDisplayValue } from "./helpers";
 import { normalizeNativePath } from "../../src/utils/nativePaths";
 import { readCliComposerDraft, readLegacyCliComposerDraft, writeCliComposerDraft } from "./cliSessionCache";
-import { acknowledgeCliComposerDraft, cliComposerDraftKey, resolveCliComposerSettings, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
+import { acknowledgeCliComposerDraft, cliComposerDraftKey, resolveCliComposerSettings, restoreFailedCliComposerDraft, type CliComposerDraft, type CliSubmissionResult } from "./cliSessionComposerState";
 
 export type CliSessionFeedback = DashboardNotice & { key: number };
 type WorkspaceTab = WorkspaceToolTab | `agent:${string}` | `file:${string}` | `review:${string}`;
@@ -384,8 +384,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const submitted = submittedDrafts.current.get(result.requestId);
       if (!submitted) continue;
       submittedDrafts.current.delete(result.requestId);
-      if (result.status === "completed") setComposerDrafts((current) => current[submitted.key]
-        ? { ...current, [submitted.key]: acknowledgeCliComposerDraft(current[submitted.key]!, submitted) } : current);
+      if (result.status !== "completed") setComposerDrafts((current) => current[submitted.key]
+        ? { ...current, [submitted.key]: restoreFailedCliComposerDraft(current[submitted.key]!, submitted) } : current);
     }
   }, [props.submissionResults]);
 
@@ -762,7 +762,11 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       requestId = props.onSend({ text, attachments, model, reasoningEffort, sandboxMode, projectPath: props.selectedSession.projectPath ?? projectPath });
     }
     if (!requestId) { reportLocalFeedback({ level: "warning", message: "Your message was not sent. The draft is saved; reconnect or wait for the current request before trying again." }); return; }
-    submittedDrafts.current.set(requestId, { ...composerDrafts[draftKey]!, key: draftKey, text: draft, attachments });
+    const submitted = { ...composerDrafts[draftKey]!, key: draftKey, text: draft, attachments };
+    submittedDrafts.current.set(requestId, submitted);
+    setComposerDrafts((current) => current[draftKey]
+      ? { ...current, [draftKey]: acknowledgeCliComposerDraft(current[draftKey]!, submitted) }
+      : current);
     reportLocalFeedback({ level: "info", message: canSteer ? "Sending your follow-up to the running turn…" : props.selectedSession ? "Codex is working on your request…" : "Starting a new Codex chat…" });
   };
   const addAttachments = async (files: File[]): Promise<void> => {

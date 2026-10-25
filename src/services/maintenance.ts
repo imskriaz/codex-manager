@@ -66,12 +66,14 @@ async function inspectCodexStorage(kind: CodexInspection): Promise<MaintenanceRe
     sizes.sort((a, b) => b.size - a.size);
     return { title: "Largest conversations", items: [{ label: "Conversation files checked", value: String(sizes.length) }, { label: "Unavailable files", value: String(unavailable) }, ...sizes.slice(0, 20).map(item => ({ label: item.title, value: formatBytes(item.size) }))] };
   }
-  const files = (await fs.readdir(home)).filter(name => /^(?:state|goals)_\d+\.sqlite$/.test(name)).sort();
+  const files = (await fs.readdir(home)).filter(name => /^(?:state|goals|thread_history|logs)_\d+\.sqlite$/.test(name)).sort();
   const moduleName = "node:sqlite";
   type NativeDatabase = { prepare(sql: string): { get(): Record<string, unknown> | undefined }; close(): void };
   const { DatabaseSync } = await import(moduleName) as { DatabaseSync: new (file: string, options: { readOnly: boolean }) => NativeDatabase };
+  let totalBytes = 0;
   for (const file of files) {
     const stat = await fs.lstat(path.join(home, file));
+    totalBytes += stat.size;
     if (!stat.isFile() || stat.isSymbolicLink()) { items.push({ label: file, value: "Skipped: not a regular database" }); continue; }
     let db: NativeDatabase | undefined;
     try {
@@ -81,7 +83,7 @@ async function inspectCodexStorage(kind: CodexInspection): Promise<MaintenanceRe
     } catch { items.push({ label: file, value: "Unavailable · No changes made" }); }
     finally { db?.close(); }
   }
-  return { title: "Codex storage check", items: [...(inventoryUnavailable ? [{ label: "Conversation inventory", value: "Unavailable · Review database checks" }] : [{ label: "Indexed conversations", value: String(sessions.length) }, { label: "Indexed archives", value: String(sessions.filter(session => session.archived).length) }]), ...items, ...(!files.length ? [{ label: "Native databases", value: "Not created yet" }] : [])] };
+  return { title: "Codex storage check", items: [...(inventoryUnavailable ? [{ label: "Conversation inventory", value: "Unavailable · Review database checks" }] : [{ label: "Indexed conversations", value: String(sessions.length) }, { label: "Indexed archives", value: String(sessions.filter(session => session.archived).length) }]), ...(files.length ? [{ label: "Native database files", value: `${files.length} · ${formatBytes(totalBytes)} total` }] : []), ...items, ...(!files.length ? [{ label: "Native databases", value: "Not created yet" }] : [])] };
 }
 
 function formatBytes(size: number): string {

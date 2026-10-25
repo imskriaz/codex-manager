@@ -518,8 +518,10 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   let dirty = false;
   let running = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let retryAfter = 0;
   const capture = () => {
     if (controller.signal.aborted || !isAutoResumeAvailable()) return;
+    if (Date.now() < retryAfter) return;
     dirty = true;
     if (running) return;
     if (timer) clearTimeout(timer);
@@ -531,10 +533,12 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
           dirty = false;
           try {
             await persistOpenCodexSessions(context, undefined, controller.signal);
+            retryAfter = 0;
           } catch (error) {
             if (controller.signal.aborted) break;
             recordPersistentEvent("warning", "auto-resume", "Background recovery capture failed; previous snapshot retained", undefined, error);
             // One bounded retry timer also handles metadata arriving after the tab event.
+            retryAfter = Date.now() + 30_000;
             dirty = false;
             break;
           }
@@ -553,6 +557,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
     } else {
       tabs?.dispose();
       tabs = undefined;
+      retryAfter = 0;
       if (timer) clearTimeout(timer);
       timer = undefined;
       dirty = false;

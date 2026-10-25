@@ -1796,10 +1796,7 @@ async function handleReloadPrompt(
   payload: DashboardActionPayload | undefined,
   browserHost = false
 ) {
-  if (browserHost && payload?.confirmed !== true) {
-    throw new Error("Confirm the reload in the browser dashboard, then try again.");
-  }
-  if (payload?.confirmed === true || payload?.forceReload || !account) {
+  if (browserHost || payload?.confirmed === true || payload?.forceReload || !account) {
     return {
       reloadScheduled: true,
       notice: { level: "info" as const, message: "Reloading VS Code…" }

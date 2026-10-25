@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acknowledgeCliComposerDraft, cliComposerDraftKey, normalizeCliComposerDraft, resolveCliComposerSettings } from "../webview-src/dashboard/cliSessionComposerState";
+import { acknowledgeCliComposerDraft, cliComposerDraftKey, normalizeCliComposerDraft, resolveCliComposerSettings, restoreFailedCliComposerDraft } from "../webview-src/dashboard/cliSessionComposerState";
 
 describe("durable Codex composer state", () => {
   it("separates devices and new project drafts from existing chats", () => {
@@ -16,6 +16,11 @@ describe("durable Codex composer state", () => {
     const submitted = { text: "first", attachments: [], model: "chosen" };
     expect(acknowledgeCliComposerDraft(submitted, submitted)).toEqual({ ...submitted, text: "" });
     expect(acknowledgeCliComposerDraft({ ...submitted, text: "follow-up", model: "next" }, submitted)).toEqual({ text: "follow-up", attachments: [], model: "next" });
+  });
+  it("restores a failed send without replacing newer editor content", () => {
+    const submitted = { text: "first", attachments: [], model: "chosen" };
+    expect(restoreFailedCliComposerDraft({ ...submitted, text: "" }, submitted)).toEqual(submitted);
+    expect(restoreFailedCliComposerDraft({ ...submitted, text: "follow-up" }, submitted).text).toBe("follow-up");
   });
   it("restores settings offline and validates them against the fresh model catalog", () => {
     const saved = { text: "draft", attachments: [], model: "retired", reasoningEffort: "xhigh", sandboxMode: "read-only" as const };

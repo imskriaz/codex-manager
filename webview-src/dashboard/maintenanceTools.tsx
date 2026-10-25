@@ -3,6 +3,7 @@ import { CODEX_INSPECTIONS, MAINTENANCE_TOOLS, isMaintenanceJob, mergeMaintenanc
 import type { DashboardActionName, DashboardActionPayload, DashboardHostMessage } from "../../src/domain/dashboard/types";
 import type { SendAction } from "./hookTypes";
 import { getActionTimeoutMs } from './host';
+import { ModalShell } from './primitives';
 
 const dialogTitles: Record<string, string> = { startup: "Codex UI startup", archives: "Archive manager", sessions: "Conversation cleanup", goals: "Goal manager", snapshots: "Shell snapshot cleanup", projects: "Missing projects", "large-sessions": "Largest conversations", storage: "Codex storage check" };
 
@@ -135,7 +136,8 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
     <div class="maintenance-scope"><span>System</span><strong>{props.targetName}</strong><small>{props.connected === false ? 'System offline · reconnect to run tools.' : 'Preview first. Running work stays protected.'}</small></div>
     <div class="maintenance-layout">
     <nav class="maintenance-tool-grid" aria-label="Maintenance tools">{[...MAINTENANCE_TOOLS.map(tool => ({...tool, label:dialogTitles[tool.id], inspection:false})),...CODEX_INSPECTIONS.map(tool => ({...tool,label:tool.title,inspection:true}))].map(tool => <button class="maintenance-tool" type="button" key={tool.id} aria-pressed={dialog === tool.id} disabled={props.connected === false || busy || running} onClick={() => tool.inspection ? check(tool.id) : inspect(tool.id as MaintenanceTool)}><span class="maintenance-tool-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d={tool.inspection ? 'M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm5 12 6 6' : tool.id === 'archives' ? 'M3 4h18v4H3zM5 8v12h14V8M9 12h6' : 'M5 6h14M9 6V3h6v3M7 6l1 15h8l1-15M10 10v7m4-7v7'} /></svg></span><span><strong>{tool.label}</strong><small>{tool.description}</small></span><span class="maintenance-tool-kind">{tool.inspection ? 'Inspect' : 'Manage'} →</span></button>)}</nav>
-    {dialog && props.parentOpen ? <section class="maintenance-workspace" role="region" aria-label={dialogTitles[dialog] ?? 'Codex tools'} onKeyDown={event => { if(event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); if(confirmation) setConfirmation(undefined); else setDialog(undefined); } }}>
+    <ModalShell open={Boolean(dialog && props.parentOpen)} title={dialogTitles[dialog ?? ""] ?? 'Codex tools'} closeLabel="Close tool" className="maintenance-tool-modal" onClose={() => { if (confirmation) setConfirmation(undefined); else setDialog(undefined); }}>
+      {dialog ? <section class="maintenance-workspace" role="region" aria-label={dialogTitles[dialog] ?? 'Codex tools'}>
       <header class="maintenance-workspace-head"><div><strong>{dialogTitles[dialog]}</strong><small>{origin.current.name}</small></div><button class="settings-action-btn" type="button" onClick={() => setDialog(undefined)}>All tools</button></header>
       <div class="maintenance-modal-context"><strong>{origin.current.name}</strong><span>{preview ? `${preview.count.toLocaleString()} items` : "Codex storage"}</span></div>
       {scopeChanged ? <p role="alert" class="settings-notice-warning">This preview belongs to {origin.current.name}. Choose a tool again to load {props.targetName} before changing data.</p> : null}
@@ -163,7 +165,8 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
         <div class="settings-actions"><button class="settings-action-btn" type="button" disabled={props.connected === false} onClick={refreshStatus}>Refresh status</button>{running ? <button class="settings-action-btn" type="button" disabled={props.connected === false || busy || job.cancelRequested || scopeChanged} onClick={() => act("cancelMaintenance", { maintenanceJobId: job.id })}>Cancel operation</button> : <button class="settings-action-btn" type="button" disabled={props.connected === false} onClick={() => inspect(job.tool)}>Review current data</button>}</div>
       </section> : null}
       {!busy && error && !preview && !job && !report ? <button class="settings-action-btn" type="button" disabled={props.connected === false} onClick={() => MAINTENANCE_TOOLS.some(tool => tool.id === dialog) ? inspect(dialog as MaintenanceTool) : check(dialog!)}>Retry</button> : null}
-    </section> : null}
+      </section> : null}
+    </ModalShell>
     </div>
     {!dialog && job ? <div class="maintenance-job-summary" role="status"><span>{dialogTitles[job.tool]} · {running ? 'In progress' : 'Review result'}</span><button class="settings-action-btn" type="button" onClick={() => setDialog(job.tool)}>View {running ? 'progress' : 'result'}</button></div> : null}
     {!dialog && error ? <p class="settings-notice-warning" role="alert">{error}</p> : null}

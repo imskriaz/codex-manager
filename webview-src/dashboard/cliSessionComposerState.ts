@@ -48,3 +48,10 @@ export function acknowledgeCliComposerDraft(current: CliComposerDraft, submitted
     text: current.text === submitted.text ? "" : current.text,
     attachments: JSON.stringify(current.attachments) === JSON.stringify(submitted.attachments) ? [] : current.attachments };
 }
+
+/** Restore only content that is still empty after an unconfirmed send. */
+export function restoreFailedCliComposerDraft(current: CliComposerDraft, submitted: CliComposerDraft): CliComposerDraft {
+  return { ...current,
+    text: current.text ? current.text : submitted.text,
+    attachments: current.attachments.length ? current.attachments : submitted.attachments };
+}

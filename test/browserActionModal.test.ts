@@ -6,7 +6,8 @@ describe("port dashboard action modals", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).toContain('action === "remove" && accountId');
     expect(source).toContain('action === "consumeResetCredit" && accountId');
-    expect(source).toContain('action === "reloadPrompt" && accountId');
+    expect(source).not.toContain('action === "reloadPrompt" && accountId');
+    expect(source).toContain('sendAction("reloadPrompt", message.payload.reloadAccountId, { forceReload: true, automatic: true })');
     expect(source).toContain("openBrowserSwitchPicker();");
     expect(source).toContain('kind: "notification"');
     expect(source).toContain('kind: "disabledActiveAccount"');
