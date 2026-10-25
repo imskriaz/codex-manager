@@ -14,7 +14,12 @@ export type CodexInspection = typeof CODEX_INSPECTIONS[number]["id"];
 export type MaintenanceTool = typeof MAINTENANCE_TOOLS[number]["id"];
 export type MaintenancePreview = { token: string; tool: MaintenanceTool; count: number; expiresAt: number; titles: string[] };
 export type MaintenancePage = { token: string; query: string; offset: number; total: number; items: Array<{ id: string; title: string; detail?: string }> };
-export type MaintenanceReport = { title: string; items: Array<{ label: string; value: string }> };
+export type MaintenanceStorageSummary = {
+  totalBytes: number;
+  buckets: Array<{ label: string; bytes: number; detail: string }>;
+  projects: Array<{ label: string; bytes: number; detail: string }>;
+};
+export type MaintenanceReport = { title: string; items: Array<{ label: string; value: string }>; storage?: MaintenanceStorageSummary };
 export type MaintenanceJob = { id: string; tool: MaintenanceTool; operation: "delete" | "restore"; status: "running" | "completed" | "cancelled" | "failed" | "unknown"; total: number; processed: number; cleared: number; skipped: number; failed: number; errors: string[]; cancelRequested?: boolean; previewToken?: string; revision?: number };
 const JOB_FIELDS = new Set(['id', 'tool', 'operation', 'status', 'total', 'processed', 'cleared', 'skipped', 'failed', 'errors', 'cancelRequested', 'previewToken', 'revision']);
 

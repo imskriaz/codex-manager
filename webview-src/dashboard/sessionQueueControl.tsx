@@ -4,6 +4,22 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hook
 import type { DashboardCliSessionSummary } from '../../src/domain/dashboard/types';
 import { isSessionQueuePriority } from '../../src/domain/sessionQueuePriority';
 
+export function SessionPolicySelect(props: {
+  session: DashboardCliSessionSummary;
+  globalEnabled: boolean;
+  disabled: boolean;
+  onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
+}) {
+  const enabled = props.globalEnabled ? props.session.autoResumeEnabled !== false : props.session.autoResumeEnabled === true;
+  return <label class="cli-session-policy-control" title={enabled ? "Resume automatically when the Codex server is ready" : "Resume manually only"}>
+    <span class="sr-only">Session resume policy for {props.session.title}</span>
+    <select aria-label={`Resume policy for ${props.session.title}`} value={enabled ? "auto" : "manual"} disabled={props.disabled} onChange={event => props.onAutoResume(props.session, event.currentTarget.value === "auto")}>
+      <option value="auto">Auto</option>
+      <option value="manual">Manual</option>
+    </select>
+  </label>;
+}
+
 export function SessionQueueControl(props: {
   session: DashboardCliSessionSummary; disabled: boolean;
   onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: number) => void;

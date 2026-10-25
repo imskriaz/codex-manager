@@ -1,5 +1,5 @@
 import { useAnchoredPopover } from './anchoredPopover';
-import { SessionQueueControl } from './sessionQueueControl';
+import { SessionPolicySelect, SessionQueueControl } from './sessionQueueControl';
 import { SystemLogConsole } from "./systemLogConsole";
 import { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { render } from "preact";
@@ -86,7 +86,7 @@ import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedba
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
-import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
+import { formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
 import { filterCliSessionsBySection, mergeDashboardPeers } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
@@ -3455,6 +3455,8 @@ function CliSessionsMenu(props: {
   const menuLabel = isZh ? "运行中的会话" : isHant ? "執行中的工作階段" : "Running sessions";
   const manageLabel = isZh ? "会话面板" : isHant ? "工作階段面板" : "Session dashboard";
   const runningCount = props.sessions.filter(session => session.status === "running" && (!session.remote || props.peers.some(peer => peer.id === session.deviceId && peer.connected))).length;
+  const serverStatus = !props.connected ? "offline" : props.error ? "error" : props.loading ? "starting" : props.ready ? "ready" : "checking";
+  const serverLabel = serverStatus === "ready" ? "Ready" : serverStatus === "starting" ? "Starting" : serverStatus === "checking" ? "Checking" : serverStatus === "offline" ? "Offline" : "Needs attention";
 
   useEffect(() => {
     if (!props.open) return;
@@ -3506,6 +3508,7 @@ function CliSessionsMenu(props: {
             <CodexSessionsIcon />
           </span>
         </span>
+        <span class={`cli-server-status-indicator is-${serverStatus}`}><i aria-hidden="true" />{serverLabel}</span>
         <span class="cli-running-count" aria-label={`${runningCount} running sessions`}>
             {runningCount}
         </span>
@@ -3519,6 +3522,7 @@ function CliSessionsMenu(props: {
               aria-label={menuLabel}
 
             >
+              <div class="cli-sessions-server-card" role="status"><span class={`cli-server-status-indicator is-${serverStatus}`}><i aria-hidden="true" />{serverLabel}</span><span>{props.connected ? "Codex session service" : "Reconnect to inspect the local server"}</span>{props.error ? <small title={props.error}>{props.error}</small> : <small>{runningCount} running · {Math.max(0, props.sessions.length - runningCount)} waiting or interrupted</small>}</div>
               <div class="cli-sessions-popover-heading"><span>{menuLabel} · {runningCount}{props.sessions.length > runningCount ? ` · ${props.sessions.length - runningCount} interrupted` : ""}</span><button type="button" class={`cli-icon-button cli-running-refresh ${props.error ? 'has-error' : ''}`} aria-label={props.loading ? 'Refreshing sessions' : props.error ? 'Retry session refresh' : 'Refresh sessions'} title={props.error || (!props.connected ? 'System offline · showing saved sessions' : props.loading ? 'Refreshing sessions' : 'Refresh sessions')} disabled={props.loading || !props.connected} onClick={props.onRetry}>{renderRefreshIcon()}</button></div>
               <div class="cli-sessions-running-list" role="list" aria-busy={props.loading}>
                 {props.sessions.length === 0 ? <p class="cli-sessions-empty" role="status">{props.error ? "Running sessions are unavailable." : !props.connected ? "Reconnect to check running sessions." : props.loading ? "Checking sessions…" : !props.ready ? "Running status unavailable." : "No running sessions."}</p> : null}
@@ -3538,7 +3542,7 @@ function CliSessionsMenu(props: {
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
-                    {running ? <button type="button" class={`cli-icon-button is-auto-resume ${(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true) ? "is-enabled is-active" : "is-disabled"}`} aria-pressed={props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true} aria-label={`Auto Resume for ${session.title}`} title={(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true) ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={!props.connected || offline || actionPending} onClick={() => props.onAutoResume(session, !(props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true))}><AutoResumeIcon enabled={props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true} goal={!!session.goal} /></button> : <SessionQueueControl session={session} disabled={!props.connected || !!offline || actionPending} onQueue={props.onQueue} />}
+                    <SessionPolicySelect session={session} globalEnabled={props.autoResumeEnabled} disabled={!props.connected || offline || actionPending} onAutoResume={props.onAutoResume} />{!running && (session.interrupted || session.queueEnabled) ? <SessionQueueControl session={session} disabled={!props.connected || !!offline || actionPending} onQueue={props.onQueue} /> : null}
                     </div>
                   </article>;
                 })}

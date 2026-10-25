@@ -173,8 +173,11 @@ describe("additional Codex utilities", () => {
     const history = new DatabaseSync(path.join(mocks.home, "thread_history_5.sqlite")); history.exec("CREATE TABLE example(id TEXT)"); history.close();
     await writeFile(path.join(mocks.home, "chat.jsonl"), "x".repeat(2048));
     mocks.sessions.mockResolvedValue([{ id: ids[0], title: "Large chat", transcriptPath: path.join(mocks.home, "chat.jsonl") }, { id: ids[1], title: "Missing chat" }]);
-    expect((await api.inspectMaintenanceStorage()).items).toContainEqual({ label: "state_5.sqlite", value: expect.stringContaining("Healthy") });
-    expect((await api.inspectMaintenanceStorage()).items).toContainEqual({ label: "thread_history_5.sqlite", value: expect.stringContaining("Healthy") });
+    const storageReport = await api.inspectMaintenanceStorage();
+    expect(storageReport.items).toContainEqual({ label: "state_5.sqlite", value: expect.stringContaining("Healthy") });
+    expect(storageReport.items).toContainEqual({ label: "thread_history_5.sqlite", value: expect.stringContaining("Healthy") });
+    expect(storageReport.storage?.buckets.some(bucket => bucket.label === "Databases" && bucket.bytes > 0)).toBe(true);
+    expect(storageReport.storage?.totalBytes).toBeGreaterThan(0);
     expect((await api.inspectMaintenanceStorage("large-sessions")).items).toContainEqual({ label: "Large chat", value: "2 KB" });
     expect(mocks.remove).not.toHaveBeenCalled(); expect(mocks.clear).not.toHaveBeenCalled();
   });

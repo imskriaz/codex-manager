@@ -3,7 +3,7 @@ import { ScrollMore } from './scrollMore';
 import { WorkspaceTerminal } from './workspaceTerminal';
 import { WorkspaceGit } from './workspaceGit';
 import { readChatAttachmentFiles } from './attachmentUploads';
-import { SessionQueueControl } from './sessionQueueControl';
+import { SessionPolicySelect, SessionQueueControl } from './sessionQueueControl';
 import { createPortal } from "preact/compat";
 import type { JSX } from "preact";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -721,9 +721,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   ) : (
     (() => {
       const running = isCodexSessionRunning(session);
-      const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
-      const hasGoal = Boolean(session.goal && ["active", "usage_limited", "paused"].includes(session.goal.status));
-      const autoResumeLabel = `${autoResume ? "Disable" : "Enable"} Auto Resume for ${session.title}${hasGoal ? " (goal included)" : ""}`;
       return <div role="listitem" draggable class={`cli-session-row ${grouped ? "is-grouped" : ""} ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
@@ -733,8 +730,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       </span> : null}
       <span class="cli-session-row-actions">
         {running ? <>
-          <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={autoResumeLabel} title={autoResumeLabel} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={hasGoal} /></IconButton>
-        </> : session.interrupted || session.queueEnabled ? <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} /> : null}
+          <SessionPolicySelect session={session} globalEnabled={props.autoResumeEnabled} disabled={props.mutating || props.connected === false} onAutoResume={props.onAutoResume} />
+        </> : <><SessionPolicySelect session={session} globalEnabled={props.autoResumeEnabled} disabled={props.mutating || props.connected === false} onAutoResume={props.onAutoResume} />{session.interrupted || session.queueEnabled ? <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} /> : null}</>}
       </span>
       </div>;
     })()

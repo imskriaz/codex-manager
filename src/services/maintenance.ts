@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { CODEX_INSPECTIONS, MAINTENANCE_TOOLS, type CodexInspection, type MaintenanceJob, type MaintenancePreview, type MaintenancePage, type MaintenanceTool, type MaintenanceReport } from "../domain/maintenance";
+import { CODEX_INSPECTIONS, MAINTENANCE_TOOLS, type CodexInspection, type MaintenanceJob, type MaintenancePreview, type MaintenancePage, type MaintenanceTool, type MaintenanceReport, type MaintenanceStorageSummary } from "../domain/maintenance";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { readCodexSessionGoals } from "./codexSessionGoals";
 import { clearCodexSessionGoal, deleteCodexCliSession, unarchiveCodexCliSession, readCodexCliSessionSummary, readCodexArchiveMaintenanceState, readCodexSessionMaintenanceCandidates, resolveCodexHome, SESSION_ID_PATTERN, withCodexSessionMaintenance } from "./codexSessionResume";
@@ -83,12 +83,38 @@ async function inspectCodexStorage(kind: CodexInspection): Promise<MaintenanceRe
     } catch { items.push({ label: file, value: "Unavailable · No changes made" }); }
     finally { db?.close(); }
   }
-  return { title: "Codex storage check", items: [...(inventoryUnavailable ? [{ label: "Conversation inventory", value: "Unavailable · Review database checks" }] : [{ label: "Indexed conversations", value: String(sessions.length) }, { label: "Indexed archives", value: String(sessions.filter(session => session.archived).length) }]), ...(files.length ? [{ label: "Native database files", value: `${files.length} · ${formatBytes(totalBytes)} total` }] : []), ...items, ...(!files.length ? [{ label: "Native databases", value: "Not created yet" }] : [])] };
+  const reportItems = [...(inventoryUnavailable ? [{ label: "Conversation inventory", value: "Unavailable · Review database checks" }] : [{ label: "Indexed conversations", value: String(sessions.length) }, { label: "Indexed archives", value: String(sessions.filter(session => session.archived).length) }]), ...(files.length ? [{ label: "Native database files", value: `${files.length} · ${formatBytes(totalBytes)} total` }] : []), ...items, ...(!files.length ? [{ label: "Native databases", value: "Not created yet" }] : [])];
+  return { title: "Codex storage check", items: reportItems, storage: await summarizeCodexStorage(home, sessions, totalBytes) };
 }
 
 function formatBytes(size: number): string {
   const unit = size >= 1024 ** 3 ? 3 : size >= 1024 ** 2 ? 2 : size >= 1024 ? 1 : 0;
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(size / 1024 ** unit)} ${["B", "KB", "MB", "GB"][unit]}`;
+}
+
+async function summarizeCodexStorage(home: string, sessions: Awaited<ReturnType<typeof readCodexSessionMaintenanceCandidates>>, databaseBytes: number): Promise<MaintenanceStorageSummary> {
+  const root = path.resolve(home), buckets = new Map<string, number>(), projects = new Map<string, number>(), seen = new Set<string>();
+  const add = async (file: string | undefined, bucket: string, project?: string): Promise<void> => {
+    if (!file) return;
+    try {
+      const resolved = await fs.realpath(file), relative = path.relative(root, resolved);
+      if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`) || seen.has(resolved)) return;
+      const stat = await fs.lstat(resolved);
+      if (!stat.isFile() || stat.isSymbolicLink()) return;
+      seen.add(resolved);
+      buckets.set(bucket, (buckets.get(bucket) ?? 0) + stat.size);
+      if (project) projects.set(project, (projects.get(project) ?? 0) + stat.size);
+    } catch { /* Missing or locked files do not hide the rest of the summary. */ }
+  };
+  buckets.set("Databases", databaseBytes);
+  for (const session of sessions) await add(session.transcriptPath, session.archived ? "Archives" : "Conversations", session.projectPath);
+  try {
+    for (const name of await fs.readdir(path.join(home, "shell_snapshots"))) await add(path.join(home, "shell_snapshots", name), "Shell snapshots");
+  } catch { /* Missing snapshots are normal. */ }
+  const bucketRows = [...buckets.entries()].filter(([, bytes]) => bytes > 0).sort((a, b) => b[1] - a[1]);
+  const projectRows = [...projects.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const totalBytes = bucketRows.reduce((total, [, bytes]) => total + bytes, 0);
+  return { totalBytes, buckets: bucketRows.map(([label, bytes]) => ({ label, bytes, detail: formatBytes(bytes) })), projects: projectRows.map(([label, bytes]) => ({ label, bytes, detail: formatBytes(bytes) })) };
 }
 
 async function shellSnapshots(home: string): Promise<Item[]> {
