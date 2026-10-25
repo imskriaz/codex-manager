@@ -539,6 +539,7 @@ export type DashboardActionName =
   | "getMaintenancePage"
   | "cancelMaintenance"
   | "inspectMaintenanceStorage"
+  | "reopenCodexUi"
   | "configureEncryptedSync"
   | "syncNow"
   | "setEncryptedSyncRegistryOverride"

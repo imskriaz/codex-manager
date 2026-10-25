@@ -1,6 +1,7 @@
 import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
 import { getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
+import { reopenCodexUi } from "../../services/codexUiRecovery";
 import { resumeCodexSessionWork } from "../../services/codexSessionRecovery";
 import { normalizeNativePath } from "../../utils/nativePaths";
 import { runAccountBatch } from "../../application/accounts/batch";
@@ -109,6 +110,7 @@ const COMMAND_ROUTED_ACTIONS = new Set<DashboardActionName>([
   "setCrossPcSyncEnabled",
   "importCurrent",
   "inspectCurrentAuth",
+  "reopenCodexUi",
   "completeOnboarding",
   "refreshAll",
   "configureEncryptedSync",
@@ -246,7 +248,7 @@ export async function executeDashboardActionMessage(
   errorMessage?: string;
 }> {
   if (["startCodexCliSession", "sendCodexCliSessionMessage", "steerCodexCliSessionTurn", "cancelCodexCliSessionTurn",
-    "openNewCodexWebview", "resumeCodexSessions", "setCodexSessionGoalStatus", "renameCodexCliSession",
+    "openNewCodexWebview", "reopenCodexUi", "resumeCodexSessions", "setCodexSessionGoalStatus", "renameCodexCliSession",
     "forkCodexCliSession", "archiveCodexCliSession", "unarchiveCodexCliSession", "deleteCodexCliSession"].includes(message.action) ||
     (message.action === "openCodexCliSession" && (ctx.hostKind !== "browser" || message.payload?.openInVsCode === true)))
     cancelCodexSessionAutoResume("Auto Resume was cancelled for this manual action.");
@@ -522,6 +524,8 @@ async function runDashboardAction(
       return { maintenancePreview: await previewMaintenance(payload?.maintenanceTool) };
     case "inspectMaintenanceStorage":
       return { maintenanceReport: await inspectMaintenanceStorage(payload?.maintenanceInspection) };
+    case "reopenCodexUi":
+      return { maintenanceReport: await reopenCodexUi() };
     case "runMaintenance":
       return { maintenanceJob: runMaintenance(payload?.maintenanceToken ?? "", payload?.confirmed === true, payload?.maintenanceIds, payload?.maintenanceOperation), notice: { level: "info" as const, message: "Operation started. Progress is shown in Tools." } };
     case "getMaintenancePage":

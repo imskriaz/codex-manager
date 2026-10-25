@@ -445,6 +445,25 @@ export async function readCodexCliSessionSummary(
   return { ...summary, title, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
 }
 
+/** Archived cleanup must work even when the native renderer cannot answer IPC. */
+export async function readCodexArchiveMaintenanceState(sessionId: string, home = resolveCodexHome()): Promise<{ archived: boolean; status: "idle" | "running" | "unknown" } | undefined> {
+  validateSessionId(sessionId);
+  const record = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0];
+  if (!record || record.archived === undefined) {
+    const legacy = await readCodexCliSessionSummary(sessionId, home);
+    return legacy ? { archived: legacy.archived === true, status: legacy.status } : undefined;
+  }
+  if (!record.archived) return { archived: false, status: "running" };
+  if (ownsSessionTurn(home, sessionId) || getNativeCodexSessionRunning(home, sessionId) === true)
+    return { archived: true, status: "running" };
+  const lock = path.join(home, SESSION_LOCK_DIRECTORY, `${sessionId}.lock`);
+  const stat = await fs.lstat(lock).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+  if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error("The session writer lock is invalid. This conversation was kept.");
+  const running = Boolean(stat && await isWriterLockHeld(lock));
+  const current = (await readStateSessionRecords(home, sessionId, undefined, 1, true))[0];
+  return current ? { archived: current.archived === true, status: running || !current.archived ? "running" : "idle" } : undefined;
+}
+
 /** Read every currently running, unarchived local session without the dashboard's display limit. */
 const recentRunningSessions = new Map<string, { ids: string[]; checkedAt: number; revision?: number }>();
 const runningSessionListeners = new Set<(home: string) => void>();
@@ -1510,13 +1529,15 @@ export async function unarchiveCodexCliSession(sessionId: string): Promise<void>
   if (recent) recent.summary = { ...recent.summary, archived: false };
 }
 
-export async function deleteCodexCliSession(sessionId: string): Promise<void> {
+export async function deleteCodexCliSession(sessionId: string, options: { archivedOnly?: boolean } = {}): Promise<void> {
   validateSessionId(sessionId);
   const home = resolveCodexHome();
   if (ownsSessionTurn(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
   await runCliSessionMutation(sessionId, "Codex session deletion", async () => {
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
-    if (await isCliSessionRunning(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
+    const archived = options.archivedOnly || maintenanceConnection.getStore()?.ids.has(sessionId) ? await readCodexArchiveMaintenanceState(sessionId, home) : undefined;
+    if (options.archivedOnly && !archived?.archived) throw new Error("This conversation is no longer archived. It was kept.");
+    if (archived?.archived ? archived.status !== "idle" : await isCliSessionRunning(home, sessionId)) throw new Error("Stop the active Codex turn before deleting this session.");
     if (resolveCodexHome() !== home) throw new Error('Codex home changed. Refresh before deleting this session.');
     await runCodexAppServerRequest("thread/delete", { threadId: sessionId });
     recentNewSessions.delete(sessionId);

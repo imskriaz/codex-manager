@@ -223,6 +223,7 @@ const mockHost = `(() => {
           else if(job) { if(!window.__keepMaintenanceRunning||message.action==='cancelMaintenance') {job.status=message.action==='cancelMaintenance'?'cancelled':'completed';job.processed=job.total;job.cleared=job.total;}job.revision++;payload={maintenanceJob:{...job}}; } else error='This cleanup is no longer available in this window.';
         }
         else if(message.action === 'inspectMaintenanceStorage') payload={maintenanceReport:{title:'Codex report',items:[{label:'Recorded projects checked',value:'12'},{label:'Missing projects',value:'1'},{label:'state_5.sqlite',value:'Healthy · 2 MB'}]}};
+        else if(message.action === 'reopenCodexUi') {if(window.__failCodexReopen) error='Codex could not open in this host.';else payload={maintenanceReport:{title:'Codex UI recovery',items:[{label:'Fresh Codex panel',value:'Open request completed. Check that the new panel finishes loading.'}]}};}
         else if(message.action === 'getUsageGraph') {
           const query=message.payload.usageGraph, date=new Date(Math.floor(Date.now()/86400000)*86400000-86400000).toISOString().slice(0,10);
           payload = {usageGraph:{...query,history:window.__usageFixture && query.mode==='quota'?['usage-a','usage-b','usage-removed'].flatMap((accountId,i)=>[{accountId,at:query.from-1,hourly:100},{accountId,at:query.from+60000,hourly:90-i*10}]):[],dailyUsageCache:window.__usageFixture && query.mode==='tokens'?['usage-a','usage-b','usage-removed'].map((accountId,i)=>({accountId,...(i===2?{accountLabel:'former@example.test'}:{}),fetchedAt:Date.now(),usage:{days:30,points:[{date,unit:'tokens',totalTokens:1000,extensionTokens:[40,60,25][i]}]}})):[],truncated:false}};
@@ -2122,7 +2123,7 @@ try {
         await page.screenshot({ path: path.join(output, `settings-switching-${width}x${height}.png`) });
       }
       if (await tab.getAttribute("id") === "settings-tab-tools") {
-        assert.equal(await page.locator(".maintenance-tool").count(), 7, "Tools contain Codex utilities instead of duplicated dashboard shortcuts");
+        assert.equal(await page.locator(".maintenance-tool").count(), 8, "Tools contain Codex utilities instead of duplicated dashboard shortcuts");
         await page.locator('.maintenance-tool').filter({ hasText: 'Archive manager' }).click();
         const archive = page.getByRole("region", { name: "Archive manager", exact: true });
         assert.equal(await page.getByRole('dialog').count(), 1, 'Maintenance stays in Settings instead of nesting a dialog');

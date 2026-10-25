@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.2
+
+- Add Codex UI startup diagnostics and a fresh-panel recovery action to Settings > Tools for native renderer startup failures.
+- Make archive cleanup independent of goal storage and native renderer IPC, with targeted archive and writer-lock checks before deletion.
+- Delete selected child conversations before their parents to prevent native cascade deletion races during cleanup.
+
 ## 1.5.1
 
 - API testing checks the bearer token and shows only allowed operations and host projects, with formatted, bounded JSON responses. Host-wide `refreshAll` permission is covered directly; unavailable scope checks report retryable errors instead of misleading permission failures.

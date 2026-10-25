@@ -4,12 +4,13 @@ import * as path from "node:path";
 import { CODEX_INSPECTIONS, MAINTENANCE_TOOLS, type CodexInspection, type MaintenanceJob, type MaintenancePreview, type MaintenancePage, type MaintenanceTool, type MaintenanceReport } from "../domain/maintenance";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { readCodexSessionGoals } from "./codexSessionGoals";
-import { clearCodexSessionGoal, deleteCodexCliSession, unarchiveCodexCliSession, readCodexCliSessionSummary, readCodexSessionMaintenanceCandidates, resolveCodexHome, SESSION_ID_PATTERN, withCodexSessionMaintenance } from "./codexSessionResume";
+import { clearCodexSessionGoal, deleteCodexCliSession, unarchiveCodexCliSession, readCodexCliSessionSummary, readCodexArchiveMaintenanceState, readCodexSessionMaintenanceCandidates, resolveCodexHome, SESSION_ID_PATTERN, withCodexSessionMaintenance } from "./codexSessionResume";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { publishDashboardRealtime } from './dashboardRealtime';
+import { inspectCodexUi } from "./codexUiRecovery";
 
 type Item = { id: string; sessionId?: string; title: string; projectPath?: string; detail?: string; goalOnly?: boolean; snapshot?: { file: string; size: number; mtimeMs: number } };
 type Plan = { preview: MaintenancePreview; home: string; items: Item[]; job?: string; jobRequest?: string };
@@ -19,6 +20,7 @@ const preparing = new Map<string, Promise<MaintenancePreview>>();
 
 export async function inspectMaintenanceStorage(value: unknown = "storage"): Promise<MaintenanceReport> {
   if (!CODEX_INSPECTIONS.some(tool => tool.id === value)) throw new Error("Choose a Codex inspection tool.");
+  if (value === "startup") return waitWithin(inspectCodexUi(), 15_000, "Codex UI inspection did not finish. No data was changed; retry after this PC responds.");
   return waitWithin(inspectCodexStorage(value as CodexInspection), 15_000, "Codex storage did not respond. No data was changed; retry when it is available.");
 }
 
@@ -132,8 +134,8 @@ async function createMaintenancePreview(tool: MaintenanceTool, home: string): Pr
   if (tool === "snapshots") items = await waitWithin(shellSnapshots(home), 8_000, "Shell snapshots did not respond. No cleanup started.");
   else {
     const [sessions, goals, files] = await waitWithin(Promise.all([
-      readCodexSessionMaintenanceCandidates(home), readCodexSessionGoals(home, undefined, 10001), fs.readdir(home)
-    ]), 8_000, "Session storage did not respond. No cleanup started; retry when it is available.");
+      readCodexSessionMaintenanceCandidates(home), tool === "archives" ? undefined : readCodexSessionGoals(home, undefined, 10001), tool === "archives" ? [] : fs.readdir(home)
+    ]), 15_000, "Session storage did not respond. No cleanup started; retry when it is available.");
     if (!goals && files.some(name => /^goals_\d+\.sqlite$/.test(name))) throw new Error("Goal storage is unavailable. No cleanup started.");
     if ((goals?.size ?? 0) > 10000) throw new Error("More than 10,000 goals need cleanup. Reduce them in Codex before retrying.");
     const titles = new Map(sessions.map(session => [session.id, session.title]));
@@ -235,11 +237,20 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
     const children = new Map<string, string[]>();
     for (const session of currentSessions) if (session.parentSessionId) children.set(session.parentSessionId, [...children.get(session.parentSessionId) ?? [], session.id]);
     const selected = new Set(items.map(item => item.id));
-    await withCodexSessionMaintenance(items.map(item => item.sessionId ?? item.id), () => runWithConcurrencyLimit(items, 3, async item => {
+    const parents = new Map(currentSessions.map(session => [session.id, session.parentSessionId]));
+    const depth = (id: string) => {
+      const visited = new Set<string>();
+      let parent = parents.get(id);
+      while (parent && !visited.has(parent)) { visited.add(parent); parent = parents.get(parent); }
+      return visited.size;
+    };
+    // Native parent deletion cascades; finish selected children before deleting their parent.
+    const ordered = currentSessions.length ? [...items].sort((a, b) => depth(b.id) - depth(a.id)) : items;
+    await withCodexSessionMaintenance(items.map(item => item.sessionId ?? item.id), () => runWithConcurrencyLimit(ordered, currentSessions.length ? 1 : 3, async item => {
       if (controller.signal.aborted) return;
       try {
         check();
-        const current = await waitWithin(readCodexCliSessionSummary(item.sessionId ?? item.id), 6_000, "Running state is unavailable; this item was kept.");
+        const current = await waitWithin<{ status: string; archived?: boolean } | undefined>(plan.preview.tool === "archives" ? readCodexArchiveMaintenanceState(item.id) : readCodexCliSessionSummary(item.sessionId ?? item.id), plan.preview.tool === "archives" ? 20_000 : 6_000, "Running state is unavailable; this item was kept.");
         check();
         if (!current && !item.snapshot && !item.goalOnly) { state.skipped++; return; }
         if (current?.status === "running") { state.skipped++; return; }
@@ -257,11 +268,11 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
           if (visited.has(child)) continue;
           visited.add(child); descendants.push(...children.get(child) ?? []);
           if (!selected.has(child)) { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is outside this selection.`.slice(0, 300)); return; }
-          const summary = await waitWithin(readCodexCliSessionSummary(child), 6_000, "A child conversation could not be verified; this conversation was kept.");
-          if (summary && summary.status !== "idle") { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is running or unavailable.`.slice(0, 300)); return; }
+          const summary = await waitWithin<{ status: string; archived?: boolean } | undefined>(plan.preview.tool === "archives" ? readCodexArchiveMaintenanceState(child) : readCodexCliSessionSummary(child), plan.preview.tool === "archives" ? 20_000 : 6_000, "A child conversation could not be verified; this conversation was kept.");
+          if (summary && (summary.status !== "idle" || (plan.preview.tool === "archives" && !summary.archived))) { state.skipped++; if (state.errors.length < 20) state.errors.push(`${item.title}: kept because a child conversation is running, unavailable, or no longer archived.`.slice(0, 300)); return; }
         }
         if (item.goalOnly) await clearCodexSessionGoal(item.id);
-        if (!item.goalOnly) { check(); await deleteCodexCliSession(item.id); }
+        if (!item.goalOnly) { check(); await deleteCodexCliSession(item.id, { archivedOnly: plan.preview.tool === "archives" }); }
         state.cleared++;
       } catch (error) {
         if (controller.signal.aborted || leaseSignal.aborted) { state.skipped++; return; }

@@ -5,6 +5,7 @@ export const MAINTENANCE_TOOLS = [
   { id: "snapshots", title: "Clean old shell snapshots", description: "Remove shell snapshots older than seven days from inactive sessions.", destructive: true }
 ] as const;
 export const CODEX_INSPECTIONS = [
+  { id: "startup", title: "Codex UI startup", description: "Check installed UI files and native storage sizes; reopen a fresh Codex panel." },
   { id: "projects", title: "Find missing projects", description: "Find conversations whose recorded project folder no longer exists." },
   { id: "large-sessions", title: "Find large conversations", description: "Identify the largest conversation files before choosing what to archive." },
   { id: "storage", title: "Check Codex storage", description: "Check native conversation and goal databases without modifying them." }

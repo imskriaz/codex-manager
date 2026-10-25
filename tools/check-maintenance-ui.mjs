@@ -21,7 +21,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
     window.dispatchEvent(new MessageEvent('message', { data: {type:'dashboard:maintenance-progress',deviceId,job:{...window.__maintenanceJob,...patch}} }));
   }, {patch,deviceId});
   await page.clock.install();
-  await page.goto(`${origin}/`);
+  await page.goto(`${origin}/`, {waitUntil:'domcontentloaded'});
   await page.locator('#settingsOpenButton').waitFor({state:'attached'});
   await page.evaluate(() => {
     window.__uiSnapshot.connectedPeers = [...(window.__uiSnapshot.connectedPeers || []), {id:'fixture-peer',name:'Fixture peer',connected:true,local:false,sessionCount:0}];
@@ -33,6 +33,16 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   const closeSessions = page.getByRole('button', exact('Close sessions sidebar'));
   if (await closeSessions.isVisible()) await page.getByRole('button', exact('Hide sessions sidebar')).click();
   await open();
+  await page.locator('.maintenance-tool').filter({hasText:'Codex UI startup'}).click();
+  const startup = page.getByRole('region', exact('Codex UI startup'));
+  await startup.getByText('Healthy · 2 MB', {exact:true}).waitFor();
+  await startup.getByRole('button', exact('Open fresh Codex panel')).click();
+  await startup.getByText('Open request completed. Check that the new panel finishes loading.', {exact:true}).waitFor();
+  await page.evaluate(() => {window.__failCodexReopen=true;});
+  await startup.getByRole('button', exact('Open fresh Codex panel')).click();
+  await startup.getByRole('alert').filter({hasText:'Codex could not open in this host.'}).waitFor();
+  assert.equal(await actionCount('reopenCodexUi'), 2);
+  await startup.getByRole('button', exact('All tools')).click();
   await page.evaluate(() => {window.__holdNextMaintenancePreview=true;});
   await page.locator('.maintenance-tool').filter({hasText:'Archive manager'}).click();
   await page.waitForFunction(() => !!window.__heldMaintenancePreview);
@@ -93,7 +103,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
     window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));
     window.dispatchEvent(new MessageEvent('message', {data:{type:'dashboard:connection',connected:true}}));
   });
-  await page.waitForFunction(() => !document.querySelector('.settings-offline-fieldset')?.disabled);
+  await page.waitForFunction(() => document.querySelector('.settings-offline-fieldset')?.disabled);
   assert.equal(await archive.getByRole('button', exact('Cancel operation')).isDisabled(), true, 'A disconnected peer disables cleanup even while the browser is online');
   await page.evaluate(() => {
     window.__maintenanceRestarted=true;

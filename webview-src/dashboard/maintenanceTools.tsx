@@ -4,7 +4,7 @@ import type { DashboardActionName, DashboardActionPayload, DashboardHostMessage 
 import type { SendAction } from "./hookTypes";
 import { getActionTimeoutMs } from './host';
 
-const dialogTitles: Record<string, string> = { archives: "Archive manager", sessions: "Conversation cleanup", goals: "Goal manager", snapshots: "Shell snapshot cleanup", projects: "Missing projects", "large-sessions": "Largest conversations", storage: "Codex storage check" };
+const dialogTitles: Record<string, string> = { startup: "Codex UI startup", archives: "Archive manager", sessions: "Conversation cleanup", goals: "Goal manager", snapshots: "Shell snapshot cleanup", projects: "Missing projects", "large-sessions": "Largest conversations", storage: "Codex storage check" };
 
 export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId?: string; targetName: string; parentOpen: boolean; connected?: boolean }) {
   const [dialog, setDialog] = useState<string>();
@@ -140,6 +140,7 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
       <div class="maintenance-modal-context"><strong>{origin.current.name}</strong><span>{preview ? `${preview.count.toLocaleString()} items` : "Codex storage"}</span></div>
       {scopeChanged ? <p role="alert" class="settings-notice-warning">This preview belongs to {origin.current.name}. Choose a tool again to load {props.targetName} before changing data.</p> : null}
       {error ? <p class="settings-notice-warning" role="alert">{error}</p> : null}
+      {dialog === 'startup' ? <button class="settings-action-btn" type="button" disabled={props.connected === false || busy || scopeChanged} onClick={() => act('reopenCodexUi')}>{busy ? 'Working...' : 'Open fresh Codex panel'}</button> : null}
       {busy && !page && !report && !job ? <p class="settings-note" role="status">Reading this system's data…</p> : null}
       {report ? <section class="maintenance-report" aria-label={report.title}><dl>{report.items.map((item, index) => <div key={index}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl><button class="settings-action-btn" type="button" disabled={props.connected === false || busy} onClick={() => check(dialog!)}>Refresh report</button></section> : null}
       {preview ? <>

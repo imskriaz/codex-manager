@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeTestDirectory } from "./testFilesystem";
 
 const mocks = vi.hoisted(() => ({ home: "", sessions: vi.fn(), summary: vi.fn(), goals: vi.fn(), clear: vi.fn(), remove: vi.fn(), restore: vi.fn() }));
-vi.mock("../src/services/codexSessionResume", () => ({ resolveCodexHome: () => mocks.home, SESSION_ID_PATTERN: /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i, readCodexSessionMaintenanceCandidates: mocks.sessions, readCodexCliSessionSummary: mocks.summary, clearCodexSessionGoal: mocks.clear, deleteCodexCliSession: mocks.remove, unarchiveCodexCliSession: mocks.restore, withCodexSessionMaintenance: async (_ids: string[], task: () => Promise<unknown>) => task() }));
+vi.mock("../src/services/codexSessionResume", () => ({ resolveCodexHome: () => mocks.home, SESSION_ID_PATTERN: /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i, readCodexSessionMaintenanceCandidates: mocks.sessions, readCodexCliSessionSummary: mocks.summary, readCodexArchiveMaintenanceState: mocks.summary, clearCodexSessionGoal: mocks.clear, deleteCodexCliSession: mocks.remove, unarchiveCodexCliSession: mocks.restore, withCodexSessionMaintenance: async (_ids: string[], task: () => Promise<unknown>) => task() }));
 vi.mock("../src/services/codexSessionGoals", () => ({ readCodexSessionGoals: mocks.goals }));
 vi.mock("../src/utils/persistentLog", () => ({ recordPersistentEvent: vi.fn() }));
 vi.mock("../src/utils/crossWindowOperations", () => ({ runCrossWindowExclusive: async (_key: string, _label: string, task: (signal: AbortSignal) => Promise<void>) => task(new AbortController().signal) }));
@@ -47,6 +47,12 @@ describe("Codex maintenance safety", () => {
       try { expect(() => api.getMaintenanceJob('', false, preview.token)).toThrow('no longer available'); } finally { mocks.home = home; }
     } finally { dispose(); }
   });
+  it("previews archives without waiting for unavailable goal storage", async () => {
+    await writeFile(path.join(mocks.home, "goals_1.sqlite"), "unavailable");
+    mocks.goals.mockImplementation(() => new Promise(() => {}));
+    expect((await api.previewMaintenance("archives")).count).toBe(2);
+    expect(mocks.goals).not.toHaveBeenCalled();
+  });
   it("coalesces simultaneous previews without starting duplicate storage reads", async () => {
     const first = api.previewMaintenance("archives"), second = api.previewMaintenance("archives");
     expect(first).toBe(second); expect((await first).count).toBe(2); expect(mocks.sessions).toHaveBeenCalledOnce();
@@ -61,7 +67,7 @@ describe("Codex maintenance safety", () => {
     expect(api.runMaintenance(preview.token, true, [ids[0]!]).id).toBe(job.id);
     expect(() => api.runMaintenance(preview.token, true, [ids[1]!])).toThrow("another operation");
     expect(await finish(job.id)).toMatchObject({ total: 1, cleared: 1, failed: 0 });
-    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(ids[0]);
+    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(ids[0], { archivedOnly: true });
   });
   it("restores selected archived conversations without deleting their goals or chats", async () => {
     const preview = await api.previewMaintenance("archives");
@@ -113,10 +119,28 @@ describe("Codex maintenance safety", () => {
     const next = api.runMaintenance(nextPreview.token, true);
     expect(await finish(next.id)).toMatchObject({ cleared: 0, skipped: 2 }); expect(mocks.remove).not.toHaveBeenCalled();
   });
+  it("finishes selected children before deleting their parent", async () => {
+    mocks.sessions.mockResolvedValue([{ id: ids[0], title: "Parent", archived: true }, { id: ids[1], title: "Child", archived: true, parentSessionId: ids[0] }]);
+    const order: string[] = [];
+    let release!: () => void;
+    mocks.remove.mockImplementation(async id => { order.push(id); if (id === ids[1]) await new Promise<void>(resolve => { release = resolve; }); });
+    const job = api.runMaintenance((await api.previewMaintenance("archives")).token, true);
+    await vi.waitFor(() => expect(order).toEqual([ids[1]]));
+    release();
+    expect(await finish(job.id)).toMatchObject({ cleared: 2, failed: 0 });
+    expect(order).toEqual([ids[1], ids[0]]);
+  });
+  it("keeps parents when a selected child was unarchived after preview", async () => {
+    mocks.sessions.mockResolvedValue([{ id: ids[0], title: "Parent", archived: true }, { id: ids[1], title: "Child", archived: true, parentSessionId: ids[0] }]);
+    const preview = await api.previewMaintenance("archives");
+    mocks.summary.mockImplementation(async id => ({ status: "idle", archived: id !== ids[1] }));
+    expect(await finish(api.runMaintenance(preview.token, true).id)).toMatchObject({ cleared: 0, skipped: 2 });
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
   it("reports unavailable running state without deleting after a read timeout", async () => {
     vi.useFakeTimers(); mocks.summary.mockImplementation(() => new Promise(() => {}));
     const job = api.runMaintenance((await api.previewMaintenance("archives")).token, true);
-    await vi.advanceTimersByTimeAsync(6_001);
+    await vi.advanceTimersByTimeAsync(40_001);
     expect(api.getMaintenanceJob(job.id)).toMatchObject({ failed: 2, cleared: 0, status: "failed" }); expect(mocks.remove).not.toHaveBeenCalled();
   });
 });
