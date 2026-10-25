@@ -14990,13 +14990,14 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .settings-tab-copy { min-width:0; }
 .settings-tab-label,.settings-tab-description { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cli-running-row-actions { display:flex; align-items:center; gap:4px; flex:none; }
-.cli-session-policy-control { display:inline-flex; align-items:center; }
-.cli-session-policy-control select { width:58px; height:28px; padding:3px 4px; border:1px solid var(--border-muted); border-radius:6px; background:var(--bg-surface); color:var(--text-secondary); font:600 10px var(--vscode-font-family,sans-serif); }
-.cli-session-policy-control select:hover:not(:disabled),.cli-session-policy-control select:focus-visible { border-color:var(--accent-blue); color:var(--text-primary); outline:2px solid color-mix(in srgb,var(--accent-blue) 30%,transparent); outline-offset:1px; }
 .cli-running-row-actions .is-active { color:var(--accent-blue); background:var(--cyan-soft); }
 .cli-running-row-actions .is-auto-resume.is-disabled,.cli-session-row-actions .is-auto-resume.is-disabled { color:var(--text-muted); background:transparent; opacity:.72; }
 .cli-running-row-actions .is-auto-resume.is-enabled,.cli-session-row-actions .is-auto-resume.is-enabled { color:var(--accent-blue); background:color-mix(in srgb, var(--accent-blue) 14%, transparent); border-color:color-mix(in srgb, var(--accent-blue) 46%, var(--border-muted)); }
 .cli-running-row-actions .is-auto-resume svg,.cli-session-row-actions .is-auto-resume svg { width:16px; height:16px; }
+.cli-running-queue > button.is-active { color:var(--accent-blue); border-color:color-mix(in srgb,var(--accent-blue) 46%,var(--border-muted)); background:var(--cyan-soft); }
+.cli-running-queue > button.has-queue-error { color:var(--accent-orange,#b97900); border-color:currentColor; background:color-mix(in srgb,var(--accent-orange,#b97900) 12%,var(--bg-surface)); }
+.cli-running-queue > button.has-queue-error small { background:var(--accent-orange,#b97900); color:var(--bg-surface); }
+.cli-running-queue > button:disabled,.cli-running-row-actions .is-auto-resume:disabled,.cli-session-row-actions .is-auto-resume:disabled { opacity:.45; cursor:default; }
 .cli-sessions-running-copy>button.cli-sessions-running-title { width:100%; padding:0; margin:0; border:0; background:transparent; text-align:left; cursor:pointer; }
 .cli-sessions-running-copy>button.cli-sessions-running-title:disabled { cursor:default; opacity:.6; }
 .cli-running-queue { position:relative; }

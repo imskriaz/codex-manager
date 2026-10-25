@@ -4,22 +4,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'preact/hook
 import type { DashboardCliSessionSummary } from '../../src/domain/dashboard/types';
 import { isSessionQueuePriority } from '../../src/domain/sessionQueuePriority';
 
-export function SessionPolicySelect(props: {
-  session: DashboardCliSessionSummary;
-  globalEnabled: boolean;
-  disabled: boolean;
-  onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
-}) {
-  const enabled = props.globalEnabled ? props.session.autoResumeEnabled !== false : props.session.autoResumeEnabled === true;
-  return <label class="cli-session-policy-control" title={enabled ? "Resume automatically when the Codex server is ready" : "Resume manually only"}>
-    <span class="sr-only">Session resume policy for {props.session.title}</span>
-    <select aria-label={`Resume policy for ${props.session.title}`} value={enabled ? "auto" : "manual"} disabled={props.disabled} onChange={event => props.onAutoResume(props.session, event.currentTarget.value === "auto")}>
-      <option value="auto">Auto</option>
-      <option value="manual">Manual</option>
-    </select>
-  </label>;
-}
-
 export function SessionQueueControl(props: {
   session: DashboardCliSessionSummary; disabled: boolean;
   onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: number) => void;
@@ -53,15 +37,16 @@ export function SessionQueueControl(props: {
     };
   }, [open]);
   return <span class="cli-running-queue cli-session-queue-wrap">
-    <button ref={trigger} type="button" class={`cli-icon-button ${session.queueEnabled ? 'is-active' : ''}`} disabled={props.disabled}
-      aria-label={`Queue priority for ${session.title}`} title={session.queueEnabled ? `Queued · priority ${session.queuePriority ?? 3}` : 'Run after other work'}
+    <button ref={trigger} type="button" class={`cli-icon-button ${session.queueEnabled ? 'is-active' : ''} ${session.queueError ? 'has-queue-error' : ''}`} disabled={props.disabled}
+      data-state={session.queueError ? 'needs-review' : session.queueEnabled ? 'queued' : 'not-queued'}
+      aria-label={`Queue priority for ${session.title}`} aria-description={session.queueError} title={session.queueError ? `Queue needs review · ${session.queueError}` : session.queueEnabled ? `Queued · priority ${session.queuePriority ?? 3} · waiting for active work to finish` : 'Not queued · Run after other work'}
       aria-haspopup="dialog" aria-expanded={open} onClick={() => { setPriority(String(session.queuePriority ?? 3)); setOpen(!open); }}>
-      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h12M4 11h8M4 16h6m5-2 4 4-4 4m-3-4h7" /></svg>
-      {session.queueEnabled ? <small>{session.queuePriority ?? 3}</small> : null}
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h15M4 10h7M4 15h4" /><circle cx="16.5" cy="16" r="5" /><path d="M16.5 13v3l2 1.5" /></svg>
+      {session.queueEnabled || session.queueError ? <small title={`Priority ${session.queuePriority ?? 3}`}>{session.queueError ? '!' : session.queuePriority ?? 3}</small> : null}
     </button>
     {open ? createPortal(<div ref={panel} popover="manual" class="cli-session-queue-menu is-floating" role="dialog" aria-label={`Queue ${session.title}`}
       onClick={event => event.stopPropagation()}>
-      <header><div><strong>Run after other work</strong><small class="cli-queue-current">{session.queueEnabled ? `Queued · priority ${session.queuePriority ?? 3}` : 'Schedule this session'}</small></div><button type="button" class="cli-queue-close" aria-label="Close queue options" onClick={() => close(true)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 6 12 12M6 18 18 6" /></svg></button></header>
+      <header><div><strong>Run after other work</strong><small class="cli-queue-current">{session.queueError ? `Needs review · priority ${session.queuePriority ?? 3}` : session.queueEnabled ? `Queued · priority ${session.queuePriority ?? 3}` : 'Not queued'}</small></div><button type="button" class="cli-queue-close" aria-label="Close queue options" onClick={() => close(true)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 6 12 12M6 18 18 6" /></svg></button></header>
       <p id={hintId} class="cli-queue-hint">Lower numbers run first. Equal priorities start together once active work finishes.</p>
       {session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}
       <div class="cli-queue-presets" aria-label="Priority presets">{[1,2,3].map(value => <button key={value} type="button" aria-pressed={Number(priority) === value} class={Number(priority) === value ? 'is-selected' : ''} onClick={() => setPriority(String(value))}><span>Priority {value}</span><small>{value === 1 ? 'First' : value === 2 ? 'Next' : 'Later'}</small></button>)}</div>

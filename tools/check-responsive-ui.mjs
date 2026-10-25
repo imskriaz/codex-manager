@@ -426,6 +426,14 @@ try {
       await page.locator('#cliSessionsButton').click();
       await page.locator('.cli-sessions-popover').waitFor();
       assert.equal(await page.locator('.cli-sessions-server-card').count(),0,'Popover has no redundant service card');
+      const resumeToggle=page.locator('.cli-sessions-popover').getByRole('button',{name:'Auto Resume for Running workspace task',exact:true});
+      assert.equal(await resumeToggle.getAttribute('aria-pressed'),'true','Running work has an enabled icon toggle');
+      await resumeToggle.click();
+      await page.waitForFunction(()=>document.querySelector('.cli-sessions-popover .is-auto-resume')?.getAttribute('aria-pressed')==='false');
+      await resumeToggle.click();
+      await page.waitForFunction(()=>document.querySelector('.cli-sessions-popover .is-auto-resume')?.getAttribute('aria-pressed')==='true');
+      assert.equal(await page.locator('.cli-session-row:not(.is-running) .is-auto-resume').count(),0,'Idle sessions have no resume toggle');
+      assert.equal(await page.locator('.cli-session-policy-control').count(),0,'Auto/Manual dropdown is removed');
       await page.evaluate(()=>{window.__holdNextSystemList=true;});
       await page.locator('.cli-sessions-popover').getByRole('button',{name:'Refresh sessions',exact:true}).click();
       await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-starting')?.textContent==='Starting');
@@ -439,6 +447,26 @@ try {
       await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='1');
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'Badge does not cause page overflow');
       await page.screenshot({path:path.join(output,`session-badge-ready-${width}.png`)});
+      await page.evaluate(()=>{
+        const session=window.__uiSessions.find(item=>item.title==='Running workspace task');
+        session.status='idle';session.interrupted=true;
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
+      });
+      await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='0');
+      assert.equal(await page.locator('.cli-sessions-popover .is-auto-resume').count(),0,'Finished work loses the resume toggle');
+      const queueToggle=page.locator('.cli-sessions-popover').getByRole('button',{name:'Queue priority for Running workspace task',exact:true});
+      assert.equal(await queueToggle.isVisible(),true,'Interrupted work retains queue priority');
+      assert.equal(await queueToggle.getAttribute('data-state'),'not-queued');
+      await page.evaluate(()=>{
+        const session=window.__uiSessions.find(item=>item.title==='Running workspace task');
+        Object.assign(session,{queueEnabled:true,queuePriority:2,queueError:'A queued start was not confirmed. Review before retrying.'});
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
+      });
+      await page.waitForFunction(()=>document.querySelector('.cli-sessions-popover [data-state="needs-review"]')!==null);
+      assert.equal(await queueToggle.locator('small').textContent(),'!','Queue errors have a visible warning marker');
+      await queueToggle.click();
+      await page.getByText('Needs review · priority 2',{exact:true}).waitFor();
+      await page.screenshot({path:path.join(output,`session-queue-review-${width}.png`)});
       assert.deepEqual(errors,[]);
       results.push({width,height,checks:'Single badge: count-only ready, startup spinner, offline, reconnect, no duplicate card'});
       await context.close();continue;

@@ -1,15 +1,11 @@
 # Changelog
 
-## 1.5.4-pre.3
+## 1.5.5
 
+- Restore the compact Auto Resume icon toggle for running sessions, with distinct play/pause states. Hide resume-policy controls on idle sessions; use a clock-and-list queue icon, priority badges, and a visible warning for unconfirmed queue starts.
 - Use the existing session-count position for startup status, then show only the running count once ready. Remove the separate status badge and redundant server-status card from the session popover.
 
-## 1.5.4-pre.2
-
-- Consolidate Tools into Storage Management with storage summaries, project heatmap data, and one compact operation surface. Add a compact Codex server readiness badge and explicit Auto/Manual session resume policies while retaining queue priorities.
-
-## 1.5.4-pre.1
-
+- Consolidate Tools into Storage Management with storage summaries, project heatmap data, and one compact operation surface. Keep server status, running-session Auto Resume controls, and existing queue priorities compact.
 - Resume saved Codex work in the background through the existing native/app-server path without opening conversation editor windows or waiting for the Codex sidebar. The app-server initialize handshake remains the readiness check; existing tab cleanup and per-session state checks remain active. Open a conversation manually when you want its editor.
 
 ## 1.5.4

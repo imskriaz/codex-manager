@@ -1,5 +1,5 @@
 import { useAnchoredPopover } from './anchoredPopover';
-import { SessionPolicySelect, SessionQueueControl } from './sessionQueueControl';
+import { SessionQueueControl } from './sessionQueueControl';
 import { SystemLogConsole } from "./systemLogConsole";
 import { useTokenHistoryRefresh } from "./tokenHistoryRefresh";
 import { render } from "preact";
@@ -86,7 +86,7 @@ import { formatSessionReadError, isMissingCliSessionError } from "./actionFeedba
 import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey, sameCliSessionTarget, type CliSessionTarget } from "./cliSessionRoute";
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
-import { formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
+import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
 import { filterCliSessionsBySection, mergeDashboardPeers } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
@@ -2990,6 +2990,8 @@ function App() {
                 "openNewCodexWebview",
                 "openCodexCliSession",
                 "renameCodexCliSession",
+                "setCodexSessionAutoResume",
+                "setCodexSessionQueue",
                 "forkCodexCliSession",
                 "archiveCodexCliSession",
                 "unarchiveCodexCliSession",
@@ -3529,6 +3531,7 @@ function CliSessionsMenu(props: {
                   const time = typeof session.runningSince === "number" && Number.isFinite(session.runningSince) && session.runningSince > 0 && session.runningSince <= now + 5 * 60_000 ? formatElapsed(Math.max(0, now - session.runningSince)) : "Time unavailable";
                   const detail = `Goal: ${session.goal?.objective || (session.goal === null ? "No goal" : "Unavailable")}\nThinking: ${session.reasoningEffort || "Unavailable"}`;
                   const running = session.status === "running";
+                  const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
                   const actionPending = props.isSessionPending(session);
                   const destination = props.browser ? "browser" : "VS Code";
                   const offline = session.remote && !props.peers.some(peer => peer.id === session.deviceId && peer.connected);
@@ -3538,7 +3541,7 @@ function CliSessionsMenu(props: {
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
-                    <SessionPolicySelect session={session} globalEnabled={props.autoResumeEnabled} disabled={!props.connected || offline || actionPending} onAutoResume={props.onAutoResume} />{!running && (session.interrupted || session.queueEnabled) ? <SessionQueueControl session={session} disabled={!props.connected || !!offline || actionPending} onQueue={props.onQueue} /> : null}
+                    {running ? <button type="button" class={`cli-icon-button is-auto-resume ${autoResume ? "is-enabled is-active" : "is-disabled"}`} aria-pressed={autoResume} aria-label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={!props.connected || offline || actionPending} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></button> : session.interrupted || session.queueEnabled ? <SessionQueueControl session={session} disabled={!props.connected || !!offline || actionPending} onQueue={props.onQueue} /> : null}
                     </div>
                   </article>;
                 })}
