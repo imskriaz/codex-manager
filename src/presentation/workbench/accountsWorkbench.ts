@@ -123,7 +123,9 @@ export class AccountsWorkbench {
         const failures: string[] = [];
         for (const close of [
           () => closeQuotaSummaryTabsForExtensionHostRestart(this.context, options?.signal),
-          () => options?.closeSessions === false ? Promise.resolve() : closeCodexSessionsForExtensionHostRestart(this.context, options?.signal)
+          // Close every Codex editor before reload, even when capture timed out;
+          // durable recovery is already retained and an old tab must not race Auto Resume.
+          () => closeCodexSessionsForExtensionHostRestart(this.context, options?.signal)
         ]) {
           try { await close(); }
           catch (error) { failures.push(error instanceof Error ? error.message : String(error)); }

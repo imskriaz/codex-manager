@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.2-pre.1
+
+- Close all existing Codex conversation and panel tabs before a VS Code reload so restored tabs cannot race Auto Resume into duplicates.
+
 ## 1.5.2
 
 - Add Codex UI startup diagnostics and a fresh-panel recovery action to Settings > Tools for native renderer startup failures.
