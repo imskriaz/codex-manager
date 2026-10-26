@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.7-pre.1
+
+- Require official runtime activity for recovery decisions. A retained writer lock or recent interrupted transcript can no longer consume saved recovery as an already running turn.
+- Open and verify the official conversation when readiness is absent, and retain recovery when native activity cannot be checked. Goals remain prompt-free.
+
 ## 1.5.6
 
 - Restore tab-first Auto Resume by default for goals and non-goal sessions, continue goals without a new prompt, and send “Continue if not completed” only for interrupted non-goal chats through the ready official owner. No private server or unsupported goal-activation calls.

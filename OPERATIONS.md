@@ -62,7 +62,7 @@ Command names above have the `codexManager.` prefix. Managed reloads allow 500 m
 
 ## Failure and recovery limits
 
-Explicitly paused or stopped goals remain excluded from automatic recovery and queue scheduling. A saved paused goal with quota, capacity, or system-interruption evidence remains eligible when no explicit pause or user cancellation was recorded. Cleanly completed paused goals remain closed. Recovery rechecks eligibility before opening and before sending. Already running official owners are observed without closing tabs or sending another prompt; managed reload cleanup still saves recovery before closing old tabs. Unavailable goal storage retains recovery and cannot authorize an automatic tab open.
+Explicitly paused or stopped goals remain excluded from automatic recovery and queue scheduling. A saved paused goal with quota, capacity, or system-interruption evidence remains eligible when no explicit pause or user cancellation was recorded. Cleanly completed paused goals remain closed. Recovery rechecks eligibility before opening and before sending. Only confirmed official runtime activity can satisfy the already-running recovery branch; writer locks and transcript recency cannot. Unknown activity retains recovery. Already running official owners are observed without closing tabs or sending another prompt; managed reload cleanup still saves recovery before closing old tabs. Unavailable goal storage retains recovery and cannot authorize an automatic tab open.
 
 Temporary IPC connection failures during startup retry within the native readiness deadline. A tab being published or an unavailable pipe does not confirm readiness. Cancellation stops the wait, and continuation requests are never retried after an uncertain acceptance.
 

@@ -10,7 +10,7 @@ vi.mock("child_process", async (original) => ({ ...await original<typeof import(
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { observeRunningCodexSession, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
-import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, startNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
+import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readCodexSessionPreferences, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
@@ -28,6 +28,7 @@ function seedGoal(status: string) {
   } finally { db.close(); }
 }
 beforeEach(async () => {
+  vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
   root = await mkdtemp(path.join(os.tmpdir(), "codex-native-start-"));
   preferenceStore = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
   configureSqliteStateStore(preferenceStore);
@@ -173,6 +174,7 @@ describe("native App Server new sessions", () => {
     try {
       if (scenario === "raced") {
         vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+        vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
         const rpc = { request: vi.fn(), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
         await resumeCodexSessionGoal({ ...session, status: "idle", projectPath: root });
         expect(mocks.open).not.toHaveBeenCalled();
@@ -329,8 +331,9 @@ describe("native App Server new sessions", () => {
     await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: scenario === "stopped" ? "turn_aborted" : "task_complete", ...(scenario === "stopped" ? { reason: "user_cancelled" } : {}) } }) + "\n");
     vi.mocked(getNativeCodexSessionRunning).mockReturnValue(scenario === "unavailable" ? undefined : false);
     seedGoal(["complete", "blocked", "paused"].includes(scenario) ? scenario : "active");
+    if (scenario === "unavailable") vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
     if (scenario === "unconfirmed") vi.mocked(startNativeCodexSessionTurn).mockRejectedValueOnce(new Error("Unconfirmed native start"));
-    await expect(resumeCodexSessionGoal({ id, title: "Goal", status: "idle", projectPath: root })).rejects.toThrow(scenario === "unconfirmed" ? "Unconfirmed" : ["unavailable", "not-accepted"].includes(scenario) ? "owner is unavailable" : "no longer eligible");
+    await expect(resumeCodexSessionGoal({ id, title: "Goal", status: "idle", projectPath: root })).rejects.toThrow(scenario === "unconfirmed" ? "Unconfirmed" : scenario === "unavailable" ? "runtime is unavailable" : scenario === "not-accepted" ? "owner is unavailable" : "no longer eligible");
     expect(mocks.open).not.toHaveBeenCalled();
     expect(startNativeCodexSessionTurn).toHaveBeenCalledTimes(["not-accepted", "unconfirmed"].includes(scenario) ? 1 : 0);
   });

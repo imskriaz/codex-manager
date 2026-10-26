@@ -27,6 +27,7 @@ describe("post-load session recovery", () => {
   });
   it("sends exactly Continue if not completed and records title after provider acceptance", async () => {
     expect(await resumeCodexSessionWork("session")).toBe("continued");
+    expect(mocks.summary).toHaveBeenCalledWith("session", "recovery-test", true);
     expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ text: "Continue if not completed", projectPath: "project", interruptedOnly: true }));
     expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Continue accepted", { sessionId: "session", sessionRef: "session-ref", title: "Pending task" });
   });
@@ -75,6 +76,11 @@ describe("post-load session recovery", () => {
     await expect(resumeCodexSessionWork("session")).rejects.toThrow("Goal status is unavailable");
     expect(mocks.send).not.toHaveBeenCalled();
   });
+  it("retains non-goal recovery when transcript interruption evidence is unavailable", async () => {
+    mocks.summary.mockResolvedValue({ id: "session", title: "Partial history", status: "idle", goal: null });
+    await expect(resumeCodexSessionWork("session")).rejects.toThrow("Interrupted work could not be verified");
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
   it("recognizes older hosts with no native goal database", async () => {
     mocks.summary.mockResolvedValue({ status: "idle", interrupted: true });
     expect(await resumeCodexSessionWork("session")).toBe("continued");
@@ -119,6 +125,6 @@ describe("post-load session recovery", () => {
     const pending = resumeCodexSessionWork("session");
     await vi.advanceTimersByTimeAsync(3_001);
     expect(await pending).toBe("running"); expect(mocks.send).not.toHaveBeenCalled();
-    expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Native session already running; no prompt sent", expect.objectContaining({ sessionRef: "session-ref", title: "Loaded native task" }));
+    expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Native session already running; no prompt sent", expect.objectContaining({ sessionRef: "session-ref", title: "Loaded native task", activitySource: "official-native", nativeRunning: true }));
   });
 });

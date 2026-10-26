@@ -3,12 +3,11 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessionRecoveryMetadata, readCodexCliSessionSummary, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { getNativeCodexSessionRunning, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessionRecoveryMetadata, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
-import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 import { orderCodexSessionRecoveryIds, readQueuedCodexSessionPreferences, readCodexSessionPreferences, hasCodexSessionAutoResumeOptIn, isCodexSessionAutoResumeEnabled } from "./codexSessionPreferences";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
@@ -607,13 +606,11 @@ export function resumePersistedCodexSessions(
       if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
       recordPersistentEvent("info", "auto-resume", "Official recovery path selected", details);
       phase = "readiness";
-      const summary = await readCodexCliSessionSummary(sessionId, home);
-      if (summary?.status === "running") return await resumeCodexSessionWork(sessionId, signal);
       if (!(await filterAutoResumeGoalSessionIds([sessionId], home, signal, false, true)).length) {
         recordPersistentEvent("info", "auto-resume", "Recovery skipped before opening Codex", { ...details, reason: "no-longer-eligible" });
         return "idle";
       }
-      if (ready !== true) {
+      if (ready !== true && getNativeCodexSessionRunning(home, sessionId) !== true) {
         recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", { ...details, reason: openVsCode ? "Open VS Code enabled" : "No ready official owner" });
         await openCodexSessionInVsCode(sessionId, signal, true, 120_000, true);
       }
@@ -737,14 +734,6 @@ export function resumePersistedCodexSessions(
             "Auto Resume could not verify this saved session before its deadline.", controller.signal)).length) {
             recordPersistentEvent("info", "auto-resume", "Session skipped because recovery is no longer eligible", { sessionId: id, sessionRef: toSessionLogRef(id) });
             remaining = remaining.filter((candidate) => candidate !== id);
-            await writeIds(context, remaining, deadline, false, { remove: [id] });
-            continue;
-          }
-          const current = await readCodexCliSessionSummary(id, recoveryHome);
-          const interruptedPaused = current?.goal?.status === "paused" && current.interrupted === true && !isExplicitSessionGoalPause(recoveryHome, id);
-          if (current?.goal?.status === "paused" && !interruptedPaused) {
-            recordPersistentEvent("info", "auto-resume", "Session skipped because its goal is paused", { sessionRef: toSessionLogRef(id), reason: "goal-paused" });
-            remaining = remaining.filter(candidate => candidate !== id);
             await writeIds(context, remaining, deadline, false, { remove: [id] });
             continue;
           }

@@ -12,7 +12,7 @@ import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readAutoResumeGoalCandidateIds } from "../src/services/codexSessionAutoResumeSelection";
 import { AUTO_RESUME_OPEN_SESSION_IDS_KEY, persistOpenCodexSessions, AUTO_RESUME_SESSION_IDS_KEY, persistRunningCodexSessions, resumePersistedCodexSessions, prepareCodexSessionsForExtensionHostRestart } from "../src/services/codexSessionAutoResume";
-import { getNativeCodexSessionRunning, startNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
+import { getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
 let home: string, db: DatabaseSync;
@@ -22,6 +22,7 @@ const originalGoalResume = sessionEditor.resumeCodexSessionGoal;
 const ids = Array.from({ length: 7 }, (_, index) => `aaaaaaaa-aaaa-aaaa-aaaa-${String(index).padStart(12, "0")}`);
 const states = ["active", "usage_limited", "paused", "complete", "budget_limited", "active", "active"];
 beforeEach(async () => {
+  vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
   vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(true);
   home = await mkdtemp(path.join(tmpdir(), "goal-resume-integration-"));
   process.env.CODEX_HOME = home;
@@ -83,6 +84,56 @@ it("sends the non-goal continuation through the official owner without opening a
   expect(startNativeCodexSessionTurn).toHaveBeenCalledOnce();
   expect(mocks.open).not.toHaveBeenCalled();
   expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
+});
+
+it.each(["active", "none"])("recovers %s work despite a recent writer lock and orphaned task_started", async status => {
+  const id = ids[0]!, state = context();
+  if (status === "none") db.prepare("DELETE FROM thread_goals WHERE thread_id=?").run(id);
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [id]);
+  await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Interrupted at reload" }) + "\n");
+  const transcript = path.join(home, "sessions", `rollout-${id}.jsonl`);
+  await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "orphaned-turn" } }) + "\n");
+  await mkdir(path.join(home, "thread-writer-locks"));
+  await writeFile(path.join(home, "thread-writer-locks", `${id}.lock`), "");
+  vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
+  expect((await sessionEditor.readCodexCliSessionSummary(id, home))?.status).toBe("running");
+  vi.mocked(waitForNativeCodexSessionReady).mockResolvedValueOnce(false);
+  const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockImplementationOnce(async () => {
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+  });
+  vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, turn, _signal, onStarted) => {
+    expect(turn.input).toEqual(status === "none" ? [{ type: "text", text: "Continue if not completed", text_elements: [] }] : []);
+    await appendFile(transcript, ["task_started", "task_complete"].map(type => JSON.stringify({ type: "event_msg", payload: { type, turn_id: "official-recovered" } })).join("\n") + "\n");
+    onStarted?.("official-recovered");return true;
+  });
+  expect(await resumePersistedCodexSessions(state.context)).toEqual({ attempted: 1, opened: 1, failed: [] });
+  expect(open).toHaveBeenCalledOnce(); expect(startNativeCodexSessionTurn).toHaveBeenCalledOnce();
+  expect(mocks.open).not.toHaveBeenCalled();
+  expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
+});
+it.each(["active", "none"])("retains %s recovery when the official runtime is unavailable after opening", async status => {
+  const id = ids[0]!, state = context();
+  if (status === "none") db.prepare("DELETE FROM thread_goals WHERE thread_id=?").run(id);
+  await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Unknown runtime" }) + "\n");
+  await appendFile(path.join(home, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "event_msg", payload: { type: "task_started", turn_id: "orphaned-turn" } }) + "\n");
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [id]);
+  vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
+  const result = await resumePersistedCodexSessions(state.context);
+  expect(result).toMatchObject({ opened: 0, failed: [{ sessionId: id, message: expect.stringContaining("could not be verified") }] });
+  expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+  expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toEqual([id]);
+});
+
+it("keeps recovery for a non-goal session whose partial history has no turn state", async () => {
+  const id = ids[0]!, state = context();
+  db.prepare("DELETE FROM thread_goals WHERE thread_id=?").run(id);
+  await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Partial history" }) + "\n");
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [id]);
+  const result = await resumePersistedCodexSessions(state.context);
+  expect(result).toMatchObject({ opened: 0, failed: [{ sessionId: id, message: expect.stringContaining("Interrupted work could not be verified") }] });
+  expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+  expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toEqual([id]);
 });
 
 it("captures and restores active and quota-limited parent goals using real native goal storage", async () => {

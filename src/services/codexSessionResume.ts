@@ -445,22 +445,29 @@ export async function readCodexCliSessionRecoveryMetadata(ids: string[], home = 
 
 export async function readCodexCliSessionSummary(
   sessionId: string,
-  codexHome = resolveCodexHome()
+  codexHome = resolveCodexHome(),
+  requireNativeRuntime = false
 ): Promise<DashboardCliSessionSummary | undefined> {
   validateSessionId(sessionId);
   const recent = recentNewSessions.get(sessionId)?.summary;
-  if (recent && ownsSessionTurn(codexHome, sessionId)) return recent;
+  if (!requireNativeRuntime && recent && ownsSessionTurn(codexHome, sessionId)) return recent;
   const state = (await readStateSessionRecords(codexHome, sessionId))[0];
   const indexed = (await readCodexCliSessionIndex(codexHome).catch(error => { if (!state) throw error; return [] as CliSessionIndexEntry[]; })).find(candidate => candidate.id === sessionId);
   const entry = state ? mergeSessionIndexEntry(state, indexed) : indexed;
   if (!entry) {
+    if (requireNativeRuntime) throw new Error("Session metadata is unavailable. Saved recovery was retained.");
     const recent = recentNewSessions.get(sessionId)?.summary;
     return recent ? { ...recent, status: ownsSessionTurn(codexHome, sessionId) ? "running" : "idle", canStop: ownsSessionTurn(codexHome, sessionId) } : (await readCodexCliSessions(codexHome)).find(session => session.id === sessionId);
   }
   const transcriptPath = (await findCliSessionTranscripts(codexHome, new Set([sessionId]))).get(sessionId);
   const archiveRelative = transcriptPath ? path.relative(path.join(codexHome, "archived_sessions"), transcriptPath) : undefined;
   const archived = state?.archived ?? Boolean(archiveRelative && !path.isAbsolute(archiveRelative) && archiveRelative !== ".." && !archiveRelative.startsWith(`..${path.sep}`));
-  const summary = await toCliSessionSummary(codexHome, entry, archived, transcriptPath);
+  const nativeRunning = requireNativeRuntime && !archived ? await readNativeCodexSessionRunning(codexHome, sessionId) : undefined;
+  const runtimeStatus = requireNativeRuntime ? {
+    status: nativeRunning === true ? "running" as const : nativeRunning === false ? "idle" as const : "unknown" as const,
+    statusError: nativeRunning === undefined ? "The official Codex runtime is unavailable. Saved recovery was retained." : undefined
+  } : undefined;
+  const summary = await toCliSessionSummary(codexHome, entry, archived, transcriptPath, runtimeStatus);
   const goals = await readCodexSessionGoals(codexHome, [sessionId]);
   const title = reconcileCodexSessionTitles(codexHome, [summary]).get(sessionId) ?? summary.title;
   return { ...summary, title, model: summary.model ?? state?.model, reasoningEffort: summary.reasoningEffort ?? state?.reasoningEffort, ...(goals ? { goal: goals.get(sessionId) ?? null } : {}), ...readSubAgentMetadata(state?.source), ...(!summary.projectPath && state?.cwd ? { projectPath: state.cwd } : {}) };
@@ -1123,7 +1130,11 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
       signal?.throwIfAborted();
       if (readCodexSessionPreferences(home, [session.id]).get(session.id)?.manualStop)
         throw new Error('This session was explicitly stopped. Resume it to continue the goal.');
-      if (await isCliSessionRunning(home, session.id)) {
+      const nativeRunning = await readNativeCodexSessionRunning(home, session.id, signal);
+      signal?.throwIfAborted();
+      if (resolveCodexHome() !== home) throw new Error("The active Codex home changed. Saved recovery was retained.");
+      if (nativeRunning === undefined) throw new Error("The official Codex goal runtime is unavailable. Saved recovery was retained.");
+      if (nativeRunning === true) {
         observeRunningCodexSession({ ...session, status: "running" });
         return;
       }
@@ -1145,7 +1156,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
         observeRunningCodexSession({ ...session, status: "running" });
         return;
       }
-      if (getNativeCodexSessionRunning(home, session.id) === undefined || !await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, turnId => {
+      if (!await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, turnId => {
         accepted = true;
         nativeTurnStarted(home, session.id, turnId);
       })) throw new Error("The official Codex goal owner is unavailable. Open the conversation and retry. Saved recovery was retained.");

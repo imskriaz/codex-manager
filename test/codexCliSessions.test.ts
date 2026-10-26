@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, open, readFile, readdir, rm, truncate, utimes, writeFil
 import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
+import { readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as safeReads from '../src/utils/safeFileReads';
@@ -615,6 +616,28 @@ describe("Codex session integration", () => {
       { role: "user", text: "Review this", images: [{ src: "data:image/png;base64,AA==" }] },
       { role: "assistant", text: "Done" }
     ]);
+  });
+
+  it.each([false, undefined, true])("uses official activity %s for recovery despite a recent orphaned turn and writer lock", async running => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-recovery-runtime-")); roots.push(root);
+    await mkdir(path.join(root, "sessions")); await mkdir(path.join(root, "thread-writer-locks"));
+    await writeFile(path.join(root, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Interrupted at reload" }) + "\n");
+    await writeFile(path.join(root, "sessions", `rollout-${sessionId}.jsonl`), [
+      { type: "session_meta", payload: { id: sessionId, source: "vscode", cwd: root } },
+      { type: "event_msg", payload: { type: "task_started", turn_id: "orphaned" } }
+    ].map(row => JSON.stringify(row)).join("\n") + "\n");
+    await writeFile(path.join(root, "thread-writer-locks", `${sessionId}.lock`), "");
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(running);
+    try {
+      expect(await readCodexCliSessionSummary(sessionId, root, true)).toMatchObject({
+        status: running === true ? "running" : running === false ? "idle" : "unknown",
+        interrupted: running !== true, locked: running !== false
+      });
+    } finally { vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined); }
+  });
+  it("keeps missing metadata inconclusive for official recovery", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codex-cli-missing-recovery-")); roots.push(root);
+    await expect(readCodexCliSessionSummary(sessionId, root, true)).rejects.toThrow("metadata is unavailable");
   });
 
   it("does not report a stopped session as running from a stale writer lock", async () => {

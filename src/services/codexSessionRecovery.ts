@@ -27,18 +27,18 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
   let phase = "state-verification";
   let goalStatus: string | undefined;
   const work = (async () => {
-    const session = await waitWithin(readCodexCliSessionSummary(sessionId, home), 6_000, "Session state could not be verified after opening.", controller.signal);
+    const session = await waitWithin(readCodexCliSessionSummary(sessionId, home, true), 6_000, "Session state could not be verified after opening.", controller.signal);
     controller.signal.throwIfAborted();
     if (resolveCodexHome() !== home) throw new Error('The active account home changed. Recovery was kept; refresh before resuming.');
     if (!session || session.archived || session.subAgent || session.parentSessionId) throw new Error("This session is missing, archived, or belongs to a parent. Refresh before resuming.");
     title = session.title;
     goalStatus = session.goal?.status ?? (session.goal === null ? "none" : "unavailable");
     recordPersistentEvent("debug", "session-resume", "Post-load recovery state", {
-      ...identity, title: session.title, projectPath: session.projectPath, status: session.status, locked: session.locked, interrupted: session.interrupted, goalStatus: session.goal?.status ?? (session.goal === null ? "none" : "unavailable")
+      ...identity, title: session.title, projectPath: session.projectPath, status: session.status, locked: session.locked, interrupted: session.interrupted, activitySource: "official-native", goalStatus: session.goal?.status ?? (session.goal === null ? "none" : "unavailable")
     });
     if (session.status === "running") {
       observeRunningCodexSession(session);
-      recordPersistentEvent("info", "session-resume", "Native session already running; no prompt sent", { ...identity, title: session.title });
+      recordPersistentEvent("info", "session-resume", "Native session already running; no prompt sent", { ...identity, title: session.title, activitySource: "official-native", nativeRunning: true });
       return "running" as const;
     }
     if (session.status === "unknown") throw new Error("Running state could not be verified. Recovery was kept; refresh before retrying.");
@@ -68,6 +68,7 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
       if (resolveCodexHome() !== home) throw new Error('The active account home changed. Recovery was kept; refresh before resuming.');
       if (files.some(name => /^goals_\d+\.sqlite$/.test(name))) throw new Error("Goal status is unavailable. Recovery was kept to avoid sending a duplicate prompt.");
     }
+    if (session.interrupted === undefined) throw new Error("Interrupted work could not be verified. Saved recovery was retained; refresh before retrying.");
     if (session.interrupted !== true) {
       recordPersistentEvent("info", "session-resume", "Session has no interrupted work", { ...identity, title });
       return "idle" as const;
