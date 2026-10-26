@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile, appendFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as vscode from "vscode";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ open: vi.fn(), spawn: vi.fn() }));
@@ -19,6 +20,13 @@ const id = "01a04882-d037-7a42-ad24-9afb61901199";
 let root: string;
 let preferenceStore: SqliteStateStore;
 let previousHome: string | undefined;
+function seedGoal(status: string) {
+  const db = new DatabaseSync(path.join(root, "goals_1.sqlite"));
+  try {
+    db.exec("CREATE TABLE thread_goals(thread_id TEXT PRIMARY KEY, objective TEXT, status TEXT, time_used_seconds INTEGER)");
+    db.prepare("INSERT INTO thread_goals VALUES (?, 'Finish this task', ?, 0)").run(id, status);
+  } finally { db.close(); }
+}
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "codex-native-start-"));
   preferenceStore = await SqliteStateStore.open(path.join(root, "manager.sqlite"));
@@ -167,7 +175,7 @@ describe("native App Server new sessions", () => {
         vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
         const rpc = { request: vi.fn(), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
         await resumeCodexSessionGoal({ ...session, status: "idle", projectPath: root });
-        expect(rpc.request).not.toHaveBeenCalled(); expect(rpc.close).toHaveBeenCalledOnce();
+        expect(mocks.open).not.toHaveBeenCalled();
       }
       observeRunningCodexSession(session); observeRunningCodexSession(session);
       if (scenario === "delayed") await appendFile(transcript, event("task_started"));
@@ -185,7 +193,7 @@ describe("native App Server new sessions", () => {
         expect(log).toHaveBeenCalledWith("info", "session-turn", "Official native turn observation ended", expect.objectContaining({ status: scenario === "cancelled" ? "cancelled" : "completed", completionConfirmed: scenario !== "cancelled", source: "official-transcript" }), scenario === "cancelled" ? expect.any(Error) : undefined);
         expect(log).not.toHaveBeenCalledWith("warning", "session-resume", "Restored native turn ended without confirmed completion", expect.anything(), expect.anything());
       }
-      expect(startNativeCodexSessionTurn).not.toHaveBeenCalled(); expect(mocks.open).toHaveBeenCalledTimes(scenario === "raced" ? 1 : 0);
+      expect(startNativeCodexSessionTurn).not.toHaveBeenCalled(); expect(mocks.open).not.toHaveBeenCalled();
     } finally { unsubscribe(); log.mockRestore(); }
   });
 
@@ -254,6 +262,15 @@ describe("native App Server new sessions", () => {
     expect(log).toHaveBeenCalledWith("warning", "session-goal", "Goal status change failed", expect.objectContaining({ requestedStatus: "paused", confirmed: false, phase: "official-api" }), expect.any(Error));
     } finally { log.mockRestore(); }
   });
+  it("rejects a goal paused after automatic recovery selection before activating or starting it", async () => {
+    await mkdir(path.join(root, "sessions"));
+    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    seedGoal("paused");
+    await expect(resumeCodexSessionGoal({ id, title: "Paused task", status: "idle", projectPath: root }, undefined, "automatic")).rejects.toThrow("no longer eligible");
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+  });
   it("allows storage cleanup for a deleted project without running a turn in another workspace", async () => {
     await mkdir(path.join(root, "sessions"));
     await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: path.join(root, "deleted-project") } }) + "\n");
@@ -288,53 +305,34 @@ describe("native App Server new sessions", () => {
       expect(completed).toHaveBeenCalledOnce();
     } finally { unsubscribe(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
   });
-  it.each([true, false])("resumes a native-owned goal once without a prompt (known owner: %s)", async known => {
+  it.each(["active", "usage_limited", "paused"])("continues a native-owned %s goal once without a prompt or goal mutation", async status => {
     await mkdir(path.join(root, "sessions"));
     const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`);
-    await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
-    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(known ? false : undefined);
-    vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async () => {
+    await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: "task_failed", turn_id: "interrupted" } }) + "\n");
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, _turn, _signal, onStarted) => {
       await appendFile(transcript, ["task_started", "task_complete"].map(type => JSON.stringify({ type: "event_msg", payload: { type, turn_id: "native-goal" } })).join("\n") + "\n");
-      return true;
+      onStarted?.("native-goal"); return true;
     });
     const completed = vi.fn();
     const unsubscribe = subscribeDashboardRealtime(event => { if (event.type === "dashboard:codex-session-live" && event.state.status === "completed") completed(event.state); });
-    const rpc = { request: vi.fn(async (method: string) => { if (method === "thread/resume") throw new Error("thread already has an active writer"); return { goal: { status: "usageLimited" } }; }), close: vi.fn(), onNotification: () => () => undefined, onServerRequest: () => () => undefined, onDisconnect: () => () => undefined }; mocks.open.mockResolvedValue(rpc);
+    seedGoal(status);
     try {
-      await resumeCodexSessionGoal({ id, title: "Native goal", status: "idle", projectPath: root });
-      expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(["thread/goal/get", "thread/goal/set", ...(!known ? ["thread/resume"] : [])]);
-      expect(startNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, { threadId: id, input: [], cwd: root }, undefined, expect.any(Function));
-      expect(rpc.close).toHaveBeenCalledOnce();
+      await resumeCodexSessionGoal({ id, title: "Native goal", status: "idle", interrupted: true, projectPath: root });
+      expect(mocks.open).not.toHaveBeenCalled();
+      expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(root, id, { threadId: id, input: [], cwd: root }, expect.any(AbortSignal), expect.any(Function));
       await vi.waitFor(() => expect(completed).toHaveBeenCalledWith(expect.objectContaining({ sessionId: id, status: "completed" })));
-      expect(completed).toHaveBeenCalledOnce();
     } finally { unsubscribe(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); }
   });
-  it.each(["active", "committed", "recovered", "unchanged", "replaced", "paused"])("verifies native goal ownership without rewriting an active goal (%s)", async scenario => {
-    const completed = vi.fn();
-    const unsubscribe = subscribeDashboardRealtime(event => { if (event.type === "dashboard:codex-session-live" && event.state.status === "completed") completed(); });
+  it.each(["unavailable", "not-accepted", "unconfirmed", "complete", "blocked", "paused", "stopped"])("retains goal recovery without a prompt or private fallback when %s", async scenario => {
     await mkdir(path.join(root, "sessions"));
-    const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`);
-    await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
-    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
-    const native = vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async () => {
-      await appendFile(transcript, ["task_started", "task_complete"].map(type => JSON.stringify({ type: "event_msg", payload: { type, turn_id: "verified-goal" } })).join("\n") + "\n");
-      return true;
-    });
-    let reads = 0;
-    const rpc = { request: vi.fn(async (method: string, params?: { origin?: string }) => {
-      if (method === "thread/goal/set") {
-        if (scenario === "recovered" && params?.origin === "automatic") return { goal: { status: "active", objective: "Finish this task" } };
-        throw new Error("failed to record goal instruction: thread already has an active writer");
-      }
-      reads++;
-      return { goal: { status: reads > 1 && scenario === "paused" ? "paused" : scenario === "active" || reads > 1 && ["committed", "replaced"].includes(scenario) ? "active" : "usageLimited", objective: reads > 1 && scenario === "replaced" ? "Another task" : "Finish this task" } };
-    }), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
-    try {
-      const action = resumeCodexSessionGoal({ id, title: "Native goal", status: "idle", projectPath: root }, undefined, scenario === "unchanged" ? "automatic" : "user");
-      if (["unchanged", "replaced", "paused"].includes(scenario)) { await expect(action).rejects.toThrow("active writer"); expect(native).not.toHaveBeenCalled(); }
-      else { await action; expect(native).toHaveBeenCalledOnce(); await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce()); }
-      expect(rpc.request.mock.calls.filter(([method]) => method === "thread/goal/set")).toHaveLength(scenario === "active" ? 0 : scenario === "recovered" ? 2 : 1);
-    } finally { unsubscribe(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); native.mockReset().mockResolvedValue(false); }
+    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n" + JSON.stringify({ type: "event_msg", payload: { type: scenario === "stopped" ? "turn_aborted" : "task_complete", ...(scenario === "stopped" ? { reason: "user_cancelled" } : {}) } }) + "\n");
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(scenario === "unavailable" ? undefined : false);
+    seedGoal(["complete", "blocked", "paused"].includes(scenario) ? scenario : "active");
+    if (scenario === "unconfirmed") vi.mocked(startNativeCodexSessionTurn).mockRejectedValueOnce(new Error("Unconfirmed native start"));
+    await expect(resumeCodexSessionGoal({ id, title: "Goal", status: "idle", projectPath: root })).rejects.toThrow(scenario === "unconfirmed" ? "Unconfirmed" : ["unavailable", "not-accepted"].includes(scenario) ? "owner is unavailable" : "no longer eligible");
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(startNativeCodexSessionTurn).toHaveBeenCalledTimes(["not-accepted", "unconfirmed"].includes(scenario) ? 1 : 0);
   });
   it("uses the recorded closed project for all lifecycle operations", async () => {
     const project = path.join(root, "recorded-project"); await mkdir(project); await mkdir(path.join(root, "sessions"));
@@ -351,35 +349,22 @@ describe("native App Server new sessions", () => {
     await expect(sendCodexCliSessionMessage({ sessionId: id, text: "Continue", projectPath: root })).rejects.toThrow();
     expect(mocks.open).not.toHaveBeenCalled();
   });
-  it.each([false, true])("resumes a goal in its closed project without a prompt (native auto-start: %s)", async autoStart => {
+  it("continues a goal in its recorded closed project through the official owner without a prompt", async () => {
     const project = path.join(root, "goal-project");
     await mkdir(project); await mkdir(path.join(root, "sessions"));
-    await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: project } }) + "\n");
-    const listeners = new Set<(method: string, params: unknown) => void>();
-    const emit = (method: string) => [...listeners].forEach(fn => fn(method, { threadId: id, turn: { id: "goal-turn", status: "completed" } }));
-    const rpc = {
-      request: vi.fn(async (method: string, params?: { status?: string }) => {
-        if ((autoStart && method === "thread/resume") || method === "turn/start") emit("turn/started");
-        return { goal: { status: method === "thread/goal/set" ? params?.status : "usageLimited" } };
-      }),
-      onNotification: (fn: (method: string, params: unknown) => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
-      onServerRequest: () => () => undefined, onDisconnect: () => () => undefined, close: vi.fn()
-    };
-    mocks.open.mockResolvedValue(rpc);
-    try {
-      await resumeCodexSessionGoal({ id, title: "Goal task", status: "idle", projectPath: project });
-      expect(mocks.open).toHaveBeenCalledWith(expect.anything(), project, undefined);
-      expect(rpc.request).toHaveBeenCalledWith("thread/resume", { threadId: id, cwd: project, excludeTurns: true });
-      expect(rpc.request.mock.calls.some(([method]) => method === "thread/goal/set")).toBe(true);
-      if (!autoStart) expect(rpc.request).toHaveBeenCalledWith("thread/goal/set", { threadId: id, status: "active", origin: "automatic" });
-      expect(rpc.request.mock.calls.some(([method]) => method === "turn/start")).toBe(!autoStart);
-      if (!autoStart) expect(rpc.request).toHaveBeenCalledWith("turn/start", { threadId: id, input: [], cwd: project });
-      expect(getCodexSessionLiveState(id)?.status).toBe("running");
-      await setCodexSessionGoalStatus(id, "paused");
-      expect(mocks.open).toHaveBeenCalledOnce();
-      expect(rpc.request).toHaveBeenCalledWith("thread/goal/set", { threadId: id, status: "paused", origin: "automatic" });
-    } finally { emit("turn/completed"); }
-    expect(rpc.close).toHaveBeenCalledOnce();
+    const transcript = path.join(root, "sessions", `rollout-${id}.jsonl`);
+    await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: { id, cwd: project } }) + "\n");
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+    seedGoal("active");
+    vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, _turn, _signal, onStarted) => {
+      await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "closed-project-goal" } }) + "\n");
+      onStarted?.("closed-project-goal"); return true;
+    });
+    await resumeCodexSessionGoal({ id, title: "Goal", status: "idle", projectPath: project });
+    expect(startNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, { threadId: id, input: [], cwd: project }, expect.any(AbortSignal), expect.any(Function));
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(getCodexSessionLiveState(id)?.status).toBe("completed"));
   });
   it("rejects an unavailable project before launching App Server", async () => {
     await expect(resumeCodexSessionGoal({ id, title: "Missing project", status: "idle", projectPath: path.join(root, "missing") })).rejects.toThrow();

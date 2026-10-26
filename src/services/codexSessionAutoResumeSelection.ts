@@ -14,8 +14,8 @@ import {
 import { readSubAgentMetadata } from "../domain/sessionSource";
 import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { normalizeNativePath } from "../utils/nativePaths";
-import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 import { readCodexSessionPreferences } from "./codexSessionPreferences";
+import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 
 type SqliteDatabase = {
   prepare(sql: string): { get(id: string): Record<string, unknown> | undefined; all(): Record<string, unknown>[] };
@@ -27,7 +27,7 @@ export function isAutoResumeGoalOnlyEnabled(): boolean {
   return false;
 }
 
-/** Explicitly paused or terminal goals never auto-resume; interrupted pauses are checked separately. */
+/** Current goal state wins, except an interrupted paused goal without an explicit pause marker. */
 export async function filterAutoResumeGoalSessionIds(
   ids: string[], home = resolveCodexHome(), signal?: AbortSignal, goalOnly = isAutoResumeGoalOnlyEnabled(), includeInterruptedPaused = false
 ): Promise<string[]> {
@@ -43,11 +43,14 @@ export async function filterAutoResumeGoalSessionIds(
     if (!db) {
       return goalOnly ? [] : ids;
     }
+    const interruptedPaused = includeInterruptedPaused
+      ? new Set(await readQuotaInterruptedCodexSessionIds(home, ids, signal, [], true))
+      : new Set<string>();
     const statement = db.prepare("SELECT status FROM thread_goals WHERE thread_id = ?");
     return ids.filter((id) => {
       signal?.throwIfAborted();
       const status = statement.get(id)?.["status"];
-      const eligible = status === "active" || status === "usage_limited" || (status === "paused" && includeInterruptedPaused && !isExplicitSessionGoalPause(home, id)) || (status === undefined && !goalOnly);
+      const eligible = status === "active" || status === "usage_limited" || (status === "paused" && interruptedPaused.has(id) && !isExplicitSessionGoalPause(home, id)) || (status === undefined && !goalOnly);
       return eligible;
     });
   } catch (error) {

@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.5.6-pre.7",
+  "version": "1.5.6",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -163,7 +163,7 @@
         "codexManager.autoResumeOpenVsCode": {
           "type": "boolean",
           "scope": "machine",
-          "default": false,
+          "default": true,
           "markdownDescription": "Open the official Codex conversation tabs and wait for readiness before Auto Resume. When off, prefer an existing ready official owner and open tabs only if needed."
         },
         "codexManager.crossWindowAccountModeEnabled": {

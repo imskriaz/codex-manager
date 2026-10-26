@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import * as path from "node:path";
 vi.mock("../src/services/codexSessionRecovery", () => ({ resumeCodexSessionWork: vi.fn().mockResolvedValue("idle") }));
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -55,6 +56,31 @@ describe("Codex VS Code session editor", () => {
     expect(waitForNativeCodexSessionReady).toHaveBeenLastCalledWith(expect.any(String),id,undefined,40_000);
     await openCodexSessionInVsCode(id,undefined,false,120_000);
     expect(waitForNativeCodexSessionReady).toHaveBeenLastCalledWith(expect.any(String),id,undefined,120_000);
+  });
+  it.each(["paused", "complete", "corrupt", "activation-race"])("keeps an automatic tab closed for %s goal state", async scenario => {
+    const home = await mkdtemp(path.join(tmpdir(), "codex-paused-editor-"));
+    vi.stubEnv("CODEX_HOME", home);
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    const file = path.join(home, "goals_1.sqlite");
+    let db: DatabaseSync | undefined;
+    try {
+      if (scenario === "corrupt") await writeFile(file, "partial");
+      else {
+        db = new DatabaseSync(file);
+        db.exec("CREATE TABLE thread_goals(thread_id TEXT, objective TEXT, status TEXT, time_used_seconds INTEGER)");
+        db.prepare("INSERT INTO thread_goals VALUES (?, 'Task', ?, 0)").run(id, scenario === "activation-race" ? "active" : scenario);
+        if (scenario === "activation-race") activateExtension.mockImplementation(async () => { db!.exec("UPDATE thread_goals SET status='paused'"); });
+      }
+      const opening = openCodexSessionInVsCode(id, new AbortController().signal, false, 120_000, true);
+      if (scenario === "corrupt") await expect(opening).rejects.toThrow("Goal status is unavailable");
+      else await opening;
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+      expect(readOpenCodexSessionIds()).toEqual([]);
+      if (scenario === "paused") {
+        await openCodexSessionInVsCode(id);
+        expect(readOpenCodexSessionIds()).toEqual([id]);
+      }
+    } finally { db?.close(); vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); }
   });
 
   it.each([false, undefined])("requires verified readiness even for an already restored tab (%s)", async ready => {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.6
+
+- Restore tab-first Auto Resume by default for goals and non-goal sessions, continue goals without a new prompt, and send “Continue if not completed” only for interrupted non-goal chats through the ready official owner. No private server or unsupported goal-activation calls.
+- Retry temporary startup IPC disconnects within the readiness deadline; retain failed and uncertain recovery without duplicate sends.
+- Keep quota, capacity, and system-interrupted paused goals eligible while respecting explicit Pause, Stop, completion, and session policies. Preserve already running owners at startup.
+- Improve recovery-path, readiness, goal-transition, Stop, and native-turn diagnostics; synchronize native session names and preserve compact per-reset actions.
+
 ## 1.5.6-pre.7
 
 - Trace Auto Resume's background owner, forced tab, and fallback tab paths separately, including readiness timing, recovery outcomes, and retained failures.

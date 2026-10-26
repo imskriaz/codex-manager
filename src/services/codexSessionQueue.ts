@@ -18,7 +18,7 @@ export function nextQueuedSessions(sessions: DashboardCliSessionSummary[], prefe
   if ([...preferences.values()].some(value => value.queueClaimId || value.queueClaimedAt || value.queueError)) return [];
   const eligible = sessions.filter(session => {
     const preference = preferences.get(session.id);
-    return !session.archived && !session.subAgent && !session.parentSessionId && session.goal?.status !== 'complete' &&
+    return !session.archived && !session.subAgent && !session.parentSessionId && session.goal?.status !== 'complete' && (session.goal?.status !== 'paused' || session.interrupted === true) &&
       preference?.queue === true && !preference.manualStop && !preference.queueClaimedAt && !preference.queueError &&
       Number.isSafeInteger(preference.priority ?? 3) && (preference.priority ?? 3) >= 1;
   });

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { readAutoResumeCodexSessionIds } from "../src/services/codexSessionAutoResumeSelection";
-import { clearExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "../src/services/codexSessionGoals";
+import { clearExplicitSessionGoalPause, readCodexSessionGoals } from "../src/services/codexSessionGoals";
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readAutoResumeGoalCandidateIds } from "../src/services/codexSessionAutoResumeSelection";
@@ -18,6 +18,7 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 let home: string, db: DatabaseSync;
 let goalOnly: boolean;
 const previousHome = process.env.CODEX_HOME;
+const originalGoalResume = sessionEditor.resumeCodexSessionGoal;
 const ids = Array.from({ length: 7 }, (_, index) => `aaaaaaaa-aaaa-aaaa-aaaa-${String(index).padStart(12, "0")}`);
 const states = ["active", "usage_limited", "paused", "complete", "budget_limited", "active", "active"];
 beforeEach(async () => {
@@ -25,9 +26,16 @@ beforeEach(async () => {
   home = await mkdtemp(path.join(tmpdir(), "goal-resume-integration-"));
   process.env.CODEX_HOME = home;
   goalOnly = true;
+  mocks.open.mockImplementation(async () => ({ request: vi.fn(async (method: string, params: { threadId: string }) => {
+    if (method !== "thread/goal/get") throw new Error("Unsupported official mutation");
+    const goals = await readCodexSessionGoals(home, [params.threadId]);
+    if (!goals) throw new Error("Native goal storage unavailable");
+    return { goal: goals.get(params.threadId) ?? null };
+  }), close: vi.fn() }));
   vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
     get: (key: string, fallback: unknown) => key === "autoResumeGoalOnlyEnabled" ? goalOnly :
+      key === "autoResumeOpenVsCode" ? false :
       ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : fallback
   } as never);
   await mkdir(path.join(home, "sessions"));
@@ -87,13 +95,15 @@ it("captures and restores active and quota-limited parent goals using real nativ
   expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
 });
 
-it.each(["active", "usage_limited"])("opens and starts an unfinished %s goal after its previous turn completed", async status => {
+it.each(["active", "usage_limited", "paused", "none"])("opens the official tab and confirms %s recovery, adding a prompt only for non-goal work", async status => {
   const state = context(), id = ids[0]!;
   state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [id]);
-  db.prepare("UPDATE thread_goals SET status=? WHERE thread_id=?").run(status, id);
+  if (status === "none") db.prepare("DELETE FROM thread_goals WHERE thread_id=?").run(id);
+  else db.prepare("UPDATE thread_goals SET status=? WHERE thread_id=?").run(status, id);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback === false ? true : fallback } as never);
   await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Unfinished goal" }) + "\n");
   const transcript = path.join(home, "sessions", `rollout-${id}.jsonl`);
-  await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "previous-turn" } }) + "\n");
+  await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: status === "paused" || status === "none" ? "task_failed" : "task_complete", turn_id: "previous-turn" } }) + "\n");
   const previousTabs = vscode.window.tabGroups;
   const tabs: Array<{ input: unknown; isPreview: boolean }> = [];
   Object.assign(vscode.window, { tabGroups: { all: [{ tabs }] } });
@@ -102,11 +112,6 @@ it.each(["active", "usage_limited"])("opens and starts an unfinished %s goal aft
     if (command === "vscode.openWith") tabs.push({ input: { uri, viewType }, isPreview: false });
   });
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
-  const rpc = { request: vi.fn(async (method: string) => {
-    if (method === "thread/goal/set") db.prepare("UPDATE thread_goals SET status='active' WHERE thread_id=?").run(id);
-    return { goal: { status: method === "thread/goal/set" ? "active" : status, objective: "Finish the requested task" } };
-  }), close: vi.fn() };
-  mocks.open.mockResolvedValue(rpc);
   const completed = vi.fn();
   const unsubscribe = subscribeDashboardRealtime(message => { if (message.type === "dashboard:codex-session-live" && message.state.sessionId === id && message.state.status === "completed") completed(); });
   vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, _turn, _signal, onStarted) => {
@@ -116,12 +121,36 @@ it.each(["active", "usage_limited"])("opens and starts an unfinished %s goal aft
   });
   try {
     expect(await resumePersistedCodexSessions(state.context)).toEqual({ attempted: 1, opened: 1, failed: [] });
-    expect(tabs).toHaveLength(0);
-    expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(home, id, { threadId: id, input: [], cwd: home }, expect.any(AbortSignal), expect.any(Function));
-    expect(rpc.request.mock.calls.map(([method]) => method)).toEqual(["thread/goal/get", ...(status === "active" ? [] : ["thread/goal/set"])]);
+    expect(tabs).toHaveLength(1);
+    expect(waitForNativeCodexSessionReady).toHaveBeenCalledWith(home, id, expect.any(AbortSignal), 120_000);
+    expect(startNativeCodexSessionTurn).toHaveBeenCalledExactlyOnceWith(home, id, { threadId: id, input: status === "none" ? [{ type: "text", text: "Continue if not completed", text_elements: [] }] : [], cwd: home }, expect.any(AbortSignal), expect.any(Function));
+    expect(mocks.open).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(completed).toHaveBeenCalledOnce());
     expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
   } finally { unsubscribe(); Object.assign(vscode.window, { tabGroups: previousTabs }); }
+});
+
+it.each(["paused", "complete", "corrupt", "user-stop"])("rechecks %s goal state immediately before sending and sends nothing", async change => {
+  const id = ids[0]!, state = context();
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [id]);
+  await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Pending goal" }) + "\n");
+  const transcript = path.join(home, "sessions", `rollout-${id}.jsonl`);
+  await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "previous" } }) + "\n");
+  vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+  vi.spyOn(sessionEditor, "resumeCodexSessionGoal").mockImplementationOnce(async (session, signal, origin) => {
+    if (change === "corrupt") db.exec("ALTER TABLE thread_goals RENAME TO incompatible_schema");
+    else if (change === "user-stop") {
+      db.exec("UPDATE thread_goals SET status='paused'");
+      await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "turn_aborted", reason: "user_cancelled" } }) + "\n");
+    } else db.prepare("UPDATE thread_goals SET status=? WHERE thread_id=?").run(change, id);
+    return originalGoalResume(session, signal, origin);
+  });
+  const result = await resumePersistedCodexSessions(state.context);
+  expect(result.opened).toBe(0);
+  expect(result.failed).toHaveLength(1);
+  expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+  expect(mocks.open).not.toHaveBeenCalled();
+  if (change === "corrupt") expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toEqual([id]);
 });
 
 it("retains goal recovery when the tab opens but the native turn start is unconfirmed", async () => {
@@ -142,7 +171,6 @@ it("rechecks each goal between editor opens and skips a newly paused goal", asyn
   const state = context();
   await persistRunningCodexSessions(state.context, select);
   const open = vi.fn(async (_sessionId: string) => {
-    markExplicitSessionGoalPause(home, ids[1]!);
     db.prepare("UPDATE thread_goals SET status='paused' WHERE thread_id=?").run(ids[1]!);
   });
   const result = await resumePersistedCodexSessions(state.context, open);
@@ -262,10 +290,9 @@ it("retains the previous snapshot when sidebar goal storage is partial or corrup
   expect(state.saved.get(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([ids[0]]);
 });
 
-it("never opens a previously paused goal with goal-only turned off", async () => {
-  goalOnly = false;
+it.each([true, false])("never opens a previously paused goal without a Manager pause marker, goal-only=%s", async onlyGoals => {
+  goalOnly = onlyGoals;
   const state = context(); state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [ids[2]]);
-  markExplicitSessionGoalPause(home, ids[2]!);
   const open = vi.fn();
   expect(await resumePersistedCodexSessions(state.context, open)).toEqual({ attempted: 0, opened: 0, failed: [] });
   expect(open).not.toHaveBeenCalled();

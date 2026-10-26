@@ -19,3 +19,8 @@ it('never blindly replays a claimed or failed start after restart', () => {
 it('never schedules explicitly stopped work', () => {
   expect(nextQueuedSessions([row('b')], new Map([['b', { queue: true, priority: 1, manualStop: true }]]))).toEqual([]);
 });
+it('schedules interrupted paused goals while preserving deliberate pauses', () => {
+  expect(nextQueuedSessions([row('a'), row('b', { interrupted: false, goal: { objective: 'Paused goal', status: 'paused' } })], preferences).map(item => item.id)).toEqual(['a']);
+  expect(nextQueuedSessions([row('b', { goal: { objective: 'Interrupted goal', status: 'paused' } })], preferences).map(item => item.id)).toEqual(['b']);
+  expect(nextQueuedSessions([row('b', { goal: { objective: 'Active goal', status: 'active' } })], preferences).map(item => item.id)).toEqual(['b']);
+});

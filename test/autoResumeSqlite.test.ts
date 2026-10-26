@@ -13,6 +13,7 @@ import { removeTestDirectory } from "./testFilesystem";
 import * as sessionEditor from "../src/services/codexSessionResume";
 vi.mock("../src/services/codexSessionRecovery", () => ({ resumeCodexSessionWork: vi.fn().mockResolvedValue("continued") }));
 import { resumeCodexSessionWork } from "../src/services/codexSessionRecovery";
+import { markExplicitSessionGoalPause } from "../src/services/codexSessionGoals";
 import { waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 
 const ids = ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","cccccccc-cccc-cccc-cccc-cccccccccccc"];
@@ -64,8 +65,8 @@ it("captures quota-stopped parents, survives a fresh connection, resumes in the 
   expect(result).toEqual({attempted:2,opened:2,failed:[]});
   expect(resumeCodexSessionWork).toHaveBeenCalledWith(ids[0], expect.any(AbortSignal));
   expect(resumeCodexSessionWork).toHaveBeenCalledWith(ids[1], expect.any(AbortSignal));
-  expect(tabs).toEqual([]);
-  expect(vscode.window.tabGroups.close).toHaveBeenCalledOnce();
+  expect(tabs).toHaveLength(3);
+  expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
   expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith")).toEqual([]);
   expect(store.get(namespace,queue)).toBeUndefined();expect(store.get(namespace,snapshot)).toBeUndefined();
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
@@ -92,6 +93,20 @@ it.each(["active", "paused", "none"])("keeps native capacity errors durable thro
   expect(await resumePersistedCodexSessions(context(), opened)).toEqual({ attempted: 1, opened: 1, failed: [] });
   expect(opened).toHaveBeenCalledExactlyOnceWith(ids[0], expect.any(AbortSignal));
   expect(store.get(namespace, queue)).toBeUndefined();
+});
+it("drops explicitly paused goal recovery across a database reopen without opening a Codex tab", async () => {
+  const goals = new DatabaseSync(path.join(root, "goals_1.sqlite"));
+  goals.exec("UPDATE thread_goals SET status='paused'"); goals.close();
+  markExplicitSessionGoalPause(root, ids[0]!);
+  store.set(namespace, snapshot, [ids[0]]); store.set(namespace, queue, [ids[0]]);
+  await persistOpenCodexSessions(context());
+  store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
+  const opened = vi.fn(async () => undefined);
+  vi.mocked(vscode.commands.executeCommand).mockClear();
+  expect(await resumePersistedCodexSessions(context(), opened)).toEqual({ attempted: 0, opened: 0, failed: [] });
+  expect(opened).not.toHaveBeenCalled();
+  expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("vscode.openWith", expect.anything(), expect.anything(), expect.anything());
+  expect(store.get(namespace, queue)).toBeUndefined(); expect(store.get(namespace, snapshot)).toBeUndefined();
 });
 
 it("seals goal recovery before reload cleanup and restores after the open-tab snapshot is replaced", async () => {

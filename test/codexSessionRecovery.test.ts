@@ -40,11 +40,16 @@ describe("post-load session recovery", () => {
     expect(await resumeCodexSessionWork("session")).toBe("goal");
     expect(mocks.goal).toHaveBeenCalledOnce(); expect(mocks.send).not.toHaveBeenCalled();
   });
-  it("resumes a paused goal recorded as an interruption while preserving explicit Pause", async () => {
+  it.each(["automatic", "queue"] as const)("resumes an interrupted paused goal during %s recovery", async origin => {
     mocks.summary.mockResolvedValue({ id: "session", title: "Interrupted goal", status: "idle", interrupted: true, goal: { status: "paused" } });
-    expect(await resumeCodexSessionWork("session")).toBe("goal");
-    expect(mocks.goal).toHaveBeenCalledOnce();
-    expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Goal recovery requested", expect.objectContaining({ goalStatus: "paused", explicitPause: false, reason: "interrupted-paused-goal", origin: "automatic" }));
+    expect(await resumeCodexSessionWork("session", undefined, origin)).toBe("goal");
+    expect(mocks.goal).toHaveBeenCalledOnce(); expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Goal recovery requested", expect.objectContaining({ goalStatus: "paused", reason: "interrupted-paused-goal", origin, promptKind: "none" }));
+  });
+  it("allows an explicit user Resume of a paused goal", async () => {
+    mocks.summary.mockResolvedValue({ id: "session", title: "Paused task", status: "idle", interrupted: true, goal: { status: "paused" } });
+    expect(await resumeCodexSessionWork("session", undefined, "user")).toBe("goal");
+    expect(mocks.goal).toHaveBeenCalledOnce(); expect(mocks.send).not.toHaveBeenCalled();
   });
   it.each(["paused", "blocked", "complete", "budget_limited"])("preserves a %s goal", async status => {
     mocks.summary.mockResolvedValue({ id: "session", status: "idle", interrupted: true, goal: { status } });
@@ -93,7 +98,7 @@ describe("post-load session recovery", () => {
     await vi.advanceTimersByTimeAsync(15_001); await pending;
     expect(signal?.aborted).toBe(true); expect(vi.getTimerCount()).toBe(0);
   });
-  it("bounds an unconfirmed goal and keeps failures out of the prompt path", async () => {
+  it("bounds an unconfirmed goal continuation and retains recovery", async () => {
     vi.useFakeTimers(); let signal: AbortSignal | undefined;
     mocks.summary.mockResolvedValue({ id: "session", title: "Goal task", status: "idle", goal: { status: "active" } });
     mocks.goal.mockImplementation((_session, abortSignal) => { signal = abortSignal; return new Promise(() => undefined); });

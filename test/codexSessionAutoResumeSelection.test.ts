@@ -85,6 +85,18 @@ describe("auto resume selection", () => {
       expect(await selectSessions(home, [home], ids, undefined, "running", true)).toEqual([]);
     }
   );
+  it.each([true, false])("keeps interrupted paused goals, but excludes deliberate pauses and completion, goal-only=%s", async goalOnly => {
+    const home = await fixture();
+    goals(home, ["paused", "active", "active"]);
+    const transcript = path.join(home, "sessions", `rollout-${ids[0]}.jsonl`);
+    await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_failed", turn_id: "interrupted" } }) + "\n");
+    expect(await selectSessions(home, undefined, ids, undefined, "running", goalOnly, [], undefined, ids)).toEqual([ids[0], ids[2]]);
+    expect(await selectSessions(home, undefined, [ids[0]!], undefined, "recovery", goalOnly)).toEqual([ids[0]]);
+    await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "turn_aborted", reason: "user_cancelled" } }) + "\n");
+    expect(await selectSessions(home, undefined, [ids[0]!], undefined, "recovery", goalOnly)).toEqual([]);
+    await appendFile(transcript, JSON.stringify({ type: "event_msg", payload: { type: "task_complete", turn_id: "finished" } }) + "\n");
+    expect(await selectSessions(home, undefined, [ids[0]!], undefined, "recovery", goalOnly)).toEqual([]);
+  });
   it("keeps quota-blocked parent goals eligible after the native turn stops", async () => {
     const home = await fixture();
     goals(home, ["usage_limited", "usage_limited", "complete"]);

@@ -105,6 +105,31 @@ it("waits for a cold native owner beyond the earlier twenty-second cutoff", asyn
   message(snapshot("idle")); await vi.advanceTimersByTimeAsync(200);
   expect(await waiting).toBe(true);
 });
+it("waits through startup IPC loss and reconnects before confirming readiness without sending a turn", async () => {
+  const waiting = waitForNativeCodexSessionReady(home, id, undefined, 120_000);
+  await initialize();
+  let settled = false; void waiting.then(() => { settled = true; });
+  socket.emit("error", new Error("IPC temporarily unavailable"));
+  socket = new FakeSocket(); mocks.connect.mockReturnValue(socket);
+  await vi.advanceTimersByTimeAsync(200);
+  await initialize();
+  expect(settled).toBe(false);
+  message(snapshot("idle", 0, "reconnected-owner"));
+  await vi.advanceTimersByTimeAsync(200);
+  expect(await waiting).toBe(true);
+  expect(mocks.connect).toHaveBeenCalledTimes(2);
+  expect(socket.sent.some(value => value.method === "thread-follower-start-turn")).toBe(false);
+});
+it("bounds and cancels readiness while native IPC remains unavailable", async () => {
+  mocks.connect.mockImplementation(() => { const failed = new FakeSocket(); queueMicrotask(() => failed.emit("error", new Error("offline"))); return failed; });
+  const waiting = waitForNativeCodexSessionReady(home, id, undefined, 1000);
+  let settled = false; void waiting.then(() => { settled = true; });
+  await vi.advanceTimersByTimeAsync(600); expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(600); expect(await waiting).toBeUndefined();
+  const controller = new AbortController();
+  const cancelled = expect(waitForNativeCodexSessionReady(home, id, controller.signal, 120_000)).rejects.toThrow("manual action");
+  await vi.advanceTimersByTimeAsync(200); controller.abort(new Error("manual action")); await cancelled;
+});
 it("keeps background native observations connected without dashboard reads", async () => {
   const reading = readNativeCodexSessionRunning(home,id); await initialize(); message(snapshot("active")); await reading;
   await vi.advanceTimersByTimeAsync(90_000);

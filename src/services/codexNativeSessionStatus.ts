@@ -125,14 +125,15 @@ export async function waitForNativeCodexSessionReady(home: string, id: string, s
   readinessWaiters.set(key, (readinessWaiters.get(key) ?? 0) + 1);
   const deadline = Date.now() + timeoutMs;
   let rediscoverAt = 0;
+  let connected = false;
   try {
     while (Date.now() < deadline) {
       await readNativeCodexSessionRunning(home, id, signal);
       signal?.throwIfAborted();
       const entry = observations.get(key);
-      if (!socket) return undefined;
+      connected ||= Boolean(socket);
       if (entry?.ready) return true;
-      if (entry && Date.now() >= rediscoverAt) {
+      if (socket && entry && Date.now() >= rediscoverAt) {
         // A resumed native owner can restart its revision sequence after notLoaded.
         entry.revision = undefined;
         follow(entry, true);
@@ -146,7 +147,7 @@ export async function waitForNativeCodexSessionReady(home: string, id: string, s
         if (signal?.aborted) abort();
       });
     }
-    return false;
+    return connected ? false : undefined;
   } finally {
     const remaining = (readinessWaiters.get(key) ?? 1) - 1;
     if (remaining) readinessWaiters.set(key, remaining); else readinessWaiters.delete(key);

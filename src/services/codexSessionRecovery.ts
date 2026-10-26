@@ -48,17 +48,18 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
       recordPersistentEvent("info", "session-resume", "Recovery skipped", { ...identity, origin, reason: "manual-stop", goalStatus });
       return "idle" as const;
     }
-    const explicitPause = session.goal?.status === "paused" && session.interrupted === true && origin !== "user" ? isExplicitSessionGoalPause(home, session.id) : undefined;
+    const explicitPause = session.goal?.status === "paused" && origin !== "user" ? isExplicitSessionGoalPause(home, session.id) : undefined;
     const recoverablePausedGoal = session.goal?.status === "paused" && (origin === "user" || (session.interrupted === true && !explicitPause));
-    if (session.goal && (["active", "usage_limited"].includes(session.goal.status) || recoverablePausedGoal)) {
+    const eligibleGoal = Boolean(session.goal && (["active", "usage_limited"].includes(session.goal.status) || recoverablePausedGoal));
+    if (eligibleGoal) {
       phase = "goal-continuation";
-      recordPersistentEvent("info", "session-resume", "Goal recovery requested", { ...identity, origin, goalStatus, explicitPause, interrupted: session.interrupted === true, reason: recoverablePausedGoal ? "interrupted-paused-goal" : "unfinished-goal" });
+      recordPersistentEvent("info", "session-resume", "Goal recovery requested", { ...identity, origin, goalStatus, explicitPause, interrupted: session.interrupted === true, reason: recoverablePausedGoal && goalStatus === "paused" ? "interrupted-paused-goal" : "unfinished-goal", promptKind: "none", transport: "official-native" });
       await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin === "user" ? "user" : "automatic"), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
       recordPersistentEvent("info", "session-resume", "Goal continuation accepted", { ...identity, title: session.title });
       return "goal" as const;
     }
     if (session.goal) {
-      recordPersistentEvent("info", "session-resume", "Goal left unchanged", { ...identity, title: session.title, origin, goalStatus, reason: explicitPause ? "explicit-pause" : "goal-not-eligible" });
+      recordPersistentEvent("info", "session-resume", "Goal left unchanged", { ...identity, title: session.title, origin, goalStatus, reason: session.goal.status === "paused" ? (explicitPause ? "explicit-pause" : "goal-paused") : "goal-not-eligible" });
       return "idle" as const;
     }
     if (session.goal === undefined) {

@@ -87,10 +87,26 @@ it("waits for the official Codex editor before sending when Open VS Code is enab
   try {
     await resumePersistedCodexSessions(state.context);
     expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal));
-    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), false, 120_000, true);
+    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), true, 120_000, true);
     expect(open.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]!);
     expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "vscode-forced", outcome: "continued", ownerProbe: "skipped" }));
   } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
+});
+
+it("observes an already running official owner without closing, reopening, or starting it", async () => {
+  const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+  vi.spyOn(sessionEditor, "readCodexCliSessionSummary").mockResolvedValue({ id, title: "Running task", status: "running" });
+  const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode");
+  const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValue("running");
+  try {
+    // Enable the prerequisites while leaving Open VS Code at its default.
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : fallback } as never);
+    expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 1, failed: [] });
+    expect(resume).toHaveBeenCalledOnce();
+    expect(open).not.toHaveBeenCalled();
+    expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();
+  } finally { open.mockRestore(); resume.mockRestore(); }
 });
 
 it.each([false, undefined])("opens a verified official tab before resuming when the background owner is %s", async ready => {
@@ -141,6 +157,20 @@ it("distinguishes an accepted background continuation from a failed background c
     expect(log).toHaveBeenCalledWith("warning", "auto-resume", "Official recovery path failed", expect.objectContaining({ recoveryPath: "background-owner", phase: "continuation", recoveryRetained: true }), expect.any(Error));
     expect(state.read()).toEqual([id]); expect(resume).toHaveBeenCalledTimes(2); expect(open).not.toHaveBeenCalled();
   } finally { log.mockRestore(); resume.mockRestore(); open.mockRestore(); }
+});
+it("does not open a tab when goal eligibility changes during owner readiness", async () => {
+  const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string) => key !== "autoResumeOpenVsCode" } as never);
+  vi.mocked(waitForNativeCodexSessionReady).mockImplementationOnce(async () => {
+    vi.mocked(autoResumeSelection.filterAutoResumeGoalSessionIds).mockResolvedValue([]);
+    return false;
+  });
+  const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode");
+  const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork");
+  try {
+    expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 0, failed: [] });
+    expect(open).not.toHaveBeenCalled(); expect(resume).not.toHaveBeenCalled();
+  } finally { open.mockRestore(); resume.mockRestore(); }
 });
 
 describe("dashboard recovery list", () => {
@@ -629,7 +659,7 @@ describe("durable open conversation recovery", () => {
     }
   });
 
-  it("persists selected recovery, closes existing tabs, then opens sessions sequentially", async () => {
+  it("persists selected recovery and preserves existing owners while opening sequentially", async () => {
     const state = createContext([first]);
     state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
     const order: string[] = [];
@@ -642,8 +672,8 @@ describe("durable open conversation recovery", () => {
       order.push(id);
     });
     expect((await resumePersistedCodexSessions(state.context, open)).opened).toBe(2);
-    expect(order).toEqual(["close", first, second]);
-    expect(close).toHaveBeenCalledOnce();
+    expect(order).toEqual([first, second]);
+    expect(close).not.toHaveBeenCalled();
     expect(state.read()).toBeUndefined();
   });
 

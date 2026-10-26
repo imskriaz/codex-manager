@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.5.6-pre.7");
+    expect(manifest.version).toBe("1.5.6");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });
@@ -152,7 +152,7 @@ describe("extension manifest configuration", () => {
     expect(property?.markdownDescription).toContain("Auto Switch on");
     expect(property?.markdownDescription).toContain("unfinished parent chats");
     expect(property?.markdownDescription).toContain("VS Code restart");
-    expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeOpenVsCode"]).toMatchObject({ type: "boolean", scope: "machine", default: false });
+    expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeOpenVsCode"]).toMatchObject({ type: "boolean", scope: "machine", default: true });
     expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeGoalOnlyEnabled"]).toBeUndefined();
   });
 

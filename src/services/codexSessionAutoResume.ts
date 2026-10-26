@@ -4,10 +4,11 @@ import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessionRecoveryMetadata, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessionRecoveryMetadata, readCodexCliSessionSummary, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
+import { isExplicitSessionGoalPause } from "./codexSessionGoals";
 import { orderCodexSessionRecoveryIds, readQueuedCodexSessionPreferences, readCodexSessionPreferences, hasCodexSessionAutoResumeOptIn, isCodexSessionAutoResumeEnabled } from "./codexSessionPreferences";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
@@ -363,7 +364,7 @@ export function persistRunningCodexSessions(
       const home = resolveCodexHome();
       const ids = await bounded(async () => filterSessionAutoResumeIds(home, await filterAutoResumeGoalSessionIds(normalizeIds([
         ...readPersistedSessionIds(context), ...normalizeIds(running)
-      ]), undefined, controller.signal)), deadline - Date.now(),
+      ]), undefined, controller.signal, false, true)), deadline - Date.now(),
         "Auto Resume could not verify goals before saving recovery.", controller.signal);
       if (goalOnly !== isAutoResumeGoalOnlyEnabled()) throw new Error("The goal-only preference changed during capture. Retry after preferences settle.");
       controller.signal.throwIfAborted();
@@ -593,7 +594,8 @@ export function resumePersistedCodexSessions(
   openSession: (sessionId: string, signal?: AbortSignal) => Promise<void | Awaited<ReturnType<typeof resumeCodexSessionWork>>> = async (sessionId, signal) => {
     const startedAt = Date.now();
     const home = resolveCodexHome();
-    const openVsCode = getCodexManagerConfiguration().get<boolean>("autoResumeOpenVsCode", false) === true;
+    // The original Auto Resume path opens the official conversation first; users can opt out to a ready owner.
+    const openVsCode = getCodexManagerConfiguration().get<boolean>("autoResumeOpenVsCode", true) !== false;
     const details = { sessionRef: toSessionLogRef(sessionId), recoveryPath: openVsCode ? "vscode-forced" : "background-owner", ownerProbe: "pending" as boolean | string, probeDurationMs: 0 };
     let phase = "owner-probe";
     try {
@@ -605,9 +607,15 @@ export function resumePersistedCodexSessions(
       if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
       recordPersistentEvent("info", "auto-resume", "Official recovery path selected", details);
       phase = "readiness";
+      const summary = await readCodexCliSessionSummary(sessionId, home);
+      if (summary?.status === "running") return await resumeCodexSessionWork(sessionId, signal);
+      if (!(await filterAutoResumeGoalSessionIds([sessionId], home, signal, false, true)).length) {
+        recordPersistentEvent("info", "auto-resume", "Recovery skipped before opening Codex", { ...details, reason: "no-longer-eligible" });
+        return "idle";
+      }
       if (ready !== true) {
         recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", { ...details, reason: openVsCode ? "Open VS Code enabled" : "No ready official owner" });
-        await openCodexSessionInVsCode(sessionId, signal, false, 120_000, true);
+        await openCodexSessionInVsCode(sessionId, signal, true, 120_000, true);
       }
       phase = "continuation";
       const outcome = await resumeCodexSessionWork(sessionId, signal);
@@ -618,7 +626,7 @@ export function resumePersistedCodexSessions(
       throw error;
     }
   },
-  closeSessions: (signal?: AbortSignal) => Promise<void> = signal => closeOpenCodexSessionTabs(signal, true, false)
+  closeSessions: (signal?: AbortSignal) => Promise<void> = () => Promise.resolve()
 ): Promise<AutoResumeResult> {
   const controller = new AbortController();
   restoreControllers.add(controller);
@@ -704,7 +712,7 @@ export function resumePersistedCodexSessions(
         await bounded(() => closeSessions(controller.signal), Math.min(8_000, deadline - Date.now()),
           "Previous Codex tabs did not finish closing within 8 seconds. Background recovery was retained.", controller.signal);
         controller.signal.throwIfAborted();
-        recordPersistentEvent("info", "auto-resume", "Previous Codex tabs closed before background recovery", { count: ids.length });
+        recordPersistentEvent("info", "auto-resume", "Startup UI preparation completed; existing Codex owners preserved", { count: ids.length });
       } catch (error) {
         controller.abort(error);
         result.failed = ids.map(sessionId => ({ sessionId, message: error instanceof Error ? error.message : String(error) }));
@@ -729,6 +737,14 @@ export function resumePersistedCodexSessions(
             "Auto Resume could not verify this saved session before its deadline.", controller.signal)).length) {
             recordPersistentEvent("info", "auto-resume", "Session skipped because recovery is no longer eligible", { sessionId: id, sessionRef: toSessionLogRef(id) });
             remaining = remaining.filter((candidate) => candidate !== id);
+            await writeIds(context, remaining, deadline, false, { remove: [id] });
+            continue;
+          }
+          const current = await readCodexCliSessionSummary(id, recoveryHome);
+          const interruptedPaused = current?.goal?.status === "paused" && current.interrupted === true && !isExplicitSessionGoalPause(recoveryHome, id);
+          if (current?.goal?.status === "paused" && !interruptedPaused) {
+            recordPersistentEvent("info", "auto-resume", "Session skipped because its goal is paused", { sessionRef: toSessionLogRef(id), reason: "goal-paused" });
+            remaining = remaining.filter(candidate => candidate !== id);
             await writeIds(context, remaining, deadline, false, { remove: [id] });
             continue;
           }
