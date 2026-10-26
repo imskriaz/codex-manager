@@ -23,6 +23,7 @@ export const MAX_AUTO_RESUME_SESSIONS = 200;
 const OPERATION_TIMEOUT_MS = 30_000;
 const PER_SESSION_OPEN_TIMEOUT_MS = 135_000;
 const STORAGE_TIMEOUT_MS = 5_000;
+const EMPTY_STARTUP_RETRY_DELAYS_MS = [1_000, 2_000] as const;
 type AutoResumeContext = Pick<vscode.ExtensionContext, "workspaceState">;
 type OperationKind = "capture" | "restore" | "track" | "close";
 type Operations = { tail: Promise<unknown>; capture?: Promise<unknown>; restore?: Promise<unknown>; track?: Promise<unknown>; close?: Promise<unknown> };
@@ -612,6 +613,7 @@ export function resumePersistedCodexSessions(
       unrestoredOpenSnapshots.add(context.workspaceState);
       const goalOnly = isAutoResumeGoalOnlyEnabled();
       const recoveryHome = resolveCodexHome();
+      let startupVerificationHadError = false;
       // Retry read-only verification before dispatch; editor opens and turns are never replayed here.
       const verify = async (candidates: string[]): Promise<string[]> => {
         for (let attempt = 0; ; attempt++) {
@@ -620,6 +622,7 @@ export function resumePersistedCodexSessions(
           try {
             return await readAutoResumeCodexSessionIds(recoveryHome, undefined, candidates, controller.signal, "recovery", goalOnly);
           } catch (error) {
+            startupVerificationHadError = true;
             if (attempt >= 2 || controller.signal.aborted || !isAutoResumeAvailable()) throw error;
             recordPersistentEvent("warning", "auto-resume", "Startup verification will retry before opening sessions", { attempt: attempt + 1 }, error);
             await delay(250 * (attempt + 1), undefined, { signal: controller.signal });
@@ -633,8 +636,25 @@ export function resumePersistedCodexSessions(
       const missingTitles = savedIds.filter(id => !savedTitles[id]);
       if (missingTitles.length) Object.assign(savedTitles, await captureRecoveryMetadata(missingTitles, controller.signal));
       const queuedIds = readQueuedCodexSessionPreferences(resolveCodexHome());
-      const ids = orderCodexSessionRecoveryIds(resolveCodexHome(), filterSessionAutoResumeIds(resolveCodexHome(), await bounded(() => verify(savedIds), Math.min(OPERATION_TIMEOUT_MS,deadline - Date.now()),
-        "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal))).filter(id => !queuedIds.has(id));
+      const selectEligibleIds = (verified: string[]) =>
+        orderCodexSessionRecoveryIds(resolveCodexHome(), filterSessionAutoResumeIds(resolveCodexHome(), verified)).filter(id => !queuedIds.has(id));
+      let verifiedIds = await bounded(() => verify(savedIds), Math.min(OPERATION_TIMEOUT_MS, deadline - Date.now()),
+        "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal);
+      let ids = selectEligibleIds(verifiedIds);
+      // Codex can briefly expose an empty session set while its native databases finish opening.
+      // Recheck a successful empty result before treating saved work as stale and consuming it.
+      if (savedIds.length && !verifiedIds.length && !startupVerificationHadError) {
+        for (const delayMs of EMPTY_STARTUP_RETRY_DELAYS_MS) {
+          await delay(delayMs, undefined, { signal: controller.signal });
+          verifiedIds = await bounded(() => verify(savedIds), Math.min(OPERATION_TIMEOUT_MS, deadline - Date.now()),
+            "Auto Resume could not verify saved sessions within 30 seconds. Saved recovery was retained.", controller.signal);
+          ids = selectEligibleIds(verifiedIds);
+          if (ids.length) {
+            recordPersistentEvent("info", "auto-resume", "Startup recovery retry found eligible sessions", { count: ids.length });
+            break;
+          }
+        }
+      }
       if (!isAutoResumeAvailable()) {
         await clearIds(context, Date.now() + STORAGE_TIMEOUT_MS * 2);
         return { attempted: 0, opened: 0, failed: [] };

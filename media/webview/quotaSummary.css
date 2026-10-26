@@ -11083,6 +11083,12 @@ html[data-theme="dark"] .cli-terminal-panel {
   line-height: 1;
 }
 
+.saved-reset-action-label {
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 @media (max-width: 650px) {
   .overview-shell {
     grid-template-columns: 1fr;

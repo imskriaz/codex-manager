@@ -34,7 +34,8 @@ import {
   isFreePlanType,
   isMonthlyQuotaWindow,
   isUserFacingAdditionalQuotaLimit,
-  resolveLongQuotaLabel
+  resolveLongQuotaLabel,
+  resolveQuotaLimitLabel
 } from "../../utils/quotaLabels";
 import { parseSubscriptionExpiryMs } from "../../utils/subscriptionExpiry";
 import {
@@ -430,7 +431,7 @@ export function buildMetrics(
     if (limit.hourlyWindowPresent) {
       metrics.push({
         key: `additional-${index}-hourly`,
-        label: `${limit.limitName} ${copy.hourlyLabel}`,
+        label: `${resolveQuotaLimitLabel(limit, lang)} ${copy.hourlyLabel}`,
         period: "hourly",
         percentage: limit.hourlyPercentage,
         resetAt: limit.hourlyResetTime,
@@ -442,7 +443,7 @@ export function buildMetrics(
     if (limit.weeklyWindowPresent) {
       metrics.push({
         key: `additional-${index}-weekly`,
-        label: `${limit.limitName} ${resolveLongQuotaLabel(undefined, limit.weeklyWindowMinutes, lang, copy.weeklyLabel)}`,
+        label: `${resolveQuotaLimitLabel(limit, lang)} ${resolveLongQuotaLabel(undefined, limit.weeklyWindowMinutes, lang, copy.weeklyLabel)}`,
         period: isMonthlyQuotaWindow(undefined, limit.weeklyWindowMinutes) ? "monthly" : "weekly",
         percentage: limit.weeklyPercentage,
         resetAt: limit.weeklyResetTime,

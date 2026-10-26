@@ -139,7 +139,12 @@ export class CrossWindowOperationCoordinator {
     if (activeOwners.get(localKey)?.token === owner.token) return false;
     if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !Number.isFinite(owner.startedAt) || !Number.isFinite(owner.heartbeatAt) || typeof owner.token !== "string") return true;
     if (owner.startedAt < Date.now() - os.uptime() * 1_000 - 60_000) return true;
-    try { process.kill(owner.pid, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return true; throw error; }
+    try { process.kill(owner.pid, 0); } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ESRCH") return true;
+      if (code !== "EPERM" && code !== "EACCES") throw error;
+      // The owner exists but Windows denied inspection; keep its lease live.
+    }
     // A live foreign process keeps ownership even when temporarily unresponsive.
     return owner.pid === process.pid && Date.now() - owner.heartbeatAt > this.staleAfterMs;
   }

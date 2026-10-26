@@ -9,6 +9,7 @@ import {
   escapeMarkdown,
   getLanguage,
   isUserFacingAdditionalQuotaLimit,
+  resolveQuotaLimitLabel,
   quotaMarkerForPercentage,
   resolveLongQuotaLabel,
   t
@@ -187,13 +188,13 @@ export function renderAccountPanel(account: CodexManagerAccountRecord, showHourl
     }
     if (showHourlyQuota && limit.hourlyWindowPresent) {
       lines.push(
-        renderMetricRow(`${limit.limitName} ${_t("quota.hourly")}`, limit.hourlyPercentage, limit.hourlyResetTime)
+        renderMetricRow(`${resolveQuotaLimitLabel(limit, language)} ${_t("quota.hourly")}`, limit.hourlyPercentage, limit.hourlyResetTime)
       );
     }
     if (limit.weeklyWindowPresent) {
       lines.push(
         renderMetricRow(
-          `${limit.limitName} ${resolveLongQuotaLabel(undefined, limit.weeklyWindowMinutes, language, _t("quota.weekly"))}`,
+          `${resolveQuotaLimitLabel(limit, language)} ${resolveLongQuotaLabel(undefined, limit.weeklyWindowMinutes, language, _t("quota.weekly"))}`,
           limit.weeklyPercentage,
           limit.weeklyResetTime
         )

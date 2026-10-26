@@ -226,7 +226,13 @@ function restored(row: Record<string,unknown>): DashboardCodexSessionLiveState {
   if (!isCodexSessionLiveState(state)) throw new Error("Stored live session state is invalid.");
   if (state.status !== "running" && state.status !== "starting") return state;
   let stale = Number(row["boot_at"]) < Date.now()-os.uptime()*1000-60_000 || (Number(row["owner_pid"]) === process.pid && row["owner_instance"] !== instance);
-  try { process.kill(Number(row["owner_pid"]),0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") stale = true; else throw error; }
+  try { process.kill(Number(row["owner_pid"]),0); } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") stale = true;
+    else if (code !== "EPERM" && code !== "EACCES") throw error;
+    // EPERM/EACCES means the process exists but Windows denied inspection.
+    // Keep the snapshot live; the native session check will establish its state.
+  }
   if ((state.status === "running" || state.status === "starting") && stale)
     return { ...state,sequence:Math.min(Number.MAX_SAFE_INTEGER,state.sequence+1),updatedAt:state.updatedAt+1,status:"disconnected",error:"Recovered session snapshot; running state must be verified again." };
   return { ...state,status:row["status"] as DashboardCodexSessionLiveState["status"] };

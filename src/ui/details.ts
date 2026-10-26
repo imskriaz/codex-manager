@@ -23,6 +23,7 @@ import {
   getLanguage,
   prettyAuthProvider,
   isUserFacingAdditionalQuotaLimit,
+  resolveQuotaLimitLabel,
   resolveLongQuotaLabel
 } from "../utils";
 import { formatRelativeReset, formatTimestamp } from "../utils/time";
@@ -338,14 +339,14 @@ function renderHtml(
       const cards: string[] = [];
       if (limit.hourlyWindowPresent) {
         cards.push(`<div class="quota-card">
-        <h2>${escapeHtml(`${limit.limitName} ${copy.hourlyQuota}`)}</h2>
+        <h2>${escapeHtml(`${resolveQuotaLimitLabel(limit, copy.lang)} ${copy.hourlyQuota}`)}</h2>
         <div class="quota-value" style="--metric-color:${colorForPercentage(limit.hourlyPercentage)};">${renderQuotaValue(limit.hourlyPercentage)}</div>
         <div class="meta">${escapeHtml(copy.reset)} ${renderLiveReset(limit.hourlyResetTime, copy)}</div>
       </div>`);
       }
       if (limit.weeklyWindowPresent) {
         cards.push(`<div class="quota-card">
-        <h2>${escapeHtml(`${limit.limitName} ${resolveLongQuotaLabel(undefined, limit.weeklyWindowMinutes, copy.lang, copy.weeklyQuota, "quota")}`)}</h2>
+        <h2>${escapeHtml(`${resolveQuotaLimitLabel(limit, copy.lang)} ${resolveLongQuotaLabel(undefined, limit.weeklyWindowMinutes, copy.lang, copy.weeklyQuota, "quota")}`)}</h2>
         <div class="quota-value" style="--metric-color:${colorForPercentage(limit.weeklyPercentage)};">${renderQuotaValue(limit.weeklyPercentage)}</div>
         <div class="meta">${escapeHtml(copy.reset)} ${renderLiveReset(limit.weeklyResetTime, copy)}</div>
       </div>`);

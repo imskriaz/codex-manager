@@ -65,6 +65,20 @@ export function isUserFacingAdditionalQuotaLimit(
   );
 }
 
+/** Replace provider-internal quota names with compact labels users can act on. */
+export function resolveQuotaLimitLabel(
+  limit: Pick<CodexAdditionalQuotaLimit, "limitName" | "meteredFeature">,
+  language: DashboardLanguage
+): string {
+  const names = [limit.limitName, limit.meteredFeature]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .map((value) => value.trim().toLowerCase());
+  if (names.some((value) => ["codex_rate_limits", "codex-rate-limits", "codex rate limits"].includes(value))) {
+    return language === "zh" ? "重置 ID" : language === "zh-hant" ? "重設 ID" : "Reset ID";
+  }
+  return limit.limitName;
+}
+
 export function resolveLongQuotaLabel(
   planType: string | undefined,
   windowMinutes: number | undefined,

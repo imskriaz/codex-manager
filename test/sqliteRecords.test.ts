@@ -128,6 +128,15 @@ describe("durable session recording", () => {
     saveSessionStatus(store, root, id, "unknown");
     expect(readSessionStatus(store, root, id)).toBe("unknown");
   });
+  it("keeps reading live snapshots when Windows denies the owner PID probe", () => {
+    saveSessionLive(store, root, live());
+    const kill = vi.spyOn(process, "kill").mockImplementationOnce(() => {
+      const error = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      throw error;
+    });
+    expect(readStoredSessionLive(store, root, id)).toMatchObject({ status: "running" });
+    kill.mockRestore();
+  });
 
   it("takes an immutable snapshot, retries storage contention, bounds its queue and resumes after draining", () => {
     const state = live();

@@ -1039,6 +1039,22 @@ describe("Codex session auto resume", () => {
     expect(open).not.toHaveBeenCalled();expect(state.read()).toBeUndefined();
   });
 
+  it('retries a transient empty startup result before consuming recovery', async () => {
+    vi.useFakeTimers();
+    try {
+      const id='01a04882-d037-7a42-ad24-9afb61901181',state=createContext([id]),open=vi.fn();
+      const select=vi.mocked(autoResumeSelection.readAutoResumeCodexSessionIds).mockClear()
+        .mockResolvedValueOnce([]).mockResolvedValue([id]);
+      const work=resumePersistedCodexSessions(state.context,open);
+      await vi.waitFor(()=>expect(select).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(work).resolves.toMatchObject({attempted:1,opened:1,failed:[]});
+      expect(select).toHaveBeenCalledTimes(3);
+      expect(open).toHaveBeenCalledOnce();
+      expect(state.read()).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
   it('cancels read-only startup retries immediately for manual work', async () => {
     const id='01a04882-d037-7a42-ad24-9afb61901181',state=createContext([id]),open=vi.fn();
     const select=vi.mocked(autoResumeSelection.readAutoResumeCodexSessionIds).mockClear().mockRejectedValue(new Error('Metadata busy'));

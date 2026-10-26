@@ -501,6 +501,7 @@ export function SavedAccountCard(props: {
                         <span class="saved-toggle-spinner" aria-hidden="true"></span>
                       ) : null}
                       <ResetCreditIcon />
+                      <span class="saved-reset-action-label">{resetLabel}</span>
                       <span class="saved-reset-count">{account.resetCreditsAvailable}</span>
                     </button>
                   ) : null}
@@ -798,6 +799,7 @@ export function SavedAccountCard(props: {
                         <span class="saved-toggle-spinner" aria-hidden="true"></span>
                       ) : null}
                       <ResetCreditIcon />
+                      <span class="saved-reset-action-label">{resetLabel}</span>
                       <span class="saved-reset-count">{account.resetCreditsAvailable}</span>
                     </button>
                   ) : null}

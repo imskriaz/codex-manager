@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.6-pre.1
+
+- Retry transient empty Auto Resume startup discovery before consuming saved recovery, and tolerate Windows PID inspection permission errors during live-session capture.
+- Add per-account Reset actions and replace the internal `codex_rate_limits` label with Reset ID.
+
 ## 1.5.5
 
 - Restore the compact Auto Resume icon toggle for running sessions, with distinct play/pause states. Hide resume-policy controls on idle sessions; use a clock-and-list queue icon, priority badges, and a visible warning for unconfirmed queue starts.
