@@ -26,6 +26,7 @@ import {
   markTokenAutomationRefreshFailure
 } from "../src/presentation/workbench/tokenAutomationState";
 import * as coordination from "../src/utils/crossWindowOperations";
+import * as persistentLog from "../src/utils/persistentLog";
 import { removeTestDirectory } from "./testFilesystem";
 import { configureSqliteStateStore, listSqliteStateFiles, readSqliteStateFile, SqliteStateStore } from "../src/storage/sqliteState";
 
@@ -443,12 +444,15 @@ describe("encrypted account sync", () => {
       };
       const restored = new EncryptedSyncManager(createContext(), restoredRepo as never, legacyVaultPath);
 
+      vi.spyOn(persistentLog, "recordPersistentEvent");
       await restored.start();
 
       expect(restoredEntries.map((entry) => entry.email)).toEqual(["first@example.com"]);
       expect(restoredEntries[0]?.tokens?.refresh_token).toBe("first-refresh-token");
-      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
-        expect.stringContaining("1 saved account vault file")
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(persistentLog.recordPersistentEvent).toHaveBeenCalledWith(
+        "warning", "startup", "Durable account vault recovery completed",
+        { restoredCount: 1, unreadableVaultCount: 1, unreadableFilesKept: true }, expect.any(Error)
       );
       await expect(fs.readFile(path.join(accountsDirectory, "second@example.com.json"), "utf8")).resolves.toBe(
         "damaged"
@@ -471,6 +475,8 @@ describe("encrypted account sync", () => {
     const newer = createEntry("newer", 600, "newer-refresh-token");
     const orphanFinal = path.join(accountsDirectory, "orphan@example.com.json");
     const newerFinal = path.join(accountsDirectory, "newer@example.com.json");
+    const emptyTemp = path.join(accountsDirectory, "empty@example.com.json.tmp-interrupted");
+    await fs.writeFile(emptyTemp, "");
     await fs.writeFile(
       `${orphanFinal}.tmp-interrupted`,
       await encryptSyncPayload(createPayload([orphan]), PASSPHRASE),
@@ -520,10 +526,15 @@ describe("encrypted account sync", () => {
 
     try {
       const manager = new EncryptedSyncManager(context, repo as never, legacyVaultPath);
+      vi.spyOn(persistentLog, "recordPersistentEvent");
       await manager.start();
+      expect(persistentLog.recordPersistentEvent).toHaveBeenCalledWith("info", "startup", "Durable account vault recovery completed", { restoredCount: 2, unreadableVaultCount: 0, unreadableFilesKept: true }, undefined);
 
       expect(restoredEntries.map((entry) => entry.id).sort()).toEqual(["newer", "orphan"]);
       expect(restoredEntries.find((entry) => entry.id === "newer")?.tokens?.refresh_token).toBe("newer-refresh-token");
+      expect(await fs.readFile(emptyTemp, "utf8")).toBe("");
+      expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
       if (sqlite) {
         expect(readSqliteStateFile(orphanFinal)).toContain("ciphertext");
         expect(await fs.readFile(`${orphanFinal}.tmp-interrupted`, "utf8")).toContain("ciphertext");

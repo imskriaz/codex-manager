@@ -1,11 +1,10 @@
 # Changelog
 
-## 1.5.7-pre.1
+## 1.5.6
 
 - Require official runtime activity for recovery decisions. A retained writer lock or recent interrupted transcript can no longer consume saved recovery as an already running turn.
 - Open and verify the official conversation when readiness is absent, and retain recovery when native activity cannot be checked. Goals remain prompt-free.
-
-## 1.5.6
+- Ignore empty temporary vault writes left by interrupted saves without discarding canonical account files or complete recovery snapshots. Startup recovery and background backup diagnostics honor System Log and no longer produce routine push notifications; explicit recovery actions retain warnings.
 
 - Restore tab-first Auto Resume by default for goals and non-goal sessions, continue goals without a new prompt, and send “Continue if not completed” only for interrupted non-goal chats through the ready official owner. No private server or unsupported goal-activation calls.
 - Retry temporary startup IPC disconnects within the readiness deadline; retain failed and uncertain recovery without duplicate sends.

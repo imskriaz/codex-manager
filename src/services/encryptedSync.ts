@@ -7,6 +7,7 @@ import * as zlib from "zlib";
 import * as vscode from "vscode";
 import { fetch as undiciFetch } from "undici";
 import { waitWithin } from "../utils/concurrency";
+import { recordPersistentEvent } from "../utils/persistentLog";
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { readCrossWindowActiveAccountIds } from "./windowAccountMode";
@@ -139,6 +140,7 @@ type DurableVaultMutation = {
 type DurableVaultRestoreResult = {
   restoredCount: number;
   failedFiles: string[];
+  firstFailure?: unknown;
 };
 
 /** Opt-in encrypted account-claim coordination. Credentials always remain local. */
@@ -467,18 +469,14 @@ export class EncryptedSyncManager implements vscode.Disposable {
     if (storedPassphrase) {
       try {
         const restored = await this.restoreDurableVaults(storedPassphrase);
-        if (restored.restoredCount > 0) {
-          void vscode.window.showInformationMessage(
-            `Restored ${restored.restoredCount} saved Codex account${restored.restoredCount === 1 ? "" : "s"} from the durable local vault.`
-          );
-        }
-        this.showDurableVaultRecoveryWarning(restored.failedFiles);
+        recordPersistentEvent(restored.failedFiles.length ? "warning" : "info", "startup", "Durable account vault recovery completed", {
+          restoredCount: restored.restoredCount,
+          unreadableVaultCount: restored.failedFiles.length,
+          unreadableFilesKept: true
+        }, restored.firstFailure);
         this.queueDurableVaultSave();
       } catch (error) {
-        console.warn("[codexManager] durable local account vault could not be restored:", error);
-        void vscode.window.showWarningMessage(
-          `Saved account recovery could not complete: ${error instanceof Error ? error.message : String(error)}. Re-enter the shared password and try again.`
-        );
+        recordPersistentEvent("warning", "startup", "Durable account vault recovery could not complete; saved files were kept", undefined, error);
       }
     }
     const remoteVault = this.context.globalState.get<string>(SYNC_KEY);
@@ -502,7 +500,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
     }
     if (this.isCurrentAccountOnly() || !this.isEnabled()) {
       void this.reconcileCurrentAccountClaim().catch((error) =>
-        console.warn("[codexManager] current account claim could not be reconciled at startup", error instanceof Error ? error.message : error)
+        recordPersistentEvent("warning", "startup", "Current account claim could not be reconciled", undefined, error)
       );
     }
   }
@@ -656,7 +654,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       this.startupVaultMergeTimer = undefined;
       void this.syncNow(false, false, false).catch((error: unknown) => {
         if (!(error instanceof CrossWindowOperationBusyError)) {
-          console.warn("[codexManager] deferred downloaded-vault merge failed:", error);
+          recordPersistentEvent("warning", "startup", "Deferred downloaded-vault merge failed", undefined, error);
         }
       });
     }, delayMs);
@@ -1671,10 +1669,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         if (passphrase) await this.persistDurableVaults(passphrase, mutation);
       });
     void this.durableVaultWriteChain.catch((error) => {
-      console.warn("[codexManager] durable local account vault could not be saved:", error);
-      void vscode.window.showWarningMessage(
-        `Accounts are saved in VS Code, but the reinstall-safe vault could not be updated: ${error instanceof Error ? error.message : String(error)}`
-      );
+      recordPersistentEvent("warning", "account-vault", "Accounts are saved in VS Code, but the reinstall-safe vault could not be updated", undefined, error);
     });
   }
 
@@ -1797,7 +1792,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       const current = localById.get(getSyncAccountId(entry));
       return !current || syncEntryFingerprint(current) !== syncEntryFingerprint(entry);
     });
-    if (!changed.length) return { restoredCount: 0, failedFiles };
+    if (!changed.length) return { restoredCount: 0, failedFiles, firstFailure };
 
     this.applyingRemote = true;
     try {
@@ -1809,7 +1804,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         throw new Error(`Could not restore ${result.failedCount} saved account${result.failedCount === 1 ? "" : "s"}.`);
       }
       await this.repo.flush?.();
-      return { restoredCount: result.successCount, failedFiles };
+      return { restoredCount: result.successCount, failedFiles, firstFailure };
     } finally {
       this.applyingRemote = false;
     }
@@ -2306,6 +2301,15 @@ async function listDurableAccountVaultFiles(directory: string): Promise<string[]
       const tempMarker = `${DURABLE_ACCOUNT_FILE_SUFFIX}.tmp-`;
       const markerIndex = lower.indexOf(tempMarker);
       if (markerIndex >= 0) {
+        try {
+          // A crash before the first write leaves an empty temp, not a saved account.
+          const stat = await fs.stat(path.join(directory, name));
+          if (!stat.isFile() || stat.size === 0) continue;
+        } catch (error) {
+          if (isFileNotFoundError(error)) continue;
+          recordPersistentEvent("warning", "account-vault", "Temporary vault snapshot could not be inspected; kept for retry", undefined, error);
+          continue;
+        }
         canonicalNames.add(name.slice(0, markerIndex + DURABLE_ACCOUNT_FILE_SUFFIX.length));
       }
     }

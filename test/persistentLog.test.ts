@@ -7,6 +7,9 @@ import * as vscode from "vscode";
 import { disposePersistentLogging, PersistentSqliteLogger, registerPersistentLogging, runWithPersistentOperation } from "../src/utils/persistentLog";
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { removeTestDirectory } from "./testFilesystem";
+import { EncryptedSyncManager } from "../src/services/encryptedSync";
+
+vi.mock("fs/promises", async importOriginal => ({ ...await importOriginal<typeof import("fs/promises")>() }));
 
 const temporaryDirectories: string[] = [];
 const loggers: PersistentSqliteLogger[] = [];
@@ -41,6 +44,76 @@ async function register(directory: string) {
 }
 
 describe("SQLite persistent diagnostics", () => {
+  it.each([false, true].flatMap(enabled => ["missing", "empty-temp", "empty-canonical", "damaged", "vanished-temp", "denied-temp", "backup-full"].map(vault => ({ enabled, vault }))))(
+    "respects System Log for startup recovery without notifications ($enabled, $vault)", async ({ enabled, vault }) => {
+      const directory = await root();
+      if (enabled) await enable(directory);
+      await register(directory);
+      vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
+        get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" ? false : fallback
+      } as unknown as vscode.WorkspaceConfiguration);
+      const accountsDirectory = path.join(directory, "accounts");
+      const temporary = vault.endsWith("temp");
+      const file = path.join(accountsDirectory, `saved@example.com.json${temporary ? ".tmp-interrupted" : ""}`);
+      if (vault !== "missing" && vault !== "backup-full") {
+        await fs.mkdir(accountsDirectory);
+        await fs.writeFile(file, vault === "damaged" ? "damaged" : "");
+      }
+      if (vault === "vanished-temp" || vault === "denied-temp") {
+        const stat = fs.stat;
+        vi.spyOn(fs, "stat").mockImplementation(((target: Parameters<typeof stat>[0], ...args: unknown[]) => {
+          if (target === file) return Promise.reject(Object.assign(new Error(vault), { code: vault === "vanished-temp" ? "ENOENT" : "EPERM" }));
+          return Reflect.apply(stat, fs, [target, ...args]);
+        }) as typeof stat);
+      }
+      const context = {
+        subscriptions: [],
+        globalState: { get: (_key: string, fallback?: unknown) => fallback, update: vi.fn(), setKeysForSync: vi.fn() },
+        secrets: { get: async (key: string) => key.endsWith("passphrase") ? "test shared password" : "device-one", store: vi.fn(), delete: vi.fn() }
+      } as unknown as vscode.ExtensionContext;
+      const repo = {
+        listAccounts: vi.fn(async () => {
+          if (vault === "backup-full") throw Object.assign(new Error("backup storage full"), { code: "ENOSPC" });
+          return [];
+        }),
+        exportSharedAccounts: vi.fn(async () => []),
+        invalidateCachedIndex: vi.fn()
+      };
+      const warning = vi.spyOn(vscode.window, "showWarningMessage").mockClear();
+      const information = vi.spyOn(vscode.window, "showInformationMessage").mockClear();
+      const consoleWarning = vi.spyOn(console, "warn");
+      const manager = new EncryptedSyncManager(context, repo as never, path.join(directory, "encrypted-accounts-vault.json"));
+      try {
+        await manager.start();
+        await (manager as unknown as { durableVaultWriteChain: Promise<void> }).durableVaultWriteChain.catch(() => undefined);
+        expect(warning).not.toHaveBeenCalled();
+        expect(information).not.toHaveBeenCalled();
+        expect(consoleWarning).not.toHaveBeenCalled();
+        if (vault !== "missing" && vault !== "backup-full") {
+          expect(await fs.readFile(file, "utf8")).toBe(vault === "damaged" ? "damaged" : "");
+        }
+        await disposePersistentLogging();
+        if (enabled) {
+          const saved = await records(directory);
+          const startup = saved.find(record => record.scope === "startup");
+          expect(startup).toBeDefined();
+          const failed = ["empty-canonical", "damaged"].includes(vault);
+          expect(startup?.level).toBe(failed ? "warning" : "info");
+          if (failed) expect(startup?.error).toBeDefined();
+          else expect(startup?.details).toMatchObject({ unreadableVaultCount: 0 });
+          if (vault === "denied-temp") expect(saved).toContainEqual(expect.objectContaining({ scope: "account-vault", level: "warning", error: expect.objectContaining({ code: "EPERM" }) }));
+          if (vault === "backup-full") expect(saved).toContainEqual(expect.objectContaining({ scope: "account-vault", level: "warning", error: expect.objectContaining({ message: "backup storage full" }) }));
+          expect(JSON.stringify(saved)).not.toContain("saved@example.com");
+          expect(JSON.stringify(saved)).not.toContain("test shared password");
+        } else await expect(fs.access(path.join(directory, "manager_logs.sqlite"))).rejects.toMatchObject({ code: "ENOENT" });
+        if (vault === "empty-canonical" || vault === "damaged") {
+          await manager.configure({ passphrase: "test shared password", confirmation: "test shared password", deferSync: true });
+          expect(warning).toHaveBeenCalledWith(expect.stringContaining("durable account recovery did not complete"));
+        }
+      } finally { manager.dispose(); }
+    }
+  );
+
   it("starts without waiting for old-log cleanup and cancels its background timer on close", async () => {
     vi.useFakeTimers();
     try {

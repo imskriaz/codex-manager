@@ -740,7 +740,7 @@ export function SettingsOverlay(props: {
               </div>
               <SettingsToggleBlock
                 title="System Log"
-                sub="Save local logs with account secrets hidden."
+                sub="Include startup and recovery logs, with account secrets hidden. Off saves no logs."
                 enabled={props.settings.persistentLoggingEnabled === true}
                 className="settings-block-wide"
                 onToggle={(enabled) => patchAndSend("persistentLoggingEnabled", enabled)}
