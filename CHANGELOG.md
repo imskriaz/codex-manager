@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.6-pre.2
+
+- Keep reset rows compact by showing only the reset icon and count.
+
 ## 1.5.6-pre.1
 
 - Retry transient empty Auto Resume startup discovery before consuming saved recovery, and tolerate Windows PID inspection permission errors during live-session capture.

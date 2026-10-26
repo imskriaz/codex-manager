@@ -345,25 +345,26 @@ export function BrowserActionModal(props: {
             <div class="reset-credit-list-heading"><strong>Available resets</strong><span>{request.resetCredits?.availableCount ?? "—"}</span></div>
             {request.resetCreditsLoading ? <div class="modal-note">Checking reset availability…</div> : request.resetCreditsError ? <div class="modal-error" role="alert">{request.resetCreditsError}</div> : request.resetCredits?.credits.length ? (
               <ul>
-                {request.resetCredits.credits.map((credit, index) => <li key={credit.id ?? `${credit.status ?? "reset"}-${index}`}><span>{credit.reset_type || "Usage reset"}</span><small>{credit.status || "available"} · {formatResetExpiry(credit.expires_at)}</small></li>)}
+                {request.resetCredits.credits.map((credit, index) => <li key={credit.id ?? `${credit.status ?? "reset"}-${index}`}>
+                  <button
+                    class="reset-credit-row"
+                    type="button"
+                    disabled={request.resetCreditsLoading === true || (credit.status !== undefined && credit.status !== "available")}
+                    onClick={() => props.onConfirm(request, credit.id ? [credit.id] : undefined)}
+                  >
+                    <span class="reset-credit-row-main"><strong>{credit.reset_type || "Usage reset"}</strong><small>{credit.status || "available"} · {formatResetExpiry(credit.expires_at)}</small></span>
+                    <span class="reset-credit-row-action">Reset</span>
+                  </button>
+                </li>)}
               </ul>
             ) : <div class="modal-note">No reset credits are available.</div>}
             {request.resetCreditsError && props.onRetry ? <button class="modal-secondary-btn" type="button" onClick={() => props.onRetry?.(request)}>Retry availability check</button> : null}
           </div>
         ) : null}
-        <div class="modal-actions">
-          <button class="modal-secondary-btn" type="button" onClick={() => props.onCancel(request)}>
-            {cancelLabel}
-          </button>
-          <button
-            class={`modal-primary-btn ${request.danger ? "danger" : ""}`}
-            type="button"
-            disabled={request.action === "consumeResetCredit" && (request.resetCreditsLoading === true || (request.resetCredits?.availableCount ?? 0) < 1)}
-            onClick={() => props.onConfirm(request)}
-          >
-            {request.confirmLabel}
-          </button>
-        </div>
+        {request.action !== "consumeResetCredit" ? <div class="modal-actions">
+          <button class="modal-secondary-btn" type="button" onClick={() => props.onCancel(request)}>{cancelLabel}</button>
+          <button class={`modal-primary-btn ${request.danger ? "danger" : ""}`} type="button" onClick={() => props.onConfirm(request)}>{request.confirmLabel}</button>
+        </div> : null}
       </div>
     </Shell>
   );

@@ -24,6 +24,7 @@ describe("port dashboard action modals", () => {
     expect(modal).toContain('request.kind === "password"');
     expect(modal).toContain('request.kind === "disabledActiveAccount"');
     expect(modal).toContain('props.onConfirm(request, ["unload"])');
+    expect(modal).toContain('class="reset-credit-row"');
     expect(modal).toContain(
       'const Shell = useModalShell || props.presentation !== "popover" ? ModalShell : ActionPopoverShell;'
     );
