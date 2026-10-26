@@ -206,10 +206,10 @@ const mockHost = `(() => {
           window.__invalidNextLogRead = false;
         }
         else if(message.action === 'clearLogs') { logCleared = true; payload={notice:{level:'info',message:'System log cleared.'}}; }
-        else if(message.action === 'previewMaintenance') payload={maintenancePreview:{token:message.payload.maintenanceTool+':preview-'+crypto.randomUUID(),tool:message.payload.maintenanceTool,count:63,expiresAt:Date.now()+300000,titles:['Archived task 0']}};
+        else if(message.action === 'previewMaintenance') payload={maintenancePreview:{token:message.payload.maintenanceTool+':preview-'+crypto.randomUUID(),tool:message.payload.maintenanceTool,count:window.__maintenanceCount??63,expiresAt:Date.now()+300000,titles:['Archived task 0']}};
         else if(message.action === 'getMaintenancePage') {
           const query=message.payload.maintenanceQuery||'',offset=message.payload.maintenanceOffset||0;
-          const items=Array.from({length:63},(_,i)=>({id:'tool-item-'+i,title:'Archived task '+i,detail:'demo project'})).filter(item=>item.title.toLowerCase().includes(query.toLowerCase()));
+          const items=Array.from({length:window.__maintenanceCount??63},(_,i)=>({id:'tool-item-'+i,title:window.__maintenanceLongTitle&&i===0?'Review a very long archived conversation title with important project and session details '.repeat(4):'Archived task '+i,detail:window.__maintenanceLongTitle?'demo project · model · 10/26/2026 · '+ 'workspace metadata '.repeat(8):'demo project'})).filter(item=>item.title.toLowerCase().includes(query.toLowerCase()));
           payload={maintenancePage:{token:message.payload.maintenanceToken,query,offset,total:items.length,items:items.slice(offset,offset+50)}};
         }
         else if(message.action === 'runMaintenance') {
@@ -2183,12 +2183,12 @@ try {
         await page.screenshot({ path: path.join(output, `settings-switching-${width}x${height}.png`) });
       }
       if (await tab.getAttribute("id") === "settings-tab-tools") {
-        assert.equal(await page.locator(".maintenance-tool").count(), 8, "Tools contain Codex utilities instead of duplicated dashboard shortcuts");
-        await page.locator('.maintenance-tool').filter({ hasText: 'Archive manager' }).click();
+        assert.equal(await page.locator(".maintenance-storage-operations > button").count(), 7, "Tools contain Codex utilities instead of duplicated dashboard shortcuts");
+        await page.getByRole('button', {name:'Archive manager Manage',exact:true}).click();
         const archive = page.getByRole("region", { name: "Archive manager", exact: true });
-        assert.equal(await page.getByRole('dialog').count(), 1, 'Maintenance stays in Settings instead of nesting a dialog');
-        await archive.getByRole("checkbox").first().waitFor();
-        assert.equal(await archive.getByRole("checkbox").count(), 50, "Archive management loads one bounded page");
+        assert.equal(await page.getByRole('dialog').count(), 2, 'Tool details open above Settings');
+        await archive.getByRole("group", {name:"Tool items",exact:true}).getByRole("checkbox").first().waitFor();
+        assert.equal(await archive.getByRole("group", {name:"Tool items",exact:true}).getByRole("checkbox").count(), 50, "Archive management loads one bounded page");
         await archive.getByRole("button", { name: "Next", exact: true }).click();
         await page.waitForFunction(() => document.querySelectorAll(".maintenance-items input[type=checkbox]").length === 13);
         await archive.getByRole("searchbox", { name: "Search tool items" }).fill("task 62");
@@ -2208,13 +2208,13 @@ try {
         await archive.getByRole('button', { name: 'All tools', exact: true }).click();
         assert.equal(await page.locator(".overlay.open").count(), 1, "Returning to the tool navigator keeps Settings open");
         for (const title of ["Conversation cleanup", "Goal manager", "Shell snapshot cleanup"]) {
-          await page.locator(".maintenance-tool").filter({ hasText: title }).click();
+          await page.getByRole("button", {name:title+" Manage",exact:true}).click();
           const workspace = page.getByRole("region", { name: title, exact: true });
-          await workspace.getByRole("checkbox").first().waitFor();
+          await workspace.getByRole("group", {name:"Tool items",exact:true}).getByRole("checkbox").first().waitFor();
           await workspace.getByRole("button", { name: "All tools", exact: true }).click();
         }
         for (const [card, title] of [["Find missing projects", "Missing projects"], ["Find large conversations", "Largest conversations"], ["Check Codex storage", "Codex storage check"]]) {
-          await page.locator(".maintenance-tool").filter({ hasText: card }).click();
+          await (card === "Check Codex storage" ? page.getByRole("region", {name:"Storage Management",exact:true}).getByRole("button", {name:"Open summary",exact:true}) : page.getByRole("button", {name:card+" Inspect",exact:true})).click();
           const workspace = page.getByRole("region", { name: title, exact: true });
           await workspace.getByText("Healthy · 2 MB", { exact: true }).waitFor();
           await workspace.getByRole("button", { name: "All tools", exact: true }).click();

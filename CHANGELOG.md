@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.7-pre.3
+
+- Compact all Tools into a consistent list with a single title and system context, tighter report rows, and accessible search and refresh controls.
+- Show selection actions only when needed, keep whole-storage cleanup under More actions, and preserve explicit confirmations and progress feedback.
+- Add page selection with partial-state feedback, preserve selections across pages, and keep long titles readable through full-text labels and tooltips.
+
 ## 1.5.7-pre.2
 
 - Run native database health checks in bounded read-only workers; preserve partial results, cancel timed-out work, and include all versioned databases, reusable pages, WAL and shared-memory bytes in Storage Management.
