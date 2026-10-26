@@ -56,21 +56,8 @@ async function inspectCodexStorage(kind: CodexInspection, signal: AbortSignal): 
     return { title: "Project folder check", items };
   }
   if (kind === "large-sessions") {
-    const sizes: Array<{ title: string; size: number }> = [];
-    let unavailable = 0;
-    const root = normalizeNativePath(await fs.realpath(home));
-    await runWithConcurrencyLimit(sessions, 8, async session => {
-      signal.throwIfAborted();
-      if (!session.transcriptPath) { unavailable++; return; }
-      try {
-        const file = normalizeNativePath(await fs.realpath(session.transcriptPath)), relative = path.relative(root, file);
-        if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) { unavailable++; return; }
-        const stat = await fs.stat(file);
-        if (stat.isFile()) sizes.push({ title: session.title, size: stat.size }); else unavailable++;
-      } catch { unavailable++; }
-    });
-    sizes.sort((a, b) => b.size - a.size);
-    return { title: "Largest conversations", items: [{ label: "Conversation files checked", value: String(sizes.length) }, { label: "Unavailable files", value: String(unavailable) }, ...sizes.slice(0, 20).map(item => ({ label: item.title, value: formatBytes(item.size) }))] };
+    const { files, unavailable } = await rankConversationFiles(home, sessions, signal);
+    return { title: "Largest conversations", items: [{ label: "Conversation files checked", value: String(files.length) }, { label: "Unavailable files", value: String(unavailable) }, ...files.slice(0, 20).map(item => ({ label: item.session.title, value: formatBytes(item.size) }))] };
   }
   const database = await inspectNativeStorage(home, signal);
   for (const file of database.databases) items.push({ label: file.name, value: `${file.status} · ${formatBytes(file.bytes)} allocated · ${formatBytes(file.reusableBytes)} reusable · ${formatBytes(file.walBytes)} WAL${file.error ? ` · ${file.error}` : ""}` });
@@ -85,6 +72,24 @@ async function inspectCodexStorage(kind: CodexInspection, signal: AbortSignal): 
 function formatBytes(size: number): string {
   const unit = size >= 1024 ** 3 ? 3 : size >= 1024 ** 2 ? 2 : size >= 1024 ? 1 : 0;
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(size / 1024 ** unit)} ${["B", "KB", "MB", "GB"][unit]}`;
+}
+
+async function rankConversationFiles(home: string, sessions: Awaited<ReturnType<typeof readCodexSessionMaintenanceCandidates>>, signal: AbortSignal) {
+  const files: Array<{ session: typeof sessions[number]; size: number }> = [];
+  let unavailable = 0;
+  const root = normalizeNativePath(await fs.realpath(home));
+  await runWithConcurrencyLimit(sessions, 8, async session => {
+    signal.throwIfAborted();
+    if (!session.transcriptPath) { unavailable++; return; }
+    try {
+      const file = normalizeNativePath(await fs.realpath(session.transcriptPath)), relative = path.relative(root, file);
+      if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`)) { unavailable++; return; }
+      const stat = await fs.stat(file);
+      if (stat.isFile()) files.push({ session, size: stat.size }); else unavailable++;
+    } catch { unavailable++; }
+  });
+  files.sort((a, b) => b.size - a.size || a.session.id.localeCompare(b.session.id));
+  return { files, unavailable };
 }
 
 async function summarizeCodexStorage(home: string, sessions: Awaited<ReturnType<typeof readCodexSessionMaintenanceCandidates>>, databaseBytes: number, signal: AbortSignal): Promise<MaintenanceStorageSummary> {
@@ -155,10 +160,12 @@ async function createMaintenancePreview(tool: MaintenanceTool, home: string): Pr
   for (const [token, plan] of plans) if (!plan.job && plan.home === getCodexHomeStateKey(home) && plan.preview.tool === tool) plans.delete(token);
   if (plans.size >= 8) throw new Error("Too many cleanup previews are open. Finish one or retry in a few minutes.");
   let items: Item[] = [];
+  let warning: string | undefined;
   if (tool === "snapshots") items = await waitWithin(shellSnapshots(home), 8_000, "Shell snapshots did not respond. No cleanup started.");
   else {
+    const conversationOnly = tool === "archives" || tool === "large-sessions";
     const [sessions, goals, files] = await waitWithin(Promise.all([
-      readCodexSessionMaintenanceCandidates(home), tool === "archives" ? undefined : readCodexSessionGoals(home, undefined, 10001), tool === "archives" ? [] : fs.readdir(home)
+      readCodexSessionMaintenanceCandidates(home), conversationOnly ? undefined : readCodexSessionGoals(home, undefined, 10001), conversationOnly ? [] : fs.readdir(home)
     ]), 15_000, "Session storage did not respond. No cleanup started; retry when it is available.");
     if (!goals && files.some(name => /^goals_\d+\.sqlite$/.test(name))) throw new Error("Goal storage is unavailable. No cleanup started.");
     if ((goals?.size ?? 0) > 10000) throw new Error("More than 10,000 goals need cleanup. Reduce them in Codex before retrying.");
@@ -166,16 +173,25 @@ async function createMaintenancePreview(tool: MaintenanceTool, home: string): Pr
     if (tool === "goals") items = [...goals?.keys() ?? []].map(id => ({ id, title: titles.get(id) ?? `Codex session ${id.slice(0, 8)}`, detail: goals?.get(id)?.objective.slice(0, 256), goalOnly: true }));
     else {
       items = sessions.filter(session => tool !== "archives" || session.archived).map(session => ({ id: session.id, title: session.title, projectPath: session.projectPath,
-        detail: [session.projectPath ? path.basename(session.projectPath) || session.projectPath : "Project unavailable", session.model, session.updatedAt ? new Date(session.updatedAt).toLocaleDateString() : undefined, tool === "sessions" && session.archived ? "Archived" : undefined].filter(Boolean).join(" · ") }));
+        detail: [session.projectPath ? path.basename(session.projectPath) || session.projectPath : "Project unavailable", session.model, session.updatedAt ? new Date(session.updatedAt).toLocaleDateString() : undefined, (tool === "sessions" || tool === "large-sessions") && session.archived ? "Archived" : undefined].filter(Boolean).join(" · ") }));
       if (tool === "sessions") {
         const listed = new Set(items.map(item => item.id));
         for (const id of goals?.keys() ?? []) if (!listed.has(id)) items.push({ id, title: `Codex session ${id.slice(0, 8)}`, detail: "Saved goal · Conversation unavailable", goalOnly: true });
+      }
+      if (tool === "large-sessions") {
+        const controller = new AbortController();
+        try {
+          const ranked = await waitWithin(rankConversationFiles(home, sessions, controller.signal), 15_000, "Conversation sizes did not respond. No cleanup started; retry when storage is available.");
+          const details = new Map(items.map(item => [item.id, item]));
+          items = ranked.files.map(({ session, size }) => ({ ...details.get(session.id)!, detail: `${formatBytes(size)} · ${details.get(session.id)!.detail}` }));
+          if (ranked.unavailable) warning = `${ranked.unavailable.toLocaleString()} conversation file(s) could not be inspected and were kept. Available conversations are listed by size.`;
+        } finally { controller.abort(); }
       }
     }
   }
   if (items.length > 10000) throw new Error("More than 10,000 items need cleanup. Use a narrower tool before retrying.");
   if (plans.size >= 8) throw new Error("Too many cleanup previews are open. Finish one or retry in a few minutes.");
-  const preview: MaintenancePreview = { token: randomUUID(), tool, count: items.length, expiresAt: Date.now() + 5 * 60_000, titles: items.slice(0, 5).map(item => item.title) };
+  const preview: MaintenancePreview = { token: randomUUID(), tool, count: items.length, expiresAt: Date.now() + 5 * 60_000, titles: items.slice(0, 5).map(item => item.title), ...(warning ? { warning } : {}) };
   plans.set(preview.token, { preview, home: getCodexHomeStateKey(home), items });
   return preview;
 }
@@ -211,6 +227,7 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
   const plan = plans.get(token);
   if (!confirmed || !plan || plan.home !== getCodexHomeStateKey(resolveCodexHome())) throw new Error("Review and confirm a cleanup preview for this system first.");
   if (operation !== "delete" && operation !== "restore" || operation === "restore" && plan.preview.tool !== "archives") throw new Error("This operation is unavailable for this tool.");
+  if (plan.preview.tool === "large-sessions" && selection === undefined) throw new Error("Select the conversations to delete before continuing.");
   const available = new Set(plan.items.map(item => item.id));
   if (selection !== undefined && (!Array.isArray(selection) || !selection.length || selection.length > 10000 || selection.some(id => typeof id !== "string" || !available.has(id)))) throw new Error("Choose items from this preview before continuing.");
   const ids = selection ? new Set(selection) : undefined;
@@ -257,7 +274,7 @@ export function runMaintenance(token: string, confirmed: boolean, selection?: st
       }
     };
     check();
-    const currentSessions = operation === "delete" && ["archives", "sessions"].includes(plan.preview.tool) ? await readCodexSessionMaintenanceCandidates() : [];
+    const currentSessions = operation === "delete" && ["archives", "sessions", "large-sessions"].includes(plan.preview.tool) ? await readCodexSessionMaintenanceCandidates() : [];
     const children = new Map<string, string[]>();
     for (const session of currentSessions) if (session.parentSessionId) children.set(session.parentSessionId, [...children.get(session.parentSessionId) ?? [], session.id]);
     const selected = new Set(items.map(item => item.id));

@@ -24,6 +24,48 @@ afterEach(async () => { vi.useRealTimers(); await removeTestDirectory(mocks.home
 const finish = async (id: string) => { await vi.waitFor(() => expect(api.getMaintenanceJob(id).status).not.toBe("running")); return api.getMaintenanceJob(id); };
 
 describe("Codex maintenance safety", () => {
+  it('ranks selectable conversations by contained file size and reports unavailable files without requiring goal storage', async () => {
+    await writeFile(path.join(mocks.home, 'small.jsonl'), 'x'.repeat(1024));
+    await writeFile(path.join(mocks.home, 'large.jsonl'), 'x'.repeat(4096));
+    mocks.sessions.mockResolvedValue([
+      { id: ids[0], title: 'Small chat', transcriptPath: path.join(mocks.home, 'small.jsonl'), archived: true },
+      { id: ids[1], title: 'Large chat', transcriptPath: path.join(mocks.home, 'large.jsonl'), projectPath: mocks.home },
+      { id: ids[2], title: 'Missing chat', transcriptPath: path.join(mocks.home, 'missing.jsonl') },
+      { id: 'dddddddd-dddd-dddd-dddd-dddddddddddd', title: 'Outside chat', transcriptPath: process.execPath }
+    ]);
+    mocks.goals.mockRejectedValue(new Error('Unrelated goal storage is offline'));
+    const preview = await api.previewMaintenance('large-sessions');
+    expect(preview).toMatchObject({ count: 2, warning: expect.stringContaining('2 conversation') });
+    const page = api.readMaintenancePage(preview.token);
+    expect(page.items.map(item => item.id)).toEqual([ids[1], ids[0]]);
+    expect(page.items[0]?.detail).toMatch(/^4 KB ·/);
+    expect(api.readMaintenancePage(preview.token, 'small').items.map(item=>item.id)).toEqual([ids[0]]);
+    expect(mocks.goals).not.toHaveBeenCalled(); expect(mocks.remove).not.toHaveBeenCalled();
+    expect(() => api.runMaintenance(preview.token, true)).toThrow('Select the conversations');
+    expect(() => api.runMaintenance(preview.token, true, [ids[2]!])).toThrow('Choose items');
+    expect(() => api.runMaintenance(preview.token, false, [ids[0]!])).toThrow('confirm');
+    expect(() => api.runMaintenance(preview.token, true, [ids[0]!], 'restore')).toThrow('unavailable');
+  });
+  it('deletes only selected large conversations, coalesces duplicate requests, and preserves running or unverified sessions', async () => {
+    await Promise.all(ids.map(id => writeFile(path.join(mocks.home, id+'.jsonl'), 'conversation')));
+    mocks.sessions.mockResolvedValue(ids.map(id=>({id,title:id,transcriptPath:path.join(mocks.home,id+'.jsonl')})));
+    const preview = await api.previewMaintenance('large-sessions');
+    mocks.summary.mockImplementation(async id=>({status:id===ids[0]?'idle':id===ids[1]?'running':'unknown'}));
+    const job = api.runMaintenance(preview.token, true, ids);
+    expect(api.runMaintenance(preview.token, true, ids).id).toBe(job.id);
+    expect(await finish(job.id)).toMatchObject({total:3,cleared:1,skipped:1,failed:1});
+    expect(mocks.remove).toHaveBeenCalledExactlyOnceWith(ids[0], {archivedOnly:false});
+  });
+  it('keeps a large parent when a child appeared after preview and continues after a per-session delete failure', async () => {
+    await Promise.all(ids.map(id => writeFile(path.join(mocks.home, id+'.jsonl'), 'conversation')));
+    const sessions = ids.map(id=>({id,title:id,transcriptPath:path.join(mocks.home,id+'.jsonl')}));
+    mocks.sessions.mockResolvedValueOnce(sessions).mockResolvedValue([...sessions,{id:'dddddddd-dddd-dddd-dddd-dddddddddddd',title:'New child',parentSessionId:ids[0]}]);
+    mocks.remove.mockRejectedValueOnce(Object.assign(new Error('Permission denied'),{code:'EPERM'}));
+    const preview = await api.previewMaintenance('large-sessions');
+    const job = api.runMaintenance(preview.token, true, ids);
+    expect(await finish(job.id)).toMatchObject({cleared:1,skipped:1,failed:1,errors:expect.arrayContaining([expect.stringContaining('child conversation'),expect.stringContaining('Permission denied')])});
+    expect(mocks.remove.mock.calls.map(call=>call[0])).toEqual([ids[1],ids[2]]);
+  });
   it('publishes bounded immutable progress and recovers an accepted job by preview without replaying writes', async () => {
     const { subscribeDashboardRealtime } = await import('../src/services/dashboardRealtime');
     const { isMaintenanceJob } = await import('../src/domain/maintenance');

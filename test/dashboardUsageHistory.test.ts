@@ -6,8 +6,24 @@ import {
   readDashboardUsageHistory,
   saveDashboardUsageHistory,
   readDashboardDailyUsageCache,
-  upsertDashboardDailyUsageCache
+  upsertDashboardDailyUsageCache,
+  queryDashboardUsage
 } from "../src/services/dashboardUsageHistory";
+
+it('retains quota records beyond the old cap when normalizing, appending, and merging fallback history', async () => {
+  const now = Date.now(), start = now - 20_000;
+  let stored = Array.from({length:10_020},(_,index)=>({accountId:'a',at:start+index,hourly:index%100}));
+  const context = {globalState:{get:()=>stored,update:vi.fn(async (_key:string,value:typeof stored)=>{stored=value;})}} as never;
+  expect(normalizeDashboardUsageHistory(stored)).toHaveLength(10_020);
+  await appendDashboardUsageSnapshot(context,{settings:{usageHistoryRetentionDays:0},accounts:[{id:'a',metrics:[{key:'hourly',period:'hourly',percentage:21}]}]} as never,now);
+  expect(readDashboardUsageHistory(context)).toHaveLength(10_021);
+  await saveDashboardUsageHistory(context,[{accountId:'a',at:start-1,hourly:25}]);
+  expect(readDashboardUsageHistory(context)).toHaveLength(10_022);
+  expect(readDashboardUsageHistory(context)[0]?.at).toBe(start-1);
+  const graph = queryDashboardUsage(context,{mode:'quota',from:start-1,to:now+1});
+  expect(graph.history).toHaveLength(10_000); expect(graph.truncated).toBe(true);
+  expect(readDashboardUsageHistory(context)).toHaveLength(10_022);
+});
 
 describe("dashboard daily usage cache", () => {
   it("keeps existing cache data when a replacement is invalid", async () => {

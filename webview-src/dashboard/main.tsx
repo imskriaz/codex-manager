@@ -3457,7 +3457,7 @@ function CliSessionsMenu(props: {
   const menuLabel = isZh ? "运行中的会话" : isHant ? "執行中的工作階段" : "Running sessions";
   const manageLabel = isZh ? "会话面板" : isHant ? "工作階段面板" : "Session dashboard";
   const runningCount = props.sessions.filter(session => session.status === "running" && (!session.remote || props.peers.some(peer => peer.id === session.deviceId && peer.connected))).length;
-  const serverStatus = !props.connected ? "offline" : props.error ? "error" : props.loading ? "starting" : props.ready ? "ready" : "checking";
+  const serverStatus = !props.connected ? "offline" : props.error ? "error" : props.ready ? "ready" : props.loading ? "starting" : "checking";
   const serverLabel = serverStatus === "ready" ? "Ready" : serverStatus === "starting" ? "Starting" : serverStatus === "checking" ? "Checking" : serverStatus === "offline" ? "Offline" : "Needs attention";
 
   useEffect(() => {
@@ -3632,7 +3632,11 @@ function resolveAboutTitle(lang: string): string {
 }
 
 if (document.getElementById('project-share') || document.getElementById('conversation')) initializePublicMessages();
-else render(<App />, document.getElementById("app")!);
+else {
+  const root = document.getElementById("app")!;
+  root.replaceChildren();
+  render(<App />, root);
+}
 
 function downloadInBrowser(file: { filename: string; text: string }): void {
   const url = URL.createObjectURL(new Blob([file.text], { type: "application/json" }));

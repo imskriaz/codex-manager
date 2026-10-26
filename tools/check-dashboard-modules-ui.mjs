@@ -17,10 +17,13 @@ function visit(key) {
 }
 visit(entry);
 const requested = [], writes = [];
+let releaseBootstrap;
+const bootstrapGate = new Promise(resolve => { releaseBootstrap = resolve; });
 const host = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, 'http://localhost');
     requested.push(url.pathname);
+    if (url.pathname === '/assets/dashboard.js') await bootstrapGate;
     if (request.method !== 'GET') {
       writes.push(url.pathname); response.writeHead(405); response.end(); return;
     }
@@ -55,8 +58,12 @@ try {
   const context = await browser.newContext({ serviceWorkers: 'allow' });
   const page = await context.newPage(); page.setDefaultTimeout(20000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
-  await page.goto(origin);
+  await page.goto(origin, {waitUntil:'commit'});
+  await page.locator('.dashboard-bootstrap').waitFor();
+  assert.equal(await page.getByText('Reload dashboard',{exact:true}).count(), 0, 'Bootstrap shows a compact loading state without a persistent reload prompt');
+  releaseBootstrap();
   await page.locator('#dashboard-main').waitFor();
+  assert.equal(await page.locator('.dashboard-bootstrap').count(), 0, 'The mounted dashboard replaces its static loading state');
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   const cached = await page.evaluate(async () => (await (await caches.open('codex-manager-static-module-smoke')).keys()).map(request => new URL(request.url).pathname));
   for (const file of core) assert.ok(cached.includes('/assets/' + file), `Core module cached: ${file}`);

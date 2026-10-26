@@ -2,7 +2,8 @@ export const MAINTENANCE_TOOLS = [
   { id: "archives", title: "Clear all archives", description: "Permanently delete archived Codex chats.", destructive: true },
   { id: "sessions", title: "Clear all Codex data", description: "Delete Codex chats, archives, and their goals. Keep saved accounts, passwords, and settings.", destructive: true },
   { id: "goals", title: "Clear all goals", description: "Remove saved goals while keeping conversations.", destructive: true },
-  { id: "snapshots", title: "Clean old shell snapshots", description: "Remove shell snapshots older than seven days from inactive sessions.", destructive: true }
+  { id: "snapshots", title: "Clean old shell snapshots", description: "Remove shell snapshots older than seven days from inactive sessions.", destructive: true },
+  { id: "large-sessions", title: "Delete large conversations", description: "Review conversations by file size and permanently delete selected chats.", destructive: true }
 ] as const;
 export const CODEX_INSPECTIONS = [
   { id: "startup", title: "Codex UI startup", description: "Check installed UI files and native storage sizes; reopen a fresh Codex panel." },
@@ -12,7 +13,7 @@ export const CODEX_INSPECTIONS = [
 ] as const;
 export type CodexInspection = typeof CODEX_INSPECTIONS[number]["id"];
 export type MaintenanceTool = typeof MAINTENANCE_TOOLS[number]["id"];
-export type MaintenancePreview = { token: string; tool: MaintenanceTool; count: number; expiresAt: number; titles: string[] };
+export type MaintenancePreview = { token: string; tool: MaintenanceTool; count: number; expiresAt: number; titles: string[]; warning?: string };
 export type MaintenancePage = { token: string; query: string; offset: number; total: number; items: Array<{ id: string; title: string; detail?: string }> };
 export type MaintenanceStorageSummary = {
   totalBytes: number;

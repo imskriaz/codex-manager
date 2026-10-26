@@ -32,7 +32,7 @@ export function renderDashboardShell(
   <link rel="stylesheet" href="${pageStyles.toString()}" />
 </head>
 <body>
-  <div id="app"><p role="status">Loading Codex Manager… If loading does not finish, use Developer: Reload Window.</p></div>
+  <div id="app"><div class="loading-screen dashboard-bootstrap" role="status" aria-label="Loading dashboard"><div class="loading-shine" aria-hidden="true"><span></span></div><span class="loading-label">Loading workspace…</span></div></div>
   <script type="module" src="${script.toString()}"></script>
 </body>
 </html>`;

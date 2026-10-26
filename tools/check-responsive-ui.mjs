@@ -206,12 +206,14 @@ const mockHost = `(() => {
           window.__invalidNextLogRead = false;
         }
         else if(message.action === 'clearLogs') { logCleared = true; payload={notice:{level:'info',message:'System log cleared.'}}; }
-        else if(message.action === 'previewMaintenance') payload={maintenancePreview:{token:message.payload.maintenanceTool+':preview-'+crypto.randomUUID(),tool:message.payload.maintenanceTool,count:window.__maintenanceCount??63,expiresAt:Date.now()+300000,titles:['Archived task 0']}};
+        else if(message.action === 'previewMaintenance') payload={maintenancePreview:{token:message.payload.maintenanceTool+':preview-'+crypto.randomUUID(),tool:message.payload.maintenanceTool,count:window.__maintenanceCount??63,expiresAt:Date.now()+300000,titles:['Archived task 0'],...(message.payload.maintenanceTool==='large-sessions'?{warning:'2 conversation file(s) could not be inspected and were kept. Available conversations are listed by size.'}:{})}};
         else if(message.action === 'getMaintenancePage') {
           const query=message.payload.maintenanceQuery||'',offset=message.payload.maintenanceOffset||0;
           const items=Array.from({length:window.__maintenanceCount??63},(_,i)=>({id:'tool-item-'+i,title:window.__maintenanceLongTitle&&i===0?'Review a very long archived conversation title with important project and session details '.repeat(4):'Archived task '+i,detail:window.__maintenanceLongTitle?'demo project · model · 10/26/2026 · '+ 'workspace metadata '.repeat(8):'demo project'})).filter(item=>item.title.toLowerCase().includes(query.toLowerCase()));
+          if(message.payload.maintenanceToken.startsWith('large-sessions:')) for(const [index,item] of items.entries())item.detail=(63-index)+' MB · '+item.detail;
           payload={maintenancePage:{token:message.payload.maintenanceToken,query,offset,total:items.length,items:items.slice(offset,offset+50)}};
         }
+        else if(message.action==='runMaintenance'&&message.payload.maintenanceToken.startsWith('large-sessions:')&&window.__failNextLargestDelete){window.__failNextLargestDelete=false;error='Selected conversations could not be deleted: storage is unavailable.';}
         else if(message.action === 'runMaintenance') {
           const job={id:'job-'+crypto.randomUUID(),previewToken:message.payload.maintenanceToken,revision:0,tool:message.payload.maintenanceToken.split(':')[0],operation:message.payload.maintenanceOperation||'delete',status:'running',total:message.payload.maintenanceIds?.length||63,processed:0,cleared:0,skipped:0,failed:0,errors:[]};
           toolJobs.set(job.id,job);window.__maintenanceJob=job;payload={maintenanceJob:{...job}};
@@ -392,8 +394,8 @@ try {
     });
     const page = await context.newPage();
     const fixtureGoto = page.goto.bind(page);
-    page.goto = async (...args) => {
-      const response = await fixtureGoto(...args);
+    page.goto = async (url, options) => {
+      const response = await fixtureGoto(url, {waitUntil:'domcontentloaded',...options});
       assert.equal(await page.evaluate(() => Array.isArray(window.__uiActions)), true, 'The intercepted fixture host must be installed before UI actions');
       return response;
     };
@@ -441,9 +443,10 @@ try {
       assert.equal(await page.locator('.cli-session-policy-control').count(),0,'Auto/Manual dropdown is removed');
       await page.evaluate(()=>{window.__holdNextSystemList=true;});
       await page.locator('.cli-sessions-popover').getByRole('button',{name:'Refresh sessions',exact:true}).click();
-      await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-starting')?.textContent==='Starting');
-      assert.equal(await badge.locator('i').count(),1,'Starting badge has a spinner');
-      await page.screenshot({path:path.join(output,`session-badge-starting-${width}.png`)});
+      await page.waitForFunction(()=>!!window.__heldSystemList);
+      assert.equal(await badge.textContent(),'1','A refresh cannot replace an already loaded count with Starting');
+      assert.equal(await badge.locator('i').count(),0,'Loaded sessions keep their count while refreshing');
+      await page.locator('.cli-sessions-popover').getByRole('button',{name:'Refreshing sessions',exact:true}).waitFor();
       await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldSystemList})));
       await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='1');
       await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})));
@@ -796,6 +799,15 @@ try {
       await rail();
       const picker=page.getByRole('combobox',{name:'System',exact:true});
       await picker.selectOption('fixture-system');
+      await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='0');
+      await page.evaluate(()=>{window.__holdNextSystemList=true;window.__heldSystemList=undefined;});
+      await page.locator('#cliSessionsButton').click();
+      await page.locator('.cli-sessions-popover').getByRole('button',{name:'Refresh sessions',exact:true}).click();
+      await page.waitForFunction(()=>!!window.__heldSystemList);
+      assert.equal(await page.locator('#cliSessionsButton .cli-server-status-badge').textContent(),'0','A loaded remote PC keeps its count while its next response is delayed');
+      assert.equal(await page.locator('#cliSessionsButton .cli-server-status-badge i').count(),0);
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldSystemList})));
+      await page.keyboard.press('Escape');
       await page.waitForFunction(()=>window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId==='fixture-system');
       await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='listCodexCliSessions'&&action.payload?.targetDeviceId==='fixture-system'));
       await page.getByRole('button',{name:'Expand remote-project',exact:true}).waitFor();
@@ -2207,13 +2219,13 @@ try {
         assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "runMaintenance" && action.payload.maintenanceOperation === "restore" && action.payload.maintenanceIds.length === 1)), "Restore preserves the reviewed selection");
         await archive.getByRole('button', { name: 'All tools', exact: true }).click();
         assert.equal(await page.locator(".overlay.open").count(), 1, "Returning to the tool navigator keeps Settings open");
-        for (const title of ["Conversation cleanup", "Goal manager", "Shell snapshot cleanup"]) {
+        for (const title of ["Conversation cleanup", "Goal manager", "Shell snapshot cleanup", "Largest conversations"]) {
           await page.getByRole("button", {name:title+" Manage",exact:true}).click();
           const workspace = page.getByRole("region", { name: title, exact: true });
           await workspace.getByRole("group", {name:"Tool items",exact:true}).getByRole("checkbox").first().waitFor();
           await workspace.getByRole("button", { name: "All tools", exact: true }).click();
         }
-        for (const [card, title] of [["Find missing projects", "Missing projects"], ["Find large conversations", "Largest conversations"], ["Check Codex storage", "Codex storage check"]]) {
+        for (const [card, title] of [["Find missing projects", "Missing projects"], ["Check Codex storage", "Codex storage check"]]) {
           await (card === "Check Codex storage" ? page.getByRole("region", {name:"Storage Management",exact:true}).getByRole("button", {name:"Open summary",exact:true}) : page.getByRole("button", {name:card+" Inspect",exact:true})).click();
           const workspace = page.getByRole("region", { name: title, exact: true });
           await workspace.getByText("Healthy · 2 MB", { exact: true }).waitFor();

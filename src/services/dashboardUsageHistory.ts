@@ -6,7 +6,6 @@ import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { readUsageRows, replaceUsageRows, readDailyUsageRows, replaceDailyUsageRows, readDailyUsageRow, upsertDailyUsageRow, appendUsageRows, readUsageSummary, queryUsageRows, mergeUsageRows } from "../storage/sqliteUsage";
 
 const STORAGE_KEY = "codexManager.dashboardUsageHistory.v1";
-const MAX_SAMPLES = 10_000;
 const DAILY_USAGE_CACHE_KEY = "codexManager.dashboardDailyUsageCache.v1";
 const MAX_FUTURE_TIMESTAMP_SKEW_MS = 5 * 60_000;
 
@@ -48,7 +47,9 @@ export function queryDashboardUsage(context: vscode.ExtensionContext, query: Das
     const previous = new Map<string, DashboardUsageSample>();
     const history = readDashboardUsageHistory(context);
     for (const sample of history) if (sample.at < query.from) previous.set(sample.accountId, sample);
-    result.history = [...previous.values(), ...history.filter(sample => sample.at >= query.from && sample.at <= query.to)];
+    const range = [...previous.values(), ...history.filter(sample => sample.at >= query.from && sample.at <= query.to)].sort((a,b)=>a.at-b.at);
+    result.truncated = range.length > 10_000;
+    result.history = range.slice(-10_000);
     result.oldestAt = history[0]?.at;
   } else {
     const cutoff = tokenHistoryCutoff();
@@ -313,7 +314,7 @@ export function normalizeDashboardUsageHistory(value: unknown): DashboardUsageSa
       ...(review !== undefined ? { review } : {})
     });
   }
-  return [...normalized.values()].sort((left, right) => left.at - right.at).slice(-MAX_SAMPLES);
+  return [...normalized.values()].sort((left, right) => left.at - right.at);
 }
 
 function normalizePercentage(value: unknown): number | undefined {

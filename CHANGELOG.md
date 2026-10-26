@@ -1,13 +1,15 @@
 # Changelog
 
-## 1.5.7-pre.3
+## 1.5.7
 
+- Remove the fixed quota-history record cap from SQLite, migration, and fallback storage. Keep configured time retention and bounded graph queries without discarding saved samples.
+
+- Replace the raw bootstrap message with a compact loading state and remove it when the dashboard mounts. Keep loaded session counts visible during remote refreshes while preserving offline and error feedback.
+
+- Make Largest conversations a selectable list ordered by file size, with confirmed deletion, partial-inspection warnings, progress, and fresh running-session and child-conversation protection.
 - Compact all Tools into a consistent list with a single title and system context, tighter report rows, and accessible search and refresh controls.
 - Show selection actions only when needed, keep whole-storage cleanup under More actions, and preserve explicit confirmations and progress feedback.
 - Add page selection with partial-state feedback, preserve selections across pages, and keep long titles readable through full-text labels and tooltips.
-
-## 1.5.7-pre.2
-
 - Run native database health checks in bounded read-only workers; preserve partial results, cancel timed-out work, and include all versioned databases, reusable pages, WAL and shared-memory bytes in Storage Management.
 - Merge queued account backups, skip unchanged authenticated ciphertext, retain failed saves for bounded retry, and protect password changes from stale writes. Move compression off the extension thread.
 - Refresh active session status with targeted checks and use file notifications plus a slower idle inventory fallback. Keep fresh native checks before session mutations and automation.

@@ -104,16 +104,13 @@ export function appendUsageRows(store: SqliteStateStore, samples: readonly Dashb
   store.transaction(() => {
     const latest = store.prepare("SELECT at,hourly,weekly,review FROM usage_samples WHERE account_id=? ORDER BY at DESC LIMIT 1");
     const write = store.prepare("INSERT INTO usage_samples(account_id,at,hourly,weekly,review) VALUES(?,?,?,?,?) ON CONFLICT(account_id,at) DO NOTHING");
-    let changed = false;
     for (const sample of samples) {
       const previous = latest.get(sample.accountId);
       if (previous && (Number(previous["at"]) >= sample.at || (Number(previous["at"]) >= cutoff &&
         ["hourly", "weekly", "review"].every(key => previous[key] === (sample[key as "hourly" | "weekly" | "review"] ?? null))))) continue;
       write.run(sample.accountId, sample.at, sample.hourly ?? null, sample.weekly ?? null, sample.review ?? null);
-      changed = true;
     }
     if (Number.isFinite(cutoff)) store.prepare("DELETE FROM usage_samples WHERE at<?").run(cutoff);
-    if (changed) store.prepare("DELETE FROM usage_samples WHERE rowid IN (SELECT rowid FROM usage_samples ORDER BY at DESC,account_id LIMIT -1 OFFSET 10000)").run();
   });
 }
 
@@ -124,7 +121,6 @@ export function mergeUsageRows(store: SqliteStateStore, samples: readonly Dashbo
       ON CONFLICT(account_id,at) DO UPDATE SET hourly=excluded.hourly,weekly=excluded.weekly,review=excluded.review
       WHERE hourly IS NOT excluded.hourly OR weekly IS NOT excluded.weekly OR review IS NOT excluded.review`);
     for (const sample of samples) write.run(sample.accountId, sample.at, sample.hourly ?? null, sample.weekly ?? null, sample.review ?? null);
-    store.prepare("DELETE FROM usage_samples WHERE rowid IN (SELECT rowid FROM usage_samples ORDER BY at DESC,account_id LIMIT -1 OFFSET 10000)").run();
   });
 }
 

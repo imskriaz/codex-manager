@@ -45,6 +45,7 @@ try {
     const start = Date.now();
     await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
     await page.locator("#dashboard-main").waitFor({ state: "visible" });
+    assert.equal(await page.locator('#app > p, .dashboard-bootstrap').count(), 0, 'Bootstrap markup is removed once the dashboard mounts');
     assert.equal(new URL(page.url()).pathname, "/", "Home keeps the root URL");
     await page.locator(".cli-workspace.is-dashboard-mode").waitFor();
     await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:connection" && event.connected));

@@ -24,6 +24,21 @@ afterEach(async () => {
 });
 
 describe("database-driven usage graphs", () => {
+  it('retains more than ten thousand quota samples across appends, imports, and database reopen without enlarging graph responses', async () => {
+    const context = ctx(), now = Date.now(), start = now - 20_000;
+    await saveDashboardUsageHistory(context,Array.from({length:10_020},(_,index)=>({accountId:'a',at:start+index,hourly:index%100})));
+    expect(readDashboardUsageSummary(context).count).toBe(10_020);
+    await appendDashboardUsageSnapshot(context,{settings:{usageHistoryRetentionDays:0},accounts:[{id:'a',metrics:[{key:'hourly',period:'hourly',percentage:21}]}]} as never,now);
+    await saveDashboardUsageHistory(context,[{accountId:'a',at:start-1,hourly:25}]);
+    expect(readDashboardUsageSummary(context).count).toBe(10_022);
+    store.close();
+    store = await SqliteStateStore.open(path.join(root,'manager.sqlite'));
+    configureSqliteStateStore(store);
+    expect(readDashboardUsageSummary(context).count).toBe(10_022);
+    expect(queryUsageRows(store,{mode:'quota',from:start-1,to:now+1})).toMatchObject({truncated:true,oldestAt:start-1,history:expect.any(Array)});
+    expect(queryUsageRows(store,{mode:'quota',from:start-1,to:now+1}).history).toHaveLength(10_000);
+    expect(readDashboardUsageSummary(context).count).toBe(10_022);
+  });
   it("queries a quota range with one earlier baseline per account and no future rows", async () => {
     const context = ctx();
     const at = Date.now() - 100_000;
