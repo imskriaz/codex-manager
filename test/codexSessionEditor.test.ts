@@ -83,6 +83,25 @@ describe("Codex VS Code session editor", () => {
     } finally { db?.close(); vi.unstubAllEnvs(); await rm(home, { recursive: true, force: true }); }
   });
 
+  it.each(["task_started", "task_failed", "user_cancelled"])("checks raw %s evidence for paused-goal tab recovery despite a recent writer lock", async event => {
+    const home = await mkdtemp(path.join(tmpdir(), "codex-paused-recovery-editor-")); vi.stubEnv("CODEX_HOME", home);
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    const db = new DatabaseSync(path.join(home, "goals_1.sqlite"));
+    try {
+      db.exec("CREATE TABLE thread_goals(thread_id TEXT, objective TEXT, status TEXT, time_used_seconds INTEGER)");
+      db.prepare("INSERT INTO thread_goals VALUES (?, 'Interrupted task', 'paused', 0)").run(id);
+      await mkdir(path.join(home, "sessions"));await mkdir(path.join(home, "thread-writer-locks"));
+      await writeFile(path.join(home, "thread-writer-locks", `${id}.lock`), "");
+      await writeFile(path.join(home, "sessions", `rollout-${id}.jsonl`), [
+        { type: "session_meta", payload: { id, source: "vscode", cwd: home } },
+        { type: "event_msg", payload: { type: event === "user_cancelled" ? "turn_aborted" : event, turn_id: "interrupted", ...(event === "user_cancelled" ? { reason: "user_cancelled" } : {}) } }
+      ].map(row => JSON.stringify(row)).join("\n") + "\n");
+      vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(true);
+      await openCodexSessionInVsCode(id, new AbortController().signal, false, 120_000, true);
+      expect(readOpenCodexSessionIds()).toEqual(event === "user_cancelled" ? [] : [id]);
+    } finally { db.close();vi.unstubAllEnvs();await rm(home, { recursive: true, force: true }); }
+  });
+
   it.each([false, undefined])("requires verified readiness even for an already restored tab (%s)", async ready => {
     const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
     await openCodexSessionInVsCode(id);

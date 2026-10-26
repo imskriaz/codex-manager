@@ -1352,7 +1352,9 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
         throw new Error("Goal status is unavailable. Auto Resume kept the Codex tab closed.");
       }
       const status = goals?.get(sessionId)?.status;
-      const pausedInterrupted = status === "paused" && (await readCodexCliSessionSummary(sessionId, home))?.interrupted === true && !isExplicitSessionGoalPause(home, sessionId);
+      const pausedInterrupted = status === "paused" && !isExplicitSessionGoalPause(home, sessionId) &&
+        !(await readManuallyStoppedCodexSessionIds(home, [sessionId], signal)).length &&
+        (await readQuotaInterruptedCodexSessionIds(home, [sessionId], signal, [], true)).includes(sessionId);
       signal?.throwIfAborted();
       if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Auto Resume kept the Codex tab closed.");
       if (status && !["active", "usage_limited"].includes(status) && !pausedInterrupted) {
