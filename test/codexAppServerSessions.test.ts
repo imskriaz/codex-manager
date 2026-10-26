@@ -359,7 +359,7 @@ describe("native App Server new sessions", () => {
     try {
       await resumeCodexSessionGoal({ id, title: "Goal task", status: "idle", projectPath: project });
       expect(mocks.open).toHaveBeenCalledWith(expect.anything(), project, undefined);
-      expect(rpc.request).toHaveBeenCalledWith("thread/resume", { threadId: id, cwd: project });
+      expect(rpc.request).toHaveBeenCalledWith("thread/resume", { threadId: id, cwd: project, excludeTurns: true });
       expect(rpc.request.mock.calls.some(([method]) => method === "thread/goal/set")).toBe(true);
       if (!autoStart) expect(rpc.request).toHaveBeenCalledWith("thread/goal/set", { threadId: id, status: "active", origin: "automatic" });
       expect(rpc.request.mock.calls.some(([method]) => method === "turn/start")).toBe(!autoStart);
@@ -390,7 +390,7 @@ describe("native App Server new sessions", () => {
     try {
       await sendCodexCliSessionMessage({ sessionId: id, text: "continue", projectPath: project, model: "gpt-5", reasoningEffort: "high", sandboxMode: "read-only" });
       expect(mocks.open).toHaveBeenCalledWith(expect.anything(), project, undefined);
-      expect(rpc.request).toHaveBeenCalledWith("thread/resume", { threadId: id, cwd: project });
+      expect(rpc.request).toHaveBeenCalledWith("thread/resume", { threadId: id, cwd: project, excludeTurns: true });
       expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ cwd: project, model: "gpt-5", effort: "high", sandboxPolicy: expect.objectContaining({ type: "readOnly" }), input: [expect.objectContaining({ type: "text", text: "continue" })] }), expect.any(Number), expect.any(Function));
       expect(getCodexSessionLiveState(id)?.status).toBe("completed");
       expect(mocks.spawn).not.toHaveBeenCalled();

@@ -318,7 +318,7 @@ async function readLocalSessionListInternal(codexHome: string, limit: number, ge
   });
 }
 
-type StateSessionRecord = { id: string; title?: string; model?: string; reasoningEffort?: string; updatedAt?: string; archived?: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
+type StateSessionRecord = { id: string; name?: string; title?: string; model?: string; reasoningEffort?: string; updatedAt?: string; archived?: boolean; source?: unknown; cwd?: string; rolloutPath?: string };
 async function readStateSessionRecords(home: string, id?: string | string[], projectRoots?: string[], limit = MAX_VISIBLE_CLI_SESSIONS, strict = false): Promise<StateSessionRecord[]> {
   let db: { prepare(sql: string): { all(...args: string[]): Record<string, unknown>[] }; close(): void } | undefined;
   try {
@@ -335,7 +335,7 @@ async function readStateSessionRecords(home: string, id?: string | string[], pro
       } catch { /* Older Codex stores projects only in thread metadata. */ }
     }
     const available = new Set(db.prepare("PRAGMA table_info(threads)").all().map(row => row["name"]));
-    const columns = ["id", "title", "model", "reasoning_effort", "updated_at", "archived", "source", "cwd", "rollout_path"].filter(column => available.has(column));
+    const columns = ["id", "name", "title", "model", "reasoning_effort", "updated_at", "updated_at_ms", "archived", "source", "cwd", "rollout_path"].filter(column => available.has(column));
     if (!available.has("id")) { if (strict) throw new Error("Codex session metadata is unavailable. Saved history was retained."); return []; }
     const query = `SELECT ${columns.join(", ")} FROM threads`;
     const rows = Array.isArray(id) ? (id.length ? db.prepare(`${query} WHERE id IN (${id.map(() => "?").join(",")})`).all(...id) : [])
@@ -343,10 +343,12 @@ async function readStateSessionRecords(home: string, id?: string | string[], pro
       : db.prepare(`${query}${available.has("updated_at") ? " ORDER BY updated_at DESC" : ""} LIMIT ${Math.max(1, Math.min(10001, Math.floor(limit)))}`).all();
     return rows.flatMap((row) => {
       if (typeof row["id"] !== "string" || !SESSION_ID_PATTERN.test(row["id"])) return [];
-      return [{ id: row["id"], title: typeof row["title"] === "string" ? row["title"] : undefined,
+      const name = typeof row["name"] === "string" ? row["name"].trim().slice(0, 256) : undefined;
+      const updatedAt = typeof row["updated_at_ms"] === "number" ? row["updated_at_ms"] : typeof row["updated_at"] === "number" ? row["updated_at"] * 1000 : undefined;
+      return [{ id: row["id"], name: name || undefined, title: name || (typeof row["title"] === "string" ? row["title"] : undefined),
         model: typeof row["model"] === "string" ? row["model"].slice(0, 256) : undefined,
         reasoningEffort: typeof row["reasoning_effort"] === "string" ? row["reasoning_effort"].slice(0, 64) : undefined,
-        updatedAt: typeof row["updated_at"] === "number" && Number.isFinite(row["updated_at"]) ? new Date(row["updated_at"] * 1000).toISOString() : undefined,
+        updatedAt: updatedAt !== undefined && Number.isFinite(updatedAt) ? new Date(updatedAt).toISOString() : undefined,
         archived: row["archived"] === 1 ? true : row["archived"] === 0 ? false : undefined, source: row["source"], cwd: typeof row["cwd"] === "string" ? normalizeNativePath(row["cwd"]) : undefined,
         rolloutPath: typeof row["rollout_path"] === "string" && row["rollout_path"].length <= 4096 ? normalizeNativePath(row["rollout_path"]) : undefined }];
     });
@@ -604,6 +606,7 @@ async function readCodexCliSessionIndex(codexHome: string): Promise<CliSessionIn
 }
 
 function mergeSessionIndexEntry(state: StateSessionRecord, indexed?: CliSessionIndexEntry): CliSessionIndexEntry {
+  if (state.name) return { id: state.id, thread_name: state.name, updated_at: state.updatedAt ?? indexed?.updated_at };
   const indexTime = Date.parse(indexed?.updated_at ?? ''), stateTime = Date.parse(state.updatedAt ?? '');
   const newerIndex = Number.isFinite(indexTime) && (!Number.isFinite(stateTime) || indexTime > stateTime);
   return { id: state.id, thread_name: newerIndex ? normalizeSessionTitle(indexed?.thread_name, state.id, state.title) : normalizeSessionTitle(state.title, state.id, indexed?.thread_name), updated_at: newerIndex ? indexed?.updated_at : state.updatedAt ?? indexed?.updated_at };
@@ -1041,7 +1044,7 @@ async function sendAppServerSessionMessage(options: {
     options.signal?.throwIfAborted();
     detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
     activeAppServerTurns.set(options.sessionId, { rpc });
-    try { await rpc.request("thread/resume", { threadId: options.sessionId, cwd }); }
+    try { await rpc.request("thread/resume", { threadId: options.sessionId, cwd, excludeTurns: true }); }
     catch (error) {
       if (!(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
       if (!await needsContinuation()) return;
@@ -1172,7 +1175,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
         }
       });
       off = () => { notification(); disconnected(); };
-      try { await rpc.request("thread/resume", { threadId: session.id, cwd }); }
+      try { await rpc.request("thread/resume", { threadId: session.id, cwd, excludeTurns: true }); }
       catch (error) {
         if (!(error instanceof Error) || !/already has an active writer/i.test(error.message) || !await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, nativeStarted)) throw error;
         monitorNative(); return;
@@ -1313,16 +1316,27 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
 /** Open a local Codex session in the official VS Code conversation editor. */
 const AUTO_RESUME_EDITOR_SETTLE_MS = 1_000;
 
-export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal, focusWindow = false, readinessTimeoutMs = 40_000): Promise<void> {
+export async function openCodexSessionInVsCode(sessionId: string, signal?: AbortSignal, focusWindow = false, readinessTimeoutMs = 40_000, requireReady = false): Promise<void> {
   validateSessionId(sessionId);
   signal?.throwIfAborted();
   sessionId = sessionId.toLowerCase();
-  if (signal && !focusWindow && readOpenCodexSessionIds(false).includes(sessionId)) return;
+  const home = resolveCodexHome();
+  const verifyReady = async () => {
+    const ready = await waitForNativeCodexSessionReady(home, sessionId, signal, readinessTimeoutMs);
+    signal?.throwIfAborted();
+    if (resolveCodexHome() !== home) throw new Error("The Codex home changed while opening. Saved recovery was kept.");
+    recordPersistentEvent(ready === true ? "debug" : "warning", "session-editor", "Codex conversation readiness checked", { sessionRef: toSessionLogRef(sessionId), ready: ready ?? "unavailable" });
+    if (ready === false || (requireReady && ready !== true)) throw new Error("The official Codex conversation is not ready. Saved recovery was kept; wait for Codex to load and retry.");
+  };
+  if (signal && !focusWindow && readOpenCodexSessionIds(false).includes(sessionId)) {
+    await verifyReady();
+    return;
+  }
   const pending = editorOpens.get(sessionId);
   if (pending) {
     await pending.catch(() => undefined);
     signal?.throwIfAborted();
-    return openCodexSessionInVsCode(sessionId, signal, focusWindow, readinessTimeoutMs);
+    return openCodexSessionInVsCode(sessionId, signal, focusWindow, readinessTimeoutMs, requireReady);
   }
   const opening = (async () => {
     await activateOfficialCodexExtension();
@@ -1368,10 +1382,7 @@ export async function openCodexSessionInVsCode(sessionId: string, signal?: Abort
       signal?.throwIfAborted();
     }
     if (focusWindow) await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
-    const ready = await waitForNativeCodexSessionReady(resolveCodexHome(), sessionId, signal, readinessTimeoutMs);
-    signal?.throwIfAborted();
-    recordPersistentEvent(ready === false ? "warning" : "debug", "session-editor", "Codex conversation readiness checked", { sessionRef: toSessionLogRef(sessionId), ready: ready ?? "unavailable" });
-    if (ready === false) throw new Error("The Codex tab opened but is still loading. Wait for it to finish, then retry; saved recovery was kept.");
+    await verifyReady();
   })();
   editorOpens.set(sessionId, opening);
   try {

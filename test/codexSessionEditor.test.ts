@@ -43,7 +43,7 @@ describe("Codex VS Code session editor", () => {
   it("retains a loading tab and allows retry once its native conversation is ready", async () => {
     const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
     vi.mocked(waitForNativeCodexSessionReady).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    await expect(openCodexSessionInVsCode(id)).rejects.toThrow("still loading");
+    await expect(openCodexSessionInVsCode(id)).rejects.toThrow("not ready");
     expect(vscode.window.tabGroups.all[0]!.tabs).toHaveLength(1);
     await expect(openCodexSessionInVsCode(id)).resolves.toBeUndefined();
     expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
@@ -55,6 +55,17 @@ describe("Codex VS Code session editor", () => {
     expect(waitForNativeCodexSessionReady).toHaveBeenLastCalledWith(expect.any(String),id,undefined,40_000);
     await openCodexSessionInVsCode(id,undefined,false,120_000);
     expect(waitForNativeCodexSessionReady).toHaveBeenLastCalledWith(expect.any(String),id,undefined,120_000);
+  });
+
+  it.each([false, undefined])("requires verified readiness even for an already restored tab (%s)", async ready => {
+    const id = "01a0ca86-bdf2-7ef3-ab5c-4c3d92072cd3";
+    await openCodexSessionInVsCode(id);
+    vi.mocked(vscode.commands.executeCommand).mockClear();
+    vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(ready);
+    await expect(openCodexSessionInVsCode(id, new AbortController().signal, false, 120_000, true)).rejects.toThrow("not ready");
+    expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+    vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(true);
+    await expect(openCodexSessionInVsCode(id, new AbortController().signal, false, 120_000, true)).resolves.toBeUndefined();
   });
 
   it("resolves restored editors across groups, then closes only conversation tabs", async () => {

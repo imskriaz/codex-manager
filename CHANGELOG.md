@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.6-pre.6
+
+- Resume only through a verified ready official Codex owner, with a nested Open VS Code option and tab fallback before sending a continuation.
+- Remove Manager's private app-server transport. Unsupported official API actions report an error instead of starting a second writer.
+- Follow native session names when Codex revises them and avoid counting idle recovery as a resumed turn.
+
+## 1.5.6-pre.3
+
+- Keep Manager titles synchronized when the native Codex server renames a session.
+
 ## 1.5.6-pre.2
 
 - Keep reset rows compact by showing only the reset icon and count.

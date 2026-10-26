@@ -1496,6 +1496,7 @@ async function applyBackupSettings(settings: Record<string, unknown>): Promise<v
     "autoSwitchWaitForSessionsEnabled",
     "autoSwitchReloadWindowEnabled",
     "autoResumeEnabled",
+    "autoResumeOpenVsCode",
     "crossWindowAccountModeEnabled",
     "autoSwitchRefreshAllBeforeSwitchEnabled",
     "autoSwitchHourlyThreshold",

@@ -113,7 +113,7 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).toHaveBeenCalledWith("autoSwitchReloadWindowEnabled", true, vscode.ConfigurationTarget.Global);
   });
 
-  it("accepts the auto resume toggle", async () => {
+  it.each(["autoResumeEnabled", "autoResumeOpenVsCode"] as const)("stores %s globally", async key => {
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn(),
@@ -125,9 +125,9 @@ describe("handleDashboardSettingUpdate", () => {
       }))
     } as never);
 
-    await expect(handleDashboardSettingUpdate("autoResumeEnabled", true)).resolves.toBe(true);
+    await expect(handleDashboardSettingUpdate(key, true)).resolves.toBe(true);
 
-    expect(update).toHaveBeenCalledWith("autoResumeEnabled", true, vscode.ConfigurationTarget.Global);
+    expect(update).toHaveBeenCalledWith(key, true, vscode.ConfigurationTarget.Global);
   });
 
   it("stores parallel window mode globally and only after an explicit toggle", async () => {

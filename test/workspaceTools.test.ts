@@ -607,7 +607,9 @@ describe("workspace tools", () => {
       await writeFile(join(projectPath, "proof.txt"), "commit proof\n");
       await expect(commitWorkspaceChanges(projectPath, "Confirmed commit", true)).resolves.toBeUndefined();
       expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: projectPath, encoding: "utf8" }).trim()).toBe("1");
-      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining("status inspection unavailable"));
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(expect.stringMatching(
+        /The Git action completed, but workspace status could not refresh: (?:status inspection unavailable|Workspace status is still loading)\. Refresh the workspace; do not repeat the Git action\./
+      ));
     } finally { spawn.mockImplementation(originalSpawn); restoreWorkspace(); await rm(projectPath, { recursive: true, force: true }); }
   });
 });

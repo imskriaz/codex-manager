@@ -12,7 +12,7 @@ import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readAutoResumeGoalCandidateIds } from "../src/services/codexSessionAutoResumeSelection";
 import { AUTO_RESUME_OPEN_SESSION_IDS_KEY, persistOpenCodexSessions, AUTO_RESUME_SESSION_IDS_KEY, persistRunningCodexSessions, resumePersistedCodexSessions, prepareCodexSessionsForExtensionHostRestart } from "../src/services/codexSessionAutoResume";
-import { getNativeCodexSessionRunning, startNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
+import { getNativeCodexSessionRunning, startNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
 let home: string, db: DatabaseSync;
@@ -21,6 +21,7 @@ const previousHome = process.env.CODEX_HOME;
 const ids = Array.from({ length: 7 }, (_, index) => `aaaaaaaa-aaaa-aaaa-aaaa-${String(index).padStart(12, "0")}`);
 const states = ["active", "usage_limited", "paused", "complete", "budget_limited", "active", "active"];
 beforeEach(async () => {
+  vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(true);
   home = await mkdtemp(path.join(tmpdir(), "goal-resume-integration-"));
   process.env.CODEX_HOME = home;
   goalOnly = true;
@@ -56,6 +57,25 @@ function context() {
 }
 const select = () => readAutoResumeCodexSessionIds(home, undefined, ids, undefined, "running", goalOnly,
   ids.filter((_id, index) => index !== 1), undefined, [ids[1]!]);
+
+it("sends the non-goal continuation through the official owner without opening a private RPC", async () => {
+  const state = context(), id = ids[0]!;
+  db.prepare("DELETE FROM thread_goals WHERE thread_id=?").run(id);
+  state.saved.set(AUTO_RESUME_SESSION_IDS_KEY, [id]);
+  await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id, thread_name: "Non-goal task" }) + "\n");
+  const transcript = path.join(home, "sessions", `rollout-${id}.jsonl`);
+  await appendFile(transcript, ["task_started", "task_failed"].map(type => JSON.stringify({ type: "event_msg", payload: { type, turn_id: "interrupted" } })).join("\n") + "\n");
+  vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+  vi.mocked(startNativeCodexSessionTurn).mockImplementationOnce(async (_home, _id, turn, _signal, started) => {
+    expect(turn.input).toEqual([{ type: "text", text: "Continue if not completed", text_elements: [] }]);
+    await appendFile(transcript, ["task_started", "task_complete"].map(type => JSON.stringify({ type: "event_msg", payload: { type, turn_id: "official-turn" } })).join("\n") + "\n");
+    started?.("official-turn"); return true;
+  });
+  expect(await resumePersistedCodexSessions(state.context)).toEqual({ attempted: 1, opened: 1, failed: [] });
+  expect(startNativeCodexSessionTurn).toHaveBeenCalledOnce();
+  expect(mocks.open).not.toHaveBeenCalled();
+  expect(state.saved.get(AUTO_RESUME_SESSION_IDS_KEY)).toBeUndefined();
+});
 
 it("captures and restores active and quota-limited parent goals using real native goal storage", async () => {
   const state = context();

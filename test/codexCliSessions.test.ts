@@ -42,6 +42,20 @@ afterEach(async () => {
 });
 
 describe("Codex session integration", () => {
+  it("follows native renamed titles rather than the original prompt or a newer index entry", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "codex-native-title-")); roots.push(home);
+    const db = new DatabaseSync(path.join(home, "state_5.sqlite"));
+    try {
+      db.exec("CREATE TABLE threads (id TEXT, name TEXT, title TEXT, updated_at INTEGER, updated_at_ms INTEGER)");
+      db.prepare("INSERT INTO threads VALUES (?, ?, ?, ?, ?)").run(sessionId, "Revised native name", "Original prompt", 100, 100123);
+      await writeFile(path.join(home, "session_index.jsonl"), JSON.stringify({ id: sessionId, thread_name: "Old index title", updated_at: new Date().toISOString() }) + "\n");
+      expect((await readCodexCliSessionSummary(sessionId, home))?.title).toBe("Revised native name");
+      db.prepare("UPDATE threads SET name=?").run("Second native revision");
+      expect((await readCodexCliSessions(home))[0]?.title).toBe("Second native revision");
+      db.prepare("UPDATE threads SET name=NULL").run();
+      expect((await readCodexCliSessionSummary(sessionId, home))?.title).toBe("Old index title");
+    } finally { db.close(); }
+  });
   it('bounds project discovery, shares concurrent reads, and reuses the short cache', async()=>{
     const home=await mkdtemp(path.join(os.tmpdir(),'codex-bounded-projects-'));roots.push(home);
     const folders=Array.from({length:20},(_,index)=>path.join(home,`project-${index}`));

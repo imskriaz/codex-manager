@@ -51,6 +51,7 @@ export class ExtensionSettingsStore {
       hourlyQuotaControlEnabled: true,
       autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", false),
       autoResumeEnabled: isAutoResumeEnabled(config),
+      autoResumeOpenVsCode: config.get<boolean>("autoResumeOpenVsCode", false) === true,
       crossWindowAccountModeEnabled: config.get<boolean>("crossWindowAccountModeEnabled", false),
       autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
       autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0), 0),

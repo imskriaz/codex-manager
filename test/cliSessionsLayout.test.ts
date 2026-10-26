@@ -230,6 +230,9 @@ describe("sessions sidebar layout", () => {
     expect(autoSwitchEnd).toBeGreaterThan(autoSwitchStart);
     expect(toggleStart).toBeGreaterThan(autoSwitchEnd);
     expect(toggle).toContain('onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}');
+    expect(toggle).toContain('title="Open VS Code"');
+    expect(toggle).toContain('props.settings.autoResumeEnabled ?');
+    expect(toggle).toContain('patchAndSend("autoResumeOpenVsCode", enabled)');
     expect(toggle).not.toContain("cliIntegrationEnabled");
     expect(toggle).not.toContain("disabled=");
     expect(workbench).toContain("automatic session resume incomplete");
@@ -533,7 +536,9 @@ describe("sessions sidebar layout", () => {
     expect(resume).toContain('"thread/archive"');
     expect(resume).toContain('"thread/unarchive"');
     expect(resume).toContain('"thread/delete"');
-    expect(rpc).toContain('["app-server", "--stdio"]');
+    expect(rpc).not.toContain('["app-server", "--stdio"]');
+    expect(rpc).not.toContain("spawn(");
+    expect(rpc).toContain("Manager does not start a private server");
     expect(rpc).not.toContain("WebSocket");
   });
 

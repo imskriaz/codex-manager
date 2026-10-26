@@ -241,6 +241,8 @@ Choose **Send test notification** in those settings to test all subscribed devic
 
 Running counts, Auto Resume capture, and the wait-before-switch preference share session verification. Native runtime status overrides retained writer handles, so loaded idle conversations do not count as running. A manual Stop is durable and suppresses replay until the user resumes or sends a new message; provider capacity and other interruption failures remain eligible. New chat lists existing local Codex projects, and session positions remain stable through background refreshes.
 
+Auto Resume uses the official Codex owner and waits for its conversation runtime before sending. Enable **Open VS Code** inside Auto Resume to open conversation tabs first; otherwise Manager prefers an existing ready owner and opens a tab if needed. Unverified readiness or an uncertain send keeps recovery pending. Manager never launches a private Codex app-server. Actions absent from the installed official shared API, including creating, renaming, deleting, or changing goal status, must be completed in the official Codex UI; Manager reports that limitation instead of taking another writer lock.
+
 ### Shared session checks
 
 Session inspection is demand-driven. Overlapping consumers share bounded running-session snapshots and matching per-session status reads; cancelling one consumer does not cancel the others, while the last cancellation stops the scan.

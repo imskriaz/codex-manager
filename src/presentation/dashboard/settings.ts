@@ -59,6 +59,7 @@ export async function handleDashboardSettingUpdate(
     case "autoSwitchWaitForSessionsEnabled":
     case "autoSwitchReloadWindowEnabled":
     case "autoResumeEnabled":
+    case "autoResumeOpenVsCode":
     case "crossWindowAccountModeEnabled":
     case "autoSwitchRefreshAllBeforeSwitchEnabled":
     case "autoResetEnabled":
@@ -275,6 +276,7 @@ function resolveConfigurationTarget(
   if (
     key === "cliIntegrationEnabled" ||
     key === "autoResumeEnabled" ||
+    key === "autoResumeOpenVsCode" ||
     key === "privacyMode" ||
     key === "encryptedSyncEnabled" ||
     key === "encryptedSyncClaimAllAccountsEnabled" ||

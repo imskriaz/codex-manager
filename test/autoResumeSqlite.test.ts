@@ -11,8 +11,9 @@ import { saveSessionDiscovery, saveSessionStatus } from "../src/storage/sqliteSe
 import { disposeSessionRecording } from "../src/services/sessionRecording";
 import { removeTestDirectory } from "./testFilesystem";
 import * as sessionEditor from "../src/services/codexSessionResume";
-vi.mock("../src/services/codexSessionRecovery", () => ({ resumeCodexSessionWork: vi.fn().mockResolvedValue("idle") }));
+vi.mock("../src/services/codexSessionRecovery", () => ({ resumeCodexSessionWork: vi.fn().mockResolvedValue("continued") }));
 import { resumeCodexSessionWork } from "../src/services/codexSessionRecovery";
+import { waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 
 const ids = ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","cccccccc-cccc-cccc-cccc-cccccccccccc"];
 const namespace = "workspace:auto-resume-integration";
@@ -24,11 +25,12 @@ function context() {
   return { workspaceState:createSqliteMemento(store,namespace,{keys:()=>[],get:()=>undefined,update:async()=>undefined}) };
 }
 beforeEach(async()=>{
+  vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(true);
   root=await mkdtemp(path.join(os.tmpdir(),"codex-auto-resume-sqlite-"));
   vi.stubEnv("CODEX_HOME",root);
   store=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(store);
   await configureCrossWindowOperationCoordinator(root);
-  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string)=>key!=="cliIntegrationEnabled"} as never);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string)=>!["cliIntegrationEnabled", "autoResumeOpenVsCode"].includes(key)} as never);
   await mkdir(path.join(root,"sessions"));
   for(const [index,id] of ids.entries())await writeFile(path.join(root,"sessions",`rollout-${id}.jsonl`),
     JSON.stringify({type:"session_meta",payload:{id,source:index===2?{subagent:{thread_spawn:{parent_thread_id:ids[0]}}}:"vscode",cwd:root}})+"\n"+
