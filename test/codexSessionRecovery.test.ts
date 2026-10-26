@@ -22,6 +22,7 @@ describe("post-load session recovery", () => {
     mocks.summary.mockResolvedValue({ id: 'session', status: 'idle', interrupted: true, goal: { status: 'active' } });
     expect(await resumeCodexSessionWork('session')).toBe('idle');
     expect(mocks.goal).not.toHaveBeenCalled(); expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Recovery skipped", expect.objectContaining({ reason: "manual-stop", origin: "automatic", goalStatus: "active" }));
     expect(await resumeCodexSessionWork('session', undefined, 'user')).toBe('goal');
   });
   it("sends exactly Continue if not completed and records title after provider acceptance", async () => {
@@ -43,12 +44,14 @@ describe("post-load session recovery", () => {
     mocks.summary.mockResolvedValue({ id: "session", title: "Interrupted goal", status: "idle", interrupted: true, goal: { status: "paused" } });
     expect(await resumeCodexSessionWork("session")).toBe("goal");
     expect(mocks.goal).toHaveBeenCalledOnce();
+    expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Goal recovery requested", expect.objectContaining({ goalStatus: "paused", explicitPause: false, reason: "interrupted-paused-goal", origin: "automatic" }));
   });
   it.each(["paused", "blocked", "complete", "budget_limited"])("preserves a %s goal", async status => {
     mocks.summary.mockResolvedValue({ id: "session", status: "idle", interrupted: true, goal: { status } });
     if (status === "paused") markExplicitSessionGoalPause("recovery-test", "session");
     expect(await resumeCodexSessionWork("session")).toBe("idle");
     expect(mocks.send).not.toHaveBeenCalled(); expect(mocks.goal).not.toHaveBeenCalled();
+    expect(mocks.log).toHaveBeenCalledWith("info", "session-resume", "Goal left unchanged", expect.objectContaining({ goalStatus: status, reason: status === "paused" ? "explicit-pause" : "goal-not-eligible" }));
     clearExplicitSessionGoalPause("recovery-test", "session");
   });
   it("does not duplicate a native goal that resumed while the editor loaded", async () => {
@@ -98,6 +101,7 @@ describe("post-load session recovery", () => {
     await vi.advanceTimersByTimeAsync(25_001); await pending;
     expect(signal?.aborted).toBe(true); expect(mocks.send).not.toHaveBeenCalled();
     expect(mocks.log).toHaveBeenCalledWith("warning", "session-resume", "Post-load recovery could not be confirmed", expect.objectContaining({ sessionId: "session", title: "Goal task", durationMs: 25_000 }), expect.any(Error));
+    expect(mocks.log).toHaveBeenCalledWith("warning", "session-resume", "Post-load recovery could not be confirmed", expect.objectContaining({ phase: "goal-continuation", origin: "automatic", goalStatus: "active", recoveryRetained: true }), expect.any(Error));
   });
   it("never sends after cancellation during the state check", async () => {
     const controller = new AbortController(); controller.abort();

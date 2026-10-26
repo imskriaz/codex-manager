@@ -591,16 +591,32 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
   openSession: (sessionId: string, signal?: AbortSignal) => Promise<void | Awaited<ReturnType<typeof resumeCodexSessionWork>>> = async (sessionId, signal) => {
+    const startedAt = Date.now();
     const home = resolveCodexHome();
     const openVsCode = getCodexManagerConfiguration().get<boolean>("autoResumeOpenVsCode", false) === true;
-    const ready = openVsCode ? false : await waitForNativeCodexSessionReady(home, sessionId, signal, 3_000);
-    signal?.throwIfAborted();
-    if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
-    if (ready !== true) {
-      recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", { sessionRef: toSessionLogRef(sessionId), reason: openVsCode ? "Open VS Code enabled" : "No ready official owner" });
-      await openCodexSessionInVsCode(sessionId, signal, false, 120_000, true);
+    const details = { sessionRef: toSessionLogRef(sessionId), recoveryPath: openVsCode ? "vscode-forced" : "background-owner", ownerProbe: "pending" as boolean | string, probeDurationMs: 0 };
+    let phase = "owner-probe";
+    try {
+      const ready = openVsCode ? false : await waitForNativeCodexSessionReady(home, sessionId, signal, 3_000);
+      details.recoveryPath = openVsCode ? "vscode-forced" : ready === true ? "background-owner" : "vscode-fallback";
+      details.ownerProbe = openVsCode ? "skipped" : ready ?? "unavailable";
+      details.probeDurationMs = Date.now() - startedAt;
+      signal?.throwIfAborted();
+      if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
+      recordPersistentEvent("info", "auto-resume", "Official recovery path selected", details);
+      phase = "readiness";
+      if (ready !== true) {
+        recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", { ...details, reason: openVsCode ? "Open VS Code enabled" : "No ready official owner" });
+        await openCodexSessionInVsCode(sessionId, signal, false, 120_000, true);
+      }
+      phase = "continuation";
+      const outcome = await resumeCodexSessionWork(sessionId, signal);
+      recordPersistentEvent("info", "auto-resume", "Official recovery path completed", { ...details, outcome, durationMs: Date.now() - startedAt });
+      return outcome;
+    } catch (error) {
+      recordPersistentEvent("warning", "auto-resume", "Official recovery path failed", { ...details, phase, durationMs: Date.now() - startedAt, cancelled: signal?.aborted === true, recoveryRetained: true }, error);
+      throw error;
     }
-    return resumeCodexSessionWork(sessionId, signal);
   },
   closeSessions: (signal?: AbortSignal) => Promise<void> = signal => closeOpenCodexSessionTabs(signal, true, false)
 ): Promise<AutoResumeResult> {

@@ -176,11 +176,13 @@ describe("native App Server new sessions", () => {
       if (scenario !== "finished") await appendFile(transcript, scenario === "changed" ? event("task_started", "different-turn") + event("task_complete", "different-turn") : event(scenario === "cancelled" ? "turn_aborted" : "task_complete"));
       if (scenario === "changed") {
         await vi.waitFor(() => expect(log).toHaveBeenCalledWith("warning", "session-resume", "Restored native turn ended without confirmed completion", expect.anything(), expect.any(Error)));
+        expect(log).toHaveBeenCalledWith("warning", "session-turn", "Official native turn observation ended", expect.objectContaining({ status: "disconnected", completionConfirmed: false }), expect.any(Error));
         expect(updates).toHaveLength(1);
       } else {
         await vi.waitFor(() => expect(updates).toHaveLength(2));
         expect(updates[1]?.status).toBe(scenario === "cancelled" ? "cancelled" : "completed");
         expect(updates[1]?.streamId).toBe(updates[0]?.streamId);
+        expect(log).toHaveBeenCalledWith("info", "session-turn", "Official native turn observation ended", expect.objectContaining({ status: scenario === "cancelled" ? "cancelled" : "completed", completionConfirmed: scenario !== "cancelled", source: "official-transcript" }), scenario === "cancelled" ? expect.any(Error) : undefined);
         expect(log).not.toHaveBeenCalledWith("warning", "session-resume", "Restored native turn ended without confirmed completion", expect.anything(), expect.anything());
       }
       expect(startNativeCodexSessionTurn).not.toHaveBeenCalled(); expect(mocks.open).toHaveBeenCalledTimes(scenario === "raced" ? 1 : 0);
@@ -200,6 +202,7 @@ describe("native App Server new sessions", () => {
   });
 
   it("stops a browser-initiated native turn once and reports its actual cancellation", async () => {
+    const log = vi.spyOn(diagnostics, "recordPersistentEvent");
     const cancelled = vi.fn();
     const unsubscribe = subscribeDashboardRealtime(event => { if (event.type === "dashboard:codex-session-live" && event.state.status === "cancelled") cancelled(event.state); });
     await mkdir(path.join(root, "sessions"));
@@ -231,9 +234,13 @@ describe("native App Server new sessions", () => {
       expect(cancelled).toHaveBeenCalledWith(expect.objectContaining({ sessionId: id, turnId: "owned-native-turn", status: "cancelled" }));
       expect(await cancelCodexCliSessionTurn(id)).toBe(false);
       expect(mocks.open).not.toHaveBeenCalled();
-    } finally { stopped(); unsubscribe(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); vi.mocked(cancelNativeCodexSessionTurn).mockReset().mockResolvedValue(false); }
+      expect(log).toHaveBeenCalledWith("info", "session-turn", "Official native turn accepted", expect.objectContaining({ turnRef: expect.any(String), transport: "official-native" }));
+      expect(log).toHaveBeenCalledWith("info", "session-stop", "Official Stop confirmed", expect.objectContaining({ origin: "user", actor: "manager", goalPauseRequested: true }));
+    } finally { stopped(); unsubscribe(); log.mockRestore(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); vi.mocked(cancelNativeCodexSessionTurn).mockReset().mockResolvedValue(false); }
   });
   it("confirms explicit goal controls in the recorded project without adding a user instruction", async () => {
+    const log = vi.spyOn(diagnostics, "recordPersistentEvent");
+    try {
     await mkdir(path.join(root, "sessions"));
     await writeFile(path.join(root, "sessions", `rollout-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload: { id, cwd: root } }) + "\n");
     const rpc = { request: vi.fn(async (_method: string, params: { status: string }) => ({ goal: { status: params.status } })), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
@@ -243,6 +250,9 @@ describe("native App Server new sessions", () => {
     expect(mocks.open.mock.calls.every(([, cwd]) => cwd === root)).toBe(true);
     rpc.request.mockResolvedValueOnce({ goal: { status: "active" } });
     await expect(setCodexSessionGoalStatus(id, "paused")).rejects.toThrow("did not confirm");
+    expect(log).toHaveBeenCalledWith("info", "session-goal", "Goal status change confirmed", expect.objectContaining({ requestedStatus: "paused", actor: "manager", origin: "user" }));
+    expect(log).toHaveBeenCalledWith("warning", "session-goal", "Goal status change failed", expect.objectContaining({ requestedStatus: "paused", confirmed: false, phase: "official-api" }), expect.any(Error));
+    } finally { log.mockRestore(); }
   });
   it("allows storage cleanup for a deleted project without running a turn in another workspace", async () => {
     await mkdir(path.join(root, "sessions"));

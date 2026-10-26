@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.6-pre.7
+
+- Trace Auto Resume's background owner, forced tab, and fallback tab paths separately, including readiness timing, recovery outcomes, and retained failures.
+- Log observed goal transitions with their observation interval and unknown actor, and distinguish Manager goal/Stop requests from confirmed changes and later native turn completion.
+
 ## 1.5.6-pre.6
 
 - Resume only through a verified ready official Codex owner, with a nested Open VS Code option and tab fallback before sending a continuation.

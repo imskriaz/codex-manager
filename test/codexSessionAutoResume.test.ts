@@ -64,6 +64,7 @@ it("resumes through a ready official owner without opening a Codex editor", asyn
   const id = "01a04882-d037-7a42-ad24-9afb61901181";
   const state = createContext([id]);
   const open = vi.fn();
+  const log = vi.spyOn(diagnostics, "recordPersistentEvent");
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string) => key !== "autoResumeOpenVsCode" } as never);
   const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValue("idle");
   try {
@@ -71,8 +72,9 @@ it("resumes through a ready official owner without opening a Codex editor", asyn
     expect(result).toMatchObject({ attempted: 1, opened: 0, failed: [] });
     expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal));
     expect(open).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "background-owner", outcome: "idle", ownerProbe: true }));
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("vscode.openWith", expect.anything(), expect.anything(), expect.anything());
-  } finally { resume.mockRestore(); }
+  } finally { resume.mockRestore(); log.mockRestore(); }
 });
 
 it("waits for the official Codex editor before sending when Open VS Code is enabled", async () => {
@@ -81,12 +83,14 @@ it("waits for the official Codex editor before sending when Open VS Code is enab
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
   const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValue("continued");
   const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockResolvedValue(undefined);
+  const log = vi.spyOn(diagnostics, "recordPersistentEvent");
   try {
     await resumePersistedCodexSessions(state.context);
     expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal));
     expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), false, 120_000, true);
     expect(open.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]!);
-  } finally { resume.mockRestore(); open.mockRestore(); }
+    expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "vscode-forced", outcome: "continued", ownerProbe: "skipped" }));
+  } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
 });
 
 it.each([false, undefined])("opens a verified official tab before resuming when the background owner is %s", async ready => {
@@ -96,6 +100,7 @@ it.each([false, undefined])("opens a verified official tab before resuming when 
   const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValue("continued");
   let readyTab!: () => void;
   const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockImplementation(() => new Promise(resolve => { readyTab = resolve; }));
+  const log = vi.spyOn(diagnostics, "recordPersistentEvent");
   try {
     const pending = resumePersistedCodexSessions(state.context);
     await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
@@ -104,7 +109,8 @@ it.each([false, undefined])("opens a verified official tab before resuming when 
     readyTab();
     expect(await pending).toMatchObject({ opened: 1, failed: [] });
     expect(resume).toHaveBeenCalledOnce();
-  } finally { resume.mockRestore(); open.mockRestore(); }
+    expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "vscode-fallback", outcome: "continued", ownerProbe: ready ?? "unavailable" }));
+  } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
 });
 
 it.each(["not ready", "official extension missing", "owner disconnected", "manual cancellation"])("retains recovery and sends nothing when UI preparation fails: %s", async reason => {
@@ -112,10 +118,29 @@ it.each(["not ready", "official extension missing", "owner disconnected", "manua
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
   const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork");
   const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockRejectedValue(new Error(reason));
+  const log = vi.spyOn(diagnostics, "recordPersistentEvent");
   try {
     expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 0, failed: [{ sessionId: id, message: reason }] });
     expect(resume).not.toHaveBeenCalled(); expect(state.read()).toEqual([id]);
-  } finally { resume.mockRestore(); open.mockRestore(); }
+    expect(log).toHaveBeenCalledWith("warning", "auto-resume", "Official recovery path failed", expect.objectContaining({ recoveryPath: "vscode-forced", phase: "readiness", recoveryRetained: true }), expect.any(Error));
+    expect(log).not.toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.anything());
+  } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
+});
+
+it("distinguishes an accepted background continuation from a failed background continuation without replay", async () => {
+  const id = "01a04882-d037-7a42-ad24-9afb61901181";
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string) => key !== "autoResumeOpenVsCode" } as never);
+  const log = vi.spyOn(diagnostics, "recordPersistentEvent");
+  const resume = vi.spyOn(await import("../src/services/codexSessionRecovery"), "resumeCodexSessionWork").mockResolvedValueOnce("continued").mockRejectedValueOnce(new Error("Unconfirmed native send"));
+  const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode");
+  try {
+    expect(await resumePersistedCodexSessions(createContext([id]).context)).toMatchObject({ opened: 1, failed: [] });
+    expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "background-owner", outcome: "continued" }));
+    const state = createContext([id]);
+    expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 0, failed: [{ sessionId: id, message: "Unconfirmed native send" }] });
+    expect(log).toHaveBeenCalledWith("warning", "auto-resume", "Official recovery path failed", expect.objectContaining({ recoveryPath: "background-owner", phase: "continuation", recoveryRetained: true }), expect.any(Error));
+    expect(state.read()).toEqual([id]); expect(resume).toHaveBeenCalledTimes(2); expect(open).not.toHaveBeenCalled();
+  } finally { log.mockRestore(); resume.mockRestore(); open.mockRestore(); }
 });
 
 describe("dashboard recovery list", () => {

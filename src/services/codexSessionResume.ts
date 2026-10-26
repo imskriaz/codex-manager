@@ -103,6 +103,7 @@ function ownsSessionTurn(home: string, id: string): boolean {
 
 function nativeTurnStarted(home: string, id: string, turnId: string): void {
   activeNativeTurns.set(id, { home: path.resolve(home), turnId, streamId: randomUUID() });
+  recordPersistentEvent("info", "session-turn", "Official native turn accepted", { sessionRef: toSessionLogRef(id), turnRef: toSessionLogRef(turnId), transport: "official-native" });
   publishNativeTurnState(home, id, "running", turnId);
 }
 
@@ -377,28 +378,46 @@ export async function readCodexSessionMaintenanceCandidates(home = resolveCodexH
 
 export async function clearCodexSessionGoal(sessionId: string): Promise<void> {
   validateSessionId(sessionId);
-  await runCliSessionMutation(sessionId, "Clear Codex goal", async () => {
-    if (await isCliSessionRunning(resolveCodexHome(), sessionId)) throw new Error("This conversation is running. Stop it before clearing its goal.");
-    await runCodexAppServerRequest("thread/goal/clear", { threadId: sessionId });
-  });
+  const details = { sessionRef: toSessionLogRef(sessionId), actor: "manager", origin: "user", method: "thread/goal/clear" };
+  recordPersistentEvent("info", "session-goal", "Goal clear requested", details);
+  try {
+    await runCliSessionMutation(sessionId, "Clear Codex goal", async () => {
+      if (await isCliSessionRunning(resolveCodexHome(), sessionId)) throw new Error("This conversation is running. Stop it before clearing its goal.");
+      await runCodexAppServerRequest("thread/goal/clear", { threadId: sessionId });
+    });
+    recordPersistentEvent("info", "session-goal", "Goal clear confirmed", details);
+  } catch (error) {
+    recordPersistentEvent("warning", "session-goal", "Goal clear failed", details, error);
+    throw error;
+  }
 }
 
 /** Explicit goal controls can pause a running owner without waiting for its turn lease. */
 export async function setCodexSessionGoalStatus(sessionId: string, status: "active" | "paused"): Promise<void> {
   validateSessionId(sessionId);
   if (status !== "active" && status !== "paused") throw new Error("Choose Pause or Resume for this goal.");
-  await runCrossWindowExclusive(`codex:goal:${sessionId.toLowerCase()}`, "Update Codex goal", async () => {
-    const params = { threadId: sessionId, status, origin: "automatic" };
-    const rpc = activeAppServerTurns.get(sessionId)?.rpc;
-    const result = rpc ? await rpc.request<{ goal?: { status?: string } }>("thread/goal/set", params) :
-      await runCodexAppServerRequest<{ goal?: { status?: string } }>("thread/goal/set", params);
-    if (result.goal?.status !== status) throw new Error("Codex did not confirm the goal change. Refresh before retrying.");
-    if (status === "paused") markExplicitSessionGoalPause(resolveCodexHome(), sessionId);
-    else {
-      clearExplicitSessionGoalPause(resolveCodexHome(), sessionId);
-      clearCodexSessionManualStop(resolveCodexHome(), sessionId);
-    }
-  });
+  const details = { sessionRef: toSessionLogRef(sessionId), requestedStatus: status, actor: "manager", origin: "user", method: "thread/goal/set" };
+  recordPersistentEvent("info", "session-goal", "Goal status change requested", details);
+  let confirmed = false;
+  try {
+    await runCrossWindowExclusive(`codex:goal:${sessionId.toLowerCase()}`, "Update Codex goal", async () => {
+      const params = { threadId: sessionId, status, origin: "automatic" };
+      const rpc = activeAppServerTurns.get(sessionId)?.rpc;
+      const result = rpc ? await rpc.request<{ goal?: { status?: string } }>("thread/goal/set", params) :
+        await runCodexAppServerRequest<{ goal?: { status?: string } }>("thread/goal/set", params);
+      if (result.goal?.status !== status) throw new Error("Codex did not confirm the goal change. Refresh before retrying.");
+      confirmed = true;
+      recordPersistentEvent("info", "session-goal", "Goal status change confirmed", details);
+      if (status === "paused") markExplicitSessionGoalPause(resolveCodexHome(), sessionId);
+      else {
+        clearExplicitSessionGoalPause(resolveCodexHome(), sessionId);
+        clearCodexSessionManualStop(resolveCodexHome(), sessionId);
+      }
+    });
+  } catch (error) {
+    recordPersistentEvent("warning", "session-goal", "Goal status change failed", { ...details, confirmed, phase: confirmed ? "local-preference" : "official-api" }, error);
+    throw error;
+  }
 }
 
 export type CodexSessionRecoveryMetadata = { title?: string; projectPath?: string; updatedAt: number };
@@ -1098,6 +1117,8 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
   try { live = reserveCodexSessionLive(); }
   catch (error) { rpc.close(); throw error; }
   let accepted = false;
+  let goalStatus: string | undefined;
+  let phase = "goal-verification";
   let done = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let off = () => undefined as void;
@@ -1123,6 +1144,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
         return;
       }
       const current = await rpc.request<{ goal?: { status?: string; objective?: string } | null }>("thread/goal/get", { threadId: session.id });
+      goalStatus = current.goal?.status;
       signal?.throwIfAborted();
       if (!current.goal || (!["active", "usageLimited", "usage_limited"].includes(current.goal.status ?? "") && !(current.goal.status === "paused" && (origin === "user" || !isExplicitSessionGoalPause(home, session.id))))) throw new Error("The goal is no longer eligible to resume. Refresh the session before retrying.");
       const transcript = await findCliSessionTranscript(resolveCodexHome(), session.id, signal);
@@ -1134,6 +1156,8 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
         close(true);
       };
       if (current.goal.status !== "active") {
+        phase = "goal-activation";
+        recordPersistentEvent("info", "session-goal", "Goal status change requested", { sessionRef: toSessionLogRef(session.id), previousStatus: goalStatus, requestedStatus: "active", actor: "manager", origin, method: "thread/goal/set" });
         try { await rpc.request("thread/goal/set", { threadId: session.id, status: "active", origin }); }
         catch (error) {
           if (!(error instanceof Error) || !/already has an active writer/i.test(error.message)) throw error;
@@ -1147,8 +1171,11 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
           if (verified.goal?.status !== "active" || !current.goal.objective || verified.goal.objective !== current.goal.objective) throw error;
           recordPersistentEvent("warning", "session-resume", "Goal activation verified after native writer conflict", { sessionRef: toSessionLogRef(session.id), title: session.title }, error);
         }
+        recordPersistentEvent("info", "session-goal", "Goal status change confirmed", { sessionRef: toSessionLogRef(session.id), previousStatus: goalStatus, requestedStatus: "active", actor: "manager", origin });
+        phase = "local-preference";
         clearExplicitSessionGoalPause(home, session.id);
       }
+      phase = "turn-start";
       if (getNativeCodexSessionRunning(resolveCodexHome(), session.id) === true) { monitorNative(); return; }
       if (getNativeCodexSessionRunning(home, session.id) !== undefined && await startNativeCodexSessionTurn(home, session.id, { threadId: session.id, input: [], cwd }, signal, nativeStarted)) { monitorNative(); return; }
       live.attach(session.id, rpc, parseCodexAppServerThreadItems);
@@ -1191,6 +1218,7 @@ export async function resumeCodexSessionGoal(session: DashboardCliSessionSummary
       }
     })), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", signal);
   } catch (error) {
+    recordPersistentEvent("warning", "session-goal", "Goal recovery failed", { sessionRef: toSessionLogRef(session.id), origin, phase, goalStatus, recoveryRetained: true }, error);
     live.finish("failed", error instanceof Error ? error.message : String(error));
     close();
     throw error;
@@ -1231,8 +1259,9 @@ export function observeRunningCodexSession(session: DashboardCliSessionSummary):
 }
 
 async function waitForNativeSessionTurn(sessionId: string, transcript: string | undefined, previous: string | undefined, expectedTurnId?: string, home = resolveCodexHome(), streamId?: string): Promise<void> {
-  const deadline = Date.now() + CLI_TURN_TIMEOUT_MS;
+  const startedAt = Date.now(), deadline = startedAt + CLI_TURN_TIMEOUT_MS;
   let status: "completed" | "cancelled" | "failed" | "disconnected" = "disconnected";
+  let failure: unknown;
   try {
     while (Date.now() < deadline) {
       const state = await readRecentTranscriptTurnState(transcript);
@@ -1246,7 +1275,14 @@ async function waitForNativeSessionTurn(sessionId: string, transcript: string | 
       await new Promise(resolve => setTimeout(resolve, 150));
     }
     throw new Error("The Codex turn outcome is unconfirmed. Check the conversation before retrying.");
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
+    recordPersistentEvent(status === "completed" || status === "cancelled" ? "info" : "warning", "session-turn", "Official native turn observation ended", {
+      sessionRef: toSessionLogRef(sessionId), turnRef: expectedTurnId ? toSessionLogRef(expectedTurnId) : undefined,
+      status, completionConfirmed: status === "completed", durationMs: Date.now() - startedAt, source: "official-transcript"
+    }, failure);
     const owned = ownedNativeTurn(home, sessionId);
     if (!streamId || (transcript && cliTranscriptTurnStateCache.get(transcript)?.turnId === expectedTurnId))
       publishNativeTurnState(home, sessionId, status, expectedTurnId, streamId);
@@ -1289,7 +1325,15 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
   if (native) {
     if (!native.stop) {
       suppressRecovery(native.turnId);
-      native.stop = cancelNativeCodexSessionTurn(native.home, sessionId, native.turnId).finally(() => { native.stop = undefined; });
+      const details = { sessionRef: toSessionLogRef(sessionId), turnRef: toSessionLogRef(native.turnId), actor: "manager", origin: "user", goalPauseRequested: true, transport: "official-native" };
+      recordPersistentEvent("info", "session-stop", "Official Stop requested", details);
+      native.stop = cancelNativeCodexSessionTurn(native.home, sessionId, native.turnId).then(confirmed => {
+        recordPersistentEvent(confirmed ? "info" : "warning", "session-stop", confirmed ? "Official Stop confirmed" : "Official Stop not accepted", details);
+        return confirmed;
+      }).catch(error => {
+        recordPersistentEvent("warning", "session-stop", "Official Stop unconfirmed", details, error);
+        throw error;
+      }).finally(() => { native.stop = undefined; });
     }
     return native.stop;
   }

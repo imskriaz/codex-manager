@@ -2,15 +2,51 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as diagnostics from "../src/utils/persistentLog";
 import { readCodexSessionGoals } from "../src/services/codexSessionGoals";
 import { normalizeCodexSessionGoal } from "../src/domain/codexSessionState";
 
 let home: string;
 beforeEach(async () => { home = await mkdtemp(path.join(os.tmpdir(), "codex-goal-display-")); });
-afterEach(async () => { await rm(home, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); vi.useRealTimers(); await rm(home, { recursive: true, force: true }); });
 
 describe("native browser goal state", () => {
+  it("logs only verified transitions, bounds their time, and never guesses an external actor", async () => {
+    vi.useFakeTimers();
+    const log = vi.spyOn(diagnostics, "recordPersistentEvent").mockImplementation(() => undefined);
+    const db = new DatabaseSync(path.join(home, "goals_1.sqlite"));
+    try {
+      db.exec("CREATE TABLE thread_goals(thread_id TEXT PRIMARY KEY, objective TEXT, status TEXT, time_used_seconds INTEGER)");
+      db.prepare("INSERT INTO thread_goals VALUES ('private-session', 'Private objective', 'active', 0)").run();
+      vi.setSystemTime(new Date("2026-10-26T08:00:00Z"));
+      await readCodexSessionGoals(home, ["private-session"]);
+      vi.setSystemTime(new Date("2026-10-26T08:01:00Z"));
+      await readCodexSessionGoals(home, ["private-session"]);
+      expect(log).not.toHaveBeenCalled();
+      db.exec("ALTER TABLE thread_goals RENAME TO unavailable");
+      expect(await readCodexSessionGoals(home, ["private-session"])).toBeUndefined();
+      db.exec("ALTER TABLE unavailable RENAME TO thread_goals; UPDATE thread_goals SET status='paused'");
+      vi.setSystemTime(new Date("2026-10-26T08:02:00Z"));
+      await readCodexSessionGoals(home, ["private-session"]);
+      expect(log).toHaveBeenCalledExactlyOnceWith("info", "session-goal", "Goal state change observed", expect.objectContaining({
+        previousStatus: "active", status: "paused", actor: "unknown", source: "official-goal-storage",
+        previousObservedAt: "2026-10-26T08:01:00.000Z", observedAt: "2026-10-26T08:02:00.000Z"
+      }));
+      await readCodexSessionGoals(home, ["private-session"]);
+      await readCodexSessionGoals(path.join(home, "missing-home"), ["private-session"]);
+      expect(log).toHaveBeenCalledOnce();
+      db.exec("UPDATE thread_goals SET objective=''");
+      await readCodexSessionGoals(home, ["private-session"]);
+      expect(log).toHaveBeenCalledOnce();
+      db.exec("DELETE FROM thread_goals");
+      await readCodexSessionGoals(home, ["unrelated-session"]);
+      expect(log).toHaveBeenCalledOnce();
+      await readCodexSessionGoals(home, ["private-session"]);
+      expect(log).toHaveBeenLastCalledWith("info", "session-goal", "Goal state change observed", expect.objectContaining({ previousStatus: "paused", status: "none" }));
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/Private objective|private-session/);
+    } finally { db.close(); }
+  });
   it("reads committed goal metadata while the main app holds a WAL write transaction",async()=>{
     const db=new DatabaseSync(path.join(home,"goals_1.sqlite"));
     try {

@@ -24,12 +24,15 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
   if (signal?.aborted) abort();
   const startedAt = Date.now();
   let title: string | undefined;
+  let phase = "state-verification";
+  let goalStatus: string | undefined;
   const work = (async () => {
     const session = await waitWithin(readCodexCliSessionSummary(sessionId, home), 6_000, "Session state could not be verified after opening.", controller.signal);
     controller.signal.throwIfAborted();
     if (resolveCodexHome() !== home) throw new Error('The active account home changed. Recovery was kept; refresh before resuming.');
     if (!session || session.archived || session.subAgent || session.parentSessionId) throw new Error("This session is missing, archived, or belongs to a parent. Refresh before resuming.");
     title = session.title;
+    goalStatus = session.goal?.status ?? (session.goal === null ? "none" : "unavailable");
     recordPersistentEvent("debug", "session-resume", "Post-load recovery state", {
       ...identity, title: session.title, projectPath: session.projectPath, status: session.status, locked: session.locked, interrupted: session.interrupted, goalStatus: session.goal?.status ?? (session.goal === null ? "none" : "unavailable")
     });
@@ -41,15 +44,21 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     if (session.status === "unknown") throw new Error("Running state could not be verified. Recovery was kept; refresh before retrying.");
     if (origin === "user") clearCodexSessionManualStop(home, sessionId);
     else if (readCodexSessionPreferences(home, [sessionId]).get(sessionId)?.manualStop ||
-      (origin === "automatic" && (await readManuallyStoppedCodexSessionIds(home, [sessionId], controller.signal)).length)) return "idle" as const;
-    const recoverablePausedGoal = session.goal?.status === "paused" && (origin === "user" || (session.interrupted === true && !isExplicitSessionGoalPause(resolveCodexHome(), session.id)));
+      (origin === "automatic" && (await readManuallyStoppedCodexSessionIds(home, [sessionId], controller.signal)).length)) {
+      recordPersistentEvent("info", "session-resume", "Recovery skipped", { ...identity, origin, reason: "manual-stop", goalStatus });
+      return "idle" as const;
+    }
+    const explicitPause = session.goal?.status === "paused" && session.interrupted === true && origin !== "user" ? isExplicitSessionGoalPause(home, session.id) : undefined;
+    const recoverablePausedGoal = session.goal?.status === "paused" && (origin === "user" || (session.interrupted === true && !explicitPause));
     if (session.goal && (["active", "usage_limited"].includes(session.goal.status) || recoverablePausedGoal)) {
+      phase = "goal-continuation";
+      recordPersistentEvent("info", "session-resume", "Goal recovery requested", { ...identity, origin, goalStatus, explicitPause, interrupted: session.interrupted === true, reason: recoverablePausedGoal ? "interrupted-paused-goal" : "unfinished-goal" });
       await waitWithin(resumeCodexSessionGoal(session, controller.signal, origin === "user" ? "user" : "automatic"), 25_000, "Goal resume was not confirmed. Check Codex before retrying.", controller.signal);
       recordPersistentEvent("info", "session-resume", "Goal continuation accepted", { ...identity, title: session.title });
       return "goal" as const;
     }
     if (session.goal) {
-      recordPersistentEvent("info", "session-resume", "Goal left unchanged", { ...identity, title: session.title, goalStatus: session.goal.status });
+      recordPersistentEvent("info", "session-resume", "Goal left unchanged", { ...identity, title: session.title, origin, goalStatus, reason: explicitPause ? "explicit-pause" : "goal-not-eligible" });
       return "idle" as const;
     }
     if (session.goal === undefined) {
@@ -62,7 +71,8 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
       recordPersistentEvent("info", "session-resume", "Session has no interrupted work", { ...identity, title });
       return "idle" as const;
     }
-    recordPersistentEvent("info", "session-resume", "Requesting non-goal continuation", { ...identity, title });
+    phase = "non-goal-continuation";
+    recordPersistentEvent("info", "session-resume", "Requesting non-goal continuation", { ...identity, title, origin, promptKind: "continue-if-not-completed", transport: "official-native" });
     let accepted!: () => void;
     let didStart = false;
     const started = new Promise<void>(resolve => { accepted = () => { didStart = true; resolve(); }; });
@@ -76,7 +86,7 @@ export function resumeCodexSessionWork(sessionId: string, signal?: AbortSignal, 
     recordPersistentEvent("info", "session-resume", "Continue accepted", { ...identity, title: session.title });
     return "continued" as const;
   })().catch(error => {
-    recordPersistentEvent("warning", "session-resume", "Post-load recovery could not be confirmed", { ...identity, title, durationMs: Date.now() - startedAt, cancelled: controller.signal.aborted }, error);
+    recordPersistentEvent("warning", "session-resume", "Post-load recovery could not be confirmed", { ...identity, title, origin, phase, goalStatus, recoveryRetained: true, durationMs: Date.now() - startedAt, cancelled: controller.signal.aborted }, error);
     throw error;
   }).finally(() => {
     controller.abort();
