@@ -33,7 +33,17 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   const closeSessions = page.getByRole('button', exact('Close sessions sidebar'));
   if (await closeSessions.isVisible()) await page.getByRole('button', exact('Hide sessions sidebar')).click();
   await open();
-  await page.locator('.maintenance-tool').filter({hasText:'Codex UI startup'}).click();
+  await page.getByRole('region', exact('Storage Management')).getByRole('button', exact('Open summary')).click();
+  const storage = page.getByRole('region', exact('Codex storage check'));
+  await storage.getByRole('region', exact('Database allocation')).waitFor();
+  for (const label of ['Live pages','Reusable inside databases','Write-ahead logs (WAL)','Shared-memory files']) await storage.getByText(label,{exact:true}).waitFor();
+  await page.evaluate(() => {window.__storagePartial=true;});
+  await storage.getByRole('button',exact('Refresh report')).click();
+  await storage.getByText('Database allocation · partial',{exact:true}).waitFor();
+  await storage.getByText('Incomplete inspection',{exact:true}).waitFor();
+  await storage.getByRole('button',exact('All tools')).click();
+  await page.evaluate(() => {window.__storagePartial=false;});
+  await page.getByRole('button', exact('Codex UI startup Inspect')).click();
   const startup = page.getByRole('region', exact('Codex UI startup'));
   await startup.getByText('Healthy · 2 MB', {exact:true}).waitFor();
   await startup.getByRole('button', exact('Open fresh Codex panel')).click();
@@ -44,7 +54,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   assert.equal(await actionCount('reopenCodexUi'), 2);
   await startup.getByRole('button', exact('All tools')).click();
   await page.evaluate(() => {window.__holdNextMaintenancePreview=true;});
-  await page.locator('.maintenance-tool').filter({hasText:'Archive manager'}).click();
+  await page.getByRole('button', exact('Archive manager Manage')).click();
   await page.waitForFunction(() => !!window.__heldMaintenancePreview);
   await page.getByRole('button', exact('All tools')).click();
   await page.keyboard.press('Escape');
@@ -53,7 +63,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   await page.clock.fastForward(2000);
   assert.equal(await actionCount('getMaintenancePage'), hiddenPageReads, 'A preview finishing after Settings closes does not start a hidden page read');
   await open();
-  await page.locator('.maintenance-tool').filter({hasText:'Archive manager'}).click();
+  await page.getByRole('button', exact('Archive manager Manage')).click();
   const archive = page.getByRole('region', exact('Archive manager'));
   await archive.getByRole('checkbox').first().waitFor();
   assert.equal(await archive.getByRole('checkbox').count(), 50);

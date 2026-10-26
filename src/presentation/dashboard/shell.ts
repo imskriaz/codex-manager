@@ -32,8 +32,8 @@ export function renderDashboardShell(
   <link rel="stylesheet" href="${pageStyles.toString()}" />
 </head>
 <body>
-  <div id="app"></div>
-  <script src="${script.toString()}"></script>
+  <div id="app"><p role="status">Loading Codex Manager… If loading does not finish, use Developer: Reload Window.</p></div>
+  <script type="module" src="${script.toString()}"></script>
 </body>
 </html>`;
 }

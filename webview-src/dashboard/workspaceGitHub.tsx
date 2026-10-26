@@ -6,7 +6,7 @@ import type {
 } from "../../src/domain/dashboard/types";
 import { useWorkspaceRequest } from "./workspaceRequest";
 import { WorkspaceDialog } from "./workspaceDialog";
-import { ToolIcon } from "./workspaceTerminal";
+import { ToolIcon } from "./icons";
 import { handleTabKeyDown } from "./primitives";
 import { createActionRequestId, postMessageToHost } from "./host";
 

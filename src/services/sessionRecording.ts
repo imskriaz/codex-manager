@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
+import * as fs from "node:fs";
 import { getCodexHome } from "../codex/authFile";
 import { getSqliteStateStore } from "../storage/sqliteState";
-import { currentSessionAccountId, initializeSessionStorage, listStoredSessionLive, pruneSessionCache, readSessionDiscovery, saveSessionLive, saveSessionStatus } from "../storage/sqliteSessions";
+import { currentSessionAccountId, initializeSessionStorage, listStoredSessionLive, pruneSessionCache, readSessionDiscovery, readSessionStatuses, saveSessionLive, saveSessionStatus } from "../storage/sqliteSessions";
 import type { DashboardCodexSessionLiveState } from "../domain/dashboard/types";
 import { isCodexSessionLiveState, isNewerCodexSessionLiveState } from "../domain/codexSessionLive";
 import { publishDashboardRealtime } from "./dashboardRealtime";
@@ -129,42 +130,85 @@ export function recordNativeSessionStatus(home:string,id:string,running:boolean|
 export function registerSessionRecording(context:vscode.ExtensionContext): void {
   const store = getSqliteStateStore();
   if (!store) return;
-  const stopStorage = store.subscribe(["sessions"], () => {
-    for (const state of listStoredSessionLive(store,getCodexHome())) {
+  const controller = new AbortController();
+  const home = getCodexHome();
+  let inFlight = false, warnedScan = false, lastCleanup = 0, lastScan = 0, fullDueAt = 0;
+  let scanTimer: NodeJS.Timeout | undefined, timerAt = Infinity;
+  let knownRunning = new Set<string>();
+  const dirty = new Set<string>();
+  const schedule = (delay: number): void => {
+    if (controller.signal.aborted) return;
+    const at = Date.now() + Math.max(500, delay);
+    if (scanTimer && timerAt <= at) return;
+    if (scanTimer) clearTimeout(scanTimer);
+    timerAt = at;
+    scanTimer = setTimeout(() => { scanTimer = undefined; timerAt = Infinity; void scan(); }, Math.max(0, at - Date.now()));
+    scanTimer.unref?.();
+  };
+  const stopStorage = store.subscribe(["sessions", "session-status"], topics => {
+    if (topics.has("sessions")) for (const state of listStoredSessionLive(store,home)) {
       if (!isNewerCodexSessionLiveState(state,observed.get(state.sessionId))) continue;
       observed.set(state.sessionId,revision(state));
       if (observed.size > 30) observed.delete(observed.keys().next().value!);
       publishDashboardRealtime({type:"dashboard:codex-session-live",state});
     }
+    if (topics.has("session-status")) {
+      for (const [id,status] of readSessionStatuses(store,home)) {
+        if (status === "running" || status === "starting") knownRunning.add(id);
+        else if (status === "idle") knownRunning.delete(id);
+      }
+      if (knownRunning.size) schedule(10_000);
+    }
   });
-  const controller = new AbortController();
-  let inFlight = false, warnedScan = false;
-  let lastCleanup = 0;
   const scan = async ():Promise<void> => {
     if (inFlight || controller.signal.aborted) return;
     inFlight = true;
+    lastScan = Date.now();
+    const changed = [...dirty]; dirty.clear();
+    let failed = false;
     try {
-      if (Date.now() - lastCleanup >= 60_000) {
-        pruneSessionCache(store);
-        lastCleanup = Date.now();
-      }
+      if (Date.now() - lastCleanup >= 60_000) { pruneSessionCache(store); lastCleanup = Date.now(); }
       const sessions = await import("./codexSessionResume");
-      const home = getCodexHome();
-      const fresh = () => Date.now() - (readSessionDiscovery(store,home)?.checkedAt ?? 0) < 5_000;
-      if (!fresh())
-        await runCrossWindowExclusive(`background:session-recording:${getCodexHomeStateKey(home)}`,"Session recording discovery",
-          async signal => {
-            if (!fresh())
-              await sessions.readRunningCodexSessionIds(home,AbortSignal.any([controller.signal,signal]));
-          },{background:true});
+      const shared = readSessionDiscovery(store,home);
+      if (!changed.length && shared && Date.now() - shared.checkedAt < 5_000) {
+        knownRunning = new Set(shared.ids);
+        fullDueAt = shared.checkedAt + 60_000;
+      } else {
+        const full = Date.now() >= fullDueAt;
+        const ids = full ? undefined : [...new Set([...knownRunning, ...changed])];
+        if (full || ids?.length) await runCrossWindowExclusive(`background:session-recording:${getCodexHomeStateKey(home)}`,"Session recording discovery", async signal => {
+          const peer = readSessionDiscovery(store,home);
+          if (!changed.length && peer && Date.now() - peer.checkedAt < 5_000) {
+            knownRunning = new Set(peer.ids); fullDueAt = peer.checkedAt + 60_000; return;
+          }
+          const running = await sessions.readRunningCodexSessionIds(home,AbortSignal.any([controller.signal,signal]),ids);
+          knownRunning = new Set(running);
+          if (full) fullDueAt = Date.now() + 60_000;
+        },{background:true});
+      }
       warnedScan = false;
     } catch (error) {
+      failed = true;
+      for (const id of changed) dirty.add(id);
       if (!controller.signal.aborted && !(error instanceof CrossWindowOperationBusyError) && !warnedScan) console.warn("[codexManager] session discovery recording delayed",error);
       warnedScan = true;
-    } finally { inFlight = false; }
+    } finally {
+      inFlight = false;
+      schedule(failed || knownRunning.size || dirty.size ? 10_000 : Math.max(1_000, fullDueAt - Date.now()));
+    }
   };
-  const start = setTimeout(() => { void scan(); },1_000);
-  const interval = setInterval(() => { void scan(); },10_000);
-  start.unref?.(); interval.unref?.();
-  context.subscriptions.push({dispose:()=>{ controller.abort(); clearTimeout(start); clearInterval(interval); stopStorage(); observed.clear(); }});
+  let watcher: fs.FSWatcher | undefined;
+  try {
+    watcher = fs.watch(home, { recursive: true }, (_event, filename) => {
+      const name = String(filename ?? "").replace(/\\/g, "/");
+      if (name && !/^(?:sessions\/|archived_sessions\/|thread-writer-locks\/|session_index\.jsonl$|state_\d+\.sqlite(?:-wal)?$)/i.test(name)) return;
+      const id = name.match(/[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/i)?.[0]?.toLowerCase();
+      if (id && dirty.size < 500) { dirty.add(id); schedule(10_000 - (Date.now() - lastScan)); }
+      else { fullDueAt = Math.min(fullDueAt, Date.now() + 30_000); schedule(30_000); }
+    });
+    watcher.on("error", () => { watcher?.close(); watcher = undefined; });
+    watcher.unref();
+  } catch { /* The bounded idle scan also covers unsupported watchers and offline storage. */ }
+  schedule(1_000);
+  context.subscriptions.push({dispose:()=>{ controller.abort(); if (scanTimer) clearTimeout(scanTimer); watcher?.close(); stopStorage(); observed.clear(); }});
 }

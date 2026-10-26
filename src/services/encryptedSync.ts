@@ -4,10 +4,12 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import * as zlib from "zlib";
+import { promisify } from "util";
 import * as vscode from "vscode";
 import { fetch as undiciFetch } from "undici";
-import { waitWithin } from "../utils/concurrency";
+import { runWithConcurrencyLimit, waitWithin } from "../utils/concurrency";
 import { recordPersistentEvent } from "../utils/persistentLog";
+import { readSafeFileSnapshot } from "../utils/safeFileReads";
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { readCrossWindowActiveAccountIds } from "./windowAccountMode";
@@ -52,6 +54,8 @@ const DOWNLOADED_VAULT_POLL_INTERVAL_MS = 5 * 1000;
 const MAX_VAULT_CONFLICT_RETRIES = 3;
 const REGISTRY_OVERRIDE_KEY = "codexManager.encryptedSync.enablementOverride.v1";
 const SCRYPT_COST = 131_072;
+const compressVault = promisify(zlib.gzip);
+const decompressVault = promisify(zlib.gunzip);
 const MAX_ACCOUNTS = 500;
 const MAX_LEASES = 500;
 const MAX_DELETIONS = 1_000;
@@ -132,6 +136,10 @@ type ParsedCipherEnvelope = CipherEnvelopeBase & {
   compression?: "gzip";
 };
 
+class VaultPasswordChangedError extends Error {
+  constructor() { super("The shared password changed during backup. The newer password was preserved; backup will retry."); }
+}
+
 type DurableVaultMutation = {
   upsertAccountIds?: readonly string[];
   removedAccountIds?: readonly string[];
@@ -171,6 +179,13 @@ export class EncryptedSyncManager implements vscode.Disposable {
   private readonly pendingVaultMutationReasons = new Set<string>();
   private vaultDirtyPersistence: Promise<void> = Promise.resolve();
   private durableVaultWriteChain: Promise<void> = Promise.resolve();
+  private durableVaultSaveQueued = false;
+  private durableVaultFullSave = false;
+  private readonly durableVaultUpserts = new Set<string>();
+  private readonly durableVaultRemovals = new Set<string>();
+  private durableVaultRetryTimer: NodeJS.Timeout | undefined;
+  private durableVaultRetryDelayMs = 1_000;
+  private readonly durableVaultFingerprints = new Map<string, { payload: string; password: string; ciphertext: string }>();
   private readonly legacyDurableVaultPath: string | undefined;
   private readonly durableAccountsDirectory: string | undefined;
   private readonly legacyMigrationAccountIds = new Set<string>();
@@ -507,6 +522,8 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   dispose(): void {
     this.disposed = true;
+    if (this.durableVaultRetryTimer) clearTimeout(this.durableVaultRetryTimer);
+    this.durableVaultRetryTimer = undefined;
     this.backgroundSyncAbort?.abort(new Error("Sync stopped."));
     this.stopClaimStorageSubscription?.();
     this.stopClaimStorageSubscription = undefined;
@@ -1163,7 +1180,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       return false;
     }
 
-    if (!rotating) await this.context.secrets.store(PASSPHRASE_KEY, passphrase);
+    if (!rotating || !rawRemote) await this.context.secrets.store(PASSPHRASE_KEY, passphrase);
     if (storedPassphrase !== passphrase) {
       await this.context.secrets.delete(DASHBOARD_SESSION_SECRET_KEY);
     }
@@ -1662,15 +1679,40 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private queueDurableVaultSave(mutation?: DurableVaultMutation): void {
     if (!this.durableAccountsDirectory || this.disposed) return;
+    this.durableVaultFullSave ||= mutation === undefined;
+    for (const id of mutation?.upsertAccountIds ?? []) { this.durableVaultUpserts.add(id); this.durableVaultRemovals.delete(id); }
+    for (const id of mutation?.removedAccountIds ?? []) { this.durableVaultRemovals.add(id); this.durableVaultUpserts.delete(id); }
+    if (this.durableVaultFullSave || this.durableVaultUpserts.size + this.durableVaultRemovals.size > MAX_ACCOUNTS) {
+      this.durableVaultFullSave = true;
+      this.durableVaultUpserts.clear(); this.durableVaultRemovals.clear();
+    }
+    if (this.durableVaultSaveQueued) return;
+    if (this.durableVaultRetryTimer) clearTimeout(this.durableVaultRetryTimer);
+    this.durableVaultRetryTimer = undefined;
+    this.durableVaultSaveQueued = true;
     this.durableVaultWriteChain = this.durableVaultWriteChain
       .catch(() => undefined)
       .then(async () => {
-        const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
-        if (passphrase) await this.persistDurableVaults(passphrase, mutation);
+        try {
+          while (this.durableVaultFullSave || this.durableVaultUpserts.size || this.durableVaultRemovals.size) {
+            // Read secrets before taking the batch so simultaneous mutations share one save.
+            const passphrase = await this.context.secrets.get(PASSPHRASE_KEY);
+            const batch = this.durableVaultFullSave ? undefined : { upsertAccountIds: [...this.durableVaultUpserts], removedAccountIds: [...this.durableVaultRemovals] };
+            this.durableVaultFullSave = false; this.durableVaultUpserts.clear(); this.durableVaultRemovals.clear();
+            if (passphrase) await this.persistDurableVaults(passphrase, batch);
+          }
+          this.durableVaultRetryDelayMs = 1_000;
+        } catch (error) {
+          // A full reconcile retains failed removals and retries from the latest authoritative index.
+          this.durableVaultFullSave = true;
+          recordPersistentEvent("warning", "account-vault", "Accounts are saved in VS Code, but the reinstall-safe vault could not be updated", undefined, error);
+          if (!this.disposed) {
+            this.durableVaultRetryTimer = setTimeout(() => { this.durableVaultRetryTimer = undefined; this.queueDurableVaultSave(); }, this.durableVaultRetryDelayMs);
+            this.durableVaultRetryTimer.unref?.();
+            this.durableVaultRetryDelayMs = Math.min(30_000, this.durableVaultRetryDelayMs * 2);
+          }
+        } finally { this.durableVaultSaveQueued = false; }
       });
-    void this.durableVaultWriteChain.catch((error) => {
-      recordPersistentEvent("warning", "account-vault", "Accounts are saved in VS Code, but the reinstall-safe vault could not be updated", undefined, error);
-    });
   }
 
   private async persistDurableVaults(passphrase: string, mutation?: DurableVaultMutation): Promise<void> {
@@ -1699,25 +1741,51 @@ export class EncryptedSyncManager implements vscode.Disposable {
     const writtenPaths = new Set<string>();
     const writtenAccountIds = new Set<string>();
     const enablement = this.readLocalEnablement();
+    const temporarySnapshots = sqliteStoreForFile(this.durableAccountsDirectory) ? new Map<string, { modifiedAt: number; error?: unknown }>() : await readDurableTempSnapshots(this.durableAccountsDirectory);
+    const exportedIds = new Set(allAccounts.map(getSyncAccountId));
+    const failures: unknown[] = records.filter(account => !exportedIds.has(account.id) && (!requestedIds || requestedIds.has(account.id)))
+      .map(() => new Error("Account credentials are unavailable; its saved encrypted backup was retained."));
     for (const account of accountsToWrite) {
-      const accountId = getSyncAccountId(account);
-      const fileName = fileNamesByAccountId.get(accountId);
-      if (!fileName) continue;
-      const payload = await this.createPayload(
-        [account],
-        [],
-        enablement.filter((entry) => entry.accountId === accountId)
-      );
-      const encrypted = await encryptSyncPayload(payload, passphrase);
-      const filePath = path.join(this.durableAccountsDirectory, fileName);
-      await writePrivateFileAtomically(filePath, encrypted);
-      writtenPaths.add(path.resolve(filePath).toLowerCase());
-      writtenAccountIds.add(accountId);
+      try {
+        const accountId = getSyncAccountId(account);
+        const fileName = fileNamesByAccountId.get(accountId);
+        if (!fileName) continue;
+        const payload = await this.createPayload(
+          [account],
+          [],
+          enablement.filter((entry) => entry.accountId === accountId)
+        );
+        const filePath = path.join(this.durableAccountsDirectory, fileName);
+        const fingerprint = { payload: hashVaultValue(syncPayloadFingerprint(payload)), password: hashVaultValue(passphrase) };
+        const cached = this.durableVaultFingerprints.get(filePath);
+        const temporary = temporarySnapshots.get(path.resolve(filePath).toLowerCase());
+        if (temporary?.error) throw new Error("A temporary account snapshot could not be inspected; saved files were kept.", { cause: temporary.error });
+        let unchanged = false;
+        if (cached?.payload === fingerprint.payload && cached.password === fingerprint.password) {
+          try { unchanged = cached.ciphertext === hashVaultValue(await readCanonicalVault(filePath)); }
+          catch (error) { if (!isFileNotFoundError(error)) throw error; }
+        }
+        if (unchanged && temporary) unchanged = temporary.modifiedAt <= (await fs.stat(filePath)).mtimeMs;
+        if (!unchanged) {
+          const encrypted = await encryptSyncPayload(payload, passphrase);
+          await runCrossWindowExclusive(`vault:file:${path.resolve(filePath).toLowerCase()}`, "Durable account backup", async () => {
+            if (await this.context.secrets.get(PASSPHRASE_KEY) !== passphrase) throw new VaultPasswordChangedError();
+            await writePrivateFileAtomically(filePath, encrypted);
+          }, { background: true });
+          this.durableVaultFingerprints.set(filePath, { ...fingerprint, ciphertext: hashVaultValue(encrypted) });
+          if (this.durableVaultFingerprints.size > MAX_ACCOUNTS) this.durableVaultFingerprints.delete(this.durableVaultFingerprints.keys().next().value!);
+        }
+        writtenPaths.add(path.resolve(filePath).toLowerCase());
+        writtenAccountIds.add(accountId);
+      } catch (error) {
+        if (error instanceof VaultPasswordChangedError) throw error;
+        failures.push(error);
+      }
     }
 
     await this.removeObsoleteDurableVaultFiles(passphrase, {
       currentFileNamesByAccountId: fileNamesByAccountId,
-      currentAccountIds: new Set(allAccounts.map(getSyncAccountId)),
+      currentAccountIds: new Set(records.map(account => account.id)),
       removedAccountIds: new Set(mutation?.removedAccountIds ?? []),
       writtenPaths,
       fullReconcile: mutation === undefined
@@ -1735,6 +1803,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
       });
       this.legacyMigrationAccountIds.clear();
     }
+    if (failures.length) throw new Error(`${failures.length} account backup(s) could not be updated; other accounts were saved.`, { cause: failures[0] });
   }
 
   private async restoreDurableVaults(passphrase: string): Promise<DurableVaultRestoreResult> {
@@ -1745,11 +1814,16 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
     for (const filePath of await listDurableAccountVaultFiles(this.durableAccountsDirectory)) {
       try {
-        const durable = await readDurableAccountVault(filePath, passphrase);
+        const { payload: durable, raw } = await readDurableAccountVault(filePath, passphrase);
         if (durable.accounts.length !== 1) {
           throw new Error("Each durable account vault must contain exactly one account.");
         }
         durableAccounts.push(createSyncEntry(durable.accounts[0]!));
+        // Seed only after authentication, and only when the canonical bytes still match that snapshot.
+        const canonical = await readCanonicalVault(filePath).catch(() => undefined);
+        if (canonical === raw) {
+          this.durableVaultFingerprints.set(filePath, { payload: hashVaultValue(syncPayloadFingerprint(durable)), password: hashVaultValue(passphrase), ciphertext: hashVaultValue(raw) });
+        }
       } catch (error) {
         firstFailure ??= error;
         failedFiles.push(path.basename(filePath));
@@ -1832,7 +1906,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
         continue;
       }
       const accountIds = durable.accounts.map(getSyncAccountId).filter(Boolean);
-      const explicitlyRemoved = accountIds.some((accountId) => options.removedAccountIds.has(accountId));
+      const explicitlyRemoved = accountIds.some((accountId) => options.removedAccountIds.has(accountId) && !options.currentAccountIds.has(accountId));
       const staleAccount =
         options.fullReconcile && accountIds.length > 0 && accountIds.every((id) => !options.currentAccountIds.has(id));
       const replacedPath = accountIds.some((accountId) => {
@@ -2123,7 +2197,7 @@ export async function encryptSyncPayload(payload: SyncPayload, passphrase: strin
   if (plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
     throw new Error("The encrypted session vault is too large to synchronize.");
   }
-  const compressed = zlib.gzipSync(plaintext, { level: 9 });
+  const compressed = await compressVault(plaintext, { level: 9 });
   const salt = crypto.randomBytes(16);
   const iv = crypto.randomBytes(12);
   const key = await deriveKey(passphrase, salt);
@@ -2171,7 +2245,7 @@ export async function decryptSyncPayload(raw: string, passphrase: string): Promi
   } catch {
     throw new Error(VAULT_AUTHENTICATION_ERROR);
   }
-  const plaintext = zlib.gunzipSync(compressed, { maxOutputLength: MAX_PLAINTEXT_BYTES });
+  const plaintext = await decompressVault(compressed, { maxOutputLength: MAX_PLAINTEXT_BYTES });
   const payload = JSON.parse(plaintext.toString("utf8")) as unknown;
   validateSyncPayload(payload);
   return {
@@ -2322,6 +2396,29 @@ async function listDurableAccountVaultFiles(directory: string): Promise<string[]
   }
 }
 
+async function readDurableTempSnapshots(directory: string): Promise<Map<string, { modifiedAt: number; error?: unknown }>> {
+  const snapshots = new Map<string, { modifiedAt: number; error?: unknown }>();
+  const files = (await fs.readdir(directory, { withFileTypes: true })).filter(entry => entry.isFile() && entry.name.toLowerCase().includes(".json.tmp-"));
+  await runWithConcurrencyLimit(files, 8, async entry => {
+    const end = entry.name.toLowerCase().indexOf(".json.tmp-") + ".json".length;
+    const key = path.resolve(directory, entry.name.slice(0, end)).toLowerCase();
+    try {
+      const info = await fs.stat(path.join(directory, entry.name));
+      if (info.size && !snapshots.get(key)?.error) snapshots.set(key, { modifiedAt: Math.max(info.mtimeMs, snapshots.get(key)?.modifiedAt ?? 0) });
+    } catch (error) {
+      if (!isFileNotFoundError(error)) snapshots.set(key, { modifiedAt: Infinity, error });
+    }
+  });
+  return snapshots;
+}
+
+function hashVaultValue(value: string): string { return crypto.createHash("sha256").update(value).digest("hex"); }
+
+async function readCanonicalVault(file: string): Promise<string> {
+  return sqliteStoreForFile(file) ? readSqliteStateFile(file, MAX_ENVELOPE_BYTES)
+    : (await readSafeFileSnapshot(file, { maxBytes: MAX_ENVELOPE_BYTES, rejectIfLarger: true })).buffer.toString("utf8");
+}
+
 async function writePrivateFileAtomically(filePath: string, contents: string): Promise<void> {
   if (sqliteStoreForFile(filePath)) { writeSqliteStateFile(filePath, contents); return; }
   const directory = path.dirname(filePath);
@@ -2353,11 +2450,12 @@ async function writePrivateFileAtomically(filePath: string, contents: string): P
   }
 }
 
-async function readDurableAccountVault(filePath: string, passphrase: string): Promise<SyncPayload> {
+async function readDurableAccountVault(filePath: string, passphrase: string): Promise<{ payload: SyncPayload; raw: string }> {
   if (hasSqliteStateFile(filePath)) {
-    const stored = await decryptSyncPayload(readSqliteStateFile(filePath), passphrase);
+    const raw = readSqliteStateFile(filePath);
+    const stored = await decryptSyncPayload(raw, passphrase);
     if (stored.accounts.length !== 1) throw new Error("Each durable account vault must contain exactly one account.");
-    return stored;
+    return { payload: stored, raw };
   }
   const directory = path.dirname(filePath);
   const canonicalName = path.basename(filePath);
@@ -2388,7 +2486,7 @@ async function readDurableAccountVault(filePath: string, passphrase: string): Pr
       else if (candidate.candidatePath !== filePath) {
         await fs.rename(candidate.candidatePath, filePath).catch(() => undefined);
       }
-      return recovered;
+      return { payload: recovered, raw };
     } catch (error) {
       firstError ??= error;
     }

@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,6 +14,7 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   for (const width of [1440,390]) {
     const page = await browser.newPage({ viewport: { width, height: 900 }, serviceWorkers: 'block' });
+    await useWorkspaceDashboardAssets(page, origin);
     await page.addInitScript(() => {
       window.__projectStreams = [];
       window.EventSource = class extends EventTarget {
@@ -26,7 +28,7 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     page.on('request', request => { if (/\/api\/(?:state|message|events)(?:[?]|$)/.test(request.url())) privateRequests.push(request.url()); });
     for (const [asset, file, contentType] of [['dashboard.js','media/webview/dashboard/dashboard.js','text/javascript'],['dashboard.css','media/webview/quotaSummary.css','text/css'],['projectShare.js','media/webview/projectShare.js','text/javascript'],['sharedConversation.js','media/webview/sharedConversation.js','text/javascript']]) await page.route(`**/assets/${asset}*`, route => route.fulfill({ contentType, path: path.resolve(file) }));
-    await page.route('**/share/fixture', route => route.fulfill({ contentType:'text/html', body:'<!doctype html><html data-theme="auto"><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body class="public-conversation"><main class="cli-workspace cli-public-session"><div id="shared-header"></div><span id="live-state"></span><div class="cli-message-region"><section id="conversation" class="cli-message-viewport"></section></div></main><script src="/assets/dashboard.js" defer></script><script src="/assets/sharedConversation.js" defer></script></body></html>' }));
+    await page.route('**/share/fixture', route => route.fulfill({ contentType:'text/html', body:'<!doctype html><html data-theme="auto"><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body class="public-conversation"><main class="cli-workspace cli-public-session"><div id="shared-header"></div><span id="live-state"></span><div class="cli-message-region"><section id="conversation" class="cli-message-viewport"></section></div></main><script type="module" src="/assets/dashboard.js" defer></script><script type="module" src="/assets/sharedConversation.js" defer></script></body></html>' }));
     let sharedMessages = [...messages,{id:'command',kind:'command',text:'Ran a command',command:'echo public',output:'Complete command output',status:'completed'},{id:'tool',kind:'tool-call',text:'Used a tool',title:'Search tool',arguments:'{"query":"public activity"}',result:'Complete tool result',status:'completed'}];
     await page.route('**/api/share/fixture', route => route.fulfill({ json:{ title:'Shared conversation', messages:sharedMessages } }));
     await page.goto(`${origin}/share/fixture`);
@@ -57,7 +59,7 @@ try {
       assert.equal(typeof releaseWrite, 'function', 'The test request reached the pending-write fixture');
     }
     const tasks = [{ id:'task', title:'Release work', prompt:'Review the release', stage:'planned',createdAt:Date.now(),updatedAt:Date.now(),timing:{firstStartedAt:Date.now()-3600000,lastObservedAt:Date.now(),durationMs:1800000,runCount:2} },{id:'archive',title:'Archived work',prompt:'',stage:'completed',sessionArchived:true,parentTaskId:'task'}];
-    await page.route('**/projects/share/fixture', route => route.fulfill({ contentType:'text/html', body:'<!doctype html><html data-theme="auto"><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"></main><script src="/assets/dashboard.js"></script><script src="/assets/projectShare.js"></script></body></html>' }));
+    await page.route('**/projects/share/fixture', route => route.fulfill({ contentType:'text/html', body:'<!doctype html><html data-theme="auto"><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"></main><script type="module" src="/assets/dashboard.js"></script><script type="module" src="/assets/projectShare.js"></script></body></html>' }));
     await page.route('**/api/projects/share/fixture*', async route => {
       if (route.request().method() === 'POST') {
         writes.push(route.request().postDataJSON());

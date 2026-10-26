@@ -178,6 +178,7 @@ describe("additional Codex utilities", () => {
     expect(storageReport.items).toContainEqual({ label: "thread_history_5.sqlite", value: expect.stringContaining("Healthy") });
     expect(storageReport.storage?.buckets.some(bucket => bucket.label === "Databases" && bucket.bytes > 0)).toBe(true);
     expect(storageReport.storage?.totalBytes).toBeGreaterThan(0);
+    expect(storageReport.storage?.database).toMatchObject({ complete: true, liveBytes: expect.any(Number), reusableBytes: expect.any(Number), walBytes: expect.any(Number) });
     expect((await api.inspectMaintenanceStorage("large-sessions")).items).toContainEqual({ label: "Large chat", value: "2 KB" });
     expect(mocks.remove).not.toHaveBeenCalled(); expect(mocks.clear).not.toHaveBeenCalled();
   });

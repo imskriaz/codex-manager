@@ -84,3 +84,12 @@ System Log keeps the configured 1–30 day retention, additionally capped at 10,
 - One failed background claim operation does not skip the remaining independent claim confirmations/releases. Signed responses and fencing tokens remain validated.
 
 Without shared confirmation, another PC may acquire the same account before its ownership reaches this PC. This is the tradeoff of allowing local work during shared-host outages. Real cross-PC outages, disk exhaustion and reboot are covered through automated failure simulation where available; live UI checks are read-only.
+
+
+Storage inspection opens native databases read-only in at most two disposable workers per host. Each inspection has a 12-second worker budget inside the 15-second action deadline. A stalled worker is terminated without stopping official Codex; available partial results remain labelled. Reports distinguish physical footprint, allocated/live/reusable pages, WAL and shared-memory files. Native databases are never compacted by this check.
+
+Durable account backups merge pending account changes and use bounded retry after storage errors. An unchanged backup is skipped only after authenticated recovery and matching password, payload and current ciphertext fingerprints. Password changes still re-encrypt accounts. Compression and HTTP asset gzip run asynchronously; optional backup work does not gate account actions.
+
+Session recording uses a full inventory on startup and a 60-second idle fallback. Known running sessions are checked every 10 seconds, and file notifications wake targeted discovery. Native readiness and mutation checks retain their existing fresh checks. Lost filesystem watchers retain the timed fallback.
+
+Dashboard entry points are ES modules. The build manifest identifies the core module graph for atomic offline-shell installation; editor, syntax and terminal chunks load on demand and are cached only after use. Missing modules expose a bounded error and retry inside their own panel. A newly installed extension may require reloading an old dashboard to use its new module graph.

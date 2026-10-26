@@ -38,6 +38,34 @@ function createWorker(fetchMock: (request: { url: string }) => Promise<Response>
 }
 
 describe("browser PWA cache boundary", () => {
+  it.each(["healthy", "missing-core", "bad-manifest"])("warms core modules only and retains the old worker after %s module installation", async mode => {
+    const requests: string[] = [];
+    const worker = createWorker(async request => {
+      const pathname = new URL(request.url).pathname; requests.push(pathname);
+      if (pathname === "/assets/dashboard-manifest.json") return Response.json(mode === "bad-manifest" ? {} : {
+        main: { isEntry: true, file: "dashboard.js", imports: ["common"], dynamicImports: ["editor"] },
+        common: { file: "chunks/common-123.js" }, editor: { file: "chunks/editor-456.js" }
+      });
+      if (pathname === "/assets/chunks/common-123.js" && mode === "missing-core") return new Response("unavailable", { status: 503 });
+      return new Response(pathname, { headers: { "content-type": pathname.endsWith(".js") ? "text/javascript" : pathname.endsWith(".css") ? "text/css" : "text/html" } });
+    });
+    let work: Promise<unknown> | undefined;
+    worker.handlers.get("install")!({ waitUntil: value => { work = value; } });
+    if (mode !== "healthy") {
+      await expect(work).rejects.toThrow(/offline/i);
+      expect(worker.self.skipWaiting).not.toHaveBeenCalled(); expect(worker.caches.delete).not.toHaveBeenCalled();
+    } else {
+      await work;
+      expect(worker.self.skipWaiting).toHaveBeenCalledOnce();
+      expect(requests).toContain("/assets/chunks/common-123.js");
+      expect(requests).not.toContain("/assets/chunks/editor-456.js");
+      let response: Promise<Response> | undefined;
+      worker.handlers.get("fetch")!({ request: { method: "GET", mode: "cors", url: "https://dashboard.example/assets/chunks/editor-456.js" }, respondWith: value => { response = value; } });
+      expect(await response?.then(value => value.text())).toBe("/assets/chunks/editor-456.js");
+      expect([...worker.entries.keys()]).toContain("https://dashboard.example/assets/chunks/editor-456.js");
+    }
+  });
+
   it('leaves explicitly newer assets to the network rather than returning the controlling worker cache', () => {
     const worker = createWorker(async () => new Response('new bundle'));
     worker.entries.set(worker.key('/assets/dashboard.js?v=test'), new Response('old bundle'));
@@ -50,6 +78,7 @@ describe("browser PWA cache boundary", () => {
     for (const storageFull of [false, true]) {
       const worker = createWorker(async request => {
         const path = new URL(request.url).pathname;
+      if (path === "/assets/dashboard-manifest.json") return Response.json({ main: { isEntry: true, file: "dashboard.js" } });
         if (!storageFull && path === '/assets/dashboard.js') return new Response('unavailable', { status: 503 });
         const type = path.endsWith('.css') ? 'text/css' : path.endsWith('.js') ? 'text/javascript' : 'text/html';
         return new Response(path, { headers: { 'content-type': type } });
@@ -123,6 +152,7 @@ describe("browser PWA cache boundary", () => {
     const fetchMock = vi.fn(async (request: { url: string }) => {
       if (offline) throw new Error("host down");
       const path = new URL(request.url).pathname;
+      if (path === "/assets/dashboard-manifest.json") return Response.json({ main: { isEntry: true, file: "dashboard.js" } });
       const type = path.endsWith(".css") ? "text/css"
         : path.endsWith(".js") ? "text/javascript"
           : path.endsWith(".png") ? "image/png"
@@ -173,6 +203,7 @@ describe("browser PWA cache boundary", () => {
   it("does not cache a login page returned for a private script", async () => {
     const worker = createWorker(async (request) => {
       const path = new URL(request.url).pathname;
+      if (path === "/assets/dashboard-manifest.json") return Response.json({ main: { isEntry: true, file: "dashboard.js" } });
       return new Response("login", { headers: { "content-type": path.endsWith(".js") ? "text/html" : "text/css" } });
     });
     let response: Promise<Response> | undefined;

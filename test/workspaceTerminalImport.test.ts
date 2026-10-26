@@ -7,7 +7,7 @@ it("keeps read-only page startup independent of terminal UUID availability", asy
   vi.stubGlobal("crypto", { randomUUID });
   try {
     const module = await import("../webview-src/dashboard/workspaceTerminal");
-    expect(module.WorkspaceTerminal).toBeTypeOf("function");
+    expect(module.default).toBeTypeOf("function");
     expect(randomUUID).not.toHaveBeenCalled();
   } finally {
     vi.unstubAllGlobals();

@@ -9,7 +9,7 @@ import * as fsSync from "fs";
 import * as http from "http";
 import * as path from "path";
 import * as os from "os";
-import { gzipSync } from "zlib";
+import { gzip } from "zlib";
 import * as vscode from "vscode";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
@@ -328,6 +328,7 @@ export function isCliSessionWatchPath(filename: string | Buffer | null): boolean
   );
 }
 
+const DASHBOARD_CHUNK_PATH = /^\/assets\/chunks\/[A-Za-z0-9_-]+\.js$/;
 const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: string }> = {
   '/assets/projectShare.js': { parts: ['media', 'webview', 'projectShare.js'], contentType: 'text/javascript; charset=utf-8' },
   '/offline-dashboard.html': { parts: ['media', 'webview', 'pwaDashboard.html'], contentType: 'text/html; charset=utf-8' },
@@ -347,6 +348,7 @@ const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: strin
     parts: ["media", "webview", "dashboard", "dashboard.js"],
     contentType: "text/javascript; charset=utf-8"
   },
+  "/assets/dashboard-manifest.json": { parts: ["media", "webview", "dashboard", "dashboard-manifest.json"], contentType: "application/json; charset=utf-8" },
   "/assets/codex.svg": {
     parts: ["media", "product-icons", "codex-openai.svg"],
     contentType: "image/svg+xml"
@@ -354,7 +356,7 @@ const WEB_DASHBOARD_ASSETS: Record<string, { parts: string[]; contentType: strin
   ,"/assets/sharedConversation.js": { parts: ["media", "webview", "sharedConversation.js"], contentType: "text/javascript; charset=utf-8" }
 };
 const WEB_DASHBOARD_PUBLIC_ASSETS = new Set([
-  '/assets/projectShare.js', '/offline-dashboard.html', '/assets/dashboard.js', '/assets/browserHost.js', '/assets/dashboard.css', '/assets/shared.css',
+  '/assets/dashboard-manifest.json', '/assets/projectShare.js', '/offline-dashboard.html', '/assets/dashboard.js', '/assets/browserHost.js', '/assets/dashboard.css', '/assets/shared.css',
   "/manifest.webmanifest", "/service-worker.js", "/offline.html", "/assets/pwaRecovery.js",
   "/assets/icon-192.png", "/assets/icon-512.png", "/assets/codex.svg", "/assets/sharedConversation.js"
 ]);
@@ -870,7 +872,7 @@ export class WebDashboardServer implements vscode.Disposable {
           response.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
           response.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors http: https:; base-uri 'none'");
         }
-        this.sendHtml(response, versionPublicAssets('<!doctype html><html lang="en" data-theme="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Shared project</title><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"><p role="status">Loading shared project…</p></main><script src="/assets/dashboard.js"></script><script src="/assets/projectShare.js"></script></body></html>', this.assetVersion)); return;
+        this.sendHtml(response, versionPublicAssets('<!doctype html><html lang="en" data-theme="auto"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Shared project</title><link rel="stylesheet" href="/assets/shared.css"><link rel="stylesheet" href="/assets/dashboard.css"></head><body><main id="project-share" class="public-project"><p role="status">Loading shared project…</p></main><script type="module" src="/assets/dashboard.js"></script><script type="module" src="/assets/projectShare.js"></script></body></html>', this.assetVersion)); return;
       }
       for (const [key, value] of this.publicProjectRequests) if (value.until <= Date.now()) this.publicProjectRequests.delete(key);
       const rateKey = `${token}:${request.socket.remoteAddress ?? ''}`;
@@ -1012,7 +1014,7 @@ export class WebDashboardServer implements vscode.Disposable {
     // These files contain no account or session data. Keep the install shell
     // available before login so an expired browser session can still show the
     // generic offline page; authenticated HTML and APIs remain uncached.
-    if (method === "GET" && WEB_DASHBOARD_PUBLIC_ASSETS.has(path)) {
+    if (method === "GET" && (WEB_DASHBOARD_PUBLIC_ASSETS.has(path) || DASHBOARD_CHUNK_PATH.test(path))) {
       await this.sendAsset(path, request, response);
       return;
     }
@@ -3091,7 +3093,7 @@ export class WebDashboardServer implements vscode.Disposable {
     request: http.IncomingMessage,
     response: http.ServerResponse
   ): Promise<void> {
-    const asset = WEB_DASHBOARD_ASSETS[requestPath];
+    const asset = WEB_DASHBOARD_ASSETS[requestPath] ?? (DASHBOARD_CHUNK_PATH.test(requestPath) ? { parts: ["media", "webview", "dashboard", "chunks", requestPath.slice("/assets/chunks/".length)], contentType: "text/javascript; charset=utf-8" } : undefined);
     if (!asset) {
       response.statusCode = 404;
       response.end("Not found");
@@ -3103,7 +3105,7 @@ export class WebDashboardServer implements vscode.Disposable {
         const content = await fs.readFile(path.join(this.context.extensionUri.fsPath, ...asset.parts));
         cached = {
           content,
-          gzip: gzipSync(content, { level: 6 }),
+          gzip: await new Promise<Buffer>((resolve, reject) => gzip(content, { level: 6 }, (error, data) => error ? reject(error) : resolve(data))),
           etag: `"${crypto.createHash("sha256").update(content).digest("hex").slice(0, 20)}"`
         };
         this.assetCache.set(requestPath, cached);
@@ -3242,7 +3244,7 @@ function versionPublicAssets(html: string, version: string): string {
 
 function dashboardPage(showLogout: boolean, version: string): string {
   const assetVersion = encodeURIComponent(version);
-  return `<!DOCTYPE html><html lang="en" data-theme="auto" data-dashboard-host="browser" data-dashboard-remote="${showLogout ? "true" : "false"}"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0d1117"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/icon-192.png"><link rel="manifest" href="/manifest.webmanifest?v=${assetVersion}"><link rel="stylesheet" href="/assets/shared.css?v=${assetVersion}"><link rel="stylesheet" href="/assets/dashboard.css?v=${assetVersion}"></head><body><div id="app"></div><script src="/assets/browserHost.js?v=${assetVersion}"></script><script src="/assets/dashboard.js?v=${assetVersion}"></script></body></html>`;
+  return `<!DOCTYPE html><html lang="en" data-theme="auto" data-dashboard-host="browser" data-dashboard-remote="${showLogout ? "true" : "false"}"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0d1117"><title>Codex Manager</title><link rel="icon" href="/assets/codex.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/assets/icon-192.png"><link rel="manifest" href="/manifest.webmanifest?v=${assetVersion}"><link rel="stylesheet" href="/assets/shared.css?v=${assetVersion}"><link rel="stylesheet" href="/assets/dashboard.css?v=${assetVersion}"></head><body><div id="app"><p role="status">Loading Codex Manager… <a href="">Reload dashboard</a> if loading does not finish.</p></div><script src="/assets/browserHost.js?v=${assetVersion}"></script><script type="module" src="/assets/dashboard.js?v=${assetVersion}"></script></body></html>`;
 }
 
 const BASE_CSS = `:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111827;color:#edf2ff}body{margin:0;background:#111827}main{max-width:1100px;margin:0 auto;padding:28px 20px}header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}h1{font-size:22px;margin:0;text-wrap:balance}label{display:block;margin-top:18px;font-size:14px;font-weight:700}button{border:0;border-radius:8px;padding:10px 14px;background:#4f8cff;color:#fff;font-weight:700;cursor:pointer;touch-action:manipulation}button:hover{background:#6aa0ff}button:focus-visible,input:focus-visible{outline:2px solid #8bb8ff;outline-offset:3px}input{display:block;width:100%;box-sizing:border-box;padding:11px;border-radius:8px;border:1px solid #43516d;background:#1b2537;color:#fff;margin:8px 0 12px}.login{max-width:380px;margin:12vh auto}.login p{color:#a8b3c9;line-height:1.5}.error{color:#ff8c9b;margin-top:12px}`;

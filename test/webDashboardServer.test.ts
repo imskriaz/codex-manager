@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import type * as http from "http";
 import { describe, expect, it, vi } from "vitest";
+import { removeTestDirectory } from "./testFilesystem";
 import {
   isLocalWebDashboardRequest,
   getPeerActionTimeoutMs,
@@ -27,6 +28,28 @@ it("allows remote batches and sync to reach the same deadline as their local act
 import type { DashboardAccountViewModel } from "../src/domain/dashboard/types";
 import * as sessionMetadata from "../src/services/codexSessionResume";
 import { normalizeCloudflaredDomain } from "../src/presentation/dashboard/settings";
+
+it("serves lazy module assets and rejects traversal, source maps, and missing chunks", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "codex-dashboard-modules-"));
+  mkdirSync(join(directory, "media", "webview", "dashboard", "chunks"), { recursive: true });
+  writeFileSync(join(directory, "media", "webview", "dashboard", "chunks", "editor-123.js"), "export const ready = true;");
+  const server = Object.assign(Object.create(WebDashboardServer.prototype), {
+    context: { extensionUri: { fsPath: directory } }, assetCache: new Map(), assetVersion: "test", getUrl: () => "http://127.0.0.1:39875"
+  }) as { sendAsset: (path: string, request: unknown, response: unknown) => Promise<void> };
+  const get = async (path: string) => {
+    const headers = new Map<string, unknown>(); let body = "";
+    const response = { statusCode: 200, setHeader: (name: string, value: unknown) => headers.set(name, value), end: (value?: Buffer | string) => { body = value?.toString() ?? ""; } };
+    await server.sendAsset(path, { url: path, headers: {} }, response);
+    return { status: response.statusCode, body, headers };
+  };
+  try {
+    const asset = await get("/assets/chunks/editor-123.js");
+    expect(asset.status).toBe(200); expect(asset.body).toContain("export const ready");
+    expect(asset.headers.get("Content-Type")).toContain("javascript");
+    for (const path of ["/assets/chunks/../dashboard.js", "/assets/chunks/editor-123.js.map", "/assets/chunks/missing-123.js", "/assets/chunks/sub/editor.js"])
+      expect((await get(path)).status).toBe(404);
+  } finally { await removeTestDirectory(directory); }
+});
 
 it("uses local title metadata for completion push and never substitutes an ID or another system's title", async () => {
   const id = "01a04882-d037-7a42-ad24-9afb61901188";

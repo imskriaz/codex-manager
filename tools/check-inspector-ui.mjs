@@ -25,6 +25,11 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
     await show();
   };
   const edit = async text => { const editor = page.locator('.cli-file-editor .cm-content[contenteditable=true]'); await editor.click(); await page.keyboard.press('ControlOrMeta+A'); await page.keyboard.insertText(text); };
+  let failedEditor = false;
+  await page.route('**/assets/chunks/workspaceCodeEditor-*.js', route => {
+    if (!failedEditor) { failedEditor = true; return route.abort(); }
+    return route.fallback();
+  });
   await page.goto(`${origin}/workspace/${parentId}`);
   await page.getByRole('textbox', exact('Message Codex')).waitFor();
   await page.evaluate(() => { window.__inspectorMode = true; });
@@ -171,6 +176,17 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   assert.notEqual(await page.locator('.cli-inspector-heading strong').textContent(), 'Stale other-system response');
   await selectSession('Evaluate stack beyond expectations', 'demo');
   await tool('Files'); await page.locator('.cli-file-tree button').filter({ hasText: 'app.ts' }).click();
+  await page.getByRole('button', exact('Retry editor')).waitFor();
+  const beforeRetry = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'saveWorkspaceFile').length);
+  const composer = page.getByRole('textbox', exact('Message Codex'));
+  const previousDraft = await composer.inputValue();
+  await composer.fill('Manual input stays available while the editor module is unavailable.');
+  assert.equal(await composer.inputValue(), 'Manual input stays available while the editor module is unavailable.');
+  await composer.fill(previousDraft);
+  await page.getByRole('button', exact('Retry editor')).click();
+  await page.locator('.cli-file-editor .cm-content').waitFor();
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'saveWorkspaceFile').length), beforeRetry, 'Retrying a failed lazy panel never sends a save');
+
   await edit('const edited = 1;');
   await page.evaluate(() => { window.__holdNextSave = true; });
   await page.getByRole('button', exact('Save')).click();

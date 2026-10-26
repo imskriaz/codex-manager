@@ -7,6 +7,7 @@ const staticTypes = new Map([
   ["/assets/dashboard.css", "text/css"],
   ["/assets/browserHost.js", "javascript"],
   ["/assets/dashboard.js", "javascript"],
+  ["/assets/dashboard-manifest.json", "application/json"],
   ["/assets/codex.svg", "image/svg+xml"],
   ["/assets/icon-192.png", "image/png"],
   ["/assets/icon-512.png", "image/png"],
@@ -18,7 +19,8 @@ const staticTypes = new Map([
 const warmPaths = [...staticTypes.keys()].map((path) =>
   path === "/offline.html" || path === '/offline-dashboard.html' ? path : `${path}?v=${encodeURIComponent(version)}`
 );
-const requiredShell = ['/offline-dashboard.html', '/assets/shared.css', '/assets/dashboard.css', '/assets/browserHost.js', '/assets/dashboard.js'];
+const requiredShell = ['/offline-dashboard.html', '/assets/shared.css', '/assets/dashboard.css', '/assets/browserHost.js', '/assets/dashboard.js', '/assets/dashboard-manifest.json'];
+const chunkPath = /^\/assets\/chunks\/[A-Za-z0-9_-]+\.js$/;
 
 function isCacheable(response, expectedType) {
   if (!response || !response.ok || response.redirected || response.type === "opaque") return false;
@@ -53,6 +55,27 @@ self.addEventListener("install", (event) => {
       if (!expectedType) return;
       await fetchAndCache(new Request(path, { credentials: "same-origin", cache: "reload" }), expectedType);
     }));
+    const manifestResponse = await caches.match('/assets/dashboard-manifest.json', { cacheName, ignoreSearch: true });
+    if (!manifestResponse) throw new Error('Offline shell is incomplete: module manifest is unavailable. The previous worker was kept.');
+    const manifest = await manifestResponse.json();
+    const core = new Set(), visited = new Set();
+    const visit = key => {
+      if (visited.has(key)) return;
+      if (visited.size >= 128 || !manifest[key]) throw new Error('Offline module manifest is invalid.');
+      visited.add(key);
+      const module = manifest[key];
+      if (!module.isEntry) {
+        const path = '/assets/' + module.file;
+        if (!chunkPath.test(path)) throw new Error('Offline module path is invalid.');
+        core.add(path);
+      }
+      for (const dependency of module.imports || []) visit(dependency);
+    };
+    const entries = Object.entries(manifest).filter(([, module]) => module.isEntry);
+    if (entries.length !== 1) throw new Error('Offline module manifest is incomplete.');
+    for (const [key] of entries) visit(key);
+    await Promise.all([...core].map(path => fetchAndCache(new Request(path, { credentials: 'same-origin', cache: 'reload' }), 'javascript')));
+    for (const path of core) if (!await caches.match(path, { cacheName })) throw new Error('Offline module is unavailable. The previous worker was kept.');
     const shell = await Promise.all(requiredShell.map(path => caches.match(path, { cacheName, ignoreSearch: true })));
     if (shell.some(response => !response)) throw new Error('Offline shell is incomplete. The previous worker was kept.');
     await self.skipWaiting();
@@ -92,7 +115,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  const expectedType = staticTypes.get(url.pathname);
+  const expectedType = staticTypes.get(url.pathname) || (chunkPath.test(url.pathname) ? 'javascript' : undefined);
   if (!expectedType) return;
   // A controlling older worker must not substitute its assets for a newer page.
   if (url.searchParams.has('v') && url.searchParams.get('v') !== version) return;

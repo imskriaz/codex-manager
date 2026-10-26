@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.7-pre.2
+
+- Run native database health checks in bounded read-only workers; preserve partial results, cancel timed-out work, and include all versioned databases, reusable pages, WAL and shared-memory bytes in Storage Management.
+- Merge queued account backups, skip unchanged authenticated ciphertext, retain failed saves for bounded retry, and protect password changes from stale writes. Move compression off the extension thread.
+- Refresh active session status with targeted checks and use file notifications plus a slower idle inventory fallback. Keep fresh native checks before session mutations and automation.
+- Load editor, language and terminal modules when their panels open. Preserve browser, VS Code, shared-page and offline loading, with bounded loading errors and retry feedback.
+
 ## 1.5.6
 
 - Require official runtime activity for recovery decisions. A retained writer lock or recent interrupted transcript can no longer consume saved recovery as an already running turn.

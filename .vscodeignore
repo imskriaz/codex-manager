@@ -51,6 +51,8 @@ node_modules/node-addon-api/**
 !node_modules/node-addon-api/LICENSE.md
 
 tools/benchmark-sqlite.mjs
+tools/workspace-dashboard-assets.mjs
+tools/verify-dashboard-modules.mjs
 tools/check-*.mjs
 tools/capture-docs-ui.mjs
 RELEASE-1.4.3-PENDING.md

@@ -1,3 +1,4 @@
+import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -30,11 +31,7 @@ try {
   for (const width of [1440, 390]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width === 390, serviceWorkers: "block" });
     const page = await context.newPage();
-    if (process.argv.includes("--workspace-assets")) {
-      for (const [asset, file, contentType] of [["browserHost.js", "media/webview/browserHost.js", "text/javascript"], ["dashboard.js", "media/webview/dashboard/dashboard.js", "text/javascript"], ["dashboard.css", "media/webview/quotaSummary.css", "text/css"]]) {
-        await page.route(`**/assets/${asset}*`, route => route.fulfill({ contentType, path: path.resolve(file) }));
-      }
-    }
+    if (process.argv.includes("--workspace-assets")) await useWorkspaceDashboardAssets(page, origin);
     page.setDefaultTimeout(30_000);
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));

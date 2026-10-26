@@ -24,6 +24,7 @@ async function checkWorkerUpgrade(browser) {
     if (failShell && url.pathname === '/assets/dashboard.js' && url.searchParams.get('v') === 'second') {
       failedAssets++; response.statusCode = 503; response.end('Unavailable'); return;
     }
+    if (url.pathname === '/assets/dashboard-manifest.json') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ main: { isEntry: true, file: 'dashboard.js' } })); return; }
     const type = url.pathname.endsWith('.css') ? 'text/css' : url.pathname.endsWith('.js') ? 'text/javascript'
       : url.pathname.endsWith('.png') ? 'image/png' : url.pathname.endsWith('.svg') ? 'image/svg+xml'
         : url.pathname.endsWith('.webmanifest') ? 'application/manifest+json' : 'text/html';

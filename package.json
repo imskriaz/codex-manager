@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.5.6",
+  "version": "1.5.7-pre.2",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -382,7 +382,7 @@
   },
   "scripts": {
     "vscode:uninstall": "node ./tools/uninstall.js",
-    "build:webview": "vite build --config vite.webview.config.mts",
+    "build:webview": "vite build --config vite.webview.config.mts && node tools/verify-dashboard-modules.mjs",
     "typecheck:webview": "tsc --noEmit -p tsconfig.webview.json",
     "watch:webview": "vite build --watch --config vite.webview.config.mts",
     "compile": "npm run typecheck:webview && npm run build:webview && tsc -p ./",

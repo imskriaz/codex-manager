@@ -11,6 +11,7 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { normalizeNativePath } from "../utils/nativePaths";
 import { publishDashboardRealtime } from './dashboardRealtime';
 import { inspectCodexUi } from "./codexUiRecovery";
+import { inspectNativeStorage } from "./codexStorageInspection";
 
 type Item = { id: string; sessionId?: string; title: string; projectPath?: string; detail?: string; goalOnly?: boolean; snapshot?: { file: string; size: number; mtimeMs: number } };
 type Plan = { preview: MaintenancePreview; home: string; items: Item[]; job?: string; jobRequest?: string };
@@ -21,10 +22,12 @@ const preparing = new Map<string, Promise<MaintenancePreview>>();
 export async function inspectMaintenanceStorage(value: unknown = "storage"): Promise<MaintenanceReport> {
   if (!CODEX_INSPECTIONS.some(tool => tool.id === value)) throw new Error("Choose a Codex inspection tool.");
   if (value === "startup") return waitWithin(inspectCodexUi(), 15_000, "Codex UI inspection did not finish. No data was changed; retry after this PC responds.");
-  return waitWithin(inspectCodexStorage(value as CodexInspection), 15_000, "Codex storage did not respond. No data was changed; retry when it is available.");
+  const controller = new AbortController();
+  try { return await waitWithin(inspectCodexStorage(value as CodexInspection, controller.signal), 15_000, "Codex storage did not respond. No data was changed; retry when it is available."); }
+  finally { controller.abort(); }
 }
 
-async function inspectCodexStorage(kind: CodexInspection): Promise<MaintenanceReport> {
+async function inspectCodexStorage(kind: CodexInspection, signal: AbortSignal): Promise<MaintenanceReport> {
   const home = resolveCodexHome();
   let sessions: Awaited<ReturnType<typeof readCodexSessionMaintenanceCandidates>> = [], inventoryUnavailable = false;
   try { sessions = await readCodexSessionMaintenanceCandidates(home); }
@@ -32,12 +35,14 @@ async function inspectCodexStorage(kind: CodexInspection): Promise<MaintenanceRe
     if (kind !== "storage") throw new Error("Codex history could not be read. Run Check Codex storage before retrying; no data was changed.", { cause: error });
     inventoryUnavailable = true;
   }
+  signal.throwIfAborted();
   const items: MaintenanceReport["items"] = [];
   if (kind === "projects") {
     const projects = new Map<string, number>();
     for (const session of sessions) if (session.projectPath) projects.set(session.projectPath, (projects.get(session.projectPath) ?? 0) + 1);
     let missing = 0, unavailable = 0;
     await runWithConcurrencyLimit([...projects], 8, async ([folder, count]) => {
+      signal.throwIfAborted();
       if (!path.isAbsolute(folder)) { unavailable++; if (items.length < 50) items.push({ label: folder, value: `${count} chats · Invalid project path` }); return; }
       try {
         if (!(await fs.stat(folder)).isDirectory()) { missing++; if (items.length < 50) items.push({ label: folder, value: `${count} chats · Not a folder` }); }
@@ -55,6 +60,7 @@ async function inspectCodexStorage(kind: CodexInspection): Promise<MaintenanceRe
     let unavailable = 0;
     const root = normalizeNativePath(await fs.realpath(home));
     await runWithConcurrencyLimit(sessions, 8, async session => {
+      signal.throwIfAborted();
       if (!session.transcriptPath) { unavailable++; return; }
       try {
         const file = normalizeNativePath(await fs.realpath(session.transcriptPath)), relative = path.relative(root, file);
@@ -66,25 +72,14 @@ async function inspectCodexStorage(kind: CodexInspection): Promise<MaintenanceRe
     sizes.sort((a, b) => b.size - a.size);
     return { title: "Largest conversations", items: [{ label: "Conversation files checked", value: String(sizes.length) }, { label: "Unavailable files", value: String(unavailable) }, ...sizes.slice(0, 20).map(item => ({ label: item.title, value: formatBytes(item.size) }))] };
   }
-  const files = (await fs.readdir(home)).filter(name => /^(?:state|goals|thread_history|logs)_\d+\.sqlite$/.test(name)).sort();
-  const moduleName = "node:sqlite";
-  type NativeDatabase = { prepare(sql: string): { get(): Record<string, unknown> | undefined }; close(): void };
-  const { DatabaseSync } = await import(moduleName) as { DatabaseSync: new (file: string, options: { readOnly: boolean }) => NativeDatabase };
-  let totalBytes = 0;
-  for (const file of files) {
-    const stat = await fs.lstat(path.join(home, file));
-    totalBytes += stat.size;
-    if (!stat.isFile() || stat.isSymbolicLink()) { items.push({ label: file, value: "Skipped: not a regular database" }); continue; }
-    let db: NativeDatabase | undefined;
-    try {
-      db = new DatabaseSync(path.join(home, file), { readOnly: true });
-      const check = db.prepare("PRAGMA quick_check(1)").get()?.["quick_check"];
-      items.push({ label: file, value: `${check === "ok" ? "Healthy" : "Needs recovery"} · ${formatBytes(stat.size)}` });
-    } catch { items.push({ label: file, value: "Unavailable · No changes made" }); }
-    finally { db?.close(); }
-  }
-  const reportItems = [...(inventoryUnavailable ? [{ label: "Conversation inventory", value: "Unavailable · Review database checks" }] : [{ label: "Indexed conversations", value: String(sessions.length) }, { label: "Indexed archives", value: String(sessions.filter(session => session.archived).length) }]), ...(files.length ? [{ label: "Native database files", value: `${files.length} · ${formatBytes(totalBytes)} total` }] : []), ...items, ...(!files.length ? [{ label: "Native databases", value: "Not created yet" }] : [])];
-  return { title: "Codex storage check", items: reportItems, storage: await summarizeCodexStorage(home, sessions, totalBytes) };
+  const database = await inspectNativeStorage(home, signal);
+  for (const file of database.databases) items.push({ label: file.name, value: `${file.status} · ${formatBytes(file.bytes)} allocated · ${formatBytes(file.reusableBytes)} reusable · ${formatBytes(file.walBytes)} WAL${file.error ? ` · ${file.error}` : ""}` });
+  const reportItems = [...(inventoryUnavailable ? [{ label: "Conversation inventory", value: "Unavailable · Review database checks" }] : [{ label: "Indexed conversations", value: String(sessions.length) }, { label: "Indexed archives", value: String(sessions.filter(session => session.archived).length) }]), { label: "Native database files", value: `${database.databases.length} · ${formatBytes(database.totalBytes)} on disk` }, ...items];
+  if (!database.complete) reportItems.unshift({ label: "Incomplete inspection", value: "Some files were unavailable or the inspection limit was reached. Available results are shown; retry to check remaining storage. No data was changed." });
+  if (!database.databases.length && database.complete) reportItems.push({ label: "Native databases", value: "Not created yet" });
+  const storage = await summarizeCodexStorage(home, sessions, database.totalBytes, signal);
+  storage.database = { allocatedBytes: database.allocatedBytes, liveBytes: database.liveBytes, reusableBytes: database.reusableBytes, walBytes: database.walBytes, sharedMemoryBytes: database.sharedMemoryBytes, complete: database.complete };
+  return { title: "Codex storage check", items: reportItems, storage };
 }
 
 function formatBytes(size: number): string {
@@ -92,9 +87,10 @@ function formatBytes(size: number): string {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(size / 1024 ** unit)} ${["B", "KB", "MB", "GB"][unit]}`;
 }
 
-async function summarizeCodexStorage(home: string, sessions: Awaited<ReturnType<typeof readCodexSessionMaintenanceCandidates>>, databaseBytes: number): Promise<MaintenanceStorageSummary> {
+async function summarizeCodexStorage(home: string, sessions: Awaited<ReturnType<typeof readCodexSessionMaintenanceCandidates>>, databaseBytes: number, signal: AbortSignal): Promise<MaintenanceStorageSummary> {
   const root = path.resolve(home), buckets = new Map<string, number>(), projects = new Map<string, number>(), seen = new Set<string>();
   const add = async (file: string | undefined, bucket: string, project?: string): Promise<void> => {
+    signal.throwIfAborted();
     if (!file) return;
     try {
       const resolved = await fs.realpath(file), relative = path.relative(root, resolved);
@@ -107,9 +103,9 @@ async function summarizeCodexStorage(home: string, sessions: Awaited<ReturnType<
     } catch { /* Missing or locked files do not hide the rest of the summary. */ }
   };
   buckets.set("Databases", databaseBytes);
-  for (const session of sessions) await add(session.transcriptPath, session.archived ? "Archives" : "Conversations", session.projectPath);
+  await runWithConcurrencyLimit(sessions, 8, session => add(session.transcriptPath, session.archived ? "Archives" : "Conversations", session.projectPath));
   try {
-    for (const name of await fs.readdir(path.join(home, "shell_snapshots"))) await add(path.join(home, "shell_snapshots", name), "Shell snapshots");
+    await runWithConcurrencyLimit((await fs.readdir(path.join(home, "shell_snapshots"))).slice(0, 10_000), 8, name => add(path.join(home, "shell_snapshots", name), "Shell snapshots"));
   } catch { /* Missing snapshots are normal. */ }
   const bucketRows = [...buckets.entries()].filter(([, bytes]) => bytes > 0).sort((a, b) => b[1] - a[1]);
   const projectRows = [...projects.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);

@@ -33,6 +33,82 @@ import { configureSqliteStateStore, listSqliteStateFiles, readSqliteStateFile, S
 const PASSPHRASE = "correct horse battery staple";
 
 describe("encrypted account sync", () => {
+  it.each([false, true])("coalesces backup bursts, skips authenticated unchanged files, and retries changed/missing/rotated storage (SQLite: %s)", async sqlite => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-vault-performance-"));
+    const store = sqlite ? await SqliteStateStore.open(path.join(directory, "manager.sqlite")) : undefined;
+    configureSqliteStateStore(store);
+    vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({ get: (key: string, fallback?: unknown) => key === "encryptedSyncEnabled" ? false : fallback } as never);
+    const secrets = new Map([["codexManager.encryptedSync.passphrase", PASSPHRASE]]);
+    const state = new Map<string, unknown>();
+    const context = {
+      subscriptions: [],
+      globalState: { get: (key: string, fallback?: unknown) => state.get(key) ?? fallback, update: async (key: string, value: unknown) => { state.set(key, value); }, setKeysForSync: vi.fn() },
+      secrets: { get: async (key: string) => secrets.get(key) ?? "device-one", store: async (key: string, value: string) => { secrets.set(key, value); }, delete: async (key: string) => { secrets.delete(key); } }
+    } as unknown as vscode.ExtensionContext;
+    let entries = [createEntry("one", 100), createEntry("two", 200)];
+    const repo = {
+      invalidateCachedIndex: vi.fn(), listAccounts: vi.fn(async () => entries.map(entry => ({ id: entry.id, email: entry.email }))),
+      exportSharedAccounts: vi.fn(async (ids: string[]) => entries.filter(entry => ids.includes(entry.id!))), flush: vi.fn()
+    };
+    const legacy = path.join(directory, "encrypted-accounts-vault.json");
+    const file = path.join(directory, "accounts", "one@example.com.json");
+    const read = () => sqlite ? Promise.resolve(readSqliteStateFile(file)) : fs.readFile(file, "utf8");
+    const drain = (manager: EncryptedSyncManager) => (manager as unknown as { durableVaultWriteChain: Promise<void> }).durableVaultWriteChain;
+    let manager = new EncryptedSyncManager(context, repo as never, legacy);
+    try {
+      await manager.start(); await drain(manager);
+      const original = await read();
+      manager.dispose(); manager = new EncryptedSyncManager(context, repo as never, legacy);
+      await manager.start(); await drain(manager);
+      expect(await read()).toBe(original);
+      const exports = repo.exportSharedAccounts.mock.calls.length;
+      for (let index = 0; index < 20; index++) manager.onVaultMutation("credentials-changed", ["one"]);
+      for (let index = 0; index < 520; index++) manager.onVaultMutation("credentials-changed", [`queued-${index}`]);
+      await drain(manager);
+      expect(repo.exportSharedAccounts).toHaveBeenCalledTimes(exports + 1);
+      expect(await read()).toBe(original);
+
+      repo.exportSharedAccounts.mockResolvedValueOnce([]);
+      manager.onVaultMutation("sync-configured"); await drain(manager);
+      expect(await read()).toBe(original);
+      manager.onVaultMutation("credentials-changed", ["one"]); await drain(manager);
+      if (!sqlite) {
+        const temporary = file + ".tmp-newer-interrupted";
+        await fs.writeFile(temporary, await encryptSyncPayload(createPayload([createEntry("one", 900, "superseded-update")]), PASSPHRASE));
+        await fs.utimes(file, new Date(1), new Date(1));
+        manager.onVaultMutation("credentials-changed", ["one"]); await drain(manager);
+        expect((await fs.stat(file)).mtimeMs).toBeGreaterThanOrEqual((await fs.stat(temporary)).mtimeMs);
+        expect((await decryptSyncPayload(await read(), PASSPHRASE)).accounts[0]?.tokens?.refresh_token).toBe("refresh");
+      }
+
+      entries = [createEntry("one", 300, "new-refresh"), entries[1]!];
+      const beforeFailure = repo.exportSharedAccounts.mock.calls.length;
+      repo.exportSharedAccounts.mockRejectedValueOnce(Object.assign(new Error("storage full"), { code: "ENOSPC" }));
+      manager.onVaultMutation("credentials-changed", ["one"]); await drain(manager);
+      await vi.waitFor(() => expect(repo.exportSharedAccounts.mock.calls.length).toBeGreaterThan(beforeFailure + 1), { timeout: 5_000 });
+      await drain(manager);
+      expect((await decryptSyncPayload(await read(), PASSPHRASE)).accounts[0]?.tokens?.refresh_token).toBe("new-refresh");
+
+      if (sqlite) { const { deleteSqliteStateFile } = await import("../src/storage/sqliteState"); deleteSqliteStateFile(file); }
+      else await fs.unlink(file);
+      manager.onVaultMutation("credentials-changed", ["one"]); await drain(manager);
+      expect((await decryptSyncPayload(await read(), PASSPHRASE)).accounts[0]?.tokens?.refresh_token).toBe("new-refresh");
+      const newPassword = "new confirmed shared password";
+      let release!: () => void;
+      const blocked = new Promise<void>(resolve => { release = resolve; });
+      repo.exportSharedAccounts.mockImplementationOnce(async ids => { await blocked; return entries.filter(entry => ids.includes(entry.id!)); });
+      const beforeRotation = repo.exportSharedAccounts.mock.calls.length;
+      entries = [createEntry("one", 400, "rotated-refresh"), entries[1]!];
+      manager.onVaultMutation("credentials-changed", ["one"]);
+      await vi.waitFor(() => expect(repo.exportSharedAccounts.mock.calls.length).toBeGreaterThan(beforeRotation));
+      expect(await manager.configure({ passphrase: newPassword, confirmation: newPassword, currentPassphrase: PASSPHRASE, deferSync: true })).toBe(true);
+      release(); await drain(manager);
+      expect(secrets.get("codexManager.encryptedSync.passphrase")).toBe(newPassword);
+      await expect(decryptSyncPayload(await read(), newPassword)).resolves.toBeDefined();
+      await expect(decryptSyncPayload(await read(), PASSPHRASE)).rejects.toThrow();
+    } finally { manager.dispose(); configureSqliteStateStore(undefined); store?.close(); await removeTestDirectory(directory); }
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();

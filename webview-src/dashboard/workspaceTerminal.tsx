@@ -1,3 +1,4 @@
+import { ToolIcon } from "./icons";
 import { WorkspaceMenu } from "./workspaceMenu";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { Terminal } from "@xterm/xterm";
@@ -17,7 +18,7 @@ import { WorkspaceDialog as ModalShell } from "./workspaceDialog";
 
 let clientId = "";
 
-export function WorkspaceTerminal(props: {
+export default function WorkspaceTerminal(props: {
   projectPath?: string;
   targetDeviceId?: string;
   connected: boolean;
@@ -889,57 +890,5 @@ function TerminalScreen(props: {
         </ModalShell>
       ) : null}
     </div>
-  );
-}
-
-export function ToolIcon(props: {
-  kind:
-    | "plus"
-    | "split"
-    | "refresh"
-    | "more"
-    | "close"
-    | "terminal"
-    | "search"
-    | "copy"
-    | "clear"
-    | "branch"
-    | "github"
-    | "check"
-    | "minus"
-    | "external";
-}) {
-  const paths = {
-    plus: "M12 5v14M5 12h14",
-    split: "M4 4h16v16H4zM12 4v16",
-    refresh: "M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-2l2 2M4 17l2 2a7 7 0 0 0 12-2",
-    more: "M12 5h.01M12 12h.01M12 19h.01",
-    close: "M6 6l12 12M6 18L18 6",
-    terminal: "M4 5h16v14H4zM7 9l3 3-3 3M13 15h4",
-    search: "M16 16l5 5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
-    copy: "M8 8h12v12H8zM16 8V4H4v12h4",
-    clear: "M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7",
-    branch:
-      "M6 7v10M6 11h7a5 5 0 0 0 5-5M8 4a2 2 0 1 1-4 0 2 2 0 0 1 4 0M8 20a2 2 0 1 1-4 0 2 2 0 0 1 4 0M20 4a2 2 0 1 1-4 0 2 2 0 0 1 4 0",
-    github:
-      "M9 19c-4 1-4-2-6-2M15 22v-4c0-1 .1-1.5-.5-2 4-.5 7-2 7-6a5 5 0 0 0-1.5-3.5c.3-1 .3-2-.2-3-2 0-3 1-3.8 1.5a13 13 0 0 0-7 0C8 4 7 3 5 3c-.5 1-.5 2-.2 3A5 5 0 0 0 3.5 10c0 4 3 5.5 7 6-.5.5-.5 1-.5 2v4",
-    check: "M4 12l5 5L20 6",
-    minus: "M5 12h14",
-    external: "M14 3h7v7M10 14L21 3M10 3H3v18h18v-7"
-  };
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d={paths[props.kind]} />
-    </svg>
   );
 }

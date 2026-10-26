@@ -13,16 +13,23 @@ export default defineConfig({
     outDir: resolve(rootDir, "media", "webview", "dashboard"),
     emptyOutDir: true,
     sourcemap: false,
+    manifest: "dashboard-manifest.json",
     target: "es2020",
-    lib: {
-      entry: resolve(rootDir, "webview-src", "dashboard", "main.tsx"),
-      name: "CodexToolsDashboard",
-      formats: ["iife"],
-      fileName: () => "dashboard.js"
-    },
     rollupOptions: {
+      input: resolve(rootDir, "webview-src", "dashboard", "main.tsx"),
       output: {
-        inlineDynamicImports: true
+        entryFileNames: "dashboard.js",
+        inlineDynamicImports: false,
+        chunkFileNames: "chunks/[name]-[hash].js",
+        manualChunks(id) {
+          const file = id.replace(/\\/g, "/");
+          if (file.includes("node_modules")) {
+            if (/\/(?:@codemirror|@lezer|codemirror)\//.test(file)) return "editor-vendor";
+            if (file.includes("/@xterm/")) return "terminal-vendor";
+            return "vendor";
+          }
+          if (file.includes("vite/preload-helper") || (file.startsWith(rootDir.replace(/\\/g, "/")) && !/\/(?:main|workspaceCodeEditor|workspaceTerminal)\.tsx$/.test(file))) return "dashboard-core";
+        }
       }
     }
   }

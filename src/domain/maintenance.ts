@@ -16,6 +16,7 @@ export type MaintenancePreview = { token: string; tool: MaintenanceTool; count: 
 export type MaintenancePage = { token: string; query: string; offset: number; total: number; items: Array<{ id: string; title: string; detail?: string }> };
 export type MaintenanceStorageSummary = {
   totalBytes: number;
+  database?: { allocatedBytes: number; liveBytes: number; reusableBytes: number; walBytes: number; sharedMemoryBytes: number; complete: boolean };
   buckets: Array<{ label: string; bytes: number; detail: string }>;
   projects: Array<{ label: string; bytes: number; detail: string }>;
 };

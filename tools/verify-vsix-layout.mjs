@@ -15,6 +15,10 @@ if (!existsSync(vsixPath)) {
 }
 
 const listing = listZipEntries(readFileSync(vsixPath)).join("\n");
+for (const file of ["extension/tools/inspect-codex-storage.cjs", "extension/media/webview/dashboard/dashboard-manifest.json"])
+  if (!listing.split("\n").includes(file)) throw new Error(`VSIX runtime asset is missing: ${file}`);
+for (const panel of ["workspaceCodeEditor", "workspaceTerminal"])
+  if (!listing.split("\n").some(name => name.startsWith(`extension/media/webview/dashboard/chunks/${panel}-`) && name.endsWith(".js"))) throw new Error(`VSIX lazy panel is missing: ${panel}`);
 if (dependencies.includes('node-pty')) {
   const paths = new Set(listing.split('\n'));
   const binaries = ['win32-x64/conpty.node','win32-x64/conpty_console_list.node','win32-x64/conpty/conpty.dll','win32-x64/conpty/OpenConsole.exe','win32-arm64/conpty.node','win32-arm64/conpty_console_list.node','win32-arm64/conpty/conpty.dll','win32-arm64/conpty/OpenConsole.exe','darwin-x64/pty.node','darwin-x64/spawn-helper','darwin-arm64/pty.node','darwin-arm64/spawn-helper'];

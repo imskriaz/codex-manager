@@ -1,3 +1,4 @@
+import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 import { checkListsApiUi, checkFlyoutUi } from './check-lists-api-ui.mjs';
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
@@ -222,7 +223,7 @@ const mockHost = `(() => {
           if(window.__maintenanceRestarted) error='This cleanup is no longer available in this window.';
           else if(job) { if(!window.__keepMaintenanceRunning||message.action==='cancelMaintenance') {job.status=message.action==='cancelMaintenance'?'cancelled':'completed';job.processed=job.total;job.cleared=job.total;}job.revision++;payload={maintenanceJob:{...job}}; } else error='This cleanup is no longer available in this window.';
         }
-        else if(message.action === 'inspectMaintenanceStorage') payload={maintenanceReport:{title:'Codex report',items:[{label:'Recorded projects checked',value:'12'},{label:'Missing projects',value:'1'},{label:'state_5.sqlite',value:'Healthy · 2 MB'}]}};
+        else if(message.action === 'inspectMaintenanceStorage') payload={maintenanceReport:{title:'Codex report',items:[{label:'Recorded projects checked',value:'12'},{label:'Missing projects',value:'1'},{label:'state_5.sqlite',value:'Healthy · 2 MB'},...(window.__storagePartial?[{label:'Incomplete inspection',value:'Some files were unavailable. No data was changed.'}]:[])],...(message.payload?.maintenanceInspection==='storage'?{storage:{totalBytes:4294656,buckets:[{label:'Databases',bytes:4292608,detail:'4.1 MB'},{label:'Conversations',bytes:2048,detail:'2 KB'}],projects:[],database:{allocatedBytes:4194304,liveBytes:1048576,reusableBytes:3145728,walBytes:65536,sharedMemoryBytes:32768,complete:!window.__storagePartial}}}:{})}};
         else if(message.action === 'reopenCodexUi') {if(window.__failCodexReopen) error='Codex could not open in this host.';else payload={maintenanceReport:{title:'Codex UI recovery',items:[{label:'Fresh Codex panel',value:'Open request completed. Check that the new panel finishes loading.'}]}};}
         else if(message.action === 'getUsageGraph') {
           const query=message.payload.usageGraph, date=new Date(Math.floor(Date.now()/86400000)*86400000-86400000).toISOString().slice(0,10);
@@ -390,6 +391,12 @@ try {
       Object.defineProperty(window, "indexedDB", { configurable: true, value: { open() { throw new DOMException("Browser storage unavailable", "SecurityError"); } } });
     });
     const page = await context.newPage();
+    const fixtureGoto = page.goto.bind(page);
+    page.goto = async (...args) => {
+      const response = await fixtureGoto(...args);
+      assert.equal(await page.evaluate(() => Array.isArray(window.__uiActions)), true, 'The intercepted fixture host must be installed before UI actions');
+      return response;
+    };
     if(process.argv.includes('--systems')) await page.addInitScript(()=>localStorage.setItem('codexManager.workspaceLayout.v2',JSON.stringify({sessionView:'projects'})));
     if(process.argv.includes('--history')) await page.addInitScript(()=>{window.__historyFixture=true;});
     if(process.argv.includes('--usage')) await page.addInitScript(()=>{window.__usageFixture=true;});
@@ -408,13 +415,11 @@ try {
       if (shareResponse) return route.fulfill(shareResponse);
       return route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/create") ? { token: "a".repeat(64) } : { ok: true } });
     });
+    await useWorkspaceDashboardAssets(page, origin);
     await page.route("**/assets/browserHost.js*", (route) => route.fulfill({ contentType: "text/javascript", body: mockHost }));
-    for (const [url, file, contentType] of [["dashboard.js", "media/webview/dashboard/dashboard.js", "text/javascript"], ["dashboard.css", "media/webview/quotaSummary.css", "text/css"], ["shared.css", "media/webview/shared.css", "text/css"]]) {
-      await page.route(`**/assets/${url}*`, (route) => route.fulfill({ contentType, path: path.resolve(file) }));
-    }
     await page.route(`${origin}/workspace/*`, async route => {
       const response = await route.fetch({ url: `${origin}/workspace` });
-      await route.fulfill({ response });
+      await route.fulfill({ response, body: (await response.text()).replace(/<script(?=\s+src="\/assets\/dashboard\.js)/g, '<script type="module"') });
     });
     if(process.argv.includes('--session-badge')){
       await page.goto(origin+'/');

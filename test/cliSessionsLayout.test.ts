@@ -403,6 +403,7 @@ describe("sessions sidebar layout", () => {
 
   it("moves Files, Terminal, and Reviews into the tabbed right workbench", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    const editor = readFileSync("webview-src/dashboard/workspaceCodeEditor.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
 
     expect(source).not.toContain('class="cli-tool-tabs"');
@@ -413,7 +414,7 @@ describe("sessions sidebar layout", () => {
     expect(source).toContain('class="cli-context-tab-scroll"');
     expect(source).toContain('aria-selected={props.activeTab === tab}');
     expect(source).toContain('title="Cut selected code to the clipboard"');
-    expect(source).toContain('navigator.clipboard.writeText(view.state.sliceDoc(selection.from, selection.to))');
+    expect(editor).toContain('navigator.clipboard.writeText(view.state.sliceDoc(selection.from, selection.to))');
     expect(source).toContain("onTab={selectContextTab}");
     expect(source).toContain("if (filePath) props.onReadFile(filePath, toolProjectPath)");
     expect(source).toContain("target.scrollLeft += event.deltaY");
@@ -431,7 +432,7 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("flex: 0 0 auto; min-width: 0; border-radius: 6px;");
     expect(css).toContain(".cli-context-tab-scroll::-webkit-scrollbar");
     expect(source).toContain("WorkspaceCodeEditor");
-    expect(source).toContain("EditorView.lineWrapping");
+    expect(editor).toContain("EditorView.lineWrapping");
     expect(source).toContain("parseUnifiedDiff");
     expect(source).toContain("cli-diff-comparator");
     expect(source).toContain("cli-file-image-preview");
