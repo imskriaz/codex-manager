@@ -141,5 +141,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(tools).not.toContain('"Goal manager"');
     expect(queue).toContain("Auto Resume");
     expect(queue).toContain("Queue and Auto Resume options");
+    expect(queue).toContain("is-auto-resume-badge");
+    expect(queue).toContain("is-queue-badge");
   });
 });

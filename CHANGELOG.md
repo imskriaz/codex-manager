@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.8-pre.2
+
+- Show Auto Resume as a play badge alongside the Queue control when it is enabled, while keeping queue priority visible for queued sessions.
+
 ## 1.5.8
 
 - Show the per-session Auto Resume toggle for interrupted work in both session lists; retain explicit queue priorities and unconfirmed-start review controls.
