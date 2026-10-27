@@ -129,4 +129,17 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(feedback).toContain('"listCodexCliSessions"');
     expect(feedback).toContain("done.`");
   });
+
+  it("keeps maintenance actions grouped behind separate confirmation and result dialogs", () => {
+    const tools = readFileSync("webview-src/dashboard/maintenanceTools.tsx", "utf8");
+    const queue = readFileSync("webview-src/dashboard/sessionQueueControl.tsx", "utf8");
+    expect(tools).toContain("Sessions Management");
+    expect(tools).toContain("Codex Manager");
+    expect(tools).toContain("About Codex");
+    expect(tools).toContain('className="maintenance-confirm-modal"');
+    expect(tools).toContain('className="maintenance-result-modal"');
+    expect(tools).not.toContain('"Goal manager"');
+    expect(queue).toContain("Auto Resume");
+    expect(queue).toContain("Queue and Auto Resume options");
+  });
 });

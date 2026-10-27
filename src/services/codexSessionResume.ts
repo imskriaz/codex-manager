@@ -80,15 +80,15 @@ const newSessionFailures = new Map<string, Error>();
 const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; stop?: Promise<boolean> }>();
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean> }>();
 const nativeTurnObservers = new Map<string, Promise<void>>();
-const maintenanceConnection = new AsyncLocalStorage<{ home: string; ids: Set<string>; rpc?: Promise<CodexAppServerRpc> }>();
+const maintenanceConnection = new AsyncLocalStorage<{ home: string; ids: Set<string>; rpc?: Promise<CodexAppServerRpc>; rpcs: Map<string, Promise<CodexAppServerRpc>> }>();
 
 /** Reuse one native process for a bounded cleanup job, never for session turns. */
 export async function withCodexSessionMaintenance<T>(ids: string[], task: () => Promise<T>): Promise<T> {
   ids.forEach(validateSessionId);
-  const context = { home: resolveCodexHome(), ids: new Set(ids), rpc: undefined as Promise<CodexAppServerRpc> | undefined };
+  const context = { home: resolveCodexHome(), ids: new Set(ids), rpc: undefined as Promise<CodexAppServerRpc> | undefined, rpcs: new Map<string, Promise<CodexAppServerRpc>>() };
   return maintenanceConnection.run(context, async () => {
     try { return await task(); }
-    finally { if (context.rpc) await context.rpc.then(rpc => rpc.close(), () => undefined); }
+    finally { await Promise.all([...context.rpcs.values()].map(rpc => rpc.then(value => value.close(), () => undefined))); if (context.rpc) await context.rpc.then(rpc => rpc.close(), () => undefined); }
   });
 }
 
@@ -2676,13 +2676,17 @@ async function runCodexAppServerRequest<T = unknown>(
   if (maintenance && ["thread/delete", "thread/unarchive", "thread/goal/clear"].includes(method)) {
     const id = (params as { threadId?: string } | null)?.threadId;
     if (!id || !maintenance.ids.has(id) || maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
-    maintenance.rpc ??= (async () => {
-      await assertUsableCliProjectPath(maintenance.home);
+    const cwd = await resolveRecordedSessionProject(id).catch(() => maintenance.home);
+    const rpcKey = path.resolve(cwd);
+    let rpcPromise = maintenance.rpcs.get(rpcKey);
+    if (!rpcPromise) rpcPromise = (async () => {
+      await assertUsableCliProjectPath(cwd);
       const executable = await resolveCodexCliExecutable();
       if (maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
-      return CodexAppServerRpc.open(executable, maintenance.home);
+      return CodexAppServerRpc.open(executable, cwd);
     })();
-    const rpc = await maintenance.rpc;
+    maintenance.rpcs.set(rpcKey, rpcPromise);
+    const rpc = await rpcPromise;
     if (maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
     return rpc.request<T>(method, params, timeoutMs);
   }
