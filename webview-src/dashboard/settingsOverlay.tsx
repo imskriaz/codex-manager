@@ -516,14 +516,7 @@ export function SettingsOverlay(props: {
                       sub={props.copy.autoResumeSub}
                       enabled={props.settings.autoResumeEnabled === true}
                       onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
-                    >
-                      {props.settings.autoResumeEnabled ? <SettingsToggleBlock
-                        title="Open VS Code"
-                        sub="Open conversation tabs and wait for Codex before resuming."
-                        enabled={props.settings.autoResumeOpenVsCode === true}
-                        onToggle={(enabled) => patchAndSend("autoResumeOpenVsCode", enabled)}
-                      /> : null}
-                    </SettingsToggleBlock>
+                    />
                     <SettingsToggleBlock
                       title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh quotas before switching"}
                       sub={

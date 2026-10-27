@@ -69,7 +69,7 @@ function synchronizeSqliteConfiguration(event?: vscode.ConfigurationChangeEvent)
   if (!store || !namespace) return;
   const config = vscode.workspace.getConfiguration("codexManager");
   store.transaction(() => {
-    for (const retired of ["codexSessionTransport", "webDashboardAlwaysOnlineEnabled"]) {
+    for (const retired of ["codexSessionTransport", "webDashboardAlwaysOnlineEnabled", "autoResumeOpenVsCode"]) {
       for (const scope of [namespace, `settings-native:${namespace}`, "settings-overrides:global", `settings-overrides:${namespace}`])
         store.set(scope, retired, undefined);
     }

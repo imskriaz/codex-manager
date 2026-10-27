@@ -28,7 +28,6 @@ export type DashboardSettingKey =
   | "autoSwitchWaitForSessionsEnabled"
   | "autoSwitchReloadWindowEnabled"
   | "autoResumeEnabled"
-  | "autoResumeOpenVsCode"
   | "crossWindowAccountModeEnabled"
   | "autoSwitchHourlyThreshold"
   | "autoSwitchWeeklyThreshold"
@@ -81,7 +80,6 @@ export interface DashboardSettings {
   autoSwitchReloadWindowEnabled: boolean;
   /** Restore local parent Codex conversation tabs after VS Code restarts. */
   autoResumeEnabled?: boolean;
-  autoResumeOpenVsCode?: boolean;
   /** Assign independent accounts and CODEX_HOME values to VS Code windows. */
   crossWindowAccountModeEnabled?: boolean;
   autoSwitchHourlyThreshold: number;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.8-pre.2
+
+- Open official VS Code conversation tabs directly for Auto Resume, removing the background-owner attempt and separate Open VS Code setting. Keep readiness checks, Pause/Stop protection and saved recovery on failure.
+- Report the overall recovery deadline accurately when it shortens a session wait.
+
 ## 1.5.8-pre.1
 
 - Replay confirmed account releases after a lost reply or restart so stale synchronized claims clear. Release previous claims before reserving the current account; failed cleanup retries without adding another reservation.

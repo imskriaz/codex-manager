@@ -423,6 +423,45 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response, body: (await response.text()).replace(/<script(?=\s+src="\/assets\/dashboard\.js)/g, '<script type="module"') });
     });
+    if (process.argv.includes('--auto-resume')) {
+      const openSettings = async () => {
+        if (width <= 760) {
+          await page.locator('.dashboard-mobile-actions > summary').click();
+          await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+        } else await page.locator('#settingsOpenButton').click();
+        await page.locator('#settings-tab-automation').click();
+      };
+      await page.goto(origin + '/');
+      await openSettings();
+      const resume = page.getByRole('button', { name: snapshot.copy.autoResumeTitle, exact: true });
+      assert.equal(await page.getByRole('button', { name: 'Open VS Code', exact: true }).count(), 0);
+      assert.equal(await resume.getAttribute('aria-pressed'), 'true');
+      await resume.focus();
+      await page.keyboard.press('Space');
+      await page.waitForFunction(() => window.__uiSettingResults.some(result => result.key === 'autoResumeEnabled' && result.value === false));
+      const saved = await page.evaluate(() => window.__uiSnapshot);
+      await page.route('**/assets/browserHost.js*', route => route.fulfill({ contentType: 'text/javascript', body: mockHost.replace(`const state = ${JSON.stringify(snapshot)};`, `const state = ${JSON.stringify(saved)};`) }));
+      await page.reload();
+      await openSettings();
+      assert.equal(await resume.getAttribute('aria-pressed'), 'false', 'Saved preference reloads');
+      if (width <= 760) await resume.tap(); else await resume.click();
+      await page.waitForFunction(() => window.__uiSettingResults.some(result => result.key === 'autoResumeEnabled' && result.value === true));
+      assert.equal(await resume.getAttribute('aria-pressed'), 'true');
+      const switching = page.getByRole('button', { name: snapshot.copy.autoSwitchTitle, exact: true });
+      await switching.click();
+      await resume.waitFor({ state: 'hidden' });
+      await switching.click();
+      await resume.waitFor({ state: 'visible' });
+      assert.equal(await resume.getAttribute('aria-pressed'), 'true', 'Parent preserves Auto Resume');
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'No horizontal overflow');
+      await resume.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(output, `auto-resume-${width}x${height}.png`) });
+      assert.deepEqual(errors, [], 'Automation browser errors');
+      assert.equal(await page.evaluate(() => window.__uiActions.some(action => action.key === 'autoResumeOpenVsCode')), false);
+      results.push({ width, height, checks: 'window-only Auto Resume, keyboard/touch, save/reload, parent visibility, overflow' });
+      await context.close();
+      continue;
+    }
     if(process.argv.includes('--session-badge')){
       await page.goto(origin+'/');
       const badge=page.locator('#cliSessionsButton .cli-server-status-badge');
@@ -2172,16 +2211,11 @@ try {
         const refreshHead = await refreshCard.locator(":scope > .settings-toggle-head").boundingBox();
         assert.ok(refreshBounds.height <= refreshHead.height + 24, "Quota refresh card has no stretched empty space");
         const resumeToggle = page.getByRole("button", { name: snapshot.copy.autoResumeTitle, exact: true });
-        const goalOnly = page.getByRole("button", { name: snapshot.copy.autoResumeGoalOnlyTitle, exact: true });
+        assert.equal(await page.getByRole("button", { name: "Open VS Code", exact: true }).count(), 0, "Window-only recovery has no separate window preference");
         await resumeToggle.click();
-        await goalOnly.waitFor({ state: "hidden" });
+        assert.equal(await resumeToggle.getAttribute("aria-pressed"), "false", "Auto Resume can be disabled");
         await resumeToggle.click();
-        await goalOnly.waitFor({ state: "visible" });
-        const previousGoalOnly = await goalOnly.getAttribute("aria-pressed");
-        await goalOnly.click();
-        assert.equal(await goalOnly.getAttribute("aria-pressed"), previousGoalOnly === "true" ? "false" : "true", "Goal-only preference can be changed");
-        await goalOnly.click();
-        assert.equal(await goalOnly.getAttribute("aria-pressed"), previousGoalOnly, "Goal-only preference can be restored");
+        assert.equal(await resumeToggle.getAttribute("aria-pressed"), "true", "Auto Resume can be restored");
         const settingResultsBeforeOff = await page.evaluate(() => window.__uiSettingResults.length);
         await switchToggle.click();
         await page.waitForFunction(before => window.__uiSettingResults.slice(before).some(result => result.key === "autoSwitchEnabled" && result.value === false), settingResultsBeforeOff);

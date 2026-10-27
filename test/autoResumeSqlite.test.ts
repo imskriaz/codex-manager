@@ -31,15 +31,15 @@ beforeEach(async()=>{
   vi.stubEnv("CODEX_HOME",root);
   store=await SqliteStateStore.open(path.join(root,"manager.sqlite"));configureSqliteStateStore(store);
   await configureCrossWindowOperationCoordinator(root);
-  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string)=>!["cliIntegrationEnabled", "autoResumeOpenVsCode"].includes(key)} as never);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({get:(key:string)=>key!=="cliIntegrationEnabled"} as never);
   await mkdir(path.join(root,"sessions"));
   for(const [index,id] of ids.entries())await writeFile(path.join(root,"sessions",`rollout-${id}.jsonl`),
     JSON.stringify({type:"session_meta",payload:{id,source:index===2?{subagent:{thread_spawn:{parent_thread_id:ids[0]}}}:"vscode",cwd:root}})+"\n"+
     JSON.stringify({type:"event_msg",payload:{type:"task_started",turn_id:"quota-turn"}})+"\n"+
     JSON.stringify({type:"event_msg",payload:{type:"task_failed",turn_id:"quota-turn",error:{code:"usage_limit_reached"}}})+"\n");
   const goals=new DatabaseSync(path.join(root,"goals_1.sqlite"));
-  goals.exec("CREATE TABLE thread_goals(thread_id TEXT PRIMARY KEY,status TEXT)");
-  for(const id of ids)goals.prepare("INSERT INTO thread_goals VALUES(?,?)").run(id,"usage_limited");goals.close();
+  goals.exec("CREATE TABLE thread_goals(thread_id TEXT PRIMARY KEY,objective TEXT,status TEXT,time_used_seconds INTEGER)");
+  for(const id of ids)goals.prepare("INSERT INTO thread_goals VALUES(?,'Finish work',?,0)").run(id,"usage_limited");goals.close();
   tabs=ids.map(id=>({input:{viewType:"chatgpt.conversationEditor",uri:{scheme:"openai-codex",authority:"route",path:`/local/${id}`}}}));
   restoreTabs=vscode.window.tabGroups;
   Object.assign(vscode.window,{tabGroups:{get all(){return [{tabs}];},close:vi.fn(async()=>{tabs=[];return true;}),onDidChangeTabs:()=>({dispose(){}})}});
@@ -56,7 +56,7 @@ afterEach(async()=>{
   await removeTestDirectory(root);
 });
 
-it("captures quota-stopped parents, survives a fresh connection, resumes in the background, and consumes recovery",async()=>{
+it("captures quota-stopped parents, survives a fresh connection, opens official tabs, and consumes recovery",async()=>{
   store.set(namespace,snapshot,ids.slice(0,2));
   await persistOpenCodexSessions(context());
   expect(store.get(namespace,snapshot)).toEqual(ids.slice(0,2));
@@ -67,7 +67,7 @@ it("captures quota-stopped parents, survives a fresh connection, resumes in the 
   expect(resumeCodexSessionWork).toHaveBeenCalledWith(ids[1], expect.any(AbortSignal));
   expect(tabs).toHaveLength(3);
   expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
-  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith")).toEqual([]);
+  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith")).toHaveLength(2);
   expect(store.get(namespace,queue)).toBeUndefined();expect(store.get(namespace,snapshot)).toBeUndefined();
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
 });
@@ -118,7 +118,7 @@ it("seals goal recovery before reload cleanup and restores after the open-tab sn
   store.set(namespace, snapshot, undefined);
   store.close(); store = await SqliteStateStore.open(path.join(root, "manager.sqlite")); configureSqliteStateStore(store);
   expect(await resumePersistedCodexSessions(context())).toEqual({ attempted: 2, opened: 2, failed: [] });
-  expect(tabs).toEqual([]);
+  expect(tabs).toHaveLength(2);
   expect(store.get(namespace, queue)).toBeUndefined();
 });
 

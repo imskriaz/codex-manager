@@ -177,7 +177,7 @@ const en: DashboardCopy = {
     "Reload VS Code after switching accounts.",
   autoResumeTitle: "Auto resume sessions",
   autoResumeSub:
-    "Resume unfinished chats through official Codex after a VS Code restart. If no ready owner is available, open its conversation tab. Paused goals stay paused.",
+    "Open unfinished chats in official Codex conversation tabs after a VS Code restart, then resume when ready. Paused goals stay paused.",
   autoSwitchLockMinutesTitle: "Temporary Lock Duration",
   autoSwitchLockMinutesSub:
     "Keep the current account for this long.",

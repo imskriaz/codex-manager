@@ -17,6 +17,7 @@ import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 
 let home: string, db: DatabaseSync;
 let goalOnly: boolean;
+let previousTabs: typeof vscode.window.tabGroups;
 const previousHome = process.env.CODEX_HOME;
 const originalGoalResume = sessionEditor.resumeCodexSessionGoal;
 const ids = Array.from({ length: 7 }, (_, index) => `aaaaaaaa-aaaa-aaaa-aaaa-${String(index).padStart(12, "0")}`);
@@ -24,6 +25,13 @@ const states = ["active", "usage_limited", "paused", "complete", "budget_limited
 beforeEach(async () => {
   vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
   vi.mocked(waitForNativeCodexSessionReady).mockResolvedValue(true);
+  previousTabs = vscode.window.tabGroups;
+  const tabs: Array<{ input: unknown; isPreview: boolean }> = [];
+  Object.assign(vscode.window, { tabGroups: { all: [{ tabs }] } });
+  vi.mocked(vscode.extensions.getExtension).mockReturnValue({ activate: async () => undefined } as never);
+  vi.mocked(vscode.commands.executeCommand).mockImplementation(async (command, uri, viewType) => {
+    if (command === "vscode.openWith") tabs.push({ input: { uri, viewType }, isPreview: false });
+  });
   home = await mkdtemp(path.join(tmpdir(), "goal-resume-integration-"));
   process.env.CODEX_HOME = home;
   goalOnly = true;
@@ -36,7 +44,6 @@ beforeEach(async () => {
   vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockResolvedValue(undefined);
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
     get: (key: string, fallback: unknown) => key === "autoResumeGoalOnlyEnabled" ? goalOnly :
-      key === "autoResumeOpenVsCode" ? false :
       ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : fallback
   } as never);
   await mkdir(path.join(home, "sessions"));
@@ -51,6 +58,7 @@ beforeEach(async () => {
   }
 });
 afterEach(async () => {
+  Object.assign(vscode.window, { tabGroups: previousTabs });
   ids.forEach(id => clearExplicitSessionGoalPause(home, id));
   db.close(); vi.restoreAllMocks();
   mocks.open.mockReset();
@@ -97,7 +105,6 @@ it.each(["active", "none"])("recovers %s work despite a recent writer lock and o
   await writeFile(path.join(home, "thread-writer-locks", `${id}.lock`), "");
   vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(undefined);
   expect((await sessionEditor.readCodexCliSessionSummary(id, home))?.status).toBe("running");
-  vi.mocked(waitForNativeCodexSessionReady).mockResolvedValueOnce(false);
   const open = vi.spyOn(sessionEditor, "openCodexSessionInVsCode").mockImplementationOnce(async () => {
     vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
     vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);

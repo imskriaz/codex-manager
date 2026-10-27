@@ -2,8 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
-import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { getNativeCodexSessionRunning, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
+import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
 import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessionRecoveryMetadata, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import * as path from "path";
@@ -587,33 +586,24 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
   } };
 }
 
-/** Resume through a ready official owner; leave failed/uncertain work durable for retry. */
+/** Open official conversation tabs and resume only after readiness; retain uncertain work. */
 export function resumePersistedCodexSessions(
   context: AutoResumeContext,
   openSession: (sessionId: string, signal?: AbortSignal) => Promise<void | Awaited<ReturnType<typeof resumeCodexSessionWork>>> = async (sessionId, signal) => {
     const startedAt = Date.now();
     const home = resolveCodexHome();
-    // The original Auto Resume path opens the official conversation first; users can opt out to a ready owner.
-    const openVsCode = getCodexManagerConfiguration().get<boolean>("autoResumeOpenVsCode", true) !== false;
-    const details = { sessionRef: toSessionLogRef(sessionId), recoveryPath: openVsCode ? "vscode-forced" : "background-owner", ownerProbe: "pending" as boolean | string, probeDurationMs: 0 };
-    let phase = "owner-probe";
+    const details = { sessionRef: toSessionLogRef(sessionId), recoveryPath: "vscode" };
+    let phase = "eligibility";
     try {
-      const ready = openVsCode ? false : await waitForNativeCodexSessionReady(home, sessionId, signal, 3_000);
-      details.recoveryPath = openVsCode ? "vscode-forced" : ready === true ? "background-owner" : "vscode-fallback";
-      details.ownerProbe = openVsCode ? "skipped" : ready ?? "unavailable";
-      details.probeDurationMs = Date.now() - startedAt;
       signal?.throwIfAborted();
-      if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
-      recordPersistentEvent("info", "auto-resume", "Official recovery path selected", details);
-      phase = "readiness";
       if (!(await filterAutoResumeGoalSessionIds([sessionId], home, signal, false, true)).length) {
         recordPersistentEvent("info", "auto-resume", "Recovery skipped before opening Codex", { ...details, reason: "no-longer-eligible" });
         return "idle";
       }
-      if (ready !== true && getNativeCodexSessionRunning(home, sessionId) !== true) {
-        recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", { ...details, reason: openVsCode ? "Open VS Code enabled" : "No ready official owner" });
-        await openCodexSessionInVsCode(sessionId, signal, true, 120_000, true);
-      }
+      if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
+      phase = "readiness";
+      recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", details);
+      await openCodexSessionInVsCode(sessionId, signal, true, 120_000, true);
       phase = "continuation";
       const outcome = await resumeCodexSessionWork(sessionId, signal);
       recordPersistentEvent("info", "auto-resume", "Official recovery path completed", { ...details, outcome, durationMs: Date.now() - startedAt });
@@ -742,11 +732,14 @@ export function resumePersistedCodexSessions(
           const stopSession = () => sessionController.abort(controller.signal.reason);
           controller.signal.addEventListener("abort", stopSession, { once: true });
           try {
+            const remainingMs = Math.max(1, deadline - Date.now());
             outcome = await bounded(
-            () => openSession(id, sessionController.signal),
-            Math.min(PER_SESSION_OPEN_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
-            "This Codex window did not finish recovery within 135 seconds. The remaining sessions will continue opening; this one will retry on the next activation.",
-            sessionController.signal
+              () => openSession(id, sessionController.signal),
+              Math.min(PER_SESSION_OPEN_TIMEOUT_MS, remainingMs),
+              remainingMs < PER_SESSION_OPEN_TIMEOUT_MS
+                ? "Auto Resume reached its three minute deadline. Remaining sessions will retry on the next activation."
+                : "This Codex window did not finish recovery within 135 seconds. The remaining sessions will continue opening; this one will retry on the next activation.",
+              sessionController.signal
             );
           } catch (error) {
             sessionController.abort(error);
@@ -802,9 +795,9 @@ export function formatAutoResumeResult(result: AutoResumeResult): string | undef
   const titles = autoResumeTitles.get(result) ?? [];
   const titleText = titles.filter((entry) => entry.status === "opened").slice(0, 3).map((entry) => `“${entry.title}”`).join(", ");
   if (!result.failed.length)
-    return `Auto resume resumed ${result.opened} Codex conversation${result.opened === 1 ? "" : "s"} in the background${titleText ? `: ${titleText}` : ""}.`;
+    return `Auto resume resumed ${result.opened} Codex conversation${result.opened === 1 ? "" : "s"} in VS Code${titleText ? `: ${titleText}` : ""}.`;
   const failures = result.failed.slice(0, 3).map(failure => titles.find(entry => entry.sessionId === failure.sessionId)?.title)
     .filter((title): title is string => Boolean(title)).map(title => `“${title}”`).join(", ");
   const extra = result.failed.length > 3 ? `; and ${result.failed.length - 3} more` : "";
-  return `Auto resume resumed ${result.opened} of ${result.attempted} conversations in the background.${failures ? ` Pending: ${failures}${extra}.` : ` ${result.failed.length} still need recovery.`} Saved work was kept; open Codex to review.`;
+  return `Auto resume resumed ${result.opened} of ${result.attempted} conversations in VS Code.${failures ? ` Pending: ${failures}${extra}.` : ` ${result.failed.length} still need recovery.`} Saved work was kept; open Codex to review.`;
 }

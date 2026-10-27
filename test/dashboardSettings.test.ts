@@ -113,7 +113,8 @@ describe("handleDashboardSettingUpdate", () => {
     expect(update).toHaveBeenCalledWith("autoSwitchReloadWindowEnabled", true, vscode.ConfigurationTarget.Global);
   });
 
-  it.each(["autoResumeEnabled", "autoResumeOpenVsCode"] as const)("stores %s globally", async key => {
+  it("stores autoResumeEnabled globally", async () => {
+    const key = "autoResumeEnabled";
     const update = vi.fn().mockResolvedValue(undefined);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn(),

@@ -67,6 +67,22 @@ afterEach(async () => {
 });
 
 describe("SQLite extension context and settings migration", () => {
+  it("retires the editor preference across saved scopes without changing recovery or Auto Resume", async () => {
+    const original = context();
+    await initializeSqliteContext(original);
+    const store = getSqliteStateStore()!;
+    const namespace = store.keys("migrations").find(key => key.endsWith(":native-workspace"))!.replace(":native-workspace", "");
+    const scopes = [namespace, `settings-native:${namespace}`, "settings-overrides:global", `settings-overrides:${namespace}`];
+    for (const scope of scopes) store.set(scope, "autoResumeOpenVsCode", true);
+    await getCodexManagerConfiguration().update("autoResumeEnabled", false);
+    disposeSqliteContext();
+    const migrated = await initializeSqliteContext(original);
+    for (const scope of scopes) expect(getSqliteStateStore()!.get(scope, "autoResumeOpenVsCode")).toBeUndefined();
+    expect(getCodexManagerConfiguration().get("autoResumeEnabled")).toBe(false);
+    expect(migrated.workspaceState.get("recovery")).toEqual(["saved-id"]);
+    await expect(getCodexManagerConfiguration().update("autoResumeOpenVsCode", true)).rejects.toThrow("Unknown Codex Manager setting");
+  });
+
   it("preserves native workspace precedence over global SQLite preferences", async () => {
     vi.mocked(nativeConfig.inspect).mockImplementation(key => ({ key, workspaceValue: key === "autoResumeEnabled" ? true : undefined }) as never);
     await initializeSqliteContext(context());

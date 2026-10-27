@@ -221,7 +221,7 @@ describe("sessions sidebar layout", () => {
     const workbench = readFileSync("src/presentation/workbench/accountsWorkbench.ts", "utf8");
     const autoSwitchStart = settings.indexOf("title={props.copy.autoSwitchTitle}");
     const toggleStart = settings.indexOf("title={props.copy.autoResumeTitle}");
-    const toggle = settings.slice(toggleStart, settings.indexOf("</SettingsToggleBlock>", toggleStart));
+    const toggle = settings.slice(toggleStart, settings.indexOf("/>", toggleStart));
     const autoSwitchEnd = settings.lastIndexOf("</SettingsToggleBlock>", toggleStart);
 
     expect(getDashboardCopy("en").autoResumeTitle).toBe("Auto resume sessions");
@@ -230,9 +230,8 @@ describe("sessions sidebar layout", () => {
     expect(autoSwitchEnd).toBeGreaterThan(autoSwitchStart);
     expect(toggleStart).toBeGreaterThan(autoSwitchEnd);
     expect(toggle).toContain('onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}');
-    expect(toggle).toContain('title="Open VS Code"');
-    expect(toggle).toContain('props.settings.autoResumeEnabled ?');
-    expect(toggle).toContain('patchAndSend("autoResumeOpenVsCode", enabled)');
+    expect(settings).not.toContain('title="Open VS Code"');
+    expect(settings).not.toContain('autoResumeOpenVsCode');
     expect(toggle).not.toContain("cliIntegrationEnabled");
     expect(toggle).not.toContain("disabled=");
     expect(workbench).toContain("automatic session resume incomplete");
@@ -243,13 +242,11 @@ describe("sessions sidebar layout", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const switchStart = settings.indexOf("title={props.copy.autoSwitchTitle}");
     const reloadStart = settings.indexOf("title={props.copy.autoSwitchReloadTitle}");
-    const switchEnd = settings.lastIndexOf("</SettingsToggleBlock>", reloadStart);
     const resumeStart = settings.indexOf("title={props.copy.autoResumeTitle}");
     const outerSwitchEnd = settings.indexOf("</SettingsToggleBlock>", reloadStart);
-    expect(switchEnd).toBeGreaterThan(switchStart);
     expect(outerSwitchEnd).toBeGreaterThan(reloadStart);
     expect(resumeStart).toBeGreaterThan(switchStart);
-    expect(resumeStart).toBeLessThan(switchEnd);
+    expect(resumeStart).toBeLessThan(outerSwitchEnd);
     const switchContent = settings.slice(switchStart, outerSwitchEnd);
     expect(switchContent).toContain('enabled={props.settings.autoSwitchEnabled}');
     expect(switchContent).toContain('class="settings-integration-grid settings-switch-options"');
