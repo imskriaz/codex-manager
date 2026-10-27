@@ -811,7 +811,7 @@ async function runDashboardAction(
           await ctx.repo.lockAutoSwitchForManualSelection?.(currentAccount.id);
           const held = isAutoSwitchLocked(currentAccount.id);
           const reloadNeeded = deferWindowReloadForAccount(currentAccount.id);
-          const reloadScheduled = reloadNeeded && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
+          const reloadScheduled = reloadNeeded && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", true);
           ctx.schedulePublishState();
           return {
             notice: {
@@ -829,7 +829,7 @@ async function runDashboardAction(
         clearTokenAutomationError(currentAccount.id);
         void handleCodexAppRestartPreference({ allowManualPrompt: false });
         const reloadRequired = deferWindowReloadForAccount(currentAccount.id);
-        const reloadScheduled = reloadRequired && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
+        const reloadScheduled = reloadRequired && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", true);
         ctx.schedulePublishState();
         return {
           notice: {
@@ -854,7 +854,7 @@ async function runDashboardAction(
         if ((result?.status === "switched" || result?.status === "already-active") && result.account) {
           const reloadRequired =
             result.reloadNeeded && !result.reloaded ? deferWindowReloadForAccount(result.account.id) : false;
-          const reloadScheduled = reloadRequired && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
+          const reloadScheduled = reloadRequired && getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", true);
           const held = isAutoSwitchLocked(result.account.id);
           return {
             notice: {
@@ -1851,7 +1851,7 @@ async function handleGetDailyUsage(
 }
 
 function ensureCliIntegrationEnabled(): void {
-  if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) {
+  if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) {
     throw new Error("Session Integration is disabled. Enable it in Settings before opening sessions.");
   }
 }

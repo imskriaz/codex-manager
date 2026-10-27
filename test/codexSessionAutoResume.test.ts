@@ -616,7 +616,7 @@ describe("durable open conversation recovery", () => {
     "disables %s when Auto Switch is off even with Auto Resume saved on",
     async (operation) => {
       vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-        get: (key: string, fallback?: unknown) => key === "autoResumeEnabled" ? true : fallback
+        get: (key: string, fallback?: unknown) => key === "autoResumeEnabled" ? true : key === "autoSwitchEnabled" ? false : fallback
       } as never);
       const state = createContext([first]);
       state.set([second], AUTO_RESUME_OPEN_SESSION_IDS_KEY);
@@ -1121,7 +1121,7 @@ describe("Codex session auto resume", () => {
 
   it("clears stale state without reading sessions when auto resume is disabled", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: vi.fn((_key: string, fallback?: unknown) => fallback)
+      get: vi.fn((key: string, fallback?: unknown) => key === "autoResumeEnabled" ? false : fallback)
     } as never);
     const state = createContext(["01a04882-d037-7a42-ad24-9afb61901185"]);
     const readSessions = vi.fn();
@@ -1194,7 +1194,7 @@ describe("Codex session auto resume", () => {
 
   it("does not restore stored sessions after Auto Resume is turned off", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: vi.fn((_key: string, fallback?: unknown) => fallback)
+      get: vi.fn((key: string, fallback?: unknown) => key === "autoResumeEnabled" ? false : fallback)
     } as never);
     const state = createContext(["01a04882-d037-7a42-ad24-9afb61901181"]);
     const openSession = vi.fn();

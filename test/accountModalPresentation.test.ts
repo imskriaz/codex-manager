@@ -73,6 +73,8 @@ describe("add account OAuth actions", () => {
     expect(overview).not.toContain('<div class="account-tag-row">{blankValue}</div>');
     expect(styles).toMatch(/\.overview-shell\s*\{[\s\S]*?align-items:\s*stretch;/);
     expect(styles).toMatch(/\.overview-account,\s*\n\.overview-main\s*\{[\s\S]*?align-self:\s*stretch;/);
+    expect(styles).not.toContain('.overview-shell > .overview-account:not(.overview-inline-add-panel) { display: none; }');
+    expect(styles).toContain('.overview-account, .overview-main, .overview-account-main { height: auto; min-width: 0; grid-column: auto; }');
     expect(styles).toMatch(/\.oauth-modal-stack \.oauth-open-btn,[\s\S]*?max-width:\s*30px;/);
   });
 });

@@ -15,6 +15,26 @@ import {
 } from "../src/infrastructure/config/extensionSettings";
 
 describe("5-hour quota control defaults", () => {
+  it("matches the shipped portable defaults in fresh dashboard settings and keeps explicit Off", () => {
+    const manifest = require("../package.json").contributes.configuration.properties;
+    const expected = {
+      codexAppRestartMode: "auto", autoRefreshMinutes: 10, usageHistoryRetentionDays: 30,
+      cliIntegrationEnabled: true, apiAccessEnabled: false, autoSwitchEnabled: true,
+      autoSwitchWaitForSessionsEnabled: false, autoSwitchReloadWindowEnabled: true,
+      autoResumeEnabled: true, autoSwitchRefreshAllBeforeSwitchEnabled: true,
+      autoResetEnabled: true, quotaWarningEnabled: true, webDashboardEnabled: true,
+      encryptedSyncVsCodeHeartbeatMinutes: 10
+    };
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject(expected);
+    for (const [key, value] of Object.entries(expected)) expect(manifest[`codexManager.${key}`].default).toBe(value);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) =>
+      typeof expected[key as keyof typeof expected] === "boolean" ? false : fallback } as never);
+    for (const [key, value] of Object.entries(expected)) {
+      if (typeof value === "boolean") expect(new ExtensionSettingsStore().getDashboardSettings()[key as keyof typeof expected]).toBe(false);
+    }
+    for (const key of ["cloudflaredDomain", "codexAppPath", "codexCliPath"]) expect(manifest[`codexManager.${key}`].default).toBe("");
+  });
   it("defaults token collection on and bounds its interval from one minute to one day", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
     expect(new ExtensionSettingsStore().getDashboardSettings()).toMatchObject({ dailyTokenUsageEnabled: true, dailyTokenUsageIntervalMinutes: 60 });
@@ -56,7 +76,7 @@ describe("5-hour quota control defaults", () => {
   it("does not activate safety refresh without either switching or warnings", () => {
     const enabled = new Set(["autoSwitchRefreshAllBeforeSwitchEnabled"]);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (key: string, fallback?: unknown) => (enabled.has(key) ? true : fallback)
+      get: (key: string, fallback?: unknown) => (enabled.has(key) ? true : false)
     } as never);
     expect(isAutoSwitchRefreshAllBeforeSwitchEnabled()).toBe(false);
     enabled.add("quotaWarningEnabled");
@@ -74,7 +94,7 @@ describe("5-hour quota control defaults", () => {
     expect(new ExtensionSettingsStore().getDashboardSettings().quotaFreshnessMs).toBe(125 * 60_000);
   });
   it("validates the VS Code batch gap and removes obsolete network and WebSocket controls", () => {
-    expect([Number.NaN, -1, 0, 1, 2.6, 60, 100].map(normalizeSyncHeartbeatMinutes)).toEqual([5, 1, 1, 1, 3, 60, 60]);
+    expect([Number.NaN, -1, 0, 1, 2.6, 60, 100].map(normalizeSyncHeartbeatMinutes)).toEqual([10, 1, 1, 1, 3, 60, 60]);
     const properties = JSON.parse(readFileSync("package.json", "utf8")).contributes.configuration.properties;
     expect(properties["codexManager.debugNetwork"]).toBeUndefined();
     expect(properties["codexManager.encryptedSyncWebSocketHeartbeatSeconds"]).toBeUndefined();
@@ -91,7 +111,7 @@ describe("5-hour quota control defaults", () => {
     expect(manifest.contributes.configuration.properties["codexManager.fullCrossPcAccountSyncEnabled"].default).toBe(
       false
     );
-    expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncVsCodeHeartbeatMinutes"].default).toBe(5);
+    expect(manifest.contributes.configuration.properties["codexManager.encryptedSyncVsCodeHeartbeatMinutes"].default).toBe(10);
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (_key: string, fallback?: unknown) => fallback,
       inspect: vi.fn(),

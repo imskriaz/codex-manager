@@ -1,17 +1,15 @@
 # Changelog
 
-## 1.5.8-pre.3
+## 1.5.8
 
-- Remove empty space between Automation switching options. Pack compact toggles beside the expanded reset slider and preserve a single column on phones.
+- Show the per-session Auto Resume toggle for interrupted work in both session lists; retain explicit queue priorities and unconfirmed-start review controls.
 
-## 1.5.8-pre.2
+- Keep manual switch requests pending through required credential renewal and short auth commits instead of requiring a premature Retry. Valid credentials switch immediately; optional rotation and shared confirmation stay in the background.
 
-- Open official VS Code conversation tabs directly for Auto Resume, removing the background-owner attempt and separate Open VS Code setting. Keep readiness checks, Pause/Stop protection and saved recovery on failure.
-- Report the overall recovery deadline accurately when it shortens a session wait.
-
-## 1.5.8-pre.1
-
-- Replay confirmed account releases after a lost reply or restart so stale synchronized claims clear. Release previous claims before reserving the current account; failed cleanup retries without adding another reservation.
+- Use the current portable preferences as defaults: enable Workspace, browser dashboard, automatic switching, quota refresh before switching, reload, Auto Resume, reset credits and warnings. Default all-account polling and Settings Sync saves to ten minutes, and desktop restart mode to automatic when enabled. Keep dashboard API access, System Log and Wait for running sessions off by default. Preserve explicit saved settings and keep private domains and executable paths unset.
+- Replay confirmed account releases after lost replies or restarts. Release previous claims before reserving the current account; failed cleanup retries without adding another reservation.
+- Open official VS Code conversation tabs directly for Auto Resume, removing the background attempt and separate window preference. Keep readiness, Pause/Stop and saved recovery protections, and accurately report the overall recovery deadline.
+- Remove empty space between Automation options in expanded, collapsed and phone layouts. Keep account identity visible in narrow dashboard overviews and reset stale grid placement so quota panels fill their column.
 
 ## 1.5.7
 

@@ -192,11 +192,11 @@ describe("Settings Sync request budget", () => {
     const sync = vi.spyOn(manager, "syncNow").mockRejectedValueOnce(new Error("Disk full")).mockResolvedValue(true);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await manager.start();
-    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
     expect(sync).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(state.get("codexManager.encryptedSync.vaultDirty.v1")).toEqual(["enablement-changed"]);
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
     expect(sync).toHaveBeenCalledTimes(2);
     expect(sync).toHaveBeenCalledWith(false, false, false);
   });

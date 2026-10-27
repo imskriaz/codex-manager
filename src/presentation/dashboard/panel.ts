@@ -285,7 +285,7 @@ export class DashboardPanelController {
       });
 
       this.configWatcher = this.settingsStore.onDidChange(() => {
-        if (getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) this.startCliSessionRealtime();
+        if (getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) this.startCliSessionRealtime();
         else this.stopCliSessionRealtime();
         this.schedulePublishState();
       });
@@ -507,7 +507,7 @@ export class DashboardPanelController {
   }
 
   private startCliSessionRealtime(): void {
-    if (this.cliSessionWatcher || !this.panel || this.panel.visible === false || !this.webviewReady || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
+    if (this.cliSessionWatcher || !this.panel || this.panel.visible === false || !this.webviewReady || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return;
     this.cliSessionReconcileTimer ??= setInterval(() => {
       if (this.panel?.visible === false || !this.webviewReady) return;
       if (!this.cliSessionWatcher) this.startCliSessionRealtime();
@@ -547,14 +547,14 @@ export class DashboardPanelController {
     if (this.cliSessionPublish) return this.cliSessionPublish;
     const panel = this.panel;
     if (Date.now() < this.cliSessionRefreshAfter || !panel || panel.visible === false || !this.webviewReady ||
-      !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return Promise.resolve();
+      !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return Promise.resolve();
     let delayMs = 2_000;
     this.cliSessionPublish = (async () => {
       const sessions = await readCodexCliSessions();
       if (sessions.some(session => session.status === "unknown")) delayMs = SESSION_DISCOVERY_RETRY_GAP_MS;
       const stabilized = await stabilizeSessionProjectPaths(this.context, withCodexSessionRecovery(this.context, sessions));
       if (this.panel !== panel || panel.visible === false || !this.webviewReady ||
-        !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
+        !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return;
       await this.postActionResult(`realtime-cli-${Date.now()}`, "listCodexCliSessions", "completed", undefined, {
         cliSessions: stabilized,
         realtimeRevision: ++this.cliSessionRealtimeRevision,

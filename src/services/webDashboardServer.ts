@@ -803,7 +803,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private isEnabled(): boolean {
     const config = getCodexManagerConfiguration();
-    return config.get<boolean>("webDashboardEnabled", false);
+    return config.get<boolean>("webDashboardEnabled", true);
   }
 
   /** Verify that the public tunnel reaches this server without exposing a device identifier. */
@@ -1837,7 +1837,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private refreshCliSessionRealtimeLifecycle(): void {
-    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) {
+    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) {
       this.stopCliSessionRealtime();
       return;
     }
@@ -1901,10 +1901,10 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async publishCliSessionsRealtimeCore(): Promise<void> {
-    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false))
+    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true))
       return;
     const sessions = await this.readLocalCliSessions(true);
-    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return;
+    if (!this.hasWorkspaceViewer() || !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return;
     // Keep revisions monotonic across extension-host restarts. An already-open
     // browser page may otherwise reject a fresh revision that restarted at 1.
     const revision = (this.cliSessionRealtimeRevision = Math.max(this.cliSessionRealtimeRevision + 1, Date.now()));
@@ -2161,7 +2161,7 @@ export class WebDashboardServer implements vscode.Disposable {
   private async readLocalCliSessions(
     force = false
   ): Promise<import("../domain/dashboard/types").DashboardCliSessionSummary[]> {
-    if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false)) return [];
+    if (!getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return [];
     const now = Date.now();
     if (!force && now < this.localCliSessionsRetryAt) return this.localCliSessions ?? [];
     if (!force && this.localCliSessions && now - this.localCliSessionsReadAt < LOCAL_CLI_SESSION_CACHE_MS) {
@@ -2196,7 +2196,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private getConnectedPeers(): DashboardPeerView[] {
-    const cliEnabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
+    const cliEnabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true);
     // Counts use the last completed catalogue; discovery must not hold up the dashboard.
     if (cliEnabled && this.hasWorkspaceViewer()) void this.readLocalCliSessions();
     const localSessionCount = cliEnabled
@@ -2678,7 +2678,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (this.localPeerState) return this.localPeerState;
     const revision = this.localPeerStateRevision;
     const pending = (this.localPeerStateRead ??= (async () => {
-      const enabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", false);
+      const enabled = getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true);
       const [sessions, dashboard] = await Promise.all([
         enabled ? this.readLocalCliSessions() : Promise.resolve([]),
         buildDashboardState(this.repo, this.settingsStore, "/assets/codex.svg")

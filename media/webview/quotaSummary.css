@@ -14104,8 +14104,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .cli-workspace .cli-workspace-feedback { max-width: calc(100vw - 24px); overflow-wrap: anywhere; font-size: 12px; }
   .cli-workspace .cli-workspace-feedback button { min-width: 36px; min-height: 36px; }
   .overview-shell { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; }
-  .overview-shell > .overview-account:not(.overview-inline-add-panel) { display: none; }
-  .overview-account, .overview-main, .overview-account-main { height: auto; min-width: 0; }
+  .overview-account, .overview-main, .overview-account-main { height: auto; min-width: 0; grid-column: auto; }
   .overview-account .overview-meta { grid-template-rows: auto; }
   .overview-main > .usage-graph-card { flex: none; height: auto; }
   .overview-main, .overview-bottom-row, .overview-metrics, .overview-actions { min-width: 0; max-width: 100%; }
@@ -14988,6 +14987,8 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-running-row-actions .is-active { color:var(--accent-blue); background:var(--cyan-soft); }
 .cli-running-row-actions .is-auto-resume.is-disabled,.cli-session-row-actions .is-auto-resume.is-disabled { color:var(--text-muted); background:transparent; opacity:.72; }
 .cli-running-row-actions .is-auto-resume.is-enabled,.cli-session-row-actions .is-auto-resume.is-enabled { color:var(--accent-blue); background:color-mix(in srgb, var(--accent-blue) 14%, transparent); border-color:color-mix(in srgb, var(--accent-blue) 46%, var(--border-muted)); }
+.cli-workspace .cli-session-row-actions:has(.is-auto-resume) { opacity:1 !important; pointer-events:auto !important; }
+.cli-workspace .cli-session-row:has(.is-auto-resume) .cli-session-row-select { padding-right:32px; }
 .cli-running-row-actions .is-auto-resume svg,.cli-session-row-actions .is-auto-resume svg { width:16px; height:16px; }
 .cli-running-queue > button.is-active { color:var(--accent-blue); border-color:color-mix(in srgb,var(--accent-blue) 46%,var(--border-muted)); background:var(--cyan-soft); }
 .cli-running-queue > button.has-queue-error { color:var(--accent-orange,#b97900); border-color:currentColor; background:color-mix(in srgb,var(--accent-orange,#b97900) 12%,var(--bg-surface)); }

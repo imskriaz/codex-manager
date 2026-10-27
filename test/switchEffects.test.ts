@@ -61,7 +61,7 @@ describe("account switch reload effects", () => {
     vi.mocked(vscode.window.showInformationMessage).mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) =>
-        key === "crossWindowAccountModeEnabled" || key === "autoSwitchReloadWindowEnabled" ? true : fallback
+        key === "crossWindowAccountModeEnabled" || key === "autoSwitchReloadWindowEnabled" ? true : ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
     } as vscode.WorkspaceConfiguration);
     setCurrentWindowRuntimeAccountId("current-account");
     clearQueuedAccountSwitch();
@@ -104,7 +104,7 @@ describe("account switch reload effects", () => {
 
   it("queues shared-auth changes and offers an explicit reload when automatic reload is off", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (_key: string, fallback?: unknown) => fallback
+      get: (key: string, fallback?: unknown) => ["autoSwitchReloadWindowEnabled", "autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
     } as vscode.WorkspaceConfiguration);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Later" as never);
     await expect(promptWindowReloadForAccount({ id: "shared-next", email: "next@example.com" })).resolves.toBe(false);
@@ -115,7 +115,7 @@ describe("account switch reload effects", () => {
 
   it("keeps deferred and observed account changes pending while automatic reload is off", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (_key: string, fallback?: unknown) => fallback
+      get: (key: string, fallback?: unknown) => ["autoSwitchReloadWindowEnabled", "autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
     } as vscode.WorkspaceConfiguration);
     expect(deferWindowReloadForAccount("shared-next")).toBe(true);
     await expect(autoReloadWindowForAccount("shared-next")).resolves.toBe(false);
@@ -125,7 +125,7 @@ describe("account switch reload effects", () => {
 
   it("allows a manually requested reload even when automatic reload is off", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (_key: string, fallback?: unknown) => fallback
+      get: (key: string, fallback?: unknown) => ["autoSwitchReloadWindowEnabled", "autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
     } as vscode.WorkspaceConfiguration);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Reload Now" as never);
     await expect(promptWindowReloadForAccount({ id: "shared-next", email: "next@example.com" })).resolves.toBe(true);
@@ -145,7 +145,7 @@ describe("account switch reload effects", () => {
     });
     const automatic = autoReloadWindowForAccount("next-account");
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (_key: string, fallback?: unknown) => fallback
+      get: (key: string, fallback?: unknown) => ["autoSwitchReloadWindowEnabled", "autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
     } as vscode.WorkspaceConfiguration);
     finishCapture?.();
     await expect(automatic).resolves.toBe(false);
@@ -169,7 +169,7 @@ describe("account switch reload effects", () => {
     const automatic = autoReloadWindowForAccount("next-account");
     const explicit = reloadWindowNow();
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (_key: string, fallback?: unknown) => fallback
+      get: (key: string, fallback?: unknown) => ["autoSwitchReloadWindowEnabled", "autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
     } as vscode.WorkspaceConfiguration);
     finishCapture?.();
     await expect(Promise.all([automatic, explicit])).resolves.toEqual([true, true]);
@@ -186,7 +186,7 @@ describe("account switch reload effects", () => {
       deferWindowReloadForAccount("next-account");
       scheduleExtensionHostReload(undefined, 10, "Shared Codex account changed", true, true);
       vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-        get: (_key: string, fallback?: unknown) => fallback
+        get: (key: string, fallback?: unknown) => ["autoSwitchReloadWindowEnabled", "autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
       } as vscode.WorkspaceConfiguration);
       await vi.advanceTimersByTimeAsync(10);
       expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
@@ -203,7 +203,7 @@ describe("account switch reload effects", () => {
       scheduleExtensionHostReload(undefined, 10, "automatic", true, true);
       scheduleExtensionHostReload(undefined, 10, "manual", true);
       vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-        get: (_key: string, fallback?: unknown) => fallback
+        get: (key: string, fallback?: unknown) => ["autoSwitchReloadWindowEnabled", "autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
       } as vscode.WorkspaceConfiguration);
       await vi.advanceTimersByTimeAsync(10);
       expect(vscode.commands.executeCommand).toHaveBeenCalledWith("workbench.action.restartExtensionHost");
@@ -214,7 +214,7 @@ describe("account switch reload effects", () => {
 
   it("falls back to a full window reload when the extension host restart fails", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
-      get: (_key: string, fallback?: unknown) => fallback
+      get: (key: string, fallback?: unknown) => ["autoSwitchReloadWindowEnabled", "autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? false : fallback
     } as vscode.WorkspaceConfiguration);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.mocked(vscode.window.showInformationMessage).mockResolvedValue("Reload Now" as never);

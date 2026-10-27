@@ -29,39 +29,39 @@ export class ExtensionSettingsStore {
       persistentLogRetentionDays: getPersistentLogRetentionDays(),
       persistentLogLevel: getPersistentLogLevel(),
       codexAppRestartEnabled: config.get<boolean>("codexAppRestartEnabled", false),
-      codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "manual",
-      cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", false),
+      codexAppRestartMode: config.get<"auto" | "manual">("codexAppRestartMode") ?? "auto",
+      cliIntegrationEnabled: config.get<boolean>("cliIntegrationEnabled", true),
       taskBoardEnabled: config.get<boolean>("taskBoardEnabled", true),
       apiAccessEnabled: config.get<boolean>("apiAccessEnabled", false),
       codexSessionTransport: readCodexSessionTransport(config),
-      autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15)),
+      autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 10)),
       autoRefreshCurrentMinutes: normalizeCurrentAutoRefreshMinutes(config.get<number>("autoRefreshCurrentMinutes", 1)),
       quotaFreshnessMs: getAutoQueueQuotaFreshnessMs(
-        normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15))
+        normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 10))
       ),
-      usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 7)),
+      usageHistoryRetentionDays: normalizeUsageHistoryRetentionDays(config.get<number>("usageHistoryRetentionDays", 30)),
       tokenHistoryRetentionDays: normalizeTokenHistoryRetentionDays(config.get<number>("tokenHistoryRetentionDays", 30)),
       dailyTokenUsageIntervalMinutes: normalizeDailyTokenUsageIntervalMinutes(config.get<number>("dailyTokenUsageIntervalMinutes", 60)),
       dailyTokenUsageEnabled: config.get<boolean>("dailyTokenUsageEnabled", true),
-      autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
+      autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", true),
       autoSwitchWaitForSessionsEnabled: config.get<boolean>("autoSwitchWaitForSessionsEnabled", false),
       // The 5-hour quota is always part of automatic quota control. Keep the
       // legacy field in the dashboard model for old snapshots, but do not read
       // the removed user setting anymore.
       hourlyQuotaControlEnabled: true,
-      autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", false),
+      autoSwitchReloadWindowEnabled: config.get<boolean>("autoSwitchReloadWindowEnabled", true),
       autoResumeEnabled: isAutoResumeEnabled(config),
       crossWindowAccountModeEnabled: config.get<boolean>("crossWindowAccountModeEnabled", false),
       autoSwitchHourlyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchHourlyThreshold", 5)),
       autoSwitchWeeklyThreshold: normalizeAutoSwitchThreshold(config.get<number>("autoSwitchWeeklyThreshold", 0), 0),
-      autoSwitchRefreshAllBeforeSwitchEnabled: config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false),
-      autoResetEnabled: config.get<boolean>("autoResetEnabled", false),
+      autoSwitchRefreshAllBeforeSwitchEnabled: config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", true),
+      autoResetEnabled: config.get<boolean>("autoResetEnabled", true),
       autoResetWeeklyThreshold: normalizeAutoResetWeeklyThreshold(config.get<number>("autoResetWeeklyThreshold", 0)),
       autoSwitchLockMinutes: normalizeAutoSwitchLockMinutes(config.get<number>("autoSwitchLockMinutes", 0)),
       codexAppPath: config.get<string>("codexAppPath", ""),
       resolvedCodexAppPath: "",
       codexCliPath: config.get<string>("codexCliPath", ""),
-      quotaWarningEnabled: config.get<boolean>("quotaWarningEnabled", false),
+      quotaWarningEnabled: config.get<boolean>("quotaWarningEnabled", true),
       quotaWarningThreshold: warningThresholds.hourly,
       quotaWarningWeeklyThreshold: warningThresholds.weekly,
       quotaGreenThreshold: thresholds.green,
@@ -69,10 +69,10 @@ export class ExtensionSettingsStore {
       encryptedSyncEnabled: config.get<boolean>("encryptedSyncEnabled", true),
       encryptedSyncClaimAllAccountsEnabled: config.get<boolean>("encryptedSyncClaimAllAccountsEnabled", false) === true,
       fullCrossPcAccountSyncEnabled: config.get<boolean>("fullCrossPcAccountSyncEnabled", false),
-      encryptedSyncVsCodeHeartbeatMinutes: normalizeSyncHeartbeatMinutes(config.get<number>("encryptedSyncVsCodeHeartbeatMinutes", 5)),
+      encryptedSyncVsCodeHeartbeatMinutes: normalizeSyncHeartbeatMinutes(config.get<number>("encryptedSyncVsCodeHeartbeatMinutes", 10)),
       // Runtime-owned and passphrase-gated; buildDashboardState replaces this placeholder.
       encryptedSyncRegistryOverrideEnabled: false,
-      webDashboardEnabled: config.get<boolean>("webDashboardEnabled", false),
+      webDashboardEnabled: config.get<boolean>("webDashboardEnabled", true),
       webSocketServerEnabled: config.get<boolean>("webSocketServerEnabled", true),
       cloudflaredDomain: config.get<string>("cloudflaredDomain", "").trim(),
       displayLanguage: config.get<DashboardLanguageOption>("displayLanguage", "en")
@@ -107,12 +107,12 @@ export function readCodexSessionTransport(_config?: vscode.WorkspaceConfiguratio
 }
 
 export function normalizeSyncHeartbeatMinutes(value: number): number {
-  if (!Number.isFinite(value)) return 5;
+  if (!Number.isFinite(value)) return 10;
   return Math.max(1, Math.min(60, Math.round(value)));
 }
 
 export function getSyncHeartbeatMinutes(): number {
-  return normalizeSyncHeartbeatMinutes(getCodexManagerConfiguration().get<number>("encryptedSyncVsCodeHeartbeatMinutes", 5));
+  return normalizeSyncHeartbeatMinutes(getCodexManagerConfiguration().get<number>("encryptedSyncVsCodeHeartbeatMinutes", 10));
 }
 
 export function normalizeDailyTokenUsageIntervalMinutes(value: number): number {
@@ -136,7 +136,7 @@ export function normalizeCurrentAutoRefreshMinutes(value: number): number {
 
 export function normalizeUsageHistoryRetentionDays(value: number): number {
   if (!Number.isFinite(value) || value <= 0) {
-    return 7;
+    return 30;
   }
 
   return Math.max(1, Math.min(90, Math.round(value)));
@@ -148,12 +148,12 @@ export function getCodexManagerConfiguration(): vscode.WorkspaceConfiguration {
 
 export function isAutoResumeEnabled(config = getCodexManagerConfiguration()): boolean {
   return (
-    config.get<boolean>("autoSwitchEnabled", false) === true && config.get<boolean>("autoResumeEnabled", false) === true
+    config.get<boolean>("autoSwitchEnabled", true) === true && config.get<boolean>("autoResumeEnabled", true) === true
   );
 }
 
 export function getAutoRefreshMinutes(): number {
-  return normalizeAutoRefreshMinutes(getCodexManagerConfiguration().get<number>("autoRefreshMinutes", 15));
+  return normalizeAutoRefreshMinutes(getCodexManagerConfiguration().get<number>("autoRefreshMinutes", 10));
 }
 
 export function getAutoRefreshCurrentMinutes(): number {
@@ -163,8 +163,8 @@ export function getAutoRefreshCurrentMinutes(): number {
 export function isAutoSwitchRefreshAllBeforeSwitchEnabled(): boolean {
   const config = getCodexManagerConfiguration();
   return (
-    config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false) &&
-    (config.get<boolean>("autoSwitchEnabled", false) || config.get<boolean>("quotaWarningEnabled", false))
+    config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", true) &&
+    (config.get<boolean>("autoSwitchEnabled", true) || config.get<boolean>("quotaWarningEnabled", true))
   );
 }
 

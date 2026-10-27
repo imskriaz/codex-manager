@@ -5,6 +5,14 @@ import * as vscode from "vscode";
 import { readNativeCodexSessionRunning } from "../src/services/codexNativeSessionStatus";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// These transcript fixtures own no live locks; codexWriterLock tests held/error probes.
+vi.mock("child_process", async original => {
+  const child = await original<typeof import("child_process")>();
+  return { ...child, execFile: (...args: any[]) => {
+    if (args[0] === "powershell.exe") { args.at(-1)(null, "[]"); return {}; }
+    return (child.execFile as any)(...args);
+  } };
+});
 import * as safeReads from '../src/utils/safeFileReads';
 import * as fileSystem from 'fs/promises';
 vi.mock('fs/promises', {spy:true});

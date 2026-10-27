@@ -87,7 +87,7 @@ import { buildCliSessionPath, cliSessionTargetFromLocation, cliSessionTargetKey,
 import { canRunAccountOnThisPc } from "./accountRunPolicy";
 import { loadUiPreferences, saveUiPreferences, type UiPreferences } from "./preferences";
 import { AutoResumeIcon, formatElapsed, projectDisplayName, type CliSessionFeedback } from "./cliSessionsModal";
-import { filterCliSessionsBySection, mergeDashboardPeers } from "../../src/domain/codexSessionState";
+import { filterCliSessionsBySection, mergeDashboardPeers, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 import type { CliSubmissionResult } from "./cliSessionComposerState";
 import { acceptCliLiveState, combineCliLiveMessages, isCliTurnActive, reconcileCliSessionStatus, reconcileCliSessionStatuses } from "./cliSessionLiveState";
 import {
@@ -3541,7 +3541,7 @@ function CliSessionsMenu(props: {
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
-                    {running ? <button type="button" class={`cli-icon-button is-auto-resume ${autoResume ? "is-enabled is-active" : "is-disabled"}`} aria-pressed={autoResume} aria-label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={!props.connected || offline || actionPending} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></button> : session.interrupted || session.queueEnabled ? <SessionQueueControl session={session} disabled={!props.connected || !!offline || actionPending} onQueue={props.onQueue} /> : null}
+                    {showsCodexSessionAutoResume(session) ? <button type="button" class={`cli-icon-button is-auto-resume ${autoResume ? "is-enabled is-active" : "is-disabled"}`} aria-pressed={autoResume} aria-label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={!props.connected || offline || actionPending} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></button> : session.interrupted || session.queueEnabled ? <SessionQueueControl session={session} disabled={!props.connected || !!offline || actionPending} onQueue={props.onQueue} /> : null}
                     </div>
                   </article>;
                 })}

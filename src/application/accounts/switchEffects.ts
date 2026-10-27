@@ -231,7 +231,7 @@ export function deferWindowReloadForAccount(accountId: string): boolean {
 }
 
 function isAutomaticWindowReloadEnabled(): boolean {
-  return getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false);
+  return getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", true);
 }
 
 function queueAccountChangeForReload(accountId: string): void {

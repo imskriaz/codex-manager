@@ -1,7 +1,7 @@
 import { useWorkspaceDashboardAssets } from './workspace-dashboard-assets.mjs';
 import { checkListsApiUi, checkFlyoutUi } from './check-lists-api-ui.mjs';
 import { chromium } from "playwright";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -35,6 +35,13 @@ snapshot.settings.privacyMode = true;
 snapshot.settings.dailyTokenUsageEnabled = false;
 snapshot.settings.persistentLoggingEnabled = true;
 snapshot.settings.persistentLogLevel = "info";
+if (process.argv.includes('--defaults')) {
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const [name, schema] of Object.entries(manifest.contributes.configuration.properties)) {
+    snapshot.settings[name.slice('codexManager.'.length)] = schema.default;
+  }
+  snapshot.settings.persistentLoggingEnabled = false;
+}
 const parentId = "01a04882-d037-7a42-ad24-9afb61901188";
 const runningId = "01a04882-d037-7a42-ad24-9afb61901189";
 const agentId = "01a04882-d037-7a42-ad24-9afb61901190";
@@ -192,7 +199,7 @@ const mockHost = `(() => {
         else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token-'+apiTokens.length,name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
         else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
         else if(message.action==='setAutoSwitchLock') {if(window.__failUnlock)error='Lock storage unavailable';else{const account=state.accounts.find(account=>account.id===message.accountId);account.autoSwitchLockedUntil=message.payload.lockMinutes?Date.now()+message.payload.lockMinutes*60000:undefined;dispatch({type:'dashboard:snapshot',state:structuredClone(state)});payload={notice:{level:'info',message:'Auto-switch lock removed.'}};}}
-        else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume')session.autoResumeEnabled=message.payload.autoResumeEnabled;else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined});payload={cliSession:session};}}
+        else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume'){if(window.__failResume){error='Session preference storage is unavailable. The change was not saved.';}else session.autoResumeEnabled=message.payload.autoResumeEnabled;}else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined});payload={cliSession:session};}}
         else if(message.action==='readWorkspaceFile' && message.payload.filePath.startsWith('@manager-attachment/')) {
           const file=uploadFiles.get(decodeURIComponent(message.payload.filePath.split('/').at(-1)));
           if(!file) error='This attachment is unavailable.';
@@ -456,6 +463,14 @@ try {
       };
       await page.goto(origin + '/');
       await openSettings();
+      if (process.argv.includes('--defaults')) {
+        assert.equal(await page.getByRole('button', { name: 'Wait for running sessions', exact: true }).getAttribute('aria-pressed'), 'false');
+        await page.locator('#settings-tab-general').click();
+        assert.equal(await page.getByRole('button', { name: 'Dashboard API', exact: true }).getAttribute('aria-pressed'), 'false');
+        await page.locator('#settings-tab-data').click();
+        assert.equal(await page.getByRole('button', { name: 'System Log', exact: true }).getAttribute('aria-pressed'), 'false');
+        await page.locator('#settings-tab-automation').click();
+      }
       await checkSwitchingLayout(page, width, true);
       const reset = page.getByRole('button', { name: snapshot.copy.autoResetTitle, exact: true });
       await reset.click();
@@ -496,6 +511,27 @@ try {
       await context.close();
       continue;
     }
+    if (process.argv.includes('--overview')) {
+      await page.goto(origin+'/');
+      const shell=page.locator('.overview-shell'), account=shell.locator('> .overview-account'), main=shell.locator('> .overview-main');
+      await account.waitFor();await main.waitFor();
+      const check=async()=>{
+        const [outer,left,right]=await Promise.all([shell.boundingBox(),account.boundingBox(),main.boundingBox()]);
+        assert.ok(left.width>0&&left.height>0&&right.width>0&&right.height>0,'Both overview panels are visible');
+        assert.ok(left.x>=outer.x&&right.x>=outer.x&&left.x+left.width<=outer.x+outer.width+1&&right.x+right.width<=outer.x+outer.width+1,'Both panels fit inside the overview');
+        if(width<=760){
+          assert.ok(right.y>=left.y+left.height,'Narrow panels stack');
+          assert.ok(Math.abs(right.x-left.x)<=1&&Math.abs(right.width-left.width)<=1,'Stacked panels fill the same column without an empty left track');
+        }else assert.ok(right.x>=left.x+left.width&&Math.abs(left.y-right.y)<=1,'Desktop panels stay aligned beside each other');
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No horizontal overflow');
+      };
+      await check();
+      await page.screenshot({path:path.join(output,`overview-${width}${process.argv.includes('--dark')?'-dark':''}.png`)});
+      await page.reload();await account.waitFor();await check();
+      assert.deepEqual(errors,[]);
+      results.push({width,height,checks:'Visible account and quota panels, narrow stacking, no empty grid track, reload, overflow'});
+      await context.close();continue;
+    }
     if(process.argv.includes('--session-badge')){
       await page.goto(origin+'/');
       const badge=page.locator('#cliSessionsButton .cli-server-status-badge');
@@ -534,10 +570,24 @@ try {
         window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
       });
       await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='0');
-      assert.equal(await page.locator('.cli-sessions-popover .is-auto-resume').count(),0,'Finished work loses the resume toggle');
+      await resumeToggle.waitFor();
+      assert.equal(await resumeToggle.getAttribute('aria-pressed'),'true','Interrupted work retains its resume preference');
+      assert.equal(await page.locator('.cli-sessions-popover .cli-session-queue-wrap').count(),0,'Interrupted nonqueued work shows resume instead of queue');
+      await resumeToggle.focus(); await page.keyboard.press('Space');
+      await page.waitForFunction(()=>document.querySelector('.cli-sessions-popover .is-auto-resume')?.getAttribute('aria-pressed')==='false');
+      await page.evaluate(()=>{window.__failResume=true;});
+      await resumeToggle.click();
+      await page.getByText('Session preference storage is unavailable. The change was not saved.',{exact:true}).filter({visible:true}).first().waitFor();
+      assert.equal(await resumeToggle.getAttribute('aria-pressed'),'false','A failed preference save never appears enabled');
+      await page.evaluate(()=>{window.__failResume=false;});
+      await resumeToggle.click();
+      await page.waitForFunction(()=>document.querySelector('.cli-sessions-popover .is-auto-resume')?.getAttribute('aria-pressed')==='true');
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}})));
+      assert.equal(await resumeToggle.isDisabled(),true,'Offline preference changes are disabled');
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}})));
+      await page.waitForFunction(()=>!document.querySelector('.cli-sessions-popover .is-auto-resume')?.disabled);
+      await page.screenshot({path:path.join(output,`session-interrupted-resume-${width}${process.argv.includes('--dark')?'-dark':''}.png`)});
       const queueToggle=page.locator('.cli-sessions-popover').getByRole('button',{name:'Queue priority for Running workspace task',exact:true});
-      assert.equal(await queueToggle.isVisible(),true,'Interrupted work retains queue priority');
-      assert.equal(await queueToggle.getAttribute('data-state'),'not-queued');
       await page.evaluate(()=>{
         const session=window.__uiSessions.find(item=>item.title==='Running workspace task');
         Object.assign(session,{queueEnabled:true,queuePriority:2,queueError:'A queued start was not confirmed. Review before retrying.'});
@@ -548,8 +598,21 @@ try {
       await queueToggle.click();
       await page.getByText('Needs review · priority 2',{exact:true}).waitFor();
       await page.screenshot({path:path.join(output,`session-queue-review-${width}.png`)});
+      await page.goto(`${origin}/workspace/${runningId}`);
+      await page.evaluate(()=>{
+        const session=window.__uiSessions.find(item=>item.title==='Running workspace task');
+        Object.assign(session,{status:'idle',interrupted:true});
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
+      });
+      const showSidebar=page.getByRole('button',{name:'Show sessions sidebar',exact:true});
+      if(await showSidebar.isVisible())await showSidebar.click();
+      const sidebarToggle=page.locator('.cli-session-row').filter({hasText:'Running workspace task'}).getByRole('button',{name:'Auto Resume for Running workspace task',exact:true});
+      await sidebarToggle.waitFor();await sidebarToggle.click();
+      await page.waitForFunction(()=>document.querySelector('.cli-session-row .is-auto-resume')?.getAttribute('aria-pressed')==='false');
+      assert.equal(await sidebarToggle.getAttribute('aria-pressed'),'false','The interrupted sidebar uses the same saved preference action');
+      assert.equal(await page.evaluate(()=>window.__uiActions.filter(action=>action.action==='setCodexSessionAutoResume').at(-1)?.payload.sessionId),runningId);
       assert.deepEqual(errors,[]);
-      results.push({width,height,checks:'Single badge: count-only ready, startup spinner, offline, reconnect, no duplicate card'});
+      results.push({width,height,checks:'Badge, interrupted resume toggles in both lists, keyboard/touch, failure visibility, offline/reconnect, explicit queue review'});
       await context.close();continue;
     }
     if(process.argv.includes('--docs')){
@@ -965,7 +1028,7 @@ try {
       await page.goto(`${origin}/`);
       await page.locator('#cliSessionsButton').waitFor();
       await page.evaluate(() => {
-        window.__uiSessions.push({id:'recovery',title:'Interrupted workspace task',status:'idle',interrupted:true,projectPath:'D:/demo'});
+        window.__uiSessions.push({id:'recovery',title:'Interrupted workspace task',status:'idle',interrupted:true,queueEnabled:true,queuePriority:3,projectPath:'D:/demo'});
         window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',requestId:'dashboard-auto-fixture',action:'listCodexCliSessions',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
       });
       await page.locator('#cliSessionsButton').click();
@@ -983,7 +1046,7 @@ try {
       await panel.getByRole('button',{name:'Priority 1 First',exact:true}).click();
       assert.equal(await field.inputValue(),'1');
       for(const invalid of ['', '0', '-1', '1.5', '9007199254740992']) {
-        await field.fill(invalid); assert.equal(await panel.getByRole('button',{name:'Queue session',exact:true}).isDisabled(),true);
+        await field.fill(invalid); assert.equal(await panel.getByRole('button',{name:'Save priority',exact:true}).isDisabled(),true);
       }
       await field.fill('19');
       let box = await panel.boundingBox();
@@ -1013,7 +1076,13 @@ try {
       }
       await panel.getByRole('button',{name:'Remove from queue',exact:true}).click();
       await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.queueEnabled===false);
-      await page.evaluate(()=>{window.__failQueue=true;});
+      await trigger.waitFor({state:'detached'});
+      await row.getByRole('button',{name:'Auto Resume for Interrupted workspace task',exact:true}).waitFor();
+      await page.evaluate(()=>{
+        window.__failQueue=true;
+        Object.assign(window.__uiSessions.find(s=>s.id==='recovery'),{queueError:'Review a previous unconfirmed start.'});
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'dashboard-auto-fixture',status:'completed',payload:{cliSessions:window.__uiSessions}}}));
+      });
       await trigger.click(); await panel.getByRole('button',{name:'Queue session',exact:true}).click();
       await page.getByText('The session queue is full. Remove an entry before adding another.',{exact:true}).filter({visible:true}).first().waitFor();
       assert.equal(await page.evaluate(()=>window.__uiSessions.find(s=>s.id==='recovery')?.queueEnabled),false,'A failed queue action is never shown as saved');
@@ -1876,7 +1945,7 @@ try {
     console.log(`Checking ${width}: compact overview and floating controls`);
     const dashboardHero = await page.locator(".hero").boundingBox();
     const overviewDetails = page.locator(".overview-shell > .overview-account:not(.overview-inline-add-panel)");
-    if (await overviewDetails.count()) assert.equal(await overviewDetails.isVisible(), width > 760, "Small screens omit desktop overview identity details");
+    if (await overviewDetails.count()) assert.equal(await overviewDetails.isVisible(), true, "Account identity stays visible at every width");
     assert.equal(await page.locator(".overview-main").isVisible(), true, "Usage and quota overview stay visible");
     if (width > 760 && await overviewDetails.count()) {
       const left = await overviewDetails.boundingBox();
@@ -1928,7 +1997,7 @@ try {
     await page.locator(".cli-sessions-popover").waitFor();
     await page.evaluate(() => {
       window.__recoveryStart = window.__uiSessions.length;
-      window.__uiSessions.push({ id: "recovery", title: "Interrupted workspace task", projectPath: "C:\\work\\interrupted\\", status: "idle", interrupted: true, model: "gpt-5" }, { id: "recovery-long", title: "Long project task", projectPath: "/work/a-very-long-project-name-that-needs-to-truncate/", status: "idle", interrupted: true }, { id: "recovery-missing", title: "Missing project task", status: "idle", interrupted: true });
+      window.__uiSessions.push({ id: "recovery", title: "Interrupted workspace task", projectPath: "C:\\work\\interrupted\\", status: "idle", interrupted: true, queueEnabled: true, queuePriority: 3, model: "gpt-5" }, { id: "recovery-long", title: "Long project task", projectPath: "/work/a-very-long-project-name-that-needs-to-truncate/", status: "idle", interrupted: true }, { id: "recovery-missing", title: "Missing project task", status: "idle", interrupted: true });
       window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", requestId: "dashboard-auto-fixture", action: "listCodexCliSessions", status: "completed", payload: { cliSessions: window.__uiSessions } } }));
     });
     const interruptedRow = page.locator(".cli-sessions-running-row").filter({ hasText: "Interrupted workspace task" });
@@ -1944,7 +2013,7 @@ try {
     const queueBox = await queuePanel.boundingBox();
     assert.ok(queueBox.x >= 0 && queueBox.y >= 0 && queueBox.x + queueBox.width <= width + 1 && queueBox.y + queueBox.height <= height + 1, 'Queue flyout fits the viewport');
     await page.screenshot({ path: path.join(output, `queue-options-${width}x${height}.png`) });
-    await queuePanel.getByRole('button',{name:'Queue session',exact:true}).click();
+    await queuePanel.getByRole('button',{name:'Save priority',exact:true}).click();
     await page.waitForFunction(()=>window.__uiActions.some(message=>message.action==='setCodexSessionQueue'&&message.payload?.sessionId==='recovery'&&message.payload?.sessionQueuePriority===2));
     await page.screenshot({ path: path.join(output, `compact-recovery-${width}x${height}.png`) });
     const resumeRequestsBeforeBrowserOpen = await page.evaluate(() => window.__uiActions.filter(message => message.action === "resumeCodexSessions").length);

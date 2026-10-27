@@ -52,7 +52,8 @@ vi.mock("vscode", () => ({
   },
   workspace: {
     getConfiguration: vi.fn(() => ({
-      get: (_key: string, defaultValue?: unknown) => defaultValue,
+      // Unrelated unit tests opt out of automation and listeners explicitly.
+      get: (key: string, defaultValue?: unknown) => ["autoSwitchEnabled", "autoResetEnabled", "autoResumeEnabled", "autoSwitchWaitForSessionsEnabled", "autoSwitchReloadWindowEnabled", "autoSwitchRefreshAllBeforeSwitchEnabled", "quotaWarningEnabled", "cliIntegrationEnabled", "apiAccessEnabled", "webDashboardEnabled"].includes(key) ? false : defaultValue,
       update: vi.fn(),
       inspect: vi.fn()
     })),

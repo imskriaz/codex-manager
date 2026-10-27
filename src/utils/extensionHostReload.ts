@@ -73,7 +73,7 @@ export function reloadExtensionHostWithSessionCapture(
   const manual = new AbortController();
   manualReload = manual;
   const verifyAutomaticPreference = (): void => {
-    if (inFlightAutomatic && !getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", false)) {
+    if (inFlightAutomatic && !getCodexManagerConfiguration().get<boolean>("autoSwitchReloadWindowEnabled", true)) {
       throw new AutomaticReloadCancelledError();
     }
   };
@@ -81,7 +81,7 @@ export function reloadExtensionHostWithSessionCapture(
     const deadline = Date.now() + 45_000;
     const preparationDeadline = Date.now() + 500;
     const capture = new AbortController();
-    const preserveSessions = autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", false);
+    const preserveSessions = autoResume || getCodexManagerConfiguration().get<boolean>("autoResumeEnabled", true);
     let captureCompleted = false;
     let captureWarning: string | undefined;
     if (!inFlightAutomatic) void vscode.window.showInformationMessage("Preparing to reload Codex Manager.");

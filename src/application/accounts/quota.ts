@@ -517,7 +517,7 @@ export function isAutoSwitchWaitingForSessions(): boolean {
 async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolean> {
   const config = getCodexManagerConfiguration();
   const manual = autoSwitchManualOverride?.controller.signal;
-  if (userInitiated || manual?.aborted || !config.get<boolean>(AUTO_SWITCH_ENABLED, false) || !config.get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
+  if (userInitiated || manual?.aborted || !config.get<boolean>(AUTO_SWITCH_ENABLED, true) || !config.get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
     deferredForSessions = false;
     sessionWaitNotice = undefined;
     return false;
@@ -528,7 +528,7 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
   const inspection = new AbortController();
   const configuration = onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration(`codexManager.${AUTO_SWITCH_ENABLED}`) || event.affectsConfiguration("codexManager.autoSwitchWaitForSessionsEnabled")) {
-      if (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, false) || !getCodexManagerConfiguration().get<boolean>("autoSwitchWaitForSessionsEnabled", false)) inspection.abort(new Error("Session waiting is disabled."));
+      if (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, true) || !getCodexManagerConfiguration().get<boolean>("autoSwitchWaitForSessionsEnabled", false)) inspection.abort(new Error("Session waiting is disabled."));
     }
   });
   try {
@@ -549,7 +549,7 @@ async function deferAutoSwitchForSessions(userInitiated = false): Promise<boolea
     configuration?.dispose();
     inspection.abort();
   }
-  if (manual?.aborted || !getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, false) ||
+  if (manual?.aborted || !getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, true) ||
       !getCodexManagerConfiguration().get<boolean>("autoSwitchWaitForSessionsEnabled", false)) {
     waiting = false;
     message = undefined;
@@ -629,7 +629,7 @@ async function evaluateAutoSwitchForActiveQuota(
   refreshedActive = false
 ): Promise<boolean> {
   const config = getCodexManagerConfiguration();
-  if (!options.ignoreEnabled && !config.get<boolean>(AUTO_SWITCH_ENABLED, false)) {
+  if (!options.ignoreEnabled && !config.get<boolean>(AUTO_SWITCH_ENABLED, true)) {
     lastBlockedAutoSwitchKey = undefined;
     deferredForSessions = false;
     return false;
@@ -977,7 +977,7 @@ async function refreshAllBeforeWarningIfNeeded(
     return;
   }
   const config = getCodexManagerConfiguration();
-  if (!config.get<boolean>(QUOTA_WARNING_ENABLED, false)) {
+  if (!config.get<boolean>(QUOTA_WARNING_ENABLED, true)) {
     return;
   }
   const warningThresholds = getQuotaWarningThresholds(config);
@@ -1005,7 +1005,7 @@ async function refreshAllBeforeAutoSwitchIfDue(
   bypassGap = false,
   canUseAccount?: (accountId: string) => boolean
 ): Promise<boolean> {
-  if (!config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", false)) {
+  if (!config.get<boolean>("autoSwitchRefreshAllBeforeSwitchEnabled", true)) {
     return true;
   }
   const intervalMinutes = getAutoRefreshMinutes();
@@ -1295,7 +1295,7 @@ export async function maybeWarnForAccount(
   canUseAccount?: (accountId: string) => boolean
 ): Promise<void> {
   const config = getCodexManagerConfiguration();
-  if (!config.get<boolean>(QUOTA_WARNING_ENABLED, false)) {
+  if (!config.get<boolean>(QUOTA_WARNING_ENABLED, true)) {
     quotaWarningCounts.clear();
     return;
   }
@@ -1600,7 +1600,7 @@ function isAutoSelectionStillNeeded(active: CodexManagerAccountRecord, ignoreEna
   if (!active.isActive || isAutoSwitchLocked(active.id)) return false;
   if (
     !ignoreEnabled &&
-    (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, false) || active.enabled === false)
+    (!getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_ENABLED, true) || active.enabled === false)
   )
     return false;
   if (!active.quotaSummary || active.quotaError || !hasFreshQuotaSnapshot(active)) return false;

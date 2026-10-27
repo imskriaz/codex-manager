@@ -3,14 +3,14 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 
 describe("workspace setting", () => {
-  it("is disabled by default and is presented as a supported workspace toggle", () => {
+  it("is enabled by default and is presented as a supported workspace toggle", () => {
     const manifest = JSON.parse(readFileSync("package.json", "utf8")) as {
       contributes?: { configuration?: { properties?: Record<string, { default?: unknown; scope?: unknown; markdownDescription?: string }> } };
     };
     const property = manifest.contributes?.configuration?.properties?.["codexManager.cliIntegrationEnabled"];
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
 
-    expect(property).toMatchObject({ default: false, scope: "machine" });
+    expect(property).toMatchObject({ default: true, scope: "machine" });
     expect(property?.markdownDescription).toContain("Workspace:");
     expect(property?.markdownDescription).not.toContain("Experimental");
     expect(settings).toContain('"Enable workspace"');

@@ -1586,7 +1586,7 @@ export class EncryptedSyncManager implements vscode.Disposable {
 
   private canAuthenticatePeers(): boolean {
     const config = getCodexManagerConfiguration();
-    return this.isEnabled() || (config.get<boolean>("webDashboardEnabled", false) && config.get<boolean>("webSocketServerEnabled", true));
+    return this.isEnabled() || (config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true));
   }
 
   private isEnabled(): boolean {

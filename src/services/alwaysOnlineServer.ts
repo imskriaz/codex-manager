@@ -190,7 +190,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private configurationKey(): string | undefined {
     const config = getCodexManagerConfiguration();
     const domain = config.get<string>("cloudflaredDomain", "").trim();
-    return config.get<boolean>("webDashboardEnabled", false) && config.get<boolean>("webSocketServerEnabled", true) && domain ? domain : undefined;
+    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true) && domain ? domain : undefined;
   }
 
   private async prepareRelay(preparedHostKey?: string): Promise<PreparedRelay> {

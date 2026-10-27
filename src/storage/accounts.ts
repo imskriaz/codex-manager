@@ -139,6 +139,7 @@ const CACHE_TTL_MS = 5000;
 /** 防抖延迟 (毫秒) */
 const DEBOUNCE_DELAY_MS = 100;
 const ACCOUNT_SWITCH_TOKEN_REFRESH_WAIT_MS = 1500;
+const MANUAL_SWITCH_TOKEN_REFRESH_WAIT_MS = 30_000;
 
 const INDEX_FILE = "accounts-index.json";
 const INDEX_TEMP_SUFFIX = ".tmp";
@@ -1115,9 +1116,14 @@ export class AccountsRepository {
     if (existing) return existing;
     cancelCodexSessionAutoResume();
     // 按账号串行化，避免切号与后台续期并发刷新同一账号 token
-    const operation = this.prepareSwitchTokens(accountId).then(() =>
-      runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, "Account switch", () =>
+    const selectionKey = `account:manual-selection:${this.codexHomeStateKey}`;
+    const operation = sharedReadGeneration(selectionKey, manual).then(async generation => {
+      await this.prepareSwitchTokens(accountId, manual);
+      return runCrossWindowExclusive(`account:switch:${this.codexHomeStateKey}`, "Account switch", () =>
         this.withAccountCredentials(accountId, async () => {
+          if (await sharedReadGeneration(selectionKey) !== generation) {
+            throw new Error("This switch was cancelled because a newer manual account selection replaced it.");
+          }
           this.state.cache = null;
           this.invalidateTokenCache();
           if (options.expectedActiveAccountId !== undefined) {
@@ -1169,9 +1175,10 @@ export class AccountsRepository {
             await releaseCrossWindowAccount(previousAccountId);
           }
           return account;
-        })
-      )
-    );
+        }),
+        { waitMs: manual ? 2_000 : 0 }
+      );
+    });
     this.switchInFlight.set(key, operation);
     return operation.finally(() => {
       if (this.switchInFlight.get(key) === operation) this.switchInFlight.delete(key);
@@ -1187,7 +1194,7 @@ export class AccountsRepository {
     }));
   }
 
-  private async prepareSwitchTokens(accountId: string): Promise<void> {
+  private async prepareSwitchTokens(accountId: string, manual: boolean): Promise<void> {
     const tokens = await this.getTokens(accountId, { bypassCache: true });
     if (!tokens || !needsTokenRefresh(tokens, 0)) return;
     if (!tokens.refreshToken)
@@ -1196,10 +1203,14 @@ export class AccountsRepository {
     try {
       await waitWithin(
         renewal,
-        ACCOUNT_SWITCH_TOKEN_REFRESH_WAIT_MS,
+        manual ? MANUAL_SWITCH_TOKEN_REFRESH_WAIT_MS : ACCOUNT_SWITCH_TOKEN_REFRESH_WAIT_MS,
         "Account credentials are still refreshing. The account was not switched; retry in a moment."
       );
     } catch (error) {
+      const latest = await this.getTokens(accountId, { bypassCache: true });
+      if (latest && !needsTokenRefresh(latest, 0)) {
+        return;
+      }
       void renewal.catch((lateError) =>
         console.warn("[codexManager] pending switch credential refresh failed", lateError)
       );

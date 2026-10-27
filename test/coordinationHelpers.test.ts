@@ -96,9 +96,9 @@ describe("scheduler settings helpers", () => {
     expect(normalizeCurrentAutoRefreshMinutes(90)).toBe(60);
   });
 
-  it("normalizes quota history retention to the 7-day default or 1-90 days", () => {
-    expect(normalizeUsageHistoryRetentionDays(-1)).toBe(7);
-    expect(normalizeUsageHistoryRetentionDays(0)).toBe(7);
+  it("normalizes quota history retention to the 30-day default or 1-90 days", () => {
+    expect(normalizeUsageHistoryRetentionDays(-1)).toBe(30);
+    expect(normalizeUsageHistoryRetentionDays(0)).toBe(30);
     expect(normalizeUsageHistoryRetentionDays(0.4)).toBe(1);
     expect(normalizeUsageHistoryRetentionDays(30)).toBe(30);
     expect(normalizeUsageHistoryRetentionDays(120)).toBe(90);

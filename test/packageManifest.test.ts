@@ -21,7 +21,7 @@ describe("extension manifest configuration", () => {
       publisher: "imskriaz",
       repository: { url: "https://github.com/imskriaz/codex-manager.git" }
     });
-    expect(manifest.version).toBe("1.5.8-pre.3");
+    expect(manifest.version).toBe("1.5.8");
     expect(JSON.parse(fs.readFileSync(manifestPath, "utf8")).activationEvents)
       .toContain("onWebviewPanel:codexQuotaSummary");
   });
@@ -131,12 +131,12 @@ describe("extension manifest configuration", () => {
     expect(property).toBeTruthy();
     expect(property).toMatchObject({
       type: "boolean",
-      default: false
+      default: true
     });
     expect(property?.markdownDescription).toContain("Automatically reload");
   });
 
-  it("declares auto resume as an opt-in setting", () => {
+  it("declares auto resume enabled by default", () => {
     const manifestPath = path.resolve(__dirname, "../package.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
       contributes?: {
@@ -147,7 +147,7 @@ describe("extension manifest configuration", () => {
     };
 
     const property = manifest.contributes?.configuration?.properties?.["codexManager.autoResumeEnabled"];
-    expect(property).toMatchObject({ type: "boolean", scope: "machine", default: false });
+    expect(property).toMatchObject({ type: "boolean", scope: "machine", default: true });
     expect(property?.markdownDescription).not.toContain("Experimental");
     expect(property?.markdownDescription).toContain("Auto Switch on");
     expect(property?.markdownDescription).toContain("unfinished parent chats");
@@ -156,7 +156,7 @@ describe("extension manifest configuration", () => {
     expect(manifest.contributes?.configuration?.properties?.["codexManager.autoResumeGoalOnlyEnabled"]).toBeUndefined();
   });
 
-  it("declares quota graph history retention with a 7-day default", () => {
+  it("declares legacy quota history retention with a 30-day default", () => {
     const manifestPath = path.resolve(__dirname, "../package.json");
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as {
       contributes?: { configuration?: { properties?: Record<string, { type?: string; default?: unknown }> } };
@@ -167,7 +167,7 @@ describe("extension manifest configuration", () => {
     expect(manifest.contributes?.configuration?.properties?.["codexManager.usageHistoryRetentionDays"]).toMatchObject({
       type: "number",
       minimum: 1,
-      default: 7
+      default: 30
     });
   });
 

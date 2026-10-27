@@ -134,7 +134,7 @@ it("bounds a slow required refresh and leaves the account inactive", async () =>
   const saved = await repo.upsertFromTokens(tokens(true));
   refresh.mockReturnValue(new Promise(() => undefined));
   const startedAt = Date.now();
-  await expect(repo.switchAccount(saved.id)).rejects.toThrow("still refreshing");
+  await expect(repo.switchAccount(saved.id, { manual: false })).rejects.toThrow("still refreshing");
   expect(Date.now() - startedAt).toBeLessThan(3_000);
   expect(writeAuth).not.toHaveBeenCalled();
   expect((await repo.getAccount(saved.id))?.isActive).toBe(false);
@@ -228,4 +228,70 @@ it("locks an unverified selection for 15 minutes and clears it when a usable acc
   await repo.updateQuota(saved.id, { hourlyWindowPresent: true, hourlyWindowMinutes: 300, hourlyPercentage: 80, weeklyWindowPresent: false, weeklyPercentage: 0 });
   await repo.lockAutoSwitchForManualSelection(saved.id);
   expect(isAutoSwitchLocked(saved.id)).toBe(false);
+});
+
+
+it("keeps a manual switch pending through necessary credential renewal instead of requiring another click", async () => {
+  const saved = await repo.upsertFromTokens(tokens(true));
+  const fresh = tokens();
+  refresh.mockImplementation(async () => {
+    await new Promise(resolve => setTimeout(resolve, 1_700));
+    return fresh;
+  });
+  const first = repo.switchAccount(saved.id);
+  const duplicate = repo.switchAccount(saved.id);
+  expect((await Promise.all([first, duplicate])).map(account => account.id)).toEqual([saved.id, saved.id]);
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(writeAuth).toHaveBeenCalledWith(fresh);
+  expect(writeAuth).toHaveBeenCalledOnce();
+});
+
+it("does not let delayed renewal replace a newer manual selection", async () => {
+  const first = await repo.upsertFromTokens(tokens(true));
+  let finish!: (value: ReturnType<typeof tokens>) => void;
+  refresh.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  const pending = repo.switchAccount(first.id);
+  const cancelled = expect(pending).rejects.toThrow("newer manual account selection");
+  await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  const jwt = `header.${Buffer.from(JSON.stringify({ email: "newer@example.test", exp: Date.now() / 1000 + 3600,
+    "https://api.openai.com/auth": { chatgpt_account_id: "newer-account" } })).toString("base64url")}.signature`;
+  const newer = await repo.upsertFromTokens({ idToken: jwt, accessToken: jwt, refreshToken: "newer-refresh" });
+  await repo.switchAccount(newer.id);
+  finish(tokens());
+  await cancelled;
+  expect((await repo.getAccount(newer.id))?.isActive).toBe(true);
+  expect(writeAuth).toHaveBeenCalledOnce();
+});
+
+it("switches with newer valid credentials when an older renewal loses its credential comparison", async () => {
+  const saved = await repo.upsertFromTokens(tokens(true));
+  let finish!: (value: ReturnType<typeof tokens>) => void;
+  refresh.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  const pending = repo.switchAccount(saved.id);
+  await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  const newer = { ...tokens(), refreshToken: "newer-authorized-refresh" };
+  await repo.updateTokens(saved.id, newer);
+  finish(tokens());
+  await expect(pending).resolves.toMatchObject({ id: saved.id, isActive: true });
+  expect(await repo.getTokens(saved.id, { bypassCache: true })).toEqual(newer);
+  expect(writeAuth).toHaveBeenCalledExactlyOnceWith(newer);
+});
+
+it("does not let optional token rotation overwrite a subsequently selected account", async () => {
+  const first = await repo.upsertFromTokens(tokens());
+  let finish!: (value: ReturnType<typeof tokens>) => void;
+  refresh.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  await repo.switchAccount(first.id, { forceTokenRefresh: true });
+  await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  const jwt = `header.${Buffer.from(JSON.stringify({ email: "next@example.test", exp: Date.now() / 1000 + 3600,
+    "https://api.openai.com/auth": { chatgpt_account_id: "next-account" } })).toString("base64url")}.signature`;
+  const nextTokens = { idToken: jwt, accessToken: jwt, refreshToken: "next-refresh" };
+  const next = await repo.upsertFromTokens(nextTokens);
+  await repo.switchAccount(next.id);
+  const rotated = { ...tokens(), refreshToken: "rotated-refresh" };
+  finish(rotated);
+  await vi.waitFor(async () => expect(await repo.getTokens(first.id, { bypassCache: true })).toEqual(rotated));
+  expect(writeAuth).toHaveBeenCalledTimes(2);
+  expect(writeAuth).toHaveBeenLastCalledWith({ ...nextTokens, accountId: "next-account" });
+  expect((await repo.getAccount(next.id))?.isActive).toBe(true);
 });

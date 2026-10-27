@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.5.8-pre.3",
+  "version": "1.5.8",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -44,7 +44,7 @@
             "auto",
             "manual"
           ],
-          "default": "manual",
+          "default": "auto",
           "markdownDescription": "Restart the running desktop app automatically or ask each time."
         },
         "codexManager.codexAppRestartEnabled": {
@@ -81,8 +81,8 @@
           "minimum": 0,
           "maximum": 60,
           "multipleOf": 1,
-          "default": 15,
-          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`–`4` use `5`."
+          "default": 10,
+          "markdownDescription": "Check all account quotas every N minutes; `0` turns polling off and `1`\u2013`4` use `5`."
         },
         "codexManager.autoRefreshCurrentMinutes": {
           "type": "number",
@@ -118,12 +118,12 @@
           "minimum": 1,
           "maximum": 90,
           "multipleOf": 1,
-          "default": 7,
+          "default": 30,
           "markdownDescription": "Legacy setting retained for compatibility. New quota history is not recorded."
         },
         "codexManager.cliIntegrationEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "machine",
           "markdownDescription": "Workspace: add chats and terminals to the dashboard."
         },
@@ -140,7 +140,7 @@
         },
         "codexManager.autoSwitchEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "Switch accounts when current quota reaches either configured limit."
         },
         "codexManager.autoSwitchWaitForSessionsEnabled": {
@@ -151,13 +151,13 @@
         },
         "codexManager.autoSwitchReloadWindowEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "Automatically reload VS Code after an account switch changes the active account."
         },
         "codexManager.autoResumeEnabled": {
           "type": "boolean",
           "scope": "machine",
-          "default": false,
+          "default": true,
           "markdownDescription": "With Auto Switch on, open unfinished parent chats in official Codex conversation tabs after a VS Code restart, then resume when ready. Paused goals stay paused."
         },
         "codexManager.crossWindowAccountModeEnabled": {
@@ -183,12 +183,12 @@
         },
         "codexManager.autoSwitchRefreshAllBeforeSwitchEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "Check enabled account quotas before alerts or automatic switches."
         },
         "codexManager.autoResetEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "Use an available reset credit when every enabled account is out of quota."
         },
         "codexManager.autoResetWeeklyThreshold": {
@@ -219,7 +219,7 @@
         },
         "codexManager.quotaWarningEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "markdownDescription": "Warn when current account quota falls below either configured limit."
         },
         "codexManager.quotaWarningThreshold": {
@@ -276,7 +276,7 @@
         },
         "codexManager.webDashboardEnabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "machine",
           "markdownDescription": "Open a browser dashboard on this PC; set a shared password before allowing remote access."
         },
@@ -303,7 +303,7 @@
           "minimum": 1,
           "maximum": 60,
           "multipleOf": 1,
-          "default": 5,
+          "default": 10,
           "scope": "machine",
           "ignoreSync": true,
           "markdownDescription": "Choose the minimum interval between VS Code Settings Sync saves."

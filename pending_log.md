@@ -1,3 +1,10 @@
 # Pending work
 
-None.
+## Current defaults and release 1.5.8 — root
+
+- Outcome: make current portable Manager settings the shipped defaults, with dashboard API, System Log and Wait for running sessions off; preserve explicit saved preferences; fix premature manual-switch retry after required renewal/short auth commits; and publish stable GitHub release 1.5.8 with verified VSIX/checksum.
+- Owner/files: root claims manual switch storage/credential preparation, manifest/default consumers/tests and transcript fixture probe, docs/changelog, synchronized version and task logs; release/tag/assets serialized after verification. Preserve live sessions, accounts, credentials and machine-specific domains/paths.
+- Dependencies/consumers: live read-only settings → manifest defaults → dashboard/runtime/automation and fresh SQLite initialization; Git credential helper → GitHub Release API. No local installation or live configuration edits.
+- Acceptance: fresh settings and explicit false overrides, restart/reload/missing settings, bounded/invalid numbers, feature/auth/ownership gates; offline/retry/concurrency/storage and session safety retain existing contracts. Finish implementation before focused/full tests, lint/types/build, read-only UI, stable VSIX checks and publication.
+- Added UI scope: root claims overview responsive CSS and browser/layout assertions. Keep account identity visible when stacked, reset stale column placement at the 760px breakpoint, and verify intermediate widths as well as phones/desktop; no account/token/state mutation.
+- Next/gates: shared policy and both lists implemented; interrupted nonqueued work uses Auto Resume, explicit queue/review actions and offline/unknown/archive protections retained. Added focused 206 checks pass. Both themes pass six-width control/overview checks; overview additionally passes 714/760/761px boundaries and queue failure/remove/reconnect checks pass. Lint/types/build and rebuilt stable VSIX metadata/dependencies/runtime/defaults/CSS checks pass; checksum prepared. Final full regression passes: 2,570 tests / 209 files in 527.88s. Remaining: commit/push main, publish verified GitHub assets and verify public hashes. Marketplace publication is separate.

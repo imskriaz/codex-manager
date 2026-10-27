@@ -279,7 +279,7 @@ export class AccountsCommandService {
         if (reloadNeeded) {
           const reloadAutomatically = getCodexManagerConfiguration().get<boolean>(
             "autoSwitchReloadWindowEnabled",
-            false
+            true
           );
           if (!reloadAutomatically) {
             reloaded = await promptWindowReloadForAccount(account, {

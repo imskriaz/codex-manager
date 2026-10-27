@@ -45,7 +45,7 @@ type WorkspaceFileDraft = { text: string; revision: string };
 type WorkspaceProjectState = { tabs: WorkspaceTab[]; active: WorkspaceTab; draft?: string; fileNotice?: DashboardNotice; fileDrafts?: Record<string, WorkspaceFileDraft>; commitDraft?: string; workspaceGitPending?: boolean; workspaceGitNotice?: string; gitPending?: { requestId: string; kind: 'commit' | 'push' }; gitNotice?: DashboardNotice };
 const emptyWorkspaceProject = (): WorkspaceProjectState => ({ tabs: ['env'], active: 'env' });
 export type CliSessionSection = "active" | "archived";
-import { filterCliSessionsBySection, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder } from "../../src/domain/codexSessionState";
+import { filterCliSessionsBySection, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
 export function getMessagePrompt(messages: DashboardCliSessionMessage[], id: string): string | undefined {
@@ -715,7 +715,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         {session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />}
       </span> : null}
       <span class="cli-session-row-actions">
-        {session.status === "running" ? <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></IconButton> : session.interrupted || session.queueEnabled ? <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} /> : null}
+        {showsCodexSessionAutoResume(session) ? <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></IconButton> : session.interrupted || session.queueEnabled ? <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} /> : null}
       </span>
       </div>;
     })()

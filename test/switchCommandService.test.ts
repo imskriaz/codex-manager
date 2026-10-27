@@ -19,7 +19,7 @@ describe("manual account switch command", () => {
   beforeEach(() => {
     vi.mocked(vscode.commands.executeCommand).mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockReset().mockReturnValue({
-      get: (_key: string, defaultValue?: unknown) => defaultValue,
+      get: (key: string, defaultValue?: unknown) => key === "autoSwitchReloadWindowEnabled" ? false : defaultValue,
       update: vi.fn(),
       inspect: vi.fn(() => ({ defaultValue: false }))
     } as never);

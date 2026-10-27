@@ -33,7 +33,7 @@ export interface AutoQueueCandidate extends AutoQueueOrderValue {
 }
 
 export function createAutoQueuePolicy(settings: AutoQueuePolicySettings = {}, nowMs = Date.now(), staleAfterMs?: number): AutoQueuePolicy {
-  const interval = finite(settings.autoRefreshMinutes, 15);
+  const interval = finite(settings.autoRefreshMinutes, 10);
   const configuredFreshness = staleAfterMs ?? settings.quotaFreshnessMs;
   return {
     nowMs,
@@ -49,7 +49,7 @@ export function createAutoQueuePolicy(settings: AutoQueuePolicySettings = {}, no
 }
 
 export function getAutoQueueQuotaFreshnessMs(autoRefreshMinutes: number): number {
-  const interval = Number.isFinite(autoRefreshMinutes) && autoRefreshMinutes > 0 ? autoRefreshMinutes : 15;
+  const interval = Number.isFinite(autoRefreshMinutes) && autoRefreshMinutes > 0 ? autoRefreshMinutes : 10;
   return Math.max(30 * 60_000, interval * 2 * 60_000 + 5 * 60_000);
 }
 

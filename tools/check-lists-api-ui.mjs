@@ -131,7 +131,7 @@ export async function checkFlyoutUi(page, { origin, parentId, width, height, out
     await mobile.click();
   }
   await page.evaluate(() => {
-    window.__uiSessions.push({ id: 'flyout-interrupted', title: 'Interrupted flyout task', status: 'idle', interrupted: true, projectPath: 'D:/demo' });
+    window.__uiSessions.push({ id: 'flyout-interrupted', title: 'Interrupted flyout task', status: 'idle', interrupted: true, queueEnabled: true, queuePriority: 3, projectPath: 'D:/demo' });
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:action-result', action: 'listCodexCliSessions', requestId: 'dashboard-auto-flyout-fixture', status: 'completed', payload: { cliSessions: window.__uiSessions } } }));
   });
   const running = page.locator('#cliSessionsButton');

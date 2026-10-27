@@ -33,12 +33,12 @@ export function selectAccountResetOverride(accounts: CodexManagerAccountRecord[]
 export function getAccountAutoQueuePolicy(nowMs = Date.now(), staleAfterMs?: number): AutoQueuePolicy {
   const config = getCodexManagerConfiguration();
   return createAutoQueuePolicy({
-    autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", false),
-    autoResetEnabled: config.get<boolean>("autoResetEnabled", false),
+    autoSwitchEnabled: config.get<boolean>("autoSwitchEnabled", true),
+    autoResetEnabled: config.get<boolean>("autoResetEnabled", true),
     autoSwitchHourlyThreshold: config.get<number>("autoSwitchHourlyThreshold", 5),
     autoSwitchWeeklyThreshold: config.get<number>("autoSwitchWeeklyThreshold", 0),
     autoResetWeeklyThreshold: config.get<number>("autoResetWeeklyThreshold", 0),
-    autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 15))
+    autoRefreshMinutes: normalizeAutoRefreshMinutes(config.get<number>("autoRefreshMinutes", 10))
   }, nowMs, staleAfterMs);
 }
 

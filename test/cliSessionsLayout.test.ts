@@ -19,9 +19,23 @@ import {
 import { reconcileCliSessionStatus, reconcileCliSessionStatuses } from "../webview-src/dashboard/cliSessionLiveState";
 import { shouldPatchDashboardSettingOptimistically } from "../webview-src/dashboard/settingsOverlay";
 import { getDashboardCopy } from "../src/application/dashboard/copy";
-import { isCodexSessionRunning } from "../src/domain/codexSessionState";
+import { isCodexSessionRunning, showsCodexSessionAutoResume } from "../src/domain/codexSessionState";
 
 describe("sessions sidebar layout", () => {
+  it("shows interrupted-work resume preferences while preserving explicit queue review", () => {
+    const interrupted = { status: "idle" as const, interrupted: true };
+    expect(showsCodexSessionAutoResume({ status: "running" })).toBe(true);
+    expect(showsCodexSessionAutoResume(interrupted)).toBe(true);
+    for (const patch of [{ interrupted: false }, { archived: true }, { queueEnabled: true }, { queueError: "Unconfirmed start" }, { status: "unknown" as const }]) {
+      expect(showsCodexSessionAutoResume({ ...interrupted, ...patch })).toBe(false);
+    }
+    expect(showsCodexSessionAutoResume({ ...interrupted, queueEnabled: false })).toBe(true);
+    expect(showsCodexSessionAutoResume({ status: "idle" })).toBe(false);
+    for (const file of ["main.tsx", "cliSessionsModal.tsx"]) {
+      expect(readFileSync(`webview-src/dashboard/${file}`, "utf8")).toContain("showsCodexSessionAutoResume(session) ?");
+    }
+  });
+
   it("blocks unverified session actions and labels the status without claiming readiness", () => {
     expect(isCodexSessionRunning({ status: "unknown" })).toBe(true);
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");

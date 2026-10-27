@@ -432,7 +432,7 @@ export function registerAutoRefreshScheduler(params: {
     // ineligible) without waiting for the next refresh interval. Re-evaluate
     // immediately so enabling Auto Switch and changing its thresholds have a
     // deterministic effect.
-    if (autoSwitchChanged && getCodexManagerConfiguration().get<boolean>("autoSwitchEnabled", false)) {
+    if (autoSwitchChanged && getCodexManagerConfiguration().get<boolean>("autoSwitchEnabled", true)) {
       void maybeAutoSwitchForActiveQuota(
         params.repo,
         { refresh: params.onRefresh },

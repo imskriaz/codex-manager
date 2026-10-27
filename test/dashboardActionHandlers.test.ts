@@ -813,7 +813,7 @@ describe("executeDashboardActionMessage", () => {
   });
 
   it("returns a visible reload outcome when the VS Code reload prompt is postponed", async () => {
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({ get: (key: string, fallback?: unknown) => key === "crossWindowAccountModeEnabled" ? true : fallback } as vscode.WorkspaceConfiguration);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "crossWindowAccountModeEnabled" ? true : key === "autoSwitchReloadWindowEnabled" ? false : fallback } as vscode.WorkspaceConfiguration);
     setCurrentWindowRuntimeAccountId("account-before-reload");
     vi.mocked(vscode.window.showInformationMessage)
       .mockReset()
@@ -1891,7 +1891,7 @@ describe("executeDashboardActionMessage", () => {
   });
 
   it("queues a browser account change without falsely scheduling reload while auto reload is off", async () => {
-    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === "autoSwitchReloadWindowEnabled" ? false : fallback } as never);
     setCurrentWindowRuntimeAccountId("previous");
     vi.mocked(vscode.commands.executeCommand).mockReset();
     const account = { id: "reload-off-target", email: "target@example.test", isActive: false };

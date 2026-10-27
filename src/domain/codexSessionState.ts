@@ -29,6 +29,11 @@ export function isCodexSessionRunning(
   return Boolean(session && !session.archived && (session.status === "running" || session.status === "unknown" || session.locked));
 }
 
+export function showsCodexSessionAutoResume(session: Pick<DashboardCliSessionSummary, "status" | "archived" | "interrupted" | "queueEnabled" | "queueError">): boolean {
+  return !session.archived && (session.status === "running" ||
+    (session.status === "idle" && session.interrupted === true && !session.queueEnabled && !session.queueError));
+}
+
 export function filterCliSessionsBySection(
   sessions: DashboardCliSessionSummary[],
   section: "active" | "archived"
