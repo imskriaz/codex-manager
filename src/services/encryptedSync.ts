@@ -350,7 +350,6 @@ export class EncryptedSyncManager implements vscode.Disposable {
           failures.push(error instanceof Error ? error.message : String(error));
         }
       };
-      if (active && !this.disposed && this.isCurrentAccountOnly()) await requestClaim("acquire", active.id);
       for (const claim of this.readLocalEnablement()) {
         signal?.throwIfAborted();
         if (this.disposed) return;
@@ -359,6 +358,9 @@ export class EncryptedSyncManager implements vscode.Disposable {
         else if (claim.currentOnly && !this.isCurrentAccountOnly() && activeAccountIds.has(claim.accountId)) await requestClaim("acquire", claim.accountId);
       }
       if (failures.length) throw new Error([...new Set(failures)].join(" "));
+      if (active && !this.disposed && this.isCurrentAccountOnly() && this.preparedCurrentClaims.size === 0) {
+        await this.requestCurrentClaim("acquire", active.id, undefined, signal);
+      }
     } finally { this.currentClaimRefreshInFlight = false; }
   }
 

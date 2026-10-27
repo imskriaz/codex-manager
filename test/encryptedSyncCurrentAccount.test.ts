@@ -86,6 +86,21 @@ afterEach(async () => {
 });
 
 describe("current account only sync", () => {
+  it("retries a lost release reply before claiming the new current account", async () => {
+    await reconcile();
+    active = "next";
+    const deliver = fetchMock.getMockImplementation()!;
+    fetchMock.mockClear().mockImplementationOnce(async (...args) => {
+      await deliver(...args);
+      throw new Error("release reply lost");
+    });
+    await expect(reconcile()).rejects.toThrow("release reply lost");
+    expect(fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).request.action)).toEqual(["release"]);
+    await reconcile();
+    expect(manager.getRealtimeEnablementRegistry().filter(entry => entry.enabled).map(entry => entry.accountId)).toEqual(["next"]);
+    expect(manager.getRealtimeEnablementRegistry().find(entry => entry.accountId === "previous")).toMatchObject({ enabled: false });
+  });
+
   it("yields stalled background claim renewal to a manual account switch", async () => {
     fetchMock.mockImplementationOnce((_url: unknown, options: { signal: AbortSignal }) =>
       new Promise((_, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true }))

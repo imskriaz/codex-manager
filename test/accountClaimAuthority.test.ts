@@ -50,6 +50,31 @@ describe("shared current-account claim authority", () => {
     expect(await authority.request(acquire("PC A"))).toMatchObject({ ok: false });
   });
 
+  it("replays a committed release after a lost reply or reboot without releasing a newer claim", async () => {
+    const snapshots: ReturnType<typeof createSyncAccountEnablement>[] = [];
+    const authority = new AccountClaimAuthority(file, () => snapshots);
+    const granted = await authority.request(acquire("PC A"));
+    snapshots.push(granted.claim!);
+    const release = { ...acquire("PC A"), action: "release" as const };
+    const committed = await authority.request(release);
+    const restarted = new AccountClaimAuthority(file, () => snapshots);
+    const replays = await Promise.all([restarted.request(release), restarted.request({ ...release, requestId: "retry" })]);
+    expect(replays.map(result => result.claim)).toEqual([committed.claim, committed.claim]);
+    expect(replays.every(result => result.ok)).toBe(true);
+    await restarted.request(acquire("PC A", "new-token"));
+    expect(await restarted.request(release)).toMatchObject({ ok: false });
+  });
+
+  it("returns a release above a newer stale snapshot so it can converge", async () => {
+    const snapshots: ReturnType<typeof createSyncAccountEnablement>[] = [];
+    const authority = new AccountClaimAuthority(file, () => snapshots);
+    const first = await authority.request(acquire("PC A"));
+    const release = { ...acquire("PC A"), action: "release" as const };
+    await authority.request(release);
+    snapshots.push({ ...first.claim!, revision: 99 });
+    expect(await authority.request(release)).toMatchObject({ ok: true, claim: { enabled: false, revision: 100 } });
+  });
+
   it("keeps durable ownership and release fencing ahead of late sync snapshots", async () => {
     const snapshots = [] as ReturnType<typeof createSyncAccountEnablement>[];
     const authority = new AccountClaimAuthority(file, () => snapshots);

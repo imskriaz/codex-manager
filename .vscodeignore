@@ -3,6 +3,8 @@
 *.apk
 *.log
 AGENTS.md
+pending_log.md
+PROJECT_LOG.md
 .git/**
 .github/**
 .vscode/**

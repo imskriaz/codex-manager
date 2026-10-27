@@ -223,7 +223,7 @@ Automatic token history is on by default and preserves an explicit Off preferenc
 
 **Wait for running sessions** under Automation delays Auto Switch and automatic resets until every local turn finishes. If session inspection fails or times out, automatic switching waits with a warning and retries. Manual account switching remains available immediately.
 
-**Reserve all accounts** under Data & sync is off by default, so Sync and Claim reserves only the account currently selected on this PC and frees every other saved account. Turn it on to claim every enabled saved account. Configure the same shared HTTPS dashboard domain and password on every PC. The shared host confirms ownership before credentials change; disconnected PCs keep their current claim until they reconnect and release it. Account cards show the owning PC.
+**Reserve all accounts** under Data & sync is off by default, so Sync and Claim reserves only the account currently selected on this PC and frees every other saved account. Turn it on to claim every enabled saved account. Configure the same shared HTTPS dashboard domain and password on every PC. Ownership is confirmed in the background after local account switches, releasing previous reservations before claiming the current account. Lost release replies replay the confirmed release; failed cleanup retries after reconnecting. Parallel window mode retains each live window's current account. Account cards show the owning PC.
 
 Browser conversations show the saved native Codex goal above the composer, including its objective, state, and elapsed time. This remains available when the goal creation event has scrolled out of the message history.
 

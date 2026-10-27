@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.8-pre.1
+
+- Replay confirmed account releases after a lost reply or restart so stale synchronized claims clear. Release previous claims before reserving the current account; failed cleanup retries without adding another reservation.
+
 ## 1.5.7
 
 - Remove the fixed quota-history record cap from SQLite, migration, and fallback storage. Keep configured time retention and bounded graph queries without discarding saved samples.

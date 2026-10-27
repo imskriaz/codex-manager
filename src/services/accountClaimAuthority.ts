@@ -123,7 +123,6 @@ export class AccountClaimAuthority {
             if (
               !current ||
               current.deviceId !== request.deviceId ||
-              !current.enabled ||
               (current.claimToken !== undefined && current.claimToken !== request.token)
             ) {
               return {
@@ -131,6 +130,10 @@ export class AccountClaimAuthority {
                 ok: false,
                 error: "The account claim changed. Refresh claims before retrying."
               };
+            }
+            // Replay the committed release after a lost reply without changing its fencing token.
+            if (!current.enabled && current.revision >= observedRevision) {
+              return { requestId: request.requestId, ok: true, claim: current, acquired: false };
             }
             claim = {
               ...current,
