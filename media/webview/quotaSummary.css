@@ -10375,12 +10375,10 @@ html[data-theme="dark"] .cli-terminal-panel {
   grid-column: auto;
 }
 
-.settings-layout .settings-switch-options > .settings-block:last-child {
-  grid-column: 2;
-}
-
-.settings-layout .settings-switch-options > .settings-block:nth-child(3) {
-  grid-row: span 2;
+@media (min-width: 561px) {
+  .settings-layout .settings-switch-options:has(> .settings-block:first-child > .settings-stack:not(.is-hidden)) > .settings-block:first-child {
+    grid-row: span 2;
+  }
 }
 
 @media (max-width: 560px) {
@@ -10398,14 +10396,6 @@ html[data-theme="dark"] .cli-terminal-panel {
 
   .settings-layout .settings-integration-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .settings-layout .settings-switch-options > .settings-block:last-child {
-    grid-column: auto;
-  }
-
-  .settings-layout .settings-switch-options > .settings-block:nth-child(3) {
-    grid-row: auto;
   }
 
   .settings-layout .settings-dashboard-server {

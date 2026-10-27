@@ -512,12 +512,6 @@ export function SettingsOverlay(props: {
                       onToggle={(enabled) => patchAndSend("autoSwitchWaitForSessionsEnabled", enabled)}
                     />
                     <SettingsToggleBlock
-                      title={props.copy.autoResumeTitle}
-                      sub={props.copy.autoResumeSub}
-                      enabled={props.settings.autoResumeEnabled === true}
-                      onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
-                    />
-                    <SettingsToggleBlock
                       title={props.copy.autoSwitchRefreshAllTitle ?? "Refresh quotas before switching"}
                       sub={
                         props.copy.autoSwitchRefreshAllSub ??
@@ -525,6 +519,12 @@ export function SettingsOverlay(props: {
                       }
                       enabled={props.settings.autoSwitchRefreshAllBeforeSwitchEnabled === true}
                       onToggle={(enabled) => patchAndSend("autoSwitchRefreshAllBeforeSwitchEnabled", enabled)}
+                    />
+                    <SettingsToggleBlock
+                      title={props.copy.autoResumeTitle}
+                      sub={props.copy.autoResumeSub}
+                      enabled={props.settings.autoResumeEnabled === true}
+                      onToggle={(enabled) => patchAndSend("autoResumeEnabled", enabled)}
                     />
                     <SettingsToggleBlock
                       title={props.copy.autoSwitchReloadTitle}

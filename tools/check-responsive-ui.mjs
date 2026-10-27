@@ -383,6 +383,29 @@ async function checkClosedProject(page, width, errors) {
     assert.deepEqual(errors, [], "Closed-project browser runtime errors");
 }
 
+async function checkSwitchingLayout(page, width, resetExpanded) {
+  const options = page.locator('.settings-switch-options > .settings-block');
+  assert.equal(await options.count(), 5);
+  const bounds = await options.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
+  const [reset, wait, refresh, resume, reload] = bounds;
+  assert.ok(bounds.every(rect => Math.abs(rect.width - reset.width) <= 2), 'Switching cards have equal widths');
+  if (width > 560 && resetExpanded) {
+    assert.ok(Math.abs(reset.y - wait.y) <= 2 && wait.x > reset.x, 'Reset starts beside Wait');
+    assert.ok(refresh.y - wait.bottom >= 5 && refresh.y - wait.bottom <= 12, 'Refresh fills the space below Wait');
+    assert.ok(Math.abs(resume.y - reload.y) <= 2 && reload.x > resume.x, 'Resume and Reload share the final row');
+    assert.ok(resume.y - reset.bottom >= 5 && resume.y - reset.bottom <= 12, 'Resume follows the expanded reset without an empty row');
+    assert.ok(reload.y - refresh.bottom >= 5 && reload.y - refresh.bottom <= 12, 'Reload follows Refresh without an empty row');
+  } else if (width > 560) {
+    assert.ok(Math.abs(reset.y - wait.y) <= 2 && Math.abs(refresh.y - resume.y) <= 2, 'Collapsed options use ordinary grid rows');
+    assert.ok(refresh.y - reset.bottom <= 8 && reload.y - refresh.bottom <= 8, 'Collapsed reset leaves no reserved space');
+  } else {
+    for (let index = 1; index < bounds.length; index++) {
+      const gap = bounds[index].y - bounds[index - 1].bottom;
+      assert.ok(Math.abs(bounds[index].x - reset.x) <= 2 && gap >= 5 && gap <= 8, 'Phone cards stack without gaps');
+    }
+  }
+}
+
 const browser = await chromium.launch({ channel: process.env.CODEX_MANAGER_BROWSER || "msedge", headless: true });
 const results = [];
 try {
@@ -433,6 +456,16 @@ try {
       };
       await page.goto(origin + '/');
       await openSettings();
+      await checkSwitchingLayout(page, width, true);
+      const reset = page.getByRole('button', { name: snapshot.copy.autoResetTitle, exact: true });
+      await reset.click();
+      await page.waitForFunction(() => window.__uiSettingResults.some(result => result.key === 'autoResetEnabled' && result.value === false));
+      await checkSwitchingLayout(page, width, false);
+      await page.locator('.settings-switch-options').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(output, `switching-collapsed-${width}x${height}${process.argv.includes('--dark') ? '-dark' : ''}.png`) });
+      await reset.click();
+      await page.waitForFunction(() => window.__uiSettingResults.some(result => result.key === 'autoResetEnabled' && result.value === true));
+      await checkSwitchingLayout(page, width, true);
       const resume = page.getByRole('button', { name: snapshot.copy.autoResumeTitle, exact: true });
       assert.equal(await page.getByRole('button', { name: 'Open VS Code', exact: true }).count(), 0);
       assert.equal(await resume.getAttribute('aria-pressed'), 'true');
@@ -454,8 +487,9 @@ try {
       await resume.waitFor({ state: 'visible' });
       assert.equal(await resume.getAttribute('aria-pressed'), 'true', 'Parent preserves Auto Resume');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'No horizontal overflow');
-      await resume.scrollIntoViewIfNeeded();
-      await page.screenshot({ path: path.join(output, `auto-resume-${width}x${height}.png`) });
+      await checkSwitchingLayout(page, width, true);
+      await page.locator('.settings-switch-options').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(output, `auto-resume-${width}x${height}${process.argv.includes('--dark') ? '-dark' : ''}.png`) });
       assert.deepEqual(errors, [], 'Automation browser errors');
       assert.equal(await page.evaluate(() => window.__uiActions.some(action => action.key === 'autoResumeOpenVsCode')), false);
       results.push({ width, height, checks: 'window-only Auto Resume, keyboard/touch, save/reload, parent visibility, overflow' });
@@ -2200,12 +2234,7 @@ try {
         const switchCard = switchToggle.locator("../..");
         const options = switchCard.locator(":scope > .settings-stack > .settings-integration-grid > .settings-block");
         assert.equal(await options.count(), 5, "Switching contains reset, wait, resume, refresh, and reload options");
-        const bounds = await options.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().toJSON()));
-        assert.ok(bounds.every(rect => Math.abs(rect.width - bounds[0].width) <= 2), "Switching options use equal-width cards");
-        if (width > 560) {
-          assert.ok(Math.abs(bounds[0].y - bounds[1].y) <= 2 && Math.abs(bounds[2].y - bounds[3].y) <= 2, "Switching options form two rows of two");
-          assert.ok(bounds[4].x > bounds[0].x && bounds[4].y >= bounds[3].bottom && bounds[4].y < bounds[2].bottom, "Reload fills the space below Refresh beside Auto Resume");
-        }
+        await checkSwitchingLayout(page, width, true);
         const refreshCard = page.getByRole("button", { name: snapshot.copy.autoSwitchRefreshAllTitle, exact: true }).locator("../..");
         const refreshBounds = await refreshCard.boundingBox();
         const refreshHead = await refreshCard.locator(":scope > .settings-toggle-head").boundingBox();

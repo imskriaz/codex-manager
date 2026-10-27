@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.8-pre.3
+
+- Remove empty space between Automation switching options. Pack compact toggles beside the expanded reset slider and preserve a single column on phones.
+
 ## 1.5.8-pre.2
 
 - Open official VS Code conversation tabs directly for Auto Resume, removing the background-owner attempt and separate Open VS Code setting. Keep readiness checks, Pause/Stop protection and saved recovery on failure.
