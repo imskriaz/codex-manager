@@ -143,6 +143,8 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(queue).not.toContain("cli-session-control-markers");
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("is-auto-resume ${autoResume ? \"is-enabled\" : \"is-disabled\"}");
     expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("cli-icon-button is-auto-resume ${autoResume ? \"is-enabled is-active\" : \"is-disabled\"}");
+    expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("running && showsCodexSessionAutoResume(session)");
+    expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("!running && (session.interrupted || session.queueEnabled)");
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(main).toContain('cli-sessions-running-row ${running ? "is-running" : "is-interrupted"}');
