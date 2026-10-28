@@ -141,9 +141,13 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(tools).not.toContain('"Goal manager"');
     expect(queue).toContain("Auto Resume");
     expect(queue).toContain("Queue and Auto Resume options");
-    expect(queue).toContain("is-auto-resume-badge");
+    expect(queue).toContain("is-auto-resume-icon");
     expect(queue).toContain("is-queue-badge");
     expect(queue).toContain("cli-session-control-markers");
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(main).toContain('cli-sessions-running-row ${running ? "is-running" : "is-interrupted"}');
+    expect(css).toContain(".cli-sessions-running-row.is-running .cli-sessions-running-title");
     expect(tools).toContain('class={`maintenance-report${storage ? " has-storage" : ""}`}');
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const webDashboard = settings.indexOf('props.lang === "zh" ? "浏览器面板"');

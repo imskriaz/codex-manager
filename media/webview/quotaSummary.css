@@ -5673,6 +5673,8 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-sessions-running-row .cli-icon-button:focus-visible { outline:2px solid var(--accent-blue); outline-offset:2px; }
 .cli-sessions-running-row + .cli-sessions-running-row { border-top: 1px solid var(--border-default); }
 .cli-sessions-running-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 11px; font-weight: 600; line-height: 14px; }
+.cli-sessions-running-row.is-running .cli-sessions-running-title { color: var(--accent-green,#2da44e); }
+.cli-sessions-running-row.is-interrupted .cli-sessions-running-title { color: var(--text-secondary); }
 .cli-sessions-running-copy > .cli-session-row-meta { display: flex; margin-top: 1px; color: var(--muted); font-size: 10px; line-height: 13px; }
 .cli-sessions-running-row .cli-sessions-running-time, .cli-sessions-running-row .cli-session-row-meta > [aria-hidden="true"] { flex: none; }
 .cli-sessions-list-status, .cli-sessions-empty { margin: 0; padding: 8px 12px 12px; color: var(--muted); font-size: 11px; line-height: 1.5; }
@@ -14954,13 +14956,13 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-session-queue-wrap { position: relative; display: inline-flex; }
 .cli-session-queue-wrap > button { position:relative; }
 .cli-session-control-markers { display:inline-flex; align-items:center; justify-content:center; gap:3px; min-width:32px; }
-.cli-session-queue-glyph { display:inline-flex; width:16px; height:16px; }
-.cli-session-queue-glyph svg { width:16px; height:16px; }
-.cli-session-control-badge { display:grid; place-items:center; min-width:13px; height:13px; padding:0 2px; box-sizing:border-box; border:1px solid var(--bg-elevated); border-radius:99px; background:var(--accent-blue); color:#fff; font-size:8px; font-weight:700; line-height:1; }
-.cli-session-control-badge svg { width:8px; height:8px; }
-.cli-session-control-badge.is-auto-resume-badge { background:var(--accent-green,#2da44e); box-shadow:0 0 0 1px color-mix(in srgb,var(--accent-green,#2da44e) 28%,transparent); }
-.cli-session-control-badge.is-queue-badge { margin-left:-2px; background:var(--accent-blue); }
-.cli-session-queue-wrap > button.has-queue-error .is-queue-badge { background:var(--danger,var(--accent-red,#c63b4d)); }
+.cli-session-main-icon { display:inline-flex; width:17px; height:17px; color:var(--text-muted); }
+.cli-session-main-icon svg { width:17px; height:17px; }
+.cli-session-main-icon.is-auto-resume-icon { color:var(--accent-green,#2da44e); }
+.cli-session-queue-wrap > button.is-auto-resume-selected { color:var(--accent-green,#2da44e); background:color-mix(in srgb,var(--accent-green,#2da44e) 12%,transparent); border-color:color-mix(in srgb,var(--accent-green,#2da44e) 48%,var(--border-muted)); }
+.cli-session-control-badge { display:grid; place-items:center; min-width:15px; height:15px; padding:0 3px; box-sizing:border-box; border:1px solid var(--bg-surface); border-radius:99px; background:var(--accent-blue); color:#fff; font-size:8px; font-weight:700; line-height:1; box-shadow:0 0 0 1px color-mix(in srgb,var(--accent-blue) 45%,transparent); }
+.cli-session-control-badge.is-queue-badge { position:absolute; right:-5px; top:-5px; min-width:15px; background:var(--accent-blue); }
+.cli-session-queue-wrap > button.has-queue-error .is-queue-badge { background:var(--danger,var(--accent-red,#c63b4d)); box-shadow:0 0 0 1px color-mix(in srgb,var(--danger,var(--accent-red,#c63b4d)) 45%,transparent); }
 .cli-session-queue-menu { padding:12px; border:1px solid var(--border-default); border-radius:10px; background:var(--bg-elevated, var(--vscode-editorWidget-background, #1d2028)); color:var(--text-primary); box-shadow:0 12px 36px #0005; }
 .cli-session-queue-menu header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 0 10px; border-bottom:1px solid var(--border-muted); }
 .cli-session-queue-menu header strong { display:block; font-size:12px; font-weight:600; line-height:18px; letter-spacing:0; text-transform:none; }
@@ -14986,7 +14988,6 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-queue-current { display:block; margin-top:1px; }
 .cli-session-queue-menu button:focus-visible,.cli-session-queue-menu input:focus-visible { outline:2px solid var(--accent-blue); outline-offset:1px; }
 .cli-running-queue > button { display:inline-flex; align-items:center; gap:2px; }
-.cli-running-queue > button > .cli-session-control-markers small { max-width:36px; overflow:hidden; text-overflow:ellipsis; border-color:var(--bg-surface); font-size:9px; line-height:12px; }
 .cli-queue-presets { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; }
 .cli-queue-presets button { display:block; padding:7px 4px; text-align:center; }
 .cli-queue-presets button span,.cli-queue-presets button small { display:block; }

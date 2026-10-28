@@ -39,14 +39,16 @@ export function SessionQueueControl(props: {
     };
   }, [open]);
   const hasAutoResume = props.autoResumeEnabled !== undefined && props.onAutoResume;
+  const autoResumeActive = Boolean(hasAutoResume && props.autoResumeEnabled);
   return <span class="cli-running-queue cli-session-queue-wrap">
-    <button ref={trigger} type="button" class={`cli-icon-button ${session.queueEnabled ? 'is-active' : ''} ${session.queueError ? 'has-queue-error' : ''}`} disabled={props.disabled}
-      data-state={session.queueError ? 'needs-review' : session.queueEnabled ? 'queued' : 'not-queued'}
+    <button ref={trigger} type="button" class={`cli-icon-button ${session.queueEnabled || autoResumeActive ? 'is-active' : ''} ${autoResumeActive ? 'is-auto-resume-selected' : ''} ${session.queueError ? 'has-queue-error' : ''}`} disabled={props.disabled}
+      data-state={session.queueError ? 'needs-review' : autoResumeActive ? 'auto-resume' : session.queueEnabled ? 'queued' : 'not-queued'}
       aria-label={`Queue and Auto Resume options for ${session.title}`} aria-description={session.queueError} title={session.queueError ? `Queue needs review · ${session.queueError}` : session.queueEnabled ? `Queued · priority ${session.queuePriority ?? 3} · waiting for active work to finish` : hasAutoResume && props.autoResumeEnabled ? 'Auto Resume on · Open queue options' : 'Queue and Auto Resume options'}
       aria-haspopup="dialog" aria-expanded={open} onClick={() => { setPriority(String(session.queuePriority ?? 3)); setOpen(!open); }}>
       <span class="cli-session-control-markers" aria-hidden="true">
-        <span class="cli-session-queue-glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h15M4 10h7M4 15h4" /><circle cx="16.5" cy="16" r="5" /><path d="M16.5 13v3l2 1.5" /></svg></span>
-        {hasAutoResume && props.autoResumeEnabled ? <span class="cli-session-control-badge is-auto-resume-badge" title="Auto Resume on"><svg viewBox="0 0 12 12" fill="currentColor"><path d="m3 2 7 4-7 4V2Z" /></svg></span> : null}
+        <span class={`cli-session-main-icon ${autoResumeActive ? 'is-auto-resume-icon' : 'is-queue-icon'}`}>
+          {autoResumeActive ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8V3l-3 3a9 9 0 1 0 3.5 9" /><path d="M20 8h-5" /><path d="m10 8 6 4-6 4V8Z" fill="currentColor" stroke="none" /></svg> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h15M4 10h7M4 15h4" /><circle cx="16.5" cy="16" r="5" /><path d="M16.5 13v3l2 1.5" /></svg>}
+        </span>
         {session.queueEnabled || session.queueError ? <small class="cli-session-control-badge is-queue-badge" title={`Priority ${session.queuePriority ?? 3}`}>{session.queueError ? '!' : session.queuePriority ?? 3}</small> : null}
       </span>
     </button>

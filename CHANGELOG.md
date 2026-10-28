@@ -1,11 +1,13 @@
 # Changelog
 
-## 1.5.9-pre.1
+## 1.5.9-pre.2
 
 - Keep About Codex reports two-column only when storage metrics exist; startup and project tabs remain single-column and compact.
 - Move Project Task Board and Dashboard API settings under Web Dashboard.
 - Keep Archive Management as a single compact tool with sorting alongside selection controls.
 - Present Queue and Auto Resume markers as a compact, non-overlapping state cluster.
+- Switch the main trigger icon to the selected play state when Auto Resume is enabled; keep queue priority as an absolute bordered badge.
+- Give running session titles a distinct active color in the session flyout.
 
 ## 1.5.8-pre.2
 

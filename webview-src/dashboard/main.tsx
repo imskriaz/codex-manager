@@ -3535,7 +3535,7 @@ function CliSessionsMenu(props: {
                   const actionPending = props.isSessionPending(session);
                   const destination = props.browser ? "browser" : "VS Code";
                   const offline = session.remote && !props.peers.some(peer => peer.id === session.deviceId && peer.connected);
-                  return <article class="cli-sessions-running-row" role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
+                  return <article class={`cli-sessions-running-row ${running ? "is-running" : "is-interrupted"}`} role="listitem" key={cliSessionTargetKey(session)} title={`${session.title}\n${detail}`}>
                     <div class="cli-sessions-running-copy">
                     <button type="button" class="cli-sessions-running-title" disabled={(!running && !props.connected) || actionPending || session.status === 'unknown' || offline} aria-label={`${props.browser || running ? 'View' : 'Resume'} ${session.title} in ${destination}`} title={offline ? 'System offline' : props.browser || running ? `View in ${destination}` : 'Resume in VS Code'} onClick={() => props.onOpen(session)}>{session.title}</button>
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
