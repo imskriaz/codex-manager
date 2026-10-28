@@ -1,10 +1,11 @@
 # Changelog
 
-## 1.5.9
+## 1.5.9-pre.1
 
 - Keep About Codex reports two-column only when storage metrics exist; startup and project tabs remain single-column and compact.
 - Move Project Task Board and Dashboard API settings under Web Dashboard.
 - Keep Archive Management as a single compact tool with sorting alongside selection controls.
+- Present Queue and Auto Resume markers as a compact, non-overlapping state cluster.
 
 ## 1.5.8-pre.2
 

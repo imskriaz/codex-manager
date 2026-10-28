@@ -143,6 +143,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(queue).toContain("Queue and Auto Resume options");
     expect(queue).toContain("is-auto-resume-badge");
     expect(queue).toContain("is-queue-badge");
+    expect(queue).toContain("cli-session-control-markers");
     expect(tools).toContain('class={`maintenance-report${storage ? " has-storage" : ""}`}');
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const webDashboard = settings.indexOf('props.lang === "zh" ? "浏览器面板"');

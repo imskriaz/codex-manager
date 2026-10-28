@@ -14953,11 +14953,12 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 @media(max-width:480px) { .maintenance-modal { width:calc(100vw - 16px); }.maintenance-report.has-storage { grid-template-columns:minmax(0,1fr); }.maintenance-report dl > div { grid-template-columns:minmax(0,1fr); gap:4px; }.maintenance-report dd { text-align:left; max-width:none; } }
 .cli-session-queue-wrap { position: relative; display: inline-flex; }
 .cli-session-queue-wrap > button { position:relative; }
+.cli-session-control-markers { display:inline-flex; align-items:center; justify-content:center; gap:3px; min-width:32px; }
 .cli-session-queue-glyph { display:inline-flex; width:16px; height:16px; }
 .cli-session-queue-glyph svg { width:16px; height:16px; }
 .cli-session-control-badge { display:grid; place-items:center; min-width:13px; height:13px; padding:0 2px; box-sizing:border-box; border:1px solid var(--bg-elevated); border-radius:99px; background:var(--accent-blue); color:#fff; font-size:8px; font-weight:700; line-height:1; }
 .cli-session-control-badge svg { width:8px; height:8px; }
-.cli-session-control-badge.is-auto-resume-badge { position:absolute; right:-2px; top:-3px; background:var(--accent-green,#2da44e); }
+.cli-session-control-badge.is-auto-resume-badge { background:var(--accent-green,#2da44e); box-shadow:0 0 0 1px color-mix(in srgb,var(--accent-green,#2da44e) 28%,transparent); }
 .cli-session-control-badge.is-queue-badge { margin-left:-2px; background:var(--accent-blue); }
 .cli-session-queue-wrap > button.has-queue-error .is-queue-badge { background:var(--danger,var(--accent-red,#c63b4d)); }
 .cli-session-queue-menu { padding:12px; border:1px solid var(--border-default); border-radius:10px; background:var(--bg-elevated, var(--vscode-editorWidget-background, #1d2028)); color:var(--text-primary); box-shadow:0 12px 36px #0005; }
@@ -14985,7 +14986,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-queue-current { display:block; margin-top:1px; }
 .cli-session-queue-menu button:focus-visible,.cli-session-queue-menu input:focus-visible { outline:2px solid var(--accent-blue); outline-offset:1px; }
 .cli-running-queue > button { display:inline-flex; align-items:center; gap:2px; }
-.cli-running-queue > button small { position:absolute; right:-4px; top:-5px; padding:0 3px; max-width:36px; overflow:hidden; text-overflow:ellipsis; border:1px solid var(--bg-surface); border-radius:4px; background:var(--accent-blue); color:var(--vscode-button-foreground,#fff); font-size:9px; line-height:12px; }
+.cli-running-queue > button > .cli-session-control-markers small { max-width:36px; overflow:hidden; text-overflow:ellipsis; border-color:var(--bg-surface); font-size:9px; line-height:12px; }
 .cli-queue-presets { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; }
 .cli-queue-presets button { display:block; padding:7px 4px; text-align:center; }
 .cli-queue-presets button span,.cli-queue-presets button small { display:block; }
