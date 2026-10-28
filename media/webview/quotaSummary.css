@@ -14954,15 +14954,6 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .maintenance-job-summary { margin-top:12px; padding:10px 12px; border:1px solid var(--border-muted); border-radius:9px; }
 @media(max-width:480px) { .maintenance-modal { width:calc(100vw - 16px); }.maintenance-report.has-storage { grid-template-columns:minmax(0,1fr); }.maintenance-report dl > div { grid-template-columns:minmax(0,1fr); gap:4px; }.maintenance-report dd { text-align:left; max-width:none; } }
 .cli-session-queue-wrap { position: relative; display: inline-flex; }
-.cli-session-queue-wrap > button { position:relative; }
-.cli-session-control-markers { display:inline-flex; align-items:center; justify-content:center; gap:3px; min-width:32px; }
-.cli-session-main-icon { display:inline-flex; width:17px; height:17px; color:var(--text-muted); }
-.cli-session-main-icon svg { width:17px; height:17px; }
-.cli-session-main-icon.is-auto-resume-icon { color:var(--accent-green,#2da44e); }
-.cli-session-queue-wrap > button.is-auto-resume-selected { color:var(--accent-green,#2da44e); background:color-mix(in srgb,var(--accent-green,#2da44e) 12%,transparent); border-color:color-mix(in srgb,var(--accent-green,#2da44e) 48%,var(--border-muted)); }
-.cli-session-control-badge { display:grid; place-items:center; min-width:15px; height:15px; padding:0 3px; box-sizing:border-box; border:1px solid var(--bg-surface); border-radius:99px; background:var(--accent-blue); color:#fff; font-size:8px; font-weight:700; line-height:1; box-shadow:0 0 0 1px color-mix(in srgb,var(--accent-blue) 45%,transparent); }
-.cli-session-control-badge.is-queue-badge { position:absolute; right:-5px; top:-5px; min-width:15px; background:var(--accent-blue); }
-.cli-session-queue-wrap > button.has-queue-error .is-queue-badge { background:var(--danger,var(--accent-red,#c63b4d)); box-shadow:0 0 0 1px color-mix(in srgb,var(--danger,var(--accent-red,#c63b4d)) 45%,transparent); }
 .cli-session-queue-menu { padding:12px; border:1px solid var(--border-default); border-radius:10px; background:var(--bg-elevated, var(--vscode-editorWidget-background, #1d2028)); color:var(--text-primary); box-shadow:0 12px 36px #0005; }
 .cli-session-queue-menu header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 0 10px; border-bottom:1px solid var(--border-muted); }
 .cli-session-queue-menu header strong { display:block; font-size:12px; font-weight:600; line-height:18px; letter-spacing:0; text-transform:none; }
@@ -14978,16 +14969,11 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-session-queue-menu.is-floating { position:fixed; inset:auto; margin:0; z-index:20000; width:min(272px,calc(100vw - 16px)); max-height:calc(100dvh - 16px); overflow:auto; box-sizing:border-box; font-size:11px; }
 .cli-session-queue-menu::backdrop { background:transparent; pointer-events:none; }
 .cli-session-queue-menu header .cli-queue-close { flex:none; width:26px; min-height:26px; height:26px; padding:5px; border-color:transparent; background:transparent; color:var(--text-muted); }
-.cli-session-queue-menu .cli-queue-auto-resume { display:flex; align-items:center; justify-content:space-between; margin:10px 0; padding:8px 9px; border-color:var(--border-muted); background:var(--bg-base); }
-.cli-session-queue-menu .cli-queue-auto-resume span:first-child { display:grid; gap:2px; }
-.cli-session-queue-menu .cli-queue-auto-resume strong { font-size:11px; }
-.cli-session-queue-menu .cli-queue-auto-resume small { color:var(--text-muted); font-size:10px; }
-.cli-session-queue-menu .cli-queue-auto-resume > span:last-child { width:auto; min-height:0; padding:0; border:0; background:transparent; color:var(--accent-blue); font-size:11px; font-weight:700; }
-.cli-session-queue-menu .cli-queue-auto-resume.is-disabled > span:last-child { color:var(--text-muted); }
 .cli-queue-close svg { display:block; width:16px; height:16px; }
 .cli-queue-current { display:block; margin-top:1px; }
 .cli-session-queue-menu button:focus-visible,.cli-session-queue-menu input:focus-visible { outline:2px solid var(--accent-blue); outline-offset:1px; }
 .cli-running-queue > button { display:inline-flex; align-items:center; gap:2px; }
+.cli-running-queue > button small { position:absolute; right:-4px; top:-5px; padding:0 3px; max-width:36px; overflow:hidden; text-overflow:ellipsis; border:1px solid var(--bg-surface); border-radius:4px; background:var(--accent-blue); color:var(--vscode-button-foreground,#fff); font-size:9px; line-height:12px; }
 .cli-queue-presets { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; }
 .cli-queue-presets button { display:block; padding:7px 4px; text-align:center; }
 .cli-queue-presets button span,.cli-queue-presets button small { display:block; }
