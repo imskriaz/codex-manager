@@ -1,6 +1,6 @@
 import { moveProjectTask, startProjectTaskSession } from '../../services/projectTaskMovement';
 import { clearPersistentLogs, exportPersistentLogs } from "../../utils/persistentLog";
-import { getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
+import { dismissMaintenanceProject, getMaintenanceJob, readMaintenancePage, inspectMaintenanceStorage, previewMaintenance, runMaintenance } from "../../services/maintenance";
 import { reopenCodexUi } from "../../services/codexUiRecovery";
 import { resumeCodexSessionWork } from "../../services/codexSessionRecovery";
 import { normalizeNativePath } from "../../utils/nativePaths";
@@ -524,6 +524,9 @@ async function runDashboardAction(
       return { maintenancePreview: await previewMaintenance(payload?.maintenanceTool) };
     case "inspectMaintenanceStorage":
       return { maintenanceReport: await inspectMaintenanceStorage(payload?.maintenanceInspection) };
+    case "dismissMaintenanceProject":
+      await dismissMaintenanceProject(payload?.maintenanceProjectPath);
+      return { maintenanceReport: await inspectMaintenanceStorage("projects"), notice: { level: "info" as const, message: "Project entry removed. Files and conversations were kept." } };
     case "reopenCodexUi":
       return { maintenanceReport: await reopenCodexUi() };
     case "runMaintenance":

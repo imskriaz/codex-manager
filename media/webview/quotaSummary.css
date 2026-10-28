@@ -16280,3 +16280,8 @@ button.saved-lock-badge { min-height: 0; padding: 1px 4px; font-size: 9px; line-
 .panel .settings-actions { gap: 6px; }
 .panel .maintenance-tool-grid { gap: 6px; }
 .panel .cli-session-queue-menu { gap: 8px; padding: 10px; }
+.maintenance-project-list { display:grid; gap:6px; margin:10px 0; }
+.maintenance-project-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--border-subtle,#30363d); border-radius:var(--dashboard-radius-control,4px); background:var(--surface-muted,#11161d); }
+.maintenance-project-row > div { min-width:0; display:grid; gap:2px; }
+.maintenance-project-row strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.maintenance-project-row small { color:var(--text-secondary,#8b949e); font-size:10px; }

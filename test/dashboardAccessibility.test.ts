@@ -159,5 +159,8 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(dashboardApi).toBeGreaterThan(taskBoard);
     expect(tools.indexOf('class="maintenance-sort"')).toBeLessThan(tools.indexOf('class="maintenance-selected-count"'));
     expect(tools).not.toContain('aria-label="Sessions Management"');
+    expect(tools).toContain("projectEntries");
+    expect(tools).toContain("dismissMaintenanceProject");
+    expect(tools).toContain("The project folder, its files, and linked conversations will stay unchanged.");
   });
 });

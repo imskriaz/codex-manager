@@ -11,6 +11,7 @@
 - Restore the Queue and Auto Resume icon behavior used in the 1.5.8 release.
 - Show Auto Resume only for running sessions; show the Queue flyout for interrupted non-running sessions.
 - Route archive, restore, and delete actions through the official Codex CLI so confirmed maintenance actions complete without a private app server.
+- Make the Codex Manager Projects tab a complete project inventory with a confirmed remove-entry action that keeps files and conversations intact.
 
 ## 1.5.8-pre.2
 

@@ -535,6 +535,7 @@ export type DashboardActionName =
   | "getMaintenancePage"
   | "cancelMaintenance"
   | "inspectMaintenanceStorage"
+  | "dismissMaintenanceProject"
   | "reopenCodexUi"
   | "configureEncryptedSync"
   | "syncNow"
@@ -664,6 +665,7 @@ export interface DashboardActionPayload {
   sessionQueuePriority?: number;
   maintenanceTool?: MaintenanceTool;
   maintenanceInspection?: CodexInspection;
+  maintenanceProjectPath?: string;
   maintenanceToken?: string;
   maintenanceQuery?: string;
   maintenanceOffset?: number;

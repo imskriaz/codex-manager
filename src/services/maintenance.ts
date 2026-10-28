@@ -12,9 +12,12 @@ import { normalizeNativePath } from "../utils/nativePaths";
 import { publishDashboardRealtime } from './dashboardRealtime';
 import { inspectCodexUi } from "./codexUiRecovery";
 import { inspectNativeStorage } from "./codexStorageInspection";
+import { getSqliteStateStore } from "../storage/sqliteState";
 
 type Item = { id: string; sessionId?: string; title: string; projectPath?: string; detail?: string; goalOnly?: boolean; snapshot?: { file: string; size: number; mtimeMs: number } };
 type Plan = { preview: MaintenancePreview; home: string; items: Item[]; job?: string; jobRequest?: string };
+const DISMISSED_PROJECTS_KEY = "codexManager.maintenance.dismissedProjects.v1";
+const dismissedProjectsFallback = new Set<string>();
 const plans = new Map<string, Plan>();
 const jobs = new Map<string, { state: MaintenanceJob; controller: AbortController; home: string; updatedAt: number }>();
 const preparing = new Map<string, Promise<MaintenancePreview>>();
@@ -25,6 +28,28 @@ export async function inspectMaintenanceStorage(value: unknown = "storage"): Pro
   const controller = new AbortController();
   try { return await waitWithin(inspectCodexStorage(value as CodexInspection, controller.signal), 15_000, "Codex storage did not respond. No data was changed; retry when it is available."); }
   finally { controller.abort(); }
+}
+
+function normalizeProjectEntry(value: string): string {
+  const resolved = normalizeNativePath(path.resolve(value.trim()));
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function readDismissedProjects(): Set<string> {
+  const stored = getSqliteStateStore()?.get<unknown>("global", DISMISSED_PROJECTS_KEY);
+  const values = Array.isArray(stored) ? stored : [...dismissedProjectsFallback];
+  return new Set(values.filter((value): value is string => typeof value === "string" && value.length <= 4096).map(normalizeProjectEntry));
+}
+
+export async function dismissMaintenanceProject(value: unknown): Promise<void> {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 4096) throw new Error("Choose a recorded project before removing it.");
+  const project = normalizeProjectEntry(value);
+  const dismissed = readDismissedProjects();
+  dismissed.add(project);
+  const values = [...dismissed].slice(-10_000);
+  const store = getSqliteStateStore();
+  if (store) store.transaction(() => store.set("global", DISMISSED_PROJECTS_KEY, values));
+  else { dismissedProjectsFallback.clear(); for (const entry of values) dismissedProjectsFallback.add(entry); }
 }
 
 async function inspectCodexStorage(kind: CodexInspection, signal: AbortSignal): Promise<MaintenanceReport> {
@@ -40,20 +65,27 @@ async function inspectCodexStorage(kind: CodexInspection, signal: AbortSignal): 
   if (kind === "projects") {
     const projects = new Map<string, number>();
     for (const session of sessions) if (session.projectPath) projects.set(session.projectPath, (projects.get(session.projectPath) ?? 0) + 1);
+    const dismissed = readDismissedProjects();
     let missing = 0, unavailable = 0;
+    const projectEntries: NonNullable<MaintenanceReport["projectEntries"]> = [];
     await runWithConcurrencyLimit([...projects], 8, async ([folder, count]) => {
       signal.throwIfAborted();
-      if (!path.isAbsolute(folder)) { unavailable++; if (items.length < 50) items.push({ label: folder, value: `${count} chats · Invalid project path` }); return; }
+      if (dismissed.has(normalizeProjectEntry(folder))) return;
+      let status: "available" | "missing" | "unavailable" = "available";
+      if (!path.isAbsolute(folder)) { unavailable++; projectEntries.push({ path: folder, label: folder, chats: count, status: "unavailable" }); if (items.length < 50) items.push({ label: folder, value: `${count} chats · Invalid project path` }); return; }
       try {
-        if (!(await fs.stat(folder)).isDirectory()) { missing++; if (items.length < 50) items.push({ label: folder, value: `${count} chats · Not a folder` }); }
+        if (!(await fs.stat(folder)).isDirectory()) { missing++; status = "missing"; if (items.length < 50) items.push({ label: folder, value: `${count} chats · Not a folder` }); }
+        else if (items.length < 50) items.push({ label: folder, value: `${count} chats · Available` });
       } catch (error) {
         const absent = (error as NodeJS.ErrnoException).code === "ENOENT";
-        if (absent) missing++; else unavailable++;
+        if (absent) { missing++; status = "missing"; } else { unavailable++; status = "unavailable"; }
         if (items.length < 50) items.push({ label: folder, value: `${count} chats · ${absent ? "Missing" : "Unavailable"}` });
       }
+      projectEntries.push({ path: normalizeProjectEntry(folder), label: folder, chats: count, status });
     });
-    items.unshift({ label: "Recorded projects checked", value: String(projects.size) }, { label: "Missing projects", value: String(missing) }, { label: "Unavailable projects", value: String(unavailable) }, { label: "Chats without a recorded project", value: String(sessions.filter(session => !session.projectPath).length) });
-    return { title: "Project folder check", items };
+    projectEntries.sort((left, right) => left.label.localeCompare(right.label));
+    items.unshift({ label: "Projects listed", value: String(projectEntries.length) }, { label: "Missing projects", value: String(missing) }, { label: "Unavailable projects", value: String(unavailable) }, { label: "Chats without a recorded project", value: String(sessions.filter(session => !session.projectPath).length) });
+    return { title: "Project inventory", items, projectEntries };
   }
   if (kind === "large-sessions") {
     const { files, unavailable } = await rankConversationFiles(home, sessions, signal);

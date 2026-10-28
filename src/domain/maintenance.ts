@@ -21,7 +21,7 @@ export type MaintenanceStorageSummary = {
   buckets: Array<{ label: string; bytes: number; detail: string }>;
   projects: Array<{ label: string; bytes: number; detail: string }>;
 };
-export type MaintenanceReport = { title: string; items: Array<{ label: string; value: string }>; storage?: MaintenanceStorageSummary };
+export type MaintenanceReport = { title: string; items: Array<{ label: string; value: string }>; projectEntries?: Array<{ path: string; label: string; chats: number; status: "available" | "missing" | "unavailable" }>; storage?: MaintenanceStorageSummary };
 export type MaintenanceJob = { id: string; tool: MaintenanceTool; operation: "delete" | "restore"; status: "running" | "completed" | "cancelled" | "failed" | "unknown"; total: number; processed: number; cleared: number; skipped: number; failed: number; errors: string[]; cancelRequested?: boolean; previewToken?: string; revision?: number };
 const JOB_FIELDS = new Set(['id', 'tool', 'operation', 'status', 'total', 'processed', 'cleared', 'skipped', 'failed', 'errors', 'cancelRequested', 'previewToken', 'revision']);
 

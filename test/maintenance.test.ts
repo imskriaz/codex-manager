@@ -210,6 +210,14 @@ describe("additional Codex utilities", () => {
     expect(report.items).toContainEqual({ label: "Missing projects", value: "1" });
     expect(report.items).toContainEqual({ label: "Chats without a recorded project", value: "1" }); expect(mocks.remove).not.toHaveBeenCalled();
   });
+  it("removes only a project inventory entry while keeping its sessions", async () => {
+    const project = path.join(mocks.home, "missing");
+    mocks.sessions.mockResolvedValue([{ id: ids[0], projectPath: project }]);
+    expect((await api.inspectMaintenanceStorage("projects")).projectEntries).toHaveLength(1);
+    await api.dismissMaintenanceProject(project);
+    expect((await api.inspectMaintenanceStorage("projects")).projectEntries).toEqual([]);
+    expect(mocks.sessions).toHaveBeenCalledTimes(2);
+  });
   it("checks every native database health read-only and ranks contained conversation files", async () => {
     const db = new DatabaseSync(path.join(mocks.home, "state_5.sqlite")); db.exec("CREATE TABLE example(id TEXT)"); db.close();
     const history = new DatabaseSync(path.join(mocks.home, "thread_history_5.sqlite")); history.exec("CREATE TABLE example(id TEXT)"); history.close();
