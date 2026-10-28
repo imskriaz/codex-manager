@@ -133,7 +133,7 @@ describe("dashboard accessibility and interaction flow", () => {
   it("keeps maintenance actions grouped behind separate confirmation and result dialogs", () => {
     const tools = readFileSync("webview-src/dashboard/maintenanceTools.tsx", "utf8");
     const queue = readFileSync("webview-src/dashboard/sessionQueueControl.tsx", "utf8");
-    expect(tools).toContain("Sessions Management");
+    expect(tools).toContain("Archive Management");
     expect(tools).toContain("Codex Manager");
     expect(tools).toContain("About Codex");
     expect(tools).toContain('className="maintenance-confirm-modal"');
@@ -143,5 +143,15 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(queue).toContain("Queue and Auto Resume options");
     expect(queue).toContain("is-auto-resume-badge");
     expect(queue).toContain("is-queue-badge");
+    expect(tools).toContain('class={`maintenance-report${storage ? " has-storage" : ""}`}');
+    const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    const webDashboard = settings.indexOf('props.lang === "zh" ? "浏览器面板"');
+    const taskBoard = settings.indexOf('title="Project task board"');
+    const dashboardApi = settings.indexOf('title="Dashboard API"');
+    expect(webDashboard).toBeGreaterThanOrEqual(0);
+    expect(taskBoard).toBeGreaterThan(webDashboard);
+    expect(dashboardApi).toBeGreaterThan(taskBoard);
+    expect(tools.indexOf('class="maintenance-sort"')).toBeLessThan(tools.indexOf('class="maintenance-selected-count"'));
+    expect(tools).not.toContain('aria-label="Sessions Management"');
   });
 });

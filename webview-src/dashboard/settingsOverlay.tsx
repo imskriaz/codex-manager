@@ -288,6 +288,18 @@ export function SettingsOverlay(props: {
                               : "Workspace is off."}
                       </div>
                     </SettingsToggleBlock>
+                    <SettingsToggleBlock
+                      title="Project task board"
+                      sub="Show Idea, Planned, Running, and Completed project work with offline drafts."
+                      enabled={props.settings.taskBoardEnabled !== false}
+                      onToggle={(enabled) => patchAndSend("taskBoardEnabled", enabled)}
+                    />
+                    <SettingsToggleBlock
+                      title="Dashboard API"
+                      sub="Allow generated Bearer tokens to call the local dashboard API."
+                      enabled={props.settings.apiAccessEnabled === true}
+                      onToggle={(enabled) => patchAndSend("apiAccessEnabled", enabled)}
+                    />
                   <SettingsToggleBlock
                     title="WS Cross System"
                     className="settings-dashboard-server"
@@ -360,18 +372,6 @@ export function SettingsOverlay(props: {
                   />
                 </div>
               </SettingsToggleBlock>
-                  <SettingsToggleBlock
-                    title="Project task board"
-                    sub="Show Idea, Planned, Running, and Completed project work with offline drafts."
-                    enabled={props.settings.taskBoardEnabled !== false}
-                    onToggle={(enabled) => patchAndSend("taskBoardEnabled", enabled)}
-                  />
-                  <SettingsToggleBlock
-                    title="Dashboard API"
-                    sub="Allow generated Bearer tokens to call the local dashboard API."
-                    enabled={props.settings.apiAccessEnabled === true}
-                    onToggle={(enabled) => patchAndSend("apiAccessEnabled", enabled)}
-                  />
               <SettingsToggleBlock
                 title={props.copy.crossWindowAccountModeTitle ?? "Parallel window accounts (Experimental)"}
                 sub={
