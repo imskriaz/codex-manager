@@ -16220,3 +16220,63 @@ button.saved-lock-badge { min-height: 0; padding: 1px 4px; font-size: 9px; line-
 
 .dashboard-bootstrap { min-height:100dvh; gap:12px; }
 .dashboard-bootstrap .loading-label { font-size:12px; font-weight:500; letter-spacing:0; text-transform:none; animation:none; }
+
+/* Keep the admin surface dense and deliberate: structural corners are small,
+   controls share one radius, and only status pills/toggles stay fully round. */
+.panel {
+  --dashboard-radius-surface: 6px;
+  --dashboard-radius-control: 4px;
+  --dashboard-space-section: 8px;
+}
+.panel :is(.overview-shell,.overview-account,.overview-meta-item,.overview-actions,
+  .usage-graph-card,.overview-metrics,.metric-gauge,.saved-card,
+  .overview-more-menu,.settings-modal,.dashboard-modal,.dashboard-api-modal,
+  .task-detail-modal,.maintenance-scope,.maintenance-tool,.maintenance-review,
+  .maintenance-items,.maintenance-confirm,.cli-session-queue-menu,
+  .browser-notification-offer) {
+  border-radius: var(--dashboard-radius-surface);
+}
+.panel :is(.settings-btn,.toolbar-btn,.settings-theme-option,.account-search-control,
+  .dashboard-select-control,.dashboard-view-toggle,.overview-more-menu [role="menuitem"],
+  .settings-tab,.settings-block,.settings-select,.settings-text-input,
+  .settings-action-btn,.settings-actions button,.task-board-search,
+  .task-context-select,.task-view-tabs,.task-board-card,.task-board-column,
+  .task-file-row,.cli-rail-brand,.cli-session-row-select,.cli-context-toggle,
+  .cli-icon-button,.cli-terminal-refresh,.cli-terminal-new,.cli-terminal-new-menu > summary,
+  .maintenance-sort select,.maintenance-item,.log-console-output,
+  .api-token-pane,.api-panel,.api-create-modal .api-permissions,
+  .api-project-scope,.account-tags-field input,.tag-manager-summary input,
+  .tag-manager-confirm,.tag-manager-confirm input) {
+  border-radius: var(--dashboard-radius-control);
+}
+.panel :is(.settings-inline-toggle,.saved-enabled-toggle-indicator,.pill,
+  .header-count-badge,.overview-empty-badge,.saved-reset-badge,
+  .cli-running-count,.cli-system-count) {
+  border-radius: 999px;
+}
+
+.panel > .section { padding: var(--dashboard-space-section); }
+.panel .header { gap: 8px; margin-bottom: 8px; }
+.panel .hero { gap: 8px; padding-bottom: 8px; }
+.panel .overview-shell { gap: 8px; padding: 8px; }
+.panel .overview-account { gap: 6px; padding: 8px 10px; }
+.panel .overview-account-main { gap: 6px; }
+.panel .overview-account-header { gap: 6px; }
+.panel .overview-meta { gap: 6px; padding-top: 8px; }
+.panel .overview-main { gap: 6px; }
+.panel .overview-actions { gap: 6px; padding: 0; }
+.panel .overview-more-menu { gap: 6px; padding: 8px; }
+.panel .overview-more-menu [role="menuitem"] { gap: 6px; min-height: 34px; padding: 6px 8px; }
+.panel .toolbar { gap: 4px; }
+.panel .toolbar-btn { padding: 7px 10px; }
+.panel .dashboard-account-toolbar { gap: 4px; margin-bottom: 6px; }
+.panel .accounts-grid { gap: 6px; }
+.panel .saved-card { padding: 6px 8px; }
+.panel .saved-progress { gap: 4px; padding-bottom: 4px; }
+.panel .saved-card-footer { gap: 4px; padding-top: 4px; }
+.panel .settings-tab-list { gap: 4px; padding-bottom: 8px; }
+.panel .settings-tab-panel { gap: 8px; }
+.panel .settings-block { gap: 5px; }
+.panel .settings-actions { gap: 6px; }
+.panel .maintenance-tool-grid { gap: 6px; }
+.panel .cli-session-queue-menu { gap: 8px; padding: 10px; }

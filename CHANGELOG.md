@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.5.9-pre.1
+## 1.5.9
 
 - Keep About Codex reports two-column only when storage metrics exist; startup and project tabs remain single-column and compact.
 - Move Project Task Board and Dashboard API settings under Web Dashboard.
@@ -10,6 +10,7 @@
 - Give running session titles a distinct active color in the session flyout.
 - Restore the Queue and Auto Resume icon behavior used in the 1.5.8 release.
 - Show Auto Resume only for running sessions; show the Queue flyout for interrupted non-running sessions.
+- Route archive, restore, and delete actions through the official Codex CLI so confirmed maintenance actions complete without a private app server.
 
 ## 1.5.8-pre.2
 
