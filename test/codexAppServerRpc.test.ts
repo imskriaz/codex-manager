@@ -44,6 +44,14 @@ describe("app-server initialization recovery", () => {
     await expect(pending).rejects.toThrow("read pipe closed");
     expect(processChild.kill).toHaveBeenCalledOnce();
   });
+  it("preserves official proxy diagnostics when the daemon exits", async () => {
+    const processChild = child();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stderr.write("failed to connect to app-server-control.sock: dead network\n");
+    processChild.emit("close", 1);
+    await expect(pending).rejects.toThrow(/official Codex app-server daemon is unavailable/);
+    await expect(pending).rejects.toThrow(/failed to connect to app-server-control\.sock/);
+  });
   it("bounds incomplete protocol lines and rejects every waiter on disconnect", async () => {
     const processChild = child();
     const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());

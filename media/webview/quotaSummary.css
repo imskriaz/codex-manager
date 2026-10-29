@@ -6837,13 +6837,16 @@ html[data-theme="dark"] .cli-terminal-panel {
   height: 29px;
   min-height: 29px;
   padding: 0;
-  border-color: var(--text-primary);
+  border-color: var(--accent-blue, #4f8cff);
   border-radius: 50%;
-  background: var(--text-primary);
-  color: var(--bg-page);
+  background: var(--accent-blue, #4f8cff);
+  color: #fff;
 }
 .cli-send-button svg {
   width: 15px;
+  height: 15px;
+  display: block;
+  color: #fff;
 }
 .cli-stop-button {
   min-height: 30px;

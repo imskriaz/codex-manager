@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.9-pre.2
+
+- Preserve official app-server proxy diagnostics in workspace failures and keep the composer send icon visible on dark themes.
+
 ## 1.5.9-pre.1
 
 - Route New Chat, replies, resume, and goal/session actions through the official Codex app-server proxy instead of rejecting supported methods or starting a private server.
