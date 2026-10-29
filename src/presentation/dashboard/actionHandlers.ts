@@ -525,7 +525,7 @@ async function runDashboardAction(
     case "inspectMaintenanceStorage":
       return { maintenanceReport: await inspectMaintenanceStorage(payload?.maintenanceInspection) };
     case "dismissMaintenanceProject":
-      await dismissMaintenanceProject(payload?.maintenanceProjectPath);
+      dismissMaintenanceProject(payload?.maintenanceProjectPath);
       return { maintenanceReport: await inspectMaintenanceStorage("projects"), notice: { level: "info" as const, message: "Project entry removed. Files and conversations were kept." } };
     case "reopenCodexUi":
       return { maintenanceReport: await reopenCodexUi() };

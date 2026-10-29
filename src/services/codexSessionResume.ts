@@ -976,7 +976,7 @@ async function startAppServerSession(options: {
   let threadId: string | undefined;
   try {
     rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
-    recordPersistentEvent("info", "session-start", "App-server thread/start requested", { transport: "app-server-stdio" });
+    recordPersistentEvent("info", "session-start", "Official app-server thread/start requested", { transport: "app-server-proxy" });
     const result = await rpc.request<{ thread?: { id?: unknown } }>("thread/start", {
       cwd,
       ...(options.model ? { model: options.model } : {}),
@@ -1289,7 +1289,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     suppressRecovery(activeAppServer.turnId);
     activeAppServer.cancelRequested = true;
     if (!activeAppServer.turnId) { activeAppServer.rpc.close(); return true; }
-    recordPersistentEvent("info", "session-stop", "App-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: "app-server-stdio" });
+    recordPersistentEvent("info", "session-stop", "Official app-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: "app-server-proxy" });
     activeAppServer.stop = activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000).then(() => {
       cancelCodexAppServerPrompts(sessionId);
       return true;

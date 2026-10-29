@@ -1,70 +1,245 @@
-import { getCodexHome } from "../codex/authFile";
-import { readCodexSessionGoals } from "./codexSessionGoals";
-import { execFile } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { StringDecoder } from "node:string_decoder";
+import * as path from "node:path";
+import { normalizeNativePath } from "../utils/nativePaths";
 
 export type AppServerExecutable = { command: string; prefixArgs: string[]; shell?: boolean };
-export type AppServerRequest = { id: string | number; method: string; params: unknown };
 export class CodexAppServerTurnInterruptedError extends Error {
-  constructor() { super("Codex stopped this turn before it completed."); this.name = "CodexAppServerTurnInterruptedError"; }
+  constructor() {
+    super("Codex stopped this turn before it completed.");
+    this.name = "CodexAppServerTurnInterruptedError";
+  }
 }
 export class CodexAppServerDisconnectedError extends Error {
   constructor(message: string) { super(message); this.name = "CodexAppServerDisconnectedError"; }
 }
+type RpcResponse = { id?: unknown; method?: unknown; params?: unknown; result?: unknown; error?: { message?: unknown } };
+export type AppServerRequest = { id: string | number; method: string; params: unknown };
+type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
-function unavailable(method: string): Error {
-  return new Error(`Official Codex does not expose ${method} through its shared connection. Use the official Codex UI for this action. Manager does not start a private server.`);
-}
-
-/** Compatibility boundary for callers awaiting an official shared API; never owns a process or writer. */
+/** One scoped proxy to the official Codex app-server daemon. The manager never starts a private server. */
 export class CodexAppServerRpc {
-  private constructor(private readonly home: string, private readonly executable: AppServerExecutable, private readonly cwd: string) {}
+  private readonly child: ChildProcessWithoutNullStreams;
+  private readonly decoder = new StringDecoder("utf8");
+  private lineBuffer = "";
+  private nextId = 1;
+  private readonly pending = new Map<number, PendingRequest>();
+  private readonly notifications = new Set<(method: string, params: unknown) => void>();
+  private readonly serverRequests = new Set<(request: AppServerRequest) => void>();
+  private readonly disconnects = new Set<(error: Error) => void>();
+  private closed = false;
+  private transportError?: Error;
 
-  static open(_executable: AppServerExecutable, _cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
-    return Promise.resolve().then(() => {
+  private constructor(child: ChildProcessWithoutNullStreams) {
+    this.child = child;
+    child.on("error", (error) => this.fail(error));
+    child.stdin.on("error", (error) => this.fail(error));
+    child.stdout.on("error", (error) => this.fail(error));
+    child.stderr.on("error", (error) => this.fail(error));
+    child.on("close", (code) => this.fail(new Error(`Codex app-server exited with code ${code ?? "unknown"}.`)));
+  }
+
+  static async open(executable: AppServerExecutable, cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
+    signal?.throwIfAborted();
+    const args = ["app-server", "proxy"];
+    const configuredHome = process.env["CODEX_HOME"]?.trim().replace(/^['"]|['"]$/g, "");
+    const child = spawn(executable.command, [...executable.prefixArgs, ...args], {
+      cwd,
+      env: { ...process.env, ...(configuredHome ? { CODEX_HOME: path.resolve(normalizeNativePath(configuredHome)) } : {}), ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
+      windowsHide: true,
+      shell: executable.shell,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const client = new CodexAppServerRpc(child);
+    const abort = () => client.close();
+    signal?.addEventListener("abort", abort, { once: true });
+    child.stderr.on("data", () => undefined);
+    try {
+      child.stdout.on("data", (chunk: Buffer) => client.receiveChunk(chunk));
+      await client.request("initialize", {
+        clientInfo: { name: "codex-manager", title: "Codex Manager", version: "1.4.1" },
+        capabilities: { experimentalApi: true }
+      }, 30_000);
       signal?.throwIfAborted();
-      return new CodexAppServerRpc(getCodexHome(), _executable, _cwd);
+      client.send({ method: "initialized", params: {} });
+      return client;
+    } catch (error) {
+      client.close();
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+
+  async request<T>(method: string, params: unknown, timeoutMs = 30_000): Promise<T> {
+    if (this.closed) throw this.transportError ?? new Error("Codex app-server connection is closed.");
+    if (this.pending.size >= 64) throw new Error("Codex app-server request queue is full. Wait for pending actions before retrying.");
+    const id = this.nextId++;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new CodexAppServerDisconnectedError(`Codex app-server did not answer ${method} within ${Math.ceil(timeoutMs / 1000)} seconds. Its outcome is unconfirmed; refresh before retrying.`));
+      }, timeoutMs);
+      this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
+      try {
+        this.send({ method, id, params });
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
-  async request<T>(method: string, params: unknown, _timeoutMs?: number): Promise<T> {
-    if (getCodexHome() !== this.home) throw new Error("The active Codex home changed. Refresh before retrying.");
-    if (method === "thread/goal/get") {
-      const id = (params as { threadId?: unknown } | null)?.threadId;
-      if (typeof id !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) throw new Error("The session identifier is invalid.");
-      const goals = await readCodexSessionGoals(this.home, [id]);
-      if (getCodexHome() !== this.home) throw new Error("The active Codex home changed. Refresh before retrying.");
-      if (!goals) throw new Error("Official Codex goal storage is unavailable. Recovery was kept.");
-      return { goal: goals.get(id) ?? null } as T;
-    }
-    const command = method === "thread/archive" ? "archive" : method === "thread/unarchive" ? "unarchive" : method === "thread/delete" ? "delete" : undefined;
-    if (command) {
-      const id = (params as { threadId?: unknown } | null)?.threadId;
-      if (typeof id !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) throw new Error("The session identifier is invalid.");
-      await new Promise<void>((resolve, reject) => {
-        execFile(this.executable.command, [...this.executable.prefixArgs, command, id, ...(command === "delete" ? ["--force"] : [])], {
-          cwd: this.cwd,
-          env: { ...process.env, CODEX_HOME: this.home },
-          shell: this.executable.shell,
-          windowsHide: true,
-          timeout: _timeoutMs ?? 30_000,
-          maxBuffer: 1024 * 1024
-        }, (error, _stdout, stderr) => {
-          if (!error) { resolve(); return; }
-          const detail = typeof stderr === "string" && stderr.trim() ? stderr.trim().split(/\r?\n/).pop() : undefined;
-          reject(new Error(detail || `Codex ${command} failed. ${error.message}`));
-        });
-      });
-      if (getCodexHome() !== this.home) throw new Error("The active Codex home changed. Refresh before retrying.");
-      return undefined as T;
-    }
-    throw unavailable(method);
+  onNotification(listener: (method: string, params: unknown) => void): () => void {
+    this.notifications.add(listener);
+    return () => this.notifications.delete(listener);
   }
 
-  onNotification(_listener: (method: string, params: unknown) => void): () => void { return () => undefined; }
-  onServerRequest(_listener: (request: AppServerRequest) => void): () => void { return () => undefined; }
-  onDisconnect(_listener: (error: Error) => void): () => void { return () => undefined; }
-  answerServerRequest(_id: string | number, _result: unknown): void { throw unavailable("approval response"); }
-  rejectServerRequest(_id: string | number, _message: string): void { throw unavailable("approval response"); }
-  startAndWaitForTurn(_threadId: string, _params: Record<string, unknown>, _timeoutMs: number, _onStarted?: (turnId: string) => void): Promise<void> { return Promise.reject(unavailable("turn/start")); }
-  close(): void {}
+  onServerRequest(listener: (request: AppServerRequest) => void): () => void {
+    this.serverRequests.add(listener);
+    return () => this.serverRequests.delete(listener);
+  }
+
+  onDisconnect(listener: (error: Error) => void): () => void {
+    if (this.closed) listener(this.transportError ?? new CodexAppServerDisconnectedError("Codex app-server connection closed."));
+    else this.disconnects.add(listener);
+    return () => this.disconnects.delete(listener);
+  }
+
+  answerServerRequest(id: string | number, result: unknown): void {
+    this.send({ id, result });
+  }
+
+  rejectServerRequest(id: string | number, message: string): void {
+    this.send({ id, error: { code: -32000, message } });
+  }
+
+  async startAndWaitForTurn(
+    threadId: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+    onTurnStarted?: (turnId: string) => void
+  ): Promise<void> {
+    let turnId: string | undefined;
+    const earlyCompletions = new Map<string, Record<string, unknown>>();
+    let settle!: (params: Record<string, unknown>) => void;
+    let failTurn!: (error: Error) => void;
+    const completed = new Promise<void>((resolve, reject) => {
+      failTurn = reject;
+      settle = (payload) => {
+        const turn = payload["turn"] as Record<string, unknown> | undefined;
+        const status = turn?.["status"];
+        if (status === "completed") resolve();
+        else if (status === "interrupted") reject(new CodexAppServerTurnInterruptedError());
+        else {
+          const details = turn?.["error"] as { message?: unknown } | undefined;
+          reject(new Error(typeof details?.message === "string" ? details.message : "Codex did not complete the turn."));
+        }
+      };
+    });
+    void completed.catch(() => undefined);
+    this.disconnects.add(failTurn);
+    const off = this.onNotification((method, raw) => {
+      if (method !== "turn/completed" || !raw || typeof raw !== "object") return;
+      const payload = raw as Record<string, unknown>;
+      if (payload["threadId"] !== threadId) return;
+      const eventTurn = payload["turn"] as Record<string, unknown> | undefined;
+      if (!turnId && typeof eventTurn?.["id"] === "string") {
+        if (earlyCompletions.size >= 64) earlyCompletions.delete(earlyCompletions.keys().next().value!);
+        earlyCompletions.set(eventTurn["id"], payload);
+      }
+      else if (eventTurn?.["id"] === turnId) settle(payload);
+    });
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const started = await this.request<{ turn?: { id?: unknown } }>("turn/start", params);
+      turnId = typeof started.turn?.id === "string" ? started.turn.id : undefined;
+      if (!turnId) throw new Error("Codex started a turn without returning its ID. Refresh the session before retrying.");
+      onTurnStarted?.(turnId);
+      const earlyCompletion = earlyCompletions.get(turnId);
+      earlyCompletions.clear();
+      if (earlyCompletion) settle(earlyCompletion);
+      await Promise.race([
+        completed,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new CodexAppServerDisconnectedError("Codex did not finish the turn within 15 minutes. Refresh the session before retrying.")), timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      off();
+      this.disconnects.delete(failTurn);
+    }
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.fail(new Error("Codex app-server connection closed."));
+  }
+
+  private send(message: unknown): void {
+    if (this.closed) throw this.transportError ?? new Error("Codex app-server connection is closed.");
+    const encoded = JSON.stringify(message);
+    if (Buffer.byteLength(encoded, "utf8") > 2 * 1024 * 1024 || this.child.stdin.writableLength > 2 * 1024 * 1024) throw new Error("The Codex app-server message queue is full or the request is too large.");
+    this.child.stdin.write(`${encoded}\n`, "utf8");
+  }
+
+  private receiveChunk(chunk: Buffer): void {
+    if (this.closed) return;
+    this.lineBuffer += this.decoder.write(chunk);
+    let newline: number;
+    while ((newline = this.lineBuffer.indexOf("\n")) >= 0) {
+      if (Buffer.byteLength(this.lineBuffer.slice(0, newline), "utf8") > 4 * 1024 * 1024) { this.fail(new Error("Codex app-server sent an oversized protocol message.")); return; }
+      const line = this.lineBuffer.slice(0, newline);
+      this.lineBuffer = this.lineBuffer.slice(newline + 1);
+      this.receive(line);
+      if (this.closed) return;
+    }
+    if (Buffer.byteLength(this.lineBuffer, "utf8") > 4 * 1024 * 1024) this.fail(new Error("Codex app-server sent an oversized unfinished protocol message."));
+  }
+
+  private receive(raw: string): void {
+    let message: RpcResponse;
+    try { message = JSON.parse(raw) as RpcResponse; } catch { return; }
+    if (!message || typeof message !== "object" || Array.isArray(message)) return;
+    if (typeof message.id === "number" || typeof message.id === "string") {
+      const pending = typeof message.method !== "string" && typeof message.id === "number" ? this.pending.get(message.id) : undefined;
+      if (pending) {
+        if (!Object.prototype.hasOwnProperty.call(message, "result") && !message.error) return;
+        this.pending.delete(message.id as number);
+        clearTimeout(pending.timer);
+        if (message.error) pending.reject(new Error(typeof message.error.message === "string" ? message.error.message : "Codex rejected the request."));
+        else pending.resolve(message.result);
+      } else if (typeof message.method === "string") {
+        if (this.serverRequests.size === 0) {
+          this.rejectServerRequest(message.id, `Codex Manager cannot answer ${message.method} without a dashboard prompt.`);
+        } else {
+          for (const listener of this.serverRequests) {
+            try { listener({ id: message.id, method: message.method, params: message.params }); }
+            catch { this.rejectServerRequest(message.id, "The dashboard could not display this request."); }
+          }
+        }
+      }
+    } else if (typeof message.method === "string") {
+      for (const listener of this.notifications) {
+        try { listener(message.method, message.params); } catch { /* One display listener cannot break turn tracking. */ }
+      }
+    }
+  }
+
+  private fail(error: Error): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.transportError = error instanceof CodexAppServerDisconnectedError ? error : new CodexAppServerDisconnectedError(error.message);
+    for (const listener of this.disconnects) { try { listener(this.transportError); } catch { /* Cleanup continues for every waiter. */ } }
+    this.disconnects.clear();
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(this.transportError);
+    }
+    this.pending.clear();
+    this.lineBuffer = "";
+    this.child.kill();
+  }
 }

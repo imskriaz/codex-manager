@@ -41,7 +41,7 @@ function readDismissedProjects(): Set<string> {
   return new Set(values.filter((value): value is string => typeof value === "string" && value.length <= 4096).map(normalizeProjectEntry));
 }
 
-export async function dismissMaintenanceProject(value: unknown): Promise<void> {
+export function dismissMaintenanceProject(value: unknown): void {
   if (typeof value !== "string" || !value.trim() || value.trim().length > 4096) throw new Error("Choose a recorded project before removing it.");
   const project = normalizeProjectEntry(value);
   const dismissed = readDismissedProjects();

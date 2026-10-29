@@ -548,9 +548,9 @@ describe("sessions sidebar layout", () => {
     expect(resume).toContain('"thread/archive"');
     expect(resume).toContain('"thread/unarchive"');
     expect(resume).toContain('"thread/delete"');
-    expect(rpc).not.toContain('["app-server", "--stdio"]');
-    expect(rpc).not.toContain("spawn(");
-    expect(rpc).toContain("Manager does not start a private server");
+    expect(rpc).toContain('["app-server", "proxy"]');
+    expect(rpc).toContain("spawn(");
+    expect(rpc).toContain("manager never starts a private server");
     expect(rpc).not.toContain("WebSocket");
   });
 

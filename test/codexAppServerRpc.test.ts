@@ -1,60 +1,143 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), execFile: vi.fn(), goals: vi.fn() }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("child_process", () => ({ spawn: mocks.spawn }));
-vi.mock("node:child_process", () => ({ execFile: mocks.execFile }));
-vi.mock("../src/services/codexSessionGoals", () => ({ readCodexSessionGoals: mocks.goals }));
 import { CodexAppServerRpc } from "../src/services/codexAppServerRpc";
 
-afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
-const id = "01a04882-d037-7a42-ad24-9afb61901188";
+function child() {
+  const process = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn() });
+  mocks.spawn.mockReturnValue(process);
+  return process;
+}
+afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
-describe("official Codex boundary", () => {
-  it.each(["thread/start", "thread/resume", "turn/start", "thread/name/set", "thread/goal/set", "model/list"])("never starts a private server for unsupported %s", async method => {
-    const rpc = await CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
-    await expect(rpc.request(method, { threadId: id })).rejects.toThrow("Use the official Codex UI");
-    rpc.close(); rpc.close();
-    expect(mocks.spawn).not.toHaveBeenCalled();
+describe("app-server initialization recovery", () => {
+  it("pins a relative Codex home before switching to a session's project", async () => {
+    vi.stubEnv("CODEX_HOME", "relative-codex-home");
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, path.resolve("different-project"));
+    expect(mocks.spawn).toHaveBeenCalledWith("codex", ["app-server", "proxy"], expect.any(Object));
+    expect(mocks.spawn.mock.calls[0]?.[2].env.CODEX_HOME).toBe(path.resolve("relative-codex-home"));
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n"); (await opening).close();
   });
-  it.each([["thread/archive", "archive"], ["thread/unarchive", "unarchive"], ["thread/delete", "delete"]] as const)("uses the official CLI for %s", async (method, command) => {
-    mocks.execFile.mockImplementationOnce((_file: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => callback(null, "", ""));
-    const rpc = await CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
-    await expect(rpc.request(method, { threadId: id })).resolves.toBeUndefined();
-    expect(mocks.execFile).toHaveBeenCalledWith("codex", [command, id, ...(command === "delete" ? ["--force"] : [])], expect.objectContaining({ env: expect.objectContaining({ CODEX_HOME: expect.any(String) }) }), expect.any(Function));
+  it("closes initialization immediately when recovery is cancelled", async () => {
+    const processChild = child(), controller = new AbortController();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd(), controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    expect(processChild.kill).toHaveBeenCalledOnce();
   });
-  it("keeps the native failure detail for a failed maintenance command", async () => {
-    mocks.execFile.mockImplementationOnce((_file: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => callback(new Error("exit 1"), "", "Session is already active\n"));
-    const rpc = await CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
-    await expect(rpc.request("thread/delete", { threadId: id })).rejects.toThrow("Session is already active");
+  it("opts into the native goal lifecycle API", async () => {
+    const processChild = child();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    const initialize = JSON.parse(processChild.stdin.read().toString());
+    expect(initialize.params.capabilities).toEqual({ experimentalApi: true });
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    (await pending).close();
   });
-  it("reads existing goal metadata without taking ownership or starting a process", async () => {
-    const goal = { objective: "Finish work", status: "active" };
-    mocks.goals.mockResolvedValue(new Map([[id, goal]]));
-    const rpc = await CodexAppServerRpc.open({ command: "missing", prefixArgs: [] }, process.cwd());
-    await expect(rpc.request("thread/goal/get", { threadId: id })).resolves.toEqual({ goal });
-    expect(mocks.spawn).not.toHaveBeenCalled();
+  it.each(["stdout", "stderr"] as const)("reports %s pipe failures and rejects pending work", async (pipe) => {
+    const processChild = child();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild[pipe].emit("error", new Error("read pipe closed"));
+    await expect(pending).rejects.toThrow("read pipe closed");
+    expect(processChild.kill).toHaveBeenCalledOnce();
   });
-  it("keeps unavailable goal storage inconclusive", async () => {
-    mocks.goals.mockResolvedValue(undefined);
-    const rpc = await CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
-    await expect(rpc.request("thread/goal/get", { threadId: id })).rejects.toThrow("storage is unavailable");
-    expect(mocks.spawn).not.toHaveBeenCalled();
+  it("bounds incomplete protocol lines and rejects every waiter on disconnect", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    const request = rpc.request("thread/read", {});
+    processChild.stdout.write("x".repeat(4 * 1024 * 1024 + 1));
+    await expect(request).rejects.toThrow(/oversized unfinished/);
+    expect(processChild.kill).toHaveBeenCalled();
   });
-  it("does not switch a metadata connection to another account home", async () => {
-    vi.stubEnv("CODEX_HOME", process.cwd());
-    const rpc = await CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
-    vi.stubEnv("CODEX_HOME", process.cwd() + "/other-home");
-    await expect(rpc.request("thread/goal/get", { threadId: id })).rejects.toThrow("home changed");
+
+  it("keeps server requests separate when their ID matches a client request", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    const request = rpc.request("thread/read", {});
+    const callback = vi.fn();
+    rpc.onServerRequest(callback);
+    processChild.stdout.write(JSON.stringify({ id: 2, method: "item/tool/requestUserInput", params: {} }) + "\n");
+    expect(callback).toHaveBeenCalled();
+    processChild.stdout.write(JSON.stringify({ id: 2, result: { confirmed: true } }) + "\n");
+    await expect(request).resolves.toEqual({ confirmed: true });
+    rpc.close();
   });
-  it("never starts work or answers approvals through the retired private transport", async () => {
-    const rpc = await CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
-    await expect(rpc.startAndWaitForTurn(id, {}, 100)).rejects.toThrow("official Codex UI");
-    expect(() => rpc.answerServerRequest(1, {})).toThrow("official Codex UI");
-    expect(() => rpc.rejectServerRequest(1, "no")).toThrow("official Codex UI");
-    expect(mocks.spawn).not.toHaveBeenCalled();
+
+  it("refuses oversized requests and a full request queue without leaking waiters", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    await expect(rpc.request("turn/start", { text: "x".repeat(2 * 1024 * 1024 + 1) })).rejects.toThrow(/too large/);
+    const requests = Array.from({ length: 64 }, () => rpc.request("thread/read", {}).catch((error: unknown) => error));
+    await expect(rpc.request("thread/read", {})).rejects.toThrow(/queue is full/);
+    rpc.close();
+    expect((await Promise.all(requests)).every((value) => value instanceof Error)).toBe(true);
   });
-  it("honors cancellation before creating a connection", async () => {
-    const controller = new AbortController(); controller.abort(new Error("Cancelled"));
-    await expect(CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd(), controller.signal)).rejects.toThrow("Cancelled");
-    expect(mocks.spawn).not.toHaveBeenCalled();
+  it("ignores malformed protocol envelopes without breaking initialization", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write('null\n[]\n42\n"diagnostic"\nnot json\n');
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    rpc.close();
+  });
+  it("preserves the matching early completion when another turn completes before the start response", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    const turn = rpc.startAndWaitForTurn("thread-1", {}, 900000);
+    for (const id of ["turn-1", "other-turn"]) {
+      processChild.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id, status: "completed" } } }) + "\n");
+    }
+    processChild.stdout.write(JSON.stringify({ id: 2, result: { turn: { id: "turn-1" } } }) + "\n");
+    await expect(turn).resolves.toBeUndefined();
+    rpc.close();
+  });
+  it("fails an accepted turn immediately when the server exits", async () => {
+    const processChild = child();
+    const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await opening;
+    const turn = rpc.startAndWaitForTurn("thread-1", {}, 900000);
+    processChild.stdout.write(JSON.stringify({ id: 2, result: { turn: { id: "turn-1" } } }) + "\n");
+    await Promise.resolve();
+    processChild.emit("close", 1);
+    await expect(turn).rejects.toThrow("exited with code 1");
+  });
+  it("allows a slow initialization beyond ten seconds and launches Node shims correctly in Electron", async () => {
+    vi.useFakeTimers();
+    const processChild = child();
+    const pending = CodexAppServerRpc.open({ command: process.execPath, prefixArgs: ["codex.js"] }, process.cwd());
+    await vi.advanceTimersByTimeAsync(11_000);
+    processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n");
+    const rpc = await pending;
+    expect(mocks.spawn.mock.calls[0]?.[2].env.ELECTRON_RUN_AS_NODE).toBe("1");
+    rpc.close();
+    expect(processChild.kill).toHaveBeenCalled();
+  });
+  it("bounds initialization and terminates the abandoned process", async () => {
+    vi.useFakeTimers();
+    const processChild = child();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    const assertion = expect(pending).rejects.toThrow(/initialize within 30 seconds/);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await assertion;
+    expect(processChild.kill).toHaveBeenCalled();
+  });
+  it("reports pipe failures immediately without leaving initialization waiting", async () => {
+    const processChild = child();
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    processChild.stdin.emit("error", new Error("pipe closed"));
+    await expect(pending).rejects.toThrow("pipe closed");
+    expect(processChild.kill).toHaveBeenCalled();
   });
 });

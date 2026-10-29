@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.9-pre.1
+
+- Route New Chat, replies, resume, and goal/session actions through the official Codex app-server proxy instead of rejecting supported methods or starting a private server.
+
 ## 1.5.9
 
 - Keep About Codex reports two-column only when storage metrics exist; startup and project tabs remain single-column and compact.
