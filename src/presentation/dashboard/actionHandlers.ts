@@ -44,7 +44,8 @@ import {
   sendCodexCliSessionMessage,
   steerCodexCliSessionTurn,
   unarchiveCodexCliSession,
-  withCodexAppServerTransport
+  withCodexAppServerTransport,
+  browserCodexAppServerTransport
 } from "../../services/codexSessionResume";
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import { isCodexSessionAutoResumeEnabled } from "../../services/codexSessionPreferences";
@@ -244,7 +245,7 @@ export function executeDashboardActionMessage(
   ctx: DashboardActionContext,
   message: Extract<DashboardClientMessage, { type: "dashboard:action" }>
 ): ReturnType<typeof executeDashboardActionMessageInTransport> {
-  return withCodexAppServerTransport(ctx.hostKind === "browser" ? "proxy" : "stdio", () => executeDashboardActionMessageInTransport(ctx, message));
+  return withCodexAppServerTransport(ctx.hostKind === "browser" ? browserCodexAppServerTransport() : "stdio", () => executeDashboardActionMessageInTransport(ctx, message));
 }
 
 async function executeDashboardActionMessageInTransport(

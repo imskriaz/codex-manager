@@ -49,6 +49,11 @@ describe("sessions sidebar layout", () => {
     expect(reconcileCliSessionStatuses(sessions, live)[0]).toMatchObject({ status: "idle", canStop: false });
     expect(reconcileCliSessionStatus({ ...sessions[0], status: "running" }, live).status).toBe("idle");
   });
+  it("keeps running spinners visible beside workspace row actions", () => {
+    const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    expect(css).toContain(".cli-workspace .cli-session-row.is-running:has(.cli-session-row-actions button) .cli-session-row-status { right: 34px;");
+    expect(css).not.toContain(".cli-workspace .cli-session-row:has(.cli-session-row-actions button) .cli-session-spinner { visibility: hidden; }");
+  });
   it("shows short action toasts while preserving live status and tool copy controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
@@ -76,20 +81,19 @@ describe("sessions sidebar layout", () => {
     expect(css).toContain("white-space: nowrap; text-overflow: ellipsis");
   });
 
-  it("keeps one browser workspace logo and drops stale missing-session requests", () => {
+  it("keeps one browser workspace logo and reads deep links independently of the catalogue", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const brandStart = source.indexOf('class="cli-rail-brand"');
     const brand = source.slice(brandStart, source.indexOf("</button>", brandStart));
-    const missingRouteStart = main.indexOf("// The refreshed index is authoritative.");
-    const missingRoute = main.slice(missingRouteStart, missingRouteStart + 500);
 
     expect(brand).toContain("props.logoUri");
     expect(source).toContain("createPortal(sidebarToggle, sidebarToggleTarget)");
     expect(source).not.toContain("if (props.taskBoardActive) setRailCollapsed(true)");
     expect(brand).toContain("<strong>Codex</strong>");
-    expect(missingRoute).toContain('navigateDashboardPath("/workspace", setBrowserPath)');
-    expect(missingRoute).not.toContain("requestCliSessionMessages(routeId");
+    expect(main).toContain('if (route) requestCliSessionMessages(route.id, route.deviceId, true)');
+    const catalogue = main.slice(main.indexOf('const routeId = getCliSessionIdFromPath'), main.indexOf('if (explicitRefresh)', main.indexOf('const routeId = getCliSessionIdFromPath')));
+    expect(catalogue).not.toContain('navigateDashboardPath("/workspace"');
   });
 
   it("shows Latest only for hidden content below the viewport and avoids threshold flicker", () => {
@@ -551,16 +555,24 @@ describe("sessions sidebar layout", () => {
     expect(resume).toContain('"thread/delete"');
     expect(rpc).toContain('["app-server", "proxy"]');
     expect(rpc).toContain('["app-server", "--stdio"]');
+    expect(rpc).toContain('"--listen"');
     expect(rpc).toContain("spawn(");
-    expect(rpc).toContain("browser actions use the official daemon proxy");
-    expect(rpc).not.toContain("WebSocket");
-    expect(handlers).toContain('ctx.hostKind === "browser" ? "proxy" : "stdio"');
+    expect(rpc).toContain("browser actions use the official app-server transport");
+    expect(rpc).toContain("new WebSocket(url, { handshakeTimeout:");
+    expect(handlers).toContain('browserCodexAppServerTransport()');
+  });
+  it("keeps code copy usable when browser clipboard permission is unavailable", () => {
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
+    expect(source).toContain('document.execCommand("copy")');
+    expect(source).toContain("copyWorkspaceText");
   });
 
   it("keeps the tools panel closed for dashboard and new-chat surfaces", () => {
     const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     const styles = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(source).toContain("if (props.dashboardMode)");
+    expect(source).toContain("Resume this interrupted conversation");
+    expect(source).toContain("onResume");
     expect(source).toContain("setRailCollapsed(mobile.matches);");
     expect(source).toContain("if (newChatProject !== undefined)");
     expect(source).toContain("setContextCollapsed(true);");
@@ -857,6 +869,12 @@ describe("sessions sidebar layout", () => {
     expect(main).toContain('readCliSessionListCache(targetDeviceId)');
     expect(cache).toContain('const systemId = cacheSystemId(deviceId);');
     expect(cache).toContain('`list:${systemId}`');
+  });
+
+  it("treats an unresolved selected peer as the local workspace", () => {
+    const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(main).toContain("const belongsToActivePeer = selectedPeer?.local");
+    expect(main).toContain("!session.remote && (!session.deviceId || session.deviceId === selectedPeer.id)");
   });
 
 });

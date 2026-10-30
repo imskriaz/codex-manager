@@ -1,18 +1,28 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import { MAINTENANCE_TOOLS, isMaintenanceJob, mergeMaintenanceJob, type CodexInspection, type MaintenanceJob, type MaintenancePreview, type MaintenancePage, type MaintenanceTool, type MaintenanceReport } from "../../src/domain/maintenance";
+import { CODEX_INSPECTIONS, MAINTENANCE_TOOLS, isMaintenanceJob, mergeMaintenanceJob, type CodexInspection, type MaintenanceJob, type MaintenancePreview, type MaintenancePage, type MaintenanceTool, type MaintenanceReport } from "../../src/domain/maintenance";
 import type { DashboardActionName, DashboardActionPayload, DashboardHostMessage } from "../../src/domain/dashboard/types";
 import type { SendAction } from "./hookTypes";
 import { getActionTimeoutMs } from './host';
 import { ModalShell } from './primitives';
 import { renderRefreshIcon as RefreshIcon, renderRemoveIcon as TrashIcon } from './icons';
 
-const dialogTitles: Record<string, string> = { startup: "Codex Manager", archives: "Archive Management", sessions: "Conversation Cleanup", goals: "Codex Manager", snapshots: "Codex Manager", projects: "Codex Manager", "large-sessions": "Archive Management", storage: "About Codex" };
+const dialogTitles: Record<string, string> = { startup: "Codex UI startup", archives: "Archive manager", sessions: "Conversation cleanup", goals: "Goal manager", snapshots: "Shell snapshot cleanup", projects: "Find missing projects", "large-sessions": "Largest conversations", storage: "Codex storage check" };
 const sessionTools: MaintenanceTool[] = ["archives"];
 const codexManagerTools: Array<{ id: MaintenanceTool | CodexInspection; label: string; inspect: boolean }> = [
   { id: "snapshots", label: "Shell snapshots", inspect: false },
   { id: "startup", label: "Codex UI startup", inspect: true },
   { id: "projects", label: "Missing projects", inspect: true }
 ];
+const maintenanceLabels: Record<string, string> = {
+  archives: "Archive manager",
+  sessions: "Conversation cleanup",
+  goals: "Goal manager",
+  snapshots: "Shell snapshot cleanup",
+  "large-sessions": "Largest conversations",
+  startup: "Codex UI startup",
+  projects: "Find missing projects",
+  storage: "Codex storage check"
+};
 
 export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId?: string; targetName: string; parentOpen: boolean; connected?: boolean }) {
   const [dialog, setDialog] = useState<string>();
@@ -150,10 +160,9 @@ export function MaintenanceTools(props: { sendAction: SendAction; targetDeviceId
     <div class="maintenance-layout">
     {!dialog ? <section class="maintenance-dashboard" aria-label="Codex Manager Tools">
       <header class="maintenance-dashboard-heading"><div><span class="maintenance-kicker">Codex Manager Tools</span><strong>Keep Codex fast, tidy, and recoverable</strong></div><button class="settings-action-btn" type="button" disabled={props.connected === false || busy || running} onClick={() => check("storage")}>{busy ? "Reading…" : "About Codex"}</button></header>
-      <div class="maintenance-dashboard-grid">
-        <button class="maintenance-dashboard-card" type="button" disabled={props.connected === false || busy || running} onClick={() => inspect("archives")}><span class="maintenance-dashboard-icon">⌘</span><span><strong>Archive Management</strong><small>Restore archives or remove old conversations.</small></span><span aria-hidden="true">→</span></button>
-        <button class="maintenance-dashboard-card" type="button" disabled={props.connected === false || busy || running} onClick={() => inspect("snapshots")}><span class="maintenance-dashboard-icon">✦</span><span><strong>Codex Manager</strong><small>Startup recovery, shell snapshots, and missing projects.</small></span><span aria-hidden="true">→</span></button>
-        <button class="maintenance-dashboard-card" type="button" disabled={props.connected === false || busy || running} onClick={() => check("storage")}><span class="maintenance-dashboard-icon">ⓘ</span><span><strong>About Codex</strong><small>Compact storage, database, and workspace health overview.</small></span><span aria-hidden="true">→</span></button>
+      <div class="maintenance-dashboard-grid maintenance-storage-operations">
+        {MAINTENANCE_TOOLS.map(tool => <button key={`manage-${tool.id}`} aria-label={`${maintenanceLabels[tool.id]} Manage`} class="maintenance-dashboard-card" type="button" disabled={props.connected === false || busy || running} onClick={() => inspect(tool.id)}><span class="maintenance-dashboard-icon">⌘</span><span><strong>{maintenanceLabels[tool.id]}</strong><small>{tool.description}</small></span><span>Manage</span></button>)}
+        {CODEX_INSPECTIONS.map(tool => <button key={`inspect-${tool.id}`} aria-label={`${maintenanceLabels[tool.id]} Inspect`} class="maintenance-dashboard-card" type="button" disabled={props.connected === false || busy || running} onClick={() => check(tool.id)}><span class="maintenance-dashboard-icon">ⓘ</span><span><strong>{maintenanceLabels[tool.id]}</strong><small>{tool.description}</small></span><span>Inspect</span></button>)}
       </div>
     </section> : null}
     <ModalShell open={Boolean(dialog && props.parentOpen)} title={dialogTitles[dialog ?? ""] ?? 'Codex tools'} closeLabel="Close tool" className="maintenance-tool-modal" onClose={() => { if (confirmation) setConfirmation(undefined); else setDialog(undefined); }}>

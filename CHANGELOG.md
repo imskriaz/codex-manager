@@ -1,4 +1,92 @@
+## 1.6.0-pre.25
+
+- Finalize workspace verification fixtures for browser chunks, owned steering payloads, Git confirmation, and the complete responsive/notification matrix.
+
+## 1.6.0-pre.24
+
+- Pass the disposable Git stage operation through the real UI and host action before asserting staged diff contents.
+
+## 1.6.0-pre.23
+
+- Refresh Git state after the disposable external edit before staging, and keep steering tied to the selected session’s own live turn.
+
+## 1.6.0-pre.22
+
+- Keep the disposable Git UI check deterministic by writing its known external edit immediately before staging and diffing the real repository.
+
+## 1.6.0-pre.21
+
+- Make the live command approval optional when the provider auto-approves the disposable command, refresh terminal ownership epochs after claiming, and keep child-agent UI selection aligned with rendered agent names.
+
+## 1.6.0-pre.20
+
+- Let live terminal verification take ownership of a disposable shared terminal before typing, covering the real handoff path and preventing false cascades.
+
+## 1.6.0-pre.19
+
+- Keep live steering verification attached to the visible running/Stop state when the provider’s command event stream is delayed.
+
+## 1.6.0-pre.18
+
+- Keep the live steering/Stop verification focused on the active turn fence and approval lifecycle instead of depending on a provider shell process reporting an in-progress command.
+
+## 1.6.0-pre.17
+
+- Treat local sessions with either omitted or local peer device IDs as belonging to the active local workspace so desktop New Chat selects the created conversation reliably.
+
+## 1.6.0-pre.16
+
+- Make the live steering/Stop check use a disposable Node timer so the real approval flow is testable on Windows without a PowerShell process-policy dependency.
+
+## 1.6.0-pre.15
+
+- Expose every maintenance cleanup and inspection operation in the workspace tool navigator, keep destructive confirmations above the tool modal, and preserve responsive flyout/settings layouts.
+
+## 1.6.0-pre.14
+
+- Constrain running-session flyout rows and metadata to the viewport width.
+
+## 1.6.0-pre.13
+
+- Keep long and missing project metadata within the running-session flyout on every viewport.
+
+## 1.6.0-pre.12
+
+- Make responsive clipboard verification tolerate browsers that deny clipboard read-back while still requiring visible Copied feedback.
+
+## 1.6.0-pre.11
+
+- Polish workspace clipboard feedback with a WebView-safe copy fallback.
+
 # Changelog
+
+## 1.6.0-pre.10
+
+- Load workspace deep links independently of delayed catalogue updates; preserve submitted drafts until confirmation and keep running indicators visible.
+- Bound official app-server WebSocket startup, cancellation, disconnect cleanup, and message queues.
+
+## 1.6.0-pre.9
+- Keep running workspace indicators visible and allow eventual session routes to load before redirecting.
+
+## 1.6.0-pre.8
+- Preserve unsafely acknowledged composer drafts across reload and harden real workspace action coverage.
+
+## 1.6.0-pre.7
+- Keep a just-created New Chat route open while the session catalogue catches up.
+
+## 1.6.0-pre.6
+- Always select and open the session created by New Chat after a stale selection clears.
+
+## 1.6.0-pre.5
+- Keep local workspace New Chat selected when peer discovery is still loading.
+
+## 1.6.0-pre.4
+
+- Add the official Codex play/resume action for interrupted non-goal conversations in the browser workspace.
+
+## 1.6.0-pre.3
+
+- Use the official Codex app-server WebSocket transport for browser workspace actions on Windows, avoiding the unresponsive daemon control socket while keeping private VS Code and Auto Resume on stdio.
 
 ## 1.6.0-pre.2
 

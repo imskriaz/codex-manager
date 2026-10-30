@@ -14,8 +14,8 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   const start = async () => {
     const archive = page.getByRole('region', exact('Archive manager'));
     await archive.getByRole('group', exact('Tool items')).getByRole('checkbox').first().check();
-    await archive.getByRole('button', exact('Restore selected')).click();
-    await archive.getByRole('button', exact('Restore selected')).click();
+    await page.getByRole('button', exact('Restore selected')).last().click();
+    await page.getByRole('button', exact('Restore selected')).last().click();
   };
   const progress = async (patch, deviceId = 'fixture-peer') => page.evaluate(({ patch, deviceId }) => {
     window.dispatchEvent(new MessageEvent('message', { data: {type:'dashboard:maintenance-progress',deviceId,job:{...window.__maintenanceJob,...patch}} }));
@@ -33,7 +33,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   const closeSessions = page.getByRole('button', exact('Close sessions sidebar'));
   if (await closeSessions.isVisible()) await page.getByRole('button', exact('Hide sessions sidebar')).click();
   await open();
-  assert.equal(await page.locator('.maintenance-storage-operations > button').count(), 7, 'Every tool uses the compact navigator');
+  assert.equal(await page.locator('.maintenance-storage-operations > button').count(), 9, 'Every cleanup and inspection tool is reachable');
   for (const [title, clear] of [['Archive manager','Clear all archives'],['Conversation cleanup','Clear all Codex data'],['Goal manager','Clear all goals'],['Shell snapshot cleanup','Clean old shell snapshots']]) {
     await page.getByRole('button', exact(title+' Manage')).click();
     const tool = page.getByRole('region', exact(title)), rows = tool.getByRole('group', exact('Tool items')).getByRole('checkbox');
@@ -48,9 +48,9 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
     assert.ok(rowHeight <= 44, 'Rows stay compact');
     await tool.locator('summary[aria-label="More cleanup actions"]').click();
     await tool.getByRole('button', exact(clear)).click();
-    await tool.getByRole('region', exact('Confirm maintenance')).waitFor();
+    await page.getByRole('dialog', exact('Delete conversations permanently')).waitFor();
     assert.equal(await actionCount('runMaintenance'), 0, 'Bulk cleanup still requires explicit confirmation');
-    await tool.getByRole('button', exact('Cancel')).click();
+    await page.getByRole('dialog', exact('Delete conversations permanently')).getByRole('button', exact('Cancel')).click();
     await tool.locator('summary[aria-label="More cleanup actions"]').click();
     await page.keyboard.press('Escape');
     assert.equal(await tool.locator('.maintenance-more[open]').count(), 0, 'Escape closes the action menu first');
@@ -103,7 +103,7 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   await compact.getByRole('button', exact('Cancel')).click();
   await compact.getByRole('button', exact('All tools')).click();
   await page.evaluate(()=>{delete window.__maintenanceCount;window.__maintenanceLongTitle=false;});
-  await page.getByRole('region', exact('Storage Management')).getByRole('button', exact('Open summary')).click();
+  await page.getByRole('button', exact('Codex storage check Inspect')).click();
   const storage = page.getByRole('region', exact('Codex storage check'));
   await storage.getByRole('region', exact('Database allocation')).waitFor();
   for (const label of ['Live pages','Reusable inside databases','Write-ahead logs (WAL)','Shared-memory files']) await storage.getByText(label,{exact:true}).waitFor();
@@ -193,7 +193,8 @@ export async function checkMaintenanceUi(page, { origin, width, height, output }
   await archive.getByText(/host restarted or became unavailable/).waitFor();
   assert.equal(await actionCount('runMaintenance'), 2, 'Reconnect and host restart never replay a mutation');
   await progress({status:'completed',processed:1,cleared:1,revision:100});
-  await archive.getByText('Restore complete', {exact:true}).waitFor();
+  await page.getByRole('dialog', exact('Restore result')).waitFor();
+  await page.getByRole('dialog', exact('Restore result')).getByRole('button', exact('Close result')).click();
   await progress({status:'running',processed:0,cleared:0,revision:1});
   assert.equal(await archive.getByRole('button', exact('Cancel operation')).count(), 0);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Maintenance fits the viewport');

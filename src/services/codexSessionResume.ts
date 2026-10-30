@@ -87,6 +87,10 @@ export function withCodexAppServerTransport<T>(transport: AppServerTransport, ta
   return appServerTransport.run(transport, task);
 }
 
+export function browserCodexAppServerTransport(): AppServerTransport {
+  return process.platform === "win32" ? "websocket" : "proxy";
+}
+
 function openCodexAppServer(executable: Parameters<typeof CodexAppServerRpc.open>[0], cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
   return CodexAppServerRpc.open(executable, cwd, signal, appServerTransport.getStore() ?? "stdio");
 }

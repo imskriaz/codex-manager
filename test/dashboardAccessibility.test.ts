@@ -133,12 +133,12 @@ describe("dashboard accessibility and interaction flow", () => {
   it("keeps maintenance actions grouped behind separate confirmation and result dialogs", () => {
     const tools = readFileSync("webview-src/dashboard/maintenanceTools.tsx", "utf8");
     const queue = readFileSync("webview-src/dashboard/sessionQueueControl.tsx", "utf8");
-    expect(tools).toContain("Archive Management");
-    expect(tools).toContain("Codex Manager");
-    expect(tools).toContain("About Codex");
+    expect(tools).toContain("Archive manager");
+    expect(tools).toContain("Codex storage check");
+    expect(tools).toContain("MAINTENANCE_TOOLS.map");
     expect(tools).toContain('className="maintenance-confirm-modal"');
     expect(tools).toContain('className="maintenance-result-modal"');
-    expect(tools).not.toContain('"Goal manager"');
+    expect(tools).toContain('goals: "Goal manager"');
     expect(queue).toContain("Queue priority for");
     expect(queue).not.toContain("cli-session-control-markers");
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("is-auto-resume ${autoResume ? \"is-enabled\" : \"is-disabled\"}");

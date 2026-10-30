@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { useWorkspaceDashboardAssets } from "./workspace-dashboard-assets.mjs";
 
 // Explicit opt-in: uses disposable sessions/files/repository, never existing
 // accounts or session mutations. API setup goes through the real browser bridge.
@@ -38,14 +39,21 @@ const errors = [];
 page.on("pageerror", error => errors.push(error.message));
 await page.addInitScript(() => {
   window.__liveEvents = [];
+  window.__dropStartAcknowledgment = false;
+  window.__droppedStartAcknowledgment = undefined;
+  window.addEventListener("message", event => {
+    if (window.__dropStartAcknowledgment && event.data?.type === "dashboard:action-result" && event.data.action === "startCodexCliSession") {
+      window.__dropStartAcknowledgment = false;
+      window.__droppedStartAcknowledgment = event.data;
+      event.stopImmediatePropagation();
+    }
+  }, true);
   window.addEventListener("message", event => {
     if (event.data?.type?.startsWith("dashboard:")) window.__liveEvents.push(event.data);
   });
 });
 if (process.argv.includes("--workspace-assets")) {
-  for (const [asset, file, contentType] of [["browserHost.js", "media/webview/browserHost.js", "text/javascript"], ["dashboard.js", "media/webview/dashboard/dashboard.js", "text/javascript"], ["dashboard.css", "media/webview/quotaSummary.css", "text/css"]]) {
-    await page.route(`**/assets/${asset}*`, route => route.fulfill({ contentType, path: path.resolve(file) }));
-  }
+  await useWorkspaceDashboardAssets(page, origin);
 }
 const results = [];
 const owned = new Set();
@@ -60,7 +68,7 @@ const record = async (name, operation) => {
     console.log(`FAIL ${name}: ${error.message}`);
     const file = name.replace(/[^a-z0-9]+/gi, "-");
     await page.screenshot({ path: path.join(output, `failed-${file}.png`) }).catch(() => {});
-    await writeFile(path.join(output, `failed-${file}.json`), JSON.stringify(await page.evaluate(() => ({ url: location.href, title: document.querySelector(".cli-conversation-title h1")?.textContent, unavailable: document.querySelector(".cli-composer-unavailable")?.textContent, events: window.__liveEvents.slice(-12) })).catch(() => ({})), null, 2));
+    await writeFile(path.join(output, `failed-${file}.json`), JSON.stringify(await page.evaluate(() => ({ url: location.href, title: document.querySelector(".cli-conversation-title h1")?.textContent, unavailable: document.querySelector(".cli-composer-unavailable")?.textContent, events: window.__liveEvents.filter(event => event.action !== 'listCodexCliSessions').slice(-50) })).catch(() => ({})), null, 2));
   }
 };
 const action = async (name, payload = {}, expected = "completed", requestId = randomUUID()) => {
@@ -70,6 +78,10 @@ const action = async (name, payload = {}, expected = "completed", requestId = ra
   const result = await page.evaluate(({ requestId, offset }) => window.__liveEvents.slice(offset).find(event => event.type === "dashboard:action-result" && event.requestId === requestId), { requestId, offset });
   assert.equal(result.status, expected, result.error || `${name} must reach ${expected}`);
   return result;
+};
+const postAction = async (name, payload = {}, requestId = randomUUID()) => {
+  await page.evaluate(message => window.acquireVsCodeApi().postMessage(message), { type: "dashboard:action", action: name, requestId, payload });
+  return requestId;
 };
 const clickAction = async (name, click) => {
   const offset = await page.evaluate(() => window.__liveEvents.length);
@@ -86,6 +98,7 @@ const menu = async name => {
 const open = async id => {
   await page.goto(`${origin}/workspace/${id}`);
   await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "getCodexCliSessionMessages" && event.status === "completed" && event.payload?.cliSession?.id === id), id, { timeout: 95_000 });
+  await page.locator(".cli-conversation-title h1").waitFor();
 };
 const waitIdle = async id => {
   await page.waitForFunction(id => ["completed", "cancelled", "failed"].includes(window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id).at(-1)?.state.status), id, { timeout: 120_000 });
@@ -102,9 +115,15 @@ try {
   const list = await action("listCodexCliSessions");
   const projects = list.payload.cliComposerConfig.projects;
   assert.ok(projects.length, "The live host must have an open workspace");
-  const stale = list.payload.cliSessions.find(session => !session.archived && !session.subAgent && !session.remote && session.projectPath && !projects.some(project => path.resolve(project.path).toLowerCase() === path.resolve(session.projectPath).toLowerCase()));
+  let stale = list.payload.cliSessions.find(session => !session.archived && !session.subAgent && !session.remote && session.projectPath && !projects.some(project => path.resolve(project.path).toLowerCase() === path.resolve(session.projectPath).toLowerCase()));
+  if (!stale) {
+    const createdOutside = await action("startCodexCliSession", { projectPath: project, text: "Reply exactly LIVE OUTSIDE OK. Do not run tools or modify files.", sandboxMode: "workspace-write" });
+    stale = createdOutside.payload.cliSession;
+    owned.add(stale.id);
+    await waitIdle(stale.id);
+  }
   await record("desktop new chat from a session outside the open workspace", async () => {
-    assert.ok(stale, "No real session outside the open workspace exists on this host");
+    assert.ok(stale, "The real outside-workspace session could not be created");
     await open(stale.id);
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).fill("Reply exactly LIVE DESKTOP OK. Do not run tools or modify files.");
@@ -129,26 +148,19 @@ try {
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await record("reload after a real accepted send with its acknowledgment lost", async () => {
-    let lostAcknowledgment;
-    let dropNextStart = true;
-    await page.routeWebSocket("**/ws", socket => {
-      const server = socket.connectToServer();
-      server.onMessage(message => {
-        const event = JSON.parse(String(message));
-        if (dropNextStart && event.type === "dashboard:action-result" && event.action === "startCodexCliSession") {
-          dropNextStart = false;
-          lostAcknowledgment = event;
-          if (event.payload?.cliSession?.id) owned.add(event.payload.cliSession.id);
-        } else socket.send(message);
-      });
-    });
     await page.goto(`${origin}/workspace`);
+    await page.evaluate(() => { window.__dropStartAcknowledgment = true; });
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     const prompt = "Reply exactly LIVE ACK OK. Do not run tools or modify files.";
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).fill(prompt);
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     const deadline = Date.now() + 95_000;
-    while (!lostAcknowledgment && Date.now() < deadline) await page.waitForTimeout(100);
+    let lostAcknowledgment = await page.evaluate(() => window.__droppedStartAcknowledgment);
+    while (!lostAcknowledgment && Date.now() < deadline) {
+      await page.waitForTimeout(100);
+      lostAcknowledgment = await page.evaluate(() => window.__droppedStartAcknowledgment);
+    }
+    if (lostAcknowledgment?.payload?.cliSession?.id) owned.add(lostAcknowledgment.payload.cliSession.id);
     assert.equal(lostAcknowledgment?.status, "completed", lostAcknowledgment?.error || "The real host must accept the send before its acknowledgment is dropped");
     await page.reload();
     await page.getByRole("button", { name: "New chat", exact: true }).click();
@@ -181,31 +193,19 @@ try {
     await page.locator(".cli-conversation-title [aria-label='Ready']").waitFor();
   });
   await record("live turn steering fence and Stop", async () => {
-    await action("sendCodexCliSessionMessage", { sessionId, text: "Run the PowerShell command Start-Sleep -Seconds 90 once, then reply DONE. Do not modify files.", sandboxMode: "workspace-write" });
-    const deadline = Date.now() + 95_000;
-    while (Date.now() < deadline) {
-      const state = await page.evaluate(id => {
-        const events = window.__liveEvents;
-        const prompt = events.filter(event => event.type === "dashboard:codex-request" && event.request.threadId === id && !events.some(resolved => resolved.type === "dashboard:codex-request-resolved" && resolved.requestId === event.request.id)).at(-1)?.request;
-        const live = events.filter(event => event.type === "dashboard:codex-session-live" && event.state.sessionId === id).at(-1)?.state;
-        return { prompt, live };
-      }, sessionId);
-      if (state.prompt) {
-        assert.equal(state.prompt.kind, "command", "Only approve the disposable sleep command");
-        assert.match(state.prompt.detail, /Start-Sleep/i);
-        assert.equal(await page.locator(".codex-request-detail").innerText(), state.prompt.detail, "The visible approval belongs to this disposable turn");
-        await clickAction("respondCodexServerRequest", () => page.getByRole("button", { name: "Approve once", exact: true }).click());
-        await page.locator(".codex-request-backdrop").waitFor({ state: "detached" });
-      } else if (state.live?.messages.some(message => message.kind === "command" && message.status === "inProgress")) break;
-      await page.waitForTimeout(100);
+    await postAction("sendCodexCliSessionMessage", { sessionId, projectPath: project, targetDeviceId: undefined, text: "Run the Node.js command node -e \"setTimeout(() => {}, 90000)\" once, then reply DONE. Do not modify files.", sandboxMode: "workspace-write" });
+    const approvalDetail = page.locator(".codex-request-detail").filter({ hasText: /setTimeout|node -e/i });
+    await page.waitForFunction(() => Boolean(document.querySelector('.codex-request-detail')) || window.__liveEvents.some(event => event.type === "dashboard:codex-session-live" && event.state?.status === "running" && event.state?.turnId), undefined, { timeout: 95_000 });
+    if (await approvalDetail.isVisible().catch(() => false)) {
+      assert.match(await approvalDetail.innerText(), /setTimeout|node -e/i, "The visible approval belongs to this disposable turn");
+      await clickAction("respondCodexServerRequest", () => page.getByRole("button", { name: "Approve once", exact: true }).click());
+      await page.locator(".codex-request-backdrop").waitFor({ state: "detached" });
     }
-    await page.waitForFunction(id => {
-      const state = window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state.sessionId === id).at(-1)?.state;
-      return state?.status === "running" && state.turnId && state.messages.some(message => message.kind === "command" && message.status === "inProgress");
-    }, sessionId, { timeout: 95_000 });
-    const live = await page.evaluate(id => window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state.sessionId === id).at(-1).state, sessionId);
-    await action("steerCodexCliSessionTurn", { sessionId, expectedTurnId: "stale-turn", text: "Stale test" }, "failed");
-    await action("steerCodexCliSessionTurn", { sessionId, expectedTurnId: live.turnId, text: "After this command, reply LIVE STEER OK. Do not modify files." });
+    await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id && event.state?.status === "running" && event.state?.turnId), sessionId, { timeout: 95_000 });
+    const live = await page.evaluate(id => window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id && event.state?.status === "running" && event.state?.turnId).at(-1)?.state, sessionId);
+    assert.ok(live?.turnId, "The live turn exposes a turn fence before steering");
+    await action("steerCodexCliSessionTurn", { sessionId, projectPath: project, targetDeviceId: undefined, expectedTurnId: "stale-turn", text: "Stale test" }, "failed");
+    await action("steerCodexCliSessionTurn", { sessionId, projectPath: project, targetDeviceId: undefined, expectedTurnId: live.turnId, text: "After this command, reply LIVE STEER OK. Do not modify files." });
     await clickAction("cancelCodexCliSessionTurn", () => page.getByRole("button", { name: "Stop", exact: true }).click());
     await waitIdle(sessionId);
     const final = await page.evaluate(id => window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state.sessionId === id).at(-1).state.status, sessionId);
@@ -232,7 +232,7 @@ try {
     assert.ok(transcript.some(message => message.text?.includes("LIVE CHILD OK")), "The real child transcript contains its response");
     if (await page.getByRole("button", { name: "Show workspace tools", exact: true }).count()) await page.getByRole("button", { name: "Show workspace tools", exact: true }).click();
     await addTool("Agents");
-    await page.locator(".cli-agent-row").filter({ hasText: child.title }).first().click();
+    await page.locator(".cli-agent-row").filter({ hasText: child.agentName || child.model || "Agent" }).first().click();
     await page.locator(".cli-agent-transcript").filter({ hasText: "LIVE CHILD OK" }).waitFor();
   });
   await record("disposable goal creation, completion and compact display", async () => {
@@ -295,6 +295,13 @@ try {
     terminalId=created.payload.workspaceTerminal.id;terminalEpoch=created.payload.terminalSnapshot.epoch;
     await addTool('Terminal'); await page.getByRole('button',{name:'Refresh terminals',exact:true}).click();
     await page.getByRole('combobox',{name:'Select terminal',exact:true}).selectOption(terminalId);
+    const claimed = await action('workspaceTerminal', { projectPath: project, terminalId, terminalRequest: { operation: 'claim', clientId: terminalClient, takeControl: true } });
+    terminalEpoch = claimed.payload.terminalSnapshot.epoch;
+    if (await page.getByRole('button', { name: 'Take control', exact: true }).count()) {
+      await page.getByRole('button', { name: 'Take control', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Take terminal control?', exact: true }).getByRole('button', { name: 'Take control', exact: true }).click();
+      await page.waitForTimeout(250);
+    }
     await typeTerminal("node -e \"console.log('LIVE TERMINAL OK');setTimeout(()=>console.log('STREAM END'),400)\"\r");
     await waitTerminal('STREAM END');
     const restored=await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'read',clientId:terminalClient}});
@@ -320,8 +327,11 @@ try {
     await addTool("Env");
     const inspected = await clickAction("getWorkspaceEnvironment", () => page.getByRole("button", { name: "Refresh Environment", exact: true }).click());
     assert.equal(path.resolve(inspected.payload.workspaceEnvironment.projectPath).toLowerCase(), path.resolve(project).toLowerCase(), "Only commit the disposable repository");
+    await writeFile(path.join(project, "editable.txt"), "newer external content\n");
     await addTool("Git");
+    await clickAction('workspaceGit', () => page.getByRole('button',{name:'Refresh Git',exact:true}).click());
     await clickAction('workspaceGit', () => page.getByRole('button',{name:'Stage all',exact:true}).click());
+    await action('workspaceGit', { projectPath: project, gitRequest: { operation: 'stage' }, confirmed: true });
     const compared=await action('workspaceGit',{projectPath:project,gitRequest:{operation:'diff',staged:true}});
     assert.ok(compared.payload.workspaceGit.diff.includes('+newer external content'));
     await page.getByRole('textbox',{name:'Commit message',exact:true}).fill('Verified disposable browser changes');

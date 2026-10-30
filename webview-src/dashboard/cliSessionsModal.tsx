@@ -48,6 +48,26 @@ export type CliSessionSection = "active" | "archived";
 import { filterCliSessionsBySection, isCodexCapacityInterruption, isCodexSessionRunning, normalizeCodexSessionGoal, stabilizeCliSessionOrder, showsCodexSessionAutoResume } from "../../src/domain/codexSessionState";
 export { filterCliSessionsBySection, countPeerSessions } from "../../src/domain/codexSessionState";
 
+async function copyWorkspaceText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      if (!document.execCommand("copy")) throw new Error("copy failed");
+    } finally {
+      textarea.remove();
+    }
+  }
+}
+
 export function getMessagePrompt(messages: DashboardCliSessionMessage[], id: string): string | undefined {
   const index = messages.findIndex((message) => message.id === id);
   return index < 0 ? undefined : messages.slice(0, index + 1).reverse().find((message) => message.role === "user" && (!message.kind || message.kind === "message"))?.text;
@@ -207,6 +227,7 @@ export type CliSessionsPageProps = {
     projectPath?: string;
   }) => string | undefined;
   onStop: (session: DashboardCliSessionSummary) => void;
+  onResume: (session: DashboardCliSessionSummary) => void;
   onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
   onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: number) => void;
   onRename: (name: string) => void;
@@ -369,8 +390,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       const submitted = submittedDrafts.current.get(result.requestId);
       if (!submitted) continue;
       submittedDrafts.current.delete(result.requestId);
-      if (result.status !== "completed") setComposerDrafts((current) => current[submitted.key]
-        ? { ...current, [submitted.key]: restoreFailedCliComposerDraft(current[submitted.key]!, submitted) } : current);
+      setComposerDrafts((current) => {
+        const draft = current[submitted.key];
+        if (!draft) return current;
+        return { ...current, [submitted.key]: result.status === "completed"
+          ? acknowledgeCliComposerDraft(draft, submitted)
+          : restoreFailedCliComposerDraft(draft, submitted) };
+      });
     }
   }, [props.submissionResults]);
 
@@ -706,6 +732,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   ) : (
     (() => {
       const running = isCodexSessionRunning(session);
+      const canResume = !running && session.interrupted === true && !session.goal && !session.subAgent && !session.parentSessionId;
       const autoResume = props.autoResumeEnabled ? session.autoResumeEnabled !== false : session.autoResumeEnabled === true;
       return <div role="listitem" draggable class={`cli-session-row ${grouped ? "is-grouped" : ""} ${running ? "is-running" : ""} ${props.selectedSession?.id === session.id && props.selectedSession?.deviceId === session.deviceId ? "is-selected" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`} onDragStart={(event) => { event.dataTransfer?.setData("application/x-codex-session", JSON.stringify({ id: session.id, deviceId: session.deviceId })); if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"; }}>
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
@@ -715,7 +742,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         {session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />}
       </span> : null}
       <span class="cli-session-row-actions">
-        {running && showsCodexSessionAutoResume(session) ? <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></IconButton> : !running && (session.interrupted || session.queueEnabled) ? <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} /> : null}
+        {running && showsCodexSessionAutoResume(session) ? <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></IconButton> : canResume ? <IconButton className="is-resume" label={`Resume ${session.title}`} title="Resume this interrupted conversation" disabled={props.mutating || props.connected === false} onClick={() => props.onResume(session)}><PlayIcon /></IconButton> : !running && session.queueEnabled ? <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} /> : null}
       </span>
       </div>;
     })()
@@ -745,9 +772,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     if (!requestId) { reportLocalFeedback({ level: "warning", message: "Your message was not sent. The draft is saved; reconnect or wait for the current request before trying again." }); return; }
     const submitted = { ...composerDrafts[draftKey]!, key: draftKey, text: draft, attachments };
     submittedDrafts.current.set(requestId, submitted);
-    setComposerDrafts((current) => current[draftKey]
-      ? { ...current, [draftKey]: acknowledgeCliComposerDraft(current[draftKey]!, submitted) }
-      : current);
+    // Keep the submitted draft durable until the host confirms completion.
     reportLocalFeedback({ level: "info", message: canSteer ? "Sending your follow-up to the running turn…" : props.selectedSession ? "Codex is working on your request…" : "Starting a new Codex chat…" });
   };
   const addAttachments = async (files: File[]): Promise<void> => {
@@ -1358,7 +1383,7 @@ function MarkdownMessage({ text, onOpenFile }: { text: string; onOpenFile?: (pat
     if (!code) return;
     button.disabled = true;
     try {
-      await navigator.clipboard.writeText(code.textContent ?? "");
+      await copyWorkspaceText(code.textContent ?? "");
       setFeedback(undefined);
       button.textContent = "Copied";
       window.setTimeout(() => { if (button.isConnected) button.textContent = "Copy code"; }, 1500);
@@ -1379,7 +1404,7 @@ export function TurnCopyButton({ text, label = "Copy assistant turn", onActionFe
   const [copied, setCopied] = useState(false);
   const copy = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyWorkspaceText(text);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -1393,7 +1418,7 @@ function CopySnippet({ text, label = "Copy code" }: { text: string; label?: stri
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const copy = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyWorkspaceText(text);
       setState("copied");
       window.setTimeout(() => setState("idle"), 1200);
     } catch {
@@ -2327,6 +2352,7 @@ function ReasoningIcon() { return <Icon><path d="M9 18h6M10 21h4M8.5 15.5C6.9 14
 function ShieldIcon() { return <Icon><path d="M12 3 5 6v5c0 4.6 2.9 8.2 7 10 4.1-1.8 7-5.4 7-10V6l-7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></Icon>; }
 function SendIcon() { return <Icon><path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function StopIcon() { return <Icon><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></Icon>; }
+function PlayIcon() { return <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>; }
 export function AutoResumeIcon(props: { enabled: boolean; goal: boolean }) { return <Icon><path d="M20 8V3l-3 3a9 9 0 1 0 3.5 9M20 8h-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>{props.enabled ? <path data-state="enabled" d="m10 8 6 4-6 4V8Z" fill="currentColor" stroke-linejoin="round"/> : <path data-state="paused" d="M10 9v6m4-6v6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>}</Icon>; }
 function SwitchAccountIcon() { return <Icon><path d="M5 8h11l-2.5-2.5M19 16H8l2.5 2.5M16 8l2.5 2.5L16 13M8 16l-2.5-2.5L8 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function EmptyFolderIcon() { return <Icon><path d="M3 7h7l2 2h9v10H3V7Zm0 0V5h7l2 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></Icon>; }

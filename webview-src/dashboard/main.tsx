@@ -1013,16 +1013,6 @@ function App() {
                 if (typeof realtimeRevision !== "number" || sessionChanged || routeSession.status === "running") {
                   requestCliSessionMessages(routeId, routeSession.deviceId, typeof realtimeRevision !== "number");
                 }
-              } else if (!partialList && ownerDeviceId === (routeDevice ?? undefined)) {
-                // The refreshed index is authoritative. Do not request a route
-                // that is already gone; that only turns a stale link into a
-                // noisy “session not found” error.
-                navigateDashboardPath("/workspace", setBrowserPath);
-                messageViewRevision.current++;
-                selectedCliSessionRef.current = undefined;
-                setSelectedCliSession(undefined);
-                setCliSessionMessages([]);
-                setCliSessionMessagesError(undefined);
               }
             }
           }
@@ -1172,7 +1162,10 @@ function App() {
           const sessions = mergeCachedCliSessions([session, ...(message.payload.cliSessions ?? cliSessions).filter((candidate) => !sameCliSessionTarget(candidate, session))], cliSessions, message.payload.cliSessionsDeviceId);
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           if ((session.deviceId ?? "local") === (selectedPeer?.local ? "local" : selectedPeer?.id)) setCliComposerConfig(message.payload.cliComposerConfig ?? cliComposerConfig);
-          if ((session.deviceId ?? "local") !== (selectedPeer?.local ? "local" : selectedPeer?.id) || selectedCliSession && !sameCliSessionTarget(selectedCliSession, session)) {
+          const belongsToActivePeer = selectedPeer?.local
+            ? !session.remote && (!session.deviceId || session.deviceId === selectedPeer.id)
+            : (session.deviceId ?? "local") === (selectedPeer?.id ?? "local");
+          if (!belongsToActivePeer) {
             showCliSessionFeedback({ key: Date.now(), level: "info", message: "New Codex chat is ready. Open it from the session list." });
             return;
           }
@@ -1514,6 +1507,12 @@ function App() {
       announce(false);
     };
   }, [isBrowserDashboard, realtimeConnected, browserPresenceTargetDeviceId]);
+
+  useEffect(() => {
+    if (!isBrowserDashboard || !realtimeConnected) return;
+    const route = cliSessionTargetFromLocation(window.location.pathname, window.location.search);
+    if (route) requestCliSessionMessages(route.id, route.deviceId, true);
+  }, [browserPath, isBrowserDashboard, realtimeConnected, requestCliSessionMessages]);
 
   useEffect(() => {
     const session = selectedCliSession;
@@ -2249,6 +2248,25 @@ function App() {
     sendAction("completeOnboarding");
   };
 
+  const currentRequestTarget = currentSessionTarget();
+  const activeCodexRequest = codexRequests.find((request) =>
+    sameCliSessionTarget({ id: request.threadId, deviceId: request.deviceId }, currentRequestTarget)
+  );
+  const backgroundCodexRequest = codexRequests.find((request) =>
+    !sameCliSessionTarget({ id: request.threadId, deviceId: request.deviceId }, currentRequestTarget)
+  );
+  const reviewBackgroundCodexRequest = (): void => {
+    if (!backgroundCodexRequest) return;
+    const session = cliSessionsRef.current.find((candidate) =>
+      sameCliSessionTarget(candidate, { id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId })
+    );
+    if (session) {
+      selectCliSession(session);
+    } else if (isBrowserDashboard) {
+      navigateDashboardPath(buildCliSessionPath({ id: backgroundCodexRequest.threadId, deviceId: backgroundCodexRequest.deviceId }), setBrowserPath);
+    }
+  };
+
   const handleAutoSwitchLock = (lockMinutes: number): void => {
     if (!overviewAccount) {
       return;
@@ -2327,21 +2345,30 @@ function App() {
             document.body
           )
         : null}
-      {codexRequests[0]
+      {backgroundCodexRequest
+        ? createPortal(
+            <div class="codex-request-background" role="alert">
+              <span>Codex is waiting for input in another session.</span>
+              <button type="button" onClick={reviewBackgroundCodexRequest}>Review request</button>
+            </div>,
+            document.body
+          )
+        : null}
+      {activeCodexRequest
         ? createPortal(
             <CodexRequestDialog
-              key={`${codexRequests[0].deviceId ?? "local"}:${codexRequests[0].id}`}
-              request={codexRequests[0]}
-              queuedCount={codexRequests.length - 1}
+              key={`${activeCodexRequest.deviceId ?? "local"}:${activeCodexRequest.id}`}
+              request={activeCodexRequest}
+              queuedCount={codexRequests.filter((request) => request !== activeCodexRequest).length}
               busy={isActionPending("respondCodexServerRequest")}
               error={codexRequestError}
               onRespond={(decision, answers) => {
                 setCodexRequestError(undefined);
                 sendAction("respondCodexServerRequest", undefined, {
-                  codexRequestId: codexRequests[0]!.id,
+                  codexRequestId: activeCodexRequest.id,
                   codexDecision: decision,
                   codexAnswers: answers,
-                  targetDeviceId: codexRequests[0]!.deviceId
+                  targetDeviceId: activeCodexRequest.deviceId
                 });
               }}
             />,
@@ -2989,6 +3016,7 @@ function App() {
               mutating={(isBrowserDashboard && !realtimeConnected) || [
                 "openNewCodexWebview",
                 "openCodexCliSession",
+                "resumeCodexSessions",
                 "renameCodexCliSession",
                 "setCodexSessionAutoResume",
                 "setCodexSessionQueue",
@@ -2999,6 +3027,7 @@ function App() {
               ].some((action) => isActionPending(action as DashboardActionName))}
               goalUpdating={isActionPending("setCodexSessionGoalStatus")}
               onGoalStatus={(status) => selectedCliSession && requestSessionAction("setCodexSessionGoalStatus", selectedCliSession, { goalStatus: status })}
+              onResume={(session) => requestSessionAction("resumeCodexSessions", session)}
               onAutoResume={(session, enabled) => requestSessionAction("setCodexSessionAutoResume", session, { autoResumeEnabled: enabled })}
               onQueue={(session, enabled, priority) => requestSessionAction("setCodexSessionQueue", session, { queueEnabled: enabled, sessionQueuePriority: priority ?? 3 })}
               error={cliSessionsError}

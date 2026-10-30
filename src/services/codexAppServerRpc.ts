@@ -1,10 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { StringDecoder } from "node:string_decoder";
+import { createServer } from "node:net";
 import * as path from "node:path";
+import { WebSocket } from "ws";
 import { normalizeNativePath } from "../utils/nativePaths";
 
 export type AppServerExecutable = { command: string; prefixArgs: string[]; shell?: boolean };
-export type AppServerTransport = "stdio" | "proxy";
+export type AppServerTransport = "stdio" | "proxy" | "websocket";
 export class CodexAppServerTurnInterruptedError extends Error {
   constructor() {
     super("Codex stopped this turn before it completed.");
@@ -28,9 +30,10 @@ function appServerExitError(code: number | null, stderr: string, transport: AppS
   return new Error(`Codex app-server ${transport} exited with code ${code ?? "unknown"}.${guidance ? ` ${guidance}` : ""}${detail ? ` ${detail}` : ""}`);
 }
 
-/** One scoped app-server connection; browser actions use the official daemon proxy. */
+/** One scoped app-server connection; browser actions use the official app-server transport. */
 export class CodexAppServerRpc {
   private readonly child: ChildProcessWithoutNullStreams;
+  private socket?: WebSocket;
   private readonly decoder = new StringDecoder("utf8");
   private lineBuffer = "";
   private nextId = 1;
@@ -55,6 +58,7 @@ export class CodexAppServerRpc {
 
   static async open(executable: AppServerExecutable, cwd: string, signal?: AbortSignal, transport: AppServerTransport = "stdio"): Promise<CodexAppServerRpc> {
     signal?.throwIfAborted();
+    if (transport === "websocket") return CodexAppServerRpc.openWebSocket(executable, cwd, signal);
     const args = transport === "proxy" ? ["app-server", "proxy"] : ["app-server", "--stdio"];
     const configuredHome = process.env["CODEX_HOME"]?.trim().replace(/^['"]|['"]$/g, "");
     const child = spawn(executable.command, [...executable.prefixArgs, ...args], {
@@ -79,6 +83,81 @@ export class CodexAppServerRpc {
       signal?.throwIfAborted();
       client.send({ method: "initialized", params: {} });
       return client;
+    } catch (error) {
+      client.close();
+      throw error;
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+
+  private static async openWebSocket(executable: AppServerExecutable, cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
+    const port = await new Promise<number>((resolve, reject) => {
+      const server = createServer();
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (!address || typeof address === "string") { server.close(); reject(new Error("Could not reserve a local app-server port.")); return; }
+        server.close((error) => error ? reject(error) : resolve(address.port));
+      });
+    });
+    const configuredHome = process.env["CODEX_HOME"]?.trim().replace(/^['"]|['"]$/g, "");
+    const child = spawn(executable.command, [...executable.prefixArgs, "app-server", "--listen", `ws://127.0.0.1:${port}`, "--analytics-default-enabled"], {
+      cwd,
+      env: { ...process.env, ...(configuredHome ? { CODEX_HOME: path.resolve(normalizeNativePath(configuredHome)) } : {}), ...(executable.command === process.execPath ? { ELECTRON_RUN_AS_NODE: "1" } : {}) },
+      windowsHide: true,
+      shell: executable.shell,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const client = new CodexAppServerRpc(child, "websocket");
+    const abort = () => client.close();
+    signal?.addEventListener("abort", abort, { once: true });
+    child.stdout.resume();
+    try {
+      signal?.throwIfAborted();
+      const url = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error("The official Codex app-server WebSocket did not start within 30 seconds."));
+        }, 30_000);
+        const onStderr = (chunk: Buffer | string) => {
+          client.stderr = `${client.stderr}${chunk.toString()}`.slice(-4096);
+          if (/listening on:\s+ws:\/\/127\.0\.0\.1:\d+/.test(client.stderr)) {
+            cleanup();
+            resolve(`ws://127.0.0.1:${port}`);
+          }
+        };
+        let off = () => undefined as void;
+        const cleanup = () => { clearTimeout(timer); child.stderr.off("data", onStderr); off(); };
+        off = client.onDisconnect((error) => { cleanup(); reject(error); });
+        child.stderr.on("data", onStderr);
+      });
+      child.stderr.on("data", (chunk: Buffer | string) => { client.stderr = `${client.stderr}${chunk.toString()}`.slice(-4096); });
+      signal?.throwIfAborted();
+      const socket = new WebSocket(url, { handshakeTimeout: 30_000, maxPayload: 4 * 1024 * 1024 });
+      client.socket = socket;
+      socket.on("message", (data) => {
+        const text = typeof data === "string" ? data : Buffer.isBuffer(data) ? data.toString() : data instanceof ArrayBuffer ? Buffer.from(data).toString() : Buffer.concat(data).toString();
+        client.receive(text);
+      });
+      socket.on("error", (error) => client.fail(error instanceof Error ? error : new Error(String(error))));
+      socket.on("close", () => client.fail(new Error("Codex app-server WebSocket closed.")));
+      await new Promise<void>((resolve, reject) => {
+        const onOpen = () => { cleanup(); resolve(); };
+        const onError = (error: Error) => { cleanup(); reject(error); };
+        const onClose = () => { cleanup(); reject(client.transportError ?? new Error("Codex app-server WebSocket closed before connecting.")); };
+        const cleanup = () => { socket.off("open", onOpen); socket.off("error", onError); socket.off("close", onClose); };
+        socket.once("open", onOpen);
+        socket.once("error", onError);
+        socket.once("close", onClose);
+      });
+        await client.request("initialize", {
+          clientInfo: { name: "codex-manager", title: "codex-manager browser workspace", version: "1.6.0" },
+          capabilities: { experimentalApi: true }
+        }, 30_000);
+        signal?.throwIfAborted();
+        client.send({ method: "initialized", params: {} });
+        return client;
     } catch (error) {
       client.close();
       throw error;
@@ -198,6 +277,11 @@ export class CodexAppServerRpc {
   private send(message: unknown): void {
     if (this.closed) throw this.transportError ?? new Error("Codex app-server connection is closed.");
     const encoded = JSON.stringify(message);
+    if (this.socket) {
+      if (this.socket.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > 2 * 1024 * 1024 || Buffer.byteLength(encoded, "utf8") > 2 * 1024 * 1024) throw new Error("The Codex app-server WebSocket is closed, the queue is full, or the request is too large.");
+      this.socket.send(encoded);
+      return;
+    }
     if (Buffer.byteLength(encoded, "utf8") > 2 * 1024 * 1024 || this.child.stdin.writableLength > 2 * 1024 * 1024) throw new Error("The Codex app-server message queue is full or the request is too large.");
     this.child.stdin.write(`${encoded}\n`, "utf8");
   }
@@ -257,6 +341,8 @@ export class CodexAppServerRpc {
     }
     this.pending.clear();
     this.lineBuffer = "";
+    if (this.socket?.readyState === WebSocket.CONNECTING) this.socket.terminate();
+    else this.socket?.close();
     this.child.kill();
   }
 }

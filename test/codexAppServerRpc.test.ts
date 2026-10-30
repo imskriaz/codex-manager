@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import path from "node:path";
+import { WebSocketServer } from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("child_process", () => ({ spawn: mocks.spawn }));
@@ -14,6 +15,45 @@ function child() {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); vi.unstubAllEnvs(); });
 
 describe("app-server initialization recovery", () => {
+  it("initializes the WebSocket transport and rejects pending reads on disconnect", async () => {
+    const processChild = child();
+    let server: WebSocketServer | undefined;
+    mocks.spawn.mockImplementation((_command, args: string[]) => {
+      const url = new URL(args[args.indexOf("--listen") + 1]!);
+      server = new WebSocketServer({ host: url.hostname, port: Number(url.port) });
+      server.on("listening", () => processChild.stderr.write(`listening on: ${url.href}\n`));
+      server.on("connection", (socket) => socket.on("message", (data) => {
+        const message = JSON.parse(data.toString());
+        if (message.method === "initialize") socket.send(JSON.stringify({ id: message.id, result: {} }));
+      }));
+      return processChild;
+    });
+    const rpc = await CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd(), undefined, "websocket");
+    try {
+      const pending = rpc.request("thread/read", {});
+      server!.clients.forEach((socket) => socket.close());
+      await expect(pending).rejects.toThrow(/WebSocket closed/);
+      expect(processChild.kill).toHaveBeenCalledOnce();
+    } finally {
+      rpc.close();
+      server!.clients.forEach((socket) => socket.terminate());
+      await new Promise<void>((resolve) => server!.close(() => resolve()));
+    }
+  });
+
+  it.each(["exit", "abort"])("cleans up WebSocket startup after %s", async (cause) => {
+    const processChild = child();
+    const controller = new AbortController();
+    mocks.spawn.mockImplementation(() => {
+      setTimeout(() => {
+        if (cause === "abort") controller.abort();
+        else { processChild.stderr.write("startup failed"); processChild.emit("close", 1); }
+      }, 0);
+      return processChild;
+    });
+    await expect(CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd(), controller.signal, "websocket")).rejects.toThrow(cause === "exit" ? /startup failed/ : /closed/);
+    expect(processChild.kill).toHaveBeenCalledOnce();
+  });
   it("pins a relative Codex home before switching to a session's project", async () => {
     vi.stubEnv("CODEX_HOME", "relative-codex-home");
     const processChild = child();

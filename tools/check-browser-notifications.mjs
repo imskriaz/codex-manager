@@ -52,12 +52,13 @@ try {
       return route.fulfill({ json: { ok: true } });
     });
     await page.route("**/assets/browserHost.js*", route => route.fulfill({ contentType: "text/javascript", body: host }));
+    await page.route("**/assets/chunks/*", route => route.fulfill({ path: path.resolve("media/webview/dashboard", new URL(route.request().url()).pathname.split("/assets/")[1]) }));
     for (const [asset, file, contentType] of [["dashboard.js", "media/webview/dashboard/dashboard.js", "text/javascript"], ["dashboard.css", "media/webview/quotaSummary.css", "text/css"], ["shared.css", "media/webview/shared.css", "text/css"]])
       await page.route(`**/assets/${asset}*`, route => route.fulfill({ contentType, path: path.resolve(file) }));
     console.log(`${scenario}: opening dashboard`);
     await page.goto(`${origin}/`);
     console.log(`${scenario}: dashboard loaded`);
-    await page.locator(".dashboard-mobile-actions").waitFor();
+    await page.locator("#dashboard-main").waitFor();
     console.log(`${scenario}: dashboard ready`);
     const offer = page.getByRole("region", { name: "Notification subscription", exact: true });
     if (["registered", "login-conflict"].includes(scenario)) {
@@ -97,8 +98,12 @@ try {
         console.log(`${scenario}: subscribed`);
         assert.equal(calls.filter(path => path === "/api/push/subscribe").length, 1);
         await offer.getByRole("button", { name: "Done", exact: true }).click();
-        await page.locator(".dashboard-mobile-actions > summary").click();
-        await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+        if (await page.locator(".dashboard-mobile-actions > summary").count()) {
+          await page.locator(".dashboard-mobile-actions > summary").click();
+          await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+        } else {
+          await page.locator("#settingsOpenButton").click();
+        }
         await page.getByRole("button", { name: "Disable notifications", exact: true }).waitFor();
         const testButton = page.getByRole("button", { name: "Send test notification", exact: true });
         await page.waitForFunction(() => { const button = [...document.querySelectorAll("button")].find(element => element.textContent?.trim() === "Send test notification"); return button instanceof HTMLButtonElement && !button.disabled; });
