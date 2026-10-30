@@ -2,7 +2,7 @@
   "name": "codex-manager",
   "displayName": "Codex Manager",
   "description": "Manage Codex across connected PCs from your browser: remote sessions, files, Git, terminals, accounts, quota, task boards, and Auto Resume.",
-  "version": "1.5.9-pre.2",
+  "version": "1.6.0-pre.1",
   "publisher": "imskriaz",
   "preview": false,
   "icon": "media/product-icons/codex-openai.png",
@@ -22,6 +22,9 @@
     "onStartupFinished",
     "onWebviewPanel:codexQuotaSummary",
     "onCommand:codexManager.showQuotaSummary"
+  ],
+  "extensionDependencies": [
+    "openai.chatgpt"
   ],
   "main": "./out/extension.js",
   "contributes": {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.0-pre.1
+
+- Package the latest workspace and official app-server transport fixes for prerelease testing.
+
 ## 1.5.9-pre.2
 
 - Preserve official app-server proxy diagnostics in workspace failures and keep the composer send icon visible on dark themes.
