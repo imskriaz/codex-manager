@@ -124,7 +124,7 @@ describe("native App Server new sessions", () => {
     const rpc = { request: vi.fn(async () => ({})), close: vi.fn() }; mocks.open.mockResolvedValue(rpc);
     vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
     await withCodexSessionMaintenance([id, secondId], () => Promise.all([deleteCodexCliSession(id), unarchiveCodexCliSession(secondId)]));
-    expect(mocks.open).toHaveBeenCalledExactlyOnceWith(expect.anything(), root);
+    expect(mocks.open).toHaveBeenCalledExactlyOnceWith(expect.anything(), root, undefined, "stdio");
     expect(rpc.request.mock.calls.map(([method]) => method).sort()).toEqual(["thread/delete", "thread/unarchive"]);
     expect(rpc.close).toHaveBeenCalledOnce();
     mocks.open.mockClear(); rpc.close.mockClear(); rpc.request.mockClear();
@@ -387,7 +387,7 @@ describe("native App Server new sessions", () => {
     mocks.open.mockResolvedValue(rpc);
     try {
       await sendCodexCliSessionMessage({ sessionId: id, text: "continue", projectPath: project, model: "gpt-5", reasoningEffort: "high", sandboxMode: "read-only" });
-      expect(mocks.open).toHaveBeenCalledWith(expect.anything(), project, undefined);
+      expect(mocks.open).toHaveBeenCalledWith(expect.anything(), project, undefined, "stdio");
       expect(rpc.request).toHaveBeenCalledWith("thread/resume", { threadId: id, cwd: project, excludeTurns: true });
       expect(rpc.startAndWaitForTurn).toHaveBeenCalledWith(id, expect.objectContaining({ cwd: project, model: "gpt-5", effort: "high", sandboxPolicy: expect.objectContaining({ type: "readOnly" }), input: [expect.objectContaining({ type: "text", text: "continue" })] }), expect.any(Number), expect.any(Function));
       expect(getCodexSessionLiveState(id)?.status).toBe("completed");

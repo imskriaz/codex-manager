@@ -18,7 +18,7 @@ describe("app-server initialization recovery", () => {
     vi.stubEnv("CODEX_HOME", "relative-codex-home");
     const processChild = child();
     const opening = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, path.resolve("different-project"));
-    expect(mocks.spawn).toHaveBeenCalledWith("codex", ["app-server", "proxy"], expect.any(Object));
+    expect(mocks.spawn).toHaveBeenCalledWith("codex", ["app-server", "--stdio"], expect.any(Object));
     expect(mocks.spawn.mock.calls[0]?.[2].env.CODEX_HOME).toBe(path.resolve("relative-codex-home"));
     processChild.stdout.write(JSON.stringify({ id: 1, result: {} }) + "\n"); (await opening).close();
   });
@@ -46,7 +46,7 @@ describe("app-server initialization recovery", () => {
   });
   it("preserves official proxy diagnostics when the daemon exits", async () => {
     const processChild = child();
-    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd());
+    const pending = CodexAppServerRpc.open({ command: "codex", prefixArgs: [] }, process.cwd(), undefined, "proxy");
     processChild.stderr.write("failed to connect to app-server-control.sock: dead network\n");
     processChild.emit("close", 1);
     await expect(pending).rejects.toThrow(/official Codex app-server daemon is unavailable/);

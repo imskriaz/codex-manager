@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { normalizeNativePath } from "../utils/nativePaths";
 
 export type AppServerExecutable = { command: string; prefixArgs: string[]; shell?: boolean };
+export type AppServerTransport = "stdio" | "proxy";
 export class CodexAppServerTurnInterruptedError extends Error {
   constructor() {
     super("Codex stopped this turn before it completed.");
@@ -17,17 +18,17 @@ type RpcResponse = { id?: unknown; method?: unknown; params?: unknown; result?: 
 export type AppServerRequest = { id: string | number; method: string; params: unknown };
 type PendingRequest = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
-function proxyExitError(code: number | null, stderr: string): Error {
+function appServerExitError(code: number | null, stderr: string, transport: AppServerTransport): Error {
   const detail = stderr.trim().slice(-512);
-  const guidance = /no complete local package/i.test(detail)
+  const guidance = transport === "proxy" && /no complete local package/i.test(detail)
     ? "The installed official Codex CLI package is incomplete. Update or reinstall the official Codex extension/CLI, then retry."
-    : /app-server-control\.sock|dead network|failed to connect/i.test(detail)
+    : transport === "proxy" && /app-server-control\.sock|dead network|failed to connect/i.test(detail)
       ? "The official Codex app-server daemon is unavailable. Restart or update official Codex, then retry."
       : undefined;
-  return new Error(`Codex app-server proxy exited with code ${code ?? "unknown"}.${guidance ? ` ${guidance}` : ""}${detail ? ` ${detail}` : ""}`);
+  return new Error(`Codex app-server ${transport} exited with code ${code ?? "unknown"}.${guidance ? ` ${guidance}` : ""}${detail ? ` ${detail}` : ""}`);
 }
 
-/** One scoped proxy to the official Codex app-server daemon. The manager never starts a private server. */
+/** One scoped app-server connection; browser actions use the official daemon proxy. */
 export class CodexAppServerRpc {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly decoder = new StringDecoder("utf8");
@@ -40,19 +41,21 @@ export class CodexAppServerRpc {
   private closed = false;
   private transportError?: Error;
   private stderr = "";
+  private readonly transport: AppServerTransport;
 
-  private constructor(child: ChildProcessWithoutNullStreams) {
+  private constructor(child: ChildProcessWithoutNullStreams, transport: AppServerTransport) {
     this.child = child;
+    this.transport = transport;
     child.on("error", (error) => this.fail(error));
     child.stdin.on("error", (error) => this.fail(error));
     child.stdout.on("error", (error) => this.fail(error));
     child.stderr.on("error", (error) => this.fail(error));
-    child.on("close", (code) => this.fail(proxyExitError(code, this.stderr)));
+    child.on("close", (code) => this.fail(appServerExitError(code, this.stderr, transport)));
   }
 
-  static async open(executable: AppServerExecutable, cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
+  static async open(executable: AppServerExecutable, cwd: string, signal?: AbortSignal, transport: AppServerTransport = "stdio"): Promise<CodexAppServerRpc> {
     signal?.throwIfAborted();
-    const args = ["app-server", "proxy"];
+    const args = transport === "proxy" ? ["app-server", "proxy"] : ["app-server", "--stdio"];
     const configuredHome = process.env["CODEX_HOME"]?.trim().replace(/^['"]|['"]$/g, "");
     const child = spawn(executable.command, [...executable.prefixArgs, ...args], {
       cwd,
@@ -61,7 +64,7 @@ export class CodexAppServerRpc {
       shell: executable.shell,
       stdio: ["pipe", "pipe", "pipe"]
     });
-    const client = new CodexAppServerRpc(child);
+    const client = new CodexAppServerRpc(child, transport);
     const abort = () => client.close();
     signal?.addEventListener("abort", abort, { once: true });
     child.stderr.on("data", (chunk: Buffer | string) => {
@@ -91,7 +94,7 @@ export class CodexAppServerRpc {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        const guidance = method === "initialize" ? " The official Codex app-server daemon is unavailable or unresponsive; restart or update official Codex, then retry." : "";
+        const guidance = method === "initialize" && this.transport === "proxy" ? " The official Codex app-server daemon is unavailable or unresponsive; restart or update official Codex, then retry." : "";
         reject(new CodexAppServerDisconnectedError(`Codex app-server did not answer ${method} within ${Math.ceil(timeoutMs / 1000)} seconds.${guidance} Its outcome is unconfirmed; refresh before retrying.`));
       }, timeoutMs);
       this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });

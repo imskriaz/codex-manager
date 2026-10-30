@@ -538,6 +538,7 @@ describe("sessions sidebar layout", () => {
     const settings = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     const resume = readFileSync("src/services/codexSessionResume.ts", "utf8");
     const rpc = readFileSync("src/services/codexAppServerRpc.ts", "utf8");
+    const handlers = readFileSync("src/presentation/dashboard/actionHandlers.ts", "utf8");
 
     expect(packageJson).not.toContain('"codexManager.codexSessionTransport"');
     expect(settings).not.toContain("Workspace connection");
@@ -549,9 +550,11 @@ describe("sessions sidebar layout", () => {
     expect(resume).toContain('"thread/unarchive"');
     expect(resume).toContain('"thread/delete"');
     expect(rpc).toContain('["app-server", "proxy"]');
+    expect(rpc).toContain('["app-server", "--stdio"]');
     expect(rpc).toContain("spawn(");
-    expect(rpc).toContain("manager never starts a private server");
+    expect(rpc).toContain("browser actions use the official daemon proxy");
     expect(rpc).not.toContain("WebSocket");
+    expect(handlers).toContain('ctx.hostKind === "browser" ? "proxy" : "stdio"');
   });
 
   it("keeps the tools panel closed for dashboard and new-chat surfaces", () => {

@@ -13,7 +13,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readSubAgentMetadata, type SubAgentMetadata } from "../domain/sessionSource";
 import { prepareChatInput, readChatTextAttachments, withoutChatTextAttachments, type ChatAttachment } from "../domain/chatAttachments";
 import { appServerChatInput } from "./codexChatAttachments";
-import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError } from "./codexAppServerRpc";
+import { CodexAppServerRpc, CodexAppServerTurnInterruptedError, CodexAppServerDisconnectedError, type AppServerTransport } from "./codexAppServerRpc";
 import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./codexAppServerPrompts";
 import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
 import { recordNativeSessionStatus, recordSessionLive } from "./sessionRecording";
@@ -81,6 +81,15 @@ const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: 
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean> }>();
 const nativeTurnObservers = new Map<string, Promise<void>>();
 const maintenanceConnection = new AsyncLocalStorage<{ home: string; ids: Set<string>; rpc?: Promise<CodexAppServerRpc>; rpcs: Map<string, Promise<CodexAppServerRpc>> }>();
+const appServerTransport = new AsyncLocalStorage<AppServerTransport>();
+
+export function withCodexAppServerTransport<T>(transport: AppServerTransport, task: () => Promise<T>): Promise<T> {
+  return appServerTransport.run(transport, task);
+}
+
+function openCodexAppServer(executable: Parameters<typeof CodexAppServerRpc.open>[0], cwd: string, signal?: AbortSignal): Promise<CodexAppServerRpc> {
+  return CodexAppServerRpc.open(executable, cwd, signal, appServerTransport.getStore() ?? "stdio");
+}
 
 /** Reuse one native process for a bounded cleanup job, never for session turns. */
 export async function withCodexSessionMaintenance<T>(ids: string[], task: () => Promise<T>): Promise<T> {
@@ -975,8 +984,8 @@ async function startAppServerSession(options: {
   let detachPrompts: () => void = () => undefined;
   let threadId: string | undefined;
   try {
-    rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd);
-    recordPersistentEvent("info", "session-start", "Official app-server thread/start requested", { transport: "app-server-proxy" });
+    rpc = await openCodexAppServer(await resolveCodexCliExecutable(), cwd);
+    recordPersistentEvent("info", "session-start", "Official app-server thread/start requested", { transport: appServerTransport.getStore() ?? "stdio" });
     const result = await rpc.request<{ thread?: { id?: unknown } }>("thread/start", {
       cwd,
       ...(options.model ? { model: options.model } : {}),
@@ -1067,7 +1076,7 @@ async function sendAppServerSessionMessage(options: {
   const abort = () => rpc?.close();
   options.signal?.addEventListener("abort", abort, { once: true });
   try {
-    rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), cwd, options.signal);
+    rpc = await openCodexAppServer(await resolveCodexCliExecutable(), cwd, options.signal);
     options.signal?.throwIfAborted();
     detachPrompts = attachCodexAppServerPrompts(rpc, options.sessionId);
     activeAppServerTurns.set(options.sessionId, { rpc });
@@ -1289,7 +1298,7 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
     suppressRecovery(activeAppServer.turnId);
     activeAppServer.cancelRequested = true;
     if (!activeAppServer.turnId) { activeAppServer.rpc.close(); return true; }
-    recordPersistentEvent("info", "session-stop", "Official app-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: "app-server-proxy" });
+    recordPersistentEvent("info", "session-stop", "Official app-server turn/interrupt requested", { sessionRef: toSessionLogRef(sessionId), transport: appServerTransport.getStore() ?? "stdio" });
     activeAppServer.stop = activeAppServer.rpc.request("turn/interrupt", { threadId: sessionId, turnId: activeAppServer.turnId }, 10_000).then(() => {
       cancelCodexAppServerPrompts(sessionId);
       return true;
@@ -1642,7 +1651,7 @@ export async function readCodexCliSessionMessages(
   if (path.resolve(codexHome) === path.resolve(resolveCodexHome()) && !transcriptPath) {
     try {
       const projectPath = await resolveRecordedSessionProject(sessionId);
-      const rpc = await CodexAppServerRpc.open(await resolveCodexCliExecutable(), projectPath);
+      const rpc = await openCodexAppServer(await resolveCodexCliExecutable(), projectPath);
       try {
         const result = await rpc.request("thread/read", { threadId: sessionId, includeTurns: true }, APP_SERVER_REQUEST_TIMEOUT_MS);
         const messages = parseCodexAppServerThreadItems(result);
@@ -2683,7 +2692,7 @@ async function runCodexAppServerRequest<T = unknown>(
       await assertUsableCliProjectPath(cwd);
       const executable = await resolveCodexCliExecutable();
       if (maintenance.home !== resolveCodexHome()) throw new Error("The cleanup context changed. Remaining conversations were kept.");
-      return CodexAppServerRpc.open(executable, cwd);
+      return openCodexAppServer(executable, cwd);
     })();
     maintenance.rpcs.set(rpcKey, rpcPromise);
     const rpc = await rpcPromise;
@@ -2707,7 +2716,7 @@ async function runCodexAppServerRequest<T = unknown>(
     await assertUsableCliProjectPath(cwd);
     recordPersistentEvent("debug", "session-maintenance", "Using Codex storage for an unavailable session project", { sessionRef: toSessionLogRef(sessionId), method });
   }
-  const rpc = await CodexAppServerRpc.open(executable, cwd);
+  const rpc = await openCodexAppServer(executable, cwd);
   try { return await rpc.request<T>(method, params, timeoutMs); }
   finally { rpc.close(); }
 }

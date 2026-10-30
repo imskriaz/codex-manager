@@ -43,7 +43,8 @@ import {
   startCodexCliSession,
   sendCodexCliSessionMessage,
   steerCodexCliSessionTurn,
-  unarchiveCodexCliSession
+  unarchiveCodexCliSession,
+  withCodexAppServerTransport
 } from "../../services/codexSessionResume";
 import { getCodexManagerConfiguration } from "../../infrastructure/config/extensionSettings";
 import { isCodexSessionAutoResumeEnabled } from "../../services/codexSessionPreferences";
@@ -239,7 +240,14 @@ const sessionActionRequestsByContext = new WeakMap<vscode.ExtensionContext, Map<
 const SESSION_REQUEST_TTL_MS = 10 * 60_000;
 const MAX_SESSION_REQUESTS = 128;
 
-export async function executeDashboardActionMessage(
+export function executeDashboardActionMessage(
+  ctx: DashboardActionContext,
+  message: Extract<DashboardClientMessage, { type: "dashboard:action" }>
+): ReturnType<typeof executeDashboardActionMessageInTransport> {
+  return withCodexAppServerTransport(ctx.hostKind === "browser" ? "proxy" : "stdio", () => executeDashboardActionMessageInTransport(ctx, message));
+}
+
+async function executeDashboardActionMessageInTransport(
   ctx: DashboardActionContext,
   message: Extract<DashboardClientMessage, { type: "dashboard:action" }>
 ): Promise<{

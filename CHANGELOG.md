@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.0-pre.2
+
+- Keep the pre-1.6 private Codex transport for VS Code while scoping the official daemon proxy to browser workspace actions; Auto Resume remains unchanged.
+
 ## 1.6.0-pre.1
 
 - Package the latest workspace and official app-server transport fixes for prerelease testing.
