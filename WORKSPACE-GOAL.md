@@ -40,4 +40,5 @@ Objective: end to end fix all gaps and support in workspace, including all UI/UX
 - Installed live actions passed desktop/mobile New Chat, lost acknowledgment reload, rename/reply, files, terminal ownership/stream/cancel/reload, offline/reconnect, and fork/archive cleanup. Steering remains provider-sensitive: the current run can keep a real command active but the host rejects the follow-up as not owned; Git confirmation and authenticated remote/peer/reboot/storage-exhaustion cases remain explicitly unverified.
 - Earlier installed responsive read-only smoke: desktop 1160 ms, mobile 584 ms; both reconnect checks passed.
 - Installed real New Chat, first response, rename and reply passed individually. Full action run still has failures and is not a completion gate yet.
-- Current work is uncommitted. Active prerelease source: `1.6.0-pre.25`.
+- Current work is committed and pushed on `main` at `79161bb`. Active installed prerelease source: `1.6.0-pre.26`.
+- Verified VSIX: `codex-manager-1.6.0-pre.25.vsix` was installed before the final goal evidence-only update; rebuild/install `pre.26` is the final delivery gate.

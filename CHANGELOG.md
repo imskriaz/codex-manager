@@ -1,3 +1,7 @@
+## 1.6.0-pre.26
+
+- Record final verification, installation, and main-branch delivery evidence in the workspace goal.
+
 ## 1.6.0-pre.25
 
 - Finalize workspace verification fixtures for browser chunks, owned steering payloads, Git confirmation, and the complete responsive/notification matrix.
