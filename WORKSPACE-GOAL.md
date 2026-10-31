@@ -19,7 +19,7 @@ Objective: end to end fix all gaps and support in workspace, including UI/UX par
 | UI/UX Pro Max | Every workspace screen: desktop/mobile, light/dark, no overflow, visible loading/running feedback, accessible icons/focus/dialogs, preserved drafts and clear outcomes | Compact hover/focus row menus, same-slot spinner replacement, compact turn usage, settings/layout, dialogs, focus, light/dark, and all six responsive sizes passed |
 | Failure handling | Offline/stale/missing/partial/reconnect/retry/duplicate/queue-full/storage-full/reboot/timeout/failure; no blind replay or lost edits | Real stale-session, lost-ack reload, conflict/path, duplicate, offline/reconnect, timeout and failure checks passed; storage exhaustion, reboot, and alternate host remain external limits |
 | Performance and resources | Immediate manual actions, bounded optional work, lazy panels, hidden-tab idle behavior, bounded streams/queues, compact rendering, and cleanup | Lazy/deferred panels, bounded app-server/terminal queues, same-slot status rendering, cleanup, and responsive timing checks passed; long-run memory and reboot/storage pressure remain external limits |
-| Delivery | Focused tests → full regression → verify → VSIX → install → installed real UI/action run → commit all intended files → push main | Complete for `1.6.0-pre.27` at commit `a935c31`; no public publication authorized |
+| Delivery | Focused tests → full regression → verify → VSIX → install → installed real UI/action run → commit all intended files → push main | Complete for `1.6.0-pre.28` after the final ordering check; no public publication authorized |
 
 ## Evidence rules
 
@@ -41,5 +41,5 @@ Objective: end to end fix all gaps and support in workspace, including UI/UX par
 - The responsive run now verifies compact three-dot row menus, same-slot running spinner replacement, contextual Stop/Start-or-Resume/queue/archive/delete actions, compact turn usage, and all six viewport sizes. Browser notification and offline/reconnect fixtures also passed.
 - Earlier installed responsive read-only smoke: desktop 1160 ms, mobile 584 ms; both reconnect checks passed.
 - Installed real New Chat, first response, rename and reply passed individually. Full action run still has failures and is not a completion gate yet.
-- Verified `codex-manager-1.6.0-pre.27.vsix` packaged and installed; the installed real action matrix passed. Commit `a935c31` is pushed to `main`.
+- Verified `codex-manager-1.6.0-pre.28.vsix` packaged and installed; the installed real action matrix passed after running-session-first ordering. The six-viewport responsive matrix passed again with the final build.
 - External limits remain: authenticated GitHub mutations, real remote peers, reboot recovery, storage exhaustion, and alternate operating systems cannot be executed in this host; they are not claimed as verified.

@@ -563,9 +563,14 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const sessionOrder = useRef(new Map<string, number>());
   const localPeerId = props.peers?.find((peer) => peer.local)?.id;
   const selectedSystem = props.selectedPeerId === "local" ? localPeerId : props.selectedPeerId;
-  const orderedSessions = useMemo(() => stabilizeCliSessionOrder(reconcileCliSessionStatuses(props.sessions.filter(session =>
-    selectedSystem && selectedSystem !== localPeerId ? session.deviceId === selectedSystem : !session.remote
-  ), props.liveStates ?? {}), sessionOrder.current), [props.sessions, props.liveStates, selectedSystem, localPeerId]);
+  const orderedSessions = useMemo(() => {
+    const sessions = reconcileCliSessionStatuses(props.sessions.filter(session =>
+      selectedSystem && selectedSystem !== localPeerId ? session.deviceId === selectedSystem : !session.remote
+    ), props.liveStates ?? {});
+    return stabilizeCliSessionOrder(sessions, sessionOrder.current).sort((left, right) =>
+      Number(isCodexSessionRunning(right)) - Number(isCodexSessionRunning(left))
+    );
+  }, [props.sessions, props.liveStates, selectedSystem, localPeerId]);
   const composerSystemKey = selectedSystem && selectedSystem !== localPeerId ? selectedSystem : "local";
   const composerSystem = useRef(composerSystemKey);
   useEffect(() => {

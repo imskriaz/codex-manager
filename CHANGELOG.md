@@ -1,3 +1,7 @@
+## 1.6.0-pre.28
+
+- Keep running sessions at the top of the sidebar while preserving stable order within running and idle groups.
+
 ## 1.6.0-pre.27
 
 - Add compact hover/focus session menus with contextual Start/Resume, Stop, queue, archive, restore, delete, and Auto Resume actions; keep running spinners in the same status slot until actions are revealed.
