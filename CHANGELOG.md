@@ -1,138 +1,13 @@
+# Changelog
+
 ## 1.6.0
 
 - Expand the workspace with chat, goals, files, shared terminals, Git, worktrees, Reviews, and Agents, with clearer action outcomes and recovery handling.
-- Keep Auto Resume on the stable official Codex conversation-tab recovery path after VS Code restart.
+- Remove the experimental Resume in background setting. Auto Resume uses official Codex conversation tabs after restart, with bounded shutdown capture and retained recovery on failure.
 - Add a persisted dashboard zoom slider in General settings.
 - Keep running sessions first, with running spinners replaced by contextual actions on hover or focus. Show Start/Resume, Stop, queue, archive, restore, and delete where applicable.
 - Compact turn usage into code-style rows, remove duplicate copy controls, restore send-icon contrast in both themes, and keep session menus above scrolling content.
 - Improve bounded recovery, stale running-state checks, duplicate-send protection, reconnect handling, and Windows stash operations.
-
-## 1.6.0-pre.30
-
-- Add General settings controls for VS Code dashboard zoom with persisted 80–140% scaling, reset, keyboard/wheel parity, and compact responsive controls.
-
-## 1.6.0-pre.29
-
-- Fix Windows stash/apply behavior by avoiding `--literal-pathspecs` for stash operations while preserving literal path handling for file mutations.
-
-## 1.6.0-pre.28
-
-- Keep running sessions at the top of the sidebar while preserving stable order within running and idle groups.
-
-## 1.6.0-pre.27
-
-- Add compact hover/focus session menus with contextual Start/Resume, Stop, queue, archive, restore, delete, and Auto Resume actions; keep running spinners in the same status slot until actions are revealed.
-- Compact turn usage summaries and finish real disposable-project UI action, responsive, notification, offline, and stale-session verification coverage.
-
-## 1.6.0-pre.26
-
-- Record final verification, installation, and main-branch delivery evidence in the workspace goal.
-
-## 1.6.0-pre.25
-
-- Finalize workspace verification fixtures for browser chunks, owned steering payloads, Git confirmation, and the complete responsive/notification matrix.
-
-## 1.6.0-pre.24
-
-- Pass the disposable Git stage operation through the real UI and host action before asserting staged diff contents.
-
-## 1.6.0-pre.23
-
-- Refresh Git state after the disposable external edit before staging, and keep steering tied to the selected session’s own live turn.
-
-## 1.6.0-pre.22
-
-- Keep the disposable Git UI check deterministic by writing its known external edit immediately before staging and diffing the real repository.
-
-## 1.6.0-pre.21
-
-- Make the live command approval optional when the provider auto-approves the disposable command, refresh terminal ownership epochs after claiming, and keep child-agent UI selection aligned with rendered agent names.
-
-## 1.6.0-pre.20
-
-- Let live terminal verification take ownership of a disposable shared terminal before typing, covering the real handoff path and preventing false cascades.
-
-## 1.6.0-pre.19
-
-- Keep live steering verification attached to the visible running/Stop state when the provider’s command event stream is delayed.
-
-## 1.6.0-pre.18
-
-- Keep the live steering/Stop verification focused on the active turn fence and approval lifecycle instead of depending on a provider shell process reporting an in-progress command.
-
-## 1.6.0-pre.17
-
-- Treat local sessions with either omitted or local peer device IDs as belonging to the active local workspace so desktop New Chat selects the created conversation reliably.
-
-## 1.6.0-pre.16
-
-- Make the live steering/Stop check use a disposable Node timer so the real approval flow is testable on Windows without a PowerShell process-policy dependency.
-
-## 1.6.0-pre.15
-
-- Expose every maintenance cleanup and inspection operation in the workspace tool navigator, keep destructive confirmations above the tool modal, and preserve responsive flyout/settings layouts.
-
-## 1.6.0-pre.14
-
-- Constrain running-session flyout rows and metadata to the viewport width.
-
-## 1.6.0-pre.13
-
-- Keep long and missing project metadata within the running-session flyout on every viewport.
-
-## 1.6.0-pre.12
-
-- Make responsive clipboard verification tolerate browsers that deny clipboard read-back while still requiring visible Copied feedback.
-
-## 1.6.0-pre.11
-
-- Polish workspace clipboard feedback with a WebView-safe copy fallback.
-
-# Changelog
-
-## 1.6.0-pre.10
-
-- Load workspace deep links independently of delayed catalogue updates; preserve submitted drafts until confirmation and keep running indicators visible.
-- Bound official app-server WebSocket startup, cancellation, disconnect cleanup, and message queues.
-
-## 1.6.0-pre.9
-- Keep running workspace indicators visible and allow eventual session routes to load before redirecting.
-
-## 1.6.0-pre.8
-- Preserve unsafely acknowledged composer drafts across reload and harden real workspace action coverage.
-
-## 1.6.0-pre.7
-- Keep a just-created New Chat route open while the session catalogue catches up.
-
-## 1.6.0-pre.6
-- Always select and open the session created by New Chat after a stale selection clears.
-
-## 1.6.0-pre.5
-- Keep local workspace New Chat selected when peer discovery is still loading.
-
-## 1.6.0-pre.4
-
-- Add the official Codex play/resume action for interrupted non-goal conversations in the browser workspace.
-
-## 1.6.0-pre.3
-
-- Use the official Codex app-server WebSocket transport for browser workspace actions on Windows, avoiding the unresponsive daemon control socket while keeping private VS Code and Auto Resume on stdio.
-
-## 1.6.0-pre.2
-
-- Keep the pre-1.6 private Codex transport for VS Code while scoping the official daemon proxy to browser workspace actions; Auto Resume remains unchanged.
-
-## 1.6.0-pre.1
-
-- Package the latest workspace and official app-server transport fixes for prerelease testing.
-
-## 1.5.9-pre.2
-
-- Preserve official app-server proxy diagnostics in workspace failures and keep the composer send icon visible on dark themes.
-
-## 1.5.9-pre.1
-
-- Route New Chat, replies, resume, and goal/session actions through the official Codex app-server proxy instead of rejecting supported methods or starting a private server.
 
 ## 1.5.9
 
@@ -146,10 +21,6 @@
 - Show Auto Resume only for running sessions; show the Queue flyout for interrupted non-running sessions.
 - Route archive, restore, and delete actions through the official Codex CLI so confirmed maintenance actions complete without a private app server.
 - Make the Codex Manager Projects tab a complete project inventory with a confirmed remove-entry action that keeps files and conversations intact.
-
-## 1.5.8-pre.2
-
-- Show Auto Resume as a play badge alongside the Queue control when it is enabled, while keeping queue priority visible for queued sessions.
 
 ## 1.5.8
 
@@ -187,30 +58,6 @@
 - Retry temporary startup IPC disconnects within the readiness deadline; retain failed and uncertain recovery without duplicate sends.
 - Keep quota, capacity, and system-interrupted paused goals eligible while respecting explicit Pause, Stop, completion, and session policies. Preserve already running owners at startup.
 - Improve recovery-path, readiness, goal-transition, Stop, and native-turn diagnostics; synchronize native session names and preserve compact per-reset actions.
-
-## 1.5.6-pre.7
-
-- Trace Auto Resume's background owner, forced tab, and fallback tab paths separately, including readiness timing, recovery outcomes, and retained failures.
-- Log observed goal transitions with their observation interval and unknown actor, and distinguish Manager goal/Stop requests from confirmed changes and later native turn completion.
-
-## 1.5.6-pre.6
-
-- Resume only through a verified ready official Codex owner, with a nested Open VS Code option and tab fallback before sending a continuation.
-- Remove Manager's private app-server transport. Unsupported official API actions report an error instead of starting a second writer.
-- Follow native session names when Codex revises them and avoid counting idle recovery as a resumed turn.
-
-## 1.5.6-pre.3
-
-- Keep Manager titles synchronized when the native Codex server renames a session.
-
-## 1.5.6-pre.2
-
-- Keep reset rows compact by showing only the reset icon and count.
-
-## 1.5.6-pre.1
-
-- Retry transient empty Auto Resume startup discovery before consuming saved recovery, and tolerate Windows PID inspection permission errors during live-session capture.
-- Add per-account Reset actions and replace the internal `codex_rate_limits` label with Reset ID.
 
 ## 1.5.5
 
@@ -260,17 +107,6 @@
 
 - Close previous Codex Manager tabs before reopening or restoring a dashboard, then create one fresh panel. Preserve other editors, reject dirty tabs and failed cleanup, coalesce concurrent opens, and keep recovery pending after failures.
 
-### Included from 1.4.4-pre.1
-
-- Rename Auto Sync to Sync and Claim. Stop claim creation, pending markers and claim advertisements while disabled, recheck the setting after asynchronous work, and release this PC’s prior legacy and verified current-account claims without acquiring new ones. Preserve uncertain cleanup for retry.
-- Align the collapsed sidebar logo across mobile dashboard, board, welcome and conversation headers, with consistent control sizing and centered artwork.
-- Load session sidebars and task board/list batches on scroll, retaining filtering, keyboard access and bounded initial rendering.
-- Return token lists with confirmed API mutations, reject repeated creation request IDs without persisting token text, keep project scopes on the owning host, and show bounded pending/error/recovery states in the API dialog.
-- Replace the detached relay diagnostics page with a quiet startup screen, bounded automatic handover recovery and an offline retry state. Keep the workspace loading screen visible and stop session discovery from delaying dashboard state.
-- Default new session sidebars to compact list view, preserve saved view choices and remove the remote-system information banner.
-- Default new project links to Never Expire while retaining timed expiry choices, permissions, revocation and storage limits. Existing timed links keep their expiry.
-- Keep history readable when a recorded project folder is missing. Report folder availability in Environment without pretending Git is verified or redirecting commands to another folder.
-
 ## 1.4.3
 
 - Replace the command-log terminal panel with a shared pseudoterminal and xterm screen: native/browser shell parity for newly created shared terminals, ANSI and cursor handling, interactive input, screen restoration, sequence-fenced input, control handoff, resize, find, copy, rename and split views. Keep unsupported native-screen attachment explicit and do not cache or replay terminal input.
@@ -286,63 +122,7 @@
 - Use stable system IDs for local browser caches, drafts, task boards and offline changes. Keep unverified legacy drafts for explicit recovery instead of automatically assigning them to the current PC. Reject late confirmations when the browser origin changes host.
 - Retire saved queue entries after confirmed native archive/delete actions, preserve uncertain claims, and report bookkeeping failures without replaying the native mutation. Keep open task metadata current without overwriting edits.
 
-### 1.4.3-pre.5
-
-- Keep browser sessions and Account Center scoped to the selected system. Persist local and remote account read views separately in IndexedDB, release inactive remote catalogues from the visible state, and retain the selected PC across reload, history navigation, and temporary discovery loss. Hide disabled accounts from switching choices.
-- Treat peer heartbeat session lists as partial updates, including older relays. Preserve the complete cached catalogue and composer metadata until an authoritative read confirms changes; fence delayed cache writes and stale restores.
-- Keep discovery heartbeats responsive while session indexing is slow, reuse the last completed standby view, and send active parent sessions and running agents rather than archived history. Allow a short reconnect grace without letting repeated old signed heartbeats keep a disconnected PC online.
-- Preserve a session’s folder when starting a chat from a project missing from the catalogue; reset the project context on system changes without deleting saved drafts.
-- Improve System/Project tab alignment, readable compact session titles, centered empty workspaces, and menu access around toasts. Give Tasks its own pulse icon so it differs from the session-list control.
-
-### 1.4.3-pre.4
-
-- Keep agent details in the task’s Agents tab, using the same compact agent selector and transcript panel as the workspace sidebar. Preserve messages on failed refresh, isolate task/system requests, and keep shared boards read-only.
-- Fix live task search for grouped sessions and keep the same filter in Board/List. Remove repeated PC names from cards, normalize action icons, tighten all task-details tabs, and keep compact headers on one row when space allows.
-- Present task Activities as a compact timeline shared by owner and public boards, with messages, useful actions, changes, and permitted comments. Hide thinking and failed tool attempts in this view while preserving the full session conversation and session-level errors. Keep System and Project selectors single-line beside the view tabs, with counts on hover.
-
-- Restore quota-change recording and retention controls at the user’s updated request. Put the token-history toggle and interval inside Usage log. Confirm quota-history clearing, send it to the selected system, retain failure feedback, and refresh the graph only after confirmation. Background recording does not block dashboard rendering.
-
-- Prevent a rare relay restart loop when a newly generated admin token resembles the legacy timestamp/hostname format; keep strict legacy-token rotation.
-- Authenticate WS Cross System with the shared dashboard password independently of account Auto Sync. Keep encrypted account vault synchronization disabled when requested; converge host preparation to the latest configured domain after an in-flight check.
-- Retry read-only startup recovery verification within its existing deadline, cancel when the home changes, and preserve unconfirmed work without replaying editor opens or turns.
-- Match System and Project selectors to the task view tabs, balance header padding, and place the actions menu last.
-- Retain account names with token history after account removal while deleting credentials; preserve labels through legacy writes and apply privacy masking to historical accounts.
-
-### 1.4.3-pre.3
-
-- Clarify and verify that Manager follows the latest valid Codex login, restores a missing saved entry, and retries with the new login after an import race without writing authentication back to Codex.
-
-- Dispatch equal-priority queue entries beyond the first eight without waiting for the first batch of turns to finish. Bound startup checks and existing live-turn capacity, retain overflow in its original priority, and wake on slot release without a new polling loop.
-- Cancel unconfirmed queued startup when its operation lease is lost, integration is disabled, the home changes, or the host disposes. Keep uncertain claims visible for review and preserve accepted work.
-- Show confirmed session-action/list-refresh warnings as one dismissible toast, without adding a session or transcript block. Keep automatic acknowledgements quiet.
-
-### 1.4.3-pre.2
-
-- Automatically bind Codex OAuth sign-ins and reauthorizations, including an empty vault and retry after temporary storage failure. Treat the latest valid Codex login as authoritative, restoring its saved entry if missing; preserve partial-file credentials, recheck the auth snapshot before importing, and never rewrite Codex authentication during import. Match legacy workspace identity consistently.
-
-- Restore informational action feedback, including token refresh and saved settings, as three-second toasts. Keep warnings/errors visible for ten seconds, preserve cancellation and partial-failure messages, and keep background reads quiet. Show session/workspace feedback above the UI without inserting conversation blocks.
-- Add session-only Hide from boards and a searchable Hidden sessions dialog with Restore. Persist visibility in SQLite with revision checks and safe retries, preserve session work/grouping/state, and exclude hidden sessions and their comments from shared boards.
-
-- Recover Usage details from valid provider rows with incomplete optional client counts. Share guarded credential renewal and a single rejected-token retry across views; preserve saved data and show actionable failures with explicit retry.
-- Log only verified VS Code token counts from new responses. Retain saved history after account removal or disabling, stop new quota snapshots, query retained daily rows by date, and color the token graph by account.
-- Honor all-account refresh intervals independently of pre-switch safety checks. Compact the task header with System/Project counts and responsive view tabs; add main/subagent details and Overview environment metadata. Unify confirmation and selection dialog spacing and replace native task confirmations. Place the collapsed-sidebar logo inside content headers, preserve sidebar visibility, and put status/column choices in the board menu with Idea hidden by default.
-
-- Restore account tags in the account actions menu with a compact editor, validation, durable acknowledgements, conflict protection, and preserved drafts after failure or timeout. Show tags beside subscription days without wrapping, summarize overflow, and add a persistent tag filter and tag-aware search in both account views. Keep edits scoped to the selected system.
-- Restore the privacy icon to the header. More → Tags opens a searchable tag manager with account counts, filtering, rename/merge, removal of labels, and guarded enable/disable actions. Confirm group changes, preserve other labels/accounts, enforce credential and ownership checks, and report partial or unconfirmed outcomes without replay.
-
-### 1.4.3-pre.1
-
-- Subscribe to the browser's selected system on demand. Load its sessions once, then share file-change events without recurring session scans. Signed target subscriptions do not wake unrelated PCs or propagate peer demand; switching, closing, hiding, disconnecting, or expiring viewers releases monitoring. Keep lightweight authenticated presence for discovery and account ownership.
-
-- Correct cross-PC relay discovery when aggregates include the receiving PC; validate the full aggregate before applying it and retain newer peer data across delayed replies. Route remote session catalogs, workspace reads, and actions to their PC; replace only that PC's session rows, push changed peer sessions immediately, and keep browser caches/catalogs scoped by system. Revalidate after the browser handshake and reconnect.
-- Keep manually selected empty-quota accounts selected across reloads. A manual selection with available quota resumes automatic switching; uncertain quota waits for verification. Recheck the hold before automatic switching and reset-credit redemption.
-- Show account identity and system in the sidebar footer, put the System selector first in Account Center, and keep browser session navigation in the browser. Omit the Running Sessions footer in browsers.
-- Show transcript actions in a horizontal hover/focus overlay without an ellipsis or reserved height, and tighten paragraph spacing. Use single-line project session rows with time on the right; only verified running sessions animate project counts as running / total. Paused and blocked goals show Play; explicit blocked-goal resume keeps the native confirmation and failure guards.
-
-- Add on-demand project Git history with 50-row pages anchored to a stable revision, author/date/hash metadata, and scoped commit diffs. Preserve loaded history after failed refreshes and disable live reads offline.
-- Replace Tools' recurring status and search timers with bounded progress events, explicit search, and catch-up reads on reopening or reconnecting. Recover lost start acknowledgements by preview token without replaying cleanup; fence stale/foreign progress, retain cancellation, and cap peer progress buffering.
-
-### Earlier 1.4.3 build
+### Workspace layout
 - Replace the Environment flyout with a fixed first Env tab and one header toggle for the right inspector. Add a compact Git tab for branch/status, changed files, commit, push review and comparison; keep terminal profiles in Terminal and tool selection in a floating menu.
 - Keep Git closable, place the add button immediately after open tabs, and summarize every inspector tool in Env's aligned list, including agent status and unsaved file drafts. Compact session rows and goal/queue strips, including smaller unboxed pause controls, without shrinking phone session touch targets.
 - Rebuild the project session hierarchy as a flat, dense tree: single-row system/project headings, one collapse control per project, inline counts, minimal indentation and status/time below each title. Remove duplicated project/system metadata, stacked selection cards and tree-divider clutter.
@@ -497,7 +277,6 @@
 
 - Look up goals for visible sessions directly so large goal histories cannot hide their status. Verify goal-only capture and restore with native goal storage, including quota-limited parents, paused goals, archived sessions, sub-agents, and failed storage.
 - Keep pending shared-account confirmation and background retry failures out of desktop, dashboard, and push notifications. Preserve background retries, diagnostics, known ownership conflicts, and explicit sync failures.
-- Build 1.3.2 as a stable VSIX without prerelease or preview metadata.
 - Coordinate account credentials, token renewal, provider request budgets, browser sessions, OAuth completion, file edits, and Git mutations across local windows through shared SQLite leases. Share compatible quota, credit, profile, subscription, and local-session reads; use one batch runner. Preserve newer credentials and metadata, reject stale reset-credit snapshots, and retain completed reads when their optional result cache cannot be saved.
 - Reduce the automatic token-history gap to one hour, preserve provider retry delays, and collect missing account history when the token chart loads.
 - Show VS Code token usage only, add a one-day range alongside seven and thirty days, and open a compact account-usage tooltip from the chart total and account colors.
@@ -522,7 +301,7 @@
 - Bound shared-conversation refresh storage, preserve revocation, serialize writes across hosts, and save session/project bindings in one transaction. Retain retryable failed batches and discard stale cache completions.
 - Reject account claims before isolated-window startup completes. Place accounts claimed by another online PC after other accounts in dashboard sorts and the automatic queue.
 - Keep account card plan, reset credit, device, and subscription expiry on one line, with long device names shortened. Remove the retired announcements feature and redundant eligibility and import wrappers.
-- Fix activation with VS Code's frozen settings object, update runtime and packaging dependencies, run the packaged relay script directly, and use the Windows startup registry instead of generated launchers. Package VSIX builds as extension pre-releases.
+- Fix activation with VS Code's frozen settings object, update runtime and packaging dependencies, run the packaged relay script directly, and use the Windows startup registry instead of generated launchers.
 
 ## 1.2.23
 

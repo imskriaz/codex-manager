@@ -64,6 +64,18 @@ describe("5-hour quota control defaults", () => {
     }
   });
 
+  it("ignores the retired background resume preference and omits its control", () => {
+    const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+    const get = vi.fn((key: string, fallback?: unknown) => key === "autoResumeBackgroundEnabled" ? true : fallback);
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get } as never);
+    expect(manifest.contributes.configuration.properties["codexManager.autoResumeBackgroundEnabled"]).toBeUndefined();
+    expect(new ExtensionSettingsStore().getDashboardSettings()).not.toHaveProperty("autoResumeBackgroundEnabled");
+    expect(isAutoResumeEnabled()).toBe(true);
+    expect(get.mock.calls.some(([key]) => key === "autoResumeBackgroundEnabled")).toBe(false);
+    expect(readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8")).not.toContain("autoResumeBackground");
+    expect(readFileSync("src/services/codexSessionAutoResume.ts", "utf8")).not.toContain("autoResumeBackground");
+  });
+
   it("uses the shared policy defaults for malformed switching and reset thresholds", () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: (key: string, fallback?: unknown) => /Threshold$/.test(key) ? Number.NaN : fallback

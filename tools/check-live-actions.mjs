@@ -24,6 +24,7 @@ const git = (...args) => execFileSync("git", args, { cwd: project, encoding: "ut
 git("init", "--initial-branch=main");
 git("config", "user.name", "UI Check");
 git("config", "user.email", "ui-check@example.invalid");
+git("config", "core.autocrlf", "false");
 git("init", "--bare", remote);
 git("remote", "add", "origin", remote);
 await writeFile(path.join(project, "editable.txt"), "original\n");
@@ -100,7 +101,8 @@ const menu = async name => {
 const open = async id => {
   await page.goto(`${origin}/workspace/${id}`);
   await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "getCodexCliSessionMessages" && event.status === "completed" && event.payload?.cliSession?.id === id), id, { timeout: 95_000 });
-  await page.locator(".cli-conversation-title h1").waitFor();
+  const session = await page.evaluate(id => window.__liveEvents.find(event => event.action === "getCodexCliSessionMessages" && event.status === "completed" && event.payload?.cliSession?.id === id).payload.cliSession, id);
+  await page.waitForFunction(session => document.querySelector('.cli-conversation-title h1')?.textContent === session.title && (!session.projectPath || document.querySelector('.cli-conversation-project')?.getAttribute('title') === session.projectPath), session);
 };
 const waitIdle = async id => {
   await page.waitForFunction(id => ["completed", "cancelled", "failed"].includes(window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id).at(-1)?.state.status), id, { timeout: 120_000 });
