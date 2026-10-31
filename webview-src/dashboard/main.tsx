@@ -1716,7 +1716,8 @@ function App() {
     return () => window.clearInterval(timer);
   }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled, snapshot?.settings.dailyTokenUsageIntervalMinutes]);
 
-  if (!snapshot) {
+  const selectedPeerOffline = selectedPeer?.connected === false;
+  if (!snapshot || selectedPeerOffline) {
     const connectionFailed = isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline");
     return (
       <main
@@ -1726,8 +1727,8 @@ function App() {
         <section class="section loading-section">
           {connectionFailed ? <BrowserConnectionRecovery stage={browserHostStage} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
             <div class="loading-logo-wrap" aria-hidden="true">
-              {isBrowserDashboard ? (
-                <img class="loading-logo" src="/assets/codex.svg" alt="" width="72" height="72" />
+              {isBrowserDashboard || selectedPeerOffline ? (
+                <img class="loading-logo" src={isBrowserDashboard ? "/assets/codex.svg" : snapshot?.logoUri} alt="" width="72" height="72" />
               ) : (
                 <span class="loading-logo loading-logo-fallback">
                   <CodexSessionsIcon />
@@ -1737,7 +1738,7 @@ function App() {
             <div class="loading-shine" aria-hidden="true">
               <span />
             </div>
-            <span class="loading-label">{isBrowserDashboard ? "Starting…" : "Loading"}</span>
+            <span class="loading-label">{selectedPeerOffline ? "Reconnecting…" : isBrowserDashboard ? "Starting…" : "Loading"}</span>
           </div>}
         </section>
       </main>

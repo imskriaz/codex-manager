@@ -33,6 +33,7 @@ import { configureSqliteStateStore, listSqliteStateFiles, readSqliteStateFile, S
 const PASSPHRASE = "correct horse battery staple";
 
 describe("encrypted account sync", () => {
+  // This scenario performs several full-strength scrypt derivations, including password rotation.
   it.each([false, true])("coalesces backup bursts, skips authenticated unchanged files, and retries changed/missing/rotated storage (SQLite: %s)", async sqlite => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codex-vault-performance-"));
     const store = sqlite ? await SqliteStateStore.open(path.join(directory, "manager.sqlite")) : undefined;
@@ -107,7 +108,7 @@ describe("encrypted account sync", () => {
       await expect(decryptSyncPayload(await read(), newPassword)).resolves.toBeDefined();
       await expect(decryptSyncPayload(await read(), PASSPHRASE)).rejects.toThrow();
     } finally { manager.dispose(); configureSqliteStateStore(undefined); store?.close(); await removeTestDirectory(directory); }
-  });
+  }, 90_000);
 
   afterEach(() => {
     vi.useRealTimers();

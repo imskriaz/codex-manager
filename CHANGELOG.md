@@ -1,3 +1,12 @@
+## 1.6.0
+
+- Expand the workspace with chat, goals, files, shared terminals, Git, worktrees, Reviews, and Agents, with clearer action outcomes and recovery handling.
+- Keep Auto Resume on the stable official Codex conversation-tab recovery path after VS Code restart.
+- Add a persisted dashboard zoom slider in General settings.
+- Keep running sessions first, with running spinners replaced by contextual actions on hover or focus. Show Start/Resume, Stop, queue, archive, restore, and delete where applicable.
+- Compact turn usage into code-style rows, remove duplicate copy controls, restore send-icon contrast in both themes, and keep session menus above scrolling content.
+- Improve bounded recovery, stale running-state checks, duplicate-send protection, reconnect handling, and Windows stash operations.
+
 ## 1.6.0-pre.30
 
 - Add General settings controls for VS Code dashboard zoom with persisted 80–140% scaling, reset, keyboard/wheel parity, and compact responsive controls.

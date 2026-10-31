@@ -35,4 +35,11 @@ describe("activation performance safeguards", () => {
     ).toBeLessThan(workbench.indexOf('measureStep("repo.init"'));
     expect(manifest.activationEvents).toContain("onCommand:codexManager.showQuotaSummary");
   });
+
+  it("seals Auto Resume during manual extension-host shutdown", () => {
+    const workbench = readFileSync("src/presentation/workbench/accountsWorkbench.ts", "utf8");
+    expect(workbench).toContain("shutdown Auto Resume capture was retained for retry");
+    expect(workbench).toContain("persistOpenCodexSessions(this.context, undefined, capture.signal)");
+    expect(workbench).toContain("Shutdown recovery capture deadline reached.");
+  });
 });

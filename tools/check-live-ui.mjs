@@ -61,7 +61,7 @@ try {
     }
     for (const tab of await page.locator(".settings-tab:visible").all()) await tab.click();
     await page.keyboard.press("Escape");
-    await page.goto(`${origin}/workspace`);
+    await page.goto(`${origin}/workspace`, { waitUntil: "commit", timeout: 15_000 }).catch(() => undefined);
     await page.locator(".cli-workspace").waitFor();
     if (width === 390) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.waitForFunction(() => window.__liveEvents.some(event => event.type === "dashboard:action-result" && event.action === "listCodexCliSessions" && event.status === "completed" && !event.payload?.cliSessionsDeviceId && event.payload?.cliComposerConfig));

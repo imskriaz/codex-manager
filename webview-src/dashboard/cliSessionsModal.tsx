@@ -261,20 +261,55 @@ function SessionRowMenu(props: {
   onDelete: () => void;
 }) {
   const { session } = props;
-  const close = (event: JSX.TargetedMouseEvent<HTMLButtonElement>) => event.currentTarget.closest("details")?.removeAttribute("open");
-  return <details class="cli-session-row-menu-wrap" onClick={(event) => event.stopPropagation()}>
-    <summary class="cli-icon-button" aria-label={`Actions for ${session.title}`} title={`Actions for ${session.title}`}>
-      <MoreIcon />
-    </summary>
-    <div class="cli-session-menu" role="menu" aria-label={`Actions for ${session.title}`}>
-      {props.running ? <button type="button" role="menuitem" disabled={props.disabled} onClick={(event) => { close(event); props.onStop(); }}><StopIcon /> Stop</button> : props.canResume ? <button type="button" role="menuitem" title="Resume this interrupted conversation" disabled={props.disabled} onClick={(event) => { close(event); props.onResume(); }}><PlayIcon /> Start / Resume</button> : null}
-      {showsCodexSessionAutoResume(session) ? <button type="button" role="menuitem" disabled={props.disabled} onClick={(event) => { close(event); props.onAutoResume(!props.autoResume); }}><AutoResumeIcon enabled={Boolean(props.autoResume)} goal={!!session.goal} /> {props.autoResume ? "Pause Auto Resume" : "Enable Auto Resume"}</button> : null}
-      <button type="button" role="menuitem" disabled={props.disabled || props.running === true} onClick={(event) => { close(event); props.onQueue(!session.queueEnabled, session.queueEnabled ? undefined : 3); }}>{session.queueEnabled ? "Remove from queue" : "Queue session"}</button>
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  useAnchoredPopover(open, trigger, panel);
+  useEffect(() => {
+    if (!open) return;
+    panel.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+    const outside = (event: Event) => {
+      const target = event.target as Node;
+      if (!panel.current?.contains(target) && !trigger.current?.contains(target)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setOpen(false);
+        trigger.current?.focus({ preventScroll: true });
+      } else if (panel.current?.contains(event.target as Node) && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const items = [...panel.current.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+        const current = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+        items[next]?.focus();
+      }
+    };
+    window.addEventListener("pointerdown", outside);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", outside);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [open]);
+  const close = () => setOpen(false);
+  const menu = <div ref={panel} popover="manual" class="cli-session-menu" role="menu" aria-label={`Actions for ${session.title}`} onClick={(event) => event.stopPropagation()}>
+      {props.running ? <button type="button" role="menuitem" disabled={props.disabled} onClick={() => { close(); props.onStop(); }}><StopIcon /> Stop</button> : props.canResume ? <button type="button" role="menuitem" title="Resume this interrupted conversation" disabled={props.disabled} onClick={() => { close(); props.onResume(); }}><PlayIcon /> Start / Resume</button> : null}
+      {showsCodexSessionAutoResume(session) ? <button type="button" role="menuitem" disabled={props.disabled} onClick={() => { close(); props.onAutoResume(!props.autoResume); }}><AutoResumeIcon enabled={Boolean(props.autoResume)} goal={!!session.goal} /> {props.autoResume ? "Pause Auto Resume" : "Enable Auto Resume"}</button> : null}
+      <button type="button" role="menuitem" disabled={props.disabled || props.running === true} onClick={() => { close(); props.onQueue(!session.queueEnabled, session.queueEnabled ? undefined : 3); }}>{session.queueEnabled ? "Remove from queue" : "Queue session"}</button>
       <span aria-hidden="true" />
-      {session.archived ? <button type="button" role="menuitem" disabled={props.disabled} onClick={(event) => { close(event); props.onRestore(); }}><RestoreIcon /> Restore</button> : <button type="button" role="menuitem" disabled={props.disabled || props.running === true} onClick={(event) => { close(event); props.onArchive(); }}><ArchiveIcon /> Archive</button>}
-      <button type="button" role="menuitem" class="is-danger" disabled={props.disabled} onClick={(event) => { close(event); props.onDelete(); }}><TrashIcon /> Delete</button>
-    </div>
-  </details>;
+      {session.archived ? <button type="button" role="menuitem" disabled={props.disabled} onClick={() => { close(); props.onRestore(); }}><RestoreIcon /> Restore</button> : <button type="button" role="menuitem" disabled={props.disabled || props.running === true} onClick={() => { close(); props.onArchive(); }}><ArchiveIcon /> Archive</button>}
+      <button type="button" role="menuitem" class="is-danger" disabled={props.disabled} onClick={() => { close(); props.onDelete(); }}><TrashIcon /> Delete</button>
+    </div>;
+  return <>
+    <span class="cli-session-row-menu-wrap" data-open={open ? "true" : undefined}>
+    <button ref={trigger} type="button" class="cli-icon-button" aria-label={`Actions for ${session.title}`} title={`Actions for ${session.title}`} aria-haspopup="menu" aria-expanded={open} onClick={(event) => { event.stopPropagation(); setOpen((value) => !value); }}>
+      <MoreIcon />
+    </button>
+    </span>
+    {open ? createPortal(menu, document.body) : null}
+  </>;
 }
 
 export function CliSessionsPage(props: CliSessionsPageProps) {
@@ -1320,7 +1355,7 @@ function Composer(props: {
           <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
         </div> : null}
       </div>
-      <span>{props.draft.length > 60_000 ? `${64_000 - props.draft.length} left` : null}</span>{props.sending ? <button type="button" class="cli-stop-button" disabled={props.stopping} aria-busy={props.stopping} aria-label={props.stopping ? "Stopping" : "Stop"} title={props.stopping ? "Stopping" : "Stop"} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping" : "Stop"}</button> : null}{!props.sending || props.canSteer ? <button type="submit" class="cli-send-button" disabled={props.submitDisabled || props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label={props.canSteer ? "Send follow-up" : "Send message"} title={props.canSteer ? "Send follow-up to the running turn" : "Send message"}><SendIcon /></button> : null}</div></div>
+      <span>{props.draft.length > 60_000 ? `${64_000 - props.draft.length} left` : null}</span>{props.sending ? <button type="button" class="cli-stop-button" disabled={props.stopping} aria-busy={props.stopping} aria-label={props.stopping ? "Stopping" : "Stop"} title={props.stopping ? "Stopping" : "Stop"} onClick={props.onStop}><StopIcon /> {props.stopping ? "Stopping" : "Stop"}</button> : null}{!props.sending || (props.canSteer && (props.draft.trim().length > 0 || props.attachments.length > 0)) ? <button type="submit" class="cli-send-button" disabled={props.submitDisabled || props.attachmentReading || (!props.draft.trim() && !props.attachments.length)} aria-label={props.canSteer ? "Send follow-up" : "Send message"} title={props.canSteer ? "Send follow-up to the running turn" : "Send message"}><SendIcon /></button> : null}</div></div>
   </form></>;
 }
 
@@ -1343,7 +1378,7 @@ export function SessionMessage({ message, logoUri, turnCopyText, onActionFeedbac
   const questionReplies = useMemo(() => message.role === "user" ? parseQuestionReply(message.text) : undefined, [message.text, message.role]);
   if (!message.kind || message.kind === "message") {
     const isUser = message.role === "user";
-    return <article tabIndex={0} onPointerDown={(event) => { if (event.pointerType === "touch" && !(event.target as Element).closest("button,a,input,textarea,select")) event.currentTarget.focus({ preventScroll: true }); }} aria-label={`${isUser ? "Your" : "Codex"} message; focus for actions`} class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{renderedText}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} />)}</div> : null}{message.text || turnCopyText ? <div class="cli-message-actions" role="group" aria-label="Message actions"><span class="cli-message-action-menu">{message.text ? <TurnCopyButton text={message.text} label="Copy message" onActionFeedback={onActionFeedback} /> : null}{turnCopyText && turnCopyText !== message.text ? <TurnCopyButton text={turnCopyText} onActionFeedback={onActionFeedback} /> : null}{onDraftMessage && message.text ? <><button type="button" aria-label="Quote" title="Quote" onClick={() => onDraftMessage(message.text, true)}><QuoteIcon /></button>{isUser ? <button type="button" aria-label="Edit and resend" title="Edit and resend" onClick={() => onDraftMessage(message.text, false)}><PencilIcon /></button> : turnCopyText && onRetryPrompt ? <button type="button" aria-label="Retry prompt" title="Retry prompt" onClick={onRetryPrompt}><RefreshIcon /></button> : null}</> : null}</span></div> : null}</div></article>;
+    return <article tabIndex={0} onPointerDown={(event) => { if (event.pointerType === "touch" && !(event.target as Element).closest("button,a,input,textarea,select")) event.currentTarget.focus({ preventScroll: true }); }} aria-label={`${isUser ? "Your" : "Codex"} message; focus for actions`} class={`cli-session-message is-${message.role ?? "assistant"} ${turnCopyText ? "has-turn-copy" : ""}`}><div class="cli-session-avatar">{isUser ? "Y" : logoUri ? <img src={logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</div><div class="cli-session-message-body"><div class="cli-session-message-head"><strong>{isUser ? "You" : "Codex"}</strong><time>{formatTime(message.timestamp)}</time></div>{questionReplies ? <div class="cli-question-replies" aria-label="Answered questions">{questionReplies.map((reply, index) => <div class="cli-question-reply" key={`${index}-${reply.question}`}><small>Answered question</small><strong>{reply.question}</strong><span>{reply.answer}</span></div>)}</div> : message.text ? <div class="cli-session-message-text">{renderedText}</div> : null}{message.images?.length ? <div class="cli-session-images">{message.images.map((image, index) => <ImagePreview key={`${image.src}-${index}`} image={image} index={index} />)}</div> : null}{message.text || turnCopyText ? <div class="cli-message-actions" role="group" aria-label="Message actions"><span class="cli-message-action-menu"><TurnCopyButton text={turnCopyText || message.text} label={turnCopyText && turnCopyText !== message.text ? "Copy turn" : "Copy message"} onActionFeedback={onActionFeedback} />{onDraftMessage && message.text ? <><button type="button" aria-label="Quote" title="Quote" onClick={() => onDraftMessage(message.text, true)}><QuoteIcon /></button>{isUser ? <button type="button" aria-label="Edit and resend" title="Edit and resend" onClick={() => onDraftMessage(message.text, false)}><PencilIcon /></button> : turnCopyText && onRetryPrompt ? <button type="button" aria-label="Retry prompt" title="Retry prompt" onClick={onRetryPrompt}><RefreshIcon /></button> : null}</> : null}</span></div> : null}</div></article>;
   }
   return <ActivityMessage message={message} onOpenFile={onOpenFile} onOpenReviews={onOpenReviews} />;
 }

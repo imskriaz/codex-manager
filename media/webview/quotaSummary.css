@@ -6249,7 +6249,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 }
 .cli-session-row:hover .cli-session-row-menu-wrap,
 .cli-session-row:focus-within .cli-session-row-menu-wrap,
-.cli-session-row-menu-wrap[open] {
+.cli-session-row-menu-wrap[data-open="true"] {
   opacity: 1;
   pointer-events: auto;
 }
@@ -6257,7 +6257,7 @@ html[data-theme="dark"] .cli-terminal-panel {
 .cli-session-row:focus-within .cli-session-row-status > .cli-session-spinner {
   opacity: 0;
 }
-.cli-session-row-menu-wrap > summary {
+.cli-session-row-menu-wrap > button {
   display: grid;
   place-items: center;
   width: 24px;
@@ -6269,10 +6269,9 @@ html[data-theme="dark"] .cli-terminal-panel {
   cursor: pointer;
   list-style: none;
 }
-.cli-session-row-menu-wrap > summary::-webkit-details-marker { display: none; }
-.cli-session-row-menu-wrap > summary:hover,
-.cli-session-row-menu-wrap > summary:focus-visible { background: var(--surface-hover); color: var(--text-primary); }
-.cli-session-row-menu-wrap > summary svg { width: 14px; height: 14px; }
+.cli-session-row-menu-wrap > button:hover,
+.cli-session-row-menu-wrap > button:focus-visible { background: var(--surface-hover); color: var(--text-primary); }
+.cli-session-row-menu-wrap > button svg { width: 14px; height: 14px; }
 .cli-session-row-menu-wrap .cli-session-menu { top: calc(100% - 2px); }
 .cli-session-row-menu-wrap .cli-session-menu > span { display: block; }
 .cli-running-dot {
@@ -6878,7 +6877,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   font-size: 8px;
   white-space: nowrap;
 }
-.cli-send-button {
+.cli-workspace .cli-composer .cli-send-button {
   width: 29px;
   height: 29px;
   min-height: 29px;
@@ -6892,7 +6891,7 @@ html[data-theme="dark"] .cli-terminal-panel {
   width: 15px;
   height: 15px;
   display: block;
-  color: #fff;
+  color: inherit;
 }
 .cli-stop-button {
   min-height: 30px;
@@ -14629,12 +14628,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .cli-workspace .cli-queue-strip strong { color:var(--text-primary); }
 .cli-workspace .cli-queue-strip small { color:var(--text-muted); }
 .cli-workspace .cli-turn-usage > summary { grid-template-columns:25px minmax(0,1fr) 16px; }
-.cli-workspace .cli-usage-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
-.cli-workspace .cli-usage-grid > span { display:grid; grid-template-columns:14px minmax(0,1fr); align-items:center; gap:3px; padding:5px 6px; border:1px solid var(--border-default); border-radius:6px; background:color-mix(in srgb,var(--bg-page) 45%,transparent); }
+.cli-workspace .cli-turn-usage .cli-activity-body { display:grid; gap:6px; padding:6px 8px; font-family:var(--vscode-editor-font-family,ui-monospace,monospace); font-variant-numeric:tabular-nums; }
+.cli-workspace .cli-usage-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,128px),1fr)); gap:4px; }
+.cli-workspace .cli-usage-grid > span { display:grid; grid-template-columns:12px minmax(0,1fr) auto; align-items:center; gap:3px; min-height:24px; padding:3px 5px; border:1px solid var(--border-default); border-radius:6px; background:color-mix(in srgb,var(--bg-page) 45%,transparent); }
 .cli-workspace .cli-usage-grid i { color:var(--accent-blue); font-style:normal; text-align:center; }
 .cli-workspace .cli-usage-grid b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-muted); font-size:9px; font-weight:500; }
-.cli-workspace .cli-usage-grid strong { grid-column:2; font-size:10px; }
-.cli-workspace .cli-rate-window { display:grid; grid-template-columns:1fr auto; gap:2px 8px; padding:6px 0 0; border-top:1px solid var(--border-default); font-size:10px; }
+.cli-workspace .cli-usage-grid strong { grid-column:auto; font-size:10px; }
+.cli-workspace .cli-rate-window { display:grid; grid-template-columns:1fr auto; gap:2px 8px; margin:0; padding:4px 0 0; border-top:1px solid var(--border-default); font-size:10px; }
 .cli-workspace .cli-rate-window span { color:var(--text-muted); }
 .cli-workspace .cli-rate-window small { grid-column:1/-1; color:var(--text-muted); font-size:9px; }
 .cli-workspace .cli-turn-usage > summary { min-height:28px; padding-block:3px; }
@@ -16367,18 +16367,17 @@ button.saved-lock-badge { min-height: 0; padding: 1px 4px; font-size: 9px; line-
 .maintenance-project-row > div { min-width:0; display:grid; gap:2px; }
 .maintenance-project-row strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .maintenance-project-row small { color:var(--text-secondary,#8b949e); font-size:10px; }
-.settings-zoom-controls { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-.settings-zoom-controls output { min-width:52px; padding:6px 8px; border:1px solid var(--border-default); border-radius:6px; text-align:center; font-variant-numeric:tabular-nums; color:var(--text-primary); }
 
 /* Keep the compact row menu in the status slot; the spinner is its idle state. */
 .cli-workspace .cli-session-row-status { position:relative; width:24px; min-width:24px; height:26px; }
 .cli-workspace .cli-session-row-menu-wrap { position:absolute; inset:0; opacity:0; pointer-events:none; }
 .cli-workspace .cli-session-row:hover .cli-session-row-menu-wrap,
 .cli-workspace .cli-session-row:focus-within .cli-session-row-menu-wrap,
-.cli-workspace .cli-session-row-menu-wrap[open] { opacity:1; pointer-events:auto; }
+.cli-workspace .cli-session-row-menu-wrap[data-open="true"] { opacity:1; pointer-events:auto; }
 .cli-workspace .cli-session-row:hover .cli-session-row-status > .cli-session-spinner,
-.cli-workspace .cli-session-row:focus-within .cli-session-row-status > .cli-session-spinner { opacity:0; }
-.cli-workspace .cli-session-row-menu-wrap > summary { width:24px; min-height:26px; }
+.cli-workspace .cli-session-row:focus-within .cli-session-row-status > .cli-session-spinner,
+.cli-workspace .cli-session-row-status:has(.cli-session-row-menu-wrap[data-open="true"]) > .cli-session-spinner { opacity:0; }
+.cli-workspace .cli-session-row-menu-wrap > button { width:24px; min-height:26px; }
 .cli-workspace .cli-session-row-menu-wrap .cli-session-menu { z-index:10060; }
 @media (max-width:760px) {
   .cli-workspace .cli-session-row-menu-wrap { opacity:1; pointer-events:auto; }

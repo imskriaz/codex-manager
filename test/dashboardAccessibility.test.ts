@@ -58,6 +58,14 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(source).toMatch(/<main\r?\n\s+id="dashboard-main"/);
   });
 
+  it("keeps a disconnected selected system on the loading surface while peer recovery runs", () => {
+    const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
+    expect(source).toContain("const selectedPeerOffline = selectedPeer?.connected === false;");
+    expect(source).toContain("if (!snapshot || selectedPeerOffline)");
+    expect(source).toContain('selectedPeerOffline ? "Reconnecting…"');
+    expect(source).toContain("isBrowserDashboard || selectedPeerOffline");
+  });
+
   it("uses a labelled login form with password-manager and error semantics", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
     expect(source).toContain('<label for="dashboard-password">Password</label>');
@@ -147,9 +155,9 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("showsCodexSessionAutoResume(session)");
     const settingsSource = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
     expect(settingsSource).toContain('data-setting="webview-zoom"');
-    expect(settingsSource).toContain('aria-label="Dashboard zoom"');
-    expect(settingsSource).toContain('aria-label="Zoom out"');
-    expect(settingsSource).toContain('aria-label="Zoom in"');
+    expect(settingsSource).toContain('description={(value) => `Dashboard zoom ${value}%`}');
+    expect(settingsSource).toContain('scaleValues={[80, 100, 120, 140]}');
+    expect(settingsSource).toContain('Reset zoom');
     expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("!running && (session.interrupted || session.queueEnabled)");
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");

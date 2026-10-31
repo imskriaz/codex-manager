@@ -43,14 +43,15 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.equal(await page.locator('.task-board-card').filter({hasText:'Evaluate stack beyond expectations'}).count(),0,'Clearing search restores grouping');
   assert.equal(await page.locator('.task-card-meta').filter({hasText:/DESKTOP|Local/}).count(),0,'Board cards omit repeated PC names');
   const runningCard = page.locator('.task-board-card').filter({hasText:'Running workspace task'});
+  const runningMenuButton = page.locator('.task-board-column.is-running').getByRole('button',{name:'Actions for Running workspace task',exact:true});
   await page.evaluate(() => { window.__failTaskSaves=true; });
-  await page.getByRole('button',{name:'Actions for Running workspace task',exact:true}).click();
-  await assertFlyoutNear(page, page.getByRole('button',{name:'Actions for Running workspace task',exact:true}), page.getByRole('menu',{name:'Actions for Running workspace task',exact:true}));
+  await runningMenuButton.click();
+  await assertFlyoutNear(page, runningMenuButton, page.getByRole('menu',{name:'Actions for Running workspace task',exact:true}));
   await page.getByRole('menuitem',{name:'Hide from boards',exact:true}).click();
   await page.getByText('This task changed in another browser. Your draft was kept.',{exact:true}).first().waitFor();
   assert.equal(await runningCard.count(),1,'A failed hide keeps the session visible');
   await page.evaluate(() => { window.__failTaskSaves=false; });
-  await page.getByRole('button',{name:'Actions for Running workspace task',exact:true}).click();
+  await runningMenuButton.click();
   await page.getByRole('menuitem',{name:'Hide from boards',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('.task-board-column.is-running .task-board-card'));
   await page.getByRole('button',{name:'Board actions',exact:true}).click();

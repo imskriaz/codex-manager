@@ -11,6 +11,7 @@ import { EncryptedSyncManager } from "../../services/encryptedSync";
 import { WebDashboardServer } from "../../services/webDashboardServer";
 import { AlwaysOnlineServer } from "../../services/alwaysOnlineServer";
 import { waitWithin } from "../../utils/concurrency";
+import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../../infrastructure/config/extensionSettings";
 import {
   closeQuotaSummaryTabsForExtensionHostRestart,
   prepareQuotaSummaryPanelForExtensionHostRestart,
@@ -27,6 +28,7 @@ import {
   formatAutoResumeResult,
   prepareCodexSessionsForExtensionHostRestart,
   registerCodexSessionAutoResumeTracking,
+  persistOpenCodexSessions,
   resumePersistedCodexSessions,
   scheduleCodexSessionAutoResume
 } from "../../services/codexSessionAutoResume";
@@ -327,6 +329,22 @@ export class AccountsWorkbench {
     if (this.disposed) return;
     this.autoResumeTracking?.dispose();
     this.autoResumeTracking = undefined;
+    if (isAutoResumeEnabled(getCodexManagerConfiguration())) {
+      const capture = new AbortController();
+      const timer = setTimeout(() => capture.abort(new Error("Shutdown recovery capture deadline reached.")), 1_200);
+      try {
+        await waitWithin(
+          persistOpenCodexSessions(this.context, undefined, capture.signal),
+          1_250,
+          "Auto Resume shutdown capture was not confirmed.",
+          capture.signal
+        );
+      } catch (error) {
+        console.warn("[codexManager] shutdown Auto Resume capture was retained for retry", error);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     this.encryptedSync.shutdown();
     try { await waitWithin(this.repo.flush(), 1500, "Final account save did not finish before shutdown."); }
     finally { this.dispose(); }

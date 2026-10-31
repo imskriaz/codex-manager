@@ -1437,8 +1437,16 @@ try {
     const runningHoverRow=page.locator('.cli-session-row').filter({hasText:'Running workspace task'});
     await runningHoverRow.hover();
     await page.waitForTimeout(180);
-    assert.equal(await runningHoverRow.locator('.cli-session-row-menu-wrap > summary').count(),1,'Running rows have one compact actions trigger');
-    assert.ok(await runningHoverRow.locator('[role="menuitem"]').count() >= 4,'Running rows expose stop and context actions');
+    const rowMenuTrigger = runningHoverRow.locator('.cli-session-row-menu-wrap > button');
+    assert.equal(await rowMenuTrigger.count(),1,'Running rows have one compact actions trigger');
+    await rowMenuTrigger.click();
+    const rowMenu = page.getByRole('menu', {name:'Actions for Running workspace task',exact:true});
+    assert.ok(await rowMenu.locator('[role="menuitem"]').count() >= 4,'Running rows expose stop and context actions');
+    assert.equal(await rowMenu.evaluate(element => element.matches(':popover-open')),true,'Row actions use the top layer above scrolling sessions');
+    await rowMenu.hover();
+    await page.waitForTimeout(180);
+    assert.equal(await runningHoverRow.locator('.cli-session-spinner').evaluate(element => getComputedStyle(element).opacity),'0','An open menu keeps its spinner hidden after the pointer leaves the row');
+    await page.keyboard.press('Escape');
     assert.equal(await runningHoverRow.locator('.cli-session-spinner').evaluate(element => getComputedStyle(element).opacity),'0','Hover replaces the running spinner in its status slot');
     assert.equal(await runningHoverRow.locator('.cli-session-queue-wrap').count(),0,'Queue and Auto Resume never compete on a running row');
     const initialOrder = await page.locator(".cli-session-row-main > strong").allTextContents();
@@ -1460,8 +1468,8 @@ try {
     await page.getByRole("button", { name: "Show archived sessions (1)", exact: true }).click();
     await page.getByRole("button", { name: "Expand demo", exact: true }).click();
     await page.locator(".cli-session-row.is-archived").hover();
-    await page.locator(".cli-session-row.is-archived .cli-session-row-menu-wrap > summary").click();
-    await page.locator(".cli-session-row.is-archived").getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await page.locator(".cli-session-row.is-archived .cli-session-row-menu-wrap > button").click();
+    await page.getByRole("menu", { name: "Actions for Archived task", exact: true }).getByRole("menuitem", { name: "Delete", exact: true }).click();
     const deletion = page.getByRole("alertdialog", { name: "Delete Archived task permanently", exact: true });
     await deletion.waitFor();
     assert.ok((await deletion.locator("svg").boundingBox()).width <= 24, "Delete icon stays small");
@@ -1479,8 +1487,8 @@ try {
     assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "deleteCodexCliSession").length), 0, "Dismissing the backdrop cannot delete a session");
     if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).isVisible()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
     await page.locator(".cli-session-row.is-archived").hover();
-    await page.locator(".cli-session-row.is-archived .cli-session-row-menu-wrap > summary").click();
-    await page.locator(".cli-session-row.is-archived").getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await page.locator(".cli-session-row.is-archived .cli-session-row-menu-wrap > button").click();
+    await page.getByRole("menu", { name: "Actions for Archived task", exact: true }).getByRole("menuitem", { name: "Delete", exact: true }).click();
     await deletion.waitFor();
     await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByText("Session deletion cancelled.", { exact: true }).waitFor();
@@ -1508,7 +1516,7 @@ try {
     const afterHover = await status.boundingBox();
     assert.ok(Math.abs(beforeHover.x - afterHover.x) < 1, "Spinner does not move on hover");
     assert.equal(await status.locator(".cli-session-spinner").evaluate(element => getComputedStyle(element).opacity), "0", "Hover replaces the spinner with the compact actions trigger");
-    assert.equal(await status.locator(".cli-session-row-menu-wrap > summary").count(), 1, "Running status keeps its actions in the same slot");
+    assert.equal(await status.locator(".cli-session-row-menu-wrap > button").count(), 1, "Running status keeps its actions in the same slot");
     await page.mouse.move(width - 2, height - 2);
     await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
     await page.getByText("Running elsewhere", { exact: true }).waitFor();
@@ -1529,6 +1537,13 @@ try {
     await page.waitForFunction(() => !document.querySelector(".cli-session-row.is-running .cli-session-spinner"));
     await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 3 } } })));
     assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 0, "A stale running snapshot cannot revive a completed spinner");
+    await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:codex-session-live", state: { ...window.__spinnerLive, sequence: 4, status: 'completed', tokenUsage: { input: 40740, cachedInput: 0, output: 99, reasoningOutput: 72, total: 40839, contextWindow: 475000 }, rateLimits: { primary: { usedPercent: 32, resetsAt: 1793445000 }, secondary: { usedPercent: 60, resetsAt: 1793790000 } } } } })));
+    const turnUsage = page.locator('.cli-turn-usage');
+    await turnUsage.locator(':scope > summary').click();
+    assert.equal(await turnUsage.locator('.cli-usage-grid > span').count(),6,'All usage counters remain available');
+    assert.ok((await turnUsage.locator('.cli-activity-body').boundingBox()).height < 190,'Expanded usage stays compact');
+    assert.ok(await turnUsage.locator('.cli-usage-grid > span').evaluateAll(items => items.every(item => { const label = item.querySelector('b').getBoundingClientRect(), value = item.querySelector('strong').getBoundingClientRect(); return Math.abs((label.top+label.bottom-value.top-value.bottom)/2)<1; })),'Usage labels and values share one code-style line');
+    await turnUsage.locator(':scope > summary').click();
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.locator(".cli-session-row-select").filter({ hasText: "Evaluate stack" }).click();
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).waitFor();
@@ -1694,6 +1709,7 @@ try {
       } else await page.keyboard.press("Escape");
     }
     await page.getByRole("button", { name: "Hide workspace tools", exact: true }).click();
+    assert.ok(await page.locator('.cli-message-action-menu').evaluateAll(menus => menus.every(menu => menu.querySelectorAll('.cli-turn-copy').length <= 1)), 'Each message has one copy control');
     const userMessage = page.locator(".cli-conversation .cli-session-message.is-user").first();
     const initialMessageHeight = await userMessage.evaluate(element => element.getBoundingClientRect().height);
     await page.mouse.move(width - 2, height - 2);
@@ -1713,6 +1729,15 @@ try {
     assert.match(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), /^> /);
     await page.locator('input[type="file"][aria-label="Choose attachments"]').setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("Review this text attachment") });
     await page.getByRole("button", { name: "Remove notes.txt", exact: true }).waitFor();
+    const initialTheme = await page.evaluate(() => document.documentElement.dataset.theme);
+    for (const theme of ['light','dark']) {
+      await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+      assert.ok(await page.locator('.cli-send-button').evaluate(button => {
+        const icon = button.querySelector('svg'), style = getComputedStyle(button), iconStyle = getComputedStyle(icon);
+        return style.backgroundColor !== iconStyle.color && style.color === iconStyle.color && icon.getBoundingClientRect().width >= 14;
+      }), 'Send icon has contrasting foreground and background in '+theme+' theme');
+    }
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, initialTheme);
     await page.screenshot({ path: path.join(output, `before-send-${width}x${height}.png`) });
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await page.getByText("Simulated action failure. Your draft is preserved.", { exact: true }).first().waitFor();

@@ -886,8 +886,9 @@ describe("sessions sidebar layout", () => {
 
 it('keeps startup visible in workspace routes and removes the remote transport banner', () => {
   const source=readFileSync('webview-src/dashboard/main.tsx','utf8');
-  const startup=source.slice(source.indexOf('  if (!snapshot) {'),source.indexOf('  const cliListLoading'));
+  const startup=source.slice(source.indexOf('  const selectedPeerOffline ='),source.indexOf('  const cliListLoading'));
   expect(startup).not.toContain('workspace-route-dashboard-hidden');
-  expect(startup).toContain('Starting…');
+  expect(startup).toContain('selectedPeerOffline ? "Reconnecting…"');
+  expect(startup).toContain('"Starting…"');
   expect(source).not.toContain('actions are relayed over the secure connection');
 });

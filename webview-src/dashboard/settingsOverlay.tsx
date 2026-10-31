@@ -18,7 +18,7 @@ import { formatTemplate } from "./helpers";
 import { renderRemoveIcon } from "./icons";
 import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
-import { clampWebviewZoom, WEBVIEW_ZOOM_MAX, WEBVIEW_ZOOM_MIN, WEBVIEW_ZOOM_STEP } from "./webviewZoom";
+import { clampWebviewZoom } from "./webviewZoom";
 
 import { BrowserNotifications } from "./browserNotifications";
 import { MaintenanceTools } from "./maintenanceTools";
@@ -32,6 +32,7 @@ const USAGE_HISTORY_RETENTION_VALUES = Array.from({length:90},(_,index)=>index+1
 const TOKEN_HISTORY_GAP_VALUES = Array.from({ length: 1440 }, (_, index) => index + 1);
 const AUTO_SWITCH_VALUES = Array.from({ length: 21 }, (_, index) => index);
 const AUTO_RESET_VALUES = Array.from({ length: 101 }, (_, index) => index);
+const WEBVIEW_ZOOM_VALUES = Array.from({ length: 7 }, (_, index) => 80 + index * 10);
 // Warning thresholds are intentionally available at every percentage point.
 // The native range input already moves in single-point steps; keeping the
 // backing values equally granular prevents the nearest-value mapper from
@@ -208,12 +209,17 @@ export function SettingsOverlay(props: {
                   <div class="settings-block-title">Dashboard zoom</div>
                   <div class="settings-block-sub">Control the Codex Manager dashboard scale in this VS Code webview.</div>
                 </div>
-                <div class="settings-zoom-controls" role="group" aria-label="Dashboard zoom">
-                  <button class="settings-action-btn" type="button" aria-label="Zoom out" disabled={props.webviewZoom <= WEBVIEW_ZOOM_MIN} onClick={() => props.onWebviewZoom(clampWebviewZoom(props.webviewZoom - WEBVIEW_ZOOM_STEP))}>−</button>
-                  <output aria-live="polite">{Math.round(props.webviewZoom * 100)}%</output>
-                  <button class="settings-action-btn" type="button" aria-label="Zoom in" disabled={props.webviewZoom >= WEBVIEW_ZOOM_MAX} onClick={() => props.onWebviewZoom(clampWebviewZoom(props.webviewZoom + WEBVIEW_ZOOM_STEP))}>+</button>
-                  <button class="settings-action-btn" type="button" onClick={() => props.onWebviewZoom(1)}>Reset</button>
-                </div>
+                <SettingsDiscreteSlider
+                  value={Math.round(props.webviewZoom * 100)}
+                  values={WEBVIEW_ZOOM_VALUES}
+                  accent="sky"
+                  valueLabel={(value) => `${value}%`}
+                  description={(value) => `Dashboard zoom ${value}%`}
+                  scaleValues={[80, 100, 120, 140]}
+                  onPreview={(value) => props.onWebviewZoom(clampWebviewZoom(value / 100))}
+                  onCommit={(value) => props.onWebviewZoom(clampWebviewZoom(value / 100))}
+                />
+                <div class="settings-actions"><button class="settings-action-btn" type="button" onClick={() => props.onWebviewZoom(1)}>Reset zoom</button></div>
               </div>
               <div class={`settings-block settings-block-wide ${props.encryptedSyncNeedsConfiguration ? "settings-password-required" : ""}`} data-setting="shared-password">
                 <div class="settings-block-head">
