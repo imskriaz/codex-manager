@@ -1,3 +1,8 @@
+## 1.6.0-pre.27
+
+- Add compact hover/focus session menus with contextual Start/Resume, Stop, queue, archive, restore, delete, and Auto Resume actions; keep running spinners in the same status slot until actions are revealed.
+- Compact turn usage summaries and finish real disposable-project UI action, responsive, notification, offline, and stale-session verification coverage.
+
 ## 1.6.0-pre.26
 
 - Record final verification, installation, and main-branch delivery evidence in the workspace goal.

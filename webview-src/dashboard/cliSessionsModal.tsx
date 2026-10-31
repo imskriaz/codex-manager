@@ -5,7 +5,6 @@ const WorkspaceTerminal = deferredPanel(() => import('./workspaceTerminal'), 'te
 const WorkspaceCodeEditor = deferredPanel(() => import('./workspaceCodeEditor'), 'editor');
 import { WorkspaceGit } from './workspaceGit';
 import { readChatAttachmentFiles } from './attachmentUploads';
-import { SessionQueueControl } from './sessionQueueControl';
 import { createPortal } from "preact/compat";
 import type { JSX } from "preact";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -245,6 +244,37 @@ export function shouldShowLatestButton(scrollHeight: number, clientHeight: numbe
   if (overflow <= 2) return false;
   const remaining = Math.max(0, overflow - Math.max(0, scrollTop));
   return remaining > (wasVisible ? 16 : 48);
+}
+
+function SessionRowMenu(props: {
+  session: DashboardCliSessionSummary;
+  running?: boolean;
+  canResume?: boolean;
+  autoResume?: boolean;
+  disabled: boolean;
+  onResume: () => void;
+  onStop: () => void;
+  onAutoResume: (enabled: boolean) => void;
+  onQueue: (enabled: boolean, priority?: number) => void;
+  onArchive: () => void;
+  onRestore: () => void;
+  onDelete: () => void;
+}) {
+  const { session } = props;
+  const close = (event: JSX.TargetedMouseEvent<HTMLButtonElement>) => event.currentTarget.closest("details")?.removeAttribute("open");
+  return <details class="cli-session-row-menu-wrap" onClick={(event) => event.stopPropagation()}>
+    <summary class="cli-icon-button" aria-label={`Actions for ${session.title}`} title={`Actions for ${session.title}`}>
+      <MoreIcon />
+    </summary>
+    <div class="cli-session-menu" role="menu" aria-label={`Actions for ${session.title}`}>
+      {props.running ? <button type="button" role="menuitem" disabled={props.disabled} onClick={(event) => { close(event); props.onStop(); }}><StopIcon /> Stop</button> : props.canResume ? <button type="button" role="menuitem" title="Resume this interrupted conversation" disabled={props.disabled} onClick={(event) => { close(event); props.onResume(); }}><PlayIcon /> Start / Resume</button> : null}
+      {showsCodexSessionAutoResume(session) ? <button type="button" role="menuitem" disabled={props.disabled} onClick={(event) => { close(event); props.onAutoResume(!props.autoResume); }}><AutoResumeIcon enabled={Boolean(props.autoResume)} goal={!!session.goal} /> {props.autoResume ? "Pause Auto Resume" : "Enable Auto Resume"}</button> : null}
+      <button type="button" role="menuitem" disabled={props.disabled || props.running === true} onClick={(event) => { close(event); props.onQueue(!session.queueEnabled, session.queueEnabled ? undefined : 3); }}>{session.queueEnabled ? "Remove from queue" : "Queue session"}</button>
+      <span aria-hidden="true" />
+      {session.archived ? <button type="button" role="menuitem" disabled={props.disabled} onClick={(event) => { close(event); props.onRestore(); }}><RestoreIcon /> Restore</button> : <button type="button" role="menuitem" disabled={props.disabled || props.running === true} onClick={(event) => { close(event); props.onArchive(); }}><ArchiveIcon /> Archive</button>}
+      <button type="button" role="menuitem" class="is-danger" disabled={props.disabled} onClick={(event) => { close(event); props.onDelete(); }}><TrashIcon /> Delete</button>
+    </div>
+  </details>;
 }
 
 export function CliSessionsPage(props: CliSessionsPageProps) {
@@ -724,10 +754,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const renderSession = (session: DashboardCliSessionSummary, grouped = false): preact.ComponentChildren => session.archived ? (
     <div role="listitem" class={`cli-session-row is-archived ${grouped ? "is-grouped" : ""}`} key={`${session.deviceId ?? "local"}:${session.id}`}>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
-      <span class="cli-session-row-actions">
-        <IconButton label={`Restore ${session.title}`} disabled={props.mutating} onClick={() => props.onUnarchive(session)}><RestoreIcon /></IconButton>
-        <IconButton label={`Delete ${session.title}`} disabled={props.mutating} danger onClick={() => setDeleteTarget(session)}><TrashIcon /></IconButton>
-      </span>
+      <span class="cli-session-row-status" aria-label="Archived"><SessionRowMenu session={session} disabled={props.mutating} onResume={() => undefined} onStop={() => undefined} onAutoResume={() => undefined} onQueue={() => undefined} onArchive={() => undefined} onRestore={() => props.onUnarchive(session)} onDelete={() => setDeleteTarget(session)} /></span>
     </div>
   ) : (
     (() => {
@@ -738,11 +765,9 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
       <button type="button" class="cli-session-row-select" onClick={() => { if (mobileLayout) setRailCollapsed(true); setNewChatProject(undefined); setProjectPath(session.projectPath); props.onPeerChange?.(session.deviceId ?? localPeerId ?? "local"); props.onSelect(session); }}>
         <span class="cli-session-row-main has-project"><strong title={session.title}>{session.title}</strong>{grouped ? <time class="cli-session-row-time" title={session.updatedAt}>{relativeTime(session.updatedAt)}</time> : <small class="cli-session-row-meta"><span>{sessionMeta(session)}</span><span>{relativeTime(session.updatedAt)}</span></small>}</span>
       </button>
-      {running ? <span class="cli-session-row-status" title={session.status === "unknown" ? session.statusError ?? "Running state unavailable" : "Running"} aria-label={session.status === "unknown" ? "Running state unavailable" : "Running"}>
-        {session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />}
-      </span> : null}
-      <span class="cli-session-row-actions">
-        {running && showsCodexSessionAutoResume(session) ? <IconButton className={`is-auto-resume ${autoResume ? "is-enabled" : "is-disabled"}`} pressed={autoResume} label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></IconButton> : canResume ? <IconButton className="is-resume" label={`Resume ${session.title}`} title="Resume this interrupted conversation" disabled={props.mutating || props.connected === false} onClick={() => props.onResume(session)}><PlayIcon /></IconButton> : !running && session.queueEnabled ? <SessionQueueControl session={session} disabled={props.mutating || props.connected === false} onQueue={props.onQueue} /> : null}
+      <span class="cli-session-row-status" title={running ? (session.status === "unknown" ? session.statusError ?? "Running state unavailable" : "Running") : undefined} aria-label={running ? (session.status === "unknown" ? "Running state unavailable" : "Running") : undefined}>
+        {running ? (session.status === "unknown" ? <ShieldIcon /> : <span class="cli-session-spinner" aria-hidden="true" />) : null}
+        <SessionRowMenu session={session} running={running} canResume={canResume} autoResume={autoResume} disabled={props.mutating || props.connected === false} onResume={() => props.onResume(session)} onStop={() => props.onStop(session)} onAutoResume={(enabled) => props.onAutoResume(session, enabled)} onQueue={(enabled, priority) => props.onQueue(session, enabled, priority)} onArchive={() => props.onArchive(session)} onRestore={() => props.onUnarchive(session)} onDelete={() => setDeleteTarget(session)} />
       </span>
       </div>;
     })()
@@ -1297,12 +1322,14 @@ function Composer(props: {
 function LiveTurnDetails({ state }: { state?: DashboardCodexSessionLiveState; loading?: boolean; onLoadHistory?: () => void }) {
   const tokens = state?.tokenUsage;
   const counts = tokens ? [["Input", tokens.input], ["Cached", tokens.cachedInput], ["Output", tokens.output], ["Reasoning", tokens.reasoningOutput], ["Total", tokens.total], ["Context", tokens.contextWindow]].filter((entry) => typeof entry[1] === "number") : [];
+  const total = typeof tokens?.total === "number" ? `${tokens.total.toLocaleString()} tokens` : undefined;
+  const primary = state?.rateLimits?.primary ? `${Math.round(state.rateLimits.primary.usedPercent)}% used` : undefined;
   if (!state?.error && !state?.plan?.steps.length && !state?.diff && !counts.length && !state?.rateLimits) return null;
   return <div class="cli-turn-details">
     {state?.error ? <p class="cli-composer-unavailable" role="alert">{state.error}</p> : null}
     {state?.plan?.steps.length ? <details class="cli-activity is-plan"><summary><strong>Current plan</strong></summary><div class="cli-activity-body">{state.plan.explanation ? <p>{state.plan.explanation}</p> : null}<ol>{state.plan.steps.map((step, index) => <li key={index}>{step.status === "completed" ? "✓ " : step.status === "inProgress" ? "In progress · " : "Pending · "}{step.step}</li>)}</ol></div></details> : null}
     {state?.diff ? <details class="cli-activity is-file-change"><summary><strong>Turn changes</strong></summary><DiffPreview diff={state.diff} /></details> : null}
-    {counts.length || state?.rateLimits ? <details class="cli-activity cli-turn-usage"><summary><span class="cli-activity-icon" aria-hidden="true" title="Token usage">Σ</span><span class="cli-activity-heading"><strong>Turn usage</strong><small>Tokens and rate windows</small></span><ChevronIcon /></summary><div class="cli-activity-body"><div class="cli-usage-grid">{counts.map(([label, count]) => <span key={String(label)} title={`${label} tokens`}><i aria-hidden="true">{String(label).toLowerCase().includes("cache") ? "◌" : String(label).toLowerCase().includes("output") ? "↑" : String(label).toLowerCase().includes("input") ? "↓" : "•"}</i><b>{label}</b><strong>{Number(count).toLocaleString()}</strong></span>)}</div>{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p class="cli-rate-window" key={window}><span>{window === "primary" ? "Primary" : "Secondary"} window</span><strong>{Math.round(limit.usedPercent)}% used</strong><small>{limit.resetsAt ? `Resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : "Reset time unavailable"}</small></p> : null) : null}</div></details> : null}
+    {counts.length || state?.rateLimits ? <details class="cli-activity cli-turn-usage"><summary><span class="cli-activity-icon" aria-hidden="true" title="Token usage">Σ</span><span class="cli-activity-heading"><strong>Turn usage</strong><small>{[total, primary].filter(Boolean).join(" · ") || "Details"}</small></span><ChevronIcon /></summary><div class="cli-activity-body"><div class="cli-usage-grid">{counts.map(([label, count]) => <span key={String(label)} title={`${label} tokens`}><i aria-hidden="true">{String(label).toLowerCase().includes("cache") ? "◌" : String(label).toLowerCase().includes("output") ? "↑" : String(label).toLowerCase().includes("input") ? "↓" : "•"}</i><b>{label}</b><strong>{Number(count).toLocaleString()}</strong></span>)}</div>{state?.rateLimits ? Object.entries(state.rateLimits).map(([window, limit]) => limit ? <p class="cli-rate-window" key={window}><span>{window === "primary" ? "Primary" : "Secondary"} window</span><strong>{Math.round(limit.usedPercent)}% used</strong><small>{limit.resetsAt ? `Resets ${new Date(limit.resetsAt * 1000).toLocaleString()}` : "Reset time unavailable"}</small></p> : null) : null}</div></details> : null}
   </div>;
 }
 

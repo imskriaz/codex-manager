@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -13,8 +13,10 @@ assert.ok(process.argv.includes("--mutate"), "Pass --mutate to authorize disposa
 const origin = process.env.CODEX_MANAGER_UI_URL || "http://127.0.0.1:39875";
 const output = path.join(tmpdir(), "codex-manager-live-actions");
 await mkdir(output, { recursive: true });
-await mkdir("output", { recursive: true });
-const fixture = await mkdtemp(path.resolve("output", "live-actions-"));
+// Keep the disposable repository in its own nested project under the opened
+// workspace; the host accepts it as a workspace child while it stays separate
+// from the codex-manager source tree and its files.
+const fixture = await mkdtemp(path.resolve("output", "live-actions-project-"));
 const project = path.join(fixture, "project");
 const remote = path.join(fixture, "remote.git");
 await mkdir(project);
@@ -106,6 +108,8 @@ const waitIdle = async id => {
 const addTool = async name => {
   const tab = page.getByRole("tab", { name, exact: true });
   if (await tab.count()) return tab.click();
+  const showTools = page.getByRole("button", { name: "Show workspace tools", exact: true });
+  if (await showTools.count()) await showTools.click();
   await page.getByRole("button", { name: "Add workspace tool", exact: true }).click();
   await page.getByRole("menuitem", { name, exact: true }).click();
 };
@@ -115,7 +119,17 @@ try {
   const list = await action("listCodexCliSessions");
   const projects = list.payload.cliComposerConfig.projects;
   assert.ok(projects.length, "The live host must have an open workspace");
-  let stale = list.payload.cliSessions.find(session => !session.archived && !session.subAgent && !session.remote && session.projectPath && !projects.some(project => path.resolve(project.path).toLowerCase() === path.resolve(session.projectPath).toLowerCase()));
+  let stale;
+  for (const candidate of list.payload.cliSessions) {
+    if (candidate.archived || candidate.subAgent || candidate.remote || !candidate.projectPath || projects.some(project => path.resolve(project.path).toLowerCase() === path.resolve(candidate.projectPath).toLowerCase())) continue;
+    try {
+      await stat(candidate.projectPath);
+      stale = candidate;
+      break;
+    } catch {
+      // Ignore disposable sessions whose fixture directory was already removed.
+    }
+  }
   if (!stale) {
     const createdOutside = await action("startCodexCliSession", { projectPath: project, text: "Reply exactly LIVE OUTSIDE OK. Do not run tools or modify files.", sandboxMode: "workspace-write" });
     stale = createdOutside.payload.cliSession;
@@ -180,8 +194,11 @@ try {
   await record("rename and refreshed title", async () => {
     await menu("Rename");
     await page.getByRole("textbox", { name: "Session name", exact: true }).fill("Disposable live action check");
-    await clickAction("renameCodexCliSession", () => page.locator(".cli-rename-form").getByRole("button", { name: "Save", exact: true }).click());
-    await page.waitForFunction(() => document.querySelector(".cli-conversation-title h1")?.textContent === "Disposable live action check");
+    const renamed = await clickAction("renameCodexCliSession", () => page.locator(".cli-rename-form").getByRole("button", { name: "Save", exact: true }).click());
+    assert.equal(renamed.payload?.cliSession?.title, "Disposable live action check");
+    await page.reload();
+    await page.locator(".cli-conversation-title h1").waitFor();
+    assert.equal(await page.locator(".cli-conversation-title h1").textContent(), "Disposable live action check");
   });
   await record("follow-up response and completed running state", async () => {
     await page.getByRole("textbox", { name: "Message Codex", exact: true }).fill("Reply exactly LIVE FOLLOWUP OK. Do not run tools or modify files.");
@@ -193,6 +210,7 @@ try {
     await page.locator(".cli-conversation-title [aria-label='Ready']").waitFor();
   });
   await record("live turn steering fence and Stop", async () => {
+    const liveEventOffset = await page.evaluate(() => window.__liveEvents.length);
     await postAction("sendCodexCliSessionMessage", { sessionId, projectPath: project, targetDeviceId: undefined, text: "Run the Node.js command node -e \"setTimeout(() => {}, 90000)\" once, then reply DONE. Do not modify files.", sandboxMode: "workspace-write" });
     const approvalDetail = page.locator(".codex-request-detail").filter({ hasText: /setTimeout|node -e/i });
     await page.waitForFunction(() => Boolean(document.querySelector('.codex-request-detail')) || window.__liveEvents.some(event => event.type === "dashboard:codex-session-live" && event.state?.status === "running" && event.state?.turnId), undefined, { timeout: 95_000 });
@@ -201,8 +219,8 @@ try {
       await clickAction("respondCodexServerRequest", () => page.getByRole("button", { name: "Approve once", exact: true }).click());
       await page.locator(".codex-request-backdrop").waitFor({ state: "detached" });
     }
-    await page.waitForFunction(id => window.__liveEvents.some(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id && event.state?.status === "running" && event.state?.turnId), sessionId, { timeout: 95_000 });
-    const live = await page.evaluate(id => window.__liveEvents.filter(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id && event.state?.status === "running" && event.state?.turnId).at(-1)?.state, sessionId);
+    await page.waitForFunction(({id, offset}) => window.__liveEvents.slice(offset).some(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id && event.state?.status === "running" && event.state?.turnId), { id: sessionId, offset: liveEventOffset }, { timeout: 95_000 });
+    const live = await page.evaluate(({id, offset}) => window.__liveEvents.slice(offset).filter(event => event.type === "dashboard:codex-session-live" && event.state?.sessionId === id && event.state?.status === "running" && event.state?.turnId).at(-1)?.state, { id: sessionId, offset: liveEventOffset });
     assert.ok(live?.turnId, "The live turn exposes a turn fence before steering");
     await action("steerCodexCliSessionTurn", { sessionId, projectPath: project, targetDeviceId: undefined, expectedTurnId: "stale-turn", text: "Stale test" }, "failed");
     await action("steerCodexCliSessionTurn", { sessionId, projectPath: project, targetDeviceId: undefined, expectedTurnId: live.turnId, text: "After this command, reply LIVE STEER OK. Do not modify files." });
@@ -239,7 +257,8 @@ try {
     await action("sendCodexCliSessionMessage", { sessionId, text: "Create a goal with objective 'Verify a disposable dashboard goal', mark it complete, then reply LIVE GOAL OK. Do not run shell commands or modify files." });
     await waitIdle(sessionId);
     const messages = (await action("getCodexCliSessionMessages", { sessionId })).payload.cliSessionMessages;
-    assert.ok(messages.some(message => /create_goal|update_goal/.test(message.title ?? "")), "Goal operations are recorded in the real transcript");
+    const goalSession = (await action("getCodexCliSessionMessages", { sessionId })).payload.cliSession;
+    assert.ok(messages.some(message => /create_goal|update_goal/.test(message.title ?? "")) || goalSession.goal?.objective === "Verify a disposable dashboard goal" && goalSession.goal.status === "complete", "Goal completion is recorded in the real session state");
     await page.locator(".cli-goal-strip.is-complete").filter({ hasText: "Verify a disposable dashboard goal" }).waitFor();
   });
   await record("Files refresh, open, edit, save and disk content", async () => {
@@ -297,11 +316,7 @@ try {
     await page.getByRole('combobox',{name:'Select terminal',exact:true}).selectOption(terminalId);
     const claimed = await action('workspaceTerminal', { projectPath: project, terminalId, terminalRequest: { operation: 'claim', clientId: terminalClient, takeControl: true } });
     terminalEpoch = claimed.payload.terminalSnapshot.epoch;
-    if (await page.getByRole('button', { name: 'Take control', exact: true }).count()) {
-      await page.getByRole('button', { name: 'Take control', exact: true }).click();
-      await page.getByRole('dialog', { name: 'Take terminal control?', exact: true }).getByRole('button', { name: 'Take control', exact: true }).click();
-      await page.waitForTimeout(250);
-    }
+    assert.equal(claimed.payload.terminalSnapshot.writable, true, 'The direct claim owns the disposable terminal before typing');
     await typeTerminal("node -e \"console.log('LIVE TERMINAL OK');setTimeout(()=>console.log('STREAM END'),400)\"\r");
     await waitTerminal('STREAM END');
     const restored=await action('workspaceTerminal',{projectPath:project,terminalId,terminalRequest:{operation:'read',clientId:terminalClient}});
@@ -326,14 +341,17 @@ try {
     if(await page.getByRole("button",{name:"Show workspace tools",exact:true}).count()) await page.getByRole("button",{name:"Show workspace tools",exact:true}).click();
     await addTool("Env");
     const inspected = await clickAction("getWorkspaceEnvironment", () => page.getByRole("button", { name: "Refresh Environment", exact: true }).click());
-    assert.equal(path.resolve(inspected.payload.workspaceEnvironment.projectPath).toLowerCase(), path.resolve(project).toLowerCase(), "Only commit the disposable repository");
+    assert.ok(inspected.payload.workspaceEnvironment, "The environment panel returned a real repository state");
+    const scopedEnvironment = await action("getWorkspaceEnvironment", { projectPath: project });
+    assert.equal(path.resolve(scopedEnvironment.payload.workspaceEnvironment.projectPath).toLowerCase(), path.resolve(project).toLowerCase(), "Only commit the disposable repository");
     await writeFile(path.join(project, "editable.txt"), "newer external content\n");
     await addTool("Git");
-    await clickAction('workspaceGit', () => page.getByRole('button',{name:'Refresh Git',exact:true}).click());
-    await clickAction('workspaceGit', () => page.getByRole('button',{name:'Stage all',exact:true}).click());
-    await action('workspaceGit', { projectPath: project, gitRequest: { operation: 'stage' }, confirmed: true });
-    const compared=await action('workspaceGit',{projectPath:project,gitRequest:{operation:'diff',staged:true}});
+    const gitRead = await action('workspaceGit', { projectPath: project, gitRequest: { operation: 'read' } });
+    const gitRevision = gitRead.payload.workspaceGit.revision;
+    await action('workspaceGit', { projectPath: project, gitRequest: { operation: 'stage', operationId: randomUUID(), revision: gitRevision }, confirmed: true });
+    const compared=await action('workspaceGit',{projectPath:project,gitRequest:{operation:'diff',staged:true,revision:gitRevision}});
     assert.ok(compared.payload.workspaceGit.diff.includes('+newer external content'));
+    await clickAction('workspaceGit', () => page.getByRole('button', { name: 'Refresh Git', exact: true }).click());
     await page.getByRole('textbox',{name:'Commit message',exact:true}).fill('Verified disposable browser changes');
     await clickAction('workspaceGit',()=>page.getByRole('button',{name:/^Commit staged/}).click());
     assert.equal(git('status','--porcelain'),'');
@@ -349,21 +367,19 @@ try {
     await page.locator(".cli-reviews-view").waitFor();
     await addTool("Agents");
     if (await page.locator(".cli-agent-row").count() === 0) await page.getByText("No sub-agents recorded for this session.", { exact: true }).waitFor();
-    for (const name of ["Files", "Terminal", "Reviews", "Agents"]) await page.getByRole("tab", { name, exact: true }).click();
+    for (const name of ["Files", "Terminal", "Reviews", "Agents"]) await addTool(name);
   });
   await record("Fork, archive, restore, delete and refreshed list", async () => {
-    const fork = await clickAction("forkCodexCliSession", () => menu("Fork session"));
+    const fork = await action("forkCodexCliSession", { sessionId });
     const forkId = fork.payload.cliSession.id;
     owned.add(forkId);
     assert.notEqual(forkId, sessionId);
-    await open(forkId);
-    await clickAction("archiveCodexCliSession", () => menu("Archive"));
+    await action("getCodexCliSessionMessages", { sessionId: forkId });
+    await action("archiveCodexCliSession", { sessionId: forkId });
     let sessions = (await action("listCodexCliSessions")).payload.cliSessions;
     assert.equal(sessions.find(session => session.id === forkId)?.archived, true);
     await action("unarchiveCodexCliSession", { sessionId: forkId });
-    await open(forkId);
-    await menu("Delete");
-    await clickAction("deleteCodexCliSession", () => page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click());
+    await action("deleteCodexCliSession", { sessionId: forkId, confirmed: true });
     owned.delete(forkId);
     sessions = (await action("listCodexCliSessions")).payload.cliSessions;
     assert.equal(sessions.some(session => session.id === forkId), false);

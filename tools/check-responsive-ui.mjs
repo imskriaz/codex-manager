@@ -1436,7 +1436,10 @@ try {
     }
     const runningHoverRow=page.locator('.cli-session-row').filter({hasText:'Running workspace task'});
     await runningHoverRow.hover();
-    assert.equal(await runningHoverRow.locator('.cli-session-row-actions button').count(),1,'Running rows have a single automation action');
+    await page.waitForTimeout(180);
+    assert.equal(await runningHoverRow.locator('.cli-session-row-menu-wrap > summary').count(),1,'Running rows have one compact actions trigger');
+    assert.ok(await runningHoverRow.locator('[role="menuitem"]').count() >= 4,'Running rows expose stop and context actions');
+    assert.equal(await runningHoverRow.locator('.cli-session-spinner').evaluate(element => getComputedStyle(element).opacity),'0','Hover replaces the running spinner in its status slot');
     assert.equal(await runningHoverRow.locator('.cli-session-queue-wrap').count(),0,'Queue and Auto Resume never compete on a running row');
     const initialOrder = await page.locator(".cli-session-row-main > strong").allTextContents();
     await page.evaluate(() => { window.__uiSessions.reverse(); window.__uiSessions.forEach(session => { session.updatedAt = new Date().toISOString(); }); });
@@ -1457,7 +1460,8 @@ try {
     await page.getByRole("button", { name: "Show archived sessions (1)", exact: true }).click();
     await page.getByRole("button", { name: "Expand demo", exact: true }).click();
     await page.locator(".cli-session-row.is-archived").hover();
-    await page.getByRole("button", { name: "Delete Archived task", exact: true }).click();
+    await page.locator(".cli-session-row.is-archived .cli-session-row-menu-wrap > summary").click();
+    await page.locator(".cli-session-row.is-archived").getByRole("menuitem", { name: "Delete", exact: true }).click();
     const deletion = page.getByRole("alertdialog", { name: "Delete Archived task permanently", exact: true });
     await deletion.waitFor();
     assert.ok((await deletion.locator("svg").boundingBox()).width <= 24, "Delete icon stays small");
@@ -1475,7 +1479,8 @@ try {
     assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === "deleteCodexCliSession").length), 0, "Dismissing the backdrop cannot delete a session");
     if (await page.getByRole("button", { name: "Dismiss notification", exact: true }).isVisible()) await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
     await page.locator(".cli-session-row.is-archived").hover();
-    await page.getByRole("button", { name: "Delete Archived task", exact: true }).click();
+    await page.locator(".cli-session-row.is-archived .cli-session-row-menu-wrap > summary").click();
+    await page.locator(".cli-session-row.is-archived").getByRole("menuitem", { name: "Delete", exact: true }).click();
     await deletion.waitFor();
     await deletion.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.getByText("Session deletion cancelled.", { exact: true }).waitFor();
@@ -1492,19 +1497,18 @@ try {
     assert.equal(await page.locator('.is-dense-tree .cli-session-row-time').count(), 2, 'Each grouped session retains its elapsed time');
     await page.screenshot({ path: path.join(output, `project-sessions-${width}x${height}.png`), animations: 'disabled' });
     assert.equal(await page.locator(".cli-session-row.is-running .cli-session-spinner").count(), 1, "Running parent needs an icon");
-    assert.equal(await page.locator(".cli-session-row:not(.is-running) .cli-session-row-status").count(), 0, "Idle rows have no completion ticks");
+    assert.equal(await page.locator(".cli-session-row:not(.is-running) .cli-session-row-status").count(), 1, "Idle rows expose only the compact actions slot");
     const runningRow = page.locator(".cli-session-row.is-running").first();
     const status = runningRow.locator(":scope > .cli-session-row-status");
     const beforeHover = await status.boundingBox();
     const rowBounds = await runningRow.boundingBox();
     assert.ok(beforeHover.x > rowBounds.x + rowBounds.width / 2, "Spinner is on the right");
     await runningRow.hover();
+    await page.waitForTimeout(180);
     const afterHover = await status.boundingBox();
     assert.ok(Math.abs(beforeHover.x - afterHover.x) < 1, "Spinner does not move on hover");
-    assert.equal(await status.locator(".cli-session-spinner").evaluate(element => getComputedStyle(element).visibility), "visible", "Running status remains visible beside row actions");
-    const spinnerBounds = await status.boundingBox();
-    const actionBounds = await runningRow.locator('.cli-session-row-actions').boundingBox();
-    if (actionBounds?.width) assert.ok(spinnerBounds.x + spinnerBounds.width <= actionBounds.x + 1, "Running spinner does not overlap the action control");
+    assert.equal(await status.locator(".cli-session-spinner").evaluate(element => getComputedStyle(element).opacity), "0", "Hover replaces the spinner with the compact actions trigger");
+    assert.equal(await status.locator(".cli-session-row-menu-wrap > summary").count(), 1, "Running status keeps its actions in the same slot");
     await page.mouse.move(width - 2, height - 2);
     await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
     await page.getByText("Running elsewhere", { exact: true }).waitFor();
@@ -1656,7 +1660,7 @@ try {
     await page.getByRole("button", { name: "Session actions", exact: true }).click();
     await page.getByRole("menuitem", { name: "Copy link", exact: true }).waitFor();
     await page.keyboard.press("Escape");
-    await page.locator(".cli-session-menu").waitFor({ state: "detached" });
+    await page.locator(".cli-conversation-actions .cli-session-menu").waitFor({ state: "detached" });
     if (await page.getByRole('button',{name:'Show workspace tools',exact:true}).count()) await page.getByRole('button',{name:'Show workspace tools',exact:true}).click();
     await page.getByRole('tab',{name:'Env',exact:true}).click();
     assert.equal(await page.locator('.cli-environment-popover').count(),0,'Environment is a fixed tab, not a flyout');
@@ -1806,7 +1810,7 @@ try {
     assert.equal(new URL(page.url()).pathname, "/workspace/01a04882-d037-7a42-ad24-9afb61901198", "A new-session acknowledgement opens the accepted thread without requiring another list/catalog payload");
     assert.equal(await composer.inputValue(), "", "A newly accepted chat clears only its submitted project draft");
     await page.getByRole("button", { name: "Session actions", exact: true }).click();
-    const menuBounds = await page.locator(".cli-session-menu").boundingBox();
+    const menuBounds = await page.locator(".cli-conversation-actions .cli-session-menu").boundingBox();
     assert.ok(menuBounds && menuBounds.x >= 0 && menuBounds.x + menuBounds.width <= width, "Session actions stay inside the viewport when toolbar buttons wrap");
     await page.getByRole("menuitem", { name: "Archive", exact: true }).click();
     await page.waitForFunction(() => window.__heldArchiveResult);

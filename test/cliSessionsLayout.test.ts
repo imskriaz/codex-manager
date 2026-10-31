@@ -51,8 +51,12 @@ describe("sessions sidebar layout", () => {
   });
   it("keeps running spinners visible beside workspace row actions", () => {
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
+    const source = readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8");
     expect(css).toContain(".cli-workspace .cli-session-row.is-running:has(.cli-session-row-actions button) .cli-session-row-status { right: 34px;");
     expect(css).not.toContain(".cli-workspace .cli-session-row:has(.cli-session-row-actions button) .cli-session-spinner { visibility: hidden; }");
+    expect(source).toContain("function SessionRowMenu");
+    expect(source).toContain('aria-label={`Actions for ${session.title}`}');
+    expect(css).toContain(".cli-workspace .cli-session-row:hover .cli-session-row-menu-wrap");
   });
   it("shows short action toasts while preserving live status and tool copy controls", () => {
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
