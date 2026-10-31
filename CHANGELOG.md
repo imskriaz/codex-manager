@@ -1,3 +1,11 @@
+## 1.6.0-pre.30
+
+- Add General settings controls for VS Code dashboard zoom with persisted 80–140% scaling, reset, keyboard/wheel parity, and compact responsive controls.
+
+## 1.6.0-pre.29
+
+- Fix Windows stash/apply behavior by avoiding `--literal-pathspecs` for stash operations while preserving literal path handling for file mutations.
+
 ## 1.6.0-pre.28
 
 - Keep running sessions at the top of the sidebar while preserving stable order within running and idle groups.

@@ -52,10 +52,10 @@ const REPOSITORY_OPERATIONS = new Set([
   "dropStash"
 ]);
 const MAX_BYTES = 256 * 1024;
-export async function workspaceGitCommand(cwd: string, args: string[], timeout = 30_000): Promise<string> {
+export async function workspaceGitCommand(cwd: string, args: string[], timeout = 30_000, literalPathspecs = true): Promise<string> {
   const result = await runProcess(
     "git",
-    ["--literal-pathspecs", "-c", "credential.interactive=false", ...args],
+    [...(literalPathspecs ? ["--literal-pathspecs"] : []), "-c", "credential.interactive=false", ...args],
     cwd,
     timeout
   );
@@ -321,7 +321,8 @@ export async function workspaceGit(
         output = await workspaceGitCommand(
           cwd,
           args,
-          ["fetch", "pull", "push"].includes(request.operation) ? 120_000 : 30_000
+          ["fetch", "pull", "push"].includes(request.operation) ? 120_000 : 30_000,
+          !["stash", "applyStash", "popStash", "dropStash"].includes(request.operation)
         );
       } catch (error) {
         throw new Error(

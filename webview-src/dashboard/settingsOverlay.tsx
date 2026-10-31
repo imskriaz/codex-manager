@@ -18,6 +18,7 @@ import { formatTemplate } from "./helpers";
 import { renderRemoveIcon } from "./icons";
 import { handleTabKeyDown, ModalShell, useModalAccessibility } from "./primitives";
 import { resolveLongQuotaSettingsLabel } from "../../src/utils/quotaLabels";
+import { clampWebviewZoom, WEBVIEW_ZOOM_MAX, WEBVIEW_ZOOM_MIN, WEBVIEW_ZOOM_STEP } from "./webviewZoom";
 
 import { BrowserNotifications } from "./browserNotifications";
 import { MaintenanceTools } from "./maintenanceTools";
@@ -82,6 +83,8 @@ export function SettingsOverlay(props: {
   sendAction: SendAction;
   targetDeviceId?: string;
   targetName: string;
+  webviewZoom: number;
+  onWebviewZoom: (value: number) => void;
 }) {
   const longQuotaLabel = resolveLongQuotaSettingsLabel(props.lang, props.copy.weeklyLabel);
   const safeCurrentRefreshMinutes =
@@ -200,6 +203,18 @@ export function SettingsOverlay(props: {
                   props.onSendSetting("displayLanguage", value);
                 }}
               />
+              <div class="settings-block settings-block-wide" data-setting="webview-zoom">
+                <div class="settings-block-head">
+                  <div class="settings-block-title">Dashboard zoom</div>
+                  <div class="settings-block-sub">Control the Codex Manager dashboard scale in this VS Code webview.</div>
+                </div>
+                <div class="settings-zoom-controls" role="group" aria-label="Dashboard zoom">
+                  <button class="settings-action-btn" type="button" aria-label="Zoom out" disabled={props.webviewZoom <= WEBVIEW_ZOOM_MIN} onClick={() => props.onWebviewZoom(clampWebviewZoom(props.webviewZoom - WEBVIEW_ZOOM_STEP))}>−</button>
+                  <output aria-live="polite">{Math.round(props.webviewZoom * 100)}%</output>
+                  <button class="settings-action-btn" type="button" aria-label="Zoom in" disabled={props.webviewZoom >= WEBVIEW_ZOOM_MAX} onClick={() => props.onWebviewZoom(clampWebviewZoom(props.webviewZoom + WEBVIEW_ZOOM_STEP))}>+</button>
+                  <button class="settings-action-btn" type="button" onClick={() => props.onWebviewZoom(1)}>Reset</button>
+                </div>
+              </div>
               <div class={`settings-block settings-block-wide ${props.encryptedSyncNeedsConfiguration ? "settings-password-required" : ""}`} data-setting="shared-password">
                 <div class="settings-block-head">
                   <div class="settings-block-title">{passwordCopy.title}</div>

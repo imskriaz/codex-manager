@@ -145,6 +145,11 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("Pause Auto Resume");
     expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("cli-icon-button is-auto-resume ${autoResume ? \"is-enabled is-active\" : \"is-disabled\"}");
     expect(readFileSync("webview-src/dashboard/cliSessionsModal.tsx", "utf8")).toContain("showsCodexSessionAutoResume(session)");
+    const settingsSource = readFileSync("webview-src/dashboard/settingsOverlay.tsx", "utf8");
+    expect(settingsSource).toContain('data-setting="webview-zoom"');
+    expect(settingsSource).toContain('aria-label="Dashboard zoom"');
+    expect(settingsSource).toContain('aria-label="Zoom out"');
+    expect(settingsSource).toContain('aria-label="Zoom in"');
     expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("!running && (session.interrupted || session.queueEnabled)");
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
