@@ -5,6 +5,7 @@ import { getCodexManagerConfiguration } from "../../infrastructure/config/extens
 
 export type DashboardMessageHandlers = {
   onReady: () => void | Promise<void>;
+  onRetryConnection?: () => void | Promise<void>;
   onAction: (message: Extract<DashboardClientMessage, { type: "dashboard:action" }>) => Promise<void>;
   onSetting: (key: DashboardSettingKey, value: string | number | boolean) => Promise<void>;
   onPickCodexAppPath: () => Promise<void>;
@@ -34,6 +35,10 @@ async function dispatchDashboardClientMessageCore(
   handlers: DashboardMessageHandlers
 ): Promise<void> {
   switch (message.type) {
+    case "dashboard:retry-connection":
+      if (!handlers.onRetryConnection) throw new Error("Dashboard recovery is unavailable. Reopen Codex Manager to retry.");
+      await handlers.onRetryConnection();
+      return;
     case "dashboard:ready":
       await handlers.onReady();
       return;

@@ -199,7 +199,7 @@ const mockHost = `(() => {
         else if(message.action==='generateApiToken') {apiTokens.push({id:'new-api-token-'+apiTokens.length,name:message.payload.tokenName,projectPath:message.payload.projectPath,permissions:message.payload.tokenPermissions,createdAt:Date.now()});payload={apiTokens,apiToken:'cm_'+'c'.repeat(64)};}
         else if(message.action==='revokeApiToken') {const index=apiTokens.findIndex(token=>token.id===message.payload.tokenId);if(index>=0)apiTokens.splice(index,1);payload={apiTokens};}
         else if(message.action==='setAutoSwitchLock') {if(window.__failUnlock)error='Lock storage unavailable';else{const account=state.accounts.find(account=>account.id===message.accountId);account.autoSwitchLockedUntil=message.payload.lockMinutes?Date.now()+message.payload.lockMinutes*60000:undefined;dispatch({type:'dashboard:snapshot',state:structuredClone(state)});payload={notice:{level:'info',message:'Auto-switch lock removed.'}};}}
-        else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume'){if(window.__failResume){error='Session preference storage is unavailable. The change was not saved.';}else session.autoResumeEnabled=message.payload.autoResumeEnabled;}else Object.assign(session,{queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined});payload={cliSession:session};}}
+        else if(message.action==='setCodexSessionAutoResume'||message.action==='setCodexSessionQueue') {const session=sessions.find(item=>item.id===message.payload.sessionId);if(window.__failQueue && message.action==='setCodexSessionQueue')error='The session queue is full. Remove an entry before adding another.';else if(session){if(message.action==='setCodexSessionAutoResume'){if(window.__failResume){error='Session preference storage is unavailable. The change was not saved.';}else Object.assign(session,{autoResumeEnabled:message.payload.autoResumeEnabled,queueEnabled:false,queuePriority:undefined});}else Object.assign(session,{...(message.payload.queueEnabled?{autoResumeEnabled:false}:{}),queueEnabled:message.payload.queueEnabled,queuePriority:message.payload.queueEnabled?message.payload.sessionQueuePriority:undefined,queueError:undefined});payload={cliSession:session};}}
         else if(message.action==='readWorkspaceFile' && message.payload.filePath.startsWith('@manager-attachment/')) {
           const file=uploadFiles.get(decodeURIComponent(message.payload.filePath.split('/').at(-1)));
           if(!file) error='This attachment is unavailable.';
@@ -366,7 +366,8 @@ async function selectSidebarSystem(page, width, id) {
   const show = page.getByRole('button', { name: 'Show sessions sidebar', exact: true });
   if (await show.isVisible()) await show.click();
   await page.locator('.cli-rail-system select').selectOption(id);
-  if (width <= 760) await page.getByRole('button', { name: 'Hide sessions sidebar', exact: true }).click();
+  const hide = page.getByRole('button', { name: 'Hide sessions sidebar', exact: true });
+  if (width <= 760 && await hide.isVisible()) await hide.click();
 }
 async function checkClosedProject(page, width, errors) {
     await page.goto(`${origin}/workspace/${parentId}?closed-project`);
@@ -572,7 +573,7 @@ try {
       await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='0');
       await resumeToggle.waitFor();
       assert.equal(await resumeToggle.getAttribute('aria-pressed'),'true','Interrupted work retains its resume preference');
-      assert.equal(await page.locator('.cli-sessions-popover .cli-session-queue-wrap').count(),0,'Interrupted nonqueued work shows resume instead of queue');
+      assert.equal(await page.locator('.cli-sessions-popover .cli-session-queue-wrap').count(),1,'Interrupted work offers queue settings alongside its Auto Resume toggle');
       await resumeToggle.focus(); await page.keyboard.press('Space');
       await page.waitForFunction(()=>document.querySelector('.cli-sessions-popover .is-auto-resume')?.getAttribute('aria-pressed')==='false');
       await page.evaluate(()=>{window.__failResume=true;});
@@ -694,6 +695,19 @@ try {
       assert.deepEqual(errors,[],'Task UI runtime errors');
       results.push({width,height,checks:'Compact context header, four views, Agents, Overview, details and sharing'});
       await context.close(); continue;
+    }
+    if (process.argv.includes('--session-lists')) {
+      await page.goto(`${origin}/workspace`);
+      if(width<=760)await page.getByRole('button',{name:'Show sessions sidebar',exact:true}).click();
+      await page.locator('.cli-session-row-select').first().waitFor();
+      const titles=await page.locator('.cli-session-row-select').allTextContents();
+      await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:action-result',action:'listCodexCliSessions',requestId:'realtime-incomplete',status:'completed',payload:{realtimeRevision:100}}})));
+      await page.getByText('The session list response was incomplete. Saved sessions were kept; refresh to retry.',{exact:true}).first().waitFor();
+      assert.deepEqual(await page.locator('.cli-session-row-select').allTextContents(),titles,'Incomplete responses preserve the visible list');
+      assert.equal(await page.locator('.cli-session-row-select').filter({hasText:'Archived task'}).count(),0,'Archived sessions stay out of Active');
+      await page.screenshot({path:path.join(output,`session-lists-${width}.png`)});
+      assert.deepEqual(errors,[]);results.push({width,height,checks:'Incomplete refresh retains Active rows; archived rows remain hidden'});
+      await context.close();continue;
     }
     if (process.argv.includes('--feedback')) {
       await page.goto(`${origin}/`);
@@ -1076,8 +1090,14 @@ try {
       }
       await panel.getByRole('button',{name:'Remove from queue',exact:true}).click();
       await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.queueEnabled===false);
-      await trigger.waitFor({state:'detached'});
+      await trigger.waitFor();
       await row.getByRole('button',{name:'Auto Resume for Interrupted workspace task',exact:true}).waitFor();
+      await trigger.click();
+      await panel.getByRole('button',{name:'Auto Resume on',exact:true}).click();
+      await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.autoResumeEnabled===true);
+      await trigger.click();
+      await panel.getByRole('button',{name:'Auto Resume off',exact:true}).click();
+      await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.autoResumeEnabled===false);
       await page.evaluate(()=>{
         window.__failQueue=true;
         Object.assign(window.__uiSessions.find(s=>s.id==='recovery'),{queueError:'Review a previous unconfirmed start.'});
@@ -1743,6 +1763,23 @@ try {
     await page.getByText("Simulated action failure. Your draft is preserved.", { exact: true }).first().waitFor();
     assert.match(await page.getByRole("textbox", { name: "Message Codex", exact: true }).inputValue(), /^> /, "Failed sends preserve the draft");
     assert.equal(await page.getByRole("button", { name: "Remove notes.txt", exact: true }).count(), 1, "Failed sends preserve attachments");
+    if(width===390) {
+      const originalDraft=await page.getByRole('textbox',{name:'Message Codex',exact:true}).inputValue();
+      await page.evaluate(()=>{
+        window.__draftTransactions=IDBDatabase.prototype.transaction;window.__failedDraftWrites=0;
+        IDBDatabase.prototype.transaction=function(stores,mode,...rest){if(mode==='readwrite'){window.__failedDraftWrites++;throw new DOMException('Storage full','QuotaExceededError');}return window.__draftTransactions.call(this,stores,mode,...rest);};
+      });
+      const warning=page.locator('.dashboard-notice').filter({hasText:'Browser storage could not save your draft.'});
+      const composer=page.getByRole('textbox',{name:'Message Codex',exact:true});
+      await composer.fill(originalDraft+' storage failure');await warning.waitFor();
+      assert.equal(await page.getByRole('button',{name:'Retry saving draft',exact:true}).count(),0,'Storage failures appear only as a toast');
+      await warning.getByRole('button',{name:'Dismiss notification',exact:true}).click();
+      const failedWrites=await page.evaluate(()=>window.__failedDraftWrites);
+      await composer.fill(originalDraft+' another edit');await page.waitForFunction(before=>window.__failedDraftWrites>before,failedWrites);
+      assert.equal(await warning.count(),0,'Further failed saves do not repeat the draft toast');
+      await page.evaluate(()=>{IDBDatabase.prototype.transaction=window.__draftTransactions;});
+      await composer.fill(originalDraft);
+    }
     // Hold a real FileReader until after navigating to another composer.
     await page.evaluate(() => {
       const read = FileReader.prototype.readAsText;
@@ -1820,6 +1857,8 @@ try {
     await page.evaluate(() => { window.__holdNextSend = true; window.__heldSendResult = undefined; });
     await page.getByRole("button", { name: "Send message", exact: true }).click();
     await page.waitForFunction(() => window.__heldSendResult);
+    assert.equal(await composer.inputValue(), '', 'Sending immediately clears the composer while completion is pending');
+    assert.equal(await page.getByRole('button',{name:'Retry saving draft',exact:true}).count(), 0, 'Draft storage warnings never add a permanent session banner');
     if (width <= 760) await page.getByRole("button", { name: "Show sessions sidebar", exact: true }).click();
     await page.getByRole("button", { name: "New chat", exact: true }).click();
     await composer.fill("Keep this new draft");
@@ -1931,8 +1970,10 @@ try {
     assert.equal(await accountCenter.locator(".cli-account-switch-action").isDisabled(), true, "Duplicate switching is unavailable while its result is pending");
     assert.equal(await accountCenter.getByRole("button", { name: "Settings", exact: true }).isEnabled(), true, "Independent navigation stays available");
     await systemSelect.selectOption("account-offline");
-    await accountCenter.getByText("Saved accounts. Reconnect this system to switch.", { exact: true }).waitFor();
-    await accountCenter.getByText("No saved accounts", { exact: true }).waitFor();
+    await page.getByText('Reconnecting…',{exact:true}).waitFor();
+    assert.equal(await accountCenter.count(),0,'Offline systems show the reconnect screen instead of stale account controls');
+    await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-offline').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
+    await showAccountRail();await accountTrigger.click();
     await systemSelect.selectOption("account-empty");
     assert.equal(await accountCenter.locator(".cli-account-status").count(), 0);
     await accountCenter.getByText("Quota has not been checked yet.", { exact: true }).waitFor();
@@ -1941,9 +1982,10 @@ try {
     await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).waitFor();
     assert.equal(await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).isEnabled(), true, "A failed switch can be retried");
     await systemSelect.selectOption("account-remote");
-    await page.evaluate(() => { window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "account-remote"); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
-    await page.waitForFunction(() => document.querySelector('#account-center-system')?.value === "account-remote");
-    await accountCenter.getByText("Saved accounts. Reconnect this system to switch.", { exact: true }).waitFor();
+    await page.evaluate(() => { window.__removedAccountPeer=window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-remote');window.__uiSnapshot.connectedPeers = window.__uiSnapshot.connectedPeers.filter(peer => peer.id !== "account-remote"); window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:snapshot", state: window.__uiSnapshot } })); });
+    await page.getByText('Reconnecting…',{exact:true}).waitFor();
+    await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.push(window.__removedAccountPeer);window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
+    await showAccountRail();await accountTrigger.click();
     await systemSelect.selectOption("fixture-local");
     await page.evaluate(() => {
       const account = window.__uiSnapshot.accounts.find(account => account.id === "center-active");
@@ -2131,6 +2173,8 @@ try {
     if(await showSystems.isVisible()) await showSystems.click();
     assert.equal(await page.locator('.cli-system-count').textContent(),'2','Multiple PCs have a compact count badge');
     await selectSidebarSystem(page, width, 'fixture-remote');
+    await page.getByText('Reconnecting…',{exact:true}).waitFor();
+    await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='fixture-remote').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
     await selectSidebarSystem(page, width, 'fixture-local');
     await page.evaluate(() => {
       window.__uiSnapshot.connectedPeers = window.__savedPeers;

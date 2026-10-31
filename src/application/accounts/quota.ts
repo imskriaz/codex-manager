@@ -60,8 +60,7 @@ import {
 import {
   autoReloadWindowForAccount,
   handleCodexAppRestartPreference,
-  promptWindowReloadForAccount,
-  reloadWindowNow
+  promptWindowReloadForAccount
 } from "./switchEffects";
 
 const AUTO_SWITCH_ENABLED = "autoSwitchEnabled";
@@ -1096,14 +1095,7 @@ async function executeActiveResetPlan(
   view.refresh();
   const message = `Reset quota for ${active.email}; staying on the current account (weekly threshold ${resetThreshold}%).`;
   recordAutoSwitchDashboardNotice(message, "info", { accountId: active.id });
-  // Resetting the current account changes the quota consumed by the running
-  // Codex session even though credentials did not change; reload to ensure the
-  // host observes the new quota immediately.
   void vscode.window.showInformationMessage(message);
-  if (getCodexManagerConfiguration().get<boolean>(AUTO_SWITCH_RELOAD_WINDOW_ENABLED, false)) {
-    void handleCodexAppRestartPreference({ allowManualPrompt: false });
-    await reloadWindowNow(!userInitiated);
-  }
   return true;
 }
 

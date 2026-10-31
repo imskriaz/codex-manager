@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { readManuallyStoppedCodexSessionIds } from '../src/services/codexSessionResume';
+import { getCodexHomeStateKey } from '../src/codex/authFile';
+import { hasCodexSessionAutoResumeOptIn } from '../src/services/codexSessionPreferences';
 import { filterAutoResumeGoalSessionIds } from '../src/services/codexSessionAutoResumeSelection';
 import { configureSqliteStateStore, SqliteStateStore } from "../src/storage/sqliteState";
 import { clearCodexSessionManualStop, isCodexSessionAutoResumeDisabled, markCodexSessionManualStop, orderCodexSessionRecoveryIds, readCodexSessionPreferences, readCodexSessionTitleOverrides, writeCodexSessionPreference, writeCodexSessionTitleOverride, reconcileCodexSessionTitles, claimCodexSessionQueue, finishCodexSessionQueueClaim, retireCodexSessionQueue, readQueuedCodexSessionPreferences } from "../src/services/codexSessionPreferences";
@@ -15,6 +17,36 @@ const ids = [
 ];
 let root: string | undefined;
 let store: SqliteStateStore | undefined;
+
+it('reads only requested preferences and titles, deduplicates keys, and isolates corrupt rows', async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), 'codex-preference-index-'));
+  store = await SqliteStateStore.open(path.join(root, 'manager.sqlite'));
+  configureSqliteStateStore(store);
+  writeCodexSessionPreference(root, ids[0]!, { autoResume: false });
+  const parse = vi.spyOn(JSON, 'parse');
+  const values = readCodexSessionPreferences(root, [ids[0]!, ids[0]!.toUpperCase(), ids[1]!]);
+  expect(values.get(ids[0]!)).toMatchObject({ autoResume: false });
+  expect(values.get(ids[0]!.toUpperCase())).toMatchObject({ autoResume: false });
+  expect(parse).toHaveBeenCalledTimes(1);
+  parse.mockClear();
+  readCodexSessionPreferences(root, []); readCodexSessionTitleOverrides(root, []);
+  expect(parse).not.toHaveBeenCalled();
+  parse.mockRestore();
+  store.prepare('INSERT INTO state(namespace,key,value) VALUES(?,?,?)').run('codex-session-preferences', `${getCodexHomeStateKey(root)}:${ids[1]}`, '{broken');
+  expect(readCodexSessionPreferences(root, [ids[1]!, ids[0]!]).get(ids[0]!)).toMatchObject({ autoResume: false });
+  expect(hasCodexSessionAutoResumeOptIn(root)).toBe(false);
+  writeCodexSessionPreference(root, ids[0]!, { autoResume: true });
+  expect(hasCodexSessionAutoResumeOptIn(root)).toBe(true);
+  expect(hasCodexSessionAutoResumeOptIn(path.join(root, 'another-home'))).toBe(false);
+  expect(hasCodexSessionAutoResumeOptIn(root)).toBe(true);
+  writeCodexSessionPreference(root, ids[0]!, { autoResume: false });
+  expect(hasCodexSessionAutoResumeOptIn(root)).toBe(false);
+  const prepare = vi.spyOn(store, 'prepare');
+  readCodexSessionPreferences(root, [ids[0]!, ids[1]!]);
+  const query = prepare.mock.calls.find(([sql]) => sql.startsWith('SELECT key,value'))![0];
+  expect(store.prepare(`EXPLAIN QUERY PLAN ${query}`).all('codex-session-preferences', '[]').some(row => String(row['detail']).includes('INDEX'))).toBe(true);
+  prepare.mockRestore();
+});
 
 afterEach(async () => {
   configureSqliteStateStore(undefined);

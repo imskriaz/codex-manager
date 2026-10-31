@@ -6,7 +6,7 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 vi.mock("fs/promises", { spy: true });
 import { SqliteStateStore, configureSqliteStateStore } from "../src/storage/sqliteState";
 import { getCodexHomeStateKey } from "../src/codex/authFile";
-import { invalidateSessionCatalogue, readSessionCatalogue, saveSessionCatalogue, pruneSessionCache, removeDeletedSessionCache, saveSessionStatus } from "../src/storage/sqliteSessions";
+import { invalidateSessionCatalogue, isSessionCatalogueGenerationCurrent, readSessionCatalogue, saveSessionCatalogue, pruneSessionCache, removeDeletedSessionCache, saveSessionStatus } from "../src/storage/sqliteSessions";
 import { readCodexCliSessions } from "../src/services/codexSessionResume";
 import { writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import * as settings from '../src/infrastructure/config/extensionSettings';
@@ -75,6 +75,8 @@ it("uses native transitions before their buffered write, and never promotes expi
 it("prevents an old scan from restoring deleted metadata and isolates Codex homes", () => {
   const old = invalidateSessionCatalogue(store, root); saveSessionCatalogue(store, root, old, [row], Date.now());
   const current = invalidateSessionCatalogue(store, root);
+  expect(isSessionCatalogueGenerationCurrent(store, root, old)).toBe(false);
+  expect(isSessionCatalogueGenerationCurrent(store, root, current)).toBe(true);
   saveSessionCatalogue(store, root, old, [row], Date.now()); expect(readSessionCatalogue(store, root)?.invalidated).toBe(true);
   saveSessionCatalogue(store, root, current, [], Date.now()); expect(readSessionCatalogue(store, root)?.rows).toEqual([]);
   expect(readSessionCatalogue(store, path.join(root, "other"))).toBeUndefined();

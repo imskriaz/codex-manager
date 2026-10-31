@@ -3,17 +3,19 @@ import { recordPersistentEvent } from "../utils/persistentLog";
 import { onDidChangeConfiguration } from "../storage/configurationEvents";
 import * as vscode from "vscode";
 import { isAutoResumeEnabled } from "../infrastructure/config/extensionSettings";
-import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, readCodexCliSessionRecoveryMetadata, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
+import { closeOpenCodexSessionTabs, openCodexSessionInVsCode, observeRunningCodexSession, readCodexCliSessionRecoveryMetadata, toSessionLogRef, readOpenCodexSessionIds, readRecentRunningCodexSessionIds, onDidInspectRunningCodexSessions, resolveCodexHome, SESSION_ID_PATTERN } from "./codexSessionResume";
 import { listCodexSessionLiveStates } from "./codexSessionLive";
 import * as path from "path";
 import { filterAutoResumeGoalSessionIds, readAutoResumeGoalCandidateIds, isAutoResumeGoalOnlyEnabled, readAutoResumeCodexSessionIds } from "./codexSessionAutoResumeSelection";
-import { orderCodexSessionRecoveryIds, readQueuedCodexSessionPreferences, readCodexSessionPreferences, hasCodexSessionAutoResumeOptIn, isCodexSessionAutoResumeEnabled } from "./codexSessionPreferences";
+import { orderCodexSessionRecoveryIds, readQueuedCodexSessionPreferences, readCodexSessionPreferences, hasCodexSessionAutoResumeOptIn } from "./codexSessionPreferences";
 import { getSqliteMementoStorage, getSqliteStateStore } from "../storage/sqliteState";
 import { runCrossWindowExclusive } from "../utils/crossWindowOperations";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import type { DashboardCliSessionSummary } from "../domain/dashboard/types";
 import type { CodexSessionRecoveryMetadata } from "./codexSessionResume";
 import { resumeCodexSessionWork } from "./codexSessionRecovery";
+import { getNativeCodexSessionRunning } from "./codexNativeSessionStatus";
+import { createAutoResumeKeepAwake } from './autoResumeKeepAwake';
 
 export const AUTO_RESUME_SESSION_IDS_KEY = "codexManager.autoResumeSessionIds";
 export const AUTO_RESUME_OPEN_SESSION_IDS_KEY = "codexManager.autoResumeOpenSessionIds";
@@ -33,7 +35,11 @@ const recoveryIds = new WeakMap<object, string[]>();
 
 function filterSessionAutoResumeIds(home: string, ids: readonly string[]): string[] {
   const preferences = readCodexSessionPreferences(home, ids);
-  return ids.filter(id => !preferences.get(id)?.manualStop && isCodexSessionAutoResumeEnabled(home, id));
+  const enabled = isAutoResumeEnabled();
+  return ids.filter(id => {
+    const preference = preferences.get(id);
+    return !preference?.manualStop && preference?.autoResume !== false && (enabled || preference?.autoResume === true);
+  });
 }
 const openRecoveryIds = new WeakMap<object, string[]>();
 const unrestoredOpenSnapshots = new WeakSet<object>();
@@ -514,6 +520,7 @@ export function persistOpenCodexSessions(
 /** Track for the whole host lifetime; retain the previous host's snapshot before replacing it. */
 export function registerCodexSessionAutoResumeTracking(context: AutoResumeContext): vscode.Disposable {
   unrestoredOpenSnapshots.add(context.workspaceState);
+  const keepAwake = createAutoResumeKeepAwake();
   const controller = new AbortController();
   let dirty = false;
   let running = false;
@@ -532,7 +539,9 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
         while (dirty && !controller.signal.aborted) {
           dirty = false;
           try {
-            await persistOpenCodexSessions(context, undefined, controller.signal);
+            const ids = await persistOpenCodexSessions(context, undefined, controller.signal);
+            const preferences = readCodexSessionPreferences(resolveCodexHome(), ids);
+            keepAwake.setActive(!controller.signal.aborted && ids.some(id => !preferences.get(id)?.queue && !preferences.get(id)?.queueError));
             retryAfter = 0;
           } catch (error) {
             if (controller.signal.aborted) break;
@@ -555,6 +564,7 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
       tabs ??= vscode.window.tabGroups?.onDidChangeTabs?.(capture);
       capture();
     } else {
+      keepAwake.setActive(false);
       tabs?.dispose();
       tabs = undefined;
       retryAfter = 0;
@@ -574,14 +584,17 @@ export function registerCodexSessionAutoResumeTracking(context: AutoResumeContex
     if (!running && home === path.resolve(resolveCodexHome())) capture();
   });
   const stopStorage = getSqliteStateStore()?.subscribe(["session-status"], () => { if (!running) capture(); });
+  const stopPreferences = getSqliteStateStore()?.subscribe(["session-preferences"], refreshSubscription);
   refreshSubscription();
   return { dispose: () => {
     if (controller.signal.aborted) return;
     controller.abort(new Error("Codex Manager is shutting down."));
+    keepAwake.dispose();
     if (timer) clearTimeout(timer);
     tabs?.dispose();
     inspections.dispose();
     stopStorage?.();
+    stopPreferences?.();
     configuration?.dispose();
   } };
 }
@@ -601,9 +614,14 @@ export function resumePersistedCodexSessions(
         return "idle";
       }
       if (resolveCodexHome() !== home) throw new Error("The Codex home changed. Saved recovery was retained.");
+      if (getNativeCodexSessionRunning(home, sessionId) === true) {
+        observeRunningCodexSession({ id: sessionId, title: sessionId, status: 'running' });
+        recordPersistentEvent("info", "auto-resume", "Native session already running; tab left unchanged", details);
+        return "running";
+      }
       phase = "readiness";
       recordPersistentEvent("info", "auto-resume", "Opening official Codex before recovery", details);
-      await openCodexSessionInVsCode(sessionId, signal, true, 120_000, true);
+      await openCodexSessionInVsCode(sessionId, signal, !readOpenCodexSessionIds(false).includes(sessionId), 120_000, true);
       phase = "continuation";
       const outcome = await resumeCodexSessionWork(sessionId, signal);
       recordPersistentEvent("info", "auto-resume", "Official recovery path completed", { ...details, outcome, durationMs: Date.now() - startedAt });
@@ -785,7 +803,7 @@ export function resumePersistedCodexSessions(
   }).finally(() => restoreControllers.delete(controller));
 }
 
-function isAutoResumeAvailable(): boolean {
+export function isAutoResumeAvailable(): boolean {
   return isAutoResumeEnabled() || hasCodexSessionAutoResumeOptIn(resolveCodexHome());
 }
 

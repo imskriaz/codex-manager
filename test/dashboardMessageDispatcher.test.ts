@@ -21,4 +21,7 @@ it("leaves action auditing to the action handler and excludes startup and histor
   expect(audit).not.toHaveBeenCalled();
   await dispatchDashboardClientMessage({ type: "dashboard:setting", key: "persistentLoggingEnabled", value: false }, handlers);
   expect(audit).toHaveBeenCalledOnce();
+  handlers.onRetryConnection = vi.fn();
+  await dispatchDashboardClientMessage({ type: "dashboard:retry-connection" }, handlers);
+  expect(handlers.onRetryConnection).toHaveBeenCalledOnce();
 });

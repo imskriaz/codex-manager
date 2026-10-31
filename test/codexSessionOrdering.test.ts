@@ -2,6 +2,13 @@ import { expect, it } from "vitest";
 import { mergeDashboardPeers, stabilizeCliSessionOrder } from "../src/domain/codexSessionState";
 import type { DashboardCliSessionSummary } from "../src/domain/dashboard/types";
 const row = (id: string, deviceId?: string): DashboardCliSessionSummary => ({ id, title: id, status: "idle", deviceId });
+it('keeps running rows in place across uncertain refreshes, then applies confirmed completion', () => {
+  const order=new Map<string,number>(), running=new Map<string,boolean>();
+  const initial=[row('idle'),{...row('busy'),status:'running' as const}];
+  expect(stabilizeCliSessionOrder(initial,order,running).map(row=>row.id)).toEqual(['busy','idle']);
+  expect(stabilizeCliSessionOrder(initial.map(row=>({...row,status:'unknown' as const})),order,running).map(row=>row.id)).toEqual(['busy','idle']);
+  expect(stabilizeCliSessionOrder([row('busy'),row('idle')],order,running).map(row=>row.id)).toEqual(['idle','busy']);
+});
 it("preserves initial positions as timestamps and running states change", () => {
   const order = new Map<string, number>();
   expect(stabilizeCliSessionOrder([row("a"), row("b")], order).map(row => row.id)).toEqual(["a", "b"]);

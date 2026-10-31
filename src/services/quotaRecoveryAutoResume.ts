@@ -1,0 +1,134 @@
+import * as vscode from "vscode";
+import type { AccountsRepository } from "../storage";
+import { accountQuotaAvailability } from "../utils/quotaWindows";
+import { waitWithin } from "../utils/concurrency";
+import { getAccountAutoQueuePolicy, toAutoQueueOrderValue } from "../application/accounts/autoQueueOrder";
+import { isAutoQueueSnapshotFresh } from "../domain/autoQueuePolicy";
+import { needsWindowReloadForAccount } from "../presentation/workbench/windowRuntimeAccount";
+import { resolveCodexHome } from "./codexSessionResume";
+import {
+  formatAutoResumeResult,
+  isAutoResumeAvailable,
+  persistRunningCodexSessions,
+  resumePersistedCodexSessions
+} from "./codexSessionAutoResume";
+import { publishDashboardRealtime } from "./dashboardRealtime";
+import { onDidRecordAccountQuotaCheck } from "./quotaCheckCoordination";
+import type { CodexManagerAccountRecord } from "../core/types";
+
+/** Remember exhaustion across restarts; resume through the existing verified native recovery path. */
+export function registerQuotaRecoveryAutoResume(
+  context: vscode.ExtensionContext,
+  repo: AccountsRepository,
+  canUseAccount: (id: string) => boolean
+): vscode.Disposable {
+  let disposed = false,
+    running = false,
+    retryAt = 0;
+  let exhaustionHome: string | undefined;
+  const check = async () => {
+    if (disposed || running || Date.now() < retryAt) return;
+    running = true;
+    try {
+      const home = resolveCodexHome(),
+        key = `codexManager.quotaRecovery:${home}`;
+      let pending = context.workspaceState.get<boolean>(key) === true;
+      if (!isAutoResumeAvailable()) {
+        exhaustionHome = undefined;
+        if (pending)
+          await waitWithin(
+            Promise.resolve(context.workspaceState.update(key, undefined)),
+            5_000,
+            "Quota recovery state could not be cleared."
+          );
+        return;
+      }
+      if (exhaustionHome === home) {
+        await waitWithin(
+          Promise.resolve(context.workspaceState.update(key, true)),
+          5_000,
+          "Quota recovery could not save exhaustion."
+        );
+        exhaustionHome = undefined;
+        pending = true;
+      }
+      const accounts = await waitWithin(repo.listAccounts(), 5_000, "Quota recovery could not read accounts.");
+      if (disposed || home !== resolveCodexHome() || !isAutoResumeAvailable()) return;
+      const active = accounts.find((account) => account.isActive);
+      if (!active || !canUseAccount(active.id)) return;
+      const availability = accountQuotaAvailability(active);
+      // A failed refresh does not erase previously confirmed exhaustion.
+      if (availability === "exhausted" || accountQuotaAvailability({ ...active, quotaError: undefined }) === "exhausted") {
+        if (!pending)
+          await waitWithin(
+            Promise.resolve(context.workspaceState.update(key, true)),
+            5_000,
+            "Quota recovery could not save its pending state."
+          );
+        return;
+      }
+      if (
+        !pending ||
+        availability !== "available" ||
+        active.resetCreditAttempt ||
+        needsWindowReloadForAccount(active.id) ||
+        !isAutoQueueSnapshotFresh(toAutoQueueOrderValue(active), getAccountAutoQueuePolicy())
+      )
+        return;
+      retryAt = Date.now() + 60_000;
+      await persistRunningCodexSessions(context);
+      const latest = (
+        await waitWithin(repo.listAccounts(), 5_000, "Quota recovery could not verify the active account.")
+      ).find((account) => account.isActive);
+      if (
+        disposed ||
+        home !== resolveCodexHome() ||
+        !isAutoResumeAvailable() ||
+        latest?.id !== active.id ||
+        !canUseAccount(active.id) ||
+        latest.resetCreditAttempt ||
+        needsWindowReloadForAccount(latest.id) ||
+        accountQuotaAvailability(latest) !== "available" ||
+        !isAutoQueueSnapshotFresh(toAutoQueueOrderValue(latest), getAccountAutoQueuePolicy())
+      )
+        return;
+      const result = await resumePersistedCodexSessions(context);
+      const message = formatAutoResumeResult(result);
+      if (message) {
+        const level = result.failed.length ? "warning" : "info";
+        publishDashboardRealtime({ type: "dashboard:notice", level, message });
+        if (result.failed.length) void vscode.window.showWarningMessage(message);
+        else void vscode.window.showInformationMessage(message);
+      }
+      if (!result.failed.length)
+        await waitWithin(
+          Promise.resolve(context.workspaceState.update(key, undefined)),
+          5_000,
+          "Quota recovery completion could not be saved."
+        );
+    } catch (error) {
+      retryAt = Date.now() + 60_000;
+      console.warn("[codexManager] quota recovery deferred; saved work retained", error);
+    } finally {
+      running = false;
+    }
+  };
+  const stopQuotaChecks = onDidRecordAccountQuotaCheck((account) => {
+    if (!account.isActive || !isAutoResumeAvailable() || !canUseAccount(account.id)) return;
+    if (accountQuotaAvailability(account as CodexManagerAccountRecord) === "exhausted")
+      exhaustionHome = resolveCodexHome();
+    void check();
+  });
+  void check();
+  const timer = setInterval(() => {
+    void check();
+  }, 5_000);
+  timer.unref?.();
+  return {
+    dispose() {
+      disposed = true;
+      stopQuotaChecks();
+      clearInterval(timer);
+    }
+  };
+}

@@ -22,6 +22,13 @@ describe("durable Codex composer state", () => {
     expect(restoreFailedCliComposerDraft({ ...submitted, text: "" }, submitted)).toEqual(submitted);
     expect(restoreFailedCliComposerDraft({ ...submitted, text: "follow-up" }, submitted).text).toBe("follow-up");
   });
+  it('clears submitted text and attachments immediately and restores them on failure', () => {
+    const submitted={text:'Follow up',attachments:[{id:'note',kind:'text' as const,name:'note.txt',mimeType:'text/plain',size:4,data:'test'}],model:'chosen'};
+    const cleared=acknowledgeCliComposerDraft(submitted,submitted);
+    expect(cleared).toEqual({...submitted,text:'',attachments:[]});
+    expect(restoreFailedCliComposerDraft(cleared,submitted)).toEqual(submitted);
+    expect(restoreFailedCliComposerDraft({...cleared,text:'New edit'},submitted).text).toBe('New edit');
+  });
   it("restores settings offline and validates them against the fresh model catalog", () => {
     const saved = { text: "draft", attachments: [], model: "retired", reasoningEffort: "xhigh", sandboxMode: "read-only" as const };
     expect(resolveCliComposerSettings(saved, undefined)).toMatchObject({ model: "retired", reasoningEffort: "xhigh", sandboxMode: "read-only" });

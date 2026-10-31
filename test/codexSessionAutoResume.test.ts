@@ -7,6 +7,7 @@ import * as autoResumeSelection from "../src/services/codexSessionAutoResumeSele
 import * as sessionEditor from "../src/services/codexSessionResume";
 import * as diagnostics from "../src/utils/persistentLog";
 import { getNativeCodexSessionRunning, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
+import { createAutoResumeKeepAwake } from '../src/services/autoResumeKeepAwake';
 import {
   AUTO_RESUME_SESSION_IDS_KEY,
   AUTO_RESUME_OPEN_SESSION_IDS_KEY,
@@ -71,7 +72,7 @@ it.each([true, false])("opens the official tab regardless of the retired editor 
     const result = await resumePersistedCodexSessions(state.context);
     expect(result).toMatchObject({ attempted: 1, opened: 0, failed: [] });
     expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal));
-    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), true, 120_000, true);
+    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), false, 120_000, true);
     expect(waitForNativeCodexSessionReady).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "vscode", outcome: "idle" }));
     expect(vscode.commands.executeCommand).not.toHaveBeenCalledWith("vscode.openWith", expect.anything(), expect.anything(), expect.anything());
@@ -89,13 +90,14 @@ it("opens the official Codex editor before requesting continuation", async () =>
   try {
     await resumePersistedCodexSessions(state.context);
     expect(resume).toHaveBeenCalledWith(id, expect.any(AbortSignal));
-    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), true, 120_000, true);
+    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), false, 120_000, true);
     expect(open.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]!);
     expect(log).toHaveBeenCalledWith("info", "auto-resume", "Official recovery path completed", expect.objectContaining({ recoveryPath: "vscode", outcome: "continued" }));
   } finally { resume.mockRestore(); open.mockRestore(); log.mockRestore(); }
 });
 
-it("opens the official tab for running work without closing it or duplicating continuation", async () => {
+it("leaves verified running work and its tab unchanged", async () => {
+  const observe = vi.spyOn(sessionEditor, 'observeRunningCodexSession').mockImplementation(() => undefined);
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
   const id = "01a04882-d037-7a42-ad24-9afb61901181", state = createContext([id]);
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback: unknown) => fallback } as never);
@@ -106,10 +108,25 @@ it("opens the official tab for running work without closing it or duplicating co
     // Enable only the Auto Resume prerequisites.
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => ["autoResumeEnabled", "autoSwitchEnabled"].includes(key) ? true : fallback } as never);
     expect(await resumePersistedCodexSessions(state.context)).toMatchObject({ opened: 1, failed: [] });
-    expect(resume).toHaveBeenCalledOnce();
-    expect(open).toHaveBeenCalledOnce();
+    expect(resume).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({id,status:'running'}));
     expect(sessionEditor.closeOpenCodexSessionTabs).not.toHaveBeenCalled();
-  } finally { open.mockRestore(); resume.mockRestore(); }
+  } finally { open.mockRestore(); resume.mockRestore(); observe.mockRestore(); }
+});
+
+it.each([true, false])('reuses an existing tab and opens only missing tabs during idle recovery (open: %s)', async alreadyOpen => {
+  vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+  const id = '01a04882-d037-7a42-ad24-9afb61901181', state = createContext([id]);
+  vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: () => true } as never);
+  const tabs = vi.spyOn(sessionEditor, 'readOpenCodexSessionIds').mockReturnValue(alreadyOpen ? [id] : []);
+  const open = vi.spyOn(sessionEditor, 'openCodexSessionInVsCode').mockResolvedValue(undefined);
+  const resume = vi.spyOn(await import('../src/services/codexSessionRecovery'), 'resumeCodexSessionWork').mockResolvedValue('continued');
+  try {
+    await resumePersistedCodexSessions(state.context);
+    expect(open).toHaveBeenCalledWith(id, expect.any(AbortSignal), !alreadyOpen, 120_000, true);
+    expect(resume).toHaveBeenCalledOnce();
+  } finally { tabs.mockRestore(); open.mockRestore(); resume.mockRestore(); }
 });
 
 it.each([false, undefined])("does not trust a recorded running summary when official activity is %s", async native => {
@@ -224,7 +241,7 @@ beforeEach(() => {
     viewType: "chatgpt.conversationEditor", uri: { scheme: "openai-codex", authority: "route", path: `/local/${id}` }
   } })) }] } });
   vi.spyOn(sessionEditor, "closeOpenCodexSessionTabs").mockReset().mockResolvedValue(undefined);
-  vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockImplementation(readNativeTabs);
+  vi.spyOn(sessionEditor, "readOpenCodexSessionIds").mockImplementation(readNativeTabs).mockClear();
   vi.spyOn(sessionEditor, "readRunningCodexSessionIds").mockImplementation(async (_home, _signal, open) => open ?? []).mockClear();
   vi.spyOn(sessionEditor, "readQuotaInterruptedCodexSessionIds").mockResolvedValue([]);
   vi.spyOn(sessionEditor, "readCodexCliSessionSummary").mockResolvedValue(undefined);
@@ -380,9 +397,14 @@ describe("durable open conversation recovery", () => {
       active = true;
       await vi.advanceTimersByTimeAsync(30_000);
       expect(state.read(AUTO_RESUME_OPEN_SESSION_IDS_KEY)).toEqual([first]);
+      const power = vi.mocked(createAutoResumeKeepAwake).mock.results.at(-1)!.value;
+      expect(power.setActive).toHaveBeenLastCalledWith(true);
       const writes = state.context.workspaceState.update.mock.calls.length;
       await vi.advanceTimersByTimeAsync(30_000);
       expect(state.context.workspaceState.update.mock.calls.length).toBe(writes);
+      active = false;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(power.setActive).toHaveBeenLastCalledWith(false);
     } finally { tracker.dispose(); vi.useRealTimers(); }
   });
 

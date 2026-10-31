@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({ connect: vi.fn(), lstat: vi.fn() }));
 vi.unmock("../src/services/codexNativeSessionStatus");
 vi.mock("node:net", () => ({ createConnection: mocks.connect }));
 vi.mock("node:fs/promises", () => ({ lstat: mocks.lstat, realpath: async (file: string) => file }));
-import { cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
+import { cancelNativeCodexSessionTurn, disposeNativeCodexSessionStatus, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "../src/services/codexNativeSessionStatus";
 
 class FakeSocket extends EventEmitter {
   writable = true;
@@ -15,6 +15,26 @@ class FakeSocket extends EventEmitter {
   write(frame: Buffer) { this.sent.push(JSON.parse(frame.subarray(4).toString())); return true; }
   destroy() { if (this.writable) { this.writable = false; this.emit("close"); } return this; }
 }
+
+it.each(['confirmed','changed','timeout','disconnect'])('steers a running native turn once and reports %s outcomes',async outcome=>{
+  const reading=readNativeCodexSessionRunning(home,id);await initialize();message(snapshot('active'));await reading;
+  const pending=steerNativeCodexSessionTurn(home,id,'native-turn',[{type:'text',text:'Follow up'}],home);
+  const result=outcome==='confirmed'?expect(pending).resolves.toBe(true):expect(pending).rejects.toThrow();
+  for(let i=0;i<50;i++)await Promise.resolve();
+  const sent=socket.sent.find(value=>value.method==='thread-follower-steer-turn');
+  expect(sent).toMatchObject({version:1,targetClientId:'owner',params:{conversationId:id,input:[{type:'text',text:'Follow up'}],restoreMessage:{cwd:home,context:{workspaceRoots:[home]}}}});
+  if(outcome==='timeout')await vi.advanceTimersByTimeAsync(10_001);
+  else if(outcome==='disconnect')socket.destroy();
+  else message({type:'response',requestId:sent.requestId,resultType:'success',result:{result:{turnId:outcome==='changed'?'another-turn':'native-turn'}}});
+  await result;
+  expect(socket.sent.filter(value=>value.method==='thread-follower-steer-turn')).toHaveLength(1);
+});
+
+it('refuses native steering after a turn finishes without sending another message',async()=>{
+  const reading=readNativeCodexSessionRunning(home,id);await initialize();message(snapshot('idle'));await reading;
+  await expect(steerNativeCodexSessionTurn(home,id,'native-turn',[],home)).rejects.toThrow('finished');
+  expect(socket.sent.some(value=>value.method==='thread-follower-steer-turn')).toBe(false);
+});
 
 it("uses the verified native owner to accept Continue once in its recorded project", async () => {
   const reading = readNativeCodexSessionRunning(home, id); await initialize(); message(snapshot("idle")); await reading;

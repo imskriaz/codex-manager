@@ -10,11 +10,12 @@ vi.mock("child_process", async (original) => ({ ...await original<typeof import(
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
 import { observeRunningCodexSession, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
-import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
+import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
 import * as diagnostics from "../src/utils/persistentLog";
 import { readCodexSessionPreferences, writeCodexSessionPreference } from '../src/services/codexSessionPreferences';
 import { configureSqliteStateStore, SqliteStateStore } from '../src/storage/sqliteState';
+import { setCodexSessionAutoResume, setCodexSessionQueue } from '../src/services/codexSessionResume';
 
 const id = "01a04882-d037-7a42-ad24-9afb61901199";
 let root: string;
@@ -41,12 +42,42 @@ afterEach(async () => {
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as vscode.WorkspaceConfiguration);
   vi.clearAllMocks();
   vi.mocked(startNativeCodexSessionTurn).mockReset().mockResolvedValue(false);
+  vi.mocked(steerNativeCodexSessionTurn).mockReset().mockResolvedValue(false);
   vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined);
   configureSqliteStateStore(undefined); preferenceStore.close();
   await rm(root, { recursive: true, force: true });
 });
 
 describe("native App Server new sessions", () => {
+  it.each([false, true])('switches between Auto Resume, off, and queue without losing uncertain starts (global %s)', globalEnabled => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'autoResumeEnabled' ? globalEnabled : fallback } as vscode.WorkspaceConfiguration);
+    setCodexSessionAutoResume(id, true);
+    expect(readCodexSessionPreferences(root, [id]).get(id)?.autoResume).toBe(globalEnabled ? undefined : true);
+    setCodexSessionQueue(id, true, 2);
+    expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject({ autoResume: false, queue: true, priority: 2 });
+    setCodexSessionAutoResume(id, false);
+    expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject({ autoResume: false, queue: false });
+    setCodexSessionQueue(id, true, 3);
+    setCodexSessionAutoResume(id, true);
+    expect(readCodexSessionPreferences(root, [id]).get(id)?.autoResume).toBe(globalEnabled ? undefined : true);
+    expect(readCodexSessionPreferences(root, [id]).get(id)?.queue).not.toBe(true);
+    writeCodexSessionPreference(root, id, { queue: true, queueClaimId: 'uncertain', queueError: 'Review this start' });
+    expect(() => setCodexSessionAutoResume(id, true)).toThrow('Review the previous queue attempt');
+    setCodexSessionAutoResume(id, false);
+    expect(readCodexSessionPreferences(root, [id]).get(id)).toMatchObject({ autoResume: false, queue: false, queueClaimId: 'uncertain', queueError: 'Review this start' });
+  });
+
+  it('preserves the previous mode when storage fails or the queue is full', () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === 'autoResumeEnabled' ? false : fallback } as vscode.WorkspaceConfiguration);
+    setCodexSessionAutoResume(id, true);
+    const write = vi.spyOn(preferenceStore, 'set').mockImplementation(() => { throw new Error('storage full'); });
+    expect(() => setCodexSessionQueue(id, true)).toThrow('storage full');
+    expect(readCodexSessionPreferences(root, [id]).get(id)?.autoResume).toBe(true);
+    write.mockRestore();
+    for (let index = 0; index < 256; index++) writeCodexSessionPreference(root, `${index}`.padStart(36, '0'), { queue: true });
+    expect(() => setCodexSessionQueue(id, true)).toThrow('queue is full');
+    expect(readCodexSessionPreferences(root, [id]).get(id)?.autoResume).toBe(true);
+  });
   it.each(['archive', 'delete'] as const)('retires queue preferences only after confirmed native %s', async operation => {
     await mkdir(path.join(root, 'sessions'));
     await writeFile(path.join(root, 'sessions', `rollout-${id}.jsonl`), JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n');
@@ -182,6 +213,11 @@ describe("native App Server new sessions", () => {
       observeRunningCodexSession(session); observeRunningCodexSession(session);
       if (scenario === "delayed") await appendFile(transcript, event("task_started"));
       await vi.waitFor(() => expect(updates[0]?.status).toBe("running"));
+      if (scenario === 'active') {
+        vi.mocked(steerNativeCodexSessionTurn).mockResolvedValueOnce(true);
+        await steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'restored-turn',text:'Follow up',projectPath:root});
+        expect(steerNativeCodexSessionTurn).toHaveBeenCalledWith(root,id,'restored-turn',expect.any(Array),root);
+      }
       expect(await cancelCodexCliSessionTurn(id)).toBe(false);
       if (scenario !== "finished") await appendFile(transcript, scenario === "changed" ? event("task_started", "different-turn") + event("task_complete", "different-turn") : event(scenario === "cancelled" ? "turn_aborted" : "task_complete"));
       if (scenario === "changed") {
@@ -235,6 +271,13 @@ describe("native App Server new sessions", () => {
     const sending = expect(sendCodexCliSessionMessage({ sessionId: id, text: "Continue", onStarted: accepted })).rejects.toThrow("stopped");
     try {
       await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+      await expect(steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'another-turn',text:'Follow up'})).rejects.toThrow('turn changed');
+      vi.mocked(steerNativeCodexSessionTurn).mockResolvedValueOnce(true);
+      await steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'owned-native-turn',text:'Follow up',projectPath:root});
+      expect(steerNativeCodexSessionTurn).toHaveBeenCalledWith(root,id,'owned-native-turn',[expect.objectContaining({type:'text',text:'Follow up'})],root);
+      vi.mocked(steerNativeCodexSessionTurn).mockRejectedValueOnce(new Error('Steer outcome unconfirmed'));
+      await expect(steerCodexCliSessionTurn({sessionId:id,expectedTurnId:'owned-native-turn',text:'Do not retry'})).rejects.toThrow('unconfirmed');
+      expect(steerNativeCodexSessionTurn).toHaveBeenCalledTimes(2);
       const first = cancelCodexCliSessionTurn(id), second = cancelCodexCliSessionTurn(id);
       await vi.waitFor(() => expect(cancelNativeCodexSessionTurn).toHaveBeenCalledOnce());
       expect(readCodexSessionPreferences(root, [id]).get(id)?.manualStop).toBe(true);

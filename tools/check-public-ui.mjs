@@ -80,9 +80,19 @@ try {
     });
     await page.goto(`${origin}/projects/share/fixture`);
     await page.getByRole('button',{name:'Board actions',exact:true}).click();
-    const ideaColumn=page.getByRole('menuitemcheckbox',{name:'Idea',exact:true});
-    assert.equal(await ideaColumn.getAttribute('aria-checked'),'false','Public board follows the same hidden-Idea default');
-    await ideaColumn.click();await page.keyboard.press('Escape');
+    const ideaColumn=page.getByRole('menuitemcheckbox',{name:/^(?:✓ )?Idea$/});
+    assert.equal(await ideaColumn.getAttribute('aria-checked'),'true','Public board shows Idea by default');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.getByLabel('Task project',{exact:true}).count(),0,'Shared boards omit the project selector');
+    assert.equal(await page.locator('.task-board-heading').count(),0,'Shared boards omit the unused context row');
+    assert.ok((await page.locator('.task-board-header').boundingBox()).height <= 40,'Shared board toolbar stays compact');
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth + 2),'Shared board fits the viewport');
+    await page.screenshot({path:path.join(output,`board-${width}.png`)});
+    for(const name of ['List','Gantt','Calendar','Board']) {
+      await page.getByRole('tab',{name,exact:true}).click();
+      await page.reload();
+      await page.getByRole('tab',{name,exact:true,selected:true}).waitFor();
+    }
     await page.locator('.task-board-card').filter({hasText:'Release work'}).click();
     await page.getByRole('tab',{name:'Activities',exact:true}).click();
     await page.locator('.task-detail-panel .cli-session-message').nth(1).waitFor();

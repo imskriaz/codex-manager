@@ -1,10 +1,15 @@
 import { vi } from "vitest";
 
+vi.mock('../src/services/autoResumeKeepAwake', () => ({
+  createAutoResumeKeepAwake: vi.fn(() => ({ setActive: vi.fn(), dispose: vi.fn() }))
+}));
+
 vi.mock("../src/services/codexNativeSessionStatus", () => ({
   readNativeCodexSessionRunning: vi.fn(async () => undefined),
   waitForNativeCodexSessionReady: vi.fn(async () => undefined),
   startNativeCodexSessionTurn: vi.fn(async () => false),
   cancelNativeCodexSessionTurn: vi.fn(async () => false),
+  steerNativeCodexSessionTurn: vi.fn(async () => false),
   getNativeCodexSessionRunning: vi.fn(() => undefined),
   disposeNativeCodexSessionStatus: vi.fn()
 }));

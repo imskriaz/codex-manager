@@ -17,12 +17,25 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   assert.ok((await page.locator('.task-project-select').boundingBox()).width<=90,'A short project name does not expand into empty toolbar space');
 
   await page.getByRole('button',{name:'Board actions',exact:true}).click();
-  const ideaColumn=page.getByRole('menuitemcheckbox',{name:'Idea',exact:true});
-  assert.equal(await ideaColumn.getAttribute('aria-checked'),'false','Idea is hidden by default');
-  await ideaColumn.click();
+  const ideaColumn=page.getByRole('menuitemcheckbox',{name:/^(?:✓ )?Idea$/});
+  assert.equal(await ideaColumn.getAttribute('aria-checked'),'true','Idea is shown by default');
   await page.keyboard.press('Escape');
   await page.locator('.task-board-card').filter({ hasText: 'Release work' }).waitFor();
   assert.deepEqual(await page.locator('.task-board-column-heading strong').evaluateAll(items=>items.map(item=>item.firstChild.textContent)), ['Idea','Planned','Running','Completed']);
+  for (const name of ['List','Gantt','Calendar','Board']) {
+    await page.getByRole('tab',{name,exact:true}).click();
+    await page.reload();
+    await page.getByRole('tab',{name,exact:true,selected:true}).waitFor();
+  }
+  await page.evaluate(() => {
+    window.__originalSetItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) { if(key==='codexManager.taskBoardView.v1') throw new DOMException('Storage full','QuotaExceededError'); return window.__originalSetItem.call(this,key,value); };
+  });
+  await page.getByRole('tab',{name:'List',exact:true}).click();
+  await page.getByRole('tab',{name:'List',exact:true,selected:true}).waitFor();
+  await page.getByText('Display choice is kept in this tab only. Browser storage is unavailable.',{exact:true}).first().waitFor();
+  await page.evaluate(() => { Storage.prototype.setItem = window.__originalSetItem; });
+  await page.getByRole('tab',{name:'Board',exact:true}).click();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2), 'Task board keeps horizontal scrolling inside its columns');
   assert.equal(await page.locator('.task-board-card').filter({ hasText: 'Evaluate stack beyond expectations' }).count(), 0, 'Grouped session is absent from root cards');
   const taskSearch=page.getByRole('searchbox',{name:'Search tasks',exact:true});
@@ -399,7 +412,10 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     await api.getByText('POST /api/message', { exact: true }).waitFor();
     await page.route('**/api/schema', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ actions: ['getProjectBoard'], token: { name: 'Scoped automation', projectPaths: ['C:/host-project'] } }) }));
     await api.getByRole('tab', { name: 'Test', exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('.api-test-form select')?.value === 'getProjectBoard' && ![...document.querySelectorAll('.api-test-form button')].find(button => button.textContent === 'Send request once')?.disabled);
+    const permissionCheck = api.locator('.api-access-check small');
+    await Promise.race([permissionCheck.waitFor(), api.getByText(/^Token check failed:/).waitFor()]);
+    if (!await permissionCheck.count()) await api.getByRole('button', { name: 'Recheck token', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.api-test-form select')?.value === 'getProjectBoard' && ![...document.querySelectorAll('.api-test-form button')].find(button => button.textContent === 'Send request once')?.disabled).catch(async error => { console.error('API tester state:', await api.locator('.api-test-form').innerText()); throw error; });
     assert.equal(await api.getByRole('button', { name: 'Send request once', exact: true }).isDisabled(), false, 'API tester can use the newly created token');
     await page.screenshot({ path: path.join(output, `api-access-${width}x${height}.png`) });
     await api.getByRole('button', { name: 'Close', exact: true }).click();

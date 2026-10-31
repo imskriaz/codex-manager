@@ -1348,7 +1348,7 @@ describe("refreshSingleQuota token automation state", () => {
     );
   });
 
-  it("resets the active account in place without switching", async () => {
+  it.each([true, false])("resets the active account without switching or reloading (reload setting %s)", async reloadEnabled => {
     vi.mocked(vscode.window.showInformationMessage).mockClear();
     vi.spyOn(vscode.workspace, "getConfiguration").mockReturnValue({
       get: vi.fn((key: string, defaultValue?: unknown) => {
@@ -1358,7 +1358,7 @@ describe("refreshSingleQuota token automation state", () => {
           autoSwitchWeeklyThreshold: 20,
           autoResetEnabled: true,
           autoResetWeeklyThreshold: 10,
-          autoSwitchReloadWindowEnabled: false
+          autoSwitchReloadWindowEnabled: reloadEnabled
         };
         return values[key] ?? defaultValue;
       }),

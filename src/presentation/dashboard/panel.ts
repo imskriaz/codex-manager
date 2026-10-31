@@ -135,6 +135,8 @@ export class DashboardPanelController {
   private publishAgain = false;
   private forcePublish = false;
   private panelRevision = 0;
+  private reconnectReopened = false;
+  private pendingActions = 0;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -165,6 +167,7 @@ export class DashboardPanelController {
       }
     });
     const peersChanged = dashboardPeerHost?.onDidChangeDashboardPeers(() => {
+      if (dashboardPeerHost?.getDashboardPeerState().connectedPeers?.every(peer => peer.connected)) this.reconnectReopened = false;
       this.schedulePublishState();
       void this.publishCliSessionsRealtime();
     });
@@ -254,8 +257,11 @@ export class DashboardPanelController {
             }
           },
           onAction: async (actionMessage) => {
-            await this.handleActionMessage(actionMessage);
+            this.pendingActions++;
+            try { await this.handleActionMessage(actionMessage); }
+            finally { this.pendingActions--; }
           },
+          onRetryConnection: () => this.reopenAfterDisconnect(),
           onSetting: async (key, value) => {
             await this.handleSettingUpdate(key, value);
           },
@@ -306,6 +312,25 @@ export class DashboardPanelController {
     }
 
     await this.publishState(true);
+  }
+
+  private async reopenAfterDisconnect(): Promise<void> {
+    if (!this.panel || this.panel.visible === false) return;
+    if (this.pendingActions) {
+      await this.postNotice('warning', 'Dashboard recovery is waiting for pending actions to finish.');
+      return;
+    }
+    if (this.reconnectReopened) {
+      await this.postNotice('warning', 'The selected system is still unavailable. Reopen the dashboard or select another system to retry.');
+      return;
+    }
+    this.reconnectReopened = true;
+    try { this.panel.dispose(); this.open(true); }
+    catch (error) {
+      this.reconnectReopened = false;
+      void vscode.window.showErrorMessage(`Codex Manager could not reopen its dashboard. ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
   }
 
   private getPanelTitle(): string {

@@ -51,7 +51,7 @@ function cliSessionKey(session: DashboardCliSessionSummary): string {
   return `${session.deviceId ?? "local"}:${session.id}`;
 }
 
-const SESSION_METADATA = ["model","reasoningEffort","goal","sessionSurface","subAgent","parentSessionId","agentName"] as const;
+const SESSION_METADATA = ["model","reasoningEffort","goal","sessionSurface","subAgent","parentSessionId","agentName","archived"] as const;
 
 /** Missing metadata is inconclusive; explicit goal removal and runtime status remain authoritative. */
 export function mergeCachedCliSessions(
@@ -76,13 +76,15 @@ export function mergeCachedCliSession(
   incoming: DashboardCliSessionSummary,
   previous?: DashboardCliSessionSummary
 ): DashboardCliSessionSummary {
+  if (previous && sameCliSessionTarget(incoming,previous) && Date.parse(incoming.updatedAt ?? '') < Date.parse(previous.updatedAt ?? '')) return previous;
   if (!previous || !sameCliSessionTarget(incoming,previous) ||
       !(previous.projectPath && !incoming.projectPath || SESSION_METADATA.some(key=>incoming[key]===undefined && previous[key]!==undefined))) return incoming;
   return { ...incoming,projectPath:incoming.projectPath || previous.projectPath,
     model:incoming.model ?? previous.model,reasoningEffort:incoming.reasoningEffort ?? previous.reasoningEffort,
     goal:incoming.goal === undefined ? previous.goal : incoming.goal,
     sessionSurface:incoming.sessionSurface ?? previous.sessionSurface,subAgent:incoming.subAgent ?? previous.subAgent,
-    parentSessionId:incoming.parentSessionId ?? previous.parentSessionId,agentName:incoming.agentName ?? previous.agentName };
+    parentSessionId:incoming.parentSessionId ?? previous.parentSessionId,agentName:incoming.agentName ?? previous.agentName,
+    archived:incoming.archived ?? previous.archived };
 }
 
 let browserLocalSystemId: string | undefined;
@@ -179,8 +181,13 @@ export async function readLegacyCliComposerDraft(key: string): Promise<CliCompos
 }
 
 /** One durable record per device/session, so separate open chats cannot overwrite each other. */
+const unsavedComposerDrafts = new Set<string>();
+export function hasUnsavedCliComposerDrafts(): boolean { return unsavedComposerDrafts.size > 0; }
+
 export async function writeCliComposerDraft(key: string, value: CliComposerDraft): Promise<boolean> {
   if (!normalizeCliComposerDraft(value)) return false;
+  if (value.text || value.attachments.length) unsavedComposerDrafts.add(key);
+  else unsavedComposerDrafts.delete(key);
   const result = new Promise<boolean>((resolve) => {
     const existing = draftWrites.get(key);
     draftWrites.set(key, { value, waiters: [...(existing?.waiters ?? []), resolve] });
@@ -201,6 +208,7 @@ async function flushComposerWrites(): Promise<void> {
     const [key, pending] = draftWrites.entries().next().value!;
     draftWrites.delete(key);
     const saved = await saveCliComposerDraft(key, pending.value);
+    if (saved && !draftWrites.has(key)) unsavedComposerDrafts.delete(key);
     for (const resolve of pending.waiters) resolve(saved);
   }
 }

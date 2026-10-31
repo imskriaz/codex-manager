@@ -66,6 +66,38 @@ describe("dashboard tab persistence", () => {
     expect(state.workspaceState.get(key)).toBe(false);
   });
 
+  it('reopens only the dashboard once during a stuck connection without reloading VS Code', async () => {
+    const { DashboardPanelController } = await import('../src/presentation/dashboard/panel');
+    const controller = new DashboardPanelController(context() as never, {} as never);
+    controller.open();
+    const recovery = controller as unknown as { reopenAfterDisconnect(): Promise<void>; pendingActions: number };
+    const commands = vi.mocked(vscode.commands.executeCommand).mock.calls.length;
+    recovery.pendingActions = 1;
+    await recovery.reopenAfterDisconnect();
+    expect(created.dispose).not.toHaveBeenCalled();
+    recovery.pendingActions = 0;
+    await recovery.reopenAfterDisconnect();
+    expect(created.dispose).toHaveBeenCalledOnce();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
+    expect(vscode.window.createWebviewPanel).toHaveBeenLastCalledWith('codexQuotaSummary', expect.any(String), expect.objectContaining({preserveFocus:true}), expect.any(Object));
+    await recovery.reopenAfterDisconnect();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(2);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledTimes(commands);
+  });
+
+  it('reports a failed reconnect reopen and allows a later retry', async () => {
+    const { DashboardPanelController } = await import('../src/presentation/dashboard/panel');
+    const controller = new DashboardPanelController(context() as never, {} as never);
+    controller.open();
+    const recovery = controller as unknown as { reopenAfterDisconnect(): Promise<void> };
+    renderShell.mockImplementationOnce(() => { throw new Error('assets unavailable'); });
+    await expect(recovery.reopenAfterDisconnect()).rejects.toThrow('assets unavailable');
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('assets unavailable'));
+    controller.open();
+    await recovery.reopenAfterDisconnect();
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledTimes(4);
+  });
+
   it("restores the dashboard without stealing focus from recovering conversations", async () => {
     const module = await import("../src/presentation/dashboard/panel");
     const state = context(true);

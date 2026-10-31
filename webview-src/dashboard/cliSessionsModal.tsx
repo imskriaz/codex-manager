@@ -314,6 +314,7 @@ function SessionRowMenu(props: {
 
 export function CliSessionsPage(props: CliSessionsPageProps) {
   const [section, setSection] = useState<CliSessionSection>("active");
+  const sessionRunningOrder = useRef(new Map<string, boolean>());
   const [search, setSearch] = useState("");
 
   const [attachmentReading, setAttachmentReading] = useState(false);
@@ -331,7 +332,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
   const [draftReadyKeys, setDraftReadyKeys] = useState<Set<string>>(new Set());
   const loadedDraftKeys = useRef(new Set<string>());
   const scheduledDrafts = useRef(new Map<string, ComposerDraft>());
-  const [draftStorageFailedKeys, setDraftStorageFailedKeys] = useState(new Set<string>());
+  const draftStorageWarned = useRef(false);
   const [legacyDraft, setLegacyDraft] = useState<{ key: string; value: ComposerDraft }>();
   const dirtyDraftFields = useRef(new Map<string, Set<keyof ComposerDraft>>());
   const markDraftFields = (fields: Array<keyof ComposerDraft>): void => {
@@ -410,8 +411,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     for (const [key, value] of Object.entries(composerDrafts)) {
       if (!draftReadyKeys.has(key) || scheduledDrafts.current.get(key) === value) continue;
       scheduledDrafts.current.set(key, value);
-      void writeCliComposerDraft(key, value).then((saved) => {
-        setDraftStorageFailedKeys((current) => { const next = new Set(current); if (saved) next.delete(key); else next.add(key); return next; });
+      const pending = [...submittedDrafts.current.values()].reverse().find(submitted => submitted.key === key);
+      const durable = pending && !value.text && !value.attachments.length ? { ...value, text: pending.text, attachments: pending.attachments } : value;
+      void writeCliComposerDraft(key, durable).then((saved) => {
+        if (!saved && (durable.text || durable.attachments.length) && !draftStorageWarned.current) {
+          draftStorageWarned.current = true;
+          reportLocalFeedback({ level: 'warning', message: 'Browser storage could not save your draft. It is kept in this tab; copy it before closing or reopening.' });
+        }
       });
     }
   }, [composerDrafts, draftReadyKeys]);
@@ -459,14 +465,13 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
         const draft = current[submitted.key];
         if (!draft) return current;
         return { ...current, [submitted.key]: result.status === "completed"
-          ? acknowledgeCliComposerDraft(draft, submitted)
+          ? { ...draft }
           : restoreFailedCliComposerDraft(draft, submitted) };
       });
     }
   }, [props.submissionResults]);
 
   const legacyDraftWarning = legacyDraft?.key === draftKey ? <span class="cli-draft-recovery" role="status"><small>Older draft · unverified system.</small><button type="button" onClick={() => { const value = legacyDraft.value; setComposerDrafts(current => { const edited = Object.fromEntries([...(dirtyDraftFields.current.get(draftKey) ?? [])].map(field => [field, current[draftKey]?.[field]])); return { ...current, [draftKey]: { ...value, ...edited } }; }); setLegacyDraft(undefined); }}>Restore here</button><button type="button" onClick={() => setLegacyDraft(undefined)}>Dismiss</button></span> : null;
-  const draftStorageWarning = draftStorageFailedKeys.has(draftKey) ? <p class="cli-composer-unavailable" role="status">This draft is kept in this tab. Browser storage could not save it; copy it before closing or reloading. <button type="button" onClick={() => { const value = composerDrafts[draftKey]; if (value) void writeCliComposerDraft(draftKey, value).then((saved) => { if (saved) { setDraftStorageFailedKeys((current) => { const next = new Set(current); next.delete(draftKey); return next; }); } }); }}>Retry saving draft</button></p> : null;
 
   useEffect(() => {
     if (!props.composerConfig) return;
@@ -602,9 +607,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
     const sessions = reconcileCliSessionStatuses(props.sessions.filter(session =>
       selectedSystem && selectedSystem !== localPeerId ? session.deviceId === selectedSystem : !session.remote
     ), props.liveStates ?? {});
-    return stabilizeCliSessionOrder(sessions, sessionOrder.current).sort((left, right) =>
-      Number(isCodexSessionRunning(right)) - Number(isCodexSessionRunning(left))
-    );
+    return stabilizeCliSessionOrder(sessions, sessionOrder.current, sessionRunningOrder.current);
   }, [props.sessions, props.liveStates, selectedSystem, localPeerId]);
   const composerSystemKey = selectedSystem && selectedSystem !== localPeerId ? selectedSystem : "local";
   const composerSystem = useRef(composerSystemKey);
@@ -819,23 +822,35 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
 
   const submit = (): void => {
     if ((currentTurnRunning && !canSteer) || props.steering || props.starting || attachmentReading || props.connected === false || !draftReadyKeys.has(draftKey)) return;
-    const text = draft.trim();
-    if (!text && !attachments.length) {
+    const current = composerDraftsRef.current[draftKey] ?? { text: '', attachments: EMPTY_CHAT_ATTACHMENTS };
+    const text = current.text.trim(), uploads = current.attachments;
+    if (!text && !uploads.length) {
       reportLocalFeedback({ level: "warning", message: "Write a message before sending it to Codex." });
       return;
     }
-    try { prepareChatInput(text, attachments); }
+    try { prepareChatInput(text, uploads); }
     catch (error) { reportLocalFeedback({ level: "error", message: error instanceof Error ? error.message : String(error) }); return; }
+    const submitted = { ...current, key: draftKey };
+    markDraftFields(['text', 'attachments']);
+    composerDraftsRef.current = { ...composerDraftsRef.current, [draftKey]: acknowledgeCliComposerDraft(current, submitted) };
+    setComposerDrafts(composerDraftsRef.current);
     let requestId: string | undefined;
+    try {
     if (!props.selectedSession) {
-      requestId = props.onStart({ text, attachments, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath });
+      requestId = props.onStart({ text, attachments: uploads, model, reasoningEffort, sandboxMode, projectPath: newChatProject ?? projectPath });
     } else if (canSteer && props.liveState?.turnId) {
-      requestId = props.onSteer?.({ text, attachments, expectedTurnId: props.liveState.turnId });
+      requestId = props.onSteer?.({ text, attachments: uploads, expectedTurnId: props.liveState.turnId });
     } else {
-      requestId = props.onSend({ text, attachments, model, reasoningEffort, sandboxMode, projectPath: props.selectedSession.projectPath ?? projectPath });
+      requestId = props.onSend({ text, attachments: uploads, model, reasoningEffort, sandboxMode, projectPath: props.selectedSession.projectPath ?? projectPath });
     }
-    if (!requestId) { reportLocalFeedback({ level: "warning", message: "Your message was not sent. The draft is saved; reconnect or wait for the current request before trying again." }); return; }
-    const submitted = { ...composerDrafts[draftKey]!, key: draftKey, text: draft, attachments };
+    } catch (error) {
+      setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
+      reportLocalFeedback({ level: 'error', message: error instanceof Error ? error.message : String(error) }); return;
+    }
+    if (!requestId) {
+      setComposerDrafts(previous => ({ ...previous, [draftKey]: restoreFailedCliComposerDraft(previous[draftKey] ?? current, submitted) }));
+      reportLocalFeedback({ level: "warning", message: "Your message was not sent. The draft is saved; reconnect or wait for the current request before trying again." }); return;
+    }
     submittedDrafts.current.set(requestId, submitted);
     // Keep the submitted draft durable until the host confirms completion.
     reportLocalFeedback({ level: "info", message: canSteer ? "Sending your follow-up to the running turn…" : props.selectedSession ? "Codex is working on your request…" : "Starting a new Codex chat…" });
@@ -1086,7 +1101,6 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               {showLatestButton ? <button type="button" class="cli-scroll-latest" aria-label="Scroll to latest message" title="Scroll to latest message" onClick={scrollToLatest}><ChevronIcon /></button> : null}</div>
               {turnChanges ? <div class="cli-turn-change-bar" role="group" aria-label="Turn changes"><span>{turnChanges.files} file{turnChanges.files === 1 ? "" : "s"} changed <b class="is-added">+{turnChanges.additions}</b> <b class="is-removed">−{turnChanges.deletions}</b></span><button type="button" onClick={() => openContextTab("reviews")}>View changes</button></div> : null}
 
-              {draftStorageWarning}
               {goal ? <details class={"cli-goal-strip is-" + goal.status}><summary><span class="cli-goal-mark" aria-hidden="true" title="Goal status">◎</span><span title={goal.objective}>{goal.status === "active" ? "Pursuing goal" : goal.status === "complete" ? "Goal completed" : "Goal " + goal.status.replaceAll("_", " ")} <strong>{goal.objective}</strong></span><small title="Elapsed goal time">{goal.elapsedMs !== undefined ? formatDuration(goal.elapsedMs) : ""}</small>{props.onGoalStatus && props.selectedSession?.goal && !selectedArchived && !props.selectedSession.subAgent && !props.selectedSession.parentSessionId && ["active", "paused", "blocked", "usage_limited"].includes(goal.status) ? <button type="button" class="cli-icon-button cli-goal-control" disabled={props.goalUpdating || props.connected === false || props.selectedSession.status === "unknown"} aria-busy={props.goalUpdating} aria-label={goal.status === "active" ? "Pause goal" : "Resume goal"} title={goal.status === "active" ? "Pause automatic goal continuation" : "Resume this goal in Codex"} onClick={event => { event.preventDefault(); event.stopPropagation(); props.onGoalStatus?.(goal.status === "active" ? "paused" : "active"); }}>{goal.status === "active" ? <Icon><path d="M8 5v14M16 5v14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></Icon> : <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>}</button> : null}<ChevronIcon /></summary><div><p>{goal.objective}</p><small>{goal.detail || "Goal status and elapsed time update with the conversation."}</small></div></details> : null}
               {props.selectedSession?.queueEnabled ? <div class="cli-queue-strip" role="status"><span class="cli-queue-mark" aria-hidden="true" title="Queued session">☷</span><span title="This session waits until active work finishes"><strong>Queued</strong><small>Priority {props.selectedSession.queuePriority ?? 3}</small></span><button type="button" class="cli-icon-button" disabled={props.mutating || props.connected === false} aria-label="Remove session from queue" title="Remove from queue" onClick={() => props.onQueue(props.selectedSession!, false)}><CloseIcon /></button></div> : null}
               {selectedArchived ? (
@@ -1140,7 +1154,7 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
               <section class="cli-message-viewport cli-new-chat-viewport"><div class="cli-new-chat-copy"><span class="cli-empty-mark">{props.logoUri ? <img src={props.logoUri} alt="" aria-hidden="true" /> : <CodexSessionIcon />}</span><h2>What should we build in {composerProjects.find((project) => project.path === newChatProject)?.label ?? "your workspace"}?</h2><p>Describe the task and Codex will work directly in this project.</p></div></section>
               <UsageBanner account={props.account} onAction={(message) => reportLocalFeedback({ level: "info", message })} />
 
-              {legacyDraftWarning}{draftStorageWarning}
+              {legacyDraftWarning}
               {props.starting ? <div class="cli-composer-unavailable is-running" role="status"><span class="cli-live-spinner" aria-hidden="true" />Starting your Codex session…</div> : <Composer attachments={attachments} attachmentReading={attachmentReading} onAttach={(files) => void addAttachments(files)} onRemoveAttachment={(id) => setAttachments((current) => current.filter((file) => file.id !== id))} draft={draft} model={model} reasoningEffort={reasoningEffort} sandboxMode={sandboxMode} projectPath={newChatProject} projects={composerProjects} models={props.composerConfig?.models ?? []} reasoningOptions={reasoningOptions} sending={false} stopping={false} submitDisabled={props.connected === false || !draftReadyKeys.has(draftKey)} onDraft={setDraft} onModel={(nextModel) => { setModel(nextModel); const option = props.composerConfig?.models.find((item) => item.id === nextModel); setReasoningEffort(option?.defaultReasoningEffort ?? option?.reasoningEfforts[0]); }} onReasoning={setReasoningEffort} onSandbox={setSandboxMode} onProject={(next) => { setProjectPath(next); setNewChatProject(next); }} onSubmit={submit} composerHeight={layout.composerHeight} onResize={beginComposerResize} onResizeKeyDown={(event) => adjustComposerWithKeyboard(event.key, event.shiftKey)} onStop={() => undefined} />}
             </>
           ) : <WorkspaceEmpty logoUri={props.logoUri} running={runningCount} active={activeSessions.length} archived={archivedSessions.length} onNewChat={() => startNewChat()} />}

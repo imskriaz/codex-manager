@@ -1,5 +1,5 @@
 import { getCodexHomeStateKey } from "../codex/authFile";
-import { getSqliteStateStore } from "../storage/sqliteState";
+import { getSqliteStateStore, type SqliteStateStore } from "../storage/sqliteState";
 import { randomUUID } from 'node:crypto';
 import { isSessionQueuePriority } from '../domain/sessionQueuePriority';
 import { isAutoResumeEnabled } from '../infrastructure/config/extensionSettings';
@@ -20,6 +20,7 @@ export type CodexSessionPreference = {
 const NAMESPACE = "codex-session-preferences";
 const TITLE_NAMESPACE = "codex-session-title-overrides";
 const pendingManualStops = new Map<string, CodexSessionPreference>();
+const autoResumeOptIns = new WeakMap<SqliteStateStore, { home: string; revision: number; enabled: boolean }>();
 type TitleOverride = { title: string; writtenAt: number };
 const key = (home: string, id: string) => `${getCodexHomeStateKey(home)}:${id.toLowerCase()}`;
 
@@ -35,10 +36,10 @@ function normalizePreference(value: unknown): CodexSessionPreference {
     : { ...preference, queueError: 'Saved queue priority is invalid. Choose a positive whole number before requeuing.' };
 }
 
-function readNamespace(home: string, namespace: string): Map<string, unknown> {
+function readNamespace(home: string, namespace: string, ids: readonly string[]): Map<string, unknown> {
   const store = getSqliteStateStore();
   const result = new Map<string, unknown>();
-  if (!store) return result;
+  if (!store || !ids.length) return result;
   if (namespace === NAMESPACE) for (const [pendingKey, patch] of pendingManualStops) {
     try {
       store.transaction(() => store.set(NAMESPACE, pendingKey, { ...normalizePreference(store.get(NAMESPACE, pendingKey)), ...patch }));
@@ -46,15 +47,17 @@ function readNamespace(home: string, namespace: string): Map<string, unknown> {
     } catch { /* Keep Stop effective in this host until durable storage recovers. */ }
   }
   const prefix = `${getCodexHomeStateKey(home)}:`;
-  for (const row of store.prepare("SELECT key,value FROM state WHERE namespace=? AND key LIKE ? LIMIT 30000").all(namespace, `${prefix}%`)) {
-    const keyValue = String(row["key"]);
-    try { result.set(keyValue.slice(prefix.length), JSON.parse(String(row["value"]))); } catch { /* Ignore one corrupt optional preference. */ }
+  // Indexed lookups scale with the requested sessions instead of all saved history.
+  const keys = [...new Set(ids.map(id => `${prefix}${id.toLowerCase()}`))];
+  for (const row of store.prepare("SELECT key,value FROM state WHERE namespace=? AND key IN (SELECT value FROM json_each(?))").all(namespace, JSON.stringify(keys))) {
+    try { result.set(String(row['key']).slice(prefix.length), JSON.parse(String(row['value']))); }
+    catch { /* Ignore one corrupt optional preference. */ }
   }
   return result;
 }
 
 export function readCodexSessionPreferences(home: string, ids: readonly string[]): Map<string, CodexSessionPreference> {
-  const values = readNamespace(home, NAMESPACE);
+  const values = readNamespace(home, NAMESPACE, ids);
   const result = new Map<string, CodexSessionPreference>();
   for (const id of ids) {
     const value = values.get(id.toLowerCase());
@@ -135,7 +138,11 @@ export function hasCodexSessionAutoResumeOptIn(home: string): boolean {
   const store = getSqliteStateStore();
   if (!store) return false;
   const prefix = `${getCodexHomeStateKey(home)}:`;
-  return Boolean(store.prepare("SELECT 1 FROM state WHERE namespace=? AND key LIKE ? AND json_extract(value,'$.autoResume')=1 LIMIT 1").get(NAMESPACE, `${prefix}%`));
+  const revision = store.revision('session-preferences'), cached = autoResumeOptIns.get(store);
+  if (cached?.home === prefix && cached.revision === revision) return cached.enabled;
+  const enabled = Boolean(store.prepare("SELECT 1 FROM state WHERE namespace=? AND key LIKE ? AND json_valid(value) AND json_extract(value,'$.autoResume')=1 LIMIT 1").get(NAMESPACE, `${prefix}%`));
+  autoResumeOptIns.set(store, { home: prefix, revision, enabled });
+  return enabled;
 }
 
 export function isCodexSessionAutoResumeEnabled(home: string, id: string): boolean {
@@ -159,7 +166,7 @@ export function orderCodexSessionRecoveryIds(home: string, ids: readonly string[
 }
 
 export function readCodexSessionTitleOverrides(home: string, ids: readonly string[]): Map<string, string> {
-  const values = readNamespace(home, TITLE_NAMESPACE);
+  const values = readNamespace(home, TITLE_NAMESPACE, ids);
   const result = new Map<string, string>();
   for (const id of ids) {
     const title = values.get(id.toLowerCase());
@@ -180,7 +187,7 @@ export function writeCodexSessionTitleOverride(home: string, id: string, title: 
 
 /** Native confirmation retires the bridge so later renames in Codex remain authoritative. */
 export function reconcileCodexSessionTitles(home: string, rows: ReadonlyArray<{ id: string; title: string }>): Map<string, string> {
-  const store = getSqliteStateStore(), values = readNamespace(home, TITLE_NAMESPACE);
+  const store = getSqliteStateStore(), values = readNamespace(home, TITLE_NAMESPACE, rows.map(row => row.id));
   const overrides = new Map<string, string>();
   const retired = rows.filter(row => {
     const value = values.get(row.id.toLowerCase());

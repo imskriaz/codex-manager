@@ -2,7 +2,7 @@ import { sqliteConfiguration } from "../storage/sqliteContext";
 import { clearExplicitSessionGoalPause, isExplicitSessionGoalPause, markExplicitSessionGoalPause, readCodexSessionGoals } from "./codexSessionGoals";
 import { getCodexHomeStateKey } from "../codex/authFile";
 import { isCodexCapacityInterruption, isCodexQuotaInterruption } from "../domain/codexSessionState";
-import { getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
+import { getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, cancelNativeCodexSessionTurn, steerNativeCodexSessionTurn, waitForNativeCodexSessionReady } from "./codexNativeSessionStatus";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -18,7 +18,7 @@ import { attachCodexAppServerPrompts, cancelCodexAppServerPrompts } from "./code
 import { getCodexSessionLiveState, reserveCodexSessionLive } from "./codexSessionLive";
 import { recordNativeSessionStatus, recordSessionLive } from "./sessionRecording";
 import { publishDashboardRealtime } from "./dashboardRealtime";
-import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatuses, readSessionCatalogue, saveSessionCatalogue, invalidateSessionCatalogue, removeDeletedSessionCache } from "../storage/sqliteSessions";
+import { readRunningTurnRows, saveRunningTurnRows, readSessionDiscovery, saveSessionDiscovery, readSessionStatuses, readSessionCatalogue, saveSessionCatalogue, invalidateSessionCatalogue, isSessionCatalogueGenerationCurrent, removeDeletedSessionCache } from "../storage/sqliteSessions";
 import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
@@ -215,6 +215,7 @@ export async function readCodexCliSessions(
       const work = fs.access(codexHome).then(() => readLocalSessionList(codexHome, limit, generation)).then(rows => {
         try { saveSessionCatalogue(store, codexHome, generation, rows, startedAt); }
         catch (error) { recordPersistentEvent("warning", "session-list", "Session cache could not be saved; live history remains available", undefined, error); }
+        if (!isSessionCatalogueGenerationCurrent(store, codexHome, generation)) throw new Error('Sessions changed during discovery. Reading current history instead.');
         return withCurrentSessionStatuses(store,codexHome,rows);
       }).finally(() => { if (catalogueRefreshes.get(key) === work) catalogueRefreshes.delete(key); });
       catalogueRefreshes.set(key, work);
@@ -225,7 +226,7 @@ export async function readCodexCliSessions(
       if (stale) void refresh().catch(error => recordPersistentEvent("warning", "session-list", "Saved history retained while discovery retries", undefined, error));
       return withCurrentSessionStatuses(store,codexHome,cached.rows,stale);
     }
-    return refresh();
+    return await refresh();
   } catch (error) {
     recordPersistentEvent("warning", "session-list", "Session cache unavailable; reading local history", undefined, error);
     return readLocalSessionList(codexHome, limit);
@@ -1250,14 +1251,28 @@ async function waitForNativeSessionTurn(sessionId: string, transcript: string | 
 }
 
 /** Steering uses the owned active connection, independently of the turn's mutation lock. */
-export async function steerCodexCliSessionTurn(options: { sessionId: string; text: string; attachments?: ChatAttachment[]; expectedTurnId: string }): Promise<void> {
+export async function steerCodexCliSessionTurn(options: { sessionId: string; text: string; attachments?: ChatAttachment[]; expectedTurnId: string; projectPath?: string }): Promise<void> {
   validateSessionId(options.sessionId);
+  const sessionId = options.sessionId.toLowerCase(), home = resolveCodexHome();
   const prepared = prepareChatInput(options.text, options.attachments);
-  const active = activeAppServerTurns.get(options.sessionId);
+  const native = ownedNativeTurn(home, sessionId);
+  let nativeTurnId = native?.turnId;
+  if (!nativeTurnId && nativeTurnObservers.has(`${home}:${sessionId}`)) {
+    const transcript = await findCliSessionTranscript(home, sessionId);
+    const state = await readRecentTranscriptTurnState(transcript);
+    if (state === 'active' && transcript) nativeTurnId = cliTranscriptTurnStateCache.get(transcript)?.turnId;
+  }
+  if (nativeTurnId) {
+    if (native?.stop || !options.expectedTurnId || options.expectedTurnId !== nativeTurnId) throw new Error('The active Codex turn changed or is stopping. Refresh before sending guidance.');
+    if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(prepared.text, prepared.attachments), resolveCliProjectPath(options.projectPath)))
+      throw new Error('The native Codex owner is unavailable. Your follow-up was not sent; refresh before retrying.');
+    return;
+  }
+  const active = activeAppServerTurns.get(sessionId);
   if (!active || !active.turnId || active.cancelRequested) throw new Error("This window does not own an active Codex turn to steer. Refresh the session.");
   if (!options.expectedTurnId || options.expectedTurnId !== active.turnId) throw new Error("The active Codex turn changed. Refresh the session before sending guidance.");
   const result = await active.rpc.request<{ turnId?: string }>("turn/steer", {
-    threadId: options.sessionId, expectedTurnId: options.expectedTurnId,
+    threadId: sessionId, expectedTurnId: options.expectedTurnId,
     input: appServerChatInput(prepared.text, prepared.attachments)
   });
   if (result.turnId !== options.expectedTurnId) throw new Error("Codex did not confirm guidance for the expected turn. Refresh before retrying.");
@@ -1505,8 +1520,17 @@ export async function renameCodexCliSession(sessionId: string, name: string): Pr
 
 export function setCodexSessionAutoResume(sessionId: string, enabled: boolean): void {
   validateSessionId(sessionId);
-  if (enabled) clearCodexSessionManualStop(resolveCodexHome(), sessionId);
-  writeCodexSessionPreference(resolveCodexHome(), sessionId, { autoResume: enabled ? (isAutoResumeEnabled() ? undefined : true) : false });
+  if (typeof enabled !== 'boolean') throw new Error('Choose an Auto Resume state.');
+  const store = getSqliteStateStore(), home = resolveCodexHome();
+  if (!store) throw new Error('Session preference storage is unavailable. The change was not saved.');
+  store.transaction(() => {
+    const previous = readCodexSessionPreferences(home, [sessionId]).get(sessionId);
+    if (enabled && (previous?.queueClaimId || previous?.queueClaimedAt || previous?.queueError))
+      throw new Error('Review the previous queue attempt before enabling Auto Resume. Its start could not be confirmed.');
+    if (enabled) clearCodexSessionManualStop(home, sessionId);
+    writeCodexSessionPreference(home, sessionId, { autoResume: enabled ? (isAutoResumeEnabled() ? undefined : true) : false,
+      queue: false, priority: undefined, queueRevision: randomUUID() });
+  });
 }
 
 export function setCodexSessionQueue(sessionId: string, enabled: boolean, priority = 3): void {
@@ -1518,7 +1542,7 @@ export function setCodexSessionQueue(sessionId: string, enabled: boolean, priori
     const queued = readQueuedCodexSessionPreferences(home);
     if (enabled && !queued.has(sessionId) && queued.size >= 256) throw new Error('The session queue is full. Remove an entry before adding another.');
     if (enabled) clearCodexSessionManualStop(home, sessionId);
-    writeCodexSessionPreference(home, sessionId, { queue: enabled, priority: enabled ? priority : undefined, queueClaimedAt: undefined, queueClaimId: undefined, queueError: undefined, queueRevision: randomUUID() });
+    writeCodexSessionPreference(home, sessionId, { ...(enabled ? { autoResume: false } : {}), queue: enabled, priority: enabled ? priority : undefined, queueClaimedAt: undefined, queueClaimId: undefined, queueError: undefined, queueRevision: randomUUID() });
   });
 }
 

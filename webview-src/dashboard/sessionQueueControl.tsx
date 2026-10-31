@@ -6,6 +6,8 @@ import { isSessionQueuePriority } from '../../src/domain/sessionQueuePriority';
 
 export function SessionQueueControl(props: {
   session: DashboardCliSessionSummary; disabled: boolean;
+  autoResume: boolean;
+  onAutoResume: (session: DashboardCliSessionSummary, enabled: boolean) => void;
   onQueue: (session: DashboardCliSessionSummary, enabled: boolean, priority?: number) => void;
 }) {
   const { session } = props;
@@ -47,6 +49,7 @@ export function SessionQueueControl(props: {
     {open ? createPortal(<div ref={panel} popover="manual" class="cli-session-queue-menu is-floating" role="dialog" aria-label={`Queue ${session.title}`}
       onClick={event => event.stopPropagation()}>
       <header><div><strong>Run after other work</strong><small class="cli-queue-current">{session.queueError ? `Needs review · priority ${session.queuePriority ?? 3}` : session.queueEnabled ? `Queued · priority ${session.queuePriority ?? 3}` : 'Not queued'}</small></div><button type="button" class="cli-queue-close" aria-label="Close queue options" onClick={() => close(true)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 6 12 12M6 18 18 6" /></svg></button></header>
+      <div class="cli-queue-presets" role="group" aria-label="Auto Resume setting">{[true, false].map(enabled => <button type="button" aria-pressed={!session.queueEnabled && props.autoResume === enabled} disabled={props.disabled || (enabled && !!session.queueError)} onClick={() => { close(true); props.onAutoResume(session, enabled); }}>Auto Resume {enabled ? 'on' : 'off'}</button>)}</div>
       <p id={hintId} class="cli-queue-hint">Lower numbers run first. Equal priorities start together once active work finishes.</p>
       {session.queueError ? <p role="status" class="settings-note">{session.queueError}</p> : null}
       <div class="cli-queue-presets" aria-label="Priority presets">{[1,2,3].map(value => <button key={value} type="button" aria-pressed={Number(priority) === value} class={Number(priority) === value ? 'is-selected' : ''} onClick={() => setPriority(String(value))}><span>Priority {value}</span><small>{value === 1 ? 'First' : value === 2 ? 'Next' : 'Later'}</small></button>)}</div>

@@ -5,7 +5,16 @@
  * server feeds those timestamps into this registry so background automation on
  * another PC does not immediately re-check the same account.
  */
+import type { CodexManagerAccountRecord } from '../core/types';
+
 const lastChecks = new Map<string, number>();
+type AccountQuotaCheck = Partial<CodexManagerAccountRecord> & { id: string };
+const quotaCheckListeners = new Set<(account: AccountQuotaCheck) => void>();
+
+export function onDidRecordAccountQuotaCheck(listener: (account: AccountQuotaCheck) => void): () => void {
+  quotaCheckListeners.add(listener);
+  return () => { quotaCheckListeners.delete(listener); };
+}
 type CoordinatedQuotaSnapshot = {
   checkedAt: number;
   hourlyPercentage?: number;
@@ -26,11 +35,15 @@ export function recordQuotaCheck(accountId: string, checkedAt = Date.now()): voi
 }
 
 export function recordAccountQuotaCheck(
-  account: { id: string; email?: string; accountId?: string | null; lastQuotaAt?: number },
+  account: AccountQuotaCheck,
   checkedAt = account.lastQuotaAt ?? Date.now()
 ): void {
   for (const key of quotaIdentityKeys(account)) recordQuotaCheck(key, checkedAt);
   recordQuotaCheck(account.id, checkedAt);
+  for (const listener of quotaCheckListeners) {
+    try { listener(account); }
+    catch (error) { console.warn('[codexManager] quota recovery observation failed', error); }
+  }
 }
 
 export function recordPeerQuotaChecks(

@@ -11,6 +11,7 @@ import { EncryptedSyncManager } from "../../services/encryptedSync";
 import { WebDashboardServer } from "../../services/webDashboardServer";
 import { AlwaysOnlineServer } from "../../services/alwaysOnlineServer";
 import { waitWithin } from "../../utils/concurrency";
+import { registerQuotaRecoveryAutoResume } from "../../services/quotaRecoveryAutoResume";
 import { getCodexManagerConfiguration, isAutoResumeEnabled } from "../../infrastructure/config/extensionSettings";
 import {
   closeQuotaSummaryTabsForExtensionHostRestart,
@@ -222,6 +223,7 @@ export class AccountsWorkbench {
       this.context.subscriptions.push(this.refreshCoordinator.registerAuthFileWatcher(refreshers));
     });
     await measureStep("registerAutoRefreshScheduler", () => {
+      this.context.subscriptions.push(registerQuotaRecoveryAutoResume(this.context, this.repo, id => this.encryptedSync.canAutomateAccount(id)));
       this.context.subscriptions.push(
         registerAutoRefreshScheduler({
           context: this.context,

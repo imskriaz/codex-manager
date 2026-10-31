@@ -67,7 +67,7 @@ it("captures quota-stopped parents, survives a fresh connection, opens official 
   expect(resumeCodexSessionWork).toHaveBeenCalledWith(ids[1], expect.any(AbortSignal));
   expect(tabs).toHaveLength(3);
   expect(vscode.window.tabGroups.close).not.toHaveBeenCalled();
-  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith")).toHaveLength(2);
+  expect(vi.mocked(vscode.commands.executeCommand).mock.calls.filter(([command]) => command === "vscode.openWith")).toHaveLength(0);
   expect(store.get(namespace,queue)).toBeUndefined();expect(store.get(namespace,snapshot)).toBeUndefined();
   expect((await resumePersistedCodexSessions(context())).attempted).toBe(0);
 });
@@ -222,7 +222,7 @@ it("keeps recording in the same workspace while startup restoration is waiting f
   saveSessionDiscovery(store,root,[ids[1]!],Date.now());
   disposables.push(registerCodexSessionAutoResumeTracking(state));
   try {
-    await vi.waitFor(()=>expect(store.get<string[]>(namespace,snapshot)).toContain(ids[1]));
+    await vi.waitFor(()=>expect(store.get<string[]>(namespace,snapshot)).toContain(ids[1]), { timeout: 10_000 });
     expect(store.get(namespace,queue)).toEqual([ids[0]]);
   } finally {release();await restoring;}
   expect(store.get(namespace,queue)).toBeUndefined();

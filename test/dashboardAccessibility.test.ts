@@ -158,7 +158,7 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(settingsSource).toContain('description={(value) => `Dashboard zoom ${value}%`}');
     expect(settingsSource).toContain('scaleValues={[80, 100, 120, 140]}');
     expect(settingsSource).toContain('Reset zoom');
-    expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("!running && (session.interrupted || session.queueEnabled)");
+    expect(readFileSync("webview-src/dashboard/main.tsx", "utf8")).toContain("!running && (session.interrupted || session.queueEnabled || session.queueError)");
     const main = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     const css = readFileSync("media/webview/quotaSummary.css", "utf8");
     expect(main).toContain('cli-sessions-running-row ${running ? "is-running" : "is-interrupted"}');

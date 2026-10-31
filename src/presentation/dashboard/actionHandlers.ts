@@ -2017,7 +2017,7 @@ async function handleSteerCodexCliSessionTurn(payload: DashboardActionPayload | 
     await canonicalProjectPath(payload.projectPath) !== await canonicalProjectPath(session.projectPath))
     throw new Error("This session belongs to a different project. Open it from that project’s workspace.");
   await steerCodexCliSessionTurn({ sessionId: payload.sessionId, expectedTurnId: payload.expectedTurnId,
-    text: payload.text ?? "", attachments: payload.attachments });
+    text: payload.text ?? "", attachments: payload.attachments, projectPath: session.projectPath });
   return { cliSessionLive: getCodexSessionLiveState(payload.sessionId),
     notice: { level: "info" as const, message: "Follow-up sent to the active Codex turn." } };
 }
@@ -2106,7 +2106,7 @@ async function handleSetCodexSessionAutoResume(payload?: DashboardActionPayload)
   const session = await ensureCliSessionIsActive(payload.sessionId);
   setCodexSessionAutoResume(session.id, payload.autoResumeEnabled);
   const enabled = payload.autoResumeEnabled && isCodexSessionAutoResumeEnabled(resolveCodexHome(), session.id);
-  return { cliSession: { ...session, autoResumeEnabled: enabled }, notice: { level: "info" as const, message: enabled ? "Auto Resume enabled for this session." : "Auto Resume disabled for this session." } };
+  return { cliSession: { ...session, autoResumeEnabled: enabled, queueEnabled: false, queuePriority: undefined }, notice: { level: "info" as const, message: enabled ? "Auto Resume enabled for this session." : "Auto Resume disabled for this session." } };
 }
 
 async function handleSetCodexSessionQueue(payload?: DashboardActionPayload) {
@@ -2115,7 +2115,7 @@ async function handleSetCodexSessionQueue(payload?: DashboardActionPayload) {
   const priority = payload.queueEnabled ? payload.sessionQueuePriority ?? 3 : 3;
   const session = await ensureCliSessionIsActive(payload.sessionId);
   setCodexSessionQueue(session.id, payload.queueEnabled, priority);
-  return { cliSession: { ...session, queueEnabled: payload.queueEnabled, ...(payload.queueEnabled ? { queuePriority: priority } : { queuePriority: undefined }) }, notice: { level: "info" as const, message: payload.queueEnabled ? `Session queued at priority ${priority}.` : "Session removed from the recovery queue." } };
+  return { cliSession: { ...session, queueEnabled: payload.queueEnabled, queueError: undefined, ...(payload.queueEnabled ? { queuePriority: priority, autoResumeEnabled: false } : { queuePriority: undefined }) }, notice: { level: "info" as const, message: payload.queueEnabled ? `Session queued at priority ${priority}.` : "Session removed from the recovery queue." } };
 }
 
 async function handleRenameCodexCliSession(sessionId: string | undefined, name: string | undefined) {

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.1
+
+- Show Idea by default on task boards and remember Board, List, Gantt, or Calendar display choices across browser reloads.
+- Remove the project selector from shared boards and compact their toolbar and spacing.
+- Resume saved unfinished conversations when verified quota returns to the active account with Auto Resume enabled, including after a restart. Retain failed recovery for a bounded retry.
+- Reopen a stuck reconnecting VS Code dashboard panel without restarting VS Code. Preserve pending actions and prevent repeated reopen loops.
+- Leave verified running conversations and ready tabs untouched during Auto Resume; resetting quota on the current account no longer reloads VS Code.
+- Keep the system awake while eligible Auto Resume work remains, release sleep prevention when it finishes, and show Auto Resume controls for interrupted sessions with on/off choices in queue options.
+- Read session preferences and title overrides by indexed session ID instead of scanning saved history on every refresh.
+- Clear the composer as soon as sending starts, retain its submitted draft until confirmation, and restore failed sends without overwriting newer edits. Show draft-storage failures once as a toast.
+- Preserve archive metadata and running-row positions across partial or uncertain session refreshes, and reject older session snapshots.
+- Route workspace follow-ups through the native Codex owner when it owns the running turn, retaining drafts on failed or unconfirmed steering.
+
 ## 1.6.0
 
 - Expand the workspace with chat, goals, files, shared terminals, Git, worktrees, Reviews, and Agents, with clearer action outcomes and recovery handling.

@@ -15280,7 +15280,10 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .public-conversation #live-state { max-width:min(360px,45vw); color:var(--text-muted); font-size:10px; overflow-wrap:anywhere; }
 .public-conversation #live-state:empty { display:none; }
 .public-conversation .cli-session-messages { max-width:none; }
-.public-project { max-width:none; padding:16px; }
+.public-project { max-width:none; padding:6px; }
+.public-project .task-board-section .task-board-header { padding:2px 0; min-height:30px; gap:4px; }
+.public-project .task-board-section .task-view-tabs { border-radius:5px; }
+.public-project .task-board-columns { gap:6px; }
 .cli-workspace.cli-message-surface { position:static; display:block; inset:auto; width:auto; height:auto; min-height:0; max-height:none; overflow:visible; background:transparent; z-index:auto; }
 .cli-message-surface .cli-session-messages { width:100%; max-width:none; }
 .cli-context-tabs-v3 { position:relative; }

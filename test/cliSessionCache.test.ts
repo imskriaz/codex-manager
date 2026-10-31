@@ -1,7 +1,28 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mergeCachedCliSession, mergeCachedCliSessions, scopeDashboardAccounts } from "../webview-src/dashboard/cliSessionCache";
+import { writeCliComposerDraft, hasUnsavedCliComposerDrafts } from '../webview-src/dashboard/cliSessionCache';
+
+afterEach(() => { vi.unstubAllGlobals(); });
+it('settles thrown draft writes as failed and prevents automatic reopening until the draft is cleared', async () => {
+  vi.stubGlobal('indexedDB', { open: () => {
+    const request = { result: { transaction: () => { throw new DOMException('Storage full', 'QuotaExceededError'); } }, onsuccess: undefined as undefined | (() => void) };
+    queueMicrotask(() => request.onsuccess?.());
+    return request;
+  } });
+  expect(await writeCliComposerDraft('storage-full', { text: 'Keep my draft', attachments: [] })).toBe(false);
+  expect(hasUnsavedCliComposerDrafts()).toBe(true);
+  expect(await writeCliComposerDraft('storage-full', { text: '', attachments: [] })).toBe(false);
+  expect(hasUnsavedCliComposerDrafts()).toBe(false);
+});
 
 describe("CLI session cache merging", () => {
+  it('preserves archive metadata during partial refreshes and ignores older snapshots', () => {
+    const archived = {id:'archived',title:'Archived task',status:'idle' as const,archived:true,updatedAt:'2026-10-31T10:00:00Z'};
+    const partial = {id:'archived',title:'Archived task',status:'unknown' as const};
+    expect(mergeCachedCliSession(partial,archived).archived).toBe(true);
+    expect(mergeCachedCliSession({...archived,archived:false,updatedAt:'2026-10-31T09:00:00Z'},archived)).toBe(archived);
+    expect(mergeCachedCliSession({...archived,archived:false,updatedAt:'2026-10-31T11:00:00Z'},archived).archived).toBe(false);
+  });
   it("keeps only the selected remote account catalogue in live state", () => {
     const a = [{ id: "same-id", email: "a@example.test" }], b = [{ id: "same-id", email: "b@example.test" }];
     const state = { accounts: [], peerAccounts: { a, b } } as never;

@@ -45,7 +45,7 @@ function runtimeRunning(value: unknown): boolean | undefined {
 }
 type NativeMessage = {
   type?: unknown; method?: unknown; version?: unknown; sourceClientId?: unknown; requestId?: string; resultType?: string; error?: unknown;
-  result?: { clientId?: unknown; result?: { turn?: { id?: unknown } }; ok?: unknown; interruptedTurnId?: unknown; goalPauseError?: unknown };
+  result?: { clientId?: unknown; result?: { turn?: { id?: unknown }; turnId?: unknown }; ok?: unknown; interruptedTurnId?: unknown; goalPauseError?: unknown };
   params?: { status?: unknown; clientId?: unknown; hostId?: unknown; conversationId?: unknown;
     change?: { type?: unknown; revision?: unknown; baseRevision?: unknown; patches?: unknown;
       conversationState?: { id?: unknown; rolloutPath?: unknown; threadRuntimeStatus?: unknown } } };
@@ -231,7 +231,19 @@ export async function cancelNativeCodexSessionTurn(home: string, id: string, exp
   return true;
 }
 
-async function requestNativeOwner(home: string, id: string, method: "thread-follower-start-turn" | "thread-follower-interrupt-turn", params: Record<string, unknown>, signal?: AbortSignal): Promise<NativeMessage | undefined> {
+export async function steerNativeCodexSessionTurn(home: string, id: string, expectedTurnId: string, input: unknown[], cwd: string): Promise<boolean> {
+  if (!expectedTurnId.trim() || expectedTurnId.length > 256) throw new Error('The active turn could not be verified. Refresh before steering.');
+  const messageId = randomUUID();
+  const reply = await requestNativeOwner(home, id, 'thread-follower-steer-turn', {
+    conversationId: id, input, clientUserMessageId: messageId,
+    restoreMessage: { id: messageId, cwd, context: { workspaceRoots: [cwd] } }
+  });
+  if (!reply) return false;
+  if (reply.result?.result?.turnId !== expectedTurnId) throw new Error('Codex did not confirm guidance for the expected turn. The outcome is unconfirmed; refresh before retrying.');
+  return true;
+}
+
+async function requestNativeOwner(home: string, id: string, method: "thread-follower-start-turn" | "thread-follower-interrupt-turn" | 'thread-follower-steer-turn', params: Record<string, unknown>, signal?: AbortSignal): Promise<NativeMessage | undefined> {
   const running = await readNativeCodexSessionRunning(home, id, signal);
   signal?.throwIfAborted();
   const entry = observations.get(`${path.resolve(home)}:${id}`);
@@ -241,6 +253,7 @@ async function requestNativeOwner(home: string, id: string, method: "thread-foll
   if (!entry.owner || entry.running === undefined || !socket?.writable) return undefined;
   if (method === "thread-follower-start-turn" && !entry.ready) throw new Error("The Codex conversation is still loading. Wait for it to finish, then retry.");
   if (method === "thread-follower-start-turn" && entry.running) throw new Error("Codex is already working in this session. Refresh before sending another message.");
+  if (method === 'thread-follower-steer-turn' && (!entry.ready || !entry.running)) throw new Error('The active Codex turn finished or is unavailable. Your follow-up was not sent; refresh before retrying.');
   if (requests.size >= 32 || socket.writableLength > 4 * 1024 * 1024) throw new Error("The Codex owner request queue is full. Wait before retrying.");
   const requestId = randomUUID();
   return new Promise<NativeMessage>((resolve, reject) => {
@@ -252,7 +265,7 @@ async function requestNativeOwner(home: string, id: string, method: "thread-foll
     signal?.addEventListener("abort", abort, { once: true });
     try {
       signal?.throwIfAborted();
-      send({ type: "request", requestId, sourceClientId: clientId, method, version: method === "thread-follower-start-turn" ? 2 : 4,
+      send({ type: "request", requestId, sourceClientId: clientId, method, version: method === "thread-follower-start-turn" ? 2 : method === 'thread-follower-steer-turn' ? 1 : 4,
         targetClientId: entry.owner, timeoutMs: 10_000,
         params });
     } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }

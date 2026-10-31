@@ -107,6 +107,7 @@ import {
 } from "./cliSessionCache";
 import { clampWebviewZoom, nextWebviewZoom, readWebviewZoom, WEBVIEW_ZOOM_STORAGE_KEY } from "./webviewZoom";
 import { TaskBoard } from "./taskBoard";
+import { scheduleDashboardReopen } from "./reopenView";
 import { initializePublicMessages } from './publicMessages';
 import { isAccountTagResult, isAccountTagUpdate } from '../../src/domain/accountTags';
 
@@ -951,6 +952,10 @@ function App() {
         if (explicitRefresh) explicitCliRefreshRef.current = undefined;
         if (message.status === "completed") {
           if (result.apply) {
+            if (!Array.isArray(message.payload?.cliSessions)) {
+              setCliSessionsError('The session list response was incomplete. Saved sessions were kept; refresh to retry.');
+              return;
+            }
             if (!appliesToSelectedSystem) {
               if (!partialList) void writeCliSessionListCache({ sessions: message.payload?.cliSessions ?? [], composerConfig: message.payload?.cliComposerConfig }, ownerDeviceId);
               return;
@@ -1717,6 +1722,11 @@ function App() {
   }, [currentUsageAccountId, selectedPeerId, sendAction, snapshot?.settings.dailyTokenUsageEnabled, snapshot?.settings.dailyTokenUsageIntervalMinutes]);
 
   const selectedPeerOffline = selectedPeer?.connected === false;
+  const hasPendingActions = state.pendingActions.length > 0;
+  useEffect(() => {
+    if (isBrowserDashboard) return;
+    return scheduleDashboardReopen(selectedPeerOffline, hasPendingActions, () => postMessageToHost({ type: 'dashboard:retry-connection' }));
+  }, [isBrowserDashboard, selectedPeerOffline, hasPendingActions]);
   if (!snapshot || selectedPeerOffline) {
     const connectionFailed = isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline");
     return (
@@ -3566,7 +3576,8 @@ function CliSessionsMenu(props: {
                     <small class="cli-session-row-meta"><span title={system}>{system}</span><span aria-hidden="true">·</span><span title={project}>{project}</span><span aria-hidden="true">·</span><span class="cli-sessions-running-time" aria-label={running ? `Running time: ${time}` : "Interrupted"}>{running ? time : "Interrupted"}</span><span aria-hidden="true">·</span><span title={session.model}>{session.model || "Model unavailable"}</span></small>
                     </div>
                     <div class="cli-running-row-actions">
-                    {running && showsCodexSessionAutoResume(session) ? <button type="button" class={`cli-icon-button is-auto-resume ${autoResume ? "is-enabled is-active" : "is-disabled"}`} aria-pressed={autoResume} aria-label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={!props.connected || offline || actionPending} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></button> : !running && (session.interrupted || session.queueEnabled) ? <SessionQueueControl session={session} disabled={!props.connected || !!offline || actionPending} onQueue={props.onQueue} /> : null}
+                    {showsCodexSessionAutoResume(session) ? <button type="button" class={`cli-icon-button is-auto-resume ${autoResume ? "is-enabled is-active" : "is-disabled"}`} aria-pressed={autoResume} aria-label={`Auto Resume for ${session.title}`} title={autoResume ? "Auto Resume on · Click to disable" : "Auto Resume off · Click to enable"} disabled={!props.connected || offline || actionPending} onClick={() => props.onAutoResume(session, !autoResume)}><AutoResumeIcon enabled={autoResume} goal={!!session.goal} /></button> : null}
+                    {!running && (session.interrupted || session.queueEnabled || session.queueError) ? <SessionQueueControl session={session} autoResume={autoResume} disabled={!props.connected || !!offline || actionPending} onAutoResume={props.onAutoResume} onQueue={props.onQueue} /> : null}
                     </div>
                   </article>;
                 })}

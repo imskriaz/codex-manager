@@ -90,8 +90,21 @@ export function loadTaskBoardColumns(): Array<typeof TASK_STAGES[number]> {
     const value: unknown = JSON.parse(window.localStorage.getItem(TASK_BOARD_COLUMNS_KEY) ?? 'null');
     if (Array.isArray(value) && value.length > 0 && value.length <= 4 && value.every((stage: unknown) => typeof stage === 'string' && TASK_STAGES.some(known => known === stage))) return TASK_STAGES.filter(stage => value.includes(stage));
   } catch { /* Fall back to the compact default when browser storage is unavailable. */ }
-  return ['planned', 'running', 'completed'];
+  return [...TASK_STAGES];
 }
 export function saveTaskBoardColumns(columns: Array<typeof TASK_STAGES[number]>): boolean {
   try { window.localStorage.setItem(TASK_BOARD_COLUMNS_KEY, JSON.stringify(columns)); return true; } catch { return false; }
+}
+
+export type TaskBoardView = 'board' | 'list' | 'gantt' | 'calendar';
+const TASK_BOARD_VIEW_KEY = 'codexManager.taskBoardView.v1';
+export function loadTaskBoardView(): TaskBoardView {
+  try {
+    const value = window.localStorage.getItem(TASK_BOARD_VIEW_KEY);
+    if (value === 'list' || value === 'gantt' || value === 'calendar') return value;
+  } catch { /* Optional browser preference. */ }
+  return 'board';
+}
+export function saveTaskBoardView(view: TaskBoardView): boolean {
+  try { window.localStorage.setItem(TASK_BOARD_VIEW_KEY, view); return true; } catch { return false; }
 }

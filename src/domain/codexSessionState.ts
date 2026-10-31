@@ -29,8 +29,8 @@ export function isCodexSessionRunning(
   return Boolean(session && !session.archived && (session.status === "running" || session.status === "unknown" || session.locked));
 }
 
-export function showsCodexSessionAutoResume(session: Pick<DashboardCliSessionSummary, "status" | "archived" | "interrupted" | "queueEnabled" | "queueError">): boolean {
-  return !session.archived && (session.status === "running" ||
+export function showsCodexSessionAutoResume(session: Pick<DashboardCliSessionSummary, "status" | "archived" | "interrupted" | "queueEnabled" | "queueError" | "goal" | "subAgent" | "parentSessionId">): boolean {
+  return !session.archived && !session.subAgent && !session.parentSessionId && session.goal?.status !== 'complete' && session.goal?.status !== 'paused' && (session.status === "running" ||
     (session.status === "idle" && session.interrupted === true && !session.queueEnabled && !session.queueError));
 }
 
@@ -80,7 +80,7 @@ export function mergeDashboardPeers(
   return merged;
 }
 
-export function stabilizeCliSessionOrder(sessions: DashboardCliSessionSummary[], order: Map<string, number>): DashboardCliSessionSummary[] {
+export function stabilizeCliSessionOrder(sessions: DashboardCliSessionSummary[], order: Map<string, number>, running?: Map<string, boolean>): DashboardCliSessionSummary[] {
   const key = (session: DashboardCliSessionSummary) => `${session.deviceId ?? "local"}:${session.id}`;
   const incoming = new Set(sessions.map(key));
   const added = [...incoming].filter(id => !order.has(id));
@@ -88,7 +88,10 @@ export function stabilizeCliSessionOrder(sessions: DashboardCliSessionSummary[],
   added.forEach((id, index) => order.set(id, start + index));
   for (const id of order.keys()) {
     if (order.size <= 6000) break;
-    if (!incoming.has(id)) order.delete(id);
+    if (!incoming.has(id)) { order.delete(id); running?.delete(id); }
   }
-  return [...sessions].sort((a, b) => order.get(key(a))! - order.get(key(b))!);
+  if (running) for (const session of sessions) {
+    if (session.status !== 'unknown') running.set(key(session), session.status === 'running' && !session.archived);
+  }
+  return [...sessions].sort((a, b) => (running ? Number(running.get(key(b)) ?? false) - Number(running.get(key(a)) ?? false) : 0) || order.get(key(a))! - order.get(key(b))!);
 }

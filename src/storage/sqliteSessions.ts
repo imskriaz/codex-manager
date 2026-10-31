@@ -56,6 +56,10 @@ export function invalidateSessionCatalogue(store: SqliteStateStore, home: string
   return generation;
 }
 
+export function isSessionCatalogueGenerationCurrent(store: SqliteStateStore, home: string, generation: string): boolean {
+  return catalogueHeader(store, home)?.generation === generation;
+}
+
 export function saveSessionCatalogue(store: SqliteStateStore, home: string, generation: string, rows: DashboardCliSessionSummary[], startedAt: number): void {
   if (rows.length > 30_000) return;
   const key = getCodexHomeStateKey(home);

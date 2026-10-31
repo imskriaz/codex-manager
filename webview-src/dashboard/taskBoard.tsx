@@ -18,7 +18,7 @@ import { AgentWorkspace, SessionMessage, TurnCopyButton } from './cliSessionsMod
 import { cliSessionTargetKey } from './cliSessionRoute';
 import type { SendAction } from './hookTypes';
 import { renderRefreshIcon, renderSyncIcon } from './icons';
-import { loadTaskBoardColumns, saveTaskBoardColumns } from './preferences';
+import { loadTaskBoardColumns, saveTaskBoardColumns, loadTaskBoardView, saveTaskBoardView } from './preferences';
 
 type Outbox = { savedAt: number; project: string; device?: string; lastError?: string; task?: ProjectTaskMutation; comment?: ProjectCommentInput };
 type TaskCard = ProjectTask & { session?: DashboardCliSessionSummary };
@@ -58,7 +58,7 @@ export function TaskBoard(props: {
   const [search, setSearch] = useState(''), [dropStage, setDropStage] = useState<TaskStage>();
   const [showArchive, setShowArchive] = useState(false);
   const [hiddenOpen, setHiddenOpen] = useState(false), [hiddenSearch, setHiddenSearch] = useState(''), [hiddenLimit, setHiddenLimit] = useState(100);
-  const [view, setView] = useState<'board' | 'list' | 'gantt' | 'calendar'>('board');
+  const [view, setView] = useState(loadTaskBoardView);
   const [visibleStages, setVisibleStages] = useState<TaskStage[]>(loadTaskBoardColumns);
   const [stageFilter, setStageFilter] = useState<TaskStage | 'all'>('all');
   const [tab, setTab] = useState<DetailTab | 'agents'>('overview'), [cursor, setCursor] = useState<string>();
@@ -485,9 +485,11 @@ export function TaskBoard(props: {
   const detailTiming = selectedLatest?.timing ?? selected?.timing, detailChildCount = selected ? children.get(selected.id)?.length ?? 0 : 0;
   const comments = [...(board?.comments ?? []), ...rows.flatMap(row => row.value.comment && !(board?.comments.some(item => item.id === row.value.comment!.id)) ? [{ ...row.value.comment, author: 'You · pending', createdAt: 0, attachments: row.value.comment.uploads?.map(({data: _data, ...file}) => ({...file, hash:''})) }] : [])].filter(item => item.taskId === selected?.id);
   return <section class={`task-board-section ${selected?.id ? 'has-detail-panel' : ''}`} aria-labelledby="task-board-title">
-    <header class="task-board-header"><h2 id="task-board-title" class="sr-only">Task workspace</h2><div class="task-board-heading"><span id="task-sidebar-toggle-slot" class="content-sidebar-slot" /><div class="task-context-tabs" aria-label="Workspace context">
+    <header class="task-board-header"><h2 id="task-board-title" class="sr-only">Task workspace</h2>{!props.shared ? <div class="task-board-heading"><span id="task-sidebar-toggle-slot" class="content-sidebar-slot" /><div class="task-context-tabs" aria-label="Workspace context">
       <label class="task-context-select task-project-select"><span class="task-context-icon"><FolderIcon /></span><span><strong>{project ? basename(project) : 'Choose project'}</strong></span><span class="task-context-chevron"><ChevronDownIcon /></span><select aria-label="Task project" title={`${project || 'Choose project'} · ${cards.length} tasks · ${cards.filter(task => task.session?.status === 'running').length} running`} value={project} disabled={busy || !!props.shared} onChange={event => setProject(event.currentTarget.value)}><option value="">Choose a project</option>{projects.map(value => <option key={value} value={value}>{props.shared ? props.systemName : basename(value)}</option>)}</select></label>
-    </div></div><div class="task-view-tabs" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Task views">{(['board','list','gantt','calendar'] as const).map(value => <button key={value} type="button" role="tab" aria-label={value === 'gantt' ? 'Gantt' : label(value)} aria-selected={view === value} title={label(value)} onClick={() => setView(value)}><ViewIcon view={value} /><span>{value === 'gantt' ? 'Gantt' : label(value)}</span></button>)}</div><div class="task-board-toolbar">
+    </div></div> : null}<div class="task-view-tabs" role="tablist" onKeyDown={handleTabKeyDown} aria-label="Task views">{(['board','list','gantt','calendar'] as const).map(value => <button key={value} type="button" role="tab" aria-label={value === 'gantt' ? 'Gantt' : label(value)} aria-selected={view === value} title={label(value)} onClick={() => {
+      setView(value); if (!saveTaskBoardView(value)) setStatus('Display choice is kept in this tab only. Browser storage is unavailable.');
+    }}><ViewIcon view={value} /><span>{value === 'gantt' ? 'Gantt' : label(value)}</span></button>)}</div><div class="task-board-toolbar">
       <button type="button" ref={searchToggle} class={`task-search-toggle ${search.trim() ? 'has-query' : ''}`} aria-label="Search tasks" title={search.trim() ? `Filter: ${search.trim()}` : 'Search tasks'} aria-expanded={searchOpen} onClick={() => { setSearchOpen(!searchOpen); if (!searchOpen) requestAnimationFrame(() => searchInput.current?.focus()); }}><SearchIcon /></button><label class={`task-board-search ${searchOpen ? 'is-open' : ''}`}><SearchIcon /><input ref={searchInput} type="search" aria-label="Search tasks" placeholder="Search tasks…" value={search} onKeyDown={event => { if (event.key === 'Escape') { setSearch(''); setSearchOpen(false); searchToggle.current?.focus(); } }} onInput={event => setSearch(event.currentTarget.value)} /><button type="button" class="task-search-close" aria-label="Close task search" onClick={() => { setSearchOpen(false); searchToggle.current?.focus(); }}>×</button></label>
 
 <div class="task-board-view-actions">{can('submissions') ? <button type="button" class="task-add-button" aria-label="＋ Task" title="Add task" disabled={!project || busy} onClick={() => open({ id: '', title: '', prompt: '', stage: props.shared ? 'idea' : visibleStages[0] ?? 'planned', revision: 0, createdAt: 0, updatedAt: 0 })}><PlusIcon/><span>Add task</span></button> : null}</div>
