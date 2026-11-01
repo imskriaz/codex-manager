@@ -76,7 +76,7 @@ try {
   assert.equal(await page.evaluate(() => window.__bridgeCount), 1, 'Cold offline module graph bootstraps once');
   await page.locator('#settingsOpenButton').click();
   await page.locator('#settings-tab-tools').click();
-  await page.getByRole('region', { name: 'Storage Management', exact: true }).waitFor();
+  await page.getByRole('region', { name: 'Codex Manager Tools', exact: true }).waitFor();
   assert.deepEqual(errors, [], 'Cold offline core has no runtime errors');
   assert.deepEqual(writes, [], 'The fixture sent no write requests');
   await context.close();

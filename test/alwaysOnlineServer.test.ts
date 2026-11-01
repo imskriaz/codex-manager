@@ -18,10 +18,22 @@ afterEach(() => {
 });
 
 describe("always-online WebSocket relay handoff", () => {
-  it('stops the relay without a host probe or startup preparation when Sync and Claim is off', async () => {
+  it('keeps the verified relay enabled when Sync and Claim is off', async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'encryptedSyncEnabled' ? false : key === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
     const verify = vi.fn(async () => true);
-    const server = new AlwaysOnlineServer({} as never, {} as never, verify);
+    const server = new AlwaysOnlineServer({} as never, { getRealtimeRelayKey: async () => 'key' } as never, verify);
+    const stop = vi.spyOn(server, 'stop').mockResolvedValue();
+    const start = vi.spyOn(server, 'start').mockResolvedValue('started');
+    expect(await server.applyConfiguration()).toBe('started');
+    expect(start).toHaveBeenCalledWith('key');
+    expect(stop).not.toHaveBeenCalled();
+    expect(verify).toHaveBeenCalledOnce();
+  });
+
+  it.each(['webSocketServerEnabled', 'webDashboardEnabled', 'cloudflaredDomain'])('stops without probing when %s is disabled or missing', async key => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (name: string, fallback: unknown) => name === key ? (key === 'cloudflaredDomain' ? '' : false) : name === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
+    const verify = vi.fn(async () => true);
+    const server = new AlwaysOnlineServer({} as never, { getRealtimeRelayKey: async () => 'key' } as never, verify);
     const stop = vi.spyOn(server, 'stop').mockResolvedValue();
     expect(await server.applyConfiguration()).toBe('stopped');
     expect(stop).toHaveBeenCalledOnce();
@@ -47,6 +59,10 @@ describe("always-online WebSocket relay handoff", () => {
     expect(settings).not.toContain('title="Keep connections online"');
     expect(settings).not.toContain('title="Workspace connection"');
     expect(settings).toContain('title="WS Cross System"');
+    expect(settings).toContain('even when Sync and Claim is off');
+    const workbench = readFileSync('src/presentation/workbench/accountsWorkbench.ts', 'utf8');
+    const configurationListener = workbench.slice(workbench.indexOf('onDidChangeConfiguration((event) => {'), workbench.indexOf('await measureStep("notifyIndexHealth"'));
+    expect(configurationListener).not.toContain('event.affectsConfiguration("codexManager.encryptedSyncEnabled")');
   });
 
   it.each([false, true])("starts the relay only after local host verification (%s)", async verified => {

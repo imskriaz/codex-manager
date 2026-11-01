@@ -196,8 +196,7 @@ export class AccountsWorkbench {
         if (event.affectsConfiguration("codexManager")) {
           this.webDashboard.publishRealtimeState();
         }
-        if (event.affectsConfiguration("codexManager.encryptedSyncEnabled") ||
-            event.affectsConfiguration("codexManager.webDashboardEnabled") ||
+        if (event.affectsConfiguration("codexManager.webDashboardEnabled") ||
             event.affectsConfiguration("codexManager.cloudflaredDomain") ||
             event.affectsConfiguration("codexManager.webSocketServerEnabled")) {
           this.scheduleAlwaysOnlinePreparation();

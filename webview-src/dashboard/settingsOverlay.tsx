@@ -324,7 +324,7 @@ export function SettingsOverlay(props: {
                   <SettingsToggleBlock
                     title="WS Cross System"
                     className="settings-dashboard-server"
-                    sub="Connect your systems through a shared server."
+                    sub="Connect your systems through a shared server, even when Sync and Claim is off."
                     enabled={props.settings.webSocketServerEnabled !== false}
                     onToggle={(enabled) => patchAndSend("webSocketServerEnabled", enabled)}
                   >

@@ -359,7 +359,7 @@ describe("canonical cross-PC WebSocket domain", () => {
     expect(upgrade).toHaveBeenCalledOnce();
   });
 
-  it("does not open or accept cross-PC transport when Sync and Claim is off", async () => {
+  it("does not open or accept cross-PC transport when WS Cross System is off", async () => {
     sync.isCrossPcEnabled.mockReturnValue(false);
     domain = "dashboard.example";
     internal.connectPeerSocket();

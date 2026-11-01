@@ -1168,6 +1168,7 @@ describe("encrypted account sync", () => {
     const secrets={get:vi.fn(async()=>PASSPHRASE)};
     const manager=new EncryptedSyncManager({secrets} as never,{} as never);
     try {
+      expect(manager.isCrossPcEnabled()).toBe(ws);
       const signed=await manager.signRealtimePeerPayload('presence');
       if(ws) {
         expect(signed).toEqual(expect.any(String));
@@ -1184,6 +1185,21 @@ describe("encrypted account sync", () => {
       await expect(manager.getRealtimeEncryptedVault()).resolves.toBeUndefined();
       await expect(manager.applyRealtimeEncryptedVault('vault')).resolves.toBe(false);
     } finally {manager.dispose();}
+  });
+
+  it.each([false, true])('lets WS control transport independently with account sync %s', enabled => {
+    let ws = true;
+    let dashboard = true;
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'encryptedSyncEnabled' ? enabled : key === 'webSocketServerEnabled' ? ws : key === 'webDashboardEnabled' ? dashboard : fallback } as never);
+    const manager = new EncryptedSyncManager({} as never, {} as never);
+    try {
+      expect(manager.isCrossPcEnabled()).toBe(true);
+      ws = false;
+      expect(manager.isCrossPcEnabled()).toBe(false);
+      ws = true;
+      dashboard = false;
+      expect(manager.isCrossPcEnabled()).toBe(false);
+    } finally { manager.dispose(); }
   });
 
   it("defaults cross-PC claim checks on while local account use avoids credential sync", async () => {

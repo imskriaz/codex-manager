@@ -1578,13 +1578,15 @@ try {
     await page.mouse.move(width - 2, height - 2);
     await page.locator(".cli-session-row-select").filter({ hasText: "Running workspace" }).click();
     await page.getByText("Running elsewhere", { exact: true }).waitFor();
+    assert.equal(await page.locator('.cli-composer-unavailable .cli-running-quota').count(), 1, 'Running elsewhere retains current account quota beside the turn settings');
+    assert.ok(await page.locator('.cli-running-quota').evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'Running quota fits the status bar');
     const lockedStatus = page.locator(".cli-conversation > .cli-composer-unavailable.is-running");
     await lockedStatus.getByRole('button',{name:'Pause Auto Resume',exact:true}).click();
     await lockedStatus.getByRole('button',{name:'Enable Auto Resume',exact:true}).waitFor();
     await lockedStatus.getByRole('button',{name:'Enable Auto Resume',exact:true}).click();
     await lockedStatus.getByRole('button',{name:'Pause Auto Resume',exact:true}).waitFor();
     assert.equal(await lockedStatus.getByRole('button',{name:'Stop turn',exact:true}).isEnabled(),true,'An owned remote turn exposes Stop');
-    assert.ok((await lockedStatus.boundingBox()).height <= 34, "Session status stays one compact line");
+    assert.ok((await lockedStatus.boundingBox()).height <= (width <= 760 ? 68 : 34), "Session status keeps quota visible in one desktop row or two compact mobile rows");
     assert.equal(await lockedStatus.locator(".cli-live-spinner").count(), 1, "External turns show a spinner beside their status");
     await page.evaluate(({ sessionId }) => {
       const live = { sessionId, streamId: "ui-check-stream", sequence: 1, updatedAt: Date.now(), status: "running", messages: [] };
@@ -1972,6 +1974,22 @@ try {
     assert.ok(await page.evaluate(() => window.__uiActions.some(action => action.action === "listCodexCliSessions" && action.payload?.targetDeviceId === "account-remote")), "Selecting a remote system routes session discovery to that system");
     assert.equal(await accountCenter.locator('.cli-account-choice[aria-current="true"]').isDisabled(), true, "Current accounts are clearly marked without switching again");
     assert.equal(await accountCenter.getByRole("meter").first().getAttribute("aria-valuenow"), "0", "Zero quota stays visible");
+    assert.equal(await accountTrigger.getByRole('meter').count(), 2, 'Footer keeps each quota window separate');
+    await page.evaluate(() => {
+      const state = window.__uiSnapshot;
+      state.accounts[0].metrics[0].visible = false;
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state } }));
+    });
+    await page.waitForFunction(() => document.querySelectorAll('.cli-account-footer [role="meter"]').length === 1);
+    const singleQuota = accountTrigger.locator('.cli-quota-meter');
+    assert.ok(await singleQuota.evaluate(element => Math.abs(element.getBoundingClientRect().width - element.parentElement.getBoundingClientRect().width) < 1), 'A single quota window fills the footer width');
+    assert.equal(await accountCenter.getByRole('meter').count(), 1, 'Account center also fills one quota window');
+    await page.evaluate(() => {
+      const state = window.__uiSnapshot;
+      state.accounts[0].metrics[0].visible = true;
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:snapshot', state } }));
+    });
+    await page.waitForFunction(() => document.querySelectorAll('.cli-account-footer [role="meter"]').length === 2);
     const accountSearch = accountCenter.getByRole("searchbox", { name: "Search accounts on selected system", exact: true });
     await accountSearch.fill("ready");
     assert.equal(await accountCenter.locator(".cli-account-choice").count(), 1);
@@ -2013,7 +2031,7 @@ try {
     await page.evaluate(()=>{window.__uiSnapshot.connectedPeers.find(peer=>peer.id==='account-offline').connected=true;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
     await systemSelect.selectOption("account-empty");
     assert.equal(await accountCenter.locator(".cli-account-status").count(), 0);
-    await accountCenter.getByText("Quota has not been checked yet.", { exact: true }).waitFor();
+    await accountCenter.getByText("Quota unavailable", { exact: true }).waitFor();
     await page.evaluate(() => { const request = window.__heldSwitch; window.dispatchEvent(new MessageEvent("message", { data: { type: "dashboard:action-result", action: "switch", requestId: request.requestId, accountId: request.accountId, status: "failed", error: "Simulated switch failure. No account was changed." } })); });
     await systemSelect.selectOption("fixture-local");
     await accountCenter.getByRole("button", { name: "Switch to rea***com", exact: true }).waitFor();

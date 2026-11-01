@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.3-pre.1
+
+- Compact the account center and mobile dashboard spacing, keep account selection in a bounded scroll area, and use clearer attachment, send, and switch icons.
+- Show separate account quota bars in the sidebar footer and running-session status bar. Two available limits share the row; a single available limit fills it, with saved and unavailable states preserved.
+- Keep WS Cross System connections and the verified startup relay working independently of Sync and Claim, without restarting peer connections when account sync is toggled.
+
 ## 1.6.3
 
 - Answer browser-session questions with suggested choices or custom text, and receive push notifications that open the waiting session. Respond to short approval requests from notifications and review longer requests in the dashboard.

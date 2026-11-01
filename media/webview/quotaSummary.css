@@ -16287,7 +16287,7 @@ body:has(.task-floating-menu,.cli-account-center,details[open],:popover-open) .b
 .scroll-more button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .cli-workspace .cli-composer-unavailable.is-running { justify-content: flex-start; min-height: 28px; padding-block: 3px; }
 .cli-workspace .cli-composer-unavailable .cli-running-actions { overflow: visible; margin-left: auto; }
-.cli-workspace .cli-composer-unavailable.is-running > span:not(.cli-live-spinner):not(.cli-running-actions):not(.cli-draft-recovery) { flex: 1; min-width: 0; }
+.cli-workspace .cli-composer-unavailable.is-running > .cli-running-copy { flex: 0 1 auto; min-width: 0; }
 .cli-workspace .cli-composer-unavailable.is-running > .cli-draft-recovery { flex: none; overflow: visible; }
 button.saved-lock-badge { min-height: 0; padding: 1px 4px; font-size: 9px; line-height: 1.15; cursor: pointer; }
 
@@ -16378,4 +16378,76 @@ button.saved-lock-badge { min-height: 0; padding: 1px 4px; font-size: 9px; line-
 .cli-workspace .cli-session-row-menu-wrap .cli-session-menu { z-index:10060; }
 @media (max-width:760px) {
   .cli-workspace .cli-session-row-menu-wrap { opacity:1; pointer-events:auto; }
+}
+
+/* Quota windows keep separate bars; a single available window fills the row. */
+.cli-quota-summary { display: grid; min-width: 0; gap: 2px; }
+.cli-quota-meters { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.cli-quota-meter { display: grid; min-width: 0; gap: 3px; }
+.cli-quota-label { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; min-width: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.3; }
+.cli-quota-label > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cli-quota-label strong { flex: none; color: var(--text-primary); font-size: inherit; font-variant-numeric: tabular-nums; }
+.cli-quota-note, .cli-quota-unavailable { color: var(--text-muted); font-size: 11px; line-height: 1.3; }
+.cli-account-quota-grid { display: block; padding: 7px 8px; margin-bottom: 6px; }
+.cli-workspace .cli-account-footer .cli-quota-label { font-size: 10px; }
+.cli-workspace .cli-composer-unavailable > .cli-running-quota { flex: 1 1 160px; max-width: 220px; overflow: visible; padding-inline: 6px; }
+.cli-running-quota .cli-quota-label { font-size: 10px; }
+
+/* Keep account selection in its own scroll area so shortcuts stay in reach. */
+.cli-account-center { border-radius: 8px; }
+.cli-account-center .cli-account-center-header { padding: 5px 10px; }
+.cli-account-center .cli-account-current { padding: 5px 10px 7px; }
+.cli-account-center .cli-account-system { padding: 0 10px 6px; }
+.cli-account-center .cli-account-list-heading { padding: 5px 10px; }
+.cli-account-center .cli-account-search { margin: 0 10px 5px; }
+.cli-account-center .cli-account-list { max-height: min(300px, 40dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; gap: 0; }
+.cli-account-center .cli-account-choice { min-height: 38px; padding: 4px 7px; border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; box-shadow: none; }
+.cli-account-center .cli-account-choice:last-child { border-bottom: 0; }
+.cli-account-center .cli-account-choice-copy small { margin-top: 1px; font-size: 10px; }
+.cli-account-center .cli-account-choice-status svg { width: 16px; height: 16px; }
+.cli-account-center .cli-account-choice.is-current { opacity: 1; }
+.cli-account-center .cli-account-switch-action { min-height: 30px; margin-bottom: 6px; padding: 4px 7px; }
+.cli-account-center .cli-account-navigation { flex-wrap: nowrap; padding: 4px; }
+.cli-account-center .cli-account-navigation button { gap: 4px; padding-inline: 4px; }
+
+.cli-workspace .cli-composer :is(.cli-attach-button,.cli-send-button,.cli-attachment-list button) { display: inline-grid; place-items: center; flex: none; }
+.cli-workspace .cli-composer :is(.cli-attach-button,.cli-send-button,.cli-attachment-list button,.cli-composer-options header button) svg { display: block; width: 18px; height: 18px; }
+.cli-workspace .cli-composer .cli-attachment-list { padding: 0; gap: 5px; }
+.cli-workspace .cli-composer .cli-attachment-list > span { max-width: min(220px, 100%); gap: 5px; padding: 2px 4px; border-color: var(--border-default); border-radius: 4px; }
+.cli-workspace .cli-composer .cli-attachment-list img { width: 24px; height: 24px; }
+.cli-workspace .cli-composer .cli-attachment-list button { width: 28px; height: 28px; min-width: 28px; min-height: 28px; padding: 4px; }
+.cli-workspace .cli-composer :is(.cli-attach-button,.cli-composer-options-toggle):hover { background: var(--bg-elevated); color: var(--text-primary); }
+
+@media (max-width: 760px) {
+  .panel { --dashboard-space-section: 6px; }
+  .panel .overview-shell { gap: 5px; padding: 5px; }
+  .panel .overview-account { padding: 6px 8px; }
+  .panel .overview-main, .panel .overview-account-main { gap: 5px; }
+  .panel .overview-meta { gap: 4px; padding-top: 5px; }
+  .panel .header { gap: 5px; margin-bottom: 5px; }
+  .panel .hero { padding-bottom: 5px; }
+  .panel .accounts-grid { gap: 5px; }
+  .panel .saved-card { padding: 5px 6px; }
+  .cli-account-center .cli-account-choice { min-height: 44px; }
+  .cli-account-center .cli-account-center-header .cli-icon-button { width: 36px; min-height: 36px; }
+  .cli-account-center .cli-account-navigation button { min-height: 40px; }
+  .cli-account-center .cli-account-search input { height: 36px; font-size: 16px; }
+  .cli-workspace .cli-composer-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .cli-workspace .cli-composer-submit { min-width: 0; gap: 4px; }
+  .cli-workspace .cli-composer-access svg { width: 16px; height: 16px; flex-basis: 16px; }
+  .cli-workspace .cli-composer-access select { max-width: 108px; min-height: 40px; font-size: 16px; }
+  .cli-workspace .cli-composer .cli-send-button { width: 40px; min-width: 40px; height: 40px; min-height: 40px; }
+  .cli-workspace .cli-composer .cli-attach-button { width: 40px; min-width: 40px; min-height: 40px; padding: 8px; }
+  .cli-workspace .cli-composer-options-toggle { min-height: 40px; max-width: 116px; }
+  .cli-workspace .cli-composer .cli-attachment-list button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; }
+  .cli-workspace .cli-composer-unavailable.is-running { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 4px 6px; padding: 5px 6px; white-space: normal; }
+  .cli-workspace .cli-composer-unavailable > .cli-running-copy { grid-column: 2; }
+  .cli-workspace .cli-composer-unavailable > .cli-running-actions { grid-column: 3; grid-row: 1; }
+  .cli-workspace .cli-composer-unavailable > .cli-running-quota { grid-column: 2 / -1; max-width: none; width: 100%; padding: 0; }
+  .cli-workspace .cli-composer-unavailable > .cli-draft-recovery { grid-column: 1 / -1; white-space: normal; }
+}
+
+@media (max-width: 380px) {
+  .cli-workspace .cli-composer-access select { max-width: 88px; }
+  .cli-workspace .cli-composer-options-toggle { max-width: 96px; }
 }

@@ -1,5 +1,6 @@
 import { useAnchoredPopover } from './anchoredPopover';
 import { ScrollMore } from './scrollMore';
+import { AccountQuota, getAccountQuotaMetrics } from './accountQuota';
 import { deferredPanel } from './deferredPanel';
 const WorkspaceTerminal = deferredPanel(() => import('./workspaceTerminal'), 'terminal');
 const WorkspaceCodeEditor = deferredPanel(() => import('./workspaceCodeEditor'), 'editor');
@@ -1116,7 +1117,8 @@ export function CliSessionsPage(props: CliSessionsPageProps) {
                 <div class="cli-workspace-feedback is-warning" role="status"><ShieldIcon /><span>Running state unavailable. {props.selectedSession.statusError} Your draft is saved; refresh before sending.</span><button type="button" onClick={props.onRefreshMessages} disabled={props.messagesLoading}>Retry</button></div>
               ) : composerBlockedByOwner || props.connected === false ? (
                 <div class={`cli-composer-unavailable is-running ${props.connected === false ? "is-reconnecting" : ""}`} role="status" title={props.connected === false ? "The live connection is unavailable. Sending resumes after reconnect." : `${props.selectedSession.status === "running" ? `Running in ${props.selectedSession.runningBy ?? "another Codex process"}. Wait for that run to finish.` : "Session locked. Wait for Codex to release the lock."} Next turn: ${selectedModel?.label ?? model ?? "Default"} · ${reasoningEffort ?? "Default"} · ${sandboxMode}`}>
-                  {props.connected === false ? <ShieldIcon /> : props.selectedSession.status === "running" || props.selectedSession.locked ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span><strong>{props.connected === false ? "Reconnecting" : props.selectedSession.status === "running" || props.selectedSession.locked ? "Running elsewhere" : "Session locked"}</strong><small class="cli-locked-turn-settings" title={`${model ?? 'Default model'} · ${reasoningEffort ?? 'Default effort'} · ${sandboxMode}`}> · {selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full" : sandboxMode === "read-only" ? "RO" : "RW"}</small></span>
+                  {props.connected === false ? <ShieldIcon /> : props.selectedSession.status === "running" || props.selectedSession.locked ? <span class="cli-live-spinner" aria-hidden="true" /> : <ShieldIcon />}<span class="cli-running-copy"><strong>{props.connected === false ? "Reconnecting" : props.selectedSession.status === "running" || props.selectedSession.locked ? "Running elsewhere" : "Session locked"}</strong><small class="cli-locked-turn-settings" title={`${model ?? 'Default model'} · ${reasoningEffort ?? 'Default effort'} · ${sandboxMode}`}> · {selectedModel?.label ?? model ?? "Default"} · {reasoningEffort ?? "Default"} · {sandboxMode === "danger-full-access" ? "Full" : sandboxMode === "read-only" ? "RO" : "RW"}</small></span>
+                  <span class="cli-running-quota"><AccountQuota account={props.account} saved={props.connected === false} /></span>
                   {legacyDraftWarning}<span class="cli-running-actions">
                     {!props.selectedSession.subAgent && !props.selectedSession.parentSessionId ? <IconButton pressed={sessionAutoResume} label={sessionAutoResume ? 'Pause Auto Resume' : 'Enable Auto Resume'} title={sessionAutoResume ? 'Pause Auto Resume for this session' : 'Enable Auto Resume for this session'} disabled={props.mutating || props.connected === false} onClick={() => props.onAutoResume(props.selectedSession!, !sessionAutoResume)}><AutoResumeIcon enabled={sessionAutoResume} goal={!!goal} /></IconButton> : null}
                     <IconButton label="Stop turn" title={props.stopping ? 'Stopping…' : props.selectedSession.canStop ? 'Stop this turn' : 'Stop this turn from its owning Codex window'} disabled={!props.selectedSession.canStop || props.stopping || props.connected === false} onClick={() => props.onStop(props.selectedSession!)}><StopIcon /></IconButton>
@@ -1363,16 +1365,16 @@ function Composer(props: {
 
   return <>{projectPicker}<form class="cli-composer" style={`--cli-composer-text-limit:${props.composerHeight}px`} onDragOver={(event) => { if (event.dataTransfer?.types.includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (!event.dataTransfer?.files.length) return; event.preventDefault(); props.onAttach(Array.from(event.dataTransfer.files)); }} onSubmit={(event) => { event.preventDefault(); props.onSubmit(); }}>
     <input ref={fileInput} type="file" hidden multiple aria-label="Choose attachments" accept="image/png,image/jpeg,image/webp,text/*,.md,.json,.csv,.ts,.tsx,.js,.jsx,.py,.yaml,.yml,.toml,.rs,.go,.sql" onChange={(event) => { props.onAttach(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
-    {props.attachments.length ? <div class="cli-attachment-list">{props.attachments.map((file) => <span key={file.id}>{file.kind === "image" ? <img src={file.data} alt="" /> : <FileIcon />}<span title={file.name}>{file.name}</span><button type="button" disabled={props.attachmentReading} aria-label={`Remove ${file.name}`} onClick={() => props.onRemoveAttachment(file.id)}>×</button></span>)}</div> : null}
+    {props.attachments.length ? <div class="cli-attachment-list">{props.attachments.map((file) => <span key={file.id}>{file.kind === "image" ? <img src={file.data} alt="" /> : <FileIcon />}<span title={file.name}>{file.name}</span><button type="button" disabled={props.attachmentReading} aria-label={`Remove ${file.name}`} onClick={() => props.onRemoveAttachment(file.id)}><CloseIcon /></button></span>)}</div> : null}
     <div class="cli-composer-resizer" role="separator" aria-label="Resize message composer" aria-orientation="horizontal" aria-valuemin={120} aria-valuenow={Math.round(props.composerHeight)} tabIndex={0} onPointerDown={props.onResize} onKeyDown={props.onResizeKeyDown}><span /></div>
     <textarea ref={textarea} name="codex-message" value={props.draft} rows={1} maxLength={64_000} placeholder="Message Codex…" aria-label="Message Codex" onInput={(event) => props.onDraft(event.currentTarget.value)} onPaste={(event) => { const files = Array.from(event.clipboardData?.files ?? []); if (files.length) { event.preventDefault(); props.onAttach(files); } }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.isComposing && (event.ctrlKey || event.metaKey || !window.matchMedia("(max-width: 760px)").matches)) { event.preventDefault(); props.onSubmit(); } }} />
-    <div class="cli-composer-toolbar"><div class="cli-composer-selectors"><button type="button" class="cli-attach-button" aria-label="Attach files" title="Attach images or text/code files (up to 8 files, 1 MB total)" disabled={props.attachmentReading} onClick={() => fileInput.current?.click()}>{props.attachmentReading ? <span class="cli-live-spinner" /> : <PlusIcon />}</button>
+    <div class="cli-composer-toolbar"><div class="cli-composer-selectors"><button type="button" class="cli-attach-button" aria-label="Attach files" title="Attach images or text/code files (up to 8 files, 1 MB total)" disabled={props.attachmentReading} onClick={() => fileInput.current?.click()}>{props.attachmentReading ? <span class="cli-live-spinner" /> : <AttachmentIcon />}</button>
       <label class={`cli-composer-access ${props.sandboxMode === "danger-full-access" ? "is-full-access" : ""}`} title="Access for the next turn"><ShieldIcon /><select name="sandbox-mode" value={props.sandboxMode} aria-label="Access mode" onChange={(event) => props.onSandbox(event.currentTarget.value as DashboardCliSandboxMode)}><option value="read-only">Read only</option><option value="workspace-write">Workspace write</option><option value="danger-full-access">Full access</option></select></label>
     </div><div class="cli-composer-submit">
       <div class="cli-composer-options-wrap" ref={optionsRef}>
         <button type="button" class="cli-composer-options-toggle" aria-label="Message settings" aria-expanded={optionsOpen} title={`${selectedModel?.label ?? "Default model"} · ${selectedReasoning ?? "Default reasoning"} · ${props.sandboxMode}`} onClick={() => setOptionsOpen((open) => !open)}><span>{selectedModel?.label ?? "Default"} {selectedReasoning === "xhigh" ? "Extra high" : capitalize(selectedReasoning ?? "medium")}</span><ChevronIcon /></button>
         {optionsOpen ? <div class="cli-composer-options" role="group" aria-label="Message settings">
-          <header><strong>{props.sending ? "Next turn settings" : "Message settings"}</strong><button type="button" aria-label="Close message settings" onClick={() => setOptionsOpen(false)}>×</button></header>
+          <header><strong>{props.sending ? "Next turn settings" : "Message settings"}</strong><button type="button" aria-label="Close message settings" onClick={() => setOptionsOpen(false)}><CloseIcon /></button></header>
           <label><span>Model</span><select name="model" value={selectedModel?.id ?? ""} aria-label="Model" onChange={(event) => props.onModel(event.currentTarget.value)}>{modelChoices.map((option) => <option value={option.id} key={option.id}>{option.label}</option>)}</select></label>
           <label><span>Reasoning</span><select name="reasoning-effort" value={selectedReasoning ?? ""} aria-label="Reasoning" onChange={(event) => props.onReasoning(event.currentTarget.value)}>{reasoningChoices.map((effort) => <option value={effort} key={effort}>{effort === "xhigh" ? "Extra high" : capitalize(effort)}</option>)}</select></label>
         </div> : null}
@@ -2161,16 +2163,10 @@ function SessionAccountFooter(props: {
     const raw = (emailFirst ? account?.email : account?.displayName)?.trim() || account?.email?.trim() || account?.displayName?.trim();
     return raw ? getSensitiveDisplayValue(raw, props.privacyMode, raw.includes("@") ? "email" : "name") : account ? "Unnamed account" : "No active account";
   };
-  const metrics = (account: DashboardAccountViewModel | undefined) => (account?.metrics ?? [])
-    .filter(metric => metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage))
-    .map(metric => ({ ...metric, value: Math.max(0, Math.min(100, Math.round(metric.percentage!))) }));
-  const footerMetrics = metrics(props.account);
-  const overall = footerMetrics.length ? Math.min(...footerMetrics.map(metric => metric.value)) : undefined;
   const footerName = name(props.account, true);
   const footerSystem = getSensitiveDisplayValue(peer.name, props.privacyMode, "name");
   const footerTitle = props.account ? `${footerName} (${footerSystem})` : footerSystem;
   const currentAccount = accounts.find(account => account.isCurrentWindowAccount || account.runningOnThisDevice) ?? accounts.find(account => account.isActive);
-  const currentMetrics = metrics(currentAccount);
   const currentName = name(currentAccount);
   const enabledAccounts = accounts.filter(account => account.enabled);
   const filtered = enabledAccounts.filter(account => `${account.email} ${account.displayName} ${account.planTypeLabel}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
@@ -2211,10 +2207,10 @@ function SessionAccountFooter(props: {
   return <footer class="cli-account-footer" ref={rootRef}>
     <button ref={triggerRef} type="button" aria-label="Open account center" aria-description={footerTitle} aria-haspopup="dialog" aria-expanded={open} onClick={event => open ? closeMenu() : openMenu(event.detail === 0)}>
       <span class="cli-account-avatar" aria-hidden="true">{props.account ? footerName.slice(0, 1).toUpperCase() : "?"}</span>
-      <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerTitle}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><small class="cli-account-footer-quota">{footerMetrics.length ? footerMetrics.slice(0, 2).map(metric => `${metric.label} ${metric.value}%`).join(" · ") : "Quota unavailable"}</small>{overall !== undefined ? <span class="cli-account-quota-track" data-level={overall < 20 ? "low" : "normal"}><i style={{ width: `${overall}%` }} /></span> : null}</span>
+      <span class="cli-account-footer-copy"><span class="cli-account-footer-account"><strong title={footerTitle}>{footerTitle}</strong>{props.account?.planTypeLabel ? <em>{props.account.planTypeLabel}</em> : null}</span><span class="cli-account-footer-quota"><AccountQuota account={props.account} saved={!peer.connected} /></span></span>
       <ChevronIcon />
     </button>
-    {open ? createPortal(<div ref={menuRef} class="cli-account-menu cli-account-center" role="dialog" aria-label="Account center" style={{ width: "360px" }}>
+    {open ? createPortal(<div ref={menuRef} class="cli-account-menu cli-account-center" role="dialog" aria-label="Account center" style={{ width: "320px" }}>
       <header class="cli-account-center-header"><span>Account center</span><button type="button" class="cli-icon-button" aria-label="Close account menu" onClick={() => closeMenu(true)}><CloseIcon /></button></header>
       <div class="cli-account-system"><label for="account-center-system">System</label><select id="account-center-system" aria-label="Account system" value={peer.id} onChange={event => { const next = event.currentTarget.value; setSearch(""); props.onPeerChange?.(next); }}>{peers.map(item => <option key={item.id} value={item.id}>{getSensitiveDisplayValue(item.name, props.privacyMode, "name")}{item.local ? " (Local)" : !item.connected ? " (Offline)" : ""}</option>)}</select><span class={peer.connected ? "is-online" : "is-offline"}>{peer.connected ? "Online" : "Offline"}</span></div>
       {!peer.connected ? <p class="cli-account-status" role="status">Saved accounts. Reconnect this system to switch.</p> : null}
@@ -2223,16 +2219,14 @@ function SessionAccountFooter(props: {
         <div><strong title={currentName}>{currentName}</strong><small title={name(currentAccount, true)}>{currentAccount ? name(currentAccount, true) : "Add an account from the dashboard"}</small></div>
         {currentAccount?.planTypeLabel ? <span class="cli-account-plan">{currentAccount.planTypeLabel}</span> : null}
       </section>
-      <div class="cli-account-quota-grid" aria-label="Current account quota">
-        {currentMetrics.length ? currentMetrics.slice(0, 2).map(metric => <div key={metric.key}><span>{metric.label}<strong>{metric.value}%</strong></span><span class="cli-account-quota-track" data-level={metric.value < 20 ? "low" : "normal"} role="meter" aria-label={`${metric.label} quota remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={metric.value}><i style={{ width: `${metric.value}%` }} /></span></div>) : <small>Quota has not been checked yet.</small>}
-      </div>
+      <div class="cli-account-quota-grid"><AccountQuota account={currentAccount} saved={!peer.connected} /></div>
       <div class="cli-account-list-heading"><strong>Accounts <span>{enabledAccounts.length}</span></strong></div>
-      <label class="cli-account-search"><SearchIcon /><input ref={searchRef} type="search" aria-label="Search accounts on selected system" placeholder="Find an account..." value={search} onInput={event => setSearch(event.currentTarget.value)} /></label>
+      <label class="cli-account-search"><SearchIcon /><input ref={searchRef} type="search" aria-label="Search accounts on selected system" placeholder="Find an account…" value={search} onInput={event => setSearch(event.currentTarget.value)} /></label>
       <div class="cli-account-list" role="group" aria-label="Saved accounts">
         {filtered.map(account => {
           const active = account.isActive || account.isCurrentWindowAccount;
           const accountName = name(account, true);
-          const quota = metrics(account);
+          const quota = getAccountQuotaMetrics(account);
           return <button type="button" class={`cli-account-choice ${active ? "is-current" : ""}`} key={account.id} aria-label={`Switch to ${accountName}`} aria-current={active ? "true" : undefined} disabled={active || !account.enabled || !peer.connected || props.switching} title={active ? "Current account" : !peer.connected ? "System offline" : !account.enabled ? "Enable this account from the dashboard" : `Choose ${accountName}`} onClick={() => choose(account.id)}>
             <span class="cli-account-choice-avatar" aria-hidden="true">{accountName.slice(0, 1).toUpperCase()}</span><span class="cli-account-choice-copy"><strong title={accountName}>{accountName}</strong><small>{account.planTypeLabel || "Account"} · {quota.length ? quota.slice(0, 2).map(metric => `${metric.label} ${metric.value}%`).join(" · ") : "Quota unavailable"}</small></span><span class={`cli-account-choice-status ${active ? "is-current" : ""}`}>{active ? <><CheckIcon />Active</> : !account.enabled ? "Disabled" : <SwitchAccountIcon />}</span>
           </button>;
@@ -2441,11 +2435,12 @@ function TrashIcon() { return <Icon><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 
 function SparkIcon() { return <Icon><path d="m12 3 1.2 4.1L17 9l-3.8 1.9L12 15l-1.2-4.1L7 9l3.8-1.9L12 3Zm6 11 .7 2.3L21 17.5l-2.3 1.2L18 21l-.7-2.3-2.3-1.2 2.3-1.2L18 14Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></Icon>; }
 function ReasoningIcon() { return <Icon><path d="M9 18h6M10 21h4M8.5 15.5C6.9 14.4 6 12.6 6 10.6a6 6 0 1 1 12 0c0 2-.9 3.8-2.5 4.9-.5.4-.8.9-.8 1.5H9.3c0-.6-.3-1.1-.8-1.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function ShieldIcon() { return <Icon><path d="M12 3 5 6v5c0 4.6 2.9 8.2 7 10 4.1-1.8 7-5.4 7-10V6l-7-3Zm-3 9 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></Icon>; }
-function SendIcon() { return <Icon><path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
+function SendIcon() { return <Icon><path d="M12 19V5m-6 6 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function StopIcon() { return <Icon><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></Icon>; }
 function PlayIcon() { return <Icon><path d="m8 5 11 7-11 7Z" fill="currentColor" /></Icon>; }
 export function AutoResumeIcon(props: { enabled: boolean; goal: boolean }) { return <Icon><path d="M20 8V3l-3 3a9 9 0 1 0 3.5 9M20 8h-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>{props.enabled ? <path data-state="enabled" d="m10 8 6 4-6 4V8Z" fill="currentColor" stroke-linejoin="round"/> : <path data-state="paused" d="M10 9v6m4-6v6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/>}</Icon>; }
-function SwitchAccountIcon() { return <Icon><path d="M5 8h11l-2.5-2.5M19 16H8l2.5 2.5M16 8l2.5 2.5L16 13M8 16l-2.5-2.5L8 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
+function SwitchAccountIcon() { return <Icon><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
+function AttachmentIcon() { return <Icon><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8m-5 11 8-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></Icon>; }
 function EmptyFolderIcon() { return <Icon><path d="M3 7h7l2 2h9v10H3V7Zm0 0V5h7l2 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></Icon>; }
 function PlusIcon() { return <Icon><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></Icon>; }
 function MoreIcon() { return <Icon><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></Icon>; }

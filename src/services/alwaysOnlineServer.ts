@@ -75,11 +75,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
     const hostKey = await this.encryptedSync?.getRealtimeRelayKey();
     if (this.disposed || configuration !== this.configurationKey()) { this.verifiedConfiguration = undefined; await this.stop(); return "stopped"; }
     if (!hostKey) {
-      // This is a prerequisite state, not a relay failure. In particular, an
-      // old prepared relay must not be launched from dispose() after the user
-      // disables encrypted sync. Keep the preference armed so configuring the
-      // shared password can make it ready without asking the user to opt in a
-      // second time.
+      // A missing shared password must not leave a previously prepared relay armed.
       await this.stop();
       this.waitingForConfiguration = true;
       return "waiting-for-configuration";
@@ -190,7 +186,7 @@ export class AlwaysOnlineServer implements vscode.Disposable {
   private configurationKey(): string | undefined {
     const config = getCodexManagerConfiguration();
     const domain = config.get<string>("cloudflaredDomain", "").trim();
-    return config.get<boolean>("encryptedSyncEnabled", true) && config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true) && domain ? domain : undefined;
+    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true) && domain ? domain : undefined;
   }
 
   private async prepareRelay(preparedHostKey?: string): Promise<PreparedRelay> {

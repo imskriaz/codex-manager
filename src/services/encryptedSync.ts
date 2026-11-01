@@ -1585,13 +1585,13 @@ export class EncryptedSyncManager implements vscode.Disposable {
   }
 
   private canAuthenticatePeers(): boolean {
-    const config = getCodexManagerConfiguration();
-    return this.isEnabled() || (config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true));
+    return this.isEnabled() || this.isCrossPcEnabled();
   }
 
-  /** Cross-PC transport is unnecessary when Sync and Claim is disabled. */
+  /** Dashboard transport is independent from account syncing and claims. */
   isCrossPcEnabled(): boolean {
-    return this.isEnabled();
+    const config = getCodexManagerConfiguration();
+    return config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true);
   }
 
   private isEnabled(): boolean {
