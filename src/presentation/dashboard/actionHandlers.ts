@@ -448,7 +448,7 @@ async function runDashboardAction(
       return { projectBoard: await startProjectTaskSession(project, payload.taskId, payload.taskRevision, action === 'startProjectSubtask' ? payload.text : undefined), notice: { level: 'info', message: action === 'startProjectSubtask' ? 'Subtask session created and started.' : 'Task started in Codex.' } };
     }
     case 'shareProjectBoard':
-      return { projectShare: createProjectShare(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.sharePermissions, payload?.shareDays) };
+      return { projectShare: createProjectShare(await resolveWorkspaceProjectPathAsync(payload?.projectPath), payload?.sharePermissions, payload?.shareDays, payload?.shareBoardConfig, payload?.shareToken) };
     case 'resetProjectTaskStart': {
       if (!payload?.taskId || payload.confirmed !== true) throw new Error('Review the session list and confirm that the previous start was not accepted before allowing a retry.');
       const project = await resolveWorkspaceProjectPathAsync(payload.projectPath);
@@ -740,6 +740,12 @@ async function runDashboardAction(
       return handleEnableAllValid(ctx.repo, ctx.schedulePublishState);
     case "disableAll":
       return handleDisableAll(ctx.repo, ctx.schedulePublishState);
+    case "batchSetAccountAutoResetAllowed": {
+      if (typeof payload?.autoResetAllowed !== 'boolean' || !Array.isArray(payload.accountIds) || !payload.accountIds.length || payload.accountIds.some(id => typeof id !== 'string' || !id.trim())) throw new Error('Choose accounts and a valid Auto Reset option.');
+      const allowed = payload.autoResetAllowed;
+      const batchResult = await runAccountBatch(ctx.repo, payload.accountIds, async id => { await ctx.repo.setAccountAutoResetAllowed(id, allowed); }, { kind: 'batch_auto_reset', onComplete: ctx.schedulePublishState });
+      return { batchResult, notice: { level: batchResult.failedCount ? 'warning' as const : 'info' as const, message: `Allow auto reset ${allowed ? 'enabled' : 'disabled'} for ${batchResult.successCount} accounts.${batchResult.failedCount ? ` ${batchResult.failedCount} failed. ${batchResult.failures[0]?.message ?? ''}` : ''}` } };
+    }
     case "unloadAuth": {
       return runCodexHomeOperation("Sign out", async () => {
       const activeAccount = (await ctx.repo.listAccounts()).find((candidate) => candidate.isActive);
@@ -983,7 +989,7 @@ async function runDashboardAction(
       if (!account || typeof payload?.autoResetAllowed !== 'boolean') throw new Error('Choose an account and a valid Auto Reset option.');
       await ctx.repo.setAccountAutoResetAllowed(account.id, payload.autoResetAllowed);
       ctx.schedulePublishState();
-      return { notice: { level: 'info', message: payload.autoResetAllowed ? 'Auto Reset allowed for this account after all eligible accounts exhaust weekly quota. Auto Switch must be enabled.' : 'Account Auto Reset override disabled. The global Auto Reset setting still applies.' } };
+      return { notice: { level: 'info', message: payload.autoResetAllowed ? 'Auto Reset allowed for this account. Auto Switch must be enabled.' : 'Automatic resets disabled for this account, including global Auto Reset.' } };
     case "refreshToken":
       return handleRefreshToken(ctx.repo, account, ctx.schedulePublishState, ctx.resolveLanguage());
     case "getResetCredits":
@@ -2026,7 +2032,7 @@ async function handleCancelCodexCliSessionTurn(sessionId: string | undefined) {
   ensureCliIntegrationEnabled();
   if (!sessionId) throw new Error("Choose a session first.");
   if (!(await cancelCodexCliSessionTurn(sessionId))) {
-    throw new Error("There is no dashboard-started Codex turn to stop in this session.");
+    throw new Error("Codex did not confirm a controllable turn to stop. Refresh this session before retrying.");
   }
   return {
     notice: {

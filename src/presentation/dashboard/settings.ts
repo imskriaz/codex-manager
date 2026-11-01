@@ -297,7 +297,7 @@ function resolveConfigurationTarget(
 
 export async function pickDashboardCodexAppPath(
   settingsStore: Pick<ExtensionSettingsStore, "resolveLanguage">
-): Promise<void> {
+): Promise<boolean> {
   const pickerCopy = getDashboardCopy(settingsStore.resolveLanguage());
   const selected = await vscode.window.showOpenDialog({
     canSelectFiles: true,
@@ -307,12 +307,13 @@ export async function pickDashboardCodexAppPath(
   });
 
   if (!selected?.[0]) {
-    return;
+    return false;
   }
 
   const config = getCodexManagerConfiguration();
   const target = resolveConfigurationTarget(config, "codexAppPath");
   await config.update("codexAppPath", selected[0].fsPath, target);
+  return true;
 }
 
 export async function pickDashboardCodexCliPath(

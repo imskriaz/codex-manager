@@ -7,7 +7,7 @@ export async function useWorkspaceDashboardAssets(page, origin) {
   await page.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
     if (!request.isNavigationRequest() || url.origin !== origin) return route.fallback();
-    const response = await route.fetch();
+    const response = await route.fetch({ maxRetries: 2 });
     await route.fulfill({ response, body: (await response.text()).replace(/<script(?=\s+src="\/assets\/(?:dashboard|projectShare|sharedConversation)\.js)/g, '<script type="module"') });
   });
   for (const [asset, file, contentType] of [

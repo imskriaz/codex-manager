@@ -7,7 +7,7 @@
   host.className = 'public-board-host'; status.className = 'task-board-status'; status.setAttribute('role','status'); root.replaceChildren(host,status);
   let data, live = false, stopped = false, events, epoch = 0, loading, queued = false;
   const allowed = feature => data?.permissions.includes(feature) || feature === 'activities' && data?.permissions.includes('messages');
-  const board = () => ({ projectPath:'shared-project',tasks:(data?.tasks || []).map(task => ({ revision:1,createdAt:0,updatedAt:0,...task })),comments:data?.comments || [],sessions:[],updatedAt:Date.now() });
+  const board = () => ({ projectPath:'shared-project',tasks:(data?.tasks || []).map(task => ({ revision:1,createdAt:0,updatedAt:0,...task })),comments:data?.comments || [],sessions:[],updatedAt:Date.now(),boardConfig:data?.boardConfig });
   const stopEvents = () => { events?.close(); events = undefined; };
   function clear() { stopped = true; epoch++; queued = false; stopEvents(); live = false; data = undefined; window.clearCodexSharedMessages?.(host); host.replaceChildren(); status.textContent = 'This project link expired or was revoked.'; }
   async function request(body, query) {
@@ -39,6 +39,7 @@
   }
   function render() {
     if (!data || stopped) return;
+    document.title = data.title ? `${data.title} · Codex Manager` : 'Shared project';
     window.renderCodexSharedBoard?.(host,{sessions:[],projects:[{id:'shared-project',path:'shared-project',label:data.title}],connected:live,systemName:data.title,sendAction:()=>undefined,onOpenSession:()=>{},shared:{draftKey,board:board(),permissions:data.permissions,request:action}});
   }
   function connect() {

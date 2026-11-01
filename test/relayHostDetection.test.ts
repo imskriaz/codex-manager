@@ -9,7 +9,7 @@ let settings: { cloudflaredDomain: string; webDashboardEnabled: boolean; webSock
 let server: WebDashboardServer;
 beforeEach(() => {
   settings = { cloudflaredDomain: "https://tunnel.example", webDashboardEnabled: true, webSocketServerEnabled: true };
-  server = Object.assign(Object.create(WebDashboardServer.prototype), { settingsStore: { getDashboardSettings: () => settings }, hostProofKey: secret });
+  server = Object.assign(Object.create(WebDashboardServer.prototype), { encryptedSync: { isCrossPcEnabled: () => true }, settingsStore: { getDashboardSettings: () => settings }, hostProofKey: secret });
   mockFetch.mockReset().mockImplementation(async (url: URL) => Response.json({ proof: createHmac("sha256", secret).update(url.searchParams.get("challenge")!).digest("hex") }));
 });
 afterEach(() => vi.useRealTimers());

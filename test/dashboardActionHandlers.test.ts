@@ -97,6 +97,16 @@ afterAll(async () => {
 });
 
 describe("manual Codex navigation and recovery", () => {
+  it.each([true, false])('bulk saves the account reset permission and retains partial failures (%s)', async allowed => {
+    const records = [{ id: 'one' }, { id: 'two' }];
+    const save = vi.fn(async (id: string) => { if (id === 'two') throw new Error('Storage full'); });
+    const ctx = { ...createContext(), repo: { getAccount: vi.fn(async id => records.find(record => record.id === id)), setAccountAutoResetAllowed: save } as never };
+    const result = await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'batchSetAccountAutoResetAllowed', requestId: `bulk-reset-${allowed}`, payload: { accountIds: ['one', 'one', 'two', 'missing'], autoResetAllowed: allowed } });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalledWith('one', allowed);
+    expect(result).toMatchObject({ status: 'completed', payload: { batchResult: { successCount: 1, failedCount: 2 }, notice: { level: 'warning', message: expect.stringContaining('Storage full') } } });
+    expect((await executeDashboardActionMessage(ctx, { type: 'dashboard:action', action: 'batchSetAccountAutoResetAllowed', requestId: 'empty-reset', payload: { accountIds: [], autoResetAllowed: allowed } })).status).toBe('failed');
+  });
   const id = "01a04882-d037-7a42-ad24-9afb61901181";
   const enableSessions = () => vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback?: unknown) => key === "cliIntegrationEnabled" ? true : fallback } as never);
   it("opens the official Codex panel from the More action", async () => {
@@ -361,7 +371,7 @@ describe("executeDashboardActionMessage", () => {
     expect(steerCodexCliSessionTurnMock).not.toHaveBeenCalled();
     const valid = await executeDashboardActionMessage(ctx, { type: "dashboard:action", action: "steerCodexCliSessionTurn", requestId: "valid-steer", payload: { sessionId, text: "Follow up", expectedTurnId: "turn-1" } });
     expect(valid.status).toBe("completed");
-    expect(steerCodexCliSessionTurnMock).toHaveBeenCalledWith({ sessionId, text: "Follow up", expectedTurnId: "turn-1", attachments: undefined });
+    expect(steerCodexCliSessionTurnMock).toHaveBeenCalledWith({ sessionId, text: "Follow up", expectedTurnId: "turn-1", attachments: undefined, projectPath: "D:/project" });
   });
   it.each([true, false])("saves cross-PC sync as %s and reports completion", async (enabled) => {
     const update = vi.fn().mockResolvedValue(undefined);

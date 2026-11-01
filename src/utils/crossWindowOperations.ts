@@ -98,6 +98,11 @@ export class CrossWindowOperationCoordinator {
         let leaseError: unknown;
         const renew = (): void => {
           try {
+            const observed = store.get<LockOwner>("operation-leases", key);
+            if (observed?.token !== owner.token) throw new Error(`${operationLabel} lost its operation lease. Retry after checking the outcome.`);
+            if (observed.yieldRequested) controller.abort(new Error("Background ownership renewal yielded to an account switch."));
+            // Fast yield checks must not turn every background lease into twenty writes per second.
+            if (observed.heartbeatAt <= Date.now() && Date.now() - observed.heartbeatAt < this.heartbeatMs) return;
             store.transaction(() => {
               const current = store.get<LockOwner>("operation-leases", key);
               if (current?.token !== owner.token) throw new Error(`${operationLabel} lost its operation lease. Retry after checking the outcome.`);

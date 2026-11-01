@@ -10,7 +10,7 @@ import {
 } from "../webview-src/dashboard/accountSorting";
 
 describe("sortWithQueuedAccount", () => {
-  it.each([true, false])("keeps remote claims last with quota grouping %s", (groupQuota) => {
+  it.each([true, false])("keeps current accounts first and remote claims before exhausted quota with grouping %s", (groupQuota) => {
     const account = (id: string, overrides: Record<string, unknown> = {}) => ({
       id, email: `${id}@example.com`, isActive: false, switchQueued: false,
       metrics: [{ key: "weekly", visible: true, percentage: 50 }], ...overrides
@@ -33,20 +33,22 @@ describe("sortWithQueuedAccount", () => {
     const originalIds = accounts.map((item) => item.id);
     for (const direction of [1, -1]) {
       const sorted = sortWithQueuedAccount(accounts, (left, right) => direction * left.id.localeCompare(right.id), groupQuota);
-      expect(sorted.slice(0, 2).map((item) => item.id)).toEqual(["active", "queued"]);
-      expect(sorted.slice(-4).map((item) => item.id)).toEqual([
-        "remote-active", "remote-queued", ...(direction === 1 ? ["remote-a", "remote-z"] : ["remote-z", "remote-a"])
-      ]);
+      expect(sorted[0]?.id).toBe("active");
+      const position = (id: string) => sorted.findIndex(item => item.id === id);
+      for (const claim of ['remote-z', 'remote-queued', 'remote-a']) {
+        for (const available of ['stale', 'local', 'offline', 'unnamed', 'queued']) expect(position(available)).toBeLessThan(position(claim));
+        expect(position(claim)).toBeLessThan(position('exhausted'));
+      }
       expect(sorted).toHaveLength(accounts.length);
       expect(new Set(sorted.map((item) => item.id)).size).toBe(accounts.length);
     }
     expect(accounts.map((item) => item.id)).toEqual(originalIds);
     accounts[0].runningDeviceOnline = false;
-    expect(sortWithQueuedAccount(accounts, () => 0, groupQuota).slice(-3).map((item) => item.id))
-      .toEqual(["remote-active", "remote-queued", "remote-a"]);
+    const offlineOrder = sortWithQueuedAccount(accounts, () => 0, groupQuota).map(item => item.id);
+    expect(offlineOrder.indexOf('remote-z')).toBeLessThan(offlineOrder.indexOf('remote-a'));
     accounts[0].runningDeviceOnline = true;
-    expect(sortWithQueuedAccount(accounts, () => 0, groupQuota).slice(-4).map((item) => item.id))
-      .toEqual(["remote-active", "remote-queued", "remote-z", "remote-a"]);
+    const onlineOrder = sortWithQueuedAccount(accounts, () => 0, groupQuota).map(item => item.id);
+    expect(onlineOrder.indexOf('remote-z')).toBeGreaterThan(onlineOrder.indexOf('stale'));
   });
 
   it("always keeps the current account first when its quota is exhausted", () => {
@@ -65,6 +67,21 @@ describe("sortWithQueuedAccount", () => {
 
     expect(sorted.map((item) => item.id)).toEqual(["current", "available", "other"]);
     expect(accounts.map((item) => item.id)).toEqual(["available", "current", "other"]);
+  });
+
+  it("keeps the current account first, then available accounts, claims, and no-quota accounts", () => {
+    const account = (id: string, percentage: number, overrides: Record<string, unknown> = {}) => ({
+      id, email: `${id}@example.com`, isActive: false, switchQueued: false,
+      metrics: [{ key: "weekly", visible: true, percentage }], ...overrides
+    }) as any;
+    const claimed = { runningDeviceName: "Other PC", runningOnThisDevice: false, runningDeviceOnline: true };
+    const accounts = [
+      account("no-quota", 0), account("claimed", 80, claimed), account("available", 80),
+      account("current", 0, { ...claimed, isActive: true })
+    ];
+
+    expect(sortWithQueuedAccount(accounts, (left, right) => right.id.localeCompare(left.id), false).map(item => item.id))
+      .toEqual(["current", "available", "claimed", "no-quota"]);
   });
 
   it("keeps a queued switch immediately after the active account", () => {

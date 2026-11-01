@@ -3,6 +3,7 @@
 *.apk
 *.log
 AGENTS.md
+WORKSPACE-GOAL.md
 pending_log.md
 PROJECT_LOG.md
 .git/**

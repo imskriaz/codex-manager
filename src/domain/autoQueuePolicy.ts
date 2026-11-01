@@ -25,6 +25,7 @@ export interface AutoQueuePolicySettings {
 }
 
 export interface AutoQueueCandidate extends AutoQueueOrderValue {
+  autoResetAllowed?: boolean;
   id?: string;
   queuePriority?: boolean;
   disabled?: boolean;
@@ -79,7 +80,7 @@ export function shouldKeepCurrentAutoQueueAccount(value: AutoQueueCandidate, pol
 
 /** An expired aggregate is uncertain until reconciled; it is never a usable reserve. */
 export function usableAutoQueueResetCount(value: AutoQueueCandidate, policy: AutoQueuePolicy): number {
-  if (!policy.autoResetEnabled || value.disabled || value.quotaError || value.invalidQuota || value.resetCreditAttempt || !isAutoQueueSnapshotFresh(value, policy)) return 0;
+  if (!policy.autoResetEnabled || value.autoResetAllowed !== true || value.disabled || value.quotaError || value.invalidQuota || value.resetCreditAttempt || !isAutoQueueSnapshotFresh(value, policy)) return 0;
   const count = value.resetCreditsAvailable;
   if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) return 0;
   const expiry = value.resetCreditsNextExpiresAt;

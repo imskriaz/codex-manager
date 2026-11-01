@@ -1589,6 +1589,11 @@ export class EncryptedSyncManager implements vscode.Disposable {
     return this.isEnabled() || (config.get<boolean>("webDashboardEnabled", true) && config.get<boolean>("webSocketServerEnabled", true));
   }
 
+  /** Cross-PC transport is unnecessary when Sync and Claim is disabled. */
+  isCrossPcEnabled(): boolean {
+    return this.isEnabled();
+  }
+
   private isEnabled(): boolean {
     return getCodexManagerConfiguration().get<boolean>("encryptedSyncEnabled", true);
   }

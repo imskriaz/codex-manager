@@ -7,7 +7,10 @@ import type {
 } from "../../src/domain/dashboard/types";
 import { createActionRequestId, postMessageToHost } from "./host";
 
-/** Transient workspace commands have no offline queue, disk cache or automatic replay. */
+import { cacheSystemId, readBrowserCache, writeBrowserCache } from './cliSessionCache';
+import { offlineReadCacheKey } from './offlinePolicy';
+
+/** Transient workspace commands are never queued or automatically replayed. Cached reads never authorize mutations. */
 export function useWorkspaceRequest(
   projectPath: string | undefined,
   targetDeviceId: string | undefined,
@@ -24,9 +27,12 @@ export function useWorkspaceRequest(
     };
   }, [projectPath, targetDeviceId]);
   return useCallback(
-    (action: DashboardActionName, payload: DashboardActionPayload = {}): Promise<DashboardActionResultPayload> => {
+    (action: DashboardActionName, payload: DashboardActionPayload = {}, onCached?: (result: DashboardActionResultPayload) => void): Promise<DashboardActionResultPayload> => {
+      const systemId = cacheSystemId(targetDeviceId);
+      const cacheable = action === 'getWorkspaceEnvironment' || (action === 'workspaceGit' && ['read', 'diff'].includes(payload.gitRequest?.operation ?? '')) || (action === 'workspaceGitHub' && ['read', 'detail'].includes(payload.githubRequest?.operation ?? ''));
+      const cacheKey = document.documentElement.dataset['dashboardHost'] === 'browser' && systemId && projectPath && cacheable ? offlineReadCacheKey(action, undefined, { ...payload, projectPath, targetDeviceId: systemId }) : undefined;
       if (!connected || !navigator.onLine) {
-        return Promise.reject(new Error("Reconnect to the selected system before using workspace tools."));
+        return (cacheKey && onCached ? readBrowserCache<DashboardActionResultPayload>(cacheKey).then(saved => { if (saved) onCached(saved); }) : Promise.resolve()).then(() => { throw new Error('Reconnect to the selected system before using workspace tools.'); });
       }
       if (!projectPath) {
         return Promise.reject(new Error("Select a project first."));
@@ -47,6 +53,7 @@ export function useWorkspaceRequest(
             return;
           }
           finish();
+          if (cacheKey && message.status === 'completed' && message.payload) void writeBrowserCache(cacheKey, { ...message.payload, notice: undefined });
           if (message.status !== "completed") {
             reject(new Error(message.error || "The workspace action did not complete."));
           } else {
@@ -72,6 +79,7 @@ export function useWorkspaceRequest(
             reject(new Error("The selected workspace changed. Check the previous action’s outcome before retrying."));
           }
         });
+        if (cacheKey && onCached) void readBrowserCache<DashboardActionResultPayload>(cacheKey).then(saved => { if (saved && pending.current.has(id)) onCached(saved); });
         try {
           postMessageToHost({
             type: "dashboard:action",

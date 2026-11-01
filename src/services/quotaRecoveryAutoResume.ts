@@ -15,6 +15,8 @@ import {
 import { publishDashboardRealtime } from "./dashboardRealtime";
 import { onDidRecordAccountQuotaCheck } from "./quotaCheckCoordination";
 import type { CodexManagerAccountRecord } from "../core/types";
+import { getSqliteStateStore } from "../storage/sqliteState";
+import { onDidChangeConfiguration } from "../storage/configurationEvents";
 
 /** Remember exhaustion across restarts; resume through the existing verified native recovery path. */
 export function registerQuotaRecoveryAutoResume(
@@ -24,11 +26,22 @@ export function registerQuotaRecoveryAutoResume(
 ): vscode.Disposable {
   let disposed = false,
     running = false,
+    dirty = false,
     retryAt = 0;
   let exhaustionHome: string | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleRetry = () => {
+    retryAt = Date.now() + 60_000;
+    if (retryTimer) clearTimeout(retryTimer);
+    if (disposed) return;
+    retryTimer = setTimeout(() => { retryTimer = undefined; void check(); }, 60_000);
+    retryTimer.unref?.();
+  };
   const check = async () => {
-    if (disposed || running || Date.now() < retryAt) return;
+    if (disposed || Date.now() < retryAt) return;
+    if (running) { dirty = true; return; }
     running = true;
+    dirty = false;
     try {
       const home = resolveCodexHome(),
         key = `codexManager.quotaRecovery:${home}`;
@@ -75,7 +88,7 @@ export function registerQuotaRecoveryAutoResume(
         !isAutoQueueSnapshotFresh(toAutoQueueOrderValue(active), getAccountAutoQueuePolicy())
       )
         return;
-      retryAt = Date.now() + 60_000;
+      scheduleRetry();
       await persistRunningCodexSessions(context);
       const latest = (
         await waitWithin(repo.listAccounts(), 5_000, "Quota recovery could not verify the active account.")
@@ -100,17 +113,21 @@ export function registerQuotaRecoveryAutoResume(
         if (result.failed.length) void vscode.window.showWarningMessage(message);
         else void vscode.window.showInformationMessage(message);
       }
-      if (!result.failed.length)
+      if (!result.failed.length) {
         await waitWithin(
           Promise.resolve(context.workspaceState.update(key, undefined)),
           5_000,
           "Quota recovery completion could not be saved."
         );
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = undefined;
+      }
     } catch (error) {
-      retryAt = Date.now() + 60_000;
+      scheduleRetry();
       console.warn("[codexManager] quota recovery deferred; saved work retained", error);
     } finally {
       running = false;
+      if (dirty && !disposed) queueMicrotask(() => { void check(); });
     }
   };
   const stopQuotaChecks = onDidRecordAccountQuotaCheck((account) => {
@@ -119,16 +136,23 @@ export function registerQuotaRecoveryAutoResume(
       exhaustionHome = resolveCodexHome();
     void check();
   });
+  const stopStorage = getSqliteStateStore()?.subscribe(["accounts", "usage", "state"], () => { void check(); });
+  const stopConfiguration = onDidChangeConfiguration(event => {
+    if (event.affectsConfiguration('codexManager.autoResumeEnabled') || event.affectsConfiguration('codexManager.codexHome')) void check();
+  });
   void check();
   const timer = setInterval(() => {
     void check();
-  }, 5_000);
+  }, 60_000);
   timer.unref?.();
   return {
     dispose() {
       disposed = true;
       stopQuotaChecks();
+      stopStorage?.();
+      stopConfiguration.dispose();
       clearInterval(timer);
+      if (retryTimer) clearTimeout(retryTimer);
     }
   };
 }

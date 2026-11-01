@@ -3,6 +3,31 @@ import { runInNewContext } from "vm";
 import { describe, expect, it, vi } from "vitest";
 
 describe("browser dashboard bridge", () => {
+  it('keeps browser deadlines aligned with selected-account bulk updates and remote refresh-all size', async () => {
+    let socket!: Socket;
+    class Socket {
+      static readonly OPEN = 1; readyState = 1;
+      listeners = new Map<string, (event?: any) => void>();
+      constructor() { socket = this; }
+      addEventListener(name: string, listener: (event?: any) => void) { this.listeners.set(name, listener); }
+      send = vi.fn(); close = vi.fn();
+    }
+    const timer = vi.fn();
+    const windowMock = { dispatchEvent: vi.fn(), WebSocket: Socket, setTimeout: timer, clearTimeout: vi.fn(), location: { protocol: 'http:', host: 'localhost' },
+      acquireVsCodeApi: undefined as undefined | (() => { postMessage(message: unknown): Promise<void> }) };
+    class Event { constructor(_type: string, public options: any) {} get data() { return this.options.data; } }
+    runInNewContext(readFileSync('media/webview/browserHost.js', 'utf8'), { window: windowMock, MessageEvent: Event, fetch: vi.fn(), console, JSON, Date, Map, Error, Array });
+    socket.listeners.get('open')!();
+    socket.listeners.get('message')!({ data: JSON.stringify({ type: 'dashboard:snapshot', state: { accounts: [{}], peerAccounts: { remote: Array(20).fill({}) } } }) });
+    timer.mockClear();
+    const post = windowMock.acquireVsCodeApi!().postMessage;
+    await post({ type: 'dashboard:action', action: 'batchSetAccountAutoResetAllowed', requestId: 'bulk', payload: { accountIds: Array.from({ length: 100 }, (_, i) => String(i)), enabled: true } });
+    expect(timer.mock.calls.at(-1)?.[1]).toBe(3_015_000);
+    await post({ type: 'dashboard:action', action: 'refreshAll', requestId: 'remote', payload: { targetDeviceId: 'remote' } });
+    expect(timer.mock.calls.at(-1)?.[1]).toBe(4_815_000);
+    await post({ type: 'dashboard:action', action: 'refreshAll', requestId: 'local', payload: { targetDeviceId: 'local' } });
+    expect(timer.mock.calls.at(-1)?.[1]).toBe(255_000);
+  });
   it.each(["opened", "blocked", "unsafe"])("opens external links on the initiating browser without sending a host action: %s", async outcome => {
     const events: Array<Record<string, unknown>> = [];
     const popup = { opener: {} as unknown, location: { replace: vi.fn() }, close: vi.fn() };
@@ -288,13 +313,10 @@ describe("browser dashboard bridge", () => {
 
     expect(windowMock.setInterval).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
-    fetchMock.mockResolvedValueOnce({
-      ok: true, status: 200, headers: { get: () => "application/json" },
-      json: async () => ({ messages: [{ type: "dashboard:action-result", action: "refreshView", requestId: "recover-view", status: "completed" }] })
-    });
     await windowMock.acquireVsCodeApi?.().postMessage({ type: "dashboard:action", action: "refreshView", requestId: "recover-view" });
-    expect(fetchMock).toHaveBeenCalledWith("/api/message", expect.objectContaining({ method: "POST" }));
-    expect(sockets[0]!.send).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sockets[0]!.send).toHaveBeenCalledTimes(2);
+    sockets[0]!.emit("message", { data: JSON.stringify({ type: "dashboard:action-result", action: "refreshView", requestId: "recover-view", status: "completed" }) });
     expect(events).toContainEqual(expect.objectContaining({ requestId: "recover-view", status: "completed" }));
   });
 
@@ -544,7 +566,8 @@ describe("browser dashboard bridge", () => {
     const response = (data: unknown) => ({ ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => data });
     live(2); reads[0]!(response({ revision: 1 })); await state;
     const action = post({ type: 'dashboard:action', action: 'refreshView', requestId: 'refresh-race' });
-    live(3); reads[1]!(response({ messages: [{ type: 'dashboard:snapshot', state: { revision: 2 } }, { type: 'dashboard:action-result', requestId: 'refresh-race', action: 'refreshView', status: 'completed' }] })); await action;
+    live(3);
+    sockets[0]!.listeners.get('message')!({ data: JSON.stringify({ type: 'dashboard:action-result', requestId: 'refresh-race', action: 'refreshView', status: 'completed' }) }); await action;
     expect(events.filter(event => event.type === 'dashboard:snapshot').map(event => event.state.revision)).toEqual([2, 3]);
     expect(events).toContainEqual(expect.objectContaining({ requestId: 'refresh-race', status: 'completed' }));
   });
@@ -572,12 +595,12 @@ describe("browser dashboard bridge", () => {
     const http = post({ type: 'dashboard:action', action: 'refreshView', requestId: 'old-http' });
     system('host-b');
     push({ type: 'dashboard:action-result', action: 'switch', requestId: 'old-socket', status: 'completed' });
-    reads[0]!({ ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ messages: [{ type: 'dashboard:action-result', requestId: 'old-http', action: 'refreshView', status: 'completed', payload: { cliSessions: [{ id: 'old-host-data' }] } }] }) });
+    socket.listeners.get('message')!({ data: JSON.stringify({ type: 'dashboard:action-result', requestId: 'old-http', action: 'refreshView', status: 'completed', payload: { cliSessions: [{ id: 'old-host-data' }] } }) });
     await http;
     expect(events.filter(event => event.requestId === 'old-socket').map(event => event.status)).toEqual(['failed']);
     expect(events.filter(event => event.requestId === 'old-http').map(event => event.status)).toEqual(['failed']);
-    expect(events.find(event => event.requestId === 'old-http').error).toContain('host changed');
-    expect(socket.send).toHaveBeenCalledTimes(1);
+    expect(events.find(event => event.requestId === 'old-http').error).toContain('connection closed');
+    expect(socket.send).toHaveBeenCalledTimes(2);
   });
 
   it('bounds and deduplicates HTTP fallback actions without marking a full queue offline', async () => {

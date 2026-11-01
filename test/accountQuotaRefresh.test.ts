@@ -1936,6 +1936,7 @@ function prepareResetCreditSnapshot() {
 }
 
 function createResetRepository(accounts: CodexManagerAccountRecord[], tokens: CodexTokens) {
+  for (const account of accounts) account.autoResetAllowed ??= true;
   const find = (id: string) => {
     const account = accounts.find((item) => item.id === id);
     if (!account) throw new Error("Account missing in quota fixture");
@@ -2088,11 +2089,36 @@ describe("shared queue policy revalidation and reset dependencies", () => {
     expect(consumeResetCreditMock).not.toHaveBeenCalled();
   });
 
+  it.each([false, undefined])('global Auto Reset skips accounts without Allow auto reset (%s)', async allowed => {
+    const active = createAccount('not-opted-in', true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 2;
+    const repo = createResetRepository([active], tokens);
+    active.autoResetAllowed = allowed;
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(fetchResetCreditsMock).not.toHaveBeenCalled();
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+  });
+
+  it('rechecks account reset permission before POST even with global Auto Reset on', async () => {
+    const active = createAccount('global-opt-in-revoked', true, 0, 0);
+    active.quotaSummary!.resetCreditsAvailable = 2;
+    const repo = createResetRepository([active], tokens);
+    prepareResetCreditSnapshot();
+    repo.beginResetCreditAttempt.mockImplementationOnce(async (_id, requestId, availableBefore) => {
+      active.resetCreditAttempt = { requestId, attemptedAt: Date.now(), availableBefore };
+      active.autoResetAllowed = false;
+    });
+    expect(await maybeAutoSwitchForActiveQuota(repo as never, { refresh: vi.fn() })).toBe(false);
+    expect(consumeResetCreditMock).not.toHaveBeenCalled();
+    expect(repo.completeResetCreditAttempt).toHaveBeenCalledOnce();
+  });
+
   it.each(["autoResetEnabled", "autoSwitchEnabled"])("does not consume resets when %s is off", async (key) => {
     settings[key] = false;
     const active = createAccount(`off-${key}`, true, 0, 0);
     active.quotaSummary!.resetCreditsAvailable = 2;
     const repo = createResetRepository([active], tokens);
+    active.autoResetAllowed = false;
     expect(await maybeAutoSwitchForActiveQuota(repo as unknown as AccountsRepository, { refresh: vi.fn() })).toBe(
       false
     );

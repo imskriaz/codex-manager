@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { loadTaskBoardColumns, saveTaskBoardColumns, loadTaskBoardView, saveTaskBoardView } from '../webview-src/dashboard/preferences';
+import { loadTaskBoardColumns, saveTaskBoardColumns, loadTaskBoardView, saveTaskBoardView, loadTaskBoardShowArchive, saveTaskBoardShowArchive } from '../webview-src/dashboard/preferences';
 
 afterEach(() => vi.unstubAllGlobals());
 it('shows Idea by default and restores valid column choices without duplicates', () => {
@@ -23,6 +23,18 @@ it('keeps useful defaults when storage is unavailable and reports unsaved prefer
   expect(saveTaskBoardColumns(['completed'])).toBe(false);
   expect(loadTaskBoardView()).toBe('board');
   expect(saveTaskBoardView('list')).toBe(false);
+  expect(loadTaskBoardShowArchive()).toBe(false);
+  expect(saveTaskBoardShowArchive(true)).toBe(false);
+});
+
+it('persists archive visibility independently from the selected board view', () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('window', { localStorage: { getItem: (key: string) => values.get(key), setItem: (key: string, value: string) => values.set(key, value) } });
+  expect(loadTaskBoardShowArchive()).toBe(false);
+  expect(saveTaskBoardShowArchive(true)).toBe(true);
+  expect(loadTaskBoardShowArchive()).toBe(true);
+  values.set('codexManager.taskBoardShowArchive.v1', 'false');
+  expect(loadTaskBoardShowArchive()).toBe(false);
 });
 
 it('restores each display choice and defaults safely for missing or stale values', () => {

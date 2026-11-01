@@ -14823,7 +14823,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   box-sizing: border-box; padding: 14px; border: 1px solid var(--border-default); border-radius: 12px;
   background: var(--bg-surface); color: var(--text-primary); box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
 }
-body:has(.overlay.open, .cli-session-rail[aria-modal="true"], .cli-account-center[aria-modal="true"], .cli-image-lightbox, .cli-delete-confirm[aria-modal="true"]) .browser-notification-offer { display:none; }
+body:has(.overlay.open, .task-detail-panel, .cli-session-rail[aria-modal="true"], .cli-account-center[aria-modal="true"], .cli-image-lightbox, .cli-delete-confirm[aria-modal="true"]) .browser-notification-offer { display:none; }
 .browser-notification-heading { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .browser-notification-heading > div { flex: 1; min-width: 0; }
 .browser-notification-heading strong, .browser-notification-heading .settings-block-title { display: block; margin: 1px 0 0; font-size: 13px; line-height: 1.35; font-weight: 600; }
@@ -15061,6 +15061,7 @@ body.is-dashboard-workspace-route .hero .brand-logo { display: none; }
 .cli-queue-presets button span,.cli-queue-presets button small { display:block; }
 .cli-queue-presets button span { font-size:11px; font-weight:600; line-height:16px; }
 .cli-queue-presets button small { margin-top:1px; font-size:10px; line-height:14px; }
+.cli-queue-auto-resume-toggle { margin:10px 0 8px; justify-content:center !important; border-color:var(--accent-blue) !important; background:color-mix(in srgb,var(--accent-blue) 12%,var(--bg-surface)) !important; font-weight:600; }
 .cli-queue-priority-field { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:10px 0 0; color:var(--text-secondary); font-size:11px; }
 .cli-queue-priority-field input { width:84px; min-height:30px; box-sizing:border-box; padding:5px 8px; border:1px solid var(--border-muted); border-radius:6px; background:var(--bg-base); color:var(--text-primary); font:inherit; }
 .cli-queue-priority-field input[aria-invalid="true"] { border-color:var(--danger); }

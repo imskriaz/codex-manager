@@ -464,7 +464,7 @@ export interface DashboardTokenAutomationViewModel {
 }
 
 export type DashboardBatchResultKind =
-  "batch_refresh" | "batch_resync" | "batch_remove" | "enable_all_valid" | "disable_all";
+  "batch_refresh" | "batch_resync" | "batch_remove" | "enable_all_valid" | "disable_all" | "batch_auto_reset";
 
 export interface DashboardBatchResultFailure {
   accountId?: string;
@@ -573,6 +573,7 @@ export type DashboardActionName =
   | "batchResyncProfile"
   | "batchRemove"
   | "enableAllValid"
+  | "batchSetAccountAutoResetAllowed"
   | "disableAll"
   | "refreshView"
   | "unloadAuth"
@@ -657,6 +658,8 @@ export interface DashboardActionPayload {
   taskBefore?: string;
   sharePermissions?: import('../projectTasks').ProjectSharePermission[];
   shareDays?: number;
+  shareBoardConfig?: import('../projectTasks').ProjectBoardConfig;
+  shareToken?: string;
   taskView?: 'activities' | 'files' | 'changes' | 'overview';
   comment?: import('../projectTasks').ProjectCommentInput;
   goalStatus?: "active" | "paused";

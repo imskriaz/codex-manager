@@ -744,7 +744,7 @@ async function evaluateAutoSwitchForActiveQuota(
     }
 
     const ownedAccounts = accounts.filter(account => options.canUseAccount?.(account.id) ?? true);
-    const optedInReset = selectAccountResetOverride(ownedAccounts);
+    const optedInReset = getAccountAutoQueuePolicy().autoResetEnabled ? undefined : selectAccountResetOverride(ownedAccounts);
     if (optedInReset) {
       if (optedInReset.isActive) return executeActiveResetPlan(repo, view, active, hourlyThreshold, weeklyThreshold, 0, options.canUseAccount, options.userInitiated, true);
       return executeResetPlan(repo, view, active, optedInReset, hourlyThreshold, weeklyThreshold, 0, options.canUseAccount, options.userInitiated, true);
@@ -1542,7 +1542,8 @@ function autoQueueScoringOptions() {
 function isAutomaticResetAllowed(account: CodexManagerAccountRecord, accountOverride = false): boolean {
   const policy = getAccountAutoQueuePolicy();
   return (
-    (accountOverride ? policy.autoSwitchEnabled && account.autoResetAllowed === true : policy.autoResetEnabled) &&
+    account.autoResetAllowed === true &&
+    (accountOverride ? policy.autoSwitchEnabled : policy.autoResetEnabled) &&
     account.enabled !== false &&
     !account.quotaError &&
     hasFreshQuotaSnapshot(account) &&

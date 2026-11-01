@@ -15,9 +15,12 @@ import { compareDashboardAutoQueueAccounts } from "../webview-src/dashboard/acco
 
 const now = 2_000_000_000_000;
 const policy = createAutoQueuePolicy({ autoSwitchEnabled: true, autoResetEnabled: true }, now);
-const candidate = (id: string, overrides: Partial<AutoQueueCandidate> = {}): AutoQueueCandidate => ({ id, windows: [{ percentage: 70 }, { percentage: 70 }, {}], lastQuotaAt: now - 1_000, ...overrides });
+const candidate = (id: string, overrides: Partial<AutoQueueCandidate> = {}): AutoQueueCandidate => ({ id, autoResetAllowed: true, windows: [{ percentage: 70 }, { percentage: 70 }, {}], lastQuotaAt: now - 1_000, ...overrides });
 
 describe("shared auto queue policy", () => {
+  it.each([false, undefined])('excludes reset reserves without account opt-in (%s)', autoResetAllowed => {
+    expect(usableAutoQueueResetCount(candidate('reset', { autoResetAllowed, resetCreditsAvailable: 4 }), policy)).toBe(0);
+  });
   it("requires verified capability, timestamps, and post-session quota before selecting", () => {
     for (const overrides of [
       { lastQuotaAt: undefined }, { lastQuotaAt: Number.NaN }, { lastQuotaAt: 0 },

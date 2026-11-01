@@ -238,10 +238,17 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
   await task.getByRole('button',{name:'Close task details',exact:true}).click();
   await page.getByRole('button',{name:'Actions for Idea collection updated',exact:true}).click();
   await page.getByRole('menuitem',{name:'Archive task',exact:true}).click();
+  await page.locator('.task-board-card').filter({hasText:'Idea collection updated'}).waitFor({state:'detached'});
+  await page.getByRole('button',{name:'Board actions',exact:true}).click();
+  await page.getByRole('menuitemcheckbox',{name:/Show archive/}).click();
+  await page.keyboard.press('Escape');
   await page.locator('.task-board-column.is-completed .task-board-card').filter({hasText:'Idea collection updated'}).waitFor();
   await page.getByRole('button',{name:'Actions for Idea collection updated',exact:true}).click();
   await page.getByRole('menuitem',{name:'Restore task',exact:true}).click();
   await page.locator('.task-board-card').filter({hasText:'Idea collection updated'}).waitFor();
+  await page.getByRole('button',{name:'Board actions',exact:true}).click();
+  await page.getByRole('menuitemcheckbox',{name:/Show archive/}).click();
+  await page.keyboard.press('Escape');
   assert.equal(await page.getByRole('button',{name:/^Task info for /}).count(),0,'Metadata is visible without an info button');
   assert.match(await page.locator('.task-board-card').filter({hasText:'Release work'}).locator('.task-card-meta').textContent(),/Task/);
   await page.getByRole('button',{name:'Actions for Release work',exact:true}).click();
@@ -346,6 +353,7 @@ export async function checkTaskUi(page, { origin, width, height, output }) {
     const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
     await task.locator('input[type=file]').setInputFiles({name:'comment.png',mimeType:'image/png',buffer:pixel});
     await task.getByRole('button',{name:'Remove comment.png',exact:true}).waitFor();
+    assert.ok(await page.locator('.browser-notification-offer').evaluateAll(items=>items.every(item=>getComputedStyle(item).display==='none')),'Optional notification prompts never cover task-panel actions');
     await task.getByRole('button',{name:'Add comment',exact:true}).click();
     await page.waitForFunction(()=>window.__uiActions.some(item=>item.action==='addProjectComment'&&item.payload.comment.uploads?.[0]?.name==='comment.png'&&item.payload.comment.text===''));
     await task.getByRole('button',{name:'comment.png',exact:true}).click();

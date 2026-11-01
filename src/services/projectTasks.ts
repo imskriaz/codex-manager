@@ -254,22 +254,38 @@ export function finishProjectTaskStart(project: string, id: string, sessionId: s
 }
 
 /** expiresAt: 0 means no expiry; revocation and permissions still apply. */
-export type ProjectShare = { projectPath: string; expiresAt: number; permissions: ProjectSharePermission[] };
-export function createProjectShare(projectPath: string, permissions: ProjectSharePermission[] = ['activities','comments','submissions'], days = 0): { token: string; expiresAt: number; permissions: ProjectSharePermission[] } {
+export type ProjectShare = { projectPath: string; expiresAt: number; permissions: ProjectSharePermission[]; token?: string; boardConfig?: import('../domain/projectTasks').ProjectBoardConfig };
+export function createProjectShare(projectPath: string, permissions: ProjectSharePermission[] = ['activities','comments','submissions'], days = 0, boardConfig?: ProjectShare['boardConfig'], existingToken?: string): { token: string; expiresAt: number; permissions: ProjectSharePermission[] } {
+  const stages = ['idea', 'planned', 'running', 'completed'];
+  if (boardConfig !== undefined && (!boardConfig || typeof boardConfig !== 'object' || Array.isArray(boardConfig) ||
+    boardConfig.showArchive !== undefined && typeof boardConfig.showArchive !== 'boolean' ||
+    boardConfig.view !== undefined && !['board', 'list', 'gantt', 'calendar'].includes(boardConfig.view) ||
+    boardConfig.columns !== undefined && (!Array.isArray(boardConfig.columns) || !boardConfig.columns.length || boardConfig.columns.length > 4 || boardConfig.columns.some(stage => !stages.includes(stage))) ||
+    boardConfig.stageFilter !== undefined && !['all', ...stages].includes(boardConfig.stageFilter))) throw new Error('Choose valid shared board display settings.');
   if (!Array.isArray(permissions) || permissions.length > PROJECT_SHARE_FEATURES.length || permissions.some(permission => !PROJECT_SHARE_FEATURES.some(feature => feature.key === permission)) || ![0,1,7,30].includes(days)) throw new Error('Choose valid share permissions and Never Expire or an expiry of 1, 7, or 30 days.');
   permissions = [...new Set(permissions)];
   // The combined Activities tab grants both parts; existing links retain their original grants.
   if (permissions.includes('activities')) permissions.push('messages');
-  const store = storage(), token = randomBytes(32).toString('hex'), expiresAt = days === 0 ? 0 : Date.now() + days * 24 * 60 * 60_000;
+  const store = storage(); let token = randomBytes(32).toString('hex'); const expiresAt = days === 0 ? 0 : Date.now() + days * 24 * 60 * 60_000;
   store.transaction(() => {
     const records = store.keys('project-shares');
     for (const key of records) {
       const expiry = store.get<ProjectShare>('project-shares', key)?.expiresAt;
       if (!Number.isSafeInteger(expiry) || expiry! < 0 || expiry !== 0 && expiry! <= Date.now()) store.set('project-shares', key, undefined);
     }
-    if (store.keys('project-shares').length >= 32) throw new Error('Shared link storage is full. Revoke an old project link first.');
-    store.set('project-shares', digest(token), { projectPath, expiresAt, permissions });
+    if (!existingToken && boardConfig) existingToken = records.map(key => store.get<ProjectShare>('project-shares', key)).find(share => share?.token && projectTaskKey(share.projectPath) === projectTaskKey(projectPath))?.token;
+    const existing = existingToken && /^[a-f0-9]{64}$/.test(existingToken) ? { key: digest(existingToken), share: store.get<ProjectShare>('project-shares', digest(existingToken)) } : undefined;
+    const tokenValue = existing?.share?.token ?? existingToken ?? token;
+    if (existingToken && (!existing?.share || projectTaskKey(existing.share.projectPath) !== projectTaskKey(projectPath))) throw new Error('The shared link no longer belongs to this project. Create a new link.');
+    const record = { projectPath, expiresAt, permissions, token: tokenValue, ...(boardConfig ? { boardConfig } : {}) };
+    if (existing) store.set('project-shares', existing.key, record);
+    else {
+      if (store.keys('project-shares').length >= 32) throw new Error('Shared link storage is full. Revoke an old project link first.');
+      store.set('project-shares', digest(tokenValue), record);
+    }
+    token = tokenValue;
   });
+  publishDashboardRealtime({ type: 'dashboard:project-changed', projectPath });
   return { token, expiresAt, permissions };
 }
 export function getProjectShare(token: string): ProjectShare | undefined {
@@ -289,7 +305,7 @@ export function publicProjectBoard(board: ProjectBoard, share: ProjectShare): un
   const visibleIds = new Set(visibleTasks.map(task => task.id));
   const stages = projectTaskStages(visibleTasks);
   return { title: path.basename(board.projectPath), tasks: visibleTasks.map(({ id, title, prompt, stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage, attachments }) => ({ id, title, prompt, stage: stages.get(id) ?? stage, parentTaskId, sessionArchived, sessionStatus, createdAt, updatedAt, timing, archived, manualStage, ...(share.permissions.includes('files') ? { attachments } : {}) })),
-    comments: share.permissions.includes('comments') ? board.comments.filter(comment => visibleIds.has(comment.taskId)).map(({ attachments, ...comment }) => ({ ...comment, ...(share.permissions.includes('files') ? { attachments } : {}) })) : [], permissions: share.permissions, expiresAt: share.expiresAt, updatedAt: board.updatedAt };
+    comments: share.permissions.includes('comments') ? board.comments.filter(comment => visibleIds.has(comment.taskId)).map(({ attachments, ...comment }) => ({ ...comment, ...(share.permissions.includes('files') ? { attachments } : {}) })) : [], permissions: share.permissions, expiresAt: share.expiresAt, updatedAt: board.updatedAt, boardConfig: share.boardConfig ?? { showArchive: false } };
 }
 
 /** Board classification never changes native work, goals or recovery state. */

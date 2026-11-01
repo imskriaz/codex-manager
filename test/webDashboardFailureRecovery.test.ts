@@ -13,6 +13,7 @@ import * as sessionEditor from "../src/services/codexSessionResume";
 import * as dashboardSettings from "../src/presentation/dashboard/settings";
 import * as usageHistory from "../src/services/dashboardUsageHistory";
 import { recordDashboardActionPrompt, shouldSuppressDashboardNotifications } from "../src/utils/notificationPolicy";
+import { buildDashboardStateSignature } from '../src/presentation/dashboard/signature';
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -360,6 +361,147 @@ it('acknowledges saved settings in the browser and never reports a failed write 
     const result = await internal.processClientMessage({ type: 'dashboard:setting', key: 'autoRefreshMinutes', value: 10 });
     expect(result.messages).toContainEqual({ type: 'dashboard:notice', level: 'info', message: 'Setting saved.' });
     update.mockRejectedValueOnce(new Error('Settings are read-only.'));
-    await expect(internal.processClientMessage({ type: 'dashboard:setting', key: 'autoRefreshMinutes', value: 5 })).rejects.toThrow(/read-only/);
+    const failed = await internal.processClientMessage({ type: 'dashboard:setting', key: 'autoRefreshMinutes', value: 5 });
+    expect(failed.messages).toEqual([{ type: 'dashboard:notice', level: 'error', message: 'Settings are read-only.' }]);
+    expect(failed.reloadAfterResponse).toBe(false);
   } finally { server.dispose(); }
+});
+
+it.each([false, true])('returns the stored snapshot after an invalid or failed settings write (storage=%s)', async storageFailure => {
+  const { server, internal } = createServer();
+  const stored = { settings: { autoResumeEnabled: false } };
+  const update = vi.spyOn(dashboardSettings, 'handleDashboardSettingUpdate');
+  if (storageFailure) update.mockRejectedValue(new Error('Disk full.'));
+  else update.mockResolvedValue(false);
+  vi.spyOn(server as never, 'buildState' as never).mockResolvedValue(stored as never);
+  try {
+    const result = await internal.processClientMessage({ type: 'dashboard:setting', key: 'autoResumeEnabled', value: true });
+    expect(result.messages).toEqual([
+      { type: 'dashboard:notice', level: 'error', message: storageFailure ? 'Disk full.' : 'The autoResumeEnabled setting could not be updated.' },
+      { type: 'dashboard:snapshot', state: stored }
+    ]);
+    expect(result.reloadAfterResponse).toBe(false);
+  } finally { server.dispose(); }
+});
+
+it('reports cancelled app path selection in the initiating browser', async () => {
+  const { server, internal } = createServer();
+  vi.spyOn(dashboardSettings, 'pickDashboardCodexAppPath').mockResolvedValue(false);
+  vi.spyOn(server as never, 'appendClientSnapshot' as never).mockResolvedValue(undefined as never);
+  try {
+    expect((await internal.processClientMessage({ type: 'dashboard:pickCodexAppPath' })).messages).toEqual([
+      { type: 'dashboard:notice', level: 'warning', message: 'Codex app path selection was cancelled.' }
+    ]);
+  } finally { server.dispose(); }
+});
+
+it('executes an explicit local target on this host without attempting a peer relay', async () => {
+  const { server, internal } = createServer();
+  executeAction.mockResolvedValueOnce({ status: 'completed' });
+  const relay = vi.spyOn(server as never, 'relayPeerAction' as never);
+  vi.spyOn(server as never, 'appendClientSnapshot' as never).mockResolvedValue(undefined as never);
+  try {
+    const result = await internal.processClientMessage({ type: 'dashboard:action', action: 'refreshView', requestId: 'local', payload: { targetDeviceId: 'local' } });
+    expect(relay).not.toHaveBeenCalled();
+    expect(result.messages).toContainEqual(expect.objectContaining({ requestId: 'local', status: 'completed' }));
+  } finally { server.dispose(); }
+});
+
+it('delivers an explicit refresh snapshot even when unchanged, and avoids duplicate delivery on a changed broadcast', async () => {
+  const { server } = createServer(), internal = server as any;
+  const state = { accounts: [], settings: {}, tokenAutomation: {}, indexHealth: {} };
+  const requester = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+  const other = { ...requester, send: vi.fn() };
+  const snapshot = { type: 'dashboard:snapshot', state };
+  vi.spyOn(internal, 'processClientMessage').mockResolvedValue({ messages: [{ type: 'dashboard:action-result', action: 'refreshView', requestId: 'refresh', status: 'completed' }, snapshot], reloadAfterResponse: false });
+  vi.spyOn(internal, 'publishLocalPeerState').mockImplementation(() => undefined);
+  internal.webSocketClients.add(requester); internal.webSocketClients.add(other);
+  internal.lastRealtimeSignature = buildDashboardStateSignature(state as never);
+  try {
+    const request = JSON.stringify({ type: 'dashboard:action', action: 'refreshView', requestId: 'refresh' });
+    await internal.handleBrowserSocketMessage(request, requester);
+    expect(requester.send.mock.calls.map(([raw]) => JSON.parse(raw))).toContainEqual(snapshot);
+    expect(other.send).not.toHaveBeenCalled();
+    requester.send.mockClear(); internal.lastRealtimeSignature = '';
+    await internal.handleBrowserSocketMessage(request, requester);
+    expect(requester.send).toHaveBeenCalledTimes(2);
+    expect(other.send).toHaveBeenCalledOnce();
+    expect(JSON.parse(other.send.mock.calls[0]![0])).toEqual(snapshot);
+  } finally { server.dispose(); }
+});
+
+it('bounds slow browser buffers and isolates a failed client from healthy snapshot delivery', () => {
+  const { server } = createServer(), internal = server as any;
+  const slow = { readyState: 1, bufferedAmount: 5 * 1024 * 1024, send: vi.fn(), close: vi.fn() };
+  const broken = { readyState: 1, bufferedAmount: 0, send: vi.fn(() => { throw new Error('Disconnected'); }), terminate: vi.fn(), close: vi.fn() };
+  const healthy = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn() };
+  internal.webSocketClients.add(slow); internal.webSocketClients.add(broken); internal.webSocketClients.add(healthy);
+  try {
+    internal.broadcastRealtimeState({ accounts: [], settings: {}, tokenAutomation: {}, indexHealth: {} });
+    expect(slow.send).not.toHaveBeenCalled(); expect(slow.close).toHaveBeenCalledWith(1013, expect.any(String));
+    expect(broken.terminate).toHaveBeenCalledOnce(); expect(healthy.send).toHaveBeenCalledOnce();
+  } finally { server.dispose(); }
+});
+
+
+it('coalesces listener starts and retries an unowned port through the existing heartbeat without overlapping work', async () => {
+  vi.useFakeTimers();
+  const { server } = createServer(), internal = server as any;
+  vi.spyOn(internal, 'isEnabled').mockReturnValue(true);
+  vi.spyOn(internal, 'refreshCliSessionRealtimeLifecycle').mockImplementation(() => undefined);
+  vi.spyOn(internal, 'closeInvalidRemoteBrowserSockets').mockResolvedValue(undefined);
+  let release!: () => void;
+  const start = vi.spyOn(internal, 'startServer').mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; })).mockResolvedValue(undefined);
+  try {
+    const first = server.start(), duplicate = server.start();
+    internal.startWebSocketHeartbeat();
+    expect(start).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(start).toHaveBeenCalledOnce();
+    release(); await Promise.all([first, duplicate]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(start).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(start).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(start).toHaveBeenCalledTimes(3);
+    internal.server = {};
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(start).toHaveBeenCalledTimes(3);
+    internal.server = undefined;
+    await server.stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(start).toHaveBeenCalledTimes(3);
+  } finally { internal.server = undefined; await server.stop(); server.dispose(); vi.useRealTimers(); }
+});
+
+it('does not wait for optional legacy cleanup or resurrect a listener after shutdown during identity lookup', async () => {
+  const { server } = createServer(), internal = server as any;
+  vi.spyOn(internal, 'isEnabled').mockReturnValue(true);
+  internal.context.secrets = { delete: vi.fn(() => new Promise(() => undefined)) };
+  let release!: (id: string) => void;
+  const identity = vi.fn(() => new Promise<string>(resolve => { release = resolve; }));
+  internal.encryptedSync = { getPresenceDeviceId: identity };
+  try {
+    const starting = server.start();
+    expect(identity).toHaveBeenCalledOnce();
+    internal.encryptedSync = undefined;
+    await server.stop();
+    release('verified-device'); await starting;
+    expect(internal.server).toBeUndefined();
+    expect(internal.webSocketHeartbeatTimer).toBeUndefined();
+  } finally { internal.encryptedSync = undefined; await server.stop(); server.dispose(); }
+});
+
+it('bounds required startup identity lookup and reports an explicit browser-open failure', async () => {
+  vi.useFakeTimers();
+  const { server } = createServer(), internal = server as any;
+  vi.spyOn(internal, 'isEnabled').mockReturnValue(true);
+  internal.encryptedSync = { getPresenceDeviceId: vi.fn(() => new Promise(() => undefined)) };
+  try {
+    const opening = expect(server.openInBrowser()).rejects.toThrow('Dashboard device identity is unavailable');
+    await vi.advanceTimersByTimeAsync(5_000); await opening;
+    expect(vscode.window.showErrorMessage).toHaveBeenCalledWith(expect.stringContaining('Dashboard device identity is unavailable'));
+    expect(internal.server).toBeUndefined();
+  } finally { internal.encryptedSync = undefined; await server.stop(); server.dispose(); vi.useRealTimers(); }
 });

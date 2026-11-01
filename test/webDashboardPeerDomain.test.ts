@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
     get: (key: string, fallback?: unknown) => key === "cloudflaredDomain" ? domain : key === "webDashboardEnabled" ? true : fallback
   } as never);
-  sync = { setOnlineDeviceIds: vi.fn(), setRealtimeSyncPublisher: vi.fn(), getRealtimeEnablementRegistry: vi.fn(() => []),
+  sync = { isCrossPcEnabled: vi.fn(() => true), setOnlineDeviceIds: vi.fn(), setRealtimeSyncPublisher: vi.fn(), getRealtimeEnablementRegistry: vi.fn(() => []),
     verifyRealtimePeerPayload: vi.fn(async () => true), signRealtimePeerPayload: vi.fn(async () => "signed"),
     getRealtimeEncryptedVault: vi.fn(async () => "encrypted-vault"), applyRealtimeEncryptedVault: vi.fn(async () => true) };
   server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: {} } as never, {} as never, sync);
@@ -357,6 +357,18 @@ describe("canonical cross-PC WebSocket domain", () => {
     expect(upgrade).not.toHaveBeenCalled();
     await internal.handleWebSocketUpgrade({ url: "/ws", headers }, socket, Buffer.alloc(0));
     expect(upgrade).toHaveBeenCalledOnce();
+  });
+
+  it("does not open or accept cross-PC transport when Sync and Claim is off", async () => {
+    sync.isCrossPcEnabled.mockReturnValue(false);
+    domain = "dashboard.example";
+    internal.connectPeerSocket();
+    await internal.publishPeerHeartbeatHttp();
+    expect(sockets).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const socket = { destroy: vi.fn() };
+    await internal.handleWebSocketUpgrade({ url: "/ws?peer=1", headers: { host: "dashboard.example", origin: "https://dashboard.example" } }, socket, Buffer.alloc(0));
+    expect(socket.destroy).toHaveBeenCalledOnce();
   });
 
   it("allows peer upgrades for a valid configured domain", async () => {

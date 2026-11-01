@@ -128,6 +128,7 @@ export class DashboardPanelController {
   private cliSessionReconcileTimer: NodeJS.Timeout | undefined;
   private cliSessionRealtimeRevision = Date.now();
   private cliSessionPublish: Promise<void> | undefined;
+  private cliSessionPublishAgain = false;
   private cliSessionRefreshAfter = 0;
   private lastPublishedStateSignature: string | undefined;
   private closingForRestart = false;
@@ -528,7 +529,7 @@ export class DashboardPanelController {
   }
 
   private async pickCodexAppPath(): Promise<void> {
-    await pickDashboardCodexAppPath(this.settingsStore);
+    if (!(await pickDashboardCodexAppPath(this.settingsStore))) await this.postNotice('warning', 'Codex app path selection was cancelled.');
   }
 
   private startCliSessionRealtime(): void {
@@ -543,12 +544,7 @@ export class DashboardPanelController {
     if (!fs.existsSync(codexHome)) return;
     try {
       this.cliSessionWatcher = fs.watch(codexHome, { recursive: true }, (_eventType, filename) => {
-        if (!isLocalCliSessionWatchPath(filename) || this.cliSessionChangeTimer) return;
-        this.cliSessionChangeTimer = setTimeout(() => {
-          this.cliSessionChangeTimer = undefined;
-          void this.publishCliSessionsRealtime();
-        }, 1_000);
-        this.cliSessionChangeTimer.unref?.();
+        if (isLocalCliSessionWatchPath(filename)) this.scheduleCliSessionRefresh(1_000);
       });
       this.cliSessionWatcher.on("error", () => {
         this.cliSessionWatcher?.close();
@@ -566,13 +562,18 @@ export class DashboardPanelController {
     this.cliSessionChangeTimer = undefined;
     if (this.cliSessionReconcileTimer) clearInterval(this.cliSessionReconcileTimer);
     this.cliSessionReconcileTimer = undefined;
+    this.cliSessionPublishAgain = false;
   }
 
   private publishCliSessionsRealtime(): Promise<void> {
-    if (this.cliSessionPublish) return this.cliSessionPublish;
+    if (this.cliSessionPublish) { this.cliSessionPublishAgain = true; return this.cliSessionPublish; }
     const panel = this.panel;
-    if (Date.now() < this.cliSessionRefreshAfter || !panel || panel.visible === false || !this.webviewReady ||
+    if (!panel || panel.visible === false || !this.webviewReady ||
       !getCodexManagerConfiguration().get<boolean>("cliIntegrationEnabled", true)) return Promise.resolve();
+    if (Date.now() < this.cliSessionRefreshAfter) {
+      this.scheduleCliSessionRefresh(this.cliSessionRefreshAfter - Date.now());
+      return Promise.resolve();
+    }
     let delayMs = 2_000;
     this.cliSessionPublish = (async () => {
       const sessions = await readCodexCliSessions();
@@ -594,8 +595,21 @@ export class DashboardPanelController {
       .finally(() => {
         this.cliSessionRefreshAfter = Date.now() + delayMs;
         this.cliSessionPublish = undefined;
+        if (this.cliSessionPublishAgain) {
+          this.cliSessionPublishAgain = false;
+          if (this.panel === panel) this.scheduleCliSessionRefresh(delayMs);
+        }
       });
     return this.cliSessionPublish;
+  }
+
+  private scheduleCliSessionRefresh(delayMs: number): void {
+    if (this.cliSessionChangeTimer || !this.panel || this.panel.visible === false || !this.webviewReady) return;
+    this.cliSessionChangeTimer = setTimeout(() => {
+      this.cliSessionChangeTimer = undefined;
+      void this.publishCliSessionsRealtime();
+    }, delayMs);
+    this.cliSessionChangeTimer.unref?.();
   }
 
   private async pickCodexCliPath(): Promise<void> {

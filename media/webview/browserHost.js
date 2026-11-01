@@ -22,10 +22,11 @@
     ? 15 * 60_000 + 15_000
     : ["addAccount", "importCurrent", "startOAuthAutoFlow"].includes(message?.action)
       ? 10 * 60_000 + 30_000
-      : ["refreshAll", "batchRefresh", "batchResyncProfile"].includes(message?.action)
-        ? (message.action === "batchResyncProfile" ? 300_000 : 240_000) * Math.max(1, message.payload?.accountIds?.length || lastAccountCount) + 15_000
+      : ["refreshAll", "batchRefresh", "batchResyncProfile", "batchSetAccountAutoResetAllowed"].includes(message?.action)
+        ? (message.action === "batchSetAccountAutoResetAllowed" ? 30_000 : message.action === "batchResyncProfile" ? 300_000 : 240_000) * Math.max(1, message.payload?.accountIds?.length || peerAccountCounts.get(message.payload?.targetDeviceId) || lastAccountCount) + 15_000
         : ["generateApiToken","listApiTokens","revokeApiToken"].includes(message?.action) ? 20_000 : message?.action === "workspaceTerminal" ? 10_000 : message?.action === "refreshView" ? 8_000 : message?.action === "resyncProfile" ? 315_000 : message?.action === "refresh" ? 255_000 : 135_000;
   let lastAccountCount = 1;
+  const peerAccountCounts = new Map();
   const forgetSocketAction = (requestId) => {
     const pending = pendingSocketActions.get(requestId);
     if (pending?.timer !== undefined) window.clearTimeout?.(pending.timer);
@@ -48,6 +49,8 @@
       // Retain only the startup replay; IndexedDB owns subsequent recovery data.
       if (!dashboardReady) latestSnapshot = message;
       lastAccountCount = message.state?.accounts?.length || 1;
+      peerAccountCounts.clear();
+      for (const [id, accounts] of Object.entries(message.state?.peerAccounts || {})) peerAccountCounts.set(id, accounts.length);
     }
     window.dispatchEvent(new MessageEvent("message", { data: message }));
   };
@@ -299,8 +302,9 @@
       if (authenticationRequired) throw new Error("Dashboard session expired. This action was not sent. Sign in again before retrying.");
       if (isBrowserOffline()) throw new Error("The browser is offline. This action was not sent; reconnect and try again.");
       if (message?.type === "dashboard:action" && pendingSocketActions.size + pendingHttpActions.size >= 128) throw new Error("The dashboard request queue is full. This action was not sent. Wait for pending actions before retrying.");
-      // Manual view recovery must work even when an open socket stops responding.
-      if (realtimeSocket && realtimeSocket.readyState === window.WebSocket.OPEN && message?.action !== "refreshView") {
+      // All dashboard actions use the live socket when available. A disconnected
+      // socket still falls back to the existing confirmed HTTP request path.
+      if (realtimeSocket && realtimeSocket.readyState === window.WebSocket.OPEN) {
         reachedHost = true;
         if (message?.type === "dashboard:action" && message.requestId) {
           const actionTimer = window.setTimeout?.(() => {

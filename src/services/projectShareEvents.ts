@@ -89,7 +89,8 @@ export class ProjectShareEvents {
     const valid = (): boolean => {
       if (stopped) return false;
       try {
-        if (getProjectShare(token)) return true;
+        const current = getProjectShare(token);
+        if (current) { share = current; return true; }
         send('revoked'); close(); return false;
       } catch { send('unavailable'); close(); return false; }
     };
@@ -103,6 +104,7 @@ export class ProjectShareEvents {
       pending.unref?.();
     };
     const expire = () => {
+      clearTimeout(expiry);
       if (!valid() || share.expiresAt === 0) return;
       // Node timers cannot represent the full lifetime of a 30-day link.
       expiry = setTimeout(expire, Math.min(share.expiresAt - Date.now(), 2_147_483_647));
@@ -125,11 +127,15 @@ export class ProjectShareEvents {
       });
       const projectRevision = () => Number(store.prepare('SELECT revision FROM manager_revisions WHERE topic=?').get(`project:${projectKey}`)?.['revision'] ?? 0);
       let revision = projectRevision();
+      const grantSignature = () => JSON.stringify([share.permissions, share.expiresAt, share.boardConfig]);
+      let grant = grantSignature();
       unwatch = store.subscribe(['state','sessions','session-status'], topics => {
         if (!valid()) return;
         try {
           const next = projectRevision();
-          if (next !== revision || topics.has('sessions') || topics.has('session-status')) { revision = next; notify(); }
+          const nextGrant = grantSignature(), grantChanged = nextGrant !== grant;
+          if (grantChanged) { grant = nextGrant; expire(); }
+          if (grantChanged || next !== revision || topics.has('sessions') || topics.has('session-status')) { revision = next; notify(); }
         } catch { send('unavailable'); close(); }
       });
       send('ready'); expire();

@@ -90,10 +90,10 @@ export function registerCodexSessionQueue(context: vscode.ExtensionContext): voi
       fingerprint = '';
       if (!(error instanceof CrossWindowOperationBusyError)) {
         console.warn('[codexManager] session queue postponed', error);
-        if (!retryTimer && !disposed) {
-          retryTimer = setTimeout(() => { retryTimer = undefined; wake(); }, 5000);
-          retryTimer.unref?.();
-        }
+      }
+      if (!retryTimer && !disposed) {
+        retryTimer = setTimeout(() => { retryTimer = undefined; wake(); }, 5000);
+        retryTimer.unref?.();
       }
     } finally {
       running = false;

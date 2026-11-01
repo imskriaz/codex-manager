@@ -1,6 +1,6 @@
 import { WorkspaceMenu } from "./workspaceMenu";
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type {
   DashboardWorkspaceGitHistory,
   WorkspaceGitRequest,
@@ -55,8 +55,11 @@ export function WorkspaceGit(props: {
   const read = async () => {
     const token = generation.current;
     setBusy(true);
+    setStale(true);
     try {
-      const result = await request("workspaceGit", { gitRequest: { operation: "read" } });
+      const result = await request("workspaceGit", { gitRequest: { operation: "read" } }, saved => {
+        if (token === generation.current && saved.workspaceGit) { setState(current => current ?? saved.workspaceGit); setNotice('Saved view · refreshing Git…'); }
+      });
       if (token !== generation.current) {
         return;
       }
@@ -77,13 +80,8 @@ export function WorkspaceGit(props: {
       }
     }
   };
-  useEffect(() => {
-    if (props.connected) {
-      void read();
-    } else if (!props.connected) {
-      setStale(true);
-      setNotice("Disconnected · reconnect and refresh Git before changing the repository.");
-    }
+  useLayoutEffect(() => {
+    void read();
   }, [props.connected, request]);
   useEffect(() => {
     if (previousPending.current && !props.pending && props.connected) {
@@ -164,6 +162,8 @@ export function WorkspaceGit(props: {
     try {
       const result = await request("getWorkspaceEnvironment", {
         gitHistory: commit ? { commit } : { offset, ...(offset ? { ref: history?.ref } : {}) }
+      }, saved => {
+        if (token === generation.current && !commit && saved.workspaceEnvironment?.gitHistory) setHistory(saved.workspaceEnvironment.gitHistory);
       });
       if (token !== generation.current) {
         return;

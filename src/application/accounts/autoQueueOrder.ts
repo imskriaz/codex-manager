@@ -81,6 +81,7 @@ export function toAutoQueueOrderValue(account: CodexManagerAccountRecord): AutoQ
   const longWindow = hasLongWindow ? { percentage: quota?.weeklyPercentage, resetAt: mainExhausted ? undefined : quota?.weeklyResetTime } : {};
   return {
     id: account.id,
+    autoResetAllowed: account.autoResetAllowed,
     queuePriority: account.queuePriority,
     disabled: account.enabled === false,
     quotaError: Boolean(account.quotaError),

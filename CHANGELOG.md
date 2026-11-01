@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.2
+
+- Show cached browser views immediately and refresh them in the background, keeping content and progress visible through reconnects.
+- Speed up Files tabs by avoiding repeated tree scans and duplicate reads. Keep cached editors usable and show file-specific failures with retry controls.
+- Preserve task-board archive visibility and shared display settings. Re-sharing updates the same public link, which shows the project name.
+- Fix Stop for native private-server sessions and preserve confirmed session preferences, titles and goals across stale updates.
+- Keep the current account first, followed by available, claimed and exhausted accounts, while retaining the chosen sort within each set.
+- Require each account’s Allow auto reset permission and add bulk enable/disable actions.
+- Use one full-width Auto Resume toggle in the queue flyout and retry queues blocked by temporary ownership conflicts.
+- Improve WebSocket completion, settings failure recovery and dashboard startup handoff between VS Code windows.
+- Reduce background storage writes and quota checks, bound slow-client buffers, and stop cross-PC connection and relay work when Sync and Claim is off.
+- Keep notification prompts clear of task controls on small screens.
+
 ## 1.6.1
 
 - Show Idea by default on task boards and remember Board, List, Gantt, or Calendar display choices across browser reloads.

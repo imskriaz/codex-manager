@@ -163,6 +163,14 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.getByText('GitHub sign-in expired. Connect GitHub and retry.', { exact: true }).waitFor();
   assert.equal(await page.locator('.workspace-github-row').count(), 1, 'Failed refresh preserves loaded GitHub items');
   await page.evaluate(() => { window.__failGitHub=false; });
+  await page.getByRole('tab', exact('Changes')).click();
+  await page.evaluate(() => { window.__holdNextGitHubRead = true; });
+  await page.getByRole('tab', exact('GitHub')).click();
+  await page.waitForFunction(() => !!window.__heldGitHubRead);
+  await page.getByText('Fixture pull request', { exact: true }).waitFor();
+  assert.equal(await page.locator('.workspace-github .workspace-list-heading').getByRole('button', exact('New')).isDisabled(), true, 'Cached GitHub permissions cannot authorize a write before the live read');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: structuredClone(window.__heldGitHubRead) })));
+
   await page.getByRole('tab', exact('Env')).click();
   await page.waitForFunction(() => !document.querySelector('button[aria-label="Refresh Environment"]')?.disabled);
   await page.evaluate(() => { window.__holdNextEnvironment = true; });
@@ -186,6 +194,27 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.getByRole('button', exact('Retry editor')).click();
   await page.locator('.cli-file-editor .cm-content').waitFor();
   assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'saveWorkspaceFile').length), beforeRetry, 'Retrying a failed lazy panel never sends a save');
+
+  const treeReads = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'listWorkspaceFiles').length);
+  const fileReads = await page.evaluate(() => window.__uiActions.filter(action => action.action === 'readWorkspaceFile').length);
+  await page.evaluate(() => { window.__holdNextWorkspaceFileRead = true; });
+  await page.getByRole('tab', exact('app.ts')).click();
+  await page.waitForFunction(() => !!window.__heldWorkspaceFileResult);
+  await page.getByRole('tab', exact('app.ts')).click();
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'readWorkspaceFile').length), fileReads + 1, 'Repeated file clicks coalesce one in-flight read');
+  assert.equal(await page.evaluate(() => window.__uiActions.filter(action => action.action === 'listWorkspaceFiles').length), treeReads, 'Opening a file never rescans its project tree');
+  assert.equal(await page.locator('.cli-file-editor .cm-content').getAttribute('contenteditable'), 'true', 'A cached editor stays usable during background validation');
+  await tool('Files');
+  await page.evaluate(() => { window.__failNextWorkspaceFileRead = true; });
+  await page.locator('.cli-file-tree button').filter({ hasText: 'other.ts' }).click();
+  await page.locator('.cli-inspector-notice').filter({ hasText: 'Simulated file read failure.' }).waitFor();
+  await page.locator('.cli-file-editor').getByRole('button', exact('Retry')).waitFor();
+  assert.equal(await page.locator('.cli-file-editor').getByText('Opening file…', { exact: true }).count(), 0, 'An unrelated slow read cannot hide this file’s failure');
+  await page.locator('.cli-file-editor').getByRole('button', exact('Retry')).click();
+  await page.locator('.cli-file-editor .cm-content').waitFor();
+  await page.evaluate(() => { window.dispatchEvent(new MessageEvent('message', { data: structuredClone(window.__heldWorkspaceFileResult) })); });
+  await page.getByRole('tab', exact('app.ts')).click();
+  await page.locator('.cli-file-editor .cm-content').waitFor();
 
   await edit('const edited = 1;');
   await page.evaluate(() => { window.__holdNextSave = true; });
@@ -232,7 +261,13 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   await page.getByRole('button', exact('Close terminal')).click();
   await page.getByRole('dialog').getByRole('button', exact('Close terminal')).click();
   await page.getByRole('button', exact('New shared terminal')).waitFor();
+  await tool('Env');
+  await page.evaluate(() => { window.__holdNextGitRead = true; });
   await tool('Git');
+  await page.waitForFunction(() => !!window.__heldGitRead);
+  await page.locator('.workspace-git-file').first().waitFor();
+  assert.equal(await page.getByRole('button', exact('Stage all')).isDisabled(), true, 'Cached Git state remains read-only until the live revision arrives');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: structuredClone(window.__heldGitRead) })));
   await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: { type: 'dashboard:connection', connected: false } })));
   await page.waitForFunction(() => [...document.querySelectorAll('.workspace-commit button')].every(button => button.disabled));
   assert.equal(await commit.inputValue(), 'Newer commit draft');
@@ -240,8 +275,13 @@ export async function checkInspectorUi(page, { origin, parentId, width, output }
   if (width === 1440 || width === 390) await page.screenshot({ path: path.join(output, `inspector-git-${width}.png`), animations: 'disabled' });
   await page.getByRole('tab', exact('Env')).click();
   await page.screenshot({ path: path.join(output, `inspector-${width}.png`), animations: 'disabled' });
+  await page.addInitScript(() => { window.__holdNextWorkspaceFileRead = true; });
   await page.goto(`${origin}/workspace/${parentId}`);
   await page.getByRole('link', exact('Source file')).click();
+  await page.waitForFunction(() => !!window.__heldWorkspaceFileResult);
+  await page.locator('.cli-file-editor .cm-content').waitFor();
+  assert.equal(await page.locator('.cli-file-editor .cm-content').getAttribute('contenteditable'), 'true', 'A reopened browser hydrates its file cache without waiting for the held host read');
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent('message', { data: structuredClone(window.__heldWorkspaceFileResult) })));
   await page.locator('.cli-file-editor .cm-content').waitFor();
   assert.equal(await page.getByRole('link',exact('Source file')).getAttribute('target'),null);
   await hide();

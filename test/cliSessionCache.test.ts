@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mergeCachedCliSession, mergeCachedCliSessions, scopeDashboardAccounts } from "../webview-src/dashboard/cliSessionCache";
+import { mergeCachedCliSession, mergeCachedCliSessions, mergeConfirmedCliSession, scopeDashboardAccounts } from "../webview-src/dashboard/cliSessionCache";
 import { writeCliComposerDraft, hasUnsavedCliComposerDrafts } from '../webview-src/dashboard/cliSessionCache';
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -16,6 +16,16 @@ it('settles thrown draft writes as failed and prevents automatic reopening until
 });
 
 describe("CLI session cache merging", () => {
+  it('applies confirmed preferences, renames and goal changes independently of a newer transcript timestamp', () => {
+    const previous = { id: 'session', title: 'Old title', status: 'running' as const, canStop: true, updatedAt: '2026-11-01T12:00:00Z', autoResumeEnabled: true, queueEnabled: true, queuePriority: 2 as const, queueError: 'Old failure', goal: { objective: 'Work', status: 'active' as const } };
+    const incoming = { ...previous, status: 'idle' as const, canStop: false, updatedAt: '2026-11-01T11:00:00Z', autoResumeEnabled: false, queueEnabled: false, queuePriority: undefined, queueError: undefined, title: 'Confirmed title', goal: null };
+    for (const action of ['setCodexSessionAutoResume', 'setCodexSessionQueue'] as const) {
+      expect(mergeConfirmedCliSession(incoming, previous, action)).toMatchObject({ status: 'running', canStop: true, title: 'Old title', autoResumeEnabled: false, queueEnabled: false, queuePriority: undefined, queueError: undefined });
+    }
+    expect(mergeConfirmedCliSession(incoming, previous, 'renameCodexCliSession')).toMatchObject({ title: 'Confirmed title', status: 'running', autoResumeEnabled: true });
+    expect(mergeConfirmedCliSession(incoming, previous, 'setCodexSessionGoalStatus')).toMatchObject({ goal: null, status: 'running' });
+    expect(mergeCachedCliSession(incoming, previous)).toBe(previous);
+  });
   it('preserves archive metadata during partial refreshes and ignores older snapshots', () => {
     const archived = {id:'archived',title:'Archived task',status:'idle' as const,archived:true,updatedAt:'2026-10-31T10:00:00Z'};
     const partial = {id:'archived',title:'Archived task',status:'unknown' as const};

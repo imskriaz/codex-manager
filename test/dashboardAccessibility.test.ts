@@ -58,12 +58,16 @@ describe("dashboard accessibility and interaction flow", () => {
     expect(source).toMatch(/<main\r?\n\s+id="dashboard-main"/);
   });
 
-  it("keeps a disconnected selected system on the loading surface while peer recovery runs", () => {
+  it("retains the saved UI and system picker while a disconnected peer recovers", () => {
     const source = readFileSync("webview-src/dashboard/main.tsx", "utf8");
     expect(source).toContain("const selectedPeerOffline = selectedPeer?.connected === false;");
-    expect(source).toContain("if (!snapshot || selectedPeerOffline)");
-    expect(source).toContain('selectedPeerOffline ? "Reconnecting…"');
-    expect(source).toContain("isBrowserDashboard || selectedPeerOffline");
+    expect(source).toContain("if (!snapshot)");
+    expect(source).not.toContain("if (!snapshot || selectedPeerOffline)");
+    expect(source).toContain('dashboard-peer-offline');
+    expect(source).toContain('hasPendingActions || state.settingsOpen || workspaceHasDrafts');
+    expect(source).toContain('onWorkspaceDraftsChange={setWorkspaceHasDrafts}');
+    const workspace = readFileSync('webview-src/dashboard/cliSessionsModal.tsx', 'utf8');
+    expect(workspace).toContain('entry.draft || entry.commitDraft || Object.keys(entry.fileDrafts ?? {}).length');
   });
 
   it("uses a labelled login form with password-manager and error semantics", () => {

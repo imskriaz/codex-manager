@@ -108,6 +108,7 @@ export function toDashboardAutoQueueOrderValue(account: DashboardAccountViewMode
   const hourly = (account.metrics ?? []).find((metric) => metric.key === "hourly" && metric.visible && typeof metric.percentage === "number" && Number.isFinite(metric.percentage));
   return {
     id: account.id,
+    autoResetAllowed: account.autoResetAllowed,
     queuePriority: account.queuePriority,
     disabled: account.enabled === false,
     quotaError: account.hasQuotaError,
@@ -137,25 +138,37 @@ export function hasDashboardAutoQueueCapability(account: DashboardAccountViewMod
   return thresholds && "nowMs" in thresholds ? isAutoQueueCandidateEligible(value, thresholds) : hasAutoQueueCapability(value, thresholds);
 }
 
-/** Keep foreign claims last and pending local switches beside the active account. */
+/** Keep the current account first, then usable accounts, claims, and exhausted accounts. */
 export function sortWithQueuedAccount(
   accounts: readonly DashboardAccountViewModel[],
   compare: (left: DashboardAccountViewModel, right: DashboardAccountViewModel) => number,
   groupQuota = true
 ): DashboardAccountViewModel[] {
   return [...accounts].sort((left, right) => {
-    const claimDifference = Number(isAccountClaimedByAnotherDevice(left)) - Number(isAccountClaimedByAnotherDevice(right));
-    if (claimDifference !== 0) return claimDifference;
     const activeDifference = Number(right.isActive) - Number(left.isActive);
     if (activeDifference !== 0) return activeDifference;
+    if (left.isActive && right.isActive) {
+      const activeClaimDifference = Number(isAccountClaimedByAnotherDevice(left)) - Number(isAccountClaimedByAnotherDevice(right));
+      if (activeClaimDifference !== 0) return activeClaimDifference;
+    }
+    const leftOut = isDashboardAccountOutOfQuota(left);
+    const rightOut = isDashboardAccountOutOfQuota(right);
+    const leftClaimed = isAccountClaimedByAnotherDevice(left);
+    const rightClaimed = isAccountClaimedByAnotherDevice(right);
+    const leftMissing = isDashboardMainQuotaMissing(left);
+    const rightMissing = isDashboardMainQuotaMissing(right);
+    const leftBand = left.isActive ? 0 : leftOut || leftMissing ? 2 : leftClaimed ? 1 : 0;
+    const rightBand = right.isActive ? 0 : rightOut || rightMissing ? 2 : rightClaimed ? 1 : 0;
+    if (leftBand !== rightBand) return leftBand - rightBand;
+
+    if (leftBand === 2 && leftOut !== rightOut) return Number(rightOut) - Number(leftOut);
     const pendingDifference = Number(right.switchQueued) - Number(left.switchQueued);
     if (pendingDifference !== 0) return pendingDifference;
-    if (!groupQuota) return compare(left, right);
 
+    // Keep the caller's selected sort within each display band.
+    if (!groupQuota) return compare(left, right);
     const missingMainQuotaDifference = Number(isDashboardMainQuotaMissing(left)) - Number(isDashboardMainQuotaMissing(right));
-    if (missingMainQuotaDifference !== 0) return missingMainQuotaDifference;
-    const quotaGroupDifference = Number(isDashboardAccountOutOfQuota(left)) - Number(isDashboardAccountOutOfQuota(right));
-    if (quotaGroupDifference !== 0) return quotaGroupDifference;
+    if (missingMainQuotaDifference !== 0 && leftBand === 0 && rightBand === 0) return missingMainQuotaDifference;
 
     return compare(left, right);
   });

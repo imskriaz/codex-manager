@@ -36,7 +36,7 @@ it("reads all versioned native databases, reusable pages and sidecars without ch
     expect(result.walBytes).toBeGreaterThan(0);
     expect(result.sharedMemoryBytes).toBeGreaterThan(0);
     expect(result.totalBytes).toBe(result.databases.reduce((sum, row) => sum + row.bytes + row.walBytes + row.sharedMemoryBytes, 0));
-    expect(await readFile(file)).toEqual(before);
+    expect((await readFile(file)).equals(before)).toBe(true);
     expect(queue.prepare("SELECT id FROM queued").get()?.id).toBe("retained");
   } finally { clearInterval(timer); queue.close(); }
 });

@@ -3,7 +3,7 @@ import type { DashboardActionName, DashboardNotice, DashboardSettingKey, Dashboa
 import { noticeFromActionTimeout } from "./actionFeedback";
 import { createActionRequestId, getActionTimeoutMs, isAutomaticRequest, postMessageToHost } from "./host";
 import type { AppDispatch, SendAction } from "./hookTypes";
-import { readBrowserCache, writeBrowserCache } from './cliSessionCache';
+import { readBrowserCache, writeBrowserCache, deleteBrowserCache } from './cliSessionCache';
 import { OFFLINE_CACHE_READS, offlineReadCacheKey } from './offlinePolicy';
 import type { DashboardHostMessage, DashboardActionResultPayload } from '../../src/domain/dashboard/types';
 import type { AppState } from "./state";
@@ -14,16 +14,31 @@ export function useDashboardActions(
   onNotice: (notice: DashboardNotice) => void,
   targetDeviceId?: string,
   onActionTimeout?: (action: DashboardActionName, requestId: string) => void,
-  connected = true
+  connected = true,
+  onCachedRead?: (action: DashboardActionName, payload: DashboardActionResultPayload, requestId: string) => void
 ) {
   const connection = useRef(connected); connection.current = connected;
   const snapshot = useRef(state.snapshot); snapshot.current = state.snapshot;
+  const cachedRead = useRef(onCachedRead); cachedRead.current = onCachedRead;
   const readRequests = useRef(new Map<string, string>());
+  const latestReads = useRef(new Map<string, string>());
+  const fileMutations = useRef(new Map<string, { fileKey: string; treeKey: string }>());
   useEffect(() => {
     const receive = (event: MessageEvent<DashboardHostMessage>) => {
       const result = event.data; if (result?.type !== 'dashboard:action-result') return;
+      const mutation = fileMutations.current.get(result.requestId);
+      fileMutations.current.delete(result.requestId);
+      if (mutation && result.status === 'completed') {
+        latestReads.current.delete(mutation.fileKey); latestReads.current.delete(mutation.treeKey);
+        if (result.payload?.workspaceFile) void writeBrowserCache(mutation.fileKey, { workspaceFile: result.payload.workspaceFile });
+        else void deleteBrowserCache(mutation.fileKey);
+        if (result.payload?.workspaceFiles) void writeBrowserCache(mutation.treeKey, { workspaceFiles: result.payload.workspaceFiles });
+        else void deleteBrowserCache(mutation.treeKey);
+      }
       const key = readRequests.current.get(result.requestId); if (!key) return;
       readRequests.current.delete(result.requestId);
+      if (latestReads.current.get(key) !== result.requestId) return;
+      latestReads.current.delete(key);
       if (result.status === 'completed' && result.payload) void writeBrowserCache(key, { ...result.payload, notice: undefined });
     };
     window.addEventListener('message', receive);
@@ -54,7 +69,10 @@ export function useDashboardActions(
       }
 
       const timeoutId = window.setTimeout(() => {
+        const key = readRequests.current.get(request.requestId);
+        if (key && latestReads.current.get(key) === request.requestId) latestReads.current.delete(key);
         readRequests.current.delete(request.requestId);
+        fileMutations.current.delete(request.requestId);
         dispatch({ type: "resolve-action", requestId: request.requestId });
         if (!isAutomaticRequest(request.requestId) && request.action !== "getDailyUsage" && request.action !== "getUsageGraph" && request.action !== "listCodexCliSessions") onNotice(noticeFromActionTimeout(request.action));
         onActionTimeoutRef.current?.(request.action, request.requestId);
@@ -70,7 +88,10 @@ export function useDashboardActions(
 
       window.clearTimeout(timeoutId);
       actionTimeoutsRef.current.delete(requestId);
+      const key = readRequests.current.get(requestId);
+      if (key && latestReads.current.get(key) === requestId) latestReads.current.delete(key);
       readRequests.current.delete(requestId);
+      fileMutations.current.delete(requestId);
     });
   }, [dispatch, isAutomaticRequest, onNotice, state.pendingActions]);
 
@@ -113,7 +134,19 @@ export function useDashboardActions(
       });
       return requestId;
     }
-    if (cacheKey) readRequests.current.set(requestId, cacheKey);
+    if (cacheKey) {
+      readRequests.current.set(requestId, cacheKey);
+      latestReads.current.set(cacheKey, requestId);
+      if (cachedRead.current) void readBrowserCache<DashboardActionResultPayload>(cacheKey).then(saved => {
+        if (saved && readRequests.current.has(requestId) && latestReads.current.get(cacheKey) === requestId) cachedRead.current?.(action, saved, requestId);
+      });
+    }
+    if ((action === 'saveWorkspaceFile' || action === 'deleteWorkspaceFile') && (localSystemId || peer?.id)) {
+      const fileKey = offlineReadCacheKey('readWorkspaceFile', undefined, routedPayload, localSystemId);
+      const treeKey = offlineReadCacheKey('listWorkspaceFiles', undefined, { ...routedPayload, filePath: undefined }, localSystemId);
+      latestReads.current.delete(fileKey); latestReads.current.delete(treeKey);
+      fileMutations.current.set(requestId, { fileKey, treeKey });
+    }
     try {
       postMessageToHost({
         type: "dashboard:action",

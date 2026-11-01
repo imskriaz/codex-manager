@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type {
   WorkspaceGitHubItem,
   WorkspaceGitHubRequest,
@@ -49,6 +49,12 @@ export function WorkspaceGitHub(props: {
     try {
       const result = await request("workspaceGitHub", {
         githubRequest: { section, operation: "read", state: stateFilter, ...query }
+      }, saved => {
+        if (token === revision.current && saved.workspaceGitHub) {
+          setState(current => current ?? saved.workspaceGitHub);
+          if (query.operation === 'detail') setDetail(saved.workspaceGitHub.detail);
+          setNotice('Saved view · refreshing GitHub…');
+        }
       });
       if (token !== revision.current) {
         return;
@@ -78,19 +84,12 @@ export function WorkspaceGitHub(props: {
       }
     }
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     setState(undefined);
     setDetail(undefined);
   }, [section, stateFilter]);
-  useEffect(() => {
-    if (props.connected && !props.pending) {
-      void load();
-    } else if (!props.connected) {
-      revision.current++;
-      setBusy(false);
-      setNotice("Disconnected · GitHub actions are unavailable.");
-      setFailed(true);
-    }
+  useLayoutEffect(() => {
+    if (!props.pending) void load();
   }, [section, stateFilter, request, props.connected]);
   const open = (url: string) => {
     if (url.startsWith("https://github.com/")) {

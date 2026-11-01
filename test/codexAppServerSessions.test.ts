@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ open: vi.fn(), spawn: vi.fn() }));
 vi.mock("child_process", async (original) => ({ ...await original<typeof import("child_process")>(), spawn: mocks.spawn }));
 vi.mock("../src/services/codexAppServerRpc", () => ({ CodexAppServerRpc: { open: mocks.open }, CodexAppServerTurnInterruptedError: class extends Error {}, CodexAppServerDisconnectedError: class extends Error {} }));
-import { observeRunningCodexSession, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
+import { observeRunningCodexSession, readCodexCliSessionSummary, startCodexCliSession, sendCodexCliSessionMessage, cancelCodexCliSessionTurn, readNewCodexCliSessionSummary, steerCodexCliSessionTurn, resumeCodexSessionGoal, setCodexSessionGoalStatus, renameCodexCliSession, archiveCodexCliSession, unarchiveCodexCliSession, deleteCodexCliSession, clearCodexSessionGoal, withCodexSessionMaintenance } from "../src/services/codexSessionResume";
 import { getCodexSessionLiveState } from "../src/services/codexSessionLive";
 import { cancelNativeCodexSessionTurn, getNativeCodexSessionRunning, readNativeCodexSessionRunning, startNativeCodexSessionTurn, steerNativeCodexSessionTurn } from "../src/services/codexNativeSessionStatus";
 import { subscribeDashboardRealtime } from "../src/services/dashboardRealtime";
@@ -290,6 +290,37 @@ describe("native App Server new sessions", () => {
       expect(log).toHaveBeenCalledWith("info", "session-turn", "Official native turn accepted", expect.objectContaining({ turnRef: expect.any(String), transport: "official-native" }));
       expect(log).toHaveBeenCalledWith("info", "session-stop", "Official Stop confirmed", expect.objectContaining({ origin: "user", actor: "manager", goalPauseRequested: true }));
     } finally { stopped(); unsubscribe(); log.mockRestore(); vi.mocked(getNativeCodexSessionRunning).mockReturnValue(undefined); vi.mocked(cancelNativeCodexSessionTurn).mockReset().mockResolvedValue(false); }
+  });
+
+  it.each([true, false])('stops a restored private-server turn through its native owner (observed: %s)', async observed => {
+    await mkdir(path.join(root, 'sessions'));
+    const transcript = path.join(root, 'sessions', `rollout-${id}.jsonl`);
+    const event = (type: string) => JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type, turn_id: 'restored-stop' } }) + '\n';
+    await writeFile(transcript, JSON.stringify({ type: 'session_meta', payload: { id, cwd: root } }) + '\n' + event('task_started'));
+    await writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Restored task' }) + '\n');
+    vi.mocked(getNativeCodexSessionRunning).mockReturnValue(true);
+    vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(true);
+    const updates: string[] = [];
+    const stop = subscribeDashboardRealtime(message => { if (message.type === 'dashboard:codex-session-live' && message.state.sessionId === id) updates.push(message.state.status); });
+    try {
+      expect(await readCodexCliSessionSummary(id)).toMatchObject({ status: 'running', canStop: true });
+      if (observed) {
+        observeRunningCodexSession({ id, title: 'Restored task', status: 'running' });
+        await vi.waitFor(() => expect(updates).toContain('running'));
+      }
+      vi.mocked(cancelNativeCodexSessionTurn).mockImplementationOnce(async () => {
+        await appendFile(transcript, event('turn_aborted'));
+        vi.mocked(getNativeCodexSessionRunning).mockReturnValue(false);
+        vi.mocked(readNativeCodexSessionRunning).mockResolvedValue(false);
+        return true;
+      });
+      expect(await cancelCodexCliSessionTurn(id)).toBe(true);
+      expect(cancelNativeCodexSessionTurn).toHaveBeenCalledWith(root, id, 'restored-stop');
+      if (observed) await vi.waitFor(() => expect(updates).toContain('cancelled'));
+      expect(await readCodexCliSessionSummary(id)).toMatchObject({ status: 'idle', locked: false, canStop: false });
+      expect(startNativeCodexSessionTurn).not.toHaveBeenCalled();
+      expect(readCodexSessionPreferences(root, [id]).get(id)?.manualStop).toBe(true);
+    } finally { stop(); }
   });
   it("confirms explicit goal controls in the recorded project without adding a user instruction", async () => {
     const log = vi.spyOn(diagnostics, "recordPersistentEvent");

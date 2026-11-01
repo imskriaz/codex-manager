@@ -84,6 +84,8 @@ export function getActionTimeoutMs(action: DashboardActionName, accountCount = 1
       return 240_000 * Math.max(1, accountCount);
     case "batchResyncProfile":
       return 300_000 * Math.max(1, accountCount);
+    case "batchSetAccountAutoResetAllowed":
+      return 30_000 * Math.max(1, accountCount);
     case "restoreFromBackup":
     case "restoreFromAuthJson":
       return 60_000;

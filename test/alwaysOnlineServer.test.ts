@@ -18,6 +18,15 @@ afterEach(() => {
 });
 
 describe("always-online WebSocket relay handoff", () => {
+  it('stops the relay without a host probe or startup preparation when Sync and Claim is off', async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({ get: (key: string, fallback: unknown) => key === 'encryptedSyncEnabled' ? false : key === 'cloudflaredDomain' ? 'https://tunnel.example' : fallback } as never);
+    const verify = vi.fn(async () => true);
+    const server = new AlwaysOnlineServer({} as never, {} as never, verify);
+    const stop = vi.spyOn(server, 'stop').mockResolvedValue();
+    expect(await server.applyConfiguration()).toBe('stopped');
+    expect(stop).toHaveBeenCalledOnce();
+    expect(verify).not.toHaveBeenCalled();
+  });
   it("waits without throwing or retaining a stale relay when encrypted sync is unavailable", async () => {
     vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
       get: vi.fn((key: string, fallback?: unknown) =>

@@ -5,6 +5,7 @@ export type ProjectAttachment = Omit<ChatAttachment, 'data'> & { hash: string };
 export type ProjectCommentInput = { id: string; taskId: string; text: string; author?: string; uploads?: ChatAttachment[] };
 export const projectAttachmentPath = (owner: 'task' | 'comment', ownerId: string, file: Pick<ProjectAttachment, 'id'>) => `@manager-attachment/${owner}/${encodeURIComponent(ownerId)}/${encodeURIComponent(file.id)}`;
 export type TaskStage = 'idea' | 'planned' | 'running' | 'completed';
+export type ProjectBoardConfig = { showArchive?: boolean; view?: 'board' | 'list' | 'gantt' | 'calendar'; columns?: TaskStage[]; stageFilter?: TaskStage | 'all' };
 export type ProjectTask = {
   id: string; title: string; prompt: string; stage: TaskStage; revision: number;
   createdAt: number; updatedAt: number; sessionId?: string; launchPending?: boolean;
@@ -15,7 +16,7 @@ export type ProjectTask = {
   timing?: { firstStartedAt: number; lastObservedAt: number; durationMs: number; runCount: number };
 };
 export type ProjectComment = { id: string; taskId: string; author: string; text: string; createdAt: number; attachments?: ProjectAttachment[] };
-export type ProjectBoard = { projectPath: string; tasks: ProjectTask[]; comments: ProjectComment[]; sessions: DashboardCliSessionSummary[]; updatedAt: number; revision?: number; homeKey?: string };
+export type ProjectBoard = { projectPath: string; tasks: ProjectTask[]; comments: ProjectComment[]; sessions: DashboardCliSessionSummary[]; updatedAt: number; revision?: number; homeKey?: string; boardConfig?: ProjectBoardConfig };
 export type ProjectTaskFile = DashboardWorkspaceFileEntry & { attachment?: boolean };
 export type ProjectTaskDetails = {
   task?: ProjectTask;

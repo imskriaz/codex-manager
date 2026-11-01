@@ -565,7 +565,7 @@ describe("peer WebSocket failure handling", () => {
     const source = readFileSync("src/services/webDashboardServer.ts", "utf8");
     expect(source).toContain('socket.addEventListener("error", () => undefined);');
     expect(source).not.toContain('socket.addEventListener("error", () => socket.close());');
-    expect(source).toContain("if (this.peerStopped || !domain || this.peerSocket || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) return;");
+    expect(source).toContain("if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || !domain || this.peerSocket || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) return;");
     expect(source).toContain("if (!this.peerReconnectTimer)");
     expect(source).toContain("const PEER_RECONNECT_DELAY_MS = 1_000;");
   });
@@ -614,7 +614,7 @@ describe("confirmed peer claim sync", () => {
       getRealtimeEncryptedVault: vi.fn(async () => "encrypted-vault"),
       signRealtimePeerPayload: vi.fn(async () => "signed"),
       verifyRealtimePeerPayload: vi.fn(async (_body: string, signature: string) => signature === "signed"),
-      setOnlineDeviceIds: vi.fn(), setRealtimeSyncPublisher: vi.fn()
+      isCrossPcEnabled: vi.fn(() => true), setOnlineDeviceIds: vi.fn(), setRealtimeSyncPublisher: vi.fn()
     };
     const server = new WebDashboardServer({ extensionUri: { fsPath: process.cwd() }, secrets: { get: vi.fn(async () => undefined) } } as never, {} as never, sync as never);
     const internal = server as unknown as {

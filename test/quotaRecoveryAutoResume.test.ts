@@ -9,8 +9,11 @@ const mocks = vi.hoisted(() => ({
   capture: vi.fn(),
   resume: vi.fn(),
   needsReload: vi.fn(),
-  notice: vi.fn()
+  notice: vi.fn(),
+  subscribe: vi.fn(),
+  stopStorage: vi.fn()
 }));
+vi.mock('../src/storage/sqliteState', () => ({ getSqliteStateStore: () => ({ subscribe: mocks.subscribe }) }));
 vi.mock("../src/infrastructure/config/extensionSettings", () => ({ isAutoResumeEnabled: mocks.enabled }));
 vi.mock("../src/services/codexSessionResume", () => ({ resolveCodexHome: mocks.home }));
 vi.mock("../src/services/codexSessionAutoResume", () => ({
@@ -48,7 +51,8 @@ const start = () => {
   services.push(service);
   return service;
 };
-const tick = () => vi.advanceTimersByTimeAsync(5_000);
+const flush = () => vi.advanceTimersByTimeAsync(0);
+const tick = async () => { recordAccountQuotaCheck(account); await vi.advanceTimersByTimeAsync(5_000); };
 const recover = () => {
   account = {
     ...account,
@@ -73,6 +77,7 @@ beforeEach(() => {
   mocks.needsReload.mockReturnValue(false);
   mocks.capture.mockResolvedValue([]);
   mocks.resume.mockResolvedValue({ attempted: 1, opened: 1, failed: [] });
+  mocks.subscribe.mockReturnValue(mocks.stopStorage);
   allowed = vi.fn(() => true);
   account = {
     id: "active",
@@ -158,6 +163,31 @@ it("leaves ordinary healthy accounts alone and stops on disposal", async () => {
   service.dispose();
   await tick();
   expect(read).toHaveBeenCalledTimes(before);
+});
+
+it('stays idle between quota changes, reacts immediately to other-window writes, and releases its subscription', async () => {
+  recover(); const service = start(); await flush(); read.mockClear();
+  await vi.advanceTimersByTimeAsync(59_000);
+  expect(read).not.toHaveBeenCalled();
+  account.quotaSummary!.hourlyPercentage = 0;
+  const changed = mocks.subscribe.mock.calls[0]![1] as () => void;
+  changed(); await flush();
+  expect(saved.get('codexManager.quotaRecovery:test-home')).toBe(true);
+  recover(); changed(); await flush();
+  expect(mocks.resume).toHaveBeenCalledOnce();
+  service.dispose(); expect(mocks.stopStorage).toHaveBeenCalledOnce(); read.mockClear(); changed(); await flush();
+  expect(read).not.toHaveBeenCalled();
+});
+
+it('rechecks a quota change arriving during an unfinished account read without concurrent recovery', async () => {
+  let finish!: (rows: CodexManagerAccountRecord[]) => void;
+  const exhausted = account;
+  read.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  start(); await flush(); recover();
+  const changed = mocks.subscribe.mock.calls[0]![1] as () => void;
+  changed(); changed(); finish([exhausted]); await flush();
+  expect(mocks.resume).toHaveBeenCalledOnce();
+  expect(mocks.capture).toHaveBeenCalledOnce();
 });
 it("retains partial recovery and retries through the existing duplicate-safe recovery path", async () => {
   start();

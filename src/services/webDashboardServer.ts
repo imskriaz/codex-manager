@@ -97,7 +97,19 @@ const PEER_HTTP_HEARTBEAT_TIMEOUT_MS = 10_000;
 const LOCAL_CLI_SESSION_CACHE_MS = 2_000;
 const DASHBOARD_LOCAL_SESSION_WAIT_MS = 750;
 
+function sendDashboardSocketMessage(socket: WebSocket, message: string): void {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  try {
+    if (socket.bufferedAmount > 4 * 1024 * 1024) socket.close(1013, 'Dashboard updates need to reconnect');
+    else socket.send(message);
+  } catch (error) {
+    console.warn('[codexManager] dashboard client disconnected during delivery', error);
+    socket.terminate();
+  }
+}
+
 export function getPeerActionTimeoutMs(action: DashboardActionName, accountCount = 1): number {
+  if (action === "batchSetAccountAutoResetAllowed") return 30_000 * Math.max(1, accountCount);
   if (action === "refreshAll" || action === "batchRefresh") return 240_000 * Math.max(1, accountCount);
   if (action === "batchResyncProfile") return 300_000 * Math.max(1, accountCount);
   if (action === "refresh") return 240_000;
@@ -409,6 +421,10 @@ export class WebDashboardServer implements vscode.Disposable {
     return { status: result.status, errorMessage: result.error, payload: result.payload as import("../domain/dashboard/types").DashboardActionResultPayload | undefined };
   }
   private server: http.Server | undefined;
+  private serverStart: Promise<void> | undefined;
+  private serverStartRevision = 0;
+  private serverRetryAt = 0;
+  private legacyPasswordCleanupStarted = false;
   private readonly webSocketClients = new Set<WebSocket>();
   private readonly webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_DASHBOARD_MESSAGE_BYTES });
   private realtimePublishInFlight = false;
@@ -535,8 +551,7 @@ export class WebDashboardServer implements vscode.Disposable {
       if (this.webSocketClients.size === 0 || message.type === "dashboard:snapshot") return;
       const serialized = JSON.stringify(message);
       for (const socket of this.webSocketClients) {
-        if (message.type === 'dashboard:terminal-output' && message.output.raw && socket.bufferedAmount > 1024 * 1024) continue;
-        if (socket.readyState === WebSocket.OPEN) socket.send(serialized);
+        sendDashboardSocketMessage(socket, serialized);
       }
     });
     this.webSocketServer.on("connection", (socket, request) => {
@@ -583,16 +598,31 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   async start(): Promise<void> {
-    if (!this.isEnabled() || this.server) return;
+    if (!this.isEnabled()) return;
+    if (this.serverStart) return this.serverStart;
+    if (this.server) return;
+    const revision = this.serverStartRevision;
+    this.peerStopped = false;
+    this.serverRetryAt = Date.now() + 30_000;
+    const task = this.startServer(revision);
+    this.serverStart = task;
+    try { await task; }
+    catch (error) {
+      if (revision === this.serverStartRevision && !this.peerStopped && this.isEnabled()) this.startWebSocketHeartbeat();
+      throw error;
+    } finally { if (this.serverStart === task) this.serverStart = undefined; }
+  }
+
+  private async startServer(revision: number): Promise<void> {
     // The browser dashboard now authenticates with the encrypted-sync
     // passphrase. Remove the retired standalone password secret if present.
-    try {
-      await this.context.secrets.delete(LEGACY_PASSWORD_SECRET_KEY);
-    } catch {
-      // Removing an already-missing legacy secret is best effort.
+    if (!this.legacyPasswordCleanupStarted) {
+      this.legacyPasswordCleanupStarted = true;
+      try { void Promise.resolve(this.context.secrets.delete(LEGACY_PASSWORD_SECRET_KEY)).catch(() => undefined); }
+      catch { /* Legacy cleanup must not delay a manual dashboard open. */ }
     }
-    if (this.encryptedSync) this.deviceId = await this.encryptedSync.getPresenceDeviceId();
-    this.peerStopped = false;
+    if (this.encryptedSync) this.deviceId = await waitWithin(this.encryptedSync.getPresenceDeviceId(), 5_000, 'Dashboard device identity is unavailable. Retry shortly.');
+    if (revision !== this.serverStartRevision || this.peerStopped || !this.isEnabled()) return;
     this.server = http.createServer((request, response) => {
       void this.handle(request, response).catch((error) => {
         console.error("[codexManager] Web Dashboard request failed", error);
@@ -610,7 +640,7 @@ export class WebDashboardServer implements vscode.Disposable {
       const server = this.server!;
       const onError = (error: Error) => {
         server.off("listening", onListening);
-        this.server = undefined;
+        if (this.server === server) this.server = undefined;
         if (isAddressInUseError(error)) {
           resolve();
           return;
@@ -625,6 +655,7 @@ export class WebDashboardServer implements vscode.Disposable {
       server.once("listening", onListening);
       server.listen(WEB_DASHBOARD_PORT, "127.0.0.1");
     });
+    if (revision !== this.serverStartRevision || this.peerStopped) return;
     this.startWebSocketHeartbeat();
     this.notificationMirrorSubscription ??= subscribeToVscodeNotifications((notification) => {
       this.broadcastRealtimeNotice(notification);
@@ -642,6 +673,8 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   async stop(): Promise<void> {
+    this.serverStartRevision++;
+    this.serverStart = undefined;
     this.projectShareEvents.close();
     this.peerStopped = true;
     this.peerConnectionRevision += 1;
@@ -810,7 +843,7 @@ export class WebDashboardServer implements vscode.Disposable {
   async isConfiguredDomainLocal(): Promise<boolean> {
     const settings = this.settingsStore.getDashboardSettings();
     const domain = normalizeCloudflaredDomain(settings.cloudflaredDomain ?? "");
-    if (!domain || !settings.webDashboardEnabled || settings.webSocketServerEnabled === false) return false;
+    if (!this.encryptedSync?.isCrossPcEnabled() || !domain || !settings.webDashboardEnabled || settings.webSocketServerEnabled === false) return false;
     const challenge = crypto.randomBytes(16).toString("hex");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 4_000);
@@ -959,6 +992,7 @@ export class WebDashboardServer implements vscode.Disposable {
       return;
     }
     if (method === "POST" && path === "/api/peer-account-claim") {
+      if (!this.encryptedSync?.isCrossPcEnabled()) { response.statusCode = 404; response.end("Not found"); return; }
       try {
         const body = JSON.parse(await readDashboardRequestBody(request, 8192)) as { request?: unknown; signature?: unknown };
         if (!isAccountClaimRequest(body.request) || typeof body.signature !== "string" ||
@@ -984,7 +1018,7 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     if (method === "POST" && path === "/api/peer-heartbeat") {
       const domainConfigured = this.settingsStore.getDashboardSettings().webSocketServerEnabled !== false && Boolean(configuredCloudflaredOrigin);
-      if (!domainConfigured || request.headers["x-codex-peer"] !== "1") {
+      if (!this.encryptedSync?.isCrossPcEnabled() || !domainConfigured || request.headers["x-codex-peer"] !== "1") {
         response.statusCode = 404;
         response.end("Not found");
         return;
@@ -1332,6 +1366,9 @@ export class WebDashboardServer implements vscode.Disposable {
     this.webSocketHeartbeatTimer = setInterval(() => {
       this.projectShareEvents.heartbeat();
       const now = Date.now();
+      if (!this.server && !this.peerStopped && now >= this.serverRetryAt) {
+        void this.start().catch(error => console.warn('[codexManager] dashboard listener recovery failed', error));
+      }
       let workspacePresenceChanged = false;
       for (const [socket, { lastSeenAt }] of this.workspaceViewerLastSeen) {
         if (now - lastSeenAt <= WORKSPACE_VIEWER_LEASE_MS) continue;
@@ -1379,7 +1416,7 @@ export class WebDashboardServer implements vscode.Disposable {
     }
     if (message.type === "dashboard:action") {
       const targetDeviceId = message.payload?.targetDeviceId;
-      if (targetDeviceId && targetDeviceId !== this.deviceId) {
+      if (targetDeviceId && targetDeviceId !== "local" && targetDeviceId !== this.deviceId) {
         const relayed = await this.relayPeerAction(message, targetDeviceId);
         messages.push({
           type: "dashboard:action-result",
@@ -1439,19 +1476,24 @@ export class WebDashboardServer implements vscode.Disposable {
       reloadAfterResponse =
         result.status === "completed" && (message.action === "unloadAuth" || result.payload?.reloadScheduled === true);
     } else if (message.type === "dashboard:setting") {
-      if (!(await handleDashboardSettingUpdate(message.key, message.value))) {
-        throw new Error(`The ${message.key} setting could not be updated.`);
+      try {
+        if (!(await handleDashboardSettingUpdate(message.key, message.value))) {
+          throw new Error(`The ${message.key} setting could not be updated.`);
+        }
+        if (message.key === "crossWindowAccountModeEnabled" && typeof message.value === "boolean") {
+          messages.push({
+            type: "dashboard:notice",
+            level: "info",
+            message: `${message.value ? "Parallel window accounts enabled" : "Parallel window accounts disabled"}. Reloading this VS Code window to apply the change.`
+          });
+          reloadAfterResponse = true;
+        } else messages.push({ type: 'dashboard:notice', level: 'info', message: 'Setting saved.' });
+      } catch (error) {
+        // Return the stored value below so an optimistic control cannot stay on after a failed write.
+        messages.push({ type: 'dashboard:notice', level: 'error', message: error instanceof Error ? error.message : String(error) });
       }
-      if (message.key === "crossWindowAccountModeEnabled" && typeof message.value === "boolean") {
-        messages.push({
-          type: "dashboard:notice",
-          level: "info",
-          message: `${message.value ? "Parallel window accounts enabled" : "Parallel window accounts disabled"}. Reloading this VS Code window to apply the change.`
-        });
-        reloadAfterResponse = true;
-      } else messages.push({ type: 'dashboard:notice', level: 'info', message: 'Setting saved.' });
     } else if (message.type === "dashboard:pickCodexAppPath") {
-      await pickDashboardCodexAppPath(this.settingsStore);
+      if (!(await pickDashboardCodexAppPath(this.settingsStore))) messages.push({ type: 'dashboard:notice', level: 'warning', message: 'Codex app path selection was cancelled.' });
     } else if (message.type === "dashboard:clearCodexAppPath") {
       await clearDashboardCodexAppPath();
     } else if (message.type === "dashboard:pickCodexCliPath") {
@@ -1662,6 +1704,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (readDashboardBearerToken(request)) { socket.destroy(); return; }
     const requestUrl = new URL(request.url ?? "/", this.getUrl());
     const isPeer = requestUrl.searchParams.get("peer") === "1";
+    if (isPeer && !this.encryptedSync?.isCrossPcEnabled()) { socket.destroy(); return; }
     const domainConfigured = this.settingsStore.getDashboardSettings().webSocketServerEnabled !== false && Boolean(normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? ""));
     const localBrowser = !isPeer && isLocalWebDashboardRequest(request);
     const browserAuthorized = isPeer ? domainConfigured : await this.isAuthorized(request);
@@ -1758,9 +1801,7 @@ export class WebDashboardServer implements vscode.Disposable {
     if (["completed", "failed", "cancelled"].includes(state.status)) void this.notifySessionCompletion(state);
     const message = JSON.stringify({ type: "dashboard:codex-session-live", state } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
-      if (socket.readyState !== WebSocket.OPEN) continue;
-      if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, "Live updates need to reconnect"); continue; }
-      socket.send(message);
+      sendDashboardSocketMessage(socket, message);
     }
     const peerMessage = JSON.stringify({ type: "peer:codex-session-live", deviceId: state.deviceId ?? this.deviceId,
       state: { ...state, deviceId: undefined } } satisfies PeerCodexSessionLiveMessage);
@@ -1794,10 +1835,10 @@ export class WebDashboardServer implements vscode.Disposable {
       if (socket.readyState === WebSocket.OPEN) {
         const state = await this.buildState();
         this.lastRealtimeSignature = buildDashboardStateSignature(state);
-        socket.send(JSON.stringify({ type: "dashboard:snapshot", state }));
+        sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:snapshot", state }));
         for (const live of [...listCodexSessionLiveStates(), ...this.currentRemoteSessionLive()]) {
-          if (socket.bufferedAmount > 4 * 1024 * 1024) { socket.close(1013, "Live updates need to reconnect"); break; }
-          socket.send(JSON.stringify({ type: "dashboard:codex-session-live", state: live } satisfies DashboardHostMessage));
+          if (socket.readyState !== WebSocket.OPEN) break;
+          sendDashboardSocketMessage(socket, JSON.stringify({ type: "dashboard:codex-session-live", state: live } satisfies DashboardHostMessage));
         }
       }
     } catch (error) {
@@ -1916,7 +1957,7 @@ export class WebDashboardServer implements vscode.Disposable {
       payload: { cliSessions: [...sessions, ...this.getRemoteCliSessions()], realtimeRevision: revision, notice: getCodexSessionReadNotice(sessions) }
     } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(message);
+      sendDashboardSocketMessage(socket, message);
     }
   }
 
@@ -1944,9 +1985,7 @@ export class WebDashboardServer implements vscode.Disposable {
       }
       const result = await this.processClientMessage(message);
       for (const hostMessage of result.messages) {
-        if (hostMessage.type !== "dashboard:snapshot" && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify(hostMessage));
-        }
+        sendDashboardSocketMessage(socket, JSON.stringify(hostMessage));
       }
       const completedPasswordChangeRequestId =
         message.type === "dashboard:action" && message.action === "configureEncryptedSync"
@@ -1963,7 +2002,7 @@ export class WebDashboardServer implements vscode.Disposable {
       ) {
         this.closeRemoteBrowserSockets();
       }
-      this.publishProcessedSnapshot(result.messages);
+      this.publishProcessedSnapshot(result.messages, socket);
       if (result.reloadAfterResponse) {
         scheduleExtensionHostReload(
           (errorMessage) => this.broadcastRealtimeNotice("error", errorMessage),
@@ -2023,18 +2062,18 @@ export class WebDashboardServer implements vscode.Disposable {
     if (revision === this.peerConnectionRevision) this.broadcastRealtimeState(state);
   }
 
-  private publishProcessedSnapshot(messages: readonly DashboardHostMessage[]): void {
+  private publishProcessedSnapshot(messages: readonly DashboardHostMessage[], requester?: WebSocket): void {
     const snapshot = messages.find(
       (message): message is Extract<DashboardHostMessage, { type: "dashboard:snapshot" }> =>
         message.type === "dashboard:snapshot"
     );
     if (snapshot) {
       this.publishLocalPeerState();
-      this.broadcastRealtimeState(snapshot.state);
+      this.broadcastRealtimeState(snapshot.state, requester);
     }
   }
 
-  private broadcastRealtimeState(state: DashboardState): void {
+  private broadcastRealtimeState(state: DashboardState, requester?: WebSocket): void {
     if (this.webSocketClients.size === 0) {
       this.lastRealtimeSignature = "";
       return;
@@ -2044,7 +2083,8 @@ export class WebDashboardServer implements vscode.Disposable {
     this.lastRealtimeSignature = signature;
     const message = JSON.stringify({ type: "dashboard:snapshot", state });
     for (const socket of this.webSocketClients) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(message);
+      if (socket === requester) continue;
+      sendDashboardSocketMessage(socket, message);
     }
   }
 
@@ -2063,7 +2103,7 @@ export class WebDashboardServer implements vscode.Disposable {
     } else console.warn('[codexManager] remote notification queue full');
     const notice = JSON.stringify({ type: "dashboard:notice", ...payload } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(notice);
+      sendDashboardSocketMessage(socket, notice);
     }
   }
 
@@ -2084,7 +2124,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private async publishPeerNotification(notice: MirroredNotification): Promise<void> {
-    if (this.peerStopped || !getCodexManagerConfiguration().get<boolean>('webSocketServerEnabled', true)) return;
+    if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || !getCodexManagerConfiguration().get<boolean>('webSocketServerEnabled', true)) return;
     const unsigned = { type: 'peer:notice' as const, deviceId: this.deviceId, eventId: notice.notificationId ?? crypto.randomUUID(), sentAt: Date.now(),
       notice: { level: notice.level, message: notice.message, title: notice.title, systemName: notice.systemName } };
     const revision = this.peerConnectionRevision;
@@ -2140,7 +2180,7 @@ export class WebDashboardServer implements vscode.Disposable {
       notificationId
     } satisfies DashboardHostMessage);
     for (const socket of this.webSocketClients) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(message);
+      sendDashboardSocketMessage(socket, message);
     }
   }
 
@@ -2817,7 +2857,7 @@ export class WebDashboardServer implements vscode.Disposable {
 
   private connectPeerSocket(): void {
     const domain = normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "");
-    if (this.peerStopped || !domain || this.peerSocket || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) return;
+    if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || !domain || this.peerSocket || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) return;
     let endpoint: URL;
     try {
       endpoint = new URL(domain);
@@ -3005,7 +3045,7 @@ export class WebDashboardServer implements vscode.Disposable {
   }
 
   private startPeerHttpHeartbeat(): void {
-    if (this.peerStopped || this.peerHttpHeartbeatTimer) return;
+    if (this.peerStopped || !this.encryptedSync?.isCrossPcEnabled() || this.peerHttpHeartbeatTimer) return;
     void this.publishPeerHeartbeatHttp();
     this.peerHttpHeartbeatTimer = setInterval(() => void this.publishPeerHeartbeatHttp(), PEER_HEARTBEAT_INTERVAL_MS);
     this.peerHttpHeartbeatTimer.unref?.();
@@ -3026,7 +3066,7 @@ export class WebDashboardServer implements vscode.Disposable {
     const revision = this.peerConnectionRevision;
     if (this.peerSocket?.readyState === UndiciWebSocket.OPEN) return;
     const domain = normalizeCloudflaredDomain(this.settingsStore.getDashboardSettings().cloudflaredDomain ?? "");
-    if (!domain || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) {
+    if (!this.encryptedSync?.isCrossPcEnabled() || !domain || this.settingsStore.getDashboardSettings().webSocketServerEnabled === false) {
       this.peerPresenceAuthoritative = false;
       this.encryptedSync?.setOnlineDeviceIds(undefined);
       return;

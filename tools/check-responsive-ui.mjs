@@ -16,9 +16,16 @@ import { dashboardCopyResources } from "../out/localization/resources/dashboard.
 // Only GET the canonical local snapshot. All browser actions are intercepted
 // in memory, so this check cannot send a turn or change a real account.
 const origin = process.env.CODEX_MANAGER_UI_URL || "http://127.0.0.1:39875";
-const response = await fetch(`${origin}/api/state`);
-if (!response.ok) throw new Error(`Local dashboard snapshot returned ${response.status}.`);
-const snapshot = await response.json();
+const fixtureOnly = process.argv.includes('--fixture');
+const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+const snapshot = fixtureOnly ? { lang: 'en', panelTitle: 'Codex Manager', brandSub: '', logoUri: '/assets/codex.svg', onboardingCompleted: true,
+  copy: {}, settings: Object.fromEntries(Object.entries(manifest.contributes.configuration.properties).map(([key, schema]) => [key.slice('codexManager.'.length), schema.default])),
+  accounts: [], tokenAutomation: { enabled: true }, indexHealth: { status: 'healthy', availableBackups: 0 } } : await (async () => {
+    const response = await fetch(`${origin}/api/state`);
+    if (!response.ok) throw new Error(`Local dashboard snapshot returned ${response.status}.`);
+    return response.json();
+  })();
+if (fixtureOnly) prepareDocsSnapshot(snapshot, [{ goal: {} }, {}], []);
 Object.assign(snapshot.copy, dashboardCopyResources.en);
 snapshot.connectedPeers = [{ id: 'fixture-local', name: 'This PC', connected: true, local: true, sessionCount: 2 }];
 snapshot.peerAccounts = {};
@@ -99,7 +106,7 @@ const mockHost = `(() => {
   let logReads = 0;
   let logCleared = false;
   const toolJobs = new Map();
-  const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data}));
+  const dispatch = data => window.dispatchEvent(new MessageEvent('message', {data:structuredClone(data)}));
   window.__uiActions = []; window.__uiSessions = sessions; window.__uiSnapshot = state; window.__uiSettingResults = [];
   if(window.__tagFixture) { if(state.accounts[0]) state.accounts[0].enabled=true; try { const saved=JSON.parse(localStorage.getItem('fixture-account-tags')||'{}'); for(const account of state.accounts) if(saved[account.id]) account.tags=saved[account.id]; } catch {} }
   if(window.__tagTheme) state.settings.dashboardTheme=window.__tagTheme;
@@ -319,7 +326,7 @@ const mockHost = `(() => {
           }
         }
         else if(message.action === 'listWorkspaceTerminals') payload = {workspaceTerminals:window.__fixtureTerminals||[]};
-        else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0}]:[]};
+        else if(message.action === 'listWorkspaceFiles') payload = {workspaceFiles:window.__inspectorMode?[{path:'src/app.ts',name:'app.ts',type:'file',depth:0},{path:'src/other.ts',name:'other.ts',type:'file',depth:0}]:[]};
         else if(['openNewCodexWebview','resumeCodexSessions','openCodexCliSession'].includes(message.action)) payload = {notice:{level:'info',message:'Opened in VS Code.'}};
         else error = 'Simulated action failure. Your draft is preserved.';
         if(message.action==='setCodexSessionQueue' && !error && window.__sessionRefreshNotice) {window.__sessionRefreshNotice=false;payload.notice={level:'warning',message:'The session action completed, but the session list could not refresh: Session discovery is still pending. Refresh the list before retrying the action.'};}
@@ -328,6 +335,7 @@ const mockHost = `(() => {
           if(payload.cliSessionsDeviceId==='fixture-system')for(const session of payload.cliSessions)Object.assign(session,metadata);
           if(payload.cliSession?.deviceId==='fixture-system'){Object.assign(payload.cliSession,metadata);payload.cliSessionMessages=messages;}
         }
+        if(message.action==='readWorkspaceFile' && window.__failNextWorkspaceFileRead) {window.__failNextWorkspaceFileRead=false;error='Simulated file read failure.';payload={};}
         const result = {type:'dashboard:action-result',requestId:message.requestId,action:message.action,status:error?'failed':'completed',payload,error};
         if(message.action==='setAccountTags' && window.__loseTagAck) {window.__loseTagAck=false;window.__heldTagResult=result;return;}
         if(message.action==='listCodexCliSessions' && window.__holdNextSystemList) {window.__holdNextSystemList=false;window.__heldSystemList=result;return;}
@@ -337,6 +345,8 @@ const mockHost = `(() => {
         if((message.action==='commitWorkspaceChanges'||message.action==='workspaceGit'&&message.payload.gitRequest.operation==='commit') && window.__holdNextCommit) {window.__holdNextCommit=false;window.__heldCommitResult=result;return;}
         if(message.action==='saveWorkspaceFile' && window.__holdNextSave) {window.__holdNextSave=false;window.__heldSaveResult=result;return;}
         if(message.action==='shareProjectBoard' && window.__holdProjectShare) {window.__holdProjectShare=false;window.__heldProjectShareResult=result;return;}
+        if(message.action==='workspaceGit' && message.payload?.gitRequest?.operation==='read' && window.__holdNextGitRead) {window.__holdNextGitRead=false;window.__heldGitRead=result;return;}
+        if(message.action==='workspaceGitHub' && message.payload?.githubRequest?.operation==='read' && window.__holdNextGitHubRead) {window.__holdNextGitHubRead=false;window.__heldGitHubRead=result;return;}
         if(message.action==='readWorkspaceFile' && window.__holdNextWorkspaceFileRead) {window.__holdNextWorkspaceFileRead=false;window.__heldWorkspaceFileResult=result;return;}
         if(message.action === 'archiveCodexCliSession') {
           window.__heldArchiveResult = {...result,status:'completed',error:undefined,payload:{notice:{level:'info',message:'Original chat archived.'}}};
@@ -454,6 +464,11 @@ try {
       const response = await route.fetch({ url: `${origin}/workspace` });
       await route.fulfill({ response, body: (await response.text()).replace(/<script(?=\s+src="\/assets\/dashboard\.js)/g, '<script type="module"') });
     });
+    if (fixtureOnly) {
+      await page.route(`${origin}/assets/codex.svg*`, route => route.fulfill({ contentType: 'image/svg+xml', path: path.resolve('media/product-icons/codex-openai.svg') }));
+      await page.route(`${origin}/**`, route => route.request().isNavigationRequest()
+        ? route.fulfill({ contentType: 'text/html', path: path.resolve('media/webview/pwaDashboard.html') }) : route.fallback());
+    }
     if (process.argv.includes('--auto-resume')) {
       const openSettings = async () => {
         if (width <= 760) {
@@ -951,6 +966,7 @@ try {
       await picker.selectOption('fixture-system');
       await page.waitForFunction(()=>document.querySelector('#cliSessionsButton .is-ready')?.textContent==='0');
       await page.evaluate(()=>{window.__holdNextSystemList=true;window.__heldSystemList=undefined;});
+      if(width<=760) await page.getByRole('button',{name:'Hide sessions sidebar',exact:true}).click();
       await page.locator('#cliSessionsButton').click();
       await page.locator('.cli-sessions-popover').getByRole('button',{name:'Refresh sessions',exact:true}).click();
       await page.waitForFunction(()=>!!window.__heldSystemList);
@@ -958,6 +974,7 @@ try {
       assert.equal(await page.locator('#cliSessionsButton .cli-server-status-badge i').count(),0);
       await page.evaluate(()=>window.dispatchEvent(new MessageEvent('message',{data:window.__heldSystemList})));
       await page.keyboard.press('Escape');
+      await rail();
       await page.waitForFunction(()=>window.__uiActions.filter(message=>message.type==='dashboard:workspace-presence').at(-1)?.targetDeviceId==='fixture-system');
       await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='listCodexCliSessions'&&action.payload?.targetDeviceId==='fixture-system'));
       await page.getByRole('button',{name:'Expand remote-project',exact:true}).waitFor();
@@ -1018,9 +1035,30 @@ try {
       const showRemoteTools=page.getByRole('button',{name:'Show workspace tools',exact:true});
       if(await showRemoteTools.isVisible()) await showRemoteTools.click();
       await page.waitForFunction(()=>window.__uiActions.some(action=>action.action==='getWorkspaceEnvironment'&&action.payload?.targetDeviceId==='fixture-system'&&action.payload?.projectPath==='E:/remote-project'));
-      await page.evaluate(()=>{window.__uiSnapshot.connectedPeers[1].connected=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:window.__uiSnapshot}}));});
-      await page.getByText('Reconnecting',{exact:true}).waitFor();
-      assert.equal(await page.getByRole('button',{name:'Send message',exact:true}).count(),0,'Remote disconnect removes execution controls while browser stays online');
+      await page.evaluate(async()=>{
+        window.__reconnectViewport=document.querySelector('.cli-message-viewport');
+        window.__reconnectRows=[...document.querySelectorAll('.cli-session-row-main > strong')].map(row=>row.textContent);
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:false}}));
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:host-status',stage:'reconnecting'}}));
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      });
+      assert.ok(await page.getByText('Remote system conversation',{exact:true}).isVisible(),'Browser reconnect retains cached conversation content');
+      assert.ok(await page.evaluate(()=>window.__reconnectViewport===document.querySelector('.cli-message-viewport')),'Reconnect never unmounts the cached conversation');
+      assert.deepEqual(await page.locator('.cli-session-row-main > strong').allTextContents(),await page.evaluate(()=>window.__reconnectRows),'Reconnect preserves cached session rows');
+      await page.evaluate(async()=>{
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:connection',connected:true}}));
+        window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:host-status',stage:'live'}}));
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      });
+      assert.ok(await page.evaluate(()=>window.__reconnectViewport===document.querySelector('.cli-message-viewport')),'Connection recovery updates the existing view in place');
+      await page.evaluate(()=>{window.__uiSnapshot.connectedPeers[1].connected=false;window.dispatchEvent(new MessageEvent('message',{data:{type:'dashboard:snapshot',state:structuredClone(window.__uiSnapshot)}}));});
+      await page.getByText('Remote system conversation',{exact:true}).waitFor();
+      await rail();
+      assert.equal(await picker.isEnabled(),true,'A disconnected system never removes the system picker');
+      const offlineSend=page.getByRole('button',{name:'Send message',exact:true});
+      if(await offlineSend.count()) assert.equal(await offlineSend.isDisabled(),true,'Remote execution stays disabled while browser remains online');
+      if(width<=760) {const hide=page.getByRole('button',{name:'Hide sessions sidebar',exact:true});if(await hide.isVisible())await hide.click();}
+      await page.screenshot({path:path.join(output,`cached-reconnect-${width}x${height}.png`),animations:'disabled'});
       assert.deepEqual(errors,[]);
       results.push({width,height,checks:'Remote accounts, session lists, catalogs, stale replies, browser URL, workspace routing, peer offline'});
       await context.close();continue;
@@ -1093,10 +1131,10 @@ try {
       await trigger.waitFor();
       await row.getByRole('button',{name:'Auto Resume for Interrupted workspace task',exact:true}).waitFor();
       await trigger.click();
-      await panel.getByRole('button',{name:'Auto Resume on',exact:true}).click();
+      await panel.getByRole('button',{name:'Auto Resume Off',exact:true}).click();
       await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.autoResumeEnabled===true);
       await trigger.click();
-      await panel.getByRole('button',{name:'Auto Resume off',exact:true}).click();
+      await panel.getByRole('button',{name:'Auto Resume On',exact:true}).click();
       await page.waitForFunction(()=>window.__uiSessions.find(s=>s.id==='recovery')?.autoResumeEnabled===false);
       await page.evaluate(()=>{
         window.__failQueue=true;
@@ -2469,6 +2507,7 @@ try {
     await context.close();
   }
 } catch (error) {
+  console.error('Responsive UI check failed:', error);
   for (const [index, context] of browser.contexts().entries()) {
     for (const [pageIndex, page] of context.pages().entries()) {
       await page.screenshot({ path: path.join(output, `failure-${index}-${pageIndex}.png`) }).catch(() => undefined);
@@ -2477,4 +2516,4 @@ try {
   }
   throw error;
 } finally { await browser.close(); }
-console.log(JSON.stringify({ results, screenshots: output }, null, 2));
+console.log(JSON.stringify({ fixtureOnly, results, screenshots: output }, null, 2));

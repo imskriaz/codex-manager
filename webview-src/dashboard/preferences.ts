@@ -98,6 +98,7 @@ export function saveTaskBoardColumns(columns: Array<typeof TASK_STAGES[number]>)
 
 export type TaskBoardView = 'board' | 'list' | 'gantt' | 'calendar';
 const TASK_BOARD_VIEW_KEY = 'codexManager.taskBoardView.v1';
+const TASK_BOARD_ARCHIVE_KEY = 'codexManager.taskBoardShowArchive.v1';
 export function loadTaskBoardView(): TaskBoardView {
   try {
     const value = window.localStorage.getItem(TASK_BOARD_VIEW_KEY);
@@ -107,4 +108,10 @@ export function loadTaskBoardView(): TaskBoardView {
 }
 export function saveTaskBoardView(view: TaskBoardView): boolean {
   try { window.localStorage.setItem(TASK_BOARD_VIEW_KEY, view); return true; } catch { return false; }
+}
+export function loadTaskBoardShowArchive(): boolean {
+  try { return window.localStorage.getItem(TASK_BOARD_ARCHIVE_KEY) === 'true'; } catch { return false; }
+}
+export function saveTaskBoardShowArchive(show: boolean): boolean {
+  try { window.localStorage.setItem(TASK_BOARD_ARCHIVE_KEY, String(show)); return true; } catch { return false; }
 }

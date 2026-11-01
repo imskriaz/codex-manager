@@ -15,6 +15,8 @@ if (!existsSync(vsixPath)) {
 }
 
 const listing = listZipEntries(readFileSync(vsixPath)).join("\n");
+for (const file of ['extension/AGENTS.md', 'extension/WORKSPACE-GOAL.md', 'extension/pending_log.md', 'extension/PROJECT_LOG.md'])
+  if (listing.split('\n').includes(file)) throw new Error(`VSIX contains internal workspace notes: ${file}`);
 for (const file of ["extension/tools/inspect-codex-storage.cjs", "extension/media/webview/dashboard/dashboard-manifest.json"])
   if (!listing.split("\n").includes(file)) throw new Error(`VSIX runtime asset is missing: ${file}`);
 for (const panel of ["workspaceCodeEditor", "workspaceTerminal"])

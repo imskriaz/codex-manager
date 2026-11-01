@@ -2,6 +2,7 @@ import type {
   DashboardCliComposerConfig,
   DashboardCliSessionMessage,
   DashboardCliSessionSummary,
+  DashboardActionName,
   DashboardState
 } from "../../src/domain/dashboard/types";
 import { sameCliSessionTarget } from "./cliSessionRoute";
@@ -87,6 +88,18 @@ export function mergeCachedCliSession(
     archived:incoming.archived ?? previous.archived };
 }
 
+/** Preference acknowledgements have their own freshness; transcript timestamps do not version them. */
+export function mergeConfirmedCliSession(incoming: DashboardCliSessionSummary, previous: DashboardCliSessionSummary | undefined, action: DashboardActionName): DashboardCliSessionSummary {
+  const merged = mergeCachedCliSession(incoming, previous);
+  if (action === 'setCodexSessionAutoResume' || action === 'setCodexSessionQueue') return {
+    ...merged, autoResumeEnabled: incoming.autoResumeEnabled, queueEnabled: incoming.queueEnabled,
+    queuePriority: incoming.queuePriority, queueError: incoming.queueError
+  };
+  if (action === 'renameCodexCliSession') return { ...merged, title: incoming.title };
+  if (action === 'setCodexSessionGoalStatus') return { ...merged, goal: incoming.goal };
+  return merged;
+}
+
 let browserLocalSystemId: string | undefined;
 let requireSystemIdentity = false;
 
@@ -95,7 +108,7 @@ export function bindBrowserCacheSystem(systemId?: string): void {
   requireSystemIdentity = true;
   browserLocalSystemId = systemId && systemId !== 'local' ? systemId : undefined;
 }
-const cacheSystemId = (deviceId?: string): string | undefined => deviceId && deviceId !== 'local' ? deviceId : browserLocalSystemId ?? (requireSystemIdentity ? undefined : 'local');
+export const cacheSystemId = (deviceId?: string): string | undefined => deviceId && deviceId !== 'local' ? deviceId : browserLocalSystemId ?? (requireSystemIdentity ? undefined : 'local');
 
 let cacheDatabase: Promise<IDBDatabase | undefined> | undefined;
 let pendingDashboardState: DashboardState | undefined;
@@ -417,11 +430,54 @@ async function writeRecord(record: CacheRecord): Promise<void> {
   }).catch(() => undefined);
 }
 
-/** Durable task/comment outbox entries are never silently evicted. */
+// Read views are disposable; unsynced outbox writes keep their durable acknowledgement.
+const browserReadMemory = new Map<string, { value: unknown; signature: string; bytes: number; at: number; persistedAt: number }>();
+const browserReadLoads = new Map<string, Promise<unknown>>();
+function rememberBrowserRead(key: string, value: unknown, persistedAt = 0): void {
+  browserReadMemory.delete(key);
+  if (key.startsWith('outbox:')) return;
+  let signature: string;
+  try { signature = JSON.stringify(value); if (typeof signature !== 'string') return; value = structuredClone(value); } catch { return; }
+  const bytes = signature.length * 2;
+  if (bytes > 2 * 1024 * 1024) return;
+  browserReadMemory.set(key, { value, signature, bytes, at: persistedAt || Date.now(), persistedAt });
+  let total = [...browserReadMemory.values()].reduce((sum, entry) => sum + entry.bytes, 0);
+  while (browserReadMemory.size > 40 || total > 8 * 1024 * 1024) {
+    const oldest = browserReadMemory.keys().next().value!;
+    total -= browserReadMemory.get(oldest)!.bytes; browserReadMemory.delete(oldest);
+  }
+}
 export async function readBrowserCache<T>(key: string): Promise<T | undefined> {
-  return (await readFreshRecord<T>(`browser:${key}`, MAX_CACHE_AGE_MS))?.value;
+  const memory = browserReadMemory.get(key);
+  if (memory && Date.now() >= memory.at && Date.now() - memory.at <= MAX_CACHE_AGE_MS) {
+    browserReadMemory.delete(key); browserReadMemory.set(key, memory);
+    return structuredClone(memory.value) as T;
+  }
+  browserReadMemory.delete(key);
+  let pending = browserReadLoads.get(key);
+  if (!pending) {
+    pending = readFreshRecord<T>(`browser:${key}`, MAX_CACHE_AGE_MS).then(record => {
+      if (browserReadLoads.get(key) !== pending) return browserReadMemory.get(key)?.value;
+      if (record) rememberBrowserRead(key, record.value, Date.now() - record.ageMs);
+      return record?.value;
+    }).finally(() => { if (browserReadLoads.get(key) === pending) browserReadLoads.delete(key); });
+    browserReadLoads.set(key, pending);
+  }
+  return structuredClone(await pending) as T | undefined;
 }
 export async function writeBrowserCache(key: string, value: unknown): Promise<boolean> {
+  const previous = browserReadMemory.get(key);
+  browserReadLoads.delete(key);
+  rememberBrowserRead(key, value);
+  const next = browserReadMemory.get(key);
+  if (previous && next && previous.signature === next.signature && Date.now() >= previous.persistedAt && Date.now() - previous.persistedAt < 60_000 && previous.persistedAt > 0) {
+    next.persistedAt = previous.persistedAt; return true;
+  }
+  const saved = await persistBrowserCache(key, value);
+  if (saved && next && browserReadMemory.get(key) === next) next.persistedAt = Date.now();
+  return saved;
+}
+async function persistBrowserCache(key: string, value: unknown): Promise<boolean> {
   const db = await openCache(); if (!db) return false;
   const record: CacheRecord = { key: `browser:${key}`, updatedAt: Date.now(), value };
   try { record.sizeBytes = JSON.stringify(record).length * 2; } catch { return false; }
@@ -453,7 +509,8 @@ export async function writeBrowserCache(key: string, value: unknown): Promise<bo
       let bytes = cached.reduce((sum, entry) => sum + entry.bytes, durable ? 0 : record.sizeBytes!);
       cached.sort((a,b) => a.at - b.at);
       while (cached.length >= 80 || bytes > 24 * 1024 * 1024) { const oldest = cached.shift(); if (!oldest) break; store.delete(oldest.key); bytes -= oldest.bytes; }
-      store.put(record);
+      try { store.put(record); }
+      catch { clearTimeout(timer); try { tx.abort(); } catch { /* settled */ } resolve(false); }
     };
     tx.oncomplete = () => { clearTimeout(timer); resolve(true); };
     tx.onerror = tx.onabort = () => { clearTimeout(timer); resolve(false); };
@@ -477,6 +534,8 @@ export async function listBrowserOutbox<T>(): Promise<Array<{ key: string; value
   }).catch(() => []);
 }
 export async function deleteBrowserCache(key: string): Promise<boolean> {
+  browserReadMemory.delete(key);
+  browserReadLoads.delete(key);
   const db = await openCache(); if (!db) return false;
   return new Promise<boolean>(resolve => {
     const tx = db.transaction(STORE_NAME, 'readwrite');

@@ -144,6 +144,17 @@ it('creates additional session subtasks from completed custom containers and pre
   expect(() => claimProjectTaskStart(root,child.id,child.revision,true)).toThrow(/already started/);
 });
 
+it('keeps the public display snapshot until reshared and reuses its link after reopening the board', () => {
+  const first = createProjectShare(root, [], 0, { showArchive: false, columns: ['idea'], view: 'board' });
+  const before = getProjectShare(first.token)!;
+  expect(before.boardConfig).toMatchObject({ columns: ['idea'], view: 'board' });
+  const second = createProjectShare(root, ['comments'], 0, { showArchive: true, columns: ['running'], view: 'list' });
+  expect(second.token).toBe(first.token);
+  expect(getProjectShare(first.token)?.boardConfig).toMatchObject({ showArchive: true, columns: ['running'], view: 'list' });
+  expect(before.boardConfig).toMatchObject({ showArchive: false, columns: ['idea'] });
+  for (const invalid of [{ showArchive: 'yes' }, { columns: [] }, { columns: ['bad'] }, { view: 'unknown' }]) expect(() => createProjectShare(root, [], 0, invalid as never)).toThrow(/display settings/);
+});
+
 it('promotes legacy custom nesting without losing its description or comments', () => {
   const key=projectTaskKey(root);
   store.set(`project:${key}:tasks`,'parent',{...draft('parent'),revision:1,createdAt:1,updatedAt:1});
@@ -213,4 +224,13 @@ it('keeps permanent links bounded and preserves them after a full-store failure'
   expect(() => createProjectShare(root, [], 0)).toThrow(/full/);
   expect(getProjectShare(links[0]!.token)).toMatchObject({expiresAt:0});
   revokeProjectShares(root); expect(createProjectShare(root).expiresAt).toBe(0);
+});
+
+it('updates an explicitly reused share token while fixing the public board configuration', () => {
+  const first = createProjectShare(root, ['comments'], 0, { showArchive: false });
+  const second = createProjectShare(root, ['activities'], 7, { showArchive: true }, first.token);
+  expect(second.token).toBe(first.token);
+  expect(getProjectShare(first.token)).toMatchObject({ permissions: ['activities', 'messages'], boardConfig: { showArchive: true }, expiresAt: expect.any(Number) });
+  const board = { projectPath: root, tasks: [], comments: [], sessions: [], updatedAt: Date.now() };
+  expect(publicProjectBoard(board, getProjectShare(first.token)!)).toMatchObject({ boardConfig: { showArchive: true } });
 });

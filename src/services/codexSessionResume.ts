@@ -80,6 +80,7 @@ const newSessionFailures = new Map<string, Error>();
 const activeAppServerTurns = new Map<string, { rpc: CodexAppServerRpc; turnId?: string; cancelRequested?: boolean; stop?: Promise<boolean> }>();
 const activeNativeTurns = new Map<string, { home: string; turnId: string; streamId: string; stop?: Promise<boolean> }>();
 const nativeTurnObservers = new Map<string, Promise<void>>();
+const observedNativeStops = new Map<string, Promise<boolean>>();
 const maintenanceConnection = new AsyncLocalStorage<{ home: string; ids: Set<string>; rpc?: Promise<CodexAppServerRpc>; rpcs: Map<string, Promise<CodexAppServerRpc>> }>();
 const appServerTransport = new AsyncLocalStorage<AppServerTransport>();
 
@@ -112,6 +113,10 @@ function ownedNativeTurn(home: string, id: string) {
 
 function ownsSessionTurn(home: string, id: string): boolean {
   return activeAppServerTurns.has(id) || Boolean(ownedNativeTurn(home, id));
+}
+
+function canStopSessionTurn(home: string, id: string): boolean {
+  return ownsSessionTurn(home, id) || getNativeCodexSessionRunning(home, id) === true;
 }
 
 function nativeTurnStarted(home: string, id: string, turnId: string): void {
@@ -254,10 +259,10 @@ function withCurrentSessionStatuses(store:SqliteStateStore,home:string,rows:Dash
     if (current === undefined && (!stale || row.status !== "running")) return decorated;
     const status = current === "starting" ? "unknown" : current ?? "unknown";
     if (status !== "running" && status !== "idle" && status !== "unknown") return decorated;
-    const canStop = status === "running" && ownsSessionTurn(home,row.id);
+    const canStop = status === "running" && canStopSessionTurn(home,row.id);
     return { ...decorated,status,canStop,locked:status !== "idle",
       statusError:status === "unknown" ? row.statusError ?? "Checking saved running activity. Refresh before sending." : undefined,
-      runningBy:status === "running" ? canStop ? "Codex Manager" : "another Codex process" : undefined,
+      runningBy:status === "running" ? ownsSessionTurn(home, row.id) ? "Codex Manager" : "another Codex process" : undefined,
       runningSince:status === "running" ? row.runningSince : undefined,
       interrupted:status === "running" ? false : row.interrupted };
   });
@@ -668,7 +673,7 @@ async function toCliSessionSummary(
   const metadata = await readCliSessionMetadata(codexHome, entry.id, transcriptPath);
   const state = archived ? { status: "idle" as const } : knownStatus ?? await readCliSessionStatus(codexHome, entry.id, transcriptPath);
   const running = state.status === "running";
-  const canStop = running && ownsSessionTurn(codexHome, entry.id);
+  const canStop = running && canStopSessionTurn(codexHome, entry.id);
   const startedAt = archived ? undefined : await readCliRunningSince(transcriptPath);
   const runningSince = running ? startedAt : undefined;
   const turnMetadata = transcriptPath ? cliTranscriptTurnStateCache.get(transcriptPath) : undefined;
@@ -689,7 +694,7 @@ async function toCliSessionSummary(
     ...(metadata.projectPath ? { projectPath: metadata.projectPath } : {}),
     ...(metadata.sessionSurface ? { sessionSurface: metadata.sessionSurface } : {}),
     locked: running || state.status === "unknown",
-    runningBy: running ? (canStop ? "Codex Manager" : "another Codex process") : undefined,
+    runningBy: running ? (ownsSessionTurn(codexHome, entry.id) ? "Codex Manager" : "another Codex process") : undefined,
     canStop,
     archived
   };
@@ -1250,6 +1255,15 @@ async function waitForNativeSessionTurn(sessionId: string, transcript: string | 
   }
 }
 
+async function observedNativeTurn(home: string, sessionId: string): Promise<string | undefined> {
+  if (activeAppServerTurns.has(sessionId)) return undefined;
+  if (!nativeTurnObservers.has(`${home}:${sessionId}`) && getNativeCodexSessionRunning(home, sessionId) !== true &&
+    await readNativeCodexSessionRunning(home, sessionId) !== true) return undefined;
+  const transcript = await findCliSessionTranscript(home, sessionId);
+  const state = await readRecentTranscriptTurnState(transcript);
+  return state === 'active' && transcript ? cliTranscriptTurnStateCache.get(transcript)?.turnId : undefined;
+}
+
 /** Steering uses the owned active connection, independently of the turn's mutation lock. */
 export async function steerCodexCliSessionTurn(options: { sessionId: string; text: string; attachments?: ChatAttachment[]; expectedTurnId: string; projectPath?: string }): Promise<void> {
   validateSessionId(options.sessionId);
@@ -1257,11 +1271,7 @@ export async function steerCodexCliSessionTurn(options: { sessionId: string; tex
   const prepared = prepareChatInput(options.text, options.attachments);
   const native = ownedNativeTurn(home, sessionId);
   let nativeTurnId = native?.turnId;
-  if (!nativeTurnId && nativeTurnObservers.has(`${home}:${sessionId}`)) {
-    const transcript = await findCliSessionTranscript(home, sessionId);
-    const state = await readRecentTranscriptTurnState(transcript);
-    if (state === 'active' && transcript) nativeTurnId = cliTranscriptTurnStateCache.get(transcript)?.turnId;
-  }
+  if (!nativeTurnId) nativeTurnId = await observedNativeTurn(home, sessionId);
   if (nativeTurnId) {
     if (native?.stop || !options.expectedTurnId || options.expectedTurnId !== nativeTurnId) throw new Error('The active Codex turn changed or is stopping. Refresh before sending guidance.');
     if (!await steerNativeCodexSessionTurn(home, sessionId, nativeTurnId, appServerChatInput(prepared.text, prepared.attachments), resolveCliProjectPath(options.projectPath)))
@@ -1310,6 +1320,19 @@ export async function cancelCodexCliSessionTurn(sessionId: string): Promise<bool
       }).finally(() => { native.stop = undefined; });
     }
     return native.stop;
+  }
+  const observedTurnId = await observedNativeTurn(home, sessionId);
+  if (observedTurnId) {
+    const key = `${home}:${sessionId}`;
+    const existing = observedNativeStops.get(key);
+    if (existing) return existing;
+    suppressRecovery(observedTurnId);
+    const stop = cancelNativeCodexSessionTurn(home, sessionId, observedTurnId).then(confirmed => {
+      recordPersistentEvent(confirmed ? "info" : "warning", "session-stop", confirmed ? "Observed native Stop confirmed" : "Observed native Stop not accepted", { sessionRef: toSessionLogRef(sessionId), turnRef: toSessionLogRef(observedTurnId), transport: "official-native" });
+      return confirmed;
+    }).finally(() => { if (observedNativeStops.get(key) === stop) observedNativeStops.delete(key); });
+    observedNativeStops.set(key, stop);
+    return stop;
   }
   const activeAppServer = activeAppServerTurns.get(sessionId);
   if (activeAppServer) {

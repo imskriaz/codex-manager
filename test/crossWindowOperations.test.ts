@@ -15,6 +15,30 @@ import {
 } from "../src/utils/crossWindowOperations";
 
 describe("CrossWindowOperationCoordinator", () => {
+  it('checks background yields without writing until the heartbeat is due, and recovers a backwards clock', async () => {
+    const directory = await createTestDirectory('lease-write-budget');
+    const coordinator = new CrossWindowOperationCoordinator(directory);
+    let finish!: () => void, started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const writes = vi.spyOn(SqliteStateStore.prototype, 'set');
+    const timers = vi.spyOn(globalThis, 'setInterval');
+    const work = coordinator.runExclusive('budget', 'Background', async () => {
+      started(); await new Promise<void>(resolve => { finish = resolve; });
+    }, { background: true });
+    await ready;
+    const renew = timers.mock.calls.find(([, interval]) => interval === 50)![0] as () => void;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      for (let i = 0; i < 100; i++) renew();
+      expect(writes.mock.calls.filter(([namespace]) => namespace === 'operation-leases')).toHaveLength(1);
+      vi.setSystemTime(Date.now() + 5_000);
+      renew();
+      expect(writes.mock.calls.filter(([namespace]) => namespace === 'operation-leases')).toHaveLength(2);
+      vi.setSystemTime(Date.now() - 10_000);
+      renew();
+      expect(writes.mock.calls.filter(([namespace]) => namespace === 'operation-leases')).toHaveLength(3);
+    } finally { vi.useRealTimers(); finish(); await work; writes.mockRestore(); timers.mockRestore(); await removeTestDirectory(directory); }
+  });
   it("lets a manual switch interrupt optional renewal before taking the same lease", async () => {
     const directory = await createTestDirectory("switch-yield");
     const background = new CrossWindowOperationCoordinator(directory);

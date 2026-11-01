@@ -94,6 +94,7 @@ import {
   bindBrowserCacheSystem,
   invalidateCliSessionCache,
   mergeCachedCliSession,
+  mergeConfirmedCliSession,
   mergeCachedCliSessions,
   readCliSessionListCache,
   peekCliSessionListCache,
@@ -276,7 +277,7 @@ function App() {
     setSubmissionResults((current) => [...current.filter((result) => result.requestId !== requestId), { requestId, status, message, fileRevision }].slice(-128));
   const workspaceScopeRef = useRef<string>();
   const workspaceGeneration = useRef(0);
-  const workspaceRequests = useRef(new Map<string, { scope: string; generation: number; family: string; fileContent?: string }>());
+  const workspaceRequests = useRef(new Map<string, { scope: string; generation: number; family: string; action: DashboardActionName; fileContent?: string }>());
   const latestWorkspaceRequests = useRef(new Map<string, string>());
   const acceptLiveSnapshot = (live: DashboardCodexSessionLiveState, replay = false): void => {
     if (live.deviceId !== cliListViewTarget.current) return;
@@ -314,6 +315,8 @@ function App() {
   const terminalLiveOutputs = terminalActivity.outputs;
   const terminalEpochs = useRef<Record<string, string>>({});
   const [workspaceTerminals, setWorkspaceTerminals] = useState<DashboardWorkspaceTerminalInfo[]>([]);
+  const [workspaceHasDrafts, setWorkspaceHasDrafts] = useState(false);
+  const [workspaceReadErrors, setWorkspaceReadErrors] = useState<Record<string, string>>({});
   const [workspaceFiles, setWorkspaceFiles] = useState<DashboardWorkspaceFileEntry[]>([]);
   const [workspaceFilesByPath, setWorkspaceFilesByPath] = useState<Record<string, DashboardWorkspaceFile>>({});
   const explicitCliRefreshRef = useRef<string>();
@@ -445,7 +448,10 @@ function App() {
         cliListRequestRevisions.current.delete(requestId);
       }
       const workspaceRequest = workspaceRequests.current.get(requestId);
-      if (workspaceRequest && latestWorkspaceRequests.current.get(workspaceRequest.family) === requestId) latestWorkspaceRequests.current.delete(workspaceRequest.family);
+      if (workspaceRequest && latestWorkspaceRequests.current.get(workspaceRequest.family) === requestId) {
+        latestWorkspaceRequests.current.delete(workspaceRequest.family);
+        if (workspaceRequest.scope === workspaceScopeRef.current && workspaceRequest.generation === workspaceGeneration.current && ['listWorkspaceFiles', 'readWorkspaceFile'].includes(action)) setWorkspaceReadErrors(current => ({ ...current, [workspaceRequest.family]: 'The read timed out. Saved data is kept; retry when the system is available.' }));
+      }
       workspaceRequests.current.delete(requestId);
       if (["runWorkspaceTerminalCommand", "commitWorkspaceChanges", "pushWorkspaceBranch", "saveWorkspaceFile"].includes(action)) recordSubmissionResult(requestId, "failed", "The action timed out and may have completed. Your draft was kept; verify the result before retrying.");
       if (action === "listCodexCliSessions" && explicitCliRefreshRef.current === requestId) {
@@ -494,7 +500,22 @@ function App() {
     showNotice,
     selectedPeerId,
     handleActionTimeout,
-    !isBrowserDashboard || realtimeConnected
+    !isBrowserDashboard || realtimeConnected,
+    isBrowserDashboard ? (action, payload, requestId) => {
+      const scope = workspaceRequests.current.get(requestId);
+      if (scope && scope.scope === workspaceScopeRef.current && scope.generation === workspaceGeneration.current && latestWorkspaceRequests.current.get(scope.family) === requestId) {
+        if (action === 'listWorkspaceFiles' && payload.workspaceFiles) setWorkspaceFiles(current => current.length ? current : payload.workspaceFiles!);
+        if (action === 'readWorkspaceFile' && payload.workspaceFile) {
+          const file = payload.workspaceFile;
+          setWorkspaceFilesByPath(current => current[file.path] ? current : { ...current, [file.path]: file });
+        }
+        if (action === 'getWorkspaceEnvironment' && payload.workspaceEnvironment) setWorkspaceEnvironment(current => current ?? payload.workspaceEnvironment);
+      }
+      if (action === 'getUsageGraph' && requestId === usageGraphRequestRef.current && payload.usageGraph) {
+        usageGraphDataSourceRef.current = usageGraphSourceRef.current;
+        setUsageGraphData(payload.usageGraph);
+      }
+    } : undefined
   );
   const sendApiRequest = (action: 'generateApiToken'|'listApiTokens'|'revokeApiToken', payload: DashboardActionPayload = {}) => {
     const mutation=action!=='listApiTokens';
@@ -624,6 +645,12 @@ function App() {
     [sendAction]
   );
   const sendWorkspaceAction: typeof sendAction = useCallback((action, accountId, payload) => {
+    if (action === 'listWorkspaceFiles' || action === 'readWorkspaceFile') {
+      const family = action === 'readWorkspaceFile' ? `file:${payload?.filePath ?? ''}` : 'listWorkspaceFiles:';
+      const pendingId = latestWorkspaceRequests.current.get(family);
+      const pending = pendingId ? workspaceRequests.current.get(pendingId) : undefined;
+      if (pendingId && pending?.scope === workspaceScopeRef.current && pending?.generation === workspaceGeneration.current && pending.action === action) return pendingId;
+    }
     const requestId = sendAction(action, accountId, payload);
     if (requestId && workspaceScopeRef.current && action !== 'runWorkspaceTerminalCommand') {
       const family = ['getWorkspaceEnvironment', 'commitWorkspaceChanges', 'pushWorkspaceBranch'].includes(action) ? 'environment'
@@ -634,8 +661,9 @@ function App() {
         if (latestWorkspaceRequests.current.get(previous.family) === oldest) latestWorkspaceRequests.current.delete(previous.family);
         workspaceRequests.current.delete(oldest);
       }
-      workspaceRequests.current.set(requestId, { scope: workspaceScopeRef.current, generation: workspaceGeneration.current, family, ...(action === 'saveWorkspaceFile' ? { fileContent: payload?.fileContent } : {}) });
+      workspaceRequests.current.set(requestId, { scope: workspaceScopeRef.current, generation: workspaceGeneration.current, family, action, ...(action === 'saveWorkspaceFile' ? { fileContent: payload?.fileContent } : {}) });
       latestWorkspaceRequests.current.set(family, requestId);
+      if (action === 'listWorkspaceFiles' || action === 'readWorkspaceFile') setWorkspaceReadErrors(current => { const next = { ...current }; delete next[family]; return next; });
     }
     return requestId;
   }, [sendAction]);
@@ -648,6 +676,7 @@ function App() {
     workspaceScopeRef.current = key;
     workspaceGeneration.current++;
     latestWorkspaceRequests.current.clear();
+    setWorkspaceReadErrors({});
     setWorkspaceEnvironment(undefined); setWorkspaceFiles([]); setWorkspaceFilesByPath({}); setWorkspaceTerminals([]);
   }, []);
   const requestWorkspaceEnvironment = useCallback(
@@ -674,7 +703,6 @@ function App() {
         bindBrowserCacheSystem(message.state.connectedPeers?.find(peer => peer.local)?.id);
         if (isBrowserDashboard) {
           setBrowserLastSyncAt(Date.now());
-          void writeDashboardStateCache(message.state);
           for (const id of Object.keys(message.state.peerAccounts ?? {}))
             peerAccountsRevision.current.set(id, (peerAccountsRevision.current.get(id) ?? 0) + 1);
           const scoped = scopeDashboardAccounts(message.state, cliListViewTarget.current);
@@ -1221,7 +1249,13 @@ function App() {
           }
         }
         if (scopedAction && (!requestedScope || requestedScope.scope !== workspaceScopeRef.current || requestedScope.generation !== workspaceGeneration.current || latestWorkspaceRequests.current.get(requestedScope.family) !== message.requestId)) return;
-        if (requestedScope) latestWorkspaceRequests.current.delete(requestedScope.family);
+        if (requestedScope) {
+          latestWorkspaceRequests.current.delete(requestedScope.family);
+          if (message.action === 'readWorkspaceFile' || message.action === 'listWorkspaceFiles') {
+            const complete = message.status === 'completed' && (message.action === 'readWorkspaceFile' ? message.payload?.workspaceFile : message.payload?.workspaceFiles);
+            if (!complete) setWorkspaceReadErrors(current => ({ ...current, [requestedScope.family]: message.error ?? 'Files could not be loaded. Retry to refresh the saved view.' }));
+          }
+        }
       }
       if (
         message.type === "dashboard:action-result" &&
@@ -1352,11 +1386,11 @@ function App() {
             });
             requestWorkspaceEnvironment(selectedCliSession?.projectPath, undefined, true);
           }
-        } else if (message.status === "failed") {
+        } else {
           showCliSessionFeedback({
             key: Date.now(),
             level: "error",
-            message: message.error ?? "The project file action failed."
+            message: message.error ?? "The project file action did not return a file. Retry to load it."
           });
         }
       }
@@ -1400,7 +1434,7 @@ function App() {
         if (message.status === "completed" && message.payload?.cliSessions) {
           const sessions = mergeCachedCliSessions(message.payload.cliSessions, cliSessions, message.payload.cliSessionsDeviceId);
           const updated = message.payload.cliSession;
-          if (updated) { const index = sessions.findIndex(session => sameCliSessionTarget(session, updated)); if (index >= 0) sessions[index] = mergeCachedCliSession(updated, sessions[index]); }
+          if (updated) { const index = sessions.findIndex(session => sameCliSessionTarget(session, updated)); if (index >= 0) sessions[index] = mergeConfirmedCliSession(updated, sessions[index], message.action); }
           setCliSessions(reconcileCliSessionStatuses(sessions, cliLiveStatesRef.current));
           void writeCliSessionListCache({ sessions, composerConfig: cliComposerConfig }, selectedPeer?.local ? undefined : selectedPeer?.id);
         }
@@ -1410,11 +1444,11 @@ function App() {
             if (message.action === "archiveCodexCliSession" || message.action === "unarchiveCodexCliSession")
               return current.map((session) => sameCliSessionTarget(session, target) ? { ...session, archived: message.action === "archiveCodexCliSession" } : session);
             const updated = message.payload?.cliSession;
-            return updated ? [updated, ...current.filter((session) => !sameCliSessionTarget(session, updated))] : current;
+            return updated ? [mergeConfirmedCliSession(updated, current.find(session => sameCliSessionTarget(session, updated)), message.action), ...current.filter((session) => !sameCliSessionTarget(session, updated))] : current;
           });
         }
         if (applyToCurrentChat && message.status === "completed" && ["renameCodexCliSession", "setCodexSessionGoalStatus", "setCodexSessionAutoResume", "setCodexSessionQueue"].includes(message.action) && message.payload?.cliSession)
-          setSelectedCliSession(reconcileCliSessionStatus(mergeCachedCliSession(message.payload.cliSession, selectedCliSession), cliLiveStatesRef.current));
+          setSelectedCliSession(reconcileCliSessionStatus(mergeConfirmedCliSession(message.payload.cliSession, selectedCliSession, message.action), cliLiveStatesRef.current));
         if (
           isBrowserDashboard &&
           applyToCurrentChat &&
@@ -1725,9 +1759,9 @@ function App() {
   const hasPendingActions = state.pendingActions.length > 0;
   useEffect(() => {
     if (isBrowserDashboard) return;
-    return scheduleDashboardReopen(selectedPeerOffline, hasPendingActions, () => postMessageToHost({ type: 'dashboard:retry-connection' }));
-  }, [isBrowserDashboard, selectedPeerOffline, hasPendingActions]);
-  if (!snapshot || selectedPeerOffline) {
+    return scheduleDashboardReopen(selectedPeerOffline, hasPendingActions || state.settingsOpen || workspaceHasDrafts, () => postMessageToHost({ type: 'dashboard:retry-connection' }));
+  }, [isBrowserDashboard, selectedPeerOffline, hasPendingActions, state.settingsOpen, workspaceHasDrafts]);
+  if (!snapshot) {
     const connectionFailed = isBrowserDashboard && (browserHostStage === "unreachable" || browserHostStage === "offline");
     return (
       <main
@@ -1737,8 +1771,8 @@ function App() {
         <section class="section loading-section">
           {connectionFailed ? <BrowserConnectionRecovery stage={browserHostStage} onRetry={() => postMessageToHost({ type: "dashboard:retry-connection" })} /> : <div class="loading-screen" role="status" aria-live="polite" aria-label="Loading…">
             <div class="loading-logo-wrap" aria-hidden="true">
-              {isBrowserDashboard || selectedPeerOffline ? (
-                <img class="loading-logo" src={isBrowserDashboard ? "/assets/codex.svg" : snapshot?.logoUri} alt="" width="72" height="72" />
+              {isBrowserDashboard ? (
+                <img class="loading-logo" src="/assets/codex.svg" alt="" width="72" height="72" />
               ) : (
                 <span class="loading-logo loading-logo-fallback">
                   <CodexSessionsIcon />
@@ -1748,7 +1782,7 @@ function App() {
             <div class="loading-shine" aria-hidden="true">
               <span />
             </div>
-            <span class="loading-label">{selectedPeerOffline ? "Reconnecting…" : isBrowserDashboard ? "Starting…" : "Loading"}</span>
+            <span class="loading-label">{isBrowserDashboard ? "Starting…" : "Loading"}</span>
           </div>}
         </section>
       </main>
@@ -2383,6 +2417,7 @@ function App() {
         id="dashboard-main"
         class={`panel dashboard-density-compact dashboard-view-${uiPreferences.view} ${state.privacyMode ? "privacy-hidden" : ""} ${isBrowserDashboard && isCliSessionsPath(browserPath) ? "workspace-route-dashboard-hidden" : ""}`}
       >
+        {selectedPeerOffline ? <p class="settings-notice-warning dashboard-peer-offline" role="status">Selected system offline. Saved data is shown while reconnecting. Choose another system or wait for it to reconnect.</p> : null}
         {snapshot.settings.taskBoardEnabled !== false ? <div hidden={browserPath !== '/tasks'}><TaskBoard onActionFeedback={showNotice} active={browserPath === '/tasks'}
           sessions={cliSessions} projects={cliComposerConfig?.projects} systemName={selectedPeer?.name}
           selectedSystem={selectedPeer?.id}
@@ -2684,6 +2719,8 @@ function App() {
                   resyncPending={batchResyncPending}
                   removePending={batchRemovePending}
                   sharePending={sharePending}
+                  autoResetPending={isActionPending('batchSetAccountAutoResetAllowed')}
+                  onAutoReset={allowed => sendAction('batchSetAccountAutoResetAllowed', undefined, { accountIds: state.selectedAccountIds, autoResetAllowed: allowed })}
                   onRefresh={() => sendAction("batchRefresh", undefined, { accountIds: state.selectedAccountIds })}
                   onResync={() => sendAction("batchResyncProfile", undefined, { accountIds: state.selectedAccountIds })}
                   onRemove={() => {
@@ -3059,9 +3096,15 @@ function App() {
               terminalRunning={isActionPending("runWorkspaceTerminalCommand")}
               terminalStopping={isActionPending("cancelWorkspaceTerminalCommand")}
               workspaceFiles={workspaceFiles}
+              onWorkspaceDraftsChange={setWorkspaceHasDrafts}
               workspaceFilesByPath={workspaceFilesByPath}
+              workspaceReadErrors={workspaceReadErrors}
               workspaceFilesLoading={isWorkspaceActionPending("listWorkspaceFiles")}
               workspaceFileLoading={isWorkspaceActionPending("readWorkspaceFile")}
+              workspaceFileLoadingPaths={state.pendingActions.flatMap(request => {
+                const item = workspaceRequests.current.get(request.requestId);
+                return request.action === 'readWorkspaceFile' && item && item.scope === workspaceScopeRef.current && item.generation === workspaceGeneration.current ? [item.family.slice(5)] : [];
+              })}
               workspaceFileSaving={isWorkspaceActionPending("saveWorkspaceFile")}
               logoUri={snapshot.logoUri}
               account={overviewAccount}

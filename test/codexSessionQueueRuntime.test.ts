@@ -4,17 +4,22 @@ import path from 'node:path';
 import type * as vscode from 'vscode';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ home: '', enabled: true, slots: 30, sessions: vi.fn(), resume: vi.fn(), notice: vi.fn(), released: undefined as (() => void) | undefined, configuration: undefined as ((event: { affectsConfiguration: (key: string) => boolean }) => void) | undefined, lease: undefined as AbortController | undefined }));
+const mocks = vi.hoisted(() => ({ home: '', enabled: true, slots: 30, busy: 0, sessions: vi.fn(), resume: vi.fn(), notice: vi.fn(), released: undefined as (() => void) | undefined, configuration: undefined as ((event: { affectsConfiguration: (key: string) => boolean }) => void) | undefined, lease: undefined as AbortController | undefined }));
 vi.mock('../src/infrastructure/config/extensionSettings', () => ({ getCodexManagerConfiguration: () => ({ get: () => mocks.enabled }) }));
 vi.mock('../src/services/codexSessionResume', () => ({ resolveCodexHome: () => mocks.home, readCodexCliSessions: mocks.sessions }));
 vi.mock('../src/services/codexSessionLive', () => ({ availableCodexSessionLiveSlots: () => mocks.slots, onDidReleaseCodexSessionLiveSlot: (listener: () => void) => { mocks.released = listener; return () => { mocks.released = undefined; }; } }));
 vi.mock('../src/storage/configurationEvents', () => ({ onDidChangeConfiguration: (listener: typeof mocks.configuration) => { mocks.configuration = listener; return { dispose: () => { mocks.configuration = undefined; } }; } }));
 vi.mock('../src/services/codexSessionRecovery', () => ({ resumeCodexSessionWork: mocks.resume }));
 vi.mock('../src/services/dashboardRealtime', () => ({ publishDashboardRealtime: mocks.notice }));
-vi.mock('../src/utils/crossWindowOperations', () => ({
-  CrossWindowOperationBusyError: class extends Error {},
-  runCrossWindowExclusive: async (_key: string, _label: string, work: (signal: AbortSignal) => unknown) => { const lease = new AbortController(); mocks.lease = lease; return work(lease.signal); }
-}));
+vi.mock('../src/utils/crossWindowOperations', () => {
+  class CrossWindowOperationBusyError extends Error {}
+  return { CrossWindowOperationBusyError,
+    runCrossWindowExclusive: async (_key: string, _label: string, work: (signal: AbortSignal) => unknown) => {
+      if (mocks.busy > 0) { mocks.busy--; throw new CrossWindowOperationBusyError(); }
+      const lease = new AbortController(); mocks.lease = lease; return work(lease.signal);
+    }
+  };
+});
 
 import { removeTestDirectory } from './testFilesystem';
 import { registerCodexSessionQueue } from '../src/services/codexSessionQueue';
@@ -26,7 +31,7 @@ const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 let store: SqliteStateStore;
 let subscriptions: vscode.Disposable[];
 beforeEach(async () => {
-  vi.resetAllMocks(); mocks.enabled = true; mocks.slots = 30; mocks.lease = undefined;
+  vi.resetAllMocks(); mocks.enabled = true; mocks.slots = 30; mocks.busy = 0; mocks.lease = undefined;
   mocks.home = await mkdtemp(path.join(tmpdir(), 'codex-queue-runtime-'));
   store = await SqliteStateStore.open(path.join(mocks.home, 'manager.sqlite')); configureSqliteStateStore(store);
   subscriptions = [];
@@ -38,10 +43,21 @@ afterEach(async () => {
   await new Promise(resolve => setImmediate(resolve));
   configureSqliteStateStore(undefined); store.close();
   await removeTestDirectory(mocks.home);
+  vi.useRealTimers();
 });
 const start = () => registerCodexSessionQueue({ subscriptions } as vscode.ExtensionContext);
 const queue = (revision: string) => writeCodexSessionPreference(mocks.home, id, { queue: true, priority: 1, queueRevision: revision, queueError: undefined, queueClaimId: undefined, queueClaimedAt: undefined });
 const drain = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)); };
+
+it.each([false, true])('retries a busy queue lease without another storage change, unless disposed (disposed=%s)', async disposed => {
+  queue('busy'); mocks.busy = 1;
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  start(); await drain();
+  expect(mocks.busy).toBe(0); expect(mocks.resume).not.toHaveBeenCalled();
+  if (disposed) { subscriptions.forEach(item => item.dispose()); subscriptions = []; }
+  await vi.advanceTimersByTimeAsync(5000); await drain();
+  expect(mocks.resume).toHaveBeenCalledTimes(disposed ? 0 : 1);
+});
 
 it('consumes a queue request once across completion updates and scheduler restart; allows explicit requeue', async () => {
   queue('first'); start();

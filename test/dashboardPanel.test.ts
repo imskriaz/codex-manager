@@ -17,6 +17,7 @@ vi.mock("../src/presentation/dashboard/resetCreditsBackfill", () => ({
 
 import * as dashboardSettings from "../src/presentation/dashboard/settings";
 import * as usageHistory from "../src/services/dashboardUsageHistory";
+import * as sessionEditor from '../src/services/codexSessionResume';
 import { DashboardPanelController, publishDashboardSnapshot } from "../src/presentation/dashboard/panel";
 
 beforeEach(()=>{
@@ -269,4 +270,32 @@ it('acknowledges saved settings only after the write succeeds in the webview', a
     await expect(controller.handleSettingUpdate('autoRefreshMinutes', 5)).rejects.toThrow(/read-only/);
     expect(postNotice).toHaveBeenCalledTimes(1);
   } finally { update.mockRestore(); }
+});
+
+it('coalesces session changes during a read and its cooldown, then remains idle and cancels on hide', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(vscode.workspace, 'getConfiguration').mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback } as never);
+  let finish!: (rows: never[]) => void;
+  const read = vi.spyOn(sessionEditor, 'readCodexCliSessions').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue([]);
+  const panel = { visible: true }, post = vi.fn();
+  const instance = Object.assign(Object.create(DashboardPanelController.prototype), {
+    panel, context: createContext(), webviewReady: true, cliSessionRefreshAfter: 0, cliSessionRealtimeRevision: 1, postActionResult: post
+  });
+  try {
+    const work = instance.publishCliSessionsRealtime();
+    instance.publishCliSessionsRealtime(); instance.publishCliSessionsRealtime();
+    finish([]); await work;
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(read).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(100);
+    await instance.publishCliSessionsRealtime(); await instance.publishCliSessionsRealtime();
+    await vi.advanceTimersByTimeAsync(1_900);
+    expect(read).toHaveBeenCalledTimes(3); expect(post).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(read).toHaveBeenCalledTimes(3);
+    instance.cliSessionRefreshAfter = Date.now() + 2_000;
+    await instance.publishCliSessionsRealtime(); panel.visible = false; instance.stopCliSessionRealtime();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(read).toHaveBeenCalledTimes(3);
+  } finally { instance.stopCliSessionRealtime(); vi.restoreAllMocks(); vi.useRealTimers(); }
 });

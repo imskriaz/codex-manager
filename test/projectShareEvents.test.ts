@@ -182,3 +182,20 @@ it('does not spin expiry timers for permanent links and still closes on revocati
   expect(response.end).toHaveBeenCalledOnce();
   expect(response.write).toHaveBeenLastCalledWith('event: revoked\ndata: {}\n\n');
 });
+
+it('updates open streams after reshare and reschedules a shortened or removed expiry', async () => {
+  const token = createProjectShare(root, [], 7, { showArchive: false }).token;
+  const { response } = open(new Response(), 7, '127.0.0.1', token);
+  createProjectShare(root, ['comments'], 0, { showArchive: true }, token);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(response.write).toHaveBeenLastCalledWith('event: change\ndata: {}\n\n');
+  vi.setSystemTime(Date.now() + 8 * 86400000);
+  streams.heartbeat();
+  expect(response.end).not.toHaveBeenCalled();
+  createProjectShare(root, [], 1, { showArchive: false }, token);
+  await vi.advanceTimersByTimeAsync(2000);
+  vi.setSystemTime(Date.now() + 86400000);
+  streams.heartbeat();
+  expect(response.end).toHaveBeenCalledOnce();
+  expect(response.write).toHaveBeenLastCalledWith('event: revoked\ndata: {}\n\n');
+});

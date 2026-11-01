@@ -889,7 +889,7 @@ it('keeps startup visible in workspace routes and removes the remote transport b
   const source=readFileSync('webview-src/dashboard/main.tsx','utf8');
   const startup=source.slice(source.indexOf('  const selectedPeerOffline ='),source.indexOf('  const cliListLoading'));
   expect(startup).not.toContain('workspace-route-dashboard-hidden');
-  expect(startup).toContain('selectedPeerOffline ? "Reconnecting…"');
+  expect(startup).toContain('if (!snapshot)');
   expect(startup).toContain('"Starting…"');
   expect(source).not.toContain('actions are relayed over the secure connection');
 });

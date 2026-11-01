@@ -74,6 +74,8 @@ export function BatchSelectionBar(props: {
   resyncPending: boolean;
   removePending: boolean;
   sharePending: boolean;
+  autoResetPending: boolean;
+  onAutoReset: (allowed: boolean) => void;
   onRefresh: () => void;
   onResync: () => void;
   onRemove: () => void;
@@ -82,7 +84,7 @@ export function BatchSelectionBar(props: {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const anyPending = props.refreshPending || props.resyncPending || props.removePending || props.sharePending;
+  const anyPending = props.refreshPending || props.resyncPending || props.removePending || props.sharePending || props.autoResetPending;
 
   useAnchoredPopover(open, rootRef, popoverRef);
 
@@ -150,6 +152,8 @@ export function BatchSelectionBar(props: {
                 <button type="button" role="menuitem" disabled={props.sharePending} onClick={() => run(props.onShare)}>
                   {props.copy.batchExportBtn}
                 </button>
+                <button type="button" role="menuitem" disabled={props.autoResetPending} onClick={() => run(() => props.onAutoReset(true))}>Allow auto reset: enable all</button>
+                <button type="button" role="menuitem" disabled={props.autoResetPending} onClick={() => run(() => props.onAutoReset(false))}>Allow auto reset: disable all</button>
                 <button
                   class="danger"
                   type="button"
